@@ -38,7 +38,7 @@ When Reviewer is done reviewing, Captain shall pass the reviews to Coder with th
 
 When Coder has challenged any review, Captain shall pass the challenges to Reviewer with the prompt:
 > For each feedback item below, challenge or accept it, with stronger reasoning and evidence than before.
-> Then review the unstaged/untracked changes (if any).
+> Then review the latest unstaged/untracked changes (if any).
 
 ## Push
 
