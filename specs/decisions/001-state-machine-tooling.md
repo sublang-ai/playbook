@@ -13,16 +13,16 @@ SDLC workflows (e.g., the documentation workflow in `demo/sdlc/src/doc.md`) can 
 
 We evaluated four open-source frameworks by implementing the same two-machine model (`docWorkflow` + `reviewCycle`) in each:
 
-- **XState** (v5) — JavaScript state machine / statechart library with Stately Sketch visualizer
-- **Kestra** — Java-based workflow orchestrator with YAML flow definitions
-- **Windmill** — Python/TypeScript workflow engine with OpenFlow YAML definitions
-- **Prefect** — Python workflow orchestrator (eliminated early — poor state machine fit)
+- **XState** (v5) [[1]] — JavaScript state machine / statechart library with Stately Sketch [[2]] visualizer
+- **Kestra** [[4]] — Java-based workflow orchestrator with YAML flow definitions
+- **Windmill** [[5]] — Python/TypeScript workflow engine with OpenFlow YAML definitions
+- **Prefect** [[10]] — Python workflow orchestrator (eliminated early — poor state machine fit)
 
-We also surveyed the broader landscape of state machine tools for any competitor offering both concise text-based definitions and interactive visual simulation.
+We also surveyed the broader landscape of state machine tools [[6]] [[7]] [[8]] [[9]] for any competitor offering both concise text-based definitions and interactive visual simulation.
 
 ## Decision
 
-Adopt **XState v5** as the state machine definition and runtime, with **Stately Sketch** (MIT) as the native visualizer/simulator, and **@statelyai/inspect** for runtime monitoring.
+Adopt **XState v5** [[1]] as the state machine definition and runtime, with **Stately Sketch** [[2]] (MIT) as the native visualizer/simulator, and **@statelyai/inspect** [[3]] for runtime monitoring.
 
 ### Rationale
 
@@ -44,32 +44,43 @@ Specific patterns where the gap is most pronounced:
 
 #### 2. Interactive visualization with simulation
 
-| Tool | Visible graph edges | Step-by-step simulation | Open source | Self-hostable |
-| --- | :---: | :---: | :---: | :---: |
-| **XState + Stately Sketch** | Card layout (no arrows) | Click events to walk states | MIT | Yes (Vite SSR build) |
-| **XState + custom D3 graph** | Force-directed with arrows | Click events to walk states | MIT | Yes (single HTML + D3) |
-| **Kestra topology view** | DAG arrows | Execute only (no dry-run sim) | Apache-2.0 | Requires ~107 MB server |
-| **Windmill flow canvas** | DAG arrows | Execute only (no dry-run sim) | AGPLv3 | Requires ~569 MB server |
-| **sketch.systems** | Graph with arrows | Click to walk | Closed source | No |
-| **itemis CREATE** | Graphical editor | Trigger-based simulation | EPL | Eclipse/VSCode plugin only |
-| **Robot3 + robot3-viz** | SVG via DAGre | No simulation | MIT | Yes, but unmaintained |
-| **Sismic** | PlantUML export only | API only (no GUI) | LGPL | CLI/library only |
-| **state-machine-cat** | Graphviz SVG | No simulation | MIT | Yes |
+| Tool | Visible graph edges | Step-by-step simulation | License | Deployment |
+| --- | :---: | :---: | --- | --- |
+| **XState + Stately Sketch** | Card layout (no arrows) | Click events to walk states | MIT | Self-host (Vite SSR) |
+| **XState + custom D3 graph** | Force-directed with arrows | Click events to walk states | MIT | Self-host (static HTML) |
+| **Kestra topology view** | DAG arrows | Execute only (no dry-run sim) | Apache-2.0 | Self-host (server) |
+| **Windmill flow canvas** | DAG arrows | Execute only (no dry-run sim) | AGPLv3 | Self-host (server) |
+| **sketch.systems** [[8]] | Graph with arrows | Click to walk | Not advertised | Hosted web app |
+| **itemis CREATE** [[7]] | Graphical editor | Trigger-based simulation | Commercial | Desktop, cloud |
+| **Robot3 + robot3-viz** [[11]] [[12]] | SVG via DAGre | No simulation | BSD-2-Clause | Self-host |
+| **Sismic** | PlantUML export only | API only (no GUI) | LGPL | Library (CLI) |
+| **state-machine-cat** | Graphviz SVG | No simulation | MIT | Self-host |
 
-Only XState + Stately Sketch combines all of: concise text DSL, interactive visual charts, click-to-step simulation, MIT license, and self-hostable. sketch.systems is the closest competitor but is closed-source and unmaintained ("Alpha").
+Among off-the-shelf tools, only XState + Stately Sketch [[2]] combines all of: concise text DSL, interactive visual charts, click-to-step simulation, permissive open-source license, and self-hostable. The custom D3 graph (built during this evaluation) also meets these criteria but is a bespoke prototype, not a reusable project. Excluded alternatives: sketch.systems [[8]] supports click-through exploration but is labeled Alpha and is presented as a hosted web app on its public site; itemis CREATE [[7]] offers simulation and visual debugging across desktop and cloud, but is commercially licensed (from €510/year per [[7b]]) with no open-source edition for the current product.
 
 #### 3. Lightweight footprint
 
-| Framework | Runtime footprint (to render charts) | Full server install |
-| --- | ---: | ---: |
-| **XState + Sketch** | 20 MB (Vite SSR build) | 20 MB (same) |
-| **XState + D3 graph** | 316 KB | 316 KB |
-| Kestra | 4.1 MB (Mermaid static) | ~110 MB (107 MB server JAR) |
-| Windmill | 6.3 MB (Mermaid static) | ~575 MB (569 MB server binary) |
+Off-the-shelf native visualizers:
+
+| Framework | Native visualizer | Footprint |
+| --- | --- | ---: |
+| **XState + Sketch** [[2]] | Stately Sketch (Vite SSR build) | 20 MB |
+| **Kestra** [[4]] | Topology view (requires server) | ~110 MB |
+| **Windmill** [[5]] | Flow canvas (requires server) | ~575 MB |
+
+Internal prototypes (built during this evaluation, not reusable):
+
+| Prototype | Approach | Footprint |
+| --- | --- | ---: |
+| XState + D3 graph | Custom force-directed graph | 316 KB |
+| Kestra Mermaid mirror | Static Mermaid rendering of flow YAML | 4.1 MB |
+| Windmill Mermaid mirror | Static Mermaid rendering of flow YAML | 6.3 MB |
+
+The Mermaid mirrors lack the interactive features of their native visualizers (see `claude/README.md` for caveats).
 
 #### 4. Desktop embedding path
 
-Stately Sketch's Vite SSR build can be embedded in a Tauri desktop app (~25 MB total) or an Electron app (~150 MB), providing an offline-capable state machine IDE. `@statelyai/inspect` supports both iframe embedding and WebSocket mode for runtime monitoring.
+Stately Sketch's Vite SSR build can be embedded in a Tauri or Electron desktop shell, providing an offline-capable state machine IDE. `@statelyai/inspect` supports iframe embedding [[3b]] and WebSocket mode [[3]] for runtime monitoring. No desktop packaging was performed during this evaluation; actual bundle sizes would need to be measured.
 
 ### Components adopted
 
@@ -80,28 +91,34 @@ Stately Sketch's Vite SSR build can be embedded in a Tauri desktop app (~25 MB t
 | `@statelyai/inspect` | Runtime state inspection | MIT |
 | D3.js (optional) | Force-directed graph with visible edges | ISC |
 
-### Self-hosting notes for Stately Sketch
+### Self-hosting feasibility (verified)
 
-Sketch's client defaults to fetching source files from `stately.ai` (the cloud registry). For self-hosted mode:
+Sketch's client defaults to the `stately.ai` cloud registry. Self-hosting requires two changes, validated during prototyping (see `claude/xstate/deps/sketch/`):
 
-- Rebuild with `VITE_REGISTRY_API_URL="/api/viz"` so the client fetches from the local Nitro server.
-- Non-functional UI (login, share, help links to stately.ai) can be hidden via a `public/local-overrides.css` file injected through a `<link>` in the root route head config — no component code changes required.
+- **Upstream-clean:** Set `VITE_REGISTRY_API_URL="/api/viz"` at build time to redirect API calls to the local Nitro server. This uses an existing env-var hook in the upstream source (`api.ts:6`).
+- **Requires local patch:** Add a `<link>` to `public/local-overrides.css` in the root route config (`__root.tsx`) to hide non-functional cloud UI (login, share). This is a 4-line source modification not available upstream.
 
 ## Consequences
 
 - SDLC workflows are defined as XState v5 machines in JavaScript/TypeScript, version-controlled as code.
 - Visualization and simulation use Stately Sketch (self-hosted) for design-time exploration, and optionally a D3-based force-directed graph for topological overview with visible edges.
+- Self-hosting Sketch carries a local 4-line patch to `__root.tsx` (see [Self-hosting feasibility](#self-hosting-feasibility-verified)). This creates upgrade friction: each upstream Sketch update must be checked for compatibility with the patch, and a route-config restructure could break it. Until upstream provides a configuration hook for injecting custom stylesheets, this patch must be maintained.
 - Runtime monitoring uses `@statelyai/inspect` to observe live state transitions.
 - Kestra and Windmill remain available for DAG-style workflow orchestration where their server-based execution model is needed, but are not used for state machine modeling.
 
 ## References
 
-- [XState v5](https://github.com/statelyai/xstate) — MIT, active (v5.30, Apr 2026)
-- [Stately Sketch](https://github.com/statelyai/sketch) — MIT, active
-- [@statelyai/inspect](https://github.com/statelyai/inspect) — MIT
-- [Kestra](https://github.com/kestra-io/kestra) — Apache-2.0
-- [Windmill](https://github.com/windmill-labs/windmill) — AGPLv3
-- [state-machine-cat](https://github.com/sverweij/state-machine-cat) — MIT
-- [sketch.systems](https://sketch.systems/) — closed source
-- [itemis CREATE](https://www.itemis.com/en/products/itemis-create/) — EPL
-- Prototype implementations: `claude/xstate/`, `claude/kestra/`, `claude/windmill/`, `claude/xstate-graph/`
+[1]: https://github.com/statelyai/xstate "XState v5 — MIT, active (v5.30, Apr 2026)"
+[2]: https://github.com/statelyai/sketch "Stately Sketch — MIT, active"
+[3]: https://github.com/statelyai/inspect "@statelyai/inspect — MIT (WebSocket inspector)"
+[3b]: https://stately.ai/docs/inspector "Stately Inspector docs — iframe embedding"
+[4]: https://github.com/kestra-io/kestra "Kestra — Apache-2.0"
+[5]: https://github.com/windmill-labs/windmill "Windmill — AGPLv3"
+[6]: https://github.com/sverweij/state-machine-cat "state-machine-cat — MIT"
+[7]: https://www.itemis.com/en/products/itemis-create/ "itemis CREATE — commercial"
+[7b]: https://www.itemis.com/en/products/itemis-create/licenses "itemis CREATE licenses — pricing and platform details"
+[8]: https://sketch.systems/ "sketch.systems homepage"
+[9]: https://github.com/AlexandreDecan/sismic "Sismic — LGPL"
+[10]: https://github.com/PrefectHQ/prefect "Prefect — Apache-2.0"
+[11]: https://github.com/matthewp/robot "Robot — BSD-2-Clause"
+[12]: https://github.com/jbreckmckye/robot3-viz "robot3-viz — BSD-2-Clause"
