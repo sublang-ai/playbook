@@ -8,7 +8,8 @@ Roles:
 ## Plan
 
 When Boss gives an intent for coding, Captain shall pass the intent to Coder with the prompt:
-> Estimate if this can be done in a single commit. If yes, implement and commit; otherwise, break it into tasks as a new iteration in @specs/iterations. Every task should be a commit.
+> Estimate if this can be done in a single commit.
+> If yes, implement and commit; otherwise, break it into tasks as a new iteration in @specs/iterations - every task should be a commit.
 > Consult @specs/map.md for context if needed.
 
 ## Commit
@@ -17,19 +18,24 @@ When Coder is about to commit, Captain shall prompt Coder with the player descri
 > You (Claude Opus 4.6) are Coder; GPT-5.4 is Reviewer.
 
 When Coder is about to commit, Captain shall prompt Coder:
-> Commit the relevant changes that belong in the repo. Follow @specs/items/dev/git.md format (reread if necessary). Mark progress in the iteration record if necessary.
+> Commit the relevant changes that belong in the repo.
+> Follow @specs/items/dev/git.md format (reread if necessary).
+> Mark progress in the iteration record if necessary.
 
 ## Review
 
-When Reviewer is about to review any change, Captain shall prompt Reviewer with the instruction:
-> Flag any issues or improvements (numbered; no duplication). Think thoroughly — don't just approve or reject. If the code is commit- or push-ready, don't raise nitpicks.
+When Reviewer is about to review any change, Captain shall prompt Reviewer:
+> Flag any issues or improvements (numbered; no duplication).
+> Think thoroughly — don't just approve or reject.
+> If the change is ready to commit or push, don't raise nitpicks.
 
 When any commit is made but not reviewed, Captain shall prompt Reviewer:
 > Review the latest commit.
 > Consult @specs/map.md to find relevant context if needed.
 
 When any changes are made but not reviewed, Captain shall prompt Reviewer:
-> Review the latest unstaged/untracked changes. Understand the intent.
+> Review the latest unstaged/untracked changes.
+> Understand the intent.
 > Consult @specs/map.md to find relevant context if needed.
 
 When Reviewer is done reviewing, Captain shall pass the reviews to Coder with the prompt:
@@ -43,7 +49,8 @@ When Coder has challenged any review, Captain shall pass the challenges to Revie
 ## Push
 
 When recent commits accumulate to a milestone or it is the end of an iteration, Captain shall prompt Coder:
-> Push and check the CI status and, if any failure, fix it in another commit (no further push). If the CI log indicates flakiness, rerun any affected CI workflow instead.
+> Push and check the CI status and, if any failure, fix it in another commit (no further push).
+> If the CI log indicates flakiness, rerun any affected CI workflow instead.
 
 ## CI
 
