@@ -3,7 +3,7 @@
 Roles:
 
 - Coder
-- Reviwer
+- Reviewer
 
 ## Plan & Implement
 
