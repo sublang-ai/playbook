@@ -49,7 +49,7 @@ When Coder has challenged any code review, Captain shall pass the challenges to 
 ## Commit
 
 When Coder is about to commit, Captain shall prompt Coder with the player descriptions based on who worked on the changes, e.g.:
-> You (Claude Opus 4.6) are Coder; GPT-5.4 is Reviewer.
+> You (Claude Opus 4.7) are Coder; GPT-5.5 is Reviewer.
 
 When Coder is about to commit, Captain shall prompt Coder:
 > Finally, commit the relevant changes that belong in the repo, following @specs/items/dev/git.md format (reread if necessary).
@@ -78,7 +78,7 @@ When an IR is done and pushed, Captain shall prompt Coder with the IR number and
 > The set should be complete and coherent.
 > Avoid implementation specifics.
 > Avoid redundant spec items.
-> Consult @specs/spec-map.md for relevant context and update it to reflect your changes.
+> Consult @specs/map.md for relevant context and update it to reflect your changes.
 
 When Reviewer is about to review any spec change, Captain shall prompt Reviewer with the IR number:
 > Review the unstaged/untracked changes. Verify the spec items for IR-<#> are:
@@ -88,4 +88,4 @@ When Reviewer is about to review any spec change, Captain shall prompt Reviewer 
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/spec-map.md for relevant context and verify it reflects the changes.
+> Consult @specs/map.md for relevant context and verify it reflects the changes.
