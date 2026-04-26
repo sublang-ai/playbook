@@ -346,7 +346,7 @@ export const codingMachine = setup({
             '',
             'Estimate if this can be done in a single commit, following best practices.',
             'If yes, implement, test, and commit; otherwise, break it into tasks as a new iteration in @specs/iterations (every task should be a commit), and commit the IR.',
-            'Consult @specs/map.md to find relevant if needed.',
+            'Consult @specs/map.md to find relevant context if needed.',
           ]),
           result: {
             singleCommitCommitted: 'The intent was implemented, tested, and committed as one commit.',
