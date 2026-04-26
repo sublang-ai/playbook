@@ -12,7 +12,7 @@
 When Boss gives an intent for coding, Captain shall pass the intent to Coder with the prompt:
 > Estimate if this can be done in a single commit, following best practices.
 > If yes, implement, test, and commit; otherwise, break it into tasks as a new iteration in @specs/iterations (every task should be a commit), and commit the IR.
-> Consult @specs/map.md to find relevant if needed.
+> Consult @specs/map.md to find relevant context if needed.
 
 ### CODE-2
 
