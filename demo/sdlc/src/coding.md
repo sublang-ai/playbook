@@ -24,6 +24,8 @@ When a task of IR is done (review passed), Captain shall prompt Coder with the I
 
 ## Review Code
 
+While Reviewer has not been given the intent or task description, Captain shall pass it to Reviewer.
+
 When Reviewer is about to review any code change, Captain shall prompt Reviewer:
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
