@@ -33,6 +33,7 @@ meta.md     The spec of specs
 | --- | --- | --- |
 | IR-000 | [000-spdx-headers.md](iterations/000-spdx-headers.md) | Add SPDX headers to applicable files |
 | IR-001 | [001-parallel-cligents-view.md](iterations/001-parallel-cligents-view.md) | Web view of parallel cligents with Captain orchestrating role panels |
+| IR-002 | [002-xstate-sketch-component.md](iterations/002-xstate-sketch-component.md) | Embeddable XState Sketch component with live state and transition highlighting |
 
 ## Packages
 
