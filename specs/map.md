@@ -26,6 +26,7 @@ meta.md     The spec of specs
 | --- | --- | --- |
 | DR-000 | [000-spec-structure-format.md](decisions/000-spec-structure-format.md) | Spec structure, format, and naming conventions |
 | DR-001 | [001-state-machine-tooling.md](decisions/001-state-machine-tooling.md) | XState + Stately Sketch for state machine modeling, visualization, and simulation |
+| DR-002 | [002-in-page-xstate-visualizer.md](decisions/002-in-page-xstate-visualizer.md) | In-page XState visualizer architecture (modes, graph extraction, inspect contract, highlighting) |
 
 ## Iterations
 
