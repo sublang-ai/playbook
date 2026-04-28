@@ -72,7 +72,7 @@ Pure function `machine → { nodes, edges }`:
 
 ### 3. Layout via elkjs
 
-[`elkjs`](https://github.com/kieler/elkjs) (EPL-2.0), layered. Compound states are containers;
+`elkjs` [[1]] (EPL-2.0), layered. Compound states are containers;
 children lay out within. Async; placeholder until resolved. Computed once per machine, never per
 transition.
 
@@ -142,3 +142,7 @@ For sites that prefer not to bundle elkjs; the dynamic component is the recommen
 - Without `disambiguate`, all candidate edges flash on guarded branches sharing `(from, event, to)` — the matcher is honest about the ambiguity rather than guessing. Consumers that can read context to narrow the branch supply `disambiguate`.
 - `actorRef`-identity filtering (not `rootId`) is mandatory: any actor system that invokes children would otherwise leak child events into the bound visualizer.
 - Out of scope for this architecture: authoring the machine in the browser (Sketch's editing features); auth, multi-user sessions, persistence across reloads; replacing `@statelyai/inspect` for cross-process inspection; time-travel through past transitions.
+
+## References
+
+[1]: https://github.com/kieler/elkjs "elkjs — EPL-2.0, layered graph layout"

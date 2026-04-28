@@ -22,7 +22,7 @@ The demo wires `coding.fsm.ts`, exercising its `planAndImplement → reviewCodeC
 - [ ] `views/sketch/src/main.ts` + `views/sketch/demo/coding-demo.ts` — demo wiring `coding.fsm.ts` with event-trigger buttons.
 - [ ] `views/sketch/scripts/render-static.ts` — CLI emitting SVG + helper.
 - [ ] `views/sketch/README.md` — install, both modes, screenshot.
-- [ ] SPDX headers on all sources per [IR-000](000-spdx-headers.md).
+- [ ] SPDX headers on all sources per [LIC-1](../items/dev/licensing.md#lic-1) and [LIC-2](../items/dev/licensing.md#lic-2).
 
 ## Tasks
 
