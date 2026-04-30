@@ -18,10 +18,9 @@ The demo wires `coding.fsm.ts`, exercising its `planAndImplement → reviewCodeC
 - [ ] `views/sketch/src/render.ts` — SVG nodes/edges with `data-state-id`/`data-edge-id`.
 - [ ] `views/sketch/src/inspect.ts` — `createSketchInspector` consuming `@xstate.snapshot`/`@xstate.microstep`, emitting `(activeStateIds, firedEdgeIds)`.
 - [ ] `views/sketch/src/highlight.ts` — applies `.state.active`/`.transition.fired`.
-- [ ] `views/sketch/src/styles.css` — theme; **also exported as a string for static inlining**.
+- [ ] `views/sketch/src/styles.css` — theme.
 - [ ] `views/sketch/src/main.ts` + `views/sketch/demo/coding-demo.ts` — demo wiring `coding.fsm.ts` with event-trigger buttons.
-- [ ] `views/sketch/scripts/render-static.ts` — CLI emitting SVG + helper.
-- [ ] `views/sketch/README.md` — install, both modes, screenshot.
+- [ ] `views/sketch/README.md` — install, usage, screenshot.
 - [ ] SPDX headers on all sources per [LIC-1](../items/dev/licensing.md#lic-1) and [LIC-2](../items/dev/licensing.md#lic-2).
 
 ## Tasks
@@ -35,9 +34,7 @@ The demo wires `coding.fsm.ts`, exercising its `planAndImplement → reviewCodeC
    `highlight.ts` toggles classes.
    `mountSketch(container, { actor, inspector })` runs live; `dispose()` runs the four-step teardown idempotently.
 5. **Demo page** — `main.ts` + `demo/coding-demo.ts`: wire `coding.fsm.ts` with `createSketchInspector`, render buttons for each Boss event, exercise `planAndImplement` ambiguity (default = both flash; with `disambiguate` = one).
-6. **Static-render script + README** — `scripts/render-static.ts` per [DR-002 §7](../decisions/002-in-page-xstate-visualizer.md#7-static-render-path) emits self-contained SVG + helper.
-   Smoke test: load SVG into a fresh page (no extra stylesheet); class toggles produce visible color changes.
-   README covers install, both modes, the inspector wiring, the ambiguity model + `disambiguate`, and a mid-run screenshot.
+6. **README** — covers install, usage, the inspector wiring, the ambiguity model + `disambiguate`, and a mid-run screenshot.
 
 ## Acceptance criteria
 
@@ -51,6 +48,5 @@ The demo wires `coding.fsm.ts`, exercising its `planAndImplement → reviewCodeC
 - `mountSketch(container, { machine })` renders a static diagram with no actor wiring.
 - `mountSketch(container, { actor, inspector })`'s `dispose()` runs the four-step teardown; double-`dispose()` is a no-op.
 - `mountSketch(container, { actor })` (no inspector) tracks active state via subscribe, emits no transition highlights, and `dispose()` unsubscribes — verified by no further snapshot callbacks after `dispose()`.
-- `npx tsx views/sketch/scripts/render-static.ts <machine.ts>` writes a self-contained SVG + helper; embedding only those two files (no extra stylesheet) and calling `bindSketchSvg(svgEl, { actor, inspector })` produces highlights identical to the dynamic component.
 - All `views/sketch/**` sources carry SPDX headers per [LIC-3](../items/test/licensing.md#lic-3) and [LIC-4](../items/test/licensing.md#lic-4).
 - The page stays interactive under sustained transitions; layout work runs once per machine, never per event.

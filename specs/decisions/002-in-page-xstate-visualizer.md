@@ -35,21 +35,19 @@ Concrete cases the architecture must handle:
 ## Decision
 
 Build a vanilla TS + SVG component under `views/sketch/` that performs graph extraction + elkjs
-layout + SVG rendering, with a passive inspector that filters by actor identity. The dynamic
-component is the recommended default; a static-render path emits self-contained SVGs for sites that
-prefer not to bundle elkjs.
+layout + SVG rendering, with a passive inspector that filters by actor identity.
 
-### 1. Two modes
+### 1. API
 
-| Mode | API | Highlights |
-| --- | --- | --- |
-| Dynamic (preferred) | `mountSketch(container, { actor, inspector })`; consumer wires `createActor(machine, { inspect: inspector.handle })` | Active state + fired transition |
-| Dynamic, no actor | `mountSketch(container, { machine })` | Static diagram |
-| Static (script) | `npx tsx scripts/render-static.ts <machine.ts>` → self-contained `<id>.sketch.svg` + helper | `bindSketchSvg(svgEl, { actor, inspector })`; same inspect contract |
+| Call | Highlights |
+| --- | --- |
+| `mountSketch(container, { actor, inspector })`; consumer wires `createActor(machine, { inspect: inspector.handle })` | Active state + fired transition |
+| `mountSketch(container, { actor })` | Active state only |
+| `mountSketch(container, { machine })` | Static diagram |
 
 `mountSketch` returns idempotent `dispose()` that, in order:
 
-1. Unsubscribes the `actor.subscribe` listener (used in both paths for active-state tracking).
+1. Unsubscribes the `actor.subscribe` listener.
 2. Detaches the inspector listener if any.
 3. Cancels pending `.transition.fired` timers.
 4. Clears the container.
@@ -118,16 +116,7 @@ Therefore:
 - Without an inspector: active-state tracking via subscribe still works; no `.transition.fired` highlights.
 - Unresolvable events (no candidate edge after filters) are no-ops, not errors.
 
-### 7. Static-render path
-
-`scripts/render-static.ts` imports a machine module, runs extraction + layout, and writes:
-
-- `<id>.sketch.svg` — diagram with `data-state-id`/`data-edge-id` and an inlined `<style>` block carrying the default theme, so the file is self-contained; consumers override via a higher-specificity stylesheet.
-- `<id>.sketch.helper.js` — exports `bindSketchSvg(svgEl, { actor, inspector? }, opts?)`, using the same inspect contract as `mountSketch`.
-
-For sites that prefer not to bundle elkjs; the dynamic component is the recommended default.
-
-### 8. Stack and placement
+### 7. Stack and placement
 
 - Vite + TypeScript, matching the broader `views/` toolchain.
 - Peer deps: `xstate`, `@xstate/graph`. Dep: `elkjs`.
@@ -137,7 +126,7 @@ For sites that prefer not to bundle elkjs; the dynamic component is the recommen
 ## Consequences
 
 - The component complements the DR-001 stack: Stately Sketch remains design-time/external, `@statelyai/inspect` remains the cross-process monitor, and this DR fills the in-page, in-process gap.
-- elkjs is added as a layout dependency; the static-render path lets sites that prefer not to bundle elkjs ship pre-rendered SVGs while retaining live highlighting via `bindSketchSvg`.
+- elkjs is a runtime dependency; consumers must bundle it.
 - The inspect contract requires consumers to wire the inspector at actor creation. Inspector-less use degrades cleanly: active-state tracking still works via `actor.subscribe`; only transition highlights are lost.
 - Without `disambiguate`, all candidate edges flash on guarded branches sharing `(from, event, to)` — the matcher is honest about the ambiguity rather than guessing. Consumers that can read context to narrow the branch supply `disambiguate`.
 - `actorRef`-identity filtering (not `rootId`) is mandatory: any actor system that invokes children would otherwise leak child events into the bound visualizer.
