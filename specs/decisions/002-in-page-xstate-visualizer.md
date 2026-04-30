@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
 
-# DR-002: In-page XState Visualizer Architecture
+# DR-002: XState Visualizer Architecture
 
 ## Status
 
@@ -10,9 +10,10 @@ Accepted
 ## Context
 
 [DR-001](001-state-machine-tooling.md) adopted XState v5 + Stately Sketch + `@statelyai/inspect`:
-Sketch is design-time/external, `@statelyai/inspect` is the cross-process monitor. Neither covers
-the in-page, in-process visualizer gap — a component embedded directly in a host page that renders
-a machine and highlights a running actor's active state and most-recently-fired transition.
+Sketch is design-time/external, `@statelyai/inspect` is the cross-process generic monitor. Neither
+offers a state-diagram visualizer with live active-state and fired-transition highlights. The gap
+exists in two deployments: same-page (machine and actor in the browser) and split-process (actor
+in a Node host such as a tmux-play XState Captain, diagram in a browser).
 
 The XState v5 inspect API imposes constraints any in-page visualizer must work around:
 
@@ -34,27 +35,106 @@ Concrete cases the architecture must handle:
 
 ## Decision
 
-Build a vanilla TS + SVG component under `views/sketch/` that performs graph extraction + elkjs
-layout + SVG rendering, with a passive inspector that filters by actor identity.
+A vanilla TS + SVG component under `views/sketch/`, factored into three independent layers:
+**Diagram** turns a machine into SVG, **Telemetry** turns a live actor into a normalized event
+stream, and **Binding** mounts the SVG and applies telemetry. Each layer is independently usable.
+The Diagram layer can run anywhere the machine module is available — browser, build script,
+Captain startup; the Telemetry layer must run beside the actor; the Binding layer runs in the
+browser host page. Same-page composition binds them in one process; cross-process composition
+(e.g., a tmux-play XState Captain) runs Diagram + Telemetry on the Captain side and ships SVG +
+telemetry to the browser.
 
 ### 1. API
 
-| Call | Highlights |
-| --- | --- |
-| `mountSketch(container, { actor, inspector })`; consumer wires `createActor(machine, { inspect: inspector.handle })` | Active state + fired transition |
-| `mountSketch(container, { actor })` | Active state only |
-| `mountSketch(container, { machine })` | Static diagram |
+Public primitives:
+
+- `extractGraph(machine) → SketchGraph` — pure machine→graph extraction (§3).
+- `renderSketch(graph) → SVGSVGElement` — DOM-target render; for browser hosts (§4–§5).
+- `renderSketchToString(graph) → string` — Node-target render; serializes the same SVG with `data-state-id`/`data-edge-id` for cross-process shipping (no DOM dependency).
+- `applySketchTelemetry(svg, event, opts?)` — DOM class toggles for one telemetry event.
+- `fromXStateActor({ machine, actor, inspector?, disambiguate?, signal? }) → SketchActorSource` —
+  Telemetry-layer adapter; runs the matcher locally (§6–§7). Without `inspector`, emits `active` only.
+- `fromEventSource(url, init?) → SketchSource` — Binding-layer adapter; subscribes to a remote
+  SSE endpoint emitting `SketchTelemetry` (§8).
+- `mountSketch(container, options) → { dispose() }` — convenience composition.
+
+Source interfaces:
+
+```ts
+interface SketchSource {
+  subscribe(listener: (event: SketchTelemetry) => void): () => void; // returns unsubscribe
+  dispose(): void;                                                   // idempotent
+}
+
+interface SketchActorSource extends SketchSource {
+  // Synchronously re-emits the most recently produced `active` event with a fresh `seq`,
+  // if any. No-op when no `active` has been produced yet. Used by hosts that bind a
+  // listener after the source has already started (e.g., a Captain's per-turn emit slot).
+  emitLatestActive(): void;
+}
+```
+
+Sources are push (`subscribe(listener)`); single-listener semantics suffice for both
+documented consumers (the binding's `applySketchTelemetry` callback, and the Captain's
+emit-slot wrapper). `dispose()` ends the source: subsequent `subscribe()` invocations are
+no-ops and the returned unsubscribe is a no-op. The binding never calls `emitLatestActive` —
+it's a matcher-side concern, exposed only on `SketchActorSource`.
+
+Telemetry protocol (the public rendering contract):
+
+```ts
+type SketchTelemetry =
+  | { type: 'active'; seq: number; activeStateIds: string[] }
+  | { type: 'fired';  seq: number; firedEdgeIds: string[]; eventType?: string; ttlMs?: number };
+```
+
+`seq` is monotone per source per connection. The Binding layer tracks the highest seen `seq`
+within one connection and ignores any later event whose `seq` is not strictly greater. On
+disconnect/reconnect (`fromEventSource` re-establishes the `EventSource`), the adapter resets
+its tracking — the new connection is a fresh stream and may begin at any `seq`. The protocol
+specifies neither replay nor persistence; if events were missed during disconnect, they stay
+missed (the next `active` event re-syncs the visible state).
+
+`mountSketch` accepts:
+
+```ts
+mountSketch(container, {
+  // diagram input — exactly one of:
+  machine?, graph?, svg?,
+  // telemetry source — optional:
+  source?: SketchSource,
+  // binding option:
+  highlightMs?: number,  // default 600; per-event ttlMs on `fired` overrides
+});
+```
+
+Convenience matrix:
+
+| Diagram input | Source | Result |
+| --- | --- | --- |
+| `machine` | `fromXStateActor({ actor, inspector })` | Same-page live diagram with active + fired highlights |
+| `machine` | `fromXStateActor({ actor })` | Same-page diagram, active state only |
+| `machine` | omitted | Static diagram, in-process render |
+| `graph` | `fromEventSource(url)` | Pre-extracted graph, remote telemetry; binding renders |
+| `svg` | `fromEventSource(url)` | Pre-rendered SVG, remote telemetry; binding only toggles classes (no elkjs/`@xstate/graph` on the binding side) |
 
 `mountSketch` returns idempotent `dispose()` that, in order:
 
-1. Unsubscribes the `actor.subscribe` listener.
-2. Detaches the inspector listener if any.
-3. Cancels pending `.transition.fired` timers.
-4. Clears the container.
+1. Detaches the source (cancels actor/inspector subscriptions for `fromXStateActor`; closes the
+   `EventSource` for `fromEventSource`).
+2. Cancels pending `.transition.fired` timers.
+3. Clears the container.
 
-The inspector is a passive event sink; attach order vs `actor.start()` does not matter.
+### 2. Diagram layer
 
-### 2. Graph extraction
+`extractGraph` (§3) + elkjs layout (§4) + `renderSketch` (§5) form the Diagram layer. No actor,
+no inspector, no telemetry, no network. `xstate` and `@xstate/graph` are used only for machine
+typing and graph traversal helpers. The layer can run in any JS host: browser at page load,
+Node script at build time, or Captain at startup. The output (graph or SVG) is serializable, so
+a Captain may pre-render once and ship the SVG to the browser, freeing the binding host from
+bundling elkjs.
+
+### 3. Graph extraction
 
 Pure function `machine → { nodes, edges }`:
 
@@ -68,25 +148,26 @@ Pure function `machine → { nodes, edges }`:
   The machine root's id is the machine id (e.g., `'coding'`) — no synthetic node.
 - Compound parents and the machine root render as **visible containers**; parent/root-origin edges originate from the container perimeter.
 
-### 3. Layout via elkjs
+### 4. Layout via elkjs
 
 `elkjs` [[1]] (EPL-2.0), layered. Compound states are containers;
 children lay out within. Async; placeholder until resolved. Computed once per machine, never per
 transition.
 
-### 4. SVG rendering, no framework
+### 5. SVG rendering, no framework
 
 SVG only — no canvas, no UI framework. States: rounded rectangles labeled by id; final = double
 border; initial = stub arrow. Transitions: polylines with arrowheads, event labels;
 self-transitions loop. Theme via `styles.css`; classes `.state.active`, `.transition.fired`. CSS
 transitions absorb rapid event streams; no layout work per event.
 
-### 5. Live highlighting
+### 6. Telemetry layer: highlight derivation
 
-XState v5 does not expose a fully unique transition descriptor (see [§6 Inspect contract](#6-inspect-contract)).
-The matcher recovers what it can:
+`fromXStateActor` consumes a live actor + inspector and emits `SketchTelemetry`. It runs in the
+actor's process. XState v5 does not expose a fully unique transition descriptor (see
+[§7 Telemetry: inspect contract](#7-telemetry-layer-inspect-contract)); the matcher recovers what it can:
 
-- `.state.active` toggles on the node matching `snapshot.value` (all leaves for parallel regions).
+- `active` event on every snapshot: `activeStateIds` is the node(s) matching `snapshot.value` (all leaves for parallel regions).
 - On each `@xstate.microstep` for the bound actor, iterate `microstep.transitions[]` and, within each, every path in `entry.target[]`.
   Resolve candidates in two steps:
   1. **Match**: `event === entry.eventType`, `to === targetPath`, `from` lies on the prev active path (leaf, any ancestor, or root).
@@ -94,13 +175,21 @@ The matcher recovers what it can:
      Mirrors XState's deepest-first selection — an ancestor descriptor never fires when a descendant has a matching one for the same event.
      Without this, a root-owned and parent-owned `EVENT → #X` would both flash.
 
-  The kept group (possibly several edges differing in `branchIndex` for guarded ambiguity or `targetIndex` for multi-target descriptors) joins the union.
-  The unioned set gets `.transition.fired` for `highlightMs` (default 600ms).
+  The kept group (possibly several edges differing in `branchIndex` for guarded ambiguity or `targetIndex` for multi-target descriptors) joins the union and is emitted as one `fired` event (carrying `eventType` for context; per-event `ttlMs` may override the binding default).
 - Optional `disambiguate(prev, event, next, candidates) → edgeId | edgeId[]` narrows when context can pick the matched branch (e.g., `next.context.lastResult.guard` in `coding.fsm.ts`); invoked once per microstep.
-  Without it, all candidates flash — honest about the ambiguity.
-- Reentries and self-transitions flash node + edge; active class stays on.
+  Without it, all candidates appear in `firedEdgeIds` — honest about the ambiguity.
+- Reentries and self-transitions emit both a new `active` and a `fired`.
+- `seq` is incremented per emission; the source never reorders.
+- The source retains the most recent `active` event it produced as **latest-active state** —
+  used by hosts that bind a listener after the source has already started (e.g., a
+  cross-process Captain whose emit slot is null until a turn begins). `SketchActorSource.emitLatestActive()`
+  (see §1) re-emits this latest-active to all current subscribers with a fresh `seq`,
+  no-op when none has been produced. `fired` events are never retained or replayed — they
+  are transient by design (TTL-bounded) and a stale replay would falsely flash an old
+  transition.
+- `signal` (AbortSignal) detaches all subscriptions and stops emission.
 
-### 6. Inspect contract
+### 7. Telemetry layer: inspect contract
 
 `actor.subscribe` gives only snapshots (no event, no source, no guard).
 The `inspect` channel's `@xstate.microstep` gives `eventType` + `transitions[].target` but no source state or matched guard.
@@ -113,10 +202,102 @@ Therefore:
   The inspector captures a reference to the bound actor on attach and drops any event whose `event.actorRef !== boundActor` (equivalently, `event.actorRef.sessionId !== boundActor.sessionId`).
   **`rootId` is *not* a usable filter** — every actor in the system tree shares it, so a `rootId === boundSessionId` comparison would let every Captain child event through.
   Child snapshots, child microsteps, and `@xstate.actor` lifecycle events for children are dropped silently.
-- Without an inspector: active-state tracking via subscribe still works; no `.transition.fired` highlights.
+- Without an inspector: `active` events still emit via subscribe; no `fired` events.
 - Unresolvable events (no candidate edge after filters) are no-ops, not errors.
 
-### 7. Stack and placement
+### 8. Cross-process deployment
+
+When the actor lives outside the browser (e.g., a tmux-play XState Captain), the Captain runs
+the Diagram + Telemetry layers in its own process and publishes both through the host runtime's
+generic telemetry channel — for tmux-play that is [DR-004](../../../cligent/specs/decisions/004-tmux-play-captain-architecture.md)'s
+`emitTelemetry({ topic, payload })`. A separate **sketch presenter**, registered as a runtime
+observer alongside the tmux presenter, consumes the records and owns the browser-facing
+transport. The Captain stays out of network plumbing; the presenter stays out of XState.
+
+#### Captain side
+
+The Captain owns matcher lifecycle across the whole session, but `emitTelemetry` is only
+available inside `handleBossTurn` — DR-004 binds `CaptainContext` per turn, and `context.signal`
+is the active-turn abort signal (not session-scoped). The Captain therefore:
+
+- At factory time (before any turn): creates an internal `AbortController` (the *Captain
+  abort*, distinct from any per-turn `context.signal`); pre-renders the diagram once via
+  `const svg = renderSketchToString(extractGraph(machine))`, cached on the Captain instance;
+  starts the matcher with `const source = fromXStateActor({ machine, actor, inspector, disambiguate, signal: captainAbort.signal })`.
+  The matcher subscribes to the actor immediately so the same XState actor instance can fire
+  microsteps across turns without re-subscription.
+- The Captain owns a single `source.subscribe(listener)` registration whose listener is a
+  thin wrapper around a Captain-mutable **emit slot** — a reference to the current
+  emission function. Outside any active turn the slot is null and `fired` events during
+  that window are dropped (the matcher does not buffer transient events). `active` events
+  update the matcher's internal latest-active state (per §6) regardless of slot state, so
+  they remain available for `emitLatestActive()` later.
+- At the start of each `handleBossTurn`, sets the emit slot to a function bound to that
+  turn's `context`:
+  ```ts
+  const emit = (event: SketchTelemetry) =>
+    context.emitTelemetry({ topic: 'sketch.highlight', payload: event });
+  ```
+  Then, in order:
+  1. On the first turn (or any turn before the diagram has been emitted), awaits
+     `context.emitTelemetry({ topic: 'sketch.diagram', payload: svg })` and marks the
+     diagram as sent.
+  2. Calls `source.emitLatestActive()` — the matcher pushes the cached latest-active
+     event through the subscription, the listener routes it to the now-installed emit
+     slot, and a fresh-`seq` `active` reaches the presenter. No-op when the matcher has
+     not yet produced any `active` (e.g., actor not yet started).
+- At the end of each `handleBossTurn`, clears the emit slot back to null.
+- In `Captain.dispose()` (session shutdown, per DR-004), calls `source.dispose()` and
+  aborts the Captain abort, which detaches the matcher's actor/inspector subscriptions.
+
+This pattern fits coordinator FSMs naturally: in `coding.fsm.ts` and similar, microsteps fire
+in response to Boss events or role completions — both happen during turns. The latest-active
+replay rule above makes the "surface idle state on the next turn boundary" promise concrete:
+any state change that happened while the slot was null (initial subscribe-time snapshot,
+`after:` timers firing between turns) is reflected in the very first telemetry record of the
+next turn.
+
+`captain_telemetry` records inherit the active turn ID per DR-004's record-stamping rule.
+Because emission only occurs inside `handleBossTurn`, the runtime always has a turn ID to
+attach.
+
+#### Sketch presenter
+
+A runtime observer that:
+
+- Filters `captain_telemetry` by topic. Caches the latest `sketch.diagram` payload, caches
+  the latest `sketch.highlight` payload of `type: 'active'` (overwriting on each new one),
+  and appends each `sketch.highlight` payload to an internal in-memory queue keyed per
+  connected SSE client. `fired` payloads are not cached for replay — they are transient by
+  design (TTL-bounded), and replaying a stale `fired` would falsely flash an old transition.
+- Returns synchronously from each observer callback after enqueuing — it does **not** block
+  the runtime dispatcher on browser writes (DR-004 dispatcher contract).
+- Serves a localhost HTTP endpoint with two routes:
+    - `GET /` returns the visualizer page (HTML + cached SVG + a binding script that calls
+      `mountSketch(container, { svg, source: fromEventSource('/events') })`).
+    - `GET /events` is Server-Sent Events. On each new connection, the presenter first
+      writes the cached latest `active` payload (if any) so a late-joining browser
+      synchronizes with the current state immediately, then forwards subsequent live
+      payloads. Each emission writes a real SSE record:
+      ```text
+      event: telemetry
+      data: {"type":"fired","seq":42,"firedEdgeIds":["..."],"eventType":"DONE"}
+
+      ```
+      (one blank line terminator). `data:` carries one JSON-encoded `SketchTelemetry` object.
+      The `seq` on the cached-active replay is the original `seq` from the source; the
+      browser-side `fromEventSource` resets its expected-seq tracking on each new connection
+      (§1) so this is accepted regardless of value.
+- Owns its own lifecycle (binds at session startup, closes at session end). Its URL is
+  surfaced by whatever wiring the host has — for tmux-play, the launcher prints it once the
+  server is up; the Captain does not need to know.
+
+`fromEventSource` subscribes to `event: telemetry` records, parses JSON, applies the per-
+connection `seq` rule from §1. On EventSource disconnect/reconnect, it resets `seq` tracking
+to fresh. The server does not buffer; replay and session continuity are out of scope for this
+DR.
+
+### 9. Stack and placement
 
 - Vite + TypeScript, matching the broader `views/` toolchain.
 - Peer deps: `xstate`, `@xstate/graph`. Dep: `elkjs`.
@@ -125,12 +306,14 @@ Therefore:
 
 ## Consequences
 
-- The component complements the DR-001 stack: Stately Sketch remains design-time/external, `@statelyai/inspect` remains the cross-process monitor, and this DR fills the in-page, in-process gap.
-- elkjs is a runtime dependency; consumers must bundle it.
-- The inspect contract requires consumers to wire the inspector at actor creation. Inspector-less use degrades cleanly: active-state tracking still works via `actor.subscribe`; only transition highlights are lost.
-- Without `disambiguate`, all candidate edges flash on guarded branches sharing `(from, event, to)` — the matcher is honest about the ambiguity rather than guessing. Consumers that can read context to narrow the branch supply `disambiguate`.
+- The component complements the DR-001 stack: Stately Sketch remains design-time/external, `@statelyai/inspect` remains the cross-process generic monitor, and this DR fills the diagram-with-live-highlights gap for both same-page and cross-process deployments.
+- `SketchTelemetry` is the public rendering contract. Diagram, Telemetry, and Binding layers are independently composable; the Diagram layer can run anywhere a machine module is available, the Telemetry layer must run beside the actor, the Binding layer runs in the browser.
+- elkjs is a runtime dependency for the Diagram layer only. The Binding layer accepts a pre-rendered SVG, so cross-process deployments (Captain pre-renders) do not bundle elkjs in the browser.
+- The Telemetry layer's inspect contract requires consumers to wire the inspector at actor creation. Inspector-less use degrades cleanly: `active` events still emit via `actor.subscribe`; only `fired` events are lost.
+- Without `disambiguate`, all candidate edges appear in a single `fired` event on guarded branches sharing `(from, event, to)` — honest about the ambiguity rather than guessing.
 - `actorRef`-identity filtering (not `rootId`) is mandatory: any actor system that invokes children would otherwise leak child events into the bound visualizer.
-- Out of scope for this architecture: authoring the machine in the browser (Sketch's editing features); auth, multi-user sessions, persistence across reloads; replacing `@statelyai/inspect` for cross-process inspection; time-travel through past transitions.
+- Cross-process deployment is split along DR-004's coordination/presentation boundary: the Captain runs Diagram + Telemetry and emits structured records through [DR-004](../../../cligent/specs/decisions/004-tmux-play-captain-architecture.md)'s `emitTelemetry`; a sketch presenter (runtime observer) owns the SSE/HTTP transport and the browser page. The presenter buffers internally and returns synchronously from observer callbacks, keeping the runtime dispatcher non-blocking despite high-frequency highlight streams.
+- Out of scope for this architecture: authoring the machine in the browser (Sketch's editing features); auth, multi-user sessions, persistence across reloads; replacing `@statelyai/inspect` for cross-process inspection; time-travel through past transitions; SSE replay or reconnect-with-resume.
 
 ## References
 
