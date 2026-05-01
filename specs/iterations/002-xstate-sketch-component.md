@@ -11,7 +11,7 @@ The demo wires `coding.fsm.ts`, exercising its `planAndImplement → reviewCodeC
 
 ## Deliverables
 
-- [ ] `views/sketch/package.json`, `tsconfig.json`, `vite.config.ts`, `index.html`.
+- [x] `views/sketch/package.json`, `tsconfig.json`, `vite.config.ts`, `index.html`.
 - [ ] `views/sketch/src/sketch.ts` — exports values `mountSketch`, `extractGraph`, `renderSketch`, `renderSketchToString`, `applySketchTelemetry`, `fromXStateActor`, `fromEventSource`; exports types `SketchTelemetry`, `SketchSource`, `SketchGraph`.
 - [ ] `views/sketch/src/graph.ts` — machine → graph (with `branchIndex`, `targetIndex`, `guardKey`); pure, DOM-free.
 - [ ] `views/sketch/src/layout.ts` — elkjs wrapper.
@@ -25,7 +25,7 @@ The demo wires `coding.fsm.ts`, exercising its `planAndImplement → reviewCodeC
 
 ## Tasks
 
-1. **Scaffold `views/sketch/`** — Vite + TS; empty exports for the public API listed in deliverables; build green; SPDX headers.
+1. [x] **Scaffold `views/sketch/`** — Vite + TS; empty exports for the public API listed in deliverables; build green; SPDX headers.
 2. **Graph extraction** — `graph.ts` per [DR-002 §3](../decisions/002-in-page-xstate-visualizer.md#3-graph-extraction): stable IDs (`branchIndex`/`targetIndex`/`guardKey`), parent links, multi-target expansion, event labels. Walks every state (atomic/compound/root), assigning `edge.from = ownerState.id`.
    Unit tests: against `coding.fsm.ts`, the two `planAndImplement → reviewCodeCommit` branches yield distinct edge IDs; against a synthetic machine with a parent-owned `target: ['#A', '#B']`, two edges share `branchIndex` but differ in `targetIndex` and both have `from = parent.id`.
 3. **Layout + rendering** — `layout.ts` (elkjs) + `render.ts` per [DR-002 §4–5](../decisions/002-in-page-xstate-visualizer.md#4-layout-via-elkjs); both `renderSketch(graph) → SVGSVGElement` (DOM) and `renderSketchToString(graph) → string` (no DOM dependency) produce SVG with `data-state-id`/`data-edge-id`; compound parents and root render as visible containers.
