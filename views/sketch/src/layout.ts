@@ -67,14 +67,15 @@ export function placeholderLayout(graph: SketchGraph): SketchLayout {
   }
 
   const roots = childrenByParent.get(undefined) ?? [];
+  const LEFT_MARGIN = 16;
   let totalWidth = 0;
   let totalHeight = 0;
   let cursorY = 0;
 
   for (const root of roots) {
-    const dim = place(root.id, 0, cursorY);
+    const dim = place(root.id, LEFT_MARGIN, cursorY);
     cursorY += dim.height + GAP;
-    totalWidth = Math.max(totalWidth, dim.width);
+    totalWidth = Math.max(totalWidth, LEFT_MARGIN + dim.width);
     totalHeight = cursorY - GAP;
   }
 
