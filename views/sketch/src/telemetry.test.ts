@@ -336,6 +336,36 @@ describe('fromXStateActor', () => {
     });
   });
 
+  it('emits a fired event for every microstep in a chained macrostep (always after a guarded transition)', () => {
+    const machine = createMachine({
+      id: 'demo',
+      initial: 'a',
+      states: {
+        a: { id: 'a', on: { GO: 'b' } },
+        b: { id: 'b', always: { target: 'c' } },
+        c: { id: 'c', type: 'final' },
+      },
+    });
+    const inspector = createSketchInspector();
+    const actor = createActor(machine, { inspect: inspector.handle });
+    const source = fromXStateActor({ machine, actor, inspector });
+
+    const { events, listen } = recordingListener();
+    source.subscribe(listen);
+    actor.start();
+    actor.send({ type: 'GO' });
+
+    const fired = events.filter((e) => e.type === 'fired');
+    expect(fired).toHaveLength(2);
+    if (fired[0].type !== 'fired' || fired[1].type !== 'fired') {
+      throw new Error('expected fired events');
+    }
+    expect(fired[0].firedEdgeIds).toEqual(['a::GO::0::0']);
+    expect(fired[1].firedEdgeIds).toEqual(['b::::0::0']);
+    expect(fired[1].seq).toBeGreaterThan(fired[0].seq);
+    source.dispose();
+  });
+
   it('dispose stops further callbacks and is idempotent', () => {
     const machine = createMachine({
       id: 'm',

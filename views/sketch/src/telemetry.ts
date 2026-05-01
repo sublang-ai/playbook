@@ -234,6 +234,11 @@ export function fromXStateActor(
         next: event.snapshot,
         disambiguate,
       });
+
+      if (event.snapshot !== undefined) {
+        prevSnapshot = event.snapshot;
+      }
+
       if (firedEdgeIds.length === 0) return;
 
       seq++;
