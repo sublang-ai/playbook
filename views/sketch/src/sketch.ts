@@ -6,6 +6,8 @@ import type { AnyStateMachine } from 'xstate';
 import { extractGraph } from './graph';
 import type { SketchGraph } from './graph';
 import { renderSketch, renderSketchToString } from './render';
+import { createSketchInspector, fromXStateActor } from './telemetry';
+import type { SketchSource, SketchTelemetry } from './telemetry';
 
 export type {
   SketchGraph,
@@ -13,24 +15,19 @@ export type {
   SketchGraphNode,
 } from './graph';
 export type { EdgeRoute, NodePlacement, SketchLayout } from './layout';
+export type {
+  DisambiguateFn,
+  SketchInspector,
+  SketchSource,
+  SketchTelemetry,
+  SketchTelemetryActive,
+  SketchTelemetryFired,
+  XStateActorSourceOptions,
+} from './telemetry';
 export { elkLayout, placeholderLayout } from './layout';
 export { extractGraph };
 export { renderSketch, renderSketchToString };
-
-export type SketchTelemetry =
-  | { type: 'active'; seq: number; activeStateIds: string[] }
-  | {
-      type: 'fired';
-      seq: number;
-      firedEdgeIds: string[];
-      eventType?: string;
-      ttlMs?: number;
-    };
-
-export interface SketchSource {
-  subscribe(listener: (event: SketchTelemetry) => void): () => void;
-  dispose(): void;
-}
+export { createSketchInspector, fromXStateActor };
 
 export interface SketchMount {
   dispose(): void;
@@ -42,19 +39,6 @@ export interface SketchMountOptions {
   svg?: SVGSVGElement | string;
   source?: SketchSource;
   highlightMs?: number;
-}
-
-export interface XStateActorSourceOptions {
-  machine?: AnyStateMachine;
-  actor: unknown;
-  inspector?: unknown;
-  disambiguate?: (
-    prev: unknown,
-    event: unknown,
-    next: unknown,
-    candidates: string[],
-  ) => string | string[];
-  signal?: AbortSignal;
 }
 
 export type SketchEventSourceInit = ConstructorParameters<typeof EventSource>[1];
@@ -101,12 +85,6 @@ export function applySketchTelemetry(
   _opts?: { highlightMs?: number },
 ): void {
   throw new Error('applySketchTelemetry is not implemented yet');
-}
-
-export function fromXStateActor(
-  _options: XStateActorSourceOptions,
-): SketchSource {
-  throw new Error('fromXStateActor is not implemented yet');
 }
 
 export function fromEventSource(
