@@ -16,8 +16,10 @@
     "xstate": "^5.0.0"
   },
   "devDependencies": {
-    "@xstate/graph": "^3.0.4",
+    "@types/jsdom": "^28.0.1",
     "@types/node": "^22.15.3",
+    "@xstate/graph": "^3.0.4",
+    "jsdom": "^29.1.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.4",
     "vitest": "^3.0.0",

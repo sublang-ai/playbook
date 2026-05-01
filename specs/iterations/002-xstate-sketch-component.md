@@ -14,8 +14,8 @@ The demo wires `coding.fsm.ts`, exercising its `planAndImplement → reviewCodeC
 - [x] `views/sketch/package.json`, `tsconfig.json`, `vite.config.ts`, `index.html`.
 - [ ] `views/sketch/src/sketch.ts` — exports values `mountSketch`, `extractGraph`, `renderSketch`, `renderSketchToString`, `applySketchTelemetry`, `fromXStateActor`, `fromEventSource`; exports types `SketchTelemetry`, `SketchSource`, `SketchGraph`.
 - [x] `views/sketch/src/graph.ts` — machine → graph (with `branchIndex`, `targetIndex`, `guardKey`); pure, DOM-free.
-- [ ] `views/sketch/src/layout.ts` — elkjs wrapper.
-- [ ] `views/sketch/src/render.ts` — `renderSketch(graph) → SVGSVGElement` and `renderSketchToString(graph) → string`; both produce SVG with `data-state-id`/`data-edge-id`.
+- [x] `views/sketch/src/layout.ts` — elkjs wrapper.
+- [x] `views/sketch/src/render.ts` — `renderSketch(graph) → SVGSVGElement` and `renderSketchToString(graph) → string`; both produce SVG with `data-state-id`/`data-edge-id`.
 - [ ] `views/sketch/src/telemetry.ts` — `fromXStateActor` Telemetry-layer adapter consuming `@xstate.snapshot`/`@xstate.microstep`, emitting `SketchTelemetry` (`{ type: 'active'|'fired', seq, ... }`).
 - [ ] `views/sketch/src/binding.ts` — `applySketchTelemetry`, plus `fromEventSource` (per-connection `seq` tracking, reset on reconnect).
 - [ ] `views/sketch/src/styles.css` — theme.

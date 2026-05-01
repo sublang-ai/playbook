@@ -1,14 +1,21 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import type { AnyStateMachine } from 'xstate';
+
+import { extractGraph } from './graph';
+import type { SketchGraph } from './graph';
+import { renderSketch, renderSketchToString } from './render';
+
 export type {
   SketchGraph,
   SketchGraphEdge,
   SketchGraphNode,
 } from './graph';
-export { extractGraph } from './graph';
-
-import type { SketchGraph } from './graph';
+export type { EdgeRoute, NodePlacement, SketchLayout } from './layout';
+export { elkLayout, placeholderLayout } from './layout';
+export { extractGraph };
+export { renderSketch, renderSketchToString };
 
 export type SketchTelemetry =
   | { type: 'active'; seq: number; activeStateIds: string[] }
@@ -30,7 +37,7 @@ export interface SketchMount {
 }
 
 export interface SketchMountOptions {
-  machine?: unknown;
+  machine?: AnyStateMachine;
   graph?: SketchGraph;
   svg?: SVGSVGElement | string;
   source?: SketchSource;
@@ -38,7 +45,7 @@ export interface SketchMountOptions {
 }
 
 export interface XStateActorSourceOptions {
-  machine?: unknown;
+  machine?: AnyStateMachine;
   actor: unknown;
   inspector?: unknown;
   disambiguate?: (
@@ -52,19 +59,40 @@ export interface XStateActorSourceOptions {
 
 export type SketchEventSourceInit = ConstructorParameters<typeof EventSource>[1];
 
+function resolveSvg(options: SketchMountOptions): SVGSVGElement {
+  if (options.svg) {
+    if (typeof options.svg === 'string') {
+      const parsed = new DOMParser().parseFromString(options.svg, 'image/svg+xml');
+      return parsed.documentElement as unknown as SVGSVGElement;
+    }
+    return options.svg;
+  }
+  if (options.graph) {
+    return renderSketch(options.graph);
+  }
+  if (options.machine) {
+    return renderSketch(extractGraph(options.machine));
+  }
+  throw new Error('mountSketch requires one of: machine, graph, svg');
+}
+
 export function mountSketch(
-  _container: Element,
-  _options: SketchMountOptions,
+  container: Element,
+  options: SketchMountOptions,
 ): SketchMount {
-  throw new Error('mountSketch is not implemented yet');
-}
+  const svg = resolveSvg(options);
+  container.appendChild(svg);
 
-export function renderSketch(_graph: SketchGraph): SVGSVGElement {
-  throw new Error('renderSketch is not implemented yet');
-}
-
-export function renderSketchToString(_graph: SketchGraph): string {
-  throw new Error('renderSketchToString is not implemented yet');
+  let disposed = false;
+  return {
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      if (svg.parentNode === container) {
+        container.removeChild(svg);
+      }
+    },
+  };
 }
 
 export function applySketchTelemetry(
