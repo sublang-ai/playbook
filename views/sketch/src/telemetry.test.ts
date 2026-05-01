@@ -336,6 +336,41 @@ describe('fromXStateActor', () => {
     });
   });
 
+  it("matches edges using the documented transitions field, not just XState v5's _transitions", () => {
+    const machine = createMachine({
+      id: 'demo',
+      initial: 'a',
+      states: {
+        a: { id: 'a', on: { GO: 'b' } },
+        b: { id: 'b' },
+      },
+    });
+    const inspector = createSketchInspector();
+    const actor = createActor(machine, { inspect: inspector.handle });
+    const source = fromXStateActor({ machine, actor, inspector });
+
+    const { events, listen } = recordingListener();
+    source.subscribe(listen);
+    actor.start();
+
+    const rootStates = (machine.root as unknown as { states: Record<string, unknown> }).states;
+    inspector.handle({
+      type: '@xstate.microstep',
+      actorRef: actor,
+      event: { type: 'GO' },
+      snapshot: { value: 'b' },
+      transitions: [{ eventType: 'GO', target: [rootStates.b] }],
+    });
+
+    const fired = events.filter((e) => e.type === 'fired');
+    expect(fired).toHaveLength(1);
+    if (fired[0].type !== 'fired') {
+      throw new Error('expected a fired event');
+    }
+    expect(fired[0].firedEdgeIds).toEqual(['a::GO::0::0']);
+    source.dispose();
+  });
+
   it('emits a fired event for every microstep in a chained macrostep (always after a guarded transition)', () => {
     const machine = createMachine({
       id: 'demo',

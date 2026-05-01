@@ -164,7 +164,7 @@ actor's process. XState v5 does not expose a fully unique transition descriptor 
 [§7 Telemetry: inspect contract](#7-telemetry-layer-inspect-contract)); the matcher recovers what it can:
 
 - `active` event on every snapshot: `activeStateIds` is the node(s) matching `snapshot.value` (all leaves for parallel regions).
-- On each `@xstate.microstep` for the bound actor, iterate `microstep.transitions[]` and, within each, every path in `entry.target[]`.
+- On each `@xstate.microstep` for the bound actor, iterate the microstep's transitions array (XState v5 currently exposes this as `_transitions`; the matcher reads `transitions ?? _transitions` so a future rename is absorbed) and, within each, every path in `entry.target[]`.
   Resolve candidates in two steps:
   1. **Match**: `event === entry.eventType`, `to === targetPath`, `from` lies on the prev active path (leaf, any ancestor, or root).
   2. **Deepest owner**: group by `from`, keep only the group with the deepest `from` (longest dotted path).
@@ -186,7 +186,7 @@ actor's process. XState v5 does not expose a fully unique transition descriptor 
 ### 7. Telemetry layer: inspect contract
 
 `actor.subscribe` gives only snapshots (no event, no source, no guard).
-The `inspect` channel's `@xstate.microstep` gives `eventType` + `transitions[].target` but no source state or matched guard.
+The `inspect` channel's `@xstate.microstep` gives `eventType` + per-transition `target[]` (XState v5 exposes the transitions array as `_transitions`; the matcher reads `transitions ?? _transitions`) but no source state or matched guard.
 Therefore:
 
 - Consumer wires the inspector at actor creation: `createActor(machine, { inspect: inspector.handle })`.

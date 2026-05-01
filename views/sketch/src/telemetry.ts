@@ -89,6 +89,9 @@ interface MicrostepEvent {
   actorRef?: unknown;
   event?: { type?: string };
   snapshot?: unknown;
+  // XState v5 currently exposes the transitions array as `_transitions`.
+  // Read either name so a future rename to `transitions` is absorbed.
+  transitions?: MicrostepTransition[];
   _transitions?: MicrostepTransition[];
 }
 
@@ -135,7 +138,7 @@ function deriveFiredEdges(
   microstep: MicrostepEvent,
   ctx: { prev: unknown; event: unknown; next: unknown; disambiguate?: DisambiguateFn },
 ): string[] {
-  const transitions = microstep._transitions ?? [];
+  const transitions = microstep.transitions ?? microstep._transitions ?? [];
   const prevActivePath = activePathSet(graph, ctx.prev);
   const candidates = new Set<string>();
 
