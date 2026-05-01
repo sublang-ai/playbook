@@ -234,21 +234,23 @@ A runtime observer that:
 - Returns synchronously from each observer callback after enqueuing — it does **not** block
   the runtime dispatcher on browser writes (DR-004 dispatcher contract).
 - Serves a localhost HTTP endpoint with two routes:
-    - `GET /` returns the visualizer page (HTML + cached SVG + a binding script that calls
-      `mountSketch(container, { svg, source: fromEventSource('/events') })`).
-    - `GET /events` is Server-Sent Events. On each new connection, the presenter first
-      writes the cached latest `active` payload (if any) so a late-joining browser
-      synchronizes with the current state immediately, then forwards subsequent live
-      payloads. Each emission writes a real SSE record:
-      ```text
-      event: telemetry
-      data: {"type":"fired","seq":42,"firedEdgeIds":["..."],"eventType":"DONE"}
+  - `GET /` returns the visualizer page (HTML + cached SVG + a binding script that calls
+    `mountSketch(container, { svg, source: fromEventSource('/events') })`).
+  - `GET /events` is Server-Sent Events. On each new connection, the presenter first
+    writes the cached latest `active` payload (if any) so a late-joining browser
+    synchronizes with the current state immediately, then forwards subsequent live
+    payloads. Each emission writes a real SSE record:
 
-      ```
-      (one blank line terminator). `data:` carries one JSON-encoded `SketchTelemetry` object.
-      The `seq` on the cached-active replay is the original `seq` from the source; the
-      browser-side `fromEventSource` resets its expected-seq tracking on each new connection
-      (§1) so this is accepted regardless of value.
+    ```text
+    event: telemetry
+    data: {"type":"fired","seq":42,"firedEdgeIds":["..."],"eventType":"DONE"}
+
+    ```
+
+    (one blank line terminator). `data:` carries one JSON-encoded `SketchTelemetry` object.
+    The `seq` on the cached-active replay is the original `seq` from the source; the
+    browser-side `fromEventSource` resets its expected-seq tracking on each new connection
+    (§1) so this is accepted regardless of value.
 - Owns its own lifecycle (binds at session startup, closes at session end). Its URL is
   surfaced by whatever wiring the host has — for tmux-play, the launcher prints it once the
   server is up; the Captain does not need to know.

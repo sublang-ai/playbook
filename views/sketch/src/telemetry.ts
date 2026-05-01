@@ -81,7 +81,6 @@ export function leafStateIds(value: unknown): string[] {
 
 interface MicrostepTransition {
   eventType?: string;
-  source?: { path?: string[]; machine?: { id?: string } };
   target?: { path?: string[]; machine?: { id?: string } }[];
 }
 
@@ -101,30 +100,80 @@ function nodeIdFromPath(
   return path.join('.');
 }
 
+function activePathSet(graph: SketchGraph, snapshot: unknown): Set<string> {
+  const ids = new Set<string>();
+  if (!snapshot || typeof snapshot !== 'object') return ids;
+  const value = (snapshot as { value?: unknown }).value;
+  const leaves = leafStateIds(value);
+  if (leaves.length === 0) return ids;
+
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n] as const));
+  for (const leaf of leaves) {
+    let cursor = nodeById.get(leaf);
+    while (cursor) {
+      ids.add(cursor.id);
+      if (cursor.parentId === undefined) break;
+      cursor = nodeById.get(cursor.parentId);
+    }
+  }
+  return ids;
+}
+
+function nodeDepth(graph: SketchGraph, nodeId: string): number {
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n] as const));
+  let depth = 0;
+  let cursor = nodeById.get(nodeId);
+  while (cursor && cursor.parentId !== undefined) {
+    depth++;
+    cursor = nodeById.get(cursor.parentId);
+  }
+  return depth;
+}
+
 function deriveFiredEdges(
   graph: SketchGraph,
   microstep: MicrostepEvent,
   ctx: { prev: unknown; event: unknown; next: unknown; disambiguate?: DisambiguateFn },
 ): string[] {
   const transitions = microstep._transitions ?? [];
+  const prevActivePath = activePathSet(graph, ctx.prev);
   const candidates = new Set<string>();
 
   for (const t of transitions) {
-    const sourceId = nodeIdFromPath(t.source?.path, t.source?.machine?.id);
     const eventType = t.eventType ?? '';
     const targets = t.target ?? [];
 
     for (const target of targets) {
       const toId = nodeIdFromPath(target.path, target.machine?.id);
 
-      for (const edge of graph.edges) {
-        if (
-          edge.from === sourceId &&
-          edge.event === eventType &&
-          edge.to === toId
-        ) {
-          candidates.add(edge.id);
+      const matches = graph.edges.filter(
+        (e) =>
+          e.event === eventType &&
+          e.to === toId &&
+          prevActivePath.has(e.from),
+      );
+      if (matches.length === 0) continue;
+
+      const byFrom = new Map<string, typeof matches>();
+      for (const m of matches) {
+        const list = byFrom.get(m.from);
+        if (list) list.push(m);
+        else byFrom.set(m.from, [m]);
+      }
+
+      let deepestFrom: string | undefined;
+      let deepestDepth = -1;
+      for (const from of byFrom.keys()) {
+        const depth = nodeDepth(graph, from);
+        if (depth > deepestDepth) {
+          deepestDepth = depth;
+          deepestFrom = from;
         }
+      }
+      if (deepestFrom === undefined) continue;
+
+      for (const m of byFrom.get(deepestFrom) ?? []) {
+        candidates.add(m.id);
       }
     }
   }
