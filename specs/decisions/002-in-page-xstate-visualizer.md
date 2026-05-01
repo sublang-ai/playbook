@@ -52,33 +52,29 @@ Public primitives:
 - `renderSketch(graph) → SVGSVGElement` — DOM-target render; for browser hosts (§4–§5).
 - `renderSketchToString(graph) → string` — Node-target render; serializes the same SVG with `data-state-id`/`data-edge-id` for cross-process shipping (no DOM dependency).
 - `applySketchTelemetry(svg, event, opts?)` — DOM class toggles for one telemetry event.
-- `fromXStateActor({ machine, actor, inspector?, disambiguate?, signal? }) → SketchActorSource` —
+- `fromXStateActor({ machine, actor, inspector?, disambiguate?, signal? }) → SketchSource` —
   Telemetry-layer adapter; runs the matcher locally (§6–§7). Without `inspector`, emits `active` only.
 - `fromEventSource(url, init?) → SketchSource` — Binding-layer adapter; subscribes to a remote
   SSE endpoint emitting `SketchTelemetry` (§8).
 - `mountSketch(container, options) → { dispose() }` — convenience composition.
 
-Source interfaces:
+Source interface:
 
 ```ts
 interface SketchSource {
   subscribe(listener: (event: SketchTelemetry) => void): () => void; // returns unsubscribe
   dispose(): void;                                                   // idempotent
 }
-
-interface SketchActorSource extends SketchSource {
-  // Synchronously re-emits the most recently produced `active` event with a fresh `seq`,
-  // if any. No-op when no `active` has been produced yet. Used by hosts that bind a
-  // listener after the source has already started (e.g., a Captain's per-turn emit slot).
-  emitLatestActive(): void;
-}
 ```
 
-Sources are push (`subscribe(listener)`); single-listener semantics suffice for both
-documented consumers (the binding's `applySketchTelemetry` callback, and the Captain's
-emit-slot wrapper). `dispose()` ends the source: subsequent `subscribe()` invocations are
-no-ops and the returned unsubscribe is a no-op. The binding never calls `emitLatestActive` —
-it's a matcher-side concern, exposed only on `SketchActorSource`.
+Single-listener push.
+`fired` events are never retained or replayed (transient, TTL-bounded).
+Late-subscribe replay of `active` is adapter-specific:
+
+- `fromXStateActor`: synchronously re-emits the latest `active` to the new listener with a **fresh** `seq`, then streams live. No-op when no `active` has been produced. Covers same-page late mounts and cross-process Captains that subscribe from `init(session)` before the actor produces state. No separate replay method needed.
+- `fromEventSource`: forwards records as received, preserving the upstream `seq`. The presenter handles cached-active replay (§8); the binding resets its expected-`seq` tracking on each connection.
+
+`dispose()` ends the source.
 
 Telemetry protocol (the public rendering contract):
 
@@ -180,13 +176,11 @@ actor's process. XState v5 does not expose a fully unique transition descriptor 
   Without it, all candidates appear in `firedEdgeIds` — honest about the ambiguity.
 - Reentries and self-transitions emit both a new `active` and a `fired`.
 - `seq` is incremented per emission; the source never reorders.
-- The source retains the most recent `active` event it produced as **latest-active state** —
-  used by hosts that bind a listener after the source has already started (e.g., a
-  cross-process Captain whose emit slot is null until a turn begins). `SketchActorSource.emitLatestActive()`
-  (see §1) re-emits this latest-active to all current subscribers with a fresh `seq`,
-  no-op when none has been produced. `fired` events are never retained or replayed — they
-  are transient by design (TTL-bounded) and a stale replay would falsely flash an old
-  transition.
+- The source retains the most recent `active` event it produced as **latest-active state**.
+  On every `subscribe(listener)`, it synchronously re-emits that event with a fresh `seq`
+  before returning (no-op when none has been produced) — see §1 for the per-adapter rule.
+  `fired` events are never retained or replayed; they are transient by design (TTL-bounded)
+  and a stale replay would falsely flash an old transition.
 - `signal` (AbortSignal) detaches all subscriptions and stops emission.
 
 ### 7. Telemetry layer: inspect contract
@@ -207,59 +201,26 @@ Therefore:
 
 ### 8. Cross-process deployment
 
-When the actor lives outside the browser (e.g., a tmux-play XState Captain), the Captain runs
-the Diagram + Telemetry layers in its own process and publishes both through the host runtime's
-generic telemetry channel — for tmux-play that is [DR-004](../../../cligent/specs/decisions/004-tmux-play-captain-architecture.md)'s
-`emitTelemetry({ topic, payload })`. A separate **sketch presenter**, registered as a runtime
-observer alongside the tmux presenter, consumes the records and owns the browser-facing
-transport. The Captain stays out of network plumbing; the presenter stays out of XState.
+When the actor lives outside the browser (e.g., a tmux-play XState Captain), the Captain runs Diagram + Telemetry in its own process and publishes both through the host runtime's generic telemetry channel — for tmux-play, [DR-004](../../../cligent/specs/decisions/004-tmux-play-captain-architecture.md)'s `emitTelemetry({ topic, payload })`.
+A separate **sketch presenter**, registered as a runtime observer alongside the tmux presenter, consumes the records and owns the browser-facing transport.
+The Captain stays out of network plumbing; the presenter stays out of XState.
 
 #### Captain side
 
-The Captain owns matcher lifecycle across the whole session, but `emitTelemetry` is only
-available inside `handleBossTurn` — DR-004 binds `CaptainContext` per turn, and `context.signal`
-is the active-turn abort signal (not session-scoped). The Captain therefore:
+DR-004's `CaptainSession` makes `emitTelemetry` session-scoped.
+The Captain lives entirely in the `init` / `dispose` lifecycle — no per-turn binding.
 
-- At factory time (before any turn): creates an internal `AbortController` (the *Captain
-  abort*, distinct from any per-turn `context.signal`); pre-renders the diagram once via
-  `const svg = renderSketchToString(extractGraph(machine))`, cached on the Captain instance;
-  starts the matcher with `const source = fromXStateActor({ machine, actor, inspector, disambiguate, signal: captainAbort.signal })`.
-  The matcher subscribes to the actor immediately so the same XState actor instance can fire
-  microsteps across turns without re-subscription.
-- The Captain owns a single `source.subscribe(listener)` registration whose listener is a
-  thin wrapper around a Captain-mutable **emit slot** — a reference to the current
-  emission function. Outside any active turn the slot is null and `fired` events during
-  that window are dropped (the matcher does not buffer transient events). `active` events
-  update the matcher's internal latest-active state (per §6) regardless of slot state, so
-  they remain available for `emitLatestActive()` later.
-- At the start of each `handleBossTurn`, sets the emit slot to a function bound to that
-  turn's `context`:
-  ```ts
-  const emit = (event: SketchTelemetry) =>
-    context.emitTelemetry({ topic: 'sketch.highlight', payload: event });
-  ```
-  Then, in order:
-  1. On the first turn (or any turn before the diagram has been emitted), awaits
-     `context.emitTelemetry({ topic: 'sketch.diagram', payload: svg })` and marks the
-     diagram as sent.
-  2. Calls `source.emitLatestActive()` — the matcher pushes the cached latest-active
-     event through the subscription, the listener routes it to the now-installed emit
-     slot, and a fresh-`seq` `active` reaches the presenter. No-op when the matcher has
-     not yet produced any `active` (e.g., actor not yet started).
-- At the end of each `handleBossTurn`, clears the emit slot back to null.
-- In `Captain.dispose()` (session shutdown, per DR-004), calls `source.dispose()` and
-  aborts the Captain abort, which detaches the matcher's actor/inspector subscriptions.
+In `init(session)`:
 
-This pattern fits coordinator FSMs naturally: in `coding.fsm.ts` and similar, microsteps fire
-in response to Boss events or role completions — both happen during turns. The latest-active
-replay rule above makes the "surface idle state on the next turn boundary" promise concrete:
-any state change that happened while the slot was null (initial subscribe-time snapshot,
-`after:` timers firing between turns) is reflected in the very first telemetry record of the
-next turn.
+- Pre-render the diagram with `renderSketchToString(extractGraph(machine))` and emit it on `sketch.diagram`. The presenter caches the latest payload for late browsers.
+- Start the matcher with `fromXStateActor`, passing `session.signal` so it detaches on shutdown.
+- Subscribe once and forward each event on `sketch.highlight`. The fresh-`seq` initial emit (§1, §6) delivers latest-active synchronously when the actor has already produced state.
 
-`captain_telemetry` records inherit the active turn ID per DR-004's record-stamping rule.
-Because emission only occurs inside `handleBossTurn`, the runtime always has a turn ID to
-attach.
+`handleBossTurn` is unaffected by sketch emission.
+`Captain.dispose()` calls `source.dispose()`; per DR-004's shutdown order, the matcher has already detached via `session.signal` and emissions have drained.
+
+Microsteps during a turn carry the active `turnId`; microsteps between turns (timers, idle work) carry `turnId: null`.
+Late browsers re-sync from the presenter's cached diagram and latest-active.
 
 #### Sketch presenter
 
@@ -312,7 +273,7 @@ DR.
 - The Telemetry layer's inspect contract requires consumers to wire the inspector at actor creation. Inspector-less use degrades cleanly: `active` events still emit via `actor.subscribe`; only `fired` events are lost.
 - Without `disambiguate`, all candidate edges appear in a single `fired` event on guarded branches sharing `(from, event, to)` — honest about the ambiguity rather than guessing.
 - `actorRef`-identity filtering (not `rootId`) is mandatory: any actor system that invokes children would otherwise leak child events into the bound visualizer.
-- Cross-process deployment is split along DR-004's coordination/presentation boundary: the Captain runs Diagram + Telemetry and emits structured records through [DR-004](../../../cligent/specs/decisions/004-tmux-play-captain-architecture.md)'s `emitTelemetry`; a sketch presenter (runtime observer) owns the SSE/HTTP transport and the browser page. The presenter buffers internally and returns synchronously from observer callbacks, keeping the runtime dispatcher non-blocking despite high-frequency highlight streams.
+- Cross-process deployment splits along DR-004's coordination/presentation boundary: the Captain runs Diagram + Telemetry and emits through [DR-004](../../../cligent/specs/decisions/004-tmux-play-captain-architecture.md)'s session-scoped `emitTelemetry`, wired once in `Captain.init(session)`; a sketch presenter (runtime observer) owns SSE/HTTP transport and the browser page. The source's subscribe-time initial emit covers same-page late binders; the presenter's cached `active` covers late SSE clients. No per-turn emit binding, slot, or replay method.
 - Out of scope for this architecture: authoring the machine in the browser (Sketch's editing features); auth, multi-user sessions, persistence across reloads; replacing `@statelyai/inspect` for cross-process inspection; time-travel through past transitions; SSE replay or reconnect-with-resume.
 
 ## References
