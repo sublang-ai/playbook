@@ -14,6 +14,7 @@ When Boss gives an intent for coding, Captain shall pass the intent to Coder wit
 > Estimate if this can be done in a single commit, following best practices.
 > If yes, implement, test, and commit; otherwise, break it into tasks as a new iteration in @specs/iterations (every task should be a commit), and commit the IR.
 > Write the IR in a very concise language - avoid lengthy text.
+> Put each sentence on its own line.
 > Consult @specs/map.md to find relevant context if needed.
 
 When an IR is ready (drafted & reviewed), Captain shall prompt Coder with the IR number:
