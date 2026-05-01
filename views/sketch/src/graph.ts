@@ -49,6 +49,42 @@ function deriveGuardKey(guard: unknown): string | undefined {
   return undefined;
 }
 
+function collectEdges(
+  ownerId: string,
+  eventType: string,
+  branches: ReadonlyArray<unknown>,
+  edges: SketchGraphEdge[],
+): void {
+  for (let branchIndex = 0; branchIndex < branches.length; branchIndex++) {
+    const transition = branches[branchIndex] as {
+      target?: unknown;
+      guard?: unknown;
+    };
+    const targets = (transition.target ?? []) as AnyStateNode[];
+    if (targets.length === 0) continue;
+
+    const guardKey = deriveGuardKey(transition.guard);
+    for (let targetIndex = 0; targetIndex < targets.length; targetIndex++) {
+      const toId = nodeId(targets[targetIndex]);
+      const kind: SketchGraphEdge['kind'] = ownerId === toId ? 'self' : 'external';
+
+      const edge: SketchGraphEdge = {
+        id: `${ownerId}::${eventType}::${branchIndex}::${targetIndex}`,
+        from: ownerId,
+        to: toId,
+        event: eventType,
+        kind,
+        branchIndex,
+        targetIndex,
+      };
+      if (guardKey !== undefined) {
+        edge.guardKey = guardKey;
+      }
+      edges.push(edge);
+    }
+  }
+}
+
 export function extractGraph(machine: AnyStateMachine): SketchGraph {
   const nodes: SketchGraphNode[] = [];
   const edges: SketchGraphEdge[] = [];
@@ -70,34 +106,12 @@ export function extractGraph(machine: AnyStateMachine): SketchGraph {
     nodes.push(graphNode);
 
     for (const [eventType, transitions] of node.transitions) {
-      for (let branchIndex = 0; branchIndex < transitions.length; branchIndex++) {
-        const transition = transitions[branchIndex] as {
-          target?: unknown;
-          guard?: unknown;
-        };
-        const targets = (transition.target ?? []) as AnyStateNode[];
-        if (targets.length === 0) continue;
+      collectEdges(id, eventType, transitions, edges);
+    }
 
-        const guardKey = deriveGuardKey(transition.guard);
-        for (let targetIndex = 0; targetIndex < targets.length; targetIndex++) {
-          const toId = nodeId(targets[targetIndex]);
-          const kind: SketchGraphEdge['kind'] = id === toId ? 'self' : 'external';
-
-          const edge: SketchGraphEdge = {
-            id: `${id}::${eventType}::${branchIndex}::${targetIndex}`,
-            from: id,
-            to: toId,
-            event: eventType,
-            kind,
-            branchIndex,
-            targetIndex,
-          };
-          if (guardKey !== undefined) {
-            edge.guardKey = guardKey;
-          }
-          edges.push(edge);
-        }
-      }
+    const always = (node as { always?: ReadonlyArray<unknown> }).always;
+    if (always && always.length > 0) {
+      collectEdges(id, '', always, edges);
     }
 
     if (node.states) {

@@ -80,6 +80,34 @@ describe('extractGraph', () => {
     expect(new Set(eventEdges.map((e) => e.id)).size).toBe(2);
   });
 
+  it('emits edges for eventless (always) transitions on a state', () => {
+    const machine = createMachine({
+      id: 'flow',
+      initial: 'idle',
+      states: {
+        idle: {
+          id: 'idle',
+          always: [
+            { guard: () => true, target: '#busy' },
+            { target: '#done' },
+          ],
+        },
+        busy: { id: 'busy' },
+        done: { id: 'done', type: 'final' },
+      },
+    });
+
+    const graph = extractGraph(machine);
+    const alwaysEdges = graph.edges.filter(
+      (e) => e.from === 'idle' && e.event === '',
+    );
+
+    expect(alwaysEdges).toHaveLength(2);
+    expect(new Set(alwaysEdges.map((e) => e.branchIndex))).toEqual(new Set([0, 1]));
+    expect(new Set(alwaysEdges.map((e) => e.to))).toEqual(new Set(['busy', 'done']));
+    expect(new Set(alwaysEdges.map((e) => e.id)).size).toBe(2);
+  });
+
   it('uses the machine id for the root and dotted paths with parentId for children', () => {
     const machine = createMachine({
       id: 'tree',
