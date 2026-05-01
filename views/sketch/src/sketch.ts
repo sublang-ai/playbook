@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+export type {
+  SketchGraph,
+  SketchGraphEdge,
+  SketchGraphNode,
+} from './graph';
+export { extractGraph } from './graph';
+
+import type { SketchGraph } from './graph';
+
 export type SketchTelemetry =
   | { type: 'active'; seq: number; activeStateIds: string[] }
   | {
@@ -10,29 +19,6 @@ export type SketchTelemetry =
       eventType?: string;
       ttlMs?: number;
     };
-
-export interface SketchGraphNode {
-  id: string;
-  parentId?: string;
-  type: 'atomic' | 'compound' | 'parallel' | 'final' | 'history';
-  initial?: string;
-}
-
-export interface SketchGraphEdge {
-  id: string;
-  from: string;
-  to: string;
-  event: string;
-  kind: 'external' | 'internal' | 'self';
-  branchIndex: number;
-  targetIndex: number;
-  guardKey?: string;
-}
-
-export interface SketchGraph {
-  nodes: SketchGraphNode[];
-  edges: SketchGraphEdge[];
-}
 
 export interface SketchSource {
   subscribe(listener: (event: SketchTelemetry) => void): () => void;
@@ -71,10 +57,6 @@ export function mountSketch(
   _options: SketchMountOptions,
 ): SketchMount {
   throw new Error('mountSketch is not implemented yet');
-}
-
-export function extractGraph(_machine: unknown): SketchGraph {
-  throw new Error('extractGraph is not implemented yet');
 }
 
 export function renderSketch(_graph: SketchGraph): SVGSVGElement {
