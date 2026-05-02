@@ -18,10 +18,10 @@ The demo wires `coding.fsm.ts`, exercising its `planAndImplement → reviewCodeC
 - [x] `views/sketch/src/render.ts` — `renderSketch(graph) → SVGSVGElement` and `renderSketchToString(graph) → string`; both produce SVG with `data-state-id`/`data-edge-id`.
 - [x] `views/sketch/src/telemetry.ts` — `fromXStateActor` Telemetry-layer adapter consuming `@xstate.snapshot`/`@xstate.microstep`, emitting `SketchTelemetry` (`{ type: 'active'|'fired', seq, ... }`).
 - [x] `views/sketch/src/binding.ts` — `applySketchTelemetry`, plus `fromEventSource` (per-connection `seq` tracking, reset on reconnect).
-- [ ] `views/sketch/src/styles.css` — theme.
-- [ ] `views/sketch/src/main.ts` + `views/sketch/demo/coding-demo.ts` — demo wiring `coding.fsm.ts` with event-trigger buttons.
-- [ ] `views/sketch/README.md` — install, usage, screenshot.
-- [ ] SPDX headers on all sources per [LIC-1](../items/dev/licensing.md#lic-1) and [LIC-2](../items/dev/licensing.md#lic-2).
+- [x] `views/sketch/src/styles.css` — theme.
+- [x] `views/sketch/src/main.ts` + `views/sketch/demo/coding-demo.ts` — demo wiring `coding.fsm.ts` with event-trigger buttons.
+- [x] `views/sketch/README.md` — install, usage, screenshot.
+- [x] SPDX headers on all sources per [LIC-1](../items/dev/licensing.md#lic-1) and [LIC-2](../items/dev/licensing.md#lic-2).
 
 ## Tasks
 
