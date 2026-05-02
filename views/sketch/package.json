@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "vitest run"
+    "test": "vitest run",
+    "capture:screenshot": "vite-node scripts/capture-mid-run.ts"
   },
   "dependencies": {
     "elkjs": "^0.10.0"
