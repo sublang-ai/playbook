@@ -22,11 +22,6 @@ interface BossButton {
   event: CodingEvent;
 }
 
-interface CaptainButton {
-  label: string;
-  output: CaptainOutput;
-}
-
 const BOSS_BUTTONS: BossButton[] = [
   { label: 'START_CODING', event: { type: 'START_CODING', intent: 'demo intent' } },
   { label: 'IMPLEMENT_IR', event: { type: 'IMPLEMENT_IR', irNumber: '002' } },
@@ -39,35 +34,60 @@ const BOSS_BUTTONS: BossButton[] = [
   { label: 'REVIEW_SPECS', event: { type: 'REVIEW_SPECS', irNumber: '002' } },
 ];
 
-const CAPTAIN_BUTTONS: CaptainButton[] = [
-  { label: 'singleCommitCommitted', output: { guard: 'singleCommitCommitted' } },
-  { label: 'iterationCommitted', output: { guard: 'iterationCommitted' } },
-  { label: 'taskCommitted', output: { guard: 'taskCommitted' } },
-  { label: 'changesReadyForReview', output: { guard: 'changesReadyForReview' } },
-  { label: 'iterationDone', output: { guard: 'iterationDone' } },
-  { label: 'noFindings', output: { guard: 'noFindings' } },
-  { label: 'hasFindings', output: { guard: 'hasFindings' } },
-  { label: 'changesMade', output: { guard: 'changesMade' } },
-  { label: 'challengesRaised', output: { guard: 'challengesRaised' } },
-  { label: 'readyToCommit', output: { guard: 'readyToCommit' } },
-  { label: 'challengeAccepted', output: { guard: 'challengeAccepted' } },
-  { label: 'challengeRejected', output: { guard: 'challengeRejected' } },
-  { label: 'changesNeedReview', output: { guard: 'changesNeedReview' } },
-  { label: 'noOpenItems', output: { guard: 'noOpenItems' } },
-  { label: 'committed', output: { guard: 'committed' } },
-  { label: 'noRelevantChanges', output: { guard: 'noRelevantChanges' } },
-  { label: 'ciPassed', output: { guard: 'ciPassed' } },
-  { label: 'ciFailed', output: { guard: 'ciFailed' } },
-  { label: 'flakyRerunStarted', output: { guard: 'flakyRerunStarted' } },
-  { label: 'pushedNoCi', output: { guard: 'pushedNoCi' } },
-  { label: 'fixNeeded', output: { guard: 'fixNeeded' } },
-  { label: 'flaky', output: { guard: 'flaky' } },
-  { label: 'noAction', output: { guard: 'noAction' } },
-  { label: 'fixCommittedNoPush', output: { guard: 'fixCommittedNoPush' } },
-  { label: 'specsReadyForReview', output: { guard: 'specsReadyForReview' } },
-  { label: 'noSpecChangesNeeded', output: { guard: 'noSpecChangesNeeded' } },
-  { label: 'needsBossInput', output: { guard: 'needsBossInput' } },
+// Allowed Captain guards per invoking state, mirroring each invoke's `result`
+// map in coding.fsm.ts. The demo disables Captain buttons that the active
+// state's onDone has no branch for; otherwise XState would consume the done
+// event without firing any transition and the demo would wedge.
+const CAPTAIN_GUARDS_BY_STATE: Record<string, readonly string[]> = {
+  planAndImplement: ['singleCommitCommitted', 'iterationCommitted', 'needsBossInput'],
+  implementIr: ['taskCommitted', 'changesReadyForReview', 'iterationDone', 'needsBossInput'],
+  continueIr: ['taskCommitted', 'changesReadyForReview', 'iterationDone', 'needsBossInput'],
+  reviewCodeCommit: ['noFindings', 'hasFindings'],
+  reviewCodeChanges: ['noFindings', 'hasFindings'],
+  respondToReview: ['changesMade', 'challengesRaised', 'readyToCommit'],
+  adjudicateChallenges: [
+    'challengeAccepted',
+    'challengeRejected',
+    'changesNeedReview',
+    'noOpenItems',
+  ],
+  commitChanges: ['committed', 'noRelevantChanges', 'needsBossInput'],
+  pushMilestone: ['ciPassed', 'ciFailed', 'flakyRerunStarted', 'pushedNoCi'],
+  reviewCiFailure: ['fixNeeded', 'flaky', 'noAction'],
+  rerunCi: ['flakyRerunStarted', 'needsBossInput'],
+  fixCi: ['fixCommittedNoPush', 'needsBossInput'],
+  summarizeSpecs: ['specsReadyForReview', 'noSpecChangesNeeded', 'needsBossInput'],
+  reviewSpecChanges: ['noFindings', 'hasFindings'],
+};
+
+const ALL_CAPTAIN_GUARDS: readonly string[] = [
+  ...new Set(Object.values(CAPTAIN_GUARDS_BY_STATE).flat()),
 ];
+
+function activeStateLeafIds(snapshot: { value: unknown }): string[] {
+  function recurse(v: unknown, prefix: string): string[] {
+    if (typeof v === 'string') return [prefix ? `${prefix}.${v}` : v];
+    if (typeof v === 'object' && v !== null) {
+      const out: string[] = [];
+      for (const [k, sub] of Object.entries(v)) {
+        out.push(...recurse(sub, prefix ? `${prefix}.${k}` : k));
+      }
+      return out;
+    }
+    return [];
+  }
+  return recurse(snapshot.value, '');
+}
+
+function allowedGuardsFor(snapshot: { value: unknown }): Set<string> {
+  const allowed = new Set<string>();
+  for (const leaf of activeStateLeafIds(snapshot)) {
+    const local = leaf.split('.').pop() ?? leaf;
+    const list = CAPTAIN_GUARDS_BY_STATE[local];
+    if (list) for (const g of list) allowed.add(g);
+  }
+  return allowed;
+}
 
 // Maps the planAndImplement onDone guards to the order they appear in the
 // machine source. Used by the demo's `disambiguate` to pick a single edge
@@ -193,20 +213,44 @@ export function startCodingDemo(opts: CodingDemoOptions): CodingDemoMount {
   }
 
   const captainGroup = createGroup('Captain output', 'sketch-controls__group--buttons');
-  for (const { label, output } of CAPTAIN_BUTTONS) {
-    captainGroup.appendChild(
-      createButton(label, () => {
-        if (!pendingCaptain) {
-          setStatus('No Captain invocation pending.');
-          return;
-        }
-        const resolve = pendingCaptain;
-        pendingCaptain = null;
-        resolve(output);
-        setStatus(`Captain → ${label}.`);
-      }),
-    );
+  const captainButtons = new Map<string, HTMLButtonElement>();
+  for (const guard of ALL_CAPTAIN_GUARDS) {
+    const button = createButton(guard, () => {
+      if (!pendingCaptain) {
+        setStatus('No Captain invocation pending.');
+        return;
+      }
+      const resolve = pendingCaptain;
+      pendingCaptain = null;
+      resolve({ guard });
+      setStatus(`Captain → ${guard}.`);
+    });
+    captainButtons.set(guard, button);
+    captainGroup.appendChild(button);
   }
+
+  const refreshCaptainButtons = (snapshot: { value: unknown }): void => {
+    const allowed = pendingCaptain ? allowedGuardsFor(snapshot) : new Set<string>();
+    for (const [guard, button] of captainButtons) {
+      const enabled = allowed.has(guard);
+      button.disabled = !enabled;
+      button.title = enabled
+        ? `Resolve Captain with guard "${guard}"`
+        : pendingCaptain
+          ? `Active state has no onDone branch for "${guard}"`
+          : 'No Captain invocation pending';
+    }
+  };
+
+  // pendingCaptain is set inside the Promise creator, which fires synchronously
+  // when fromPromise's child actor starts — i.e. between actor.send returning
+  // and the next snapshot listener firing. Re-running refresh on each snapshot
+  // catches the new invocation. We also refresh after each Captain-resolving
+  // click because the resulting microstep may land on another invoke state
+  // before the parent snapshot listener observes it.
+  const snapshotSub = actor.subscribe((snapshot) => {
+    refreshCaptainButtons(snapshot as { value: unknown });
+  });
 
   opts.controls.appendChild(toggleGroup);
   opts.controls.appendChild(bossGroup);
@@ -214,9 +258,11 @@ export function startCodingDemo(opts: CodingDemoOptions): CodingDemoMount {
   opts.controls.appendChild(status);
 
   actor.start();
+  refreshCaptainButtons(actor.getSnapshot() as { value: unknown });
 
   return {
     dispose() {
+      snapshotSub?.unsubscribe?.();
       actor.stop();
       mount?.dispose();
       mount = null;
