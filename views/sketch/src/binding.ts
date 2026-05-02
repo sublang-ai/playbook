@@ -19,6 +19,17 @@ export interface ApplyTelemetryOptions {
   onComplete?: () => void;
 }
 
+const firedHighlights = new WeakMap<SVGSVGElement, Map<string, () => void>>();
+
+function getFiredMap(svg: SVGSVGElement): Map<string, () => void> {
+  let map = firedHighlights.get(svg);
+  if (!map) {
+    map = new Map();
+    firedHighlights.set(svg, map);
+  }
+  return map;
+}
+
 export function applySketchTelemetry(
   svg: SVGSVGElement,
   event: SketchTelemetry,
@@ -35,26 +46,57 @@ export function applySketchTelemetry(
   }
 
   const ttl = event.ttlMs ?? opts?.highlightMs ?? DEFAULT_HIGHLIGHT_MS;
-  const els: Element[] = [];
-  for (const id of event.firedEdgeIds) {
-    const el = svg.querySelector(`[data-edge-id="${attrEsc(id)}"]`);
-    if (el) {
-      el.classList.add('fired');
-      els.push(el);
-    }
-  }
+  const firedMap = getFiredMap(svg);
 
-  let done = false;
-  const finish = (): void => {
-    if (done) return;
-    done = true;
-    for (const el of els) el.classList.remove('fired');
+  const perEdgeCancels: (() => void)[] = [];
+  let pendingEdges = 0;
+  let aggregateDone = false;
+  const tryComplete = (): void => {
+    if (aggregateDone) return;
+    if (pendingEdges > 0) return;
+    aggregateDone = true;
     opts?.onComplete?.();
   };
-  const timer = setTimeout(finish, ttl);
-  return () => {
-    clearTimeout(timer);
-    finish();
+
+  for (const id of event.firedEdgeIds) {
+    // Supersede only the in-flight highlight for THIS edge, leaving any
+    // other edges from the prior event running on their own timers.
+    const existing = firedMap.get(id);
+    if (existing) existing();
+
+    const el = svg.querySelector(`[data-edge-id="${attrEsc(id)}"]`);
+    if (!el) continue;
+    el.classList.add('fired');
+    pendingEdges++;
+
+    let edgeDone = false;
+    let edgeCancel: () => void = () => {};
+    const edgeFinish = (): void => {
+      if (edgeDone) return;
+      edgeDone = true;
+      if (firedMap.get(id) === edgeCancel) {
+        firedMap.delete(id);
+        el.classList.remove('fired');
+      }
+      pendingEdges--;
+      tryComplete();
+    };
+    const edgeTimer = setTimeout(edgeFinish, ttl);
+    edgeCancel = (): void => {
+      clearTimeout(edgeTimer);
+      edgeFinish();
+    };
+    firedMap.set(id, edgeCancel);
+    perEdgeCancels.push(edgeCancel);
+  }
+
+  // Empty firedEdgeIds, or every querySelector missed: nothing to wait for.
+  if (pendingEdges === 0) {
+    tryComplete();
+  }
+
+  return (): void => {
+    for (const cancel of perEdgeCancels) cancel();
   };
 }
 
@@ -155,15 +197,27 @@ export function mountSketch(
   if (options.source) {
     sourceUnsubscribe = options.source.subscribe((event) => {
       if (disposed) return;
+      let registered = false;
+      let completedSync = false;
       let cancel: (() => void) | undefined;
       cancel = applySketchTelemetry(svg, event, {
         highlightMs: options.highlightMs,
         onComplete: () => {
-          if (cancel) pendingCancels.delete(cancel);
+          // applySketchTelemetry can fire onComplete synchronously when
+          // firedEdgeIds is empty or every id misses, before this call has
+          // returned the cancel handle. In that case there's nothing yet
+          // to delete; record completion so the post-call branch skips
+          // adding a stale handle to pendingCancels.
+          if (registered && cancel) {
+            pendingCancels.delete(cancel);
+          } else {
+            completedSync = true;
+          }
         },
       });
-      if (event.type === 'fired') {
+      if (event.type === 'fired' && !completedSync) {
         pendingCancels.add(cancel);
+        registered = true;
       }
     });
   }

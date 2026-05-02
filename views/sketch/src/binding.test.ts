@@ -109,6 +109,109 @@ describe('applySketchTelemetry', () => {
     }
   });
 
+  it('superseding one edge of a multi-edge fired event leaves the other edge highlighted for its full ttl', () => {
+    vi.useFakeTimers();
+    try {
+      const svg = renderSketch(extractGraph(sampleMachine));
+
+      applySketchTelemetry(
+        svg,
+        { type: 'fired', seq: 1, firedEdgeIds: ['a::GO::0::0', 'b::BACK::0::0'] },
+        { highlightMs: 100 },
+      );
+      const edgeA = svg.querySelector('[data-edge-id="a::GO::0::0"]');
+      const edgeB = svg.querySelector('[data-edge-id="b::BACK::0::0"]');
+      expect(edgeA?.classList.contains('fired')).toBe(true);
+      expect(edgeB?.classList.contains('fired')).toBe(true);
+
+      vi.advanceTimersByTime(50);
+      applySketchTelemetry(
+        svg,
+        { type: 'fired', seq: 2, firedEdgeIds: ['a::GO::0::0'] },
+        { highlightMs: 100 },
+      );
+      expect(edgeA?.classList.contains('fired')).toBe(true);
+      // Critical: B's own timer must still be pending; the prior bug would clear it.
+      expect(edgeB?.classList.contains('fired')).toBe(true);
+
+      // Past B's original t=100 deadline; B clears, A's fresh t=150 still pending.
+      vi.advanceTimersByTime(60);
+      expect(edgeB?.classList.contains('fired')).toBe(false);
+      expect(edgeA?.classList.contains('fired')).toBe(true);
+
+      // Past A's t=150 deadline; A finally clears.
+      vi.advanceTimersByTime(60);
+      expect(edgeA?.classList.contains('fired')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('overlapping fired events on the same edge keep the highlight active for the latest TTL', () => {
+    vi.useFakeTimers();
+    try {
+      const svg = renderSketch(extractGraph(sampleMachine));
+
+      applySketchTelemetry(
+        svg,
+        { type: 'fired', seq: 1, firedEdgeIds: ['a::GO::0::0'] },
+        { highlightMs: 100 },
+      );
+      const edge = svg.querySelector('[data-edge-id="a::GO::0::0"]');
+      expect(edge?.classList.contains('fired')).toBe(true);
+
+      vi.advanceTimersByTime(50);
+      expect(edge?.classList.contains('fired')).toBe(true);
+
+      applySketchTelemetry(
+        svg,
+        { type: 'fired', seq: 2, firedEdgeIds: ['a::GO::0::0'] },
+        { highlightMs: 100 },
+      );
+      expect(edge?.classList.contains('fired')).toBe(true);
+
+      // Past the first call's original TTL but still inside the second's.
+      vi.advanceTimersByTime(60);
+      expect(edge?.classList.contains('fired')).toBe(true);
+
+      // Past the second call's TTL; the highlight finally clears.
+      vi.advanceTimersByTime(60);
+      expect(edge?.classList.contains('fired')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fires onComplete synchronously when firedEdgeIds is empty', () => {
+    const svg = renderSketch(extractGraph(sampleMachine));
+    let completed = false;
+    applySketchTelemetry(
+      svg,
+      { type: 'fired', seq: 1, firedEdgeIds: [] },
+      {
+        onComplete: () => {
+          completed = true;
+        },
+      },
+    );
+    expect(completed).toBe(true);
+  });
+
+  it('fires onComplete synchronously when every fired id misses the SVG', () => {
+    const svg = renderSketch(extractGraph(sampleMachine));
+    let completed = false;
+    applySketchTelemetry(
+      svg,
+      { type: 'fired', seq: 1, firedEdgeIds: ['nonexistent::edge::0::0'] },
+      {
+        onComplete: () => {
+          completed = true;
+        },
+      },
+    );
+    expect(completed).toBe(true);
+  });
+
   it('cancel handle clears the .fired class immediately and cancels the timer', () => {
     vi.useFakeTimers();
     try {
