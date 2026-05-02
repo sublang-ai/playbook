@@ -7,6 +7,7 @@ Roles:
 
 - Coder
 - Reviewer
+- Committer
 
 ## Plan & Implement
 
@@ -17,15 +18,11 @@ When Boss gives an intent for coding, Captain shall pass the intent to Coder wit
 > Put each sentence on its own line.
 > Consult @specs/map.md to find relevant context if needed.
 
-When an IR is ready (drafted & reviewed), Captain shall prompt Coder with the IR number:
-> Implement IR-<#>.
-> Every task is a commit (including corresponding tests if any).
-> Stop after each commit for review.
-
-When a task of IR is done (review passed), Captain shall prompt Coder with the IR number:
+When an IR is ready (review passed), Captain shall prompt Coder with the IR number:
 > Continue to implement IR-<#> if not all deliverables and tasks are done.
-> Every task is a commit (including corresponding tests if any).
-> Stop after each commit for review.
+> Implement one task at a time (including corresponding tests if any).
+> Stop after each task for review — do not commit yet.
+> If relevant, mark progress in the IR.
 
 ## Review Code
 
@@ -52,13 +49,15 @@ When Reviewer has finished code review, Captain shall pass the reviews to Coder 
 When Coder has challenged any code review, Captain shall pass the challenges to Reviewer with the prompt:
 > For each feedback item below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 > Then review the latest unstaged/untracked changes (if any).
+> Understand the intent.
+> Consult @specs/map.md to find relevant context if needed.
 
 ## Commit
 
-When Coder is about to commit, Captain shall prompt Coder with the player descriptions based on who worked on the changes, e.g.:
-> You (Claude Opus 4.7) are Coder; GPT-5.5 is Reviewer.
+When Committer is about to commit, Captain shall prompt Committer with the player descriptions based on who worked on what, e.g.:
+> Coder is Claude Opus 4.7; Reviewer is GPT-5.5.
 
-When Coder is about to commit, Captain shall prompt Coder:
+When Committer is about to commit, Captain shall prompt Committer:
 > Finally, commit the relevant changes that belong in the repo, following @specs/items/dev/git.md format (reread if necessary).
 > If relevant, mark progress in the IR.
 
