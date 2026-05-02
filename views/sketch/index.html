@@ -6,12 +6,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>XState Sketch</title>
+    <title>XState Sketch — coding.fsm demo</title>
   </head>
   <body>
-    <main id="app" class="sketch-app">
-      <h1>XState Sketch</h1>
-      <p>Sketch scaffold is ready.</p>
+    <main class="sketch-app">
+      <header class="sketch-app__header">
+        <h1>XState Sketch</h1>
+        <p>
+          Live diagram of <code>coding.fsm.ts</code>. Send a Boss event,
+          then resolve the Captain invocation with a guard to drive a transition.
+        </p>
+      </header>
+      <aside id="sketch-controls" class="sketch-controls"></aside>
+      <section id="sketch-canvas" class="sketch-canvas"></section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
