@@ -26,7 +26,8 @@ meta.md     The spec of specs
 | --- | --- | --- |
 | DR-000 | [000-spec-structure-format.md](decisions/000-spec-structure-format.md) | Spec structure, format, and naming conventions |
 | DR-001 | [001-state-machine-tooling.md](decisions/001-state-machine-tooling.md) | XState + Stately Sketch for state machine modeling, visualization, and simulation |
-| DR-002 | [002-in-page-xstate-visualizer.md](decisions/002-in-page-xstate-visualizer.md) | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) |
+| DR-002 | [002-in-page-xstate-visualizer.md](decisions/002-in-page-xstate-visualizer.md) | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) — superseded by DR-003 |
+| DR-003 | [003-sketch-controlled-shell.md](decisions/003-sketch-controlled-shell.md) | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
 
 ## Iterations
 
@@ -35,6 +36,7 @@ meta.md     The spec of specs
 | IR-000 | [000-spdx-headers.md](iterations/000-spdx-headers.md) | Add SPDX headers to applicable files |
 | IR-001 | [001-parallel-cligents-view.md](iterations/001-parallel-cligents-view.md) | Web view of parallel cligents with Captain orchestrating role panels |
 | IR-002 | [002-xstate-sketch-component.md](iterations/002-xstate-sketch-component.md) | Embeddable XState Sketch component with live state and transition highlighting |
+| IR-003 | [003-sketch-controlled-shell.md](iterations/003-sketch-controlled-shell.md) | Cutover to Sketch-as-controlled-shell: fork patches, parent-side adapter, retire DR-002 renderer |
 
 ## Packages
 
@@ -50,3 +52,11 @@ meta.md     The spec of specs
 | --- | --- | --- |
 | dev | [licensing.md](items/dev/licensing.md) | SPDX header requirements and file-scope rules |
 | test | [licensing.md](items/test/licensing.md) | Copyright and license header presence checks |
+
+### SKETCH
+
+| Group | File | Summary |
+| --- | --- | --- |
+| user | [sketch.md](items/user/sketch.md) | XState sketch visualizer: diagram and live-activity behavior |
+| dev | [sketch.md](items/dev/sketch.md) | Architecture, telemetry protocol, and lifecycle contracts |
+| test | [sketch.md](items/test/sketch.md) | Integration tests for diagram, telemetry derivation, and lifecycle |
