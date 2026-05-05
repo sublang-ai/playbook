@@ -12,8 +12,8 @@ self-hosted Stately Sketch (DR-001's native visualizer) showed that Sketch
 already renders `coding.fsm.ts` legibly, exposes a mutable simulator store, and
 parses XState source via a `new Function` sandbox. Patching Sketch with a small
 postMessage protocol — driving its existing rendering machinery from the parent
-actor's own inspect events — replaces this DR's hand-rolled Diagram + Telemetry
-+ Binding stack with materially less code, no maintained custom layout, and no
+actor's own inspect events — replaces this DR's hand-rolled Diagram + Telemetry +
+Binding stack with materially less code, no maintained custom layout, and no
 runtime reconstruction of guard ambiguity. The spec contracts this DR
 established (actorRef-identity scoping, latest-active retention, separability
 across processes) survive in DR-003 in different shape.

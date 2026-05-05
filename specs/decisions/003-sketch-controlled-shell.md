@@ -73,7 +73,7 @@ visualization. The architecture has three parts:
 
 ### 1. Topology
 
-```
+```text
 Parent app process
   ┌─ XState actor (machine + actor + Captain children)
   ┌─ Sketch parent-side adapter
