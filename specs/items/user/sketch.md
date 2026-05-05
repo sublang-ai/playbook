@@ -24,9 +24,8 @@ triggering event.
 ### SKETCH-2
 
 While the visualizer is bound to a state machine actor, when the
-actor enters a state, the visualizer shall display that state
-distinctly from inactive states and shall remove the distinct
-display from the previously active state.
+actor's active state changes, the visualizer shall display only the
+currently active state(s) distinctly from inactive states.
 
 ### SKETCH-3
 

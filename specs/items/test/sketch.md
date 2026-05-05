@@ -24,7 +24,7 @@ shall mark the new active state distinctly and shall briefly mark
 the firing transition as highlighted before clearing that mark.
 
 ### SKETCH-15
-Verifies: [SKETCH-4](../user/sketch.md#sketch-4)
+Verifies: [SKETCH-4](../user/sketch.md#sketch-4), [SKETCH-22](../dev/sketch.md#sketch-22)
 
 Where two guarded transitions in the diagram have the same source,
 event, and target state, when a firing event matches one of them,
@@ -77,3 +77,12 @@ Where the actor process and the rendering process are separate, when
 the renderer connects, the actor process shall be able to emit
 `active` and `fired` messages whose identifiers the renderer can
 apply to the same diagram without sharing a runtime.
+
+### SKETCH-21
+Verifies: [SKETCH-3](../user/sketch.md#sketch-3), [SKETCH-8](../dev/sketch.md#sketch-8), [SKETCH-22](../dev/sketch.md#sketch-22)
+
+Where a state machine has a transition descriptor with multiple
+targets (e.g. `target: ['#A', '#B']`), when an event matches that
+descriptor, the diagram shall briefly highlight a distinct edge for
+each target reached, and the `fired` message identifiers shall
+distinguish the per-target edges from one another.
