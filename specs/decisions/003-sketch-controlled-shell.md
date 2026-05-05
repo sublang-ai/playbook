@@ -65,8 +65,11 @@ visualization. The architecture has three parts:
 2. **Parent-side adapter** (~80 LOC) that subscribes to
    `actor.system.inspect`, derives active-state ids and fired-edge ids, and
    emits a typed postMessage protocol.
-3. **postMessage protocol** between parent and iframe — id-only payloads,
-   origin-checked, with explicit `ready`/`dispose` lifecycle.
+3. **postMessage protocol** between parent and iframe — origin-checked,
+   with explicit `ready`/`dispose` lifecycle. Live-telemetry frames carry
+   id-only payloads (the privacy-load-bearing rule); setup frames
+   (`loadCode`) and explore-mode frames (`simSend`) carry richer payloads
+   and are scoped separately (see §2).
 
 ### 1. Topology
 
@@ -103,8 +106,22 @@ Parent app process
 | parent → iframe | `sketch:simSend` | `{ event: AnyEventObject }` | explore-mode click forward; live mode does not use this |
 | parent → iframe | `sketch:setMode` | `{ mode: 'live' \| 'explore' }` | gate iframe-side click handlers; live mode disables clicks or forwards them as parent commands |
 
-Production payloads are id-only — no context, no event payloads cross the
-iframe boundary. Origin is pinned in production (parameterized for the spike).
+**Live-telemetry frames** (`sketch:setLiveActiveIds`, `sketch:flashTransitions`,
+`sketch:clearFiredTransitions`) carry only state-id and edge-id arrays — no
+actor context, no runtime event payloads cross the iframe boundary. This is
+the privacy-load-bearing rule: live-actor data (Captain prompts, contexts,
+event payloads) never leaves the parent process via this protocol.
+
+**Setup frames** (`sketch:loadCode`) carry the machine source string by
+necessity — Sketch parses the same text it would parse from any code-load
+flow. This is configuration data, not live actor data.
+
+**Explore-mode frames** (`sketch:simSend`) carry user-driven event objects
+the human deliberately authors in the iframe for hypothetical exploration;
+they never reflect a running actor's events. Live mode (the production
+default) does not use `sketch:simSend`.
+
+Origin is pinned in production (parameterized for the spike).
 
 ### 3. Edge-id index
 
@@ -134,9 +151,18 @@ against current `statelyai/sketch`:
 | 5 | `src/components/AppLayout.tsx` | ~20 | `?iframe=true` query-param check that hides header / share / sign-in / help / footer / editor toggle |
 | 6 | `src/lib/machine.ts` | ~15 | Expand `transition.target?.[]` to one edge per target; emit 4-segment edge ids carrying `branchIndex` and `targetIndex` |
 
-Net: ~150 LOC across 6 files. Items 1–3 were validated end-to-end in the
-spike (`/tmp/sketch-fork`, `views/sketch/spike/SHELL-FINDINGS.md`). Items 4–6
-are sized but not yet executed; they land as IR-003 task commits.
+Net: ~150 LOC across 6 files. Items 1–3 were validated end-to-end in a
+throwaway spike: a real XState actor driving `coding.fsm.ts` through
+`ready → planAndImplement → reviewCodeCommit` was wired into a forked
+Sketch via patches 1–3; the parent's `setLiveActiveIds` calls populated
+`appStore.context.simActiveIds = ['reviewCodeCommit', 'coding']` (leaf
+plus ancestor) without engaging Sketch's replay simulator
+(`simEvents.length` stayed at 1 — the initial `xstate.init` from
+`startSim`); a sample edge id `planAndImplement:xstate.done.actor.0:0`
+flowed cleanly through `flashTransitions` into `firedTransitionIds`. The
+forked-Sketch `pnpm build` succeeded with all three patches applied.
+Items 4–6 are sized but not yet executed; they land as cutover task
+commits.
 
 ### 5. What we borrow from `@statelyai/inspect` / `@statelyai/sdk`
 
@@ -199,12 +225,18 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
 
 - DR-002's custom Diagram, Telemetry, and Binding layers retire.
   `views/sketch/src/{graph,layout,render,binding,sketch,telemetry,styles.css}`
-  delete in IR-003. The `elkjs` runtime dependency drops. The Diagram-layer
+  delete during the cutover iteration. The `elkjs` runtime dependency
+  drops. The Diagram-layer
   Node-side renderer (`renderSketchToString`) and the screenshot capture
   script also retire — Sketch renders in the browser; static SVG snapshots
   are no longer load-bearing for documentation.
-- **SKETCH spec package** updates correspondingly; see IR-003 §Tasks for the
-  exact item-by-item deltas.
+- The **SKETCH spec package** ([user](../items/user/sketch.md),
+  [dev](../items/dev/sketch.md), [test](../items/test/sketch.md))
+  updates correspondingly. The user-visible items (SKETCH-1..5) survive
+  unchanged in spirit, with SKETCH-4's `disambiguator` mention dropped
+  because XState's transition selection is now the source of truth.
+  Dev-side items reframe per the bullets below; test items retire those
+  whose dev counterparts retire.
 - **DR-001's Sketch self-host patch ledger grows from 1 to 7 patches.** Each
   upstream Sketch update must be checked for compatibility with all seven.
   All patches are additive and surgical; rebase ergonomics are favorable.
@@ -216,8 +248,11 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
   deepest-owner / candidate-union / disambiguator logic delete. The adapter
   iterates microstep `_transitions[]` and looks up edge ids in the index.
 - **Privacy posture unchanged.** No Stately Cloud dependency. Self-hosted
-  Sketch fork. `coding.fsm.ts` source loads via `loadCode`. Prompts never
-  leave the network — production wire is id-only.
+  Sketch fork. `coding.fsm.ts` source loads via `loadCode` (setup-time;
+  same source the editor would load). Live-telemetry frames carry
+  state-id and edge-id arrays only; runtime actor data — Captain
+  prompts, contexts, event payloads — never leaves the parent process
+  via the live-telemetry channel.
 - **Cross-process Captain deployment** (DR-002 §8 / DR-004 wiring) reshapes:
   Captain runs the parent-side adapter directly against its actor, emits
   postMessage frames over a small SSE-or-WebSocket relay (presenter), browser
