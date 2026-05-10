@@ -63,10 +63,10 @@ Target should be written in the same language as Source.
 ## Composition
 
 Source may contain individual prompt snippets with overlapping or duplicate content.
-text2gears composes these snippets into Target spec items without any concern about duplication.
+When composing snippets into a spec item, text2gears shall deduplicate identical prompt lines so the item's final prompt has each line at most once.
 
 Each spec item shall address one well-defined state behavior and carry the full final prompt (the static part) for that state.
-Duplicate prompt lines across items are acceptable: Source is what users maintain; spec items are compiled artifacts that can be regenerated anytime.
+The same line may appear in multiple spec items where each addresses a different state behavior; cross-item duplication is acceptable, since spec items are compiled artifacts and Source is what users maintain.
 
 Test: a human shall be able to simulate an agent run by reading individual spec items and copying their full prompts verbatim, without manually composing prompts across items.
 

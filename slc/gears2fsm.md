@@ -29,8 +29,8 @@ If the artifact emits an actor placeholder, that placeholder shall fail explicit
 `CaptainInput` shall be a typed object with at least:
 
 - `player`: the [player](text2gears.md#players) Captain is to invoke;
-- `sourceItems`: the GEARS item IDs composed into this prompt;
-- `prompt`: the composed prompt;
+- `sourceItem`: the GEARS item ID this state realizes;
+- `prompt`: the source item's full final prompt, verbatim;
 - `result`: a record whose keys are the valid guard names this invocation may return.
 
 `CaptainOutput` shall be a discriminated object with `guard: string` and any extracted fields downstream states need.
@@ -46,13 +46,12 @@ Each state shall declare:
 - a stable `id` (used for `#id` targeting and Boss interrupts);
 - an intuitive state key (the property name under `states: { ... }`, what humans read in code);
 - a one-line `description` summarizing what the state does (used by inspector tools and as living documentation);
-- if it invokes Captain: an `invoke.input` carrying `player`, `sourceItems`, `prompt`, and `result` (per [Setup](#setup)).
+- if it invokes Captain: an `invoke.input` carrying `player`, `sourceItem`, `prompt`, and `result` (per [Setup](#setup)).
 
-Listing source items in `invoke.input.sourceItems` makes the GEARS-to-state mapping machine-readable.
-Comments listing source IDs are not sufficient; the IDs shall live in the structured input.
+Carrying the source item ID in `invoke.input.sourceItem` makes the GEARS-to-state mapping machine-readable.
+A comment with the ID is not sufficient; the ID shall live in the structured input.
 
-A state's `invoke.input.player` shall match the player named by every composed source item.
-If two items name different players, or require Captain to ask different players to act, they cannot share a state.
+A state's `invoke.input.player` shall match the player named by its source item.
 
 Captain follows the instructions and returns a discriminated result with `guard` set to one of the keys of `input.result` [[4]].
 Guards [[5]] on `onDone` transitions inspect `event.output.guard` to choose the next state.
@@ -64,7 +63,7 @@ invoke: {
     src: 'captain',
     input: ({ context }): CaptainInput => ({
         player: 'Reviewer',
-        sourceItems: ['<ITEM-A>', '<ITEM-B>'],
+        sourceItem: '<ITEM-A>',
         prompt: [
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
@@ -79,14 +78,14 @@ invoke: {
 }
 ```
 
-## Composition
+## Mapping
 
-A single state in Target may correspond to multiple Source spec items, reversing the [abstraction](text2gears.md#abstraction) from the first phase.
-All prompts from those items shall be composed into the state's `invoke.input.prompt`, and all their IDs shall be listed in `sourceItems`.
+Each Source spec item shall map to exactly one state in Target.
+A state's `invoke.input.sourceItem` shall be that item's ID, and `invoke.input.prompt` shall carry the item's prompt verbatim.
 
-Items shall be composed into one state only when **player, condition, and downstream outcomes are identical**.
-If two items lead to different next states, they shall be split into separate states with explicit IDs rather than gated by ad-hoc context flags.
-Differences in subject matter, next workflow step, or required event payload are semantic differences and shall be represented as distinct states or distinct typed context fields, not hidden inside `lastResult`.
+Per text2gears [composition](text2gears.md#composition), each spec item already carries the full final prompt for one well-defined state behavior, with no duplicate lines.
+The FSM compiler shall not concatenate prompts across items, re-compose them, or silently dedupe.
+A spec item that still contains duplicate prompt lines is malformed; the compiler shall reject or flag it rather than silently propagate the duplication into `invoke.input.prompt`.
 
 ## Context and prompts
 
