@@ -70,7 +70,7 @@ When Reviewer begins a review round involving @specs/user/, @specs/dev/, or @spe
 > Flag anything missing, redundant, over-specified, or under-specified.
 
 When Reviewer begins a review round involving any changes outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall prompt Reviewer:
-> For code or spec changes, flag any issues or improvements (numbered; no duplication).
+> Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
 
 When Reviewer begins any review round, Captain shall prompt Reviewer:
@@ -86,4 +86,4 @@ When Coder makes any Initial Changes or Reviewer raises no findings on uncommitt
 > Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 
 When Captain prompts Committer, Captain shall also append the player identities to that prompt (which LLM played each role since last commit):
-> Coder is Claude Opus 4.7; Reviewer is GPT-5.5.
+> Coder is GPT-5.5; Reviewer is Opus 4.7.
