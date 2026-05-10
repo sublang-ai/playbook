@@ -28,7 +28,7 @@ If the artifact emits an actor placeholder, that placeholder shall fail explicit
 
 `CaptainInput` shall be a typed object with at least:
 
-- `role`: the [role](text2gears.md#roles) Captain is to invoke;
+- `player`: the [player](text2gears.md#players) Captain is to invoke;
 - `sourceItems`: the GEARS item IDs composed into this prompt;
 - `prompt`: the composed prompt;
 - `result`: a record whose keys are the valid guard names this invocation may return.
@@ -46,13 +46,13 @@ Each state shall declare:
 - a stable `id` (used for `#id` targeting and Boss interrupts);
 - an intuitive state key (the property name under `states: { ... }`, what humans read in code);
 - a one-line `description` summarizing what the state does (used by inspector tools and as living documentation);
-- if it invokes Captain: an `invoke.input` carrying `role`, `sourceItems`, `prompt`, and `result` (per [Setup](#setup)).
+- if it invokes Captain: an `invoke.input` carrying `player`, `sourceItems`, `prompt`, and `result` (per [Setup](#setup)).
 
 Listing source items in `invoke.input.sourceItems` makes the GEARS-to-state mapping machine-readable.
 Comments listing source IDs are not sufficient; the IDs shall live in the structured input.
 
-A state's `invoke.input.role` shall match the role named by every composed source item.
-If two items name different roles, or require Captain to ask different roles to act, they cannot share a state.
+A state's `invoke.input.player` shall match the player named by every composed source item.
+If two items name different players, or require Captain to ask different players to act, they cannot share a state.
 
 Captain follows the instructions and returns a discriminated result with `guard` set to one of the keys of `input.result` [[4]].
 Guards [[5]] on `onDone` transitions inspect `event.output.guard` to choose the next state.
@@ -63,7 +63,7 @@ Example:
 invoke: {
     src: 'captain',
     input: ({ context }): CaptainInput => ({
-        role: 'Reviewer',
+        player: 'Reviewer',
         sourceItems: ['<ITEM-A>', '<ITEM-B>'],
         prompt: [
             'Flag any issues or improvements (numbered; no duplication).',
@@ -84,7 +84,7 @@ invoke: {
 A single state in Target may correspond to multiple Source spec items, reversing the [abstraction](text2gears.md#abstraction) from the first phase.
 All prompts from those items shall be composed into the state's `invoke.input.prompt`, and all their IDs shall be listed in `sourceItems`.
 
-Items shall be composed into one state only when **role, condition, and downstream outcomes are identical**.
+Items shall be composed into one state only when **player, condition, and downstream outcomes are identical**.
 If two items lead to different next states, they shall be split into separate states with explicit IDs rather than gated by ad-hoc context flags.
 Differences in subject matter, next workflow step, or required event payload are semantic differences and shall be represented as distinct states or distinct typed context fields, not hidden inside `lastResult`.
 
@@ -94,11 +94,11 @@ Context fields used to drive guards or compose prompts shall be **typed and name
 The compiler shall not branch on untyped properties of `lastResult`.
 `lastResult` is useful for inspection, but persistent routing decisions shall be promoted to typed context fields.
 
-Prompts shall pass only the **specific extracted fields** the role needs.
+Prompts shall pass only the **specific extracted fields** the player needs.
 The compiler shall not dump `JSON.stringify(lastResult)` or any opaque blob into prompts: it leaks internal `guard` strings, wastes tokens, and confuses the LLM.
 
-Role bindings (which concrete player or agent fills a role) and any per-run parameters shall be supplied via the machine's `input` argument and copied into context at start-up.
-The artifact shall not bake in role bindings, model names, or per-run values.
+Player bindings (the concrete agent assigned to each player) and any per-run parameters shall be supplied via the machine's `input` argument and copied into context at start-up.
+The artifact shall not bake in player bindings, model names, or per-run values.
 
 ## Transitions
 
@@ -121,12 +121,12 @@ A state may route through approval once when its input was produced by an unrevi
 
 ### One feedback cycle across phases
 
-When the source has a feedback cycle (e.g., a back-and-forth between two roles to resolve findings), all phases that need feedback shall reuse the same cycle, not duplicate it per phase.
+When the source has a feedback cycle (e.g., a back-and-forth between two players to resolve findings), all phases that need feedback shall reuse the same cycle, not duplicate it per phase.
 Phases may set typed routing fields so the cycle's terminal outcomes route back to the originating branch.
 
 ## Boss control
 
-[Boss](text2gears.md#roles) input enters the machine through two distinct surfaces: pre-emptive interrupts on active states, and typed entry events on idle or recoverable states.
+[Boss](text2gears.md#players) input enters the machine through two distinct surfaces: pre-emptive interrupts on active states, and typed entry events on idle or recoverable states.
 
 ### Boss interrupts
 

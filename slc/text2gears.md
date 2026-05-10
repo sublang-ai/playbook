@@ -18,32 +18,32 @@ The second phase transforms spec items into state machines, which is outside the
 | source | text | .md |
 | target | gears | .md |
 
-## Roles
+## Players
 
-Both Source and Target use role names to refer to AI agents and the user.
+Both Source and Target use player names to refer to AI agents and the user.
 
-The playbook has two default roles:
+The playbook has two default players:
 
 - Boss: the human user who provides input
 - Captain: the coordinating agent that drives the procedure
 
-Source may define additional roles in an opening `## Roles` section.
-A role may be declared as an alias of other roles using `=` and `|`; at runtime, Boss picks one of the listed roles to play it.
+Source may define additional players in an opening `Players:` section.
+A player may be declared as an alias of other players using `=` and `|`; at runtime, Boss picks one of the listed players to play it.
 E.g.:
 
 - Coder
 - Reviewer
 - Committer = Coder | Reviewer
 
-The playbook runtime maps these roles to AI agents and invokes them.
+The playbook runtime maps these players to AI agents and invokes them.
 
-For accurate mapping, capitalize English role names (e.g., `Writer`).
-In other languages, quote role names such as `作者` if necessary to
+For accurate mapping, capitalize English player names (e.g., `Writer`).
+In other languages, quote player names such as `作者` if necessary to
 distinguish them from ordinary text.
 
 ## Behaviors
 
-Target specifies state-machine behaviors including which prompt to give to which role under which conditions.
+Target specifies state-machine behaviors including which prompt to give to which player under which conditions.
 All prompts shall be blockquoted.
 A prompt consists of concise, clearly organized points, one per line.
 
@@ -64,7 +64,7 @@ Target should be written in the same language as Source.
 
 Prompt lines may duplicate across spec items.
 
-If duplicate prompt lines share a common condition and identical roles, they may be abstracted into an independent spec item, and they do not need to be restated or cited by other spec items.
+If duplicate prompt lines share a common condition and identical players, they may be abstracted into an independent spec item, and they do not need to be restated or cited by other spec items.
 This improves maintainability.
 
 E.g., the prompt lines in `CODE-10` above may apply when reviewing a commit or unstaged changes, or as part of a longer prompt, so they are abstracted under the shared condition "when Reviewer is about to review any change".
