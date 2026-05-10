@@ -230,8 +230,8 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
   Node-side renderer (`renderSketchToString`) and the screenshot capture
   script also retire — Sketch renders in the browser; static SVG snapshots
   are no longer load-bearing for documentation.
-- The **SKETCH spec package** ([user](../items/user/sketch.md),
-  [dev](../items/dev/sketch.md), [test](../items/test/sketch.md))
+- The **SKETCH spec package** ([user](../user/sketch.md),
+  [dev](../dev/sketch.md), [test](../test/sketch.md))
   updates correspondingly. The user-visible items (SKETCH-1..5) survive
   unchanged in spirit, with SKETCH-4's `disambiguator` mention dropped
   because XState's transition selection is now the source of truth.

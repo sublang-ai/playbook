@@ -17,23 +17,21 @@ The `specs/` directory shall contain the following subdirectories and files:
 | --------- | ------- | ------ |
 | `decisions/` | Decision records (DRs) | \<NNN\>-\<kebab-case\>.md |
 | `iterations/` | Iteration records (IRs) | \<NNN\>-\<kebab-case\>.md |
-| `items/` | item files | [\<path\>/]\<kebab-case\>.md |
+| `user/` | item files for user-visible behavior | [\<path\>/]\<kebab-case\>.md |
+| `dev/` | item files for implementation requirements | [\<path\>/]\<kebab-case\>.md |
+| `test/` | item files for acceptance testing | [\<path\>/]\<kebab-case\>.md |
 | `map.md` | spec index for navigation with item files organized by packages | - |
 | `meta.md` | the spec of specs | - |
-
-### META-2
-
-Item files shall be grouped into three subdirectories under `items/`:
-
-| Subdirectory | Purpose |
-| ----- | ------- |
-| `user/` | What the system does. User-visible behavior. |
-| `dev/` | How the system is built. Not user-visible. |
-| `test/` | Acceptance testing. Test items cite the user or dev items they verify. |
 
 ### META-3
 
 Each item file shall include an `## Intent` section stating its purpose.
+
+### META-21
+
+Test items shall focus on integration and system testing.
+
+Unit tests shall be part of the implementation and shall not be specified as spec items.
 
 ## Record format
 
@@ -43,7 +41,23 @@ Each decision record (DR) shall follow the ADR format [[2]] with the following s
 
 ### META-5
 
-Each iteration record (IR) shall contain the following sections: Goal, Deliverables, Tasks, and Acceptance criteria.
+Each iteration record (IR) shall contain the following sections: Goal, Deliverables (with checkboxes), Tasks (numbered, each in one-commit size), and Acceptance criteria.
+
+### META-23
+
+DRs and IRs shall be written in concise language, including only what is needed to act on or audit the record, with preference for bullets and tables over prose paragraphs.
+
+### META-24
+
+A DR shall specify design decisions and constraints, not duplicate implementation logic.
+A DR is sufficient when an implementer can generate or audit code from the design intent, constraints, and tradeoffs.
+Implementation details shall be included only when they are part of the design contract.
+
+### META-25
+
+In prose paragraphs of DRs and IRs, each sentence shall begin on a new line for diff readability.
+List items and table cells are exempt, since their delimiters already isolate per-entry changes.
+Fixed-width column wrapping within a sentence is allowed.
 
 ## Item syntax
 
@@ -81,6 +95,10 @@ Each item shall be self-contained:
 - It shall have no implicit dependency on sections other than its own subsections.
 - Citations to other specs or shared sections shall be explicit.
 
+### META-26
+
+A spec item shall describe behavior as observable outcomes (e.g., file state, exit code, printed output, return value, network call) under named conditions, including any conditions under which a particular outcome shall not occur.
+
 ## Spec packages
 
 ### META-9
@@ -89,7 +107,7 @@ A spec package shall consist of one to three coordinated item files sharing the 
 
 ### META-10
 
-A spec package shall have a basename \<kebab-case\>.md unique within `specs/items/`, with a short form \<ALLCAPS\>.
+A spec package shall have a basename \<kebab-case\>.md unique across `specs/user/`, `specs/dev/`, and `specs/test/`, with a short form \<ALLCAPS\>.
 
 Example: `package-management.md` has short form `PKGMGT`.
 

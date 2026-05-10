@@ -133,5 +133,5 @@ Dynamic presentation:
 - When Captain calls a player tool, the corresponding right panel renders Captain's prompt and then streams the reply from the player's cligent (text, tool calls, tool results, done).
 - Multiple player tools called within one Boss turn populate their respective panels concurrently without cross-talk.
 - Right panels have no input affordance and ignore keyboard input.
-- All `views/**` source files carry SPDX headers per [LIC-3](../items/test/licensing.md#lic-3) and [LIC-4](../items/test/licensing.md#lic-4).
+- All `views/**` source files carry SPDX headers per [LIC-3](../test/licensing.md#lic-3) and [LIC-4](../test/licensing.md#lic-4).
 - The page remains interactive (no UI freeze) under sustained `text_delta` throughput.

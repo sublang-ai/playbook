@@ -87,7 +87,7 @@ only the visualizer renderer and its telemetry transport change.
 
 ### Spec updates (SKETCH package)
 
-- [ ] **`specs/items/user/sketch.md`** — items survive in spirit:
+- [ ] **`specs/user/sketch.md`** — items survive in spirit:
   - SKETCH-1 (render): unchanged.
   - SKETCH-2 (active state): unchanged.
   - SKETCH-3 (fired transitions): unchanged.
@@ -95,7 +95,7 @@ only the visualizer renderer and its telemetry transport change.
     `disambiguator` mention** since the firing event resolves ambiguity at
     the source.
   - SKETCH-5 (late-mount current state): unchanged.
-- [ ] **`specs/items/dev/sketch.md`** — substantive changes:
+- [ ] **`specs/dev/sketch.md`** — substantive changes:
   - SKETCH-6 (separable layers): reframe — the layers are now Diagram
     (Sketch fork) / Adapter (parent) / Binding (postMessage). Cross-process
     splittability survives.
@@ -117,7 +117,7 @@ only the visualizer renderer and its telemetry transport change.
     always exists; there is no separate inspector concept.
   - SKETCH-14 (dispose three-step): retain; reframe to the adapter's
     teardown (unsubscribe inspect; clear decay timers; drain fired set).
-- [ ] **`specs/items/test/sketch.md`** — drop tests verifying retired items
+- [ ] **`specs/test/sketch.md`** — drop tests verifying retired items
   (T for SKETCH-9, SKETCH-13, SKETCH-7); update Verifies citations on
   reframed items; keep the integration tests for SKETCH-1..5, SKETCH-10..12,
   SKETCH-14.
@@ -173,7 +173,7 @@ commit; the deletions land *after* the adapter ships.
 11. **Update README** — install, two-pane usage, adapter wiring, how to run
     the Sketch fork locally. Drop the elkjs / SVG / screenshot sections.
 12. **Spec deltas (single commit)** — update
-    `specs/items/{user,dev,test}/sketch.md` per the deliverable list; update
+    `specs/{user,dev,test}/sketch.md` per the deliverable list; update
     `specs/map.md`. Mark IR-003 deliverables progressively as the IR lands.
 
 ## Acceptance criteria
@@ -213,7 +213,7 @@ commit; the deletions land *after* the adapter ships.
   separately allowed by DR-003 and do not violate the live-telemetry
   rule.
 - All `views/sketch/**` and Sketch-fork patch sources carry SPDX headers per
-  [LIC-1](../items/dev/licensing.md#lic-1) and
-  [LIC-2](../items/dev/licensing.md#lic-2).
+  [LIC-1](../dev/licensing.md#lic-1) and
+  [LIC-2](../dev/licensing.md#lic-2).
 - After Task 10's deletion sweep, `npm run build` and `npm test` succeed
   with no references to the retired modules.

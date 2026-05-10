@@ -12,10 +12,9 @@ Code can be inconsistent with specs during development.
 ```text
 decisions/  Decision records (DRs)
 iterations/ Iteration records (IRs)
-items/      Spec item files
-    user/       User-visible behavior
-    dev/        Implementation requirements
-    test/       Acceptance testing
+user/       User-visible behavior item files
+dev/        Implementation requirements item files
+test/       Acceptance testing item files
 map.md      This index
 meta.md     The spec of specs
 ```
@@ -34,7 +33,7 @@ meta.md     The spec of specs
 | ID | File | Goal |
 | --- | --- | --- |
 | IR-000 | [000-spdx-headers.md](iterations/000-spdx-headers.md) | Add SPDX headers to applicable files |
-| IR-001 | [001-parallel-cligents-view.md](iterations/001-parallel-cligents-view.md) | Web view of parallel cligents with Captain orchestrating role panels |
+| IR-001 | [001-parallel-cligents-view.md](iterations/001-parallel-cligents-view.md) | Web view of parallel cligents with Captain orchestrating player panels |
 | IR-003 | [003-sketch-controlled-shell.md](iterations/003-sketch-controlled-shell.md) | Cutover to Sketch-as-controlled-shell: fork patches, parent-side adapter, retire DR-002 renderer |
 
 ## Packages
@@ -43,19 +42,19 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [git.md](items/dev/git.md) | Commit message format and AI co-authorship trailers |
+| dev | [git.md](dev/git.md) | Commit message format and AI co-authorship trailers |
 
 ### LIC
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [licensing.md](items/dev/licensing.md) | SPDX header requirements and file-scope rules |
-| test | [licensing.md](items/test/licensing.md) | Copyright and license header presence checks |
+| dev | [licensing.md](dev/licensing.md) | SPDX header requirements and file-scope rules |
+| test | [licensing.md](test/licensing.md) | Copyright and license header presence checks |
 
 ### SKETCH
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [sketch.md](items/user/sketch.md) | XState sketch visualizer: diagram and live-activity behavior |
-| dev | [sketch.md](items/dev/sketch.md) | Architecture, telemetry protocol, and lifecycle contracts |
-| test | [sketch.md](items/test/sketch.md) | Integration tests for diagram, telemetry derivation, and lifecycle |
+| user | [sketch.md](user/sketch.md) | XState sketch visualizer: diagram and live-activity behavior |
+| dev | [sketch.md](dev/sketch.md) | Architecture, telemetry protocol, and lifecycle contracts |
+| test | [sketch.md](test/sketch.md) | Integration tests for diagram, telemetry derivation, and lifecycle |
