@@ -60,14 +60,15 @@ When Reviewer is about to review any change, Captain shall prompt Reviewer:
 
 Target should be written in the same language as Source.
 
-## Abstraction
+## Composition
 
-Prompt lines may duplicate across spec items.
+Source may contain individual prompt snippets with overlapping or duplicate content.
+text2gears composes these snippets into Target spec items without any concern about duplication.
 
-If duplicate prompt lines share a common condition and identical players, they may be abstracted into an independent spec item, and they do not need to be restated or cited by other spec items.
-This improves maintainability.
+Each spec item shall address one well-defined state behavior and carry the full final prompt (the static part) for that state.
+Duplicate prompt lines across items are acceptable: Source is what users maintain; spec items are compiled artifacts that can be regenerated anytime.
 
-E.g., the prompt lines in `CODE-10` above may apply when reviewing a commit or unstaged changes, or as part of a longer prompt, so they are abstracted under the shared condition "when Reviewer is about to review any change".
+Test: a human shall be able to simulate an agent run by reading individual spec items and copying their full prompts verbatim, without manually composing prompts across items.
 
 ## References
 
