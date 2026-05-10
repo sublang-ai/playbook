@@ -86,4 +86,4 @@ When Coder makes any Initial Changes or Reviewer raises no findings on uncommitt
 > Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 
 When Captain prompts Committer, Captain shall also append the player identities to that prompt (which LLM played each role since last commit):
-> Coder is GPT-5.5; Reviewer is Opus 4.7.
+> Coder is Opus 4.7; Reviewer is GPT-5.5.
