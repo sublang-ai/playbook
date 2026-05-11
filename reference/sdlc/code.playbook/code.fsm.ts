@@ -35,7 +35,6 @@ type JumpableStateId =
   | 'failed';
 
 type WorkflowKind = 'singleCommit' | 'iteration' | 'specSummary';
-type FileScope = 'specs' | 'code' | 'mixed';
 type ChangeOrigin = 'bossIntent' | 'irTask';
 type ReviewSubject = 'commit' | 'changes';
 type AfterReview = 'continueIr' | 'summarizeSpecs' | 'done';
@@ -45,12 +44,24 @@ export type CaptainInput = {
   sourceItem: string;
   prompt: string;
   result: Record<string, string>;
+  // Optional structured fields the source item references but does not
+  // expose as <placeholder> tokens in the verbatim prompt. Each state
+  // populates only the fields its source item depends on; the Captain
+  // resolves placeholder tokens (e.g. IR-<#>, <coder-llm>) and grounds
+  // deictic phrasing ("below") from these.
+  intent?: string;
+  irNumber?: string;
+  taskDescription?: string;
+  reviews?: string;
+  challenges?: string;
+  coderPlayer?: string;
+  reviewerPlayer?: string;
 };
 
 export type CaptainOutput = {
   guard: string;
-  fileScope?: FileScope;
   irNumber?: string;
+  taskDescription?: string;
   reviews?: string;
   challenges?: string;
   summary?: string;
@@ -68,9 +79,9 @@ export type CodingInput = {
 export type CodingContext = CodingInput & {
   workflow?: WorkflowKind;
   changeOrigin?: ChangeOrigin;
-  fileScope?: FileScope;
   reviewSubject?: ReviewSubject;
   afterReview?: AfterReview;
+  taskDescription?: string;
   reviews?: string;
   challenges?: string;
   lastResult?: CaptainOutput;
@@ -116,15 +127,9 @@ const outputOf = (event: unknown): CaptainOutput | undefined =>
 const guardIs = (guard: string) =>
   ({ event }: { event: unknown }) => outputOf(event)?.guard === guard;
 
-const committedTo = (origin: ChangeOrigin, scope: FileScope) =>
+const guardAndOrigin = (guard: string, origin: ChangeOrigin) =>
   ({ context, event }: { context: CodingContext; event: unknown }) =>
-    outputOf(event)?.guard === 'committed' &&
-    context.changeOrigin === origin &&
-    outputOf(event)?.fileScope === scope;
-
-const changesMadeWithScope = (scope: FileScope) =>
-  ({ event }: { event: unknown }) =>
-    outputOf(event)?.guard === 'changesMade' && outputOf(event)?.fileScope === scope;
+    outputOf(event)?.guard === guard && context.changeOrigin === origin;
 
 const acceptedAfter = (subject: ReviewSubject) =>
   ({ context, event }: { context: CodingContext; event: unknown }) =>
@@ -139,8 +144,8 @@ const rememberCaptainOutput = assign({
   lastError: () => undefined,
   irNumber: ({ context, event }: { context: CodingContext; event: unknown }) =>
     outputOf(event)?.irNumber ?? context.irNumber,
-  fileScope: ({ context, event }: { context: CodingContext; event: unknown }) =>
-    outputOf(event)?.fileScope ?? context.fileScope,
+  taskDescription: ({ context, event }: { context: CodingContext; event: unknown }) =>
+    outputOf(event)?.taskDescription ?? context.taskDescription,
   reviews: ({ context, event }: { context: CodingContext; event: unknown }) =>
     outputOf(event)?.reviews ?? context.reviews,
   challenges: ({ context, event }: { context: CodingContext; event: unknown }) =>
@@ -171,10 +176,6 @@ const captainError = {
   target: '#failed',
   actions: rememberCaptainError,
 };
-
-const irNum = (context: CodingContext) => context.irNumber ?? '<#>';
-const coderLlm = (context: CodingContext) => context.coderPlayer ?? '<coder-llm>';
-const reviewerLlm = (context: CodingContext) => context.reviewerPlayer ?? '<reviewer-llm>';
 
 const readyEvents = {
   START_CODING: {
@@ -254,6 +255,7 @@ export const codingMachine = setup({
         input: ({ context }): CaptainInput => ({
           player: 'Coder',
           sourceItem: 'CODE-1',
+          intent: context.intent,
           prompt: [
             'Assess whether this can be completed in a single commit, following best practices.',
             'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
@@ -304,34 +306,40 @@ export const codingMachine = setup({
       description: 'CODE-2: Coder addresses or challenges Reviewer findings.',
       invoke: {
         src: 'captain',
-        input: (): CaptainInput => ({
+        input: ({ context }): CaptainInput => ({
           player: 'Coder',
           sourceItem: 'CODE-2',
+          reviews: context.reviews,
           prompt: [
             'For each review item below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
             'Stage all current changes that belong in the repo before making any edits, and leave your edits unstaged/untracked.',
           ].join('\n'),
           result: {
-            changesMade:
-              'Coder accepted one or more items and produced unstaged/untracked edits.',
-            challengesRaised: 'Coder challenged one or more review items.',
+            changesMadeSpecs:
+              'Coder accepted items and produced unstaged/untracked edits in @specs/{user,dev,test}/ only.',
+            changesMadeCode:
+              'Coder accepted items and produced unstaged/untracked edits outside @specs/{user,dev,test}/ only.',
+            changesMadeMixed:
+              'Coder accepted items and produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files.',
+            challengesRaised:
+              'Coder challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
             accepted:
               'Coder accepted the review outcome without further edits.',
           },
         }),
         onDone: [
           {
-            guard: changesMadeWithScope('specs'),
+            guard: guardIs('changesMadeSpecs'),
             target: '#reviewChangesSpecs',
             actions: rememberCaptainOutput,
           },
           {
-            guard: changesMadeWithScope('code'),
+            guard: guardIs('changesMadeCode'),
             target: '#reviewChangesCode',
             actions: rememberCaptainOutput,
           },
           {
-            guard: changesMadeWithScope('mixed'),
+            guard: guardIs('changesMadeMixed'),
             target: '#reviewChangesMixed',
             actions: rememberCaptainOutput,
           },
@@ -383,14 +391,16 @@ export const codingMachine = setup({
         input: ({ context }): CaptainInput => ({
           player: 'Coder',
           sourceItem: 'CODE-3',
+          irNumber: context.irNumber,
           prompt: [
-            `Continue to implement IR-${irNum(context)} if not all deliverables and tasks are done.`,
+            'Continue to implement IR-<#> if not all deliverables and tasks are done.',
             'Implement one task at a time (including corresponding tests if any).',
             'Stop after each task for review — do not commit yet.',
             'If relevant, mark progress in the IR.',
           ].join('\n'),
           result: {
-            taskReady: 'Coder produced uncommitted changes for the next IR task (Initial Changes).',
+            taskReady:
+              'Coder produced uncommitted changes for the next IR task (Initial Changes). Output shall include `taskDescription: <one-line description of the task just implemented>`.',
             iterationDone: 'All IR deliverables and tasks are done.',
             needsBossInput: 'Progress requires additional Boss input.',
           },
@@ -433,8 +443,9 @@ export const codingMachine = setup({
         input: ({ context }): CaptainInput => ({
           player: 'Coder',
           sourceItem: 'CODE-4',
+          irNumber: context.irNumber,
           prompt: [
-            `Read IR-${irNum(context)} and corresponding commits.`,
+            'Read IR-<#> and corresponding commits.',
             'According to @specs/meta.md, add or update spec items to fully capture:',
             '',
             '- the user requirements in @specs/user,',
@@ -462,7 +473,6 @@ export const codingMachine = setup({
               assign({
                 workflow: () => 'specSummary' as const,
                 changeOrigin: () => 'irTask' as const,
-                fileScope: () => 'specs' as const,
                 afterReview: () => 'done' as const,
               }),
             ],
@@ -480,9 +490,10 @@ export const codingMachine = setup({
         'CODE-5: Reviewer reviews a Boss-intent commit whose changes are only in @specs/{user,dev,test}/.',
       invoke: {
         src: 'captain',
-        input: (): CaptainInput => ({
+        input: ({ context }): CaptainInput => ({
           player: 'Reviewer',
           sourceItem: 'CODE-5',
+          intent: context.intent,
           prompt: [
             'Review the latest commit.',
             'Refer to the commit message.',
@@ -498,7 +509,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The spec-only commit has no review findings.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -521,9 +533,10 @@ export const codingMachine = setup({
         'CODE-6: Reviewer reviews a Boss-intent commit whose changes are only outside @specs/{user,dev,test}/.',
       invoke: {
         src: 'captain',
-        input: (): CaptainInput => ({
+        input: ({ context }): CaptainInput => ({
           player: 'Reviewer',
           sourceItem: 'CODE-6',
+          intent: context.intent,
           prompt: [
             'Review the latest commit.',
             'Refer to the commit message.',
@@ -534,7 +547,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The code-only commit has no review findings.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -557,9 +571,10 @@ export const codingMachine = setup({
         'CODE-7: Reviewer reviews a Boss-intent commit whose changes span both @specs/{user,dev,test}/ and other files.',
       invoke: {
         src: 'captain',
-        input: (): CaptainInput => ({
+        input: ({ context }): CaptainInput => ({
           player: 'Reviewer',
           sourceItem: 'CODE-7',
+          intent: context.intent,
           prompt: [
             'Review the latest commit.',
             'Refer to the commit message.',
@@ -577,7 +592,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The mixed commit has no review findings.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -600,9 +616,11 @@ export const codingMachine = setup({
         'CODE-8: Reviewer reviews an IR-task commit whose changes are only in @specs/{user,dev,test}/.',
       invoke: {
         src: 'captain',
-        input: (): CaptainInput => ({
+        input: ({ context }): CaptainInput => ({
           player: 'Reviewer',
           sourceItem: 'CODE-8',
+          irNumber: context.irNumber,
+          taskDescription: context.taskDescription,
           prompt: [
             'Review the latest commit.',
             'Refer to the commit message.',
@@ -618,7 +636,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The IR-task spec-only commit has no review findings.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -641,9 +660,11 @@ export const codingMachine = setup({
         'CODE-9: Reviewer reviews an IR-task commit whose changes are only outside @specs/{user,dev,test}/.',
       invoke: {
         src: 'captain',
-        input: (): CaptainInput => ({
+        input: ({ context }): CaptainInput => ({
           player: 'Reviewer',
           sourceItem: 'CODE-9',
+          irNumber: context.irNumber,
+          taskDescription: context.taskDescription,
           prompt: [
             'Review the latest commit.',
             'Refer to the commit message.',
@@ -654,7 +675,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The IR-task code-only commit has no review findings.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -677,9 +699,11 @@ export const codingMachine = setup({
         'CODE-10: Reviewer reviews an IR-task commit whose changes span both @specs/{user,dev,test}/ and other files.',
       invoke: {
         src: 'captain',
-        input: (): CaptainInput => ({
+        input: ({ context }): CaptainInput => ({
           player: 'Reviewer',
           sourceItem: 'CODE-10',
+          irNumber: context.irNumber,
+          taskDescription: context.taskDescription,
           prompt: [
             'Review the latest commit.',
             'Refer to the commit message.',
@@ -697,7 +721,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The IR-task mixed commit has no review findings.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -738,7 +763,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The uncommitted spec-only changes are ready to commit.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -776,7 +802,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The uncommitted code-only changes are ready to commit.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -821,7 +848,8 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             noFindings: 'The uncommitted mixed changes are ready to commit.',
-            hasFindings: 'The review produced findings for Coder.',
+            hasFindings:
+              'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
           },
         }),
         onDone: [
@@ -845,9 +873,11 @@ export const codingMachine = setup({
       description: 'CODE-14: Reviewer adjudicates Coder rebuttals against the prior review.',
       invoke: {
         src: 'captain',
-        input: (): CaptainInput => ({
+        input: ({ context }): CaptainInput => ({
           player: 'Reviewer',
           sourceItem: 'CODE-14',
+          reviews: context.reviews,
+          challenges: context.challenges,
           prompt: [
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
@@ -914,44 +944,47 @@ export const codingMachine = setup({
         input: ({ context }): CaptainInput => ({
           player: 'Committer',
           sourceItem: 'CODE-15',
+          coderPlayer: context.coderPlayer,
           prompt: [
             'Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
-            `Coder is ${coderLlm(context)}.`,
+            'Coder is <coder-llm>.',
           ].join('\n'),
           result: {
-            committed: 'Relevant changes were committed.',
+            committedSpecs: 'Committed changes that touch only @specs/{user,dev,test}/.',
+            committedCode: 'Committed changes that touch only files outside @specs/{user,dev,test}/.',
+            committedMixed: 'Committed changes that span both @specs/{user,dev,test}/ and other files.',
             noRelevantChanges: 'There are no relevant changes to commit.',
             needsBossInput: 'Committing requires additional Boss input.',
           },
         }),
         onDone: [
           {
-            guard: committedTo('bossIntent', 'specs'),
+            guard: guardAndOrigin('committedSpecs', 'bossIntent'),
             target: '#reviewBossCommitSpecs',
             actions: rememberCaptainOutput,
           },
           {
-            guard: committedTo('bossIntent', 'code'),
+            guard: guardAndOrigin('committedCode', 'bossIntent'),
             target: '#reviewBossCommitCode',
             actions: rememberCaptainOutput,
           },
           {
-            guard: committedTo('bossIntent', 'mixed'),
+            guard: guardAndOrigin('committedMixed', 'bossIntent'),
             target: '#reviewBossCommitMixed',
             actions: rememberCaptainOutput,
           },
           {
-            guard: committedTo('irTask', 'specs'),
+            guard: guardAndOrigin('committedSpecs', 'irTask'),
             target: '#reviewIrTaskCommitSpecs',
             actions: rememberCaptainOutput,
           },
           {
-            guard: committedTo('irTask', 'code'),
+            guard: guardAndOrigin('committedCode', 'irTask'),
             target: '#reviewIrTaskCommitCode',
             actions: rememberCaptainOutput,
           },
           {
-            guard: committedTo('irTask', 'mixed'),
+            guard: guardAndOrigin('committedMixed', 'irTask'),
             target: '#reviewIrTaskCommitMixed',
             actions: rememberCaptainOutput,
           },
@@ -971,9 +1004,10 @@ export const codingMachine = setup({
         input: ({ context }): CaptainInput => ({
           player: 'Committer',
           sourceItem: 'CODE-16',
+          reviewerPlayer: context.reviewerPlayer,
           prompt: [
             'Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
-            `Reviewer is ${reviewerLlm(context)}.`,
+            'Reviewer is <reviewer-llm>.',
           ].join('\n'),
           result: {
             committed: 'Relevant changes were committed.',
@@ -1016,9 +1050,11 @@ export const codingMachine = setup({
         input: ({ context }): CaptainInput => ({
           player: 'Committer',
           sourceItem: 'CODE-17',
+          coderPlayer: context.coderPlayer,
+          reviewerPlayer: context.reviewerPlayer,
           prompt: [
             'Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
-            `Coder is ${coderLlm(context)}; Reviewer is ${reviewerLlm(context)}.`,
+            'Coder is <coder-llm>; Reviewer is <reviewer-llm>.',
           ].join('\n'),
           result: {
             committed: 'Relevant changes were committed.',
