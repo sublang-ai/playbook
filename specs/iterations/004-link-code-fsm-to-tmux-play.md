@@ -87,9 +87,10 @@ The LLM-classifier prompt for CODE is fixed text the linker emits once; it
 names the four event types, the placeholder set for each payload field,
 and demands JSON. No mention of FSM internals beyond the event union.
 
-`BOSS_INTERRUPT` also routes from the cligent `context.signal` abort path
-when the host pre-empts the turn; in that case the linker selects
-`targetId` from a default mapping (see §Quiescence and abort below).
+`BOSS_INTERRUPT` is reached only through the explicit `/interrupt`
+slash command (or the LLM classifier choosing it). It is *not* how
+SIGINT-style aborts reach the FSM — those go through the natural
+`onError → #failed` path documented in §Quiescence and abort.
 
 ## Captain adjudication for CODE
 
@@ -212,13 +213,23 @@ For each FSM invocation, the linked Captain actor:
    table (with the composite-player tiebreak rules above).
 3. Builds the player prompt per §Player prompt composition.
 4. Awaits `context.callRole(roleId, playerPrompt)`. Honors
-   `context.signal`. Wraps `callRole` failures as
-   `runtime_error` (cligent's contract) instead of swallowing them.
+   `context.signal`. `callRole` failures already surface as
+   `role_finished { status: 'error' }` records emitted by the cligent
+   runtime per [TMUX-025](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-025);
+   the linker neither re-emits them as `runtime_error` (that record is
+   reserved for control-plane failures per the same spec item) nor
+   swallows them. Step 5 below routes the bad status into the FSM's
+   `onError` so the runtime's own `role_finished` record stays the
+   single source of truth for the failure.
 5. Adjudicates the role's `finalText` via the per-state judge
-   (§Captain adjudication). On `RunStatus !== 'ok'`, short-circuit to
-   `BOSS_INTERRUPT` rather than feeding an aborted/error result back to
-   the FSM (the FSM's `failed` state is for actor errors, not host-level
-   role failures).
+   (§Captain adjudication). On `RunStatus === 'error'` or
+   `'aborted'`, the bridge throws — the `fromPromise` actor rejects,
+   XState routes the rejection through the state's `onError:
+   captainError` → `#failed`, and the linker's drive-loop sees the
+   quiescent `failed` snapshot and returns. The FSM's `failed` is
+   the single fail-stop sink for both Captain-actor errors and
+   host-level role failures; no special-case `BOSS_INTERRUPT` is
+   needed.
 6. Returns the adjudicator's JSON as the actor's output. XState routes it
    through the state's `onDone` and the FSM advances.
 
@@ -229,15 +240,30 @@ classifier. The FSM-driven player calls all use `callRole`.
 
 - **Quiescent** values for the CODE FSM are `'ready'`, `'failed'`, and
   the final `'done'`. `handleBossTurn` returns when the snapshot value
-  matches one of these (or when `context.signal` aborts).
-- **`context.signal` abort**: when the signal fires mid-turn, the linker
-  shall send `{ type: 'BOSS_INTERRUPT', targetId: '<currentStateId>' }`
-  using the current snapshot's state ID, so any active `invoke` re-enters
-  cleanly per the FSM's `bossInterrupts` helper. The active player call
-  is already cancelled by cligent's `context.signal` propagation.
+  matches one of these.
+- **`context.signal` abort**: the linker shall *not* synthesize a
+  `BOSS_INTERRUPT` on signal — the FSM's `bossInterrupts` helper uses
+  `reenter: true`, so a synthetic interrupt would stop and immediately
+  re-enter the same state, spawning a fresh player call.
+  Instead, the linker relies on the natural rejection path: cligent
+  propagates `context.signal` into the in-flight `callRole` /
+  `callCaptain`, the call rejects with an abort error, the
+  `fromPromise` Captain actor surfaces that as a rejection, and
+  XState routes it through the state's `onError: captainError` →
+  `#failed`. `failed` is quiescent, so the drive-loop exits and
+  `handleBossTurn` returns. The active player call is already
+  cancelled by the same signal propagation; no further action is
+  needed from the linker.
+- **`BOSS_INTERRUPT` remains available for explicit Boss-driven
+  redirects** (the gears2fsm contract — "jumps into an active
+  machine, pre-empting whichever state is running"). The classifier's
+  slash form `/interrupt <stateId> [args]` is the supported path; it
+  is not how SIGINT-style aborts are expressed.
 - **Re-entry from `failed`**: Boss may send another `START_CODING` /
-  `CONTINUE_IR` / `SUMMARIZE_IR` from `failed`; the FSM accepts them via
-  `readyEvents`.
+  `CONTINUE_IR` / `SUMMARIZE_IR` from `failed`; the FSM accepts them
+  via `readyEvents`. The actor's `lastError` is surfaced via
+  `emitStatus` on the transition into `failed` so Boss sees the
+  diagnostic.
 
 ## Status and telemetry
 
@@ -279,7 +305,11 @@ records the linker invocation:
 **Module shape** (described, not implemented):
 
 - `import { codingMachine, CaptainInput, CaptainOutput, CodingInput,
-  CodingEvent, JumpableStateId } from './code.fsm.js';`
+  CodingEvent } from './code.fsm.js';` — the FSM's actual public
+  surface. `JumpableStateId`, the per-state `result` maps, and every
+  other internal type stay local to the FSM; the linker has no need
+  for them as static imports (see §Captain adjudication for how each
+  invocation's `result` reaches the judge).
 - `import { createActor, fromPromise } from 'xstate';`
 - `import type { Captain, BossTurn, CaptainContext, CaptainSession,
   RoleHandle } from '@sublang/cligent/tmux-play';`
@@ -291,9 +321,11 @@ records the linker invocation:
 - Internal helpers, one per emitted strategy:
   - `composePlayerPrompt(input: CaptainInput): string`
   - `classifyBossPrompt(prompt: string, context): Promise<CodingEvent>`
-  - `judgeResult(state: string, output: string, context):
-    Promise<CaptainOutput>` — built from a per-state table the linker
-    emits from each state's `result` map.
+  - `judgeResult(input: CaptainInput, output: string, context):
+    Promise<CaptainOutput>` — derives the judge prompt from the
+    `input.result` map XState hands the invocation. No pre-computed
+    per-state table is needed: the FSM ships the contract through each
+    `CaptainInput`, the linker reads it there.
   - `resolveRoleId(input: CaptainInput, binding): string` — implements
     the composite-player tiebreak.
 - The `captain` actor placeholder is replaced with
@@ -302,9 +334,9 @@ records the linker invocation:
   })` swap happens inside `init`.
 
 The file holds no CODE-specific prose. All player prompts, guard keys,
-and result descriptions live in `code.fsm.ts`. The linker copies
-`result` maps into the judge prompts but does not store an independent
-copy elsewhere.
+and result descriptions live in `code.fsm.ts` and reach the linker
+through `CaptainInput` at each invocation; the linker never mirrors
+them.
 
 ## Deliverables
 
@@ -352,9 +384,13 @@ Each task is a commit. Order keeps `main` building at every commit.
    CODE-15/16/17 alias resolution in the test.
 7. **Implement the LLM judge** (`judgeResult`). One commit per strategy
    would also work; for CODE there is only LLM-judge, so one commit.
-   Build the per-state result table by reading the FSM's exported
-   `result` maps at runtime (not by mirroring them in `code.captain.ts`).
-   Test against a fake `callCaptain` that returns a fixed JSON.
+   Each invocation's judge prompt is built from the `result` map on
+   that invocation's `CaptainInput` — XState already hands the linker
+   the per-state contract through `input.result`, so no pre-computed
+   table and no FSM refactor are needed. Test against a fake
+   `callCaptain` that returns a fixed JSON; assert the prompt body
+   contains every key listed in `input.result` with its description
+   verbatim.
 8. **Implement the Boss-event classifier** (`classifyBossPrompt`). Slash
    forms first; LLM-classifier fallback second. Test the slash table and
    one LLM-fallback path with a fake `callCaptain`.
@@ -363,9 +399,13 @@ Each task is a commit. Order keeps `main` building at every commit.
    Add a test that drives an actor through one fake turn end-to-end with
    stubbed `callRole`/`callCaptain` returning canned responses.
 10. **Drive-to-quiescence loop + abort**. Implement `handleBossTurn`
-    proper, including the `final`-state dispose/reconstruct path and the
-    `context.signal` → `BOSS_INTERRUPT` translation. Test with both a
-    clean run-to-`ready` and an aborted run.
+    proper, including the `final`-state dispose/reconstruct path. On
+    `context.signal` abort the linker takes no FSM action — it relies
+    on the natural rejection → `onError` → `#failed` path (see
+    §Quiescence and abort). Test three scenarios: clean run to
+    `ready`; signal-abort mid-`callRole` lands at `failed` with the
+    abort error in `lastError`; explicit `/interrupt <stateId>` slash
+    redirects to that state via `BOSS_INTERRUPT`.
 11. **Status/telemetry hookup** (`session.emitStatus` /
     `session.emitTelemetry`). Subscribe to actor snapshots, emit on every
     transition. Test with a fake session that records emissions.
@@ -389,9 +429,24 @@ Each task is a commit. Order keeps `main` building at every commit.
 - Typing free-form text (no slash) routes through the LLM-classifier
   fallback and lands on the same flow when the text obviously matches
   `START_CODING`.
-- Hitting `Ctrl-C` aborts the active turn, sends `BOSS_INTERRUPT`, and
-  leaves the FSM in `ready` (or whichever jumpable state the targetId
-  matches). The Boss can immediately start another turn.
+- `Ctrl-C` (SIGINT) is terminal in tmux-play per [TMUX-026](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026):
+  the runtime aborts the active turn, runs shutdown, kills the tmux
+  session, and removes launcher-owned work dirs. Internally during
+  the unwind, cligent's `context.signal` cancels the in-flight
+  `callRole`, which *resolves* with `RoleRunResult { status:
+  'aborted' }` per [TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033) —
+  it does not reject. The linker's bridge inspects `result.status`
+  and throws (per §Captain-actor bridge step 5); that throw rejects
+  the `fromPromise` Captain actor, XState routes the rejection
+  through `onError` to `#failed`, and the drive-loop drains the turn
+  cleanly. The user sees tmux exit, not a `failed` snapshot — there
+  is no follow-up turn in the same session. In-session redirection
+  (without ending the session) is reached only via the explicit
+  `/interrupt` slash, not Ctrl-C.
+- Typing `/interrupt <stateId>` redirects the FSM to that jumpable
+  state via `BOSS_INTERRUPT` (with `reenter: true`). This is the
+  explicit Boss-driven redirect path; it is distinct from SIGINT and
+  is not how aborts are expressed.
 - The FSM's `done` state cleanly disposes the actor; the next Boss turn
   starts fresh from `ready`.
 - The sketch visualizer (`views/sketch`) attached as an opt-in

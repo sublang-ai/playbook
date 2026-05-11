@@ -35,6 +35,7 @@ meta.md     The spec of specs
 | IR-000 | [000-spdx-headers.md](iterations/000-spdx-headers.md) | Add SPDX headers to applicable files |
 | IR-001 | [001-parallel-cligents-view.md](iterations/001-parallel-cligents-view.md) | Web view of parallel cligents with Captain orchestrating player panels |
 | IR-003 | [003-sketch-controlled-shell.md](iterations/003-sketch-controlled-shell.md) | Cutover to Sketch-as-controlled-shell: fork patches, parent-side adapter, retire DR-002 renderer |
+| IR-004 | [004-link-code-fsm-to-tmux-play.md](iterations/004-link-code-fsm-to-tmux-play.md) | Link CODE FSM to cligent's tmux-play Captain extension; ship `code.captain.ts` as the third compiler-phase output |
 
 ## Packages
 

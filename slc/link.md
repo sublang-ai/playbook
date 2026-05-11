@@ -110,9 +110,14 @@ Both strategies shall be host-agnostic in their generated form — the
 specific LLM call is the host's primitive, not the strategy's. Hosts that
 deliver structured Boss turns may skip classification entirely.
 
-`BOSS_INTERRUPT` shall route from the host's pre-emption signal (SIGINT,
-escape key, dedicated control channel) and shall not require Boss to type
-a slash command.
+`BOSS_INTERRUPT` (or whatever name the FSM uses for explicit Boss-driven
+state jumps) shall route from the host's *redirect* channel when the host
+provides one — a dedicated control key, a slash command, or a separate
+input lane — and shall not require Boss to retype a slash through the
+classifier. `BOSS_INTERRUPT` is *not* an abort surface: aborts go through
+the host's abort signal and the strategies in §Session lifecycle. Hosts
+where the abort signal is terminal (e.g., SIGINT runs shutdown, not
+mid-turn cancellation) shall not route abort to `BOSS_INTERRUPT`.
 
 ## Captain adjudication
 
@@ -147,8 +152,14 @@ The adjudicator shall fail loudly on:
 - A missing payload field the state's `result` description requires,
 - An empty / malformed response.
 
-On failure the linker shall surface a host-typed error event (e.g., raise
-`runtime_error` in cligent), not silently re-prompt the player.
+On failure the linker shall propagate the failure as a control-plane
+error in the host's terms — e.g., throw out of the host's Boss-turn
+entry so the host surfaces it on its control-plane channel (cligent
+catches such throws and emits `runtime_error` per its TMUX-025) — not
+silently re-prompt the player. Adjudicator failures are linker bugs or
+operator misconfigurations; the host's role-result channels
+(`role_finished` and equivalents) are reserved for failures the player
+itself produced.
 
 ## Session lifecycle
 
@@ -172,8 +183,31 @@ The linked Captain shall:
   shall dispose the actor and lazily reconstruct it on the next Boss
   turn — `final` is terminal and cannot accept new events.
 - Honor the host's abort signal at every player call and at every poll
-  between transitions; on abort, send the FSM's pre-emption event if it
-  declares one (e.g., `BOSS_INTERRUPT`) before returning from the turn.
+  between transitions. On abort, the linker shall drive the actor to a
+  quiescent state before returning from the turn. Three strategies are
+  permitted; the linker selects per FSM:
+  - **Natural rejection** — the linker's Captain actor (e.g.,
+    `fromPromise`) ends the invocation by rejecting, and the FSM
+    routes the rejection through `onError` to a quiescent sink. The
+    cancelled host primitive may *itself* reject (some hosts), or it
+    may resolve with a structured failure/abort status that the
+    bridge inspects and converts into a Captain-actor rejection
+    (cligent's `RoleRunResult { status: 'aborted' | 'error' }` is the
+    canonical example). Either shape is permitted — the contract is
+    on the Captain-actor boundary, not on the host primitive's
+    promise behavior. Preferred when every Captain-invoking state's
+    `onError` lands somewhere quiescent — the FSM's own error wiring
+    is the abort path.
+  - **Synthetic pre-emption to a quiescent target** — send the FSM's
+    pre-emption event (e.g., `BOSS_INTERRUPT { targetId: <state> }`)
+    with a target that is itself quiescent (typically `ready` or
+    `failed`). The linker shall not pick the active state as the
+    target: `gears2fsm.md` prescribes `reenter: true` for
+    `bossInterrupts`, so re-entering the active state restarts its
+    `invoke` and spawns a fresh player call.
+  - **Programmatic stop** — `actor.stop()` and report the turn as
+    aborted via the host's status channel. Reserved for FSMs with
+    neither `onError` wiring nor a pre-emption event.
 - In `dispose`, stop the actor and drain any pending host emissions.
 
 The actor's `lastError` field shall be surfaced via the host's status
