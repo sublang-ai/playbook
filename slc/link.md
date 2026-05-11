@@ -1,149 +1,191 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
 
-# FSM-to-Captain Linking
+# FSM-to-Runtime Linking
 
 Third phase of a playbook (a state-machine agent orchestrating other agents).
-Binds the object artifact produced by [gears2fsm](gears2fsm.md) to a concrete
-**host** — the environment that owns the Boss readline, the player runtime,
-and the lifecycle that ultimately runs the agent.
+Compiles the object artifact produced by [gears2fsm](gears2fsm.md) into a
+**`PlaybookRuntime`** — a host-agnostic runner that drives the FSM, classifies
+Boss input into typed events, runs the Captain-actor against the playbook's
+players, adjudicates player output into FSM guards, and surfaces transitions
+as status/telemetry.
+
+The runtime is invoked through a small, stable `PlaybookPorts` contract.
+Presentation layers (tmux-play, web, CLI, tests) implement the four ports
+once and inherit every playbook.
 
 - Source: an XState v5 machine artifact (`.fsm.ts`) produced by gears2fsm.
-- Target: a **linked Captain**, host-bound, ready to plug into the host's
-  Captain extension point.
+- Target: a `PlaybookRuntime` factory module — TypeScript, host-agnostic.
 
-Gears2fsm forbids the FSM from binding a runner; link is where the binding
-happens. The link compiler shall not modify the FSM artifact and shall not
-re-derive Captain prompts, result keys, or guard semantics — those are fixed
-by the FSM.
+Hosts are out of scope for this phase. Each host writes one generic adapter
+that loads any `PlaybookRuntime` module and supplies its own ports; the
+adapter is a host-side concern documented in that host's own repo.
+
+Gears2fsm forbids the FSM artifact from binding a runner; link is where the
+runner is bound. The link compiler shall not modify the FSM artifact and
+shall not re-derive Captain prompts, result keys, or guard semantics —
+those are fixed by the FSM.
 
 ## Formats
 
 | Role | Format | Extension |
 | --- | --- | --- |
 | source | fsm | .ts |
-| target | captain | host-defined |
+| target | playbook | .ts |
 
-The target extension follows the host's runtime (e.g., `.ts` for a cligent-
-style TypeScript host, `.py` for a Python host). The link compiler picks the
-emitter that matches the host.
+## PlaybookRuntime contract
 
-## Host abstraction
+The emitted module shall default-export a factory of the following shape:
 
-A **host** defines four surfaces a linked Captain must satisfy:
+```typescript
+interface PlaybookRuntime {
+  init(ports: PlaybookPorts): Promise<void>;
+  handleBossInput(turn: { text: string; signal: AbortSignal }): Promise<void>;
+  dispose(): Promise<void>;
+}
 
-- **Lifecycle hook**: how the host constructs the Captain instance, calls an
-  optional `init`, and disposes it. The Captain shall own session-scoped
-  state (the XState actor) here, not at module load.
-- **Boss turn entry**: how Boss prompts arrive. Typically a single method
-  per turn (e.g., `handleBossTurn(turn, context)`), with the host serializing
-  turns. The linker shall not assume per-character streaming on input.
-- **Player invocation**: how the Captain reaches each player. The host
-  exposes named handles and one or more call primitives (e.g.,
-  `context.callRole(roleId, prompt)`). The Captain never constructs adapters
-  directly.
-- **Status/telemetry**: how the Captain reports human-readable progress and
-  machine-readable events back to observers. Status is for the Boss-facing
-  pane; telemetry is for opt-in observers (visualizer, metrics).
+export default function createPlaybookRuntime(
+  options: PlaybookRuntimeOptions,
+): PlaybookRuntime;
+```
 
-The host shall declare its Captain contract in the spec it owns; the link
-compiler imports the contract types from there. The linker shall not
-redefine them.
+`init` receives the host's ports, constructs the XState actor with FSM
+`input` derived from `options`, and starts the actor. The runtime owns the
+actor for the rest of its lifetime; `handleBossInput` runs one turn,
+`dispose` stops the actor and drains pending port emissions.
+
+`PlaybookRuntimeOptions` is host-agnostic and carries only data the
+playbook needs to bind to its world — player binding, identity strings,
+strategy overrides. The link compiler emits a typed options interface per
+playbook based on the FSM's `CodingInput` (or equivalent).
+
+## PlaybookPorts contract
+
+```typescript
+interface PlaybookPorts {
+  callPlayer(playerId: string, prompt: string, signal: AbortSignal):
+    Promise<PlayerResult>;
+  callJudge(prompt: string, signal: AbortSignal):
+    Promise<string>;
+  emitStatus(message: string, data?: unknown): Promise<void>;
+  emitTelemetry(event: { topic: string; payload: unknown }): Promise<void>;
+}
+
+interface PlayerResult {
+  status: 'ok' | 'aborted' | 'error';
+  finalText?: string;
+  error?: string;
+}
+```
+
+`PlayerResult` mirrors cligent's `RoleRunResult` shape ([TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033))
+so a tmux-play port adapter is direct assignment; other hosts adapt their
+own player primitives to the same shape. The runtime treats `status !==
+'ok'` as a player failure and routes it through the FSM's error path
+(§Abort).
+
+`callJudge` returns free-form text. The runtime parses it according to
+the per-state adjudication strategy (§Captain adjudication). One port
+serves both classifier and adjudicator — they vary only in prompt; hosts
+that want a cheaper classifier model may wrap `callJudge` themselves.
+
+`emitStatus` is human-readable; `emitTelemetry` is structured. Both are
+async so hosts can apply backpressure on slow transports. Both shall
+return ordered, awaited, never-dropped emissions to whichever channel
+the host wires; the runtime emits in order and awaits each before
+issuing the next.
+
+The runtime never constructs adapters, never speaks to LLMs directly,
+and never touches host-specific types beyond `PlaybookPorts`.
 
 ## Linker inputs
 
-The link compiler shall accept four inputs:
+The link compiler shall accept:
 
 - The FSM artifact (path to a `.fsm.ts`).
-- The host's Captain contract module (specifier; the linker imports types
-  from it and emits a factory that satisfies it).
-- A **player binding** that maps GEARS players (declared in the
-  [text2gears](text2gears.md#players) source) to host player identifiers.
-- An **adjudication strategy** and a **Boss-event mapping** (both selected
-  by name; the strategies themselves are host-agnostic, defined below).
+- A **player binding** mapping GEARS players (declared in the
+  [text2gears](text2gears.md#players) source) to opaque player-identifier
+  strings.
+- An **adjudication strategy** (default: LLM-judge per state) and a
+  **Boss-event mapping** (default: slash-prefix with LLM-classifier
+  fallback). Both strategies are host-agnostic.
 
-The first three are required; the fourth has documented defaults so a
-linker run with only the first three still produces a working Captain.
+The host's identity does not enter compilation. A given linked
+`PlaybookRuntime` module runs unchanged under any host that implements
+`PlaybookPorts`.
 
 ## Player binding
 
 Each GEARS state names exactly one player (`invoke.input.player`). The
-linker shall map every named player to a host identifier.
+linker shall map every named player to a `playerId` string used in
+`PlaybookPorts.callPlayer(playerId, …)`. The host adapter then routes
+that opaque string to its concrete primitive.
 
 For composite players declared with aliases (e.g., `Committer = Coder |
 Reviewer`), the linker shall resolve the alias **per source item** by
-inspecting the `CaptainInput` fields populated at that state: if one of
-`<playerName>Player` is the only such field present, bind to that player;
-if multiple are present, prefer the first-listed alternative in the alias
-declaration order; if none are present, fall back to the alias's first
-alternative. The resolution shall be deterministic and recorded in the
-emitted artifact so future maintainers can audit it without re-running the
-linker.
+inspecting the `CaptainInput` fields populated at that state: if only one
+of `<playerName>Player` is present, bind to that player; if multiple are
+present, prefer the first-listed alternative in the alias declaration
+order; if none are present, fall back to the alias's first alternative.
+The resolution shall be deterministic and recorded in the emitted module
+so future maintainers can audit it without re-running the linker.
 
 The linker shall not invent player identifiers and shall not silently
 collapse aliases at the FSM level — composite players keep their
-`player: 'Committer'` value on `CaptainInput`; resolution decides the host
-call site only.
+`player: 'Committer'` value on `CaptainInput`; resolution decides the
+`callPlayer` invocation only.
 
 ## Boss-event mapping
 
-The FSM's `events` union enumerates every Boss-originated event
-(`START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`, `BOSS_INTERRUPT`, and any
-others a particular FSM adds). The host typically delivers Boss input as a
-free-form string. The linker shall classify each Boss turn into exactly one
-of the FSM's events plus its payload.
+The FSM's `events` union enumerates every Boss-originated event. The
+runtime receives Boss input as a free-form string (`handleBossInput.text`)
+and shall classify each turn into exactly one of the FSM's events plus
+its payload.
 
 Two default classifier strategies, in selection order:
 
 - **Slash-prefix** (default): the Boss types a leading slash command
-  (`/start <prompt>`, `/continue <irNumber>`, …). The linker generates one
-  parser per event from the `events` union; payload extraction is
-  positional and explicit. Unknown commands surface as a status line, not
+  (`/start <prompt>`, `/continue <irNumber>`, …). The linker generates
+  one parser per event from the `events` union; payload extraction is
+  positional and explicit. Unknown commands surface as `emitStatus`, not
   as a silently-dropped turn.
-- **LLM-classifier** (fallback): when no slash matches, the linker invokes
-  the host's Captain LLM (e.g., `context.callCaptain`) with a fixed
-  classification prompt that demands a JSON `{ event, payload }` answer
-  against the FSM's typed event union. The Captain LLM is the host's own
-  language model; the FSM never sees the classifier prompt.
+- **LLM-classifier** (fallback): when no slash matches, the runtime
+  invokes `callJudge` with a fixed classification prompt that demands a
+  JSON `{ event, payload }` answer against the FSM's typed event union.
 
-Both strategies shall be host-agnostic in their generated form — the
-specific LLM call is the host's primitive, not the strategy's. Hosts that
-deliver structured Boss turns may skip classification entirely.
+Hosts that deliver structured Boss turns (a programmatic API, a CI host
+with pre-typed payloads) shall classify before calling `handleBossInput`
+and may use a slash form that round-trips their structured payload.
 
 `BOSS_INTERRUPT` (or whatever name the FSM uses for explicit Boss-driven
-state jumps) shall route from the host's *redirect* channel when the host
-provides one — a dedicated control key, a slash command, or a separate
-input lane — and shall not require Boss to retype a slash through the
-classifier. `BOSS_INTERRUPT` is *not* an abort surface: aborts go through
-the host's abort signal and the strategies in §Session lifecycle. Hosts
-where the abort signal is terminal (e.g., SIGINT runs shutdown, not
-mid-turn cancellation) shall not route abort to `BOSS_INTERRUPT`.
+state jumps) is reached only through the explicit `/interrupt <stateId>`
+slash form (or LLM-classifier choosing it). It is *not* an abort surface;
+aborts go through the abort signal and the strategies in §Abort. Hosts
+where the abort signal is terminal (e.g., SIGINT runs shutdown) shall
+not route abort to `BOSS_INTERRUPT`.
 
 ## Captain adjudication
 
-After a player call returns free-form text, the linker shall coerce that
-text into one of the **per-state** `invoke.input.result` keys, along with
-any payload fields the state's `result` description names as required (per
-gears2fsm's contract that result descriptions oblige outputs).
+After a player call returns, the runtime shall coerce `result.finalText`
+into one of the **per-state** `invoke.input.result` keys, along with any
+payload fields the state's `result` description names as required.
 
-The linker shall emit one adjudicator per source item, scoped to that
-state's `result` map. Two default adjudication strategies, in selection
-order:
+Two default adjudication strategies, in selection order:
 
-- **LLM-judge** (default): construct a fresh prompt for the host's Captain
-  LLM that names the source item's player, includes the player's verbatim
-  output, lists the `result` keys with their descriptions, and demands a
-  JSON `{ guard, …payloadFields }` answer keyed to exactly one of the
+- **LLM-judge** (default): construct a fresh prompt for `callJudge` that
+  names the source item's player, includes the player's verbatim output,
+  lists the `result` keys with their descriptions, and demands a JSON
+  `{ guard, …payloadFields }` answer keyed to exactly one of the
   declared guards. The judge prompt shall not interpret the player's
-  output, paraphrase it, or alter the FSM's `result` text — it carries the
-  description verbatim.
-- **Marker-parse** (alternative, host-agnostic): a deterministic parser
-  that scans the player output for a terminal control line such as
+  output, paraphrase it, or alter the FSM's `result` text — it carries
+  the description verbatim.
+- **Marker-parse** (alternative): a deterministic parser that scans the
+  player output for a terminal control line such as
   `FSM-RESULT: { "guard": "...", ... }`. Useful when player adapters can
   be steered to emit structured trailers and the operator wants to avoid
   the extra LLM call.
 
-A linker may select different strategies per state if its config so
+The linker may select different strategies per state if its config so
 specifies; the default is **LLM-judge for every state**.
 
 The adjudicator shall fail loudly on:
@@ -152,112 +194,129 @@ The adjudicator shall fail loudly on:
 - A missing payload field the state's `result` description requires,
 - An empty / malformed response.
 
-On failure the linker shall propagate the failure as a control-plane
-error in the host's terms — e.g., throw out of the host's Boss-turn
-entry so the host surfaces it on its control-plane channel (cligent
-catches such throws and emits `runtime_error` per its TMUX-025) — not
-silently re-prompt the player. Adjudicator failures are linker bugs or
-operator misconfigurations; the host's role-result channels
-(`role_finished` and equivalents) are reserved for failures the player
-itself produced.
+Adjudicator failures are control-plane errors. The runtime shall
+propagate them by throwing out of `handleBossInput` after attempting
+cleanup; the host adapter surfaces the throw on its control-plane
+channel (cligent surfaces such throws as `runtime_error` per
+[TMUX-025](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-025)).
+The host's player-result channels (`role_finished` and equivalents) are
+reserved for failures the player itself produced and are emitted by the
+host automatically when `callPlayer` resolves with `status !== 'ok'`.
 
 ## Session lifecycle
 
-The linked Captain shall:
+The `PlaybookRuntime` shall:
 
-- In the host's lifecycle hook (`init`), construct the XState actor with
-  the FSM's `input` shape derived from session-scoped data the host
-  supplies (player bindings, identities, instance defaults). The actor is
-  session-scoped, not turn-scoped.
-- Start the actor in `init` and subscribe to its snapshots so each state
-  transition can be surfaced as status/telemetry before the next event
-  fires.
-- Per Boss turn, classify the prompt, send the FSM event, then **drive the
-  actor to quiescence**: keep awaiting Captain-actor invocations until the
-  machine reaches a state that takes a Boss event (typically `ready` or
-  `failed`) or a `final` state. Within that drive loop the linker calls
-  the host's player primitives, awaits each player response, adjudicates
-  it, and resolves the FSM's Captain actor with the resulting
-  `CaptainOutput`.
-- When the actor reaches a `final` state during a Boss turn, the linker
-  shall dispose the actor and lazily reconstruct it on the next Boss
-  turn — `final` is terminal and cannot accept new events.
-- Honor the host's abort signal at every player call and at every poll
-  between transitions. On abort, the linker shall drive the actor to a
-  quiescent state before returning from the turn. Three strategies are
-  permitted; the linker selects per FSM:
-  - **Natural rejection** — the linker's Captain actor (e.g.,
-    `fromPromise`) ends the invocation by rejecting, and the FSM
-    routes the rejection through `onError` to a quiescent sink. The
-    cancelled host primitive may *itself* reject (some hosts), or it
-    may resolve with a structured failure/abort status that the
-    bridge inspects and converts into a Captain-actor rejection
-    (cligent's `RoleRunResult { status: 'aborted' | 'error' }` is the
-    canonical example). Either shape is permitted — the contract is
-    on the Captain-actor boundary, not on the host primitive's
-    promise behavior. Preferred when every Captain-invoking state's
-    `onError` lands somewhere quiescent — the FSM's own error wiring
-    is the abort path.
-  - **Synthetic pre-emption to a quiescent target** — send the FSM's
-    pre-emption event (e.g., `BOSS_INTERRUPT { targetId: <state> }`)
-    with a target that is itself quiescent (typically `ready` or
-    `failed`). The linker shall not pick the active state as the
-    target: `gears2fsm.md` prescribes `reenter: true` for
-    `bossInterrupts`, so re-entering the active state restarts its
-    `invoke` and spawns a fresh player call.
-  - **Programmatic stop** — `actor.stop()` and report the turn as
-    aborted via the host's status channel. Reserved for FSMs with
-    neither `onError` wiring nor a pre-emption event.
-- In `dispose`, stop the actor and drain any pending host emissions.
+- In `init`, construct the XState actor with FSM `input` derived from
+  `options`. The actor is session-scoped, not turn-scoped. Subscribe to
+  actor snapshots so each transition can be surfaced via `emitStatus`
+  and `emitTelemetry` before the next event fires. Start the actor.
+- Per `handleBossInput`:
+  1. Classify `turn.text` (slash → event; else LLM-classifier).
+  2. If the actor is in a `final` state, dispose and reconstruct it —
+     `final` is terminal and cannot accept new events.
+  3. Send the classified event to the actor.
+  4. **Drive to quiescence**: each time the actor invokes its `captain`
+     actor, await the invoke's input, build a player prompt, call
+     `callPlayer`, adjudicate, and resolve the invoke. Repeat until the
+     actor's snapshot value is a state that takes a Boss event
+     (typically `ready` or `failed`) or a `final` state.
+- In `dispose`, stop the actor and drain pending port emissions.
 
-The actor's `lastError` field shall be surfaced via the host's status
-channel when the machine enters its `failed` state, so Boss sees the
-diagnostic without inspecting telemetry.
+The actor's `lastError` field shall be surfaced via `emitStatus` when
+the machine enters its `failed` state, so Boss sees the diagnostic
+without inspecting telemetry.
+
+## Abort
+
+`handleBossInput.signal` is the abort surface. The runtime shall honor
+it at every `callPlayer`/`callJudge` and at every poll between
+transitions. On abort, the runtime shall drive the actor to a quiescent
+state before returning from the turn. Three strategies are permitted;
+the linker selects per FSM:
+
+- **Natural rejection** — the runtime's Captain actor (e.g.,
+  `fromPromise`) ends the invocation by rejecting, and the FSM routes
+  the rejection through `onError` to a quiescent sink. The cancelled
+  port call may *itself* reject, or it may resolve with `PlayerResult {
+  status: 'aborted' | 'error' }` that the runtime inspects and converts
+  into a Captain-actor rejection. Either shape is permitted — the
+  contract is on the Captain-actor boundary, not on the port's promise
+  behavior. Preferred when every Captain-invoking state's `onError`
+  lands somewhere quiescent; the FSM's own error wiring is the abort
+  path.
+- **Synthetic pre-emption to a quiescent target** — send the FSM's
+  pre-emption event (e.g., `BOSS_INTERRUPT { targetId: <state> }`) with
+  a target that is itself quiescent (typically `ready` or `failed`).
+  The runtime shall not pick the active state as the target:
+  `gears2fsm.md` prescribes `reenter: true` for `bossInterrupts`, so
+  re-entering the active state restarts its `invoke` and spawns a fresh
+  player call.
+- **Programmatic stop** — `actor.stop()` and report the turn as aborted
+  via `emitStatus`. Reserved for FSMs with neither `onError` wiring nor
+  a pre-emption event.
+
+Whether the host's outer abort (e.g., SIGINT) is recoverable or terminal
+is the host's concern. The runtime exits `handleBossInput` cleanly in
+either case; the host decides whether to call `dispose` afterward.
 
 ## Status and telemetry
 
-The linker shall emit, at minimum:
+The runtime shall emit, at minimum:
 
-- One **status** line per Boss-visible transition (entering a state whose
-  semantics matter to Boss — e.g., the FSM enters `respondToReview`). The
+- One `emitStatus` per Boss-relevant transition (entering a state whose
+  semantics matter to Boss — e.g., `respondToReview`, `failed`). The
   default is to emit on every transition and let the host filter; hosts
   may bind a stricter rule.
-- One **telemetry** event per state transition under a namespaced topic
+- One `emitTelemetry` per state transition under a namespaced topic
   (recommended `playbook.fsm.state`), with payload `{ from, to, event }`.
-  Observers (visualizer, metrics) consume telemetry; the runtime never
-  interprets the topic.
+  Observers consume telemetry; the runtime never interprets the topic.
 
-Captain prompts and player responses already flow through the host's
-record set (cligent's `captain_*` / `role_*`); the linker shall not
-duplicate them into telemetry.
+Player prompts and adjudicator JSON ride the host's own record channels
+when the host has them (cligent's `captain_*` / `role_*`); the runtime
+shall not duplicate them into `emitTelemetry`.
 
 ## Output
 
-The link compiler emits **one** source file, host-formatted, that:
+The link compiler emits **one** TypeScript module that:
 
-- Imports the FSM artifact by relative path and the host's Captain contract
-  by specifier.
-- Default-exports the factory shape the host requires (e.g.,
-  `(options: unknown) => Captain` for cligent/tmux-play).
-- Holds no FSM business logic. Player prompts, guard keys, and result
-  descriptions live in the FSM; the linked file contains only the bridge
-  — player binding, Boss-event classifier, per-state adjudicator wiring,
-  lifecycle plumbing.
-- Records the linker inputs (FSM path, host contract specifier, player
-  binding, strategies) in a top-of-file header comment so the file is
-  reproducible from the same inputs.
+- Imports the FSM artifact by relative path.
+- Imports XState's actor primitives (`createActor`, `fromPromise`,
+  `setup`'s `.provide`).
+- Exports `createPlaybookRuntime` and the typed `PlaybookRuntimeOptions`
+  interface for that playbook.
+- Holds no host-specific types and no host primitive calls. The runtime
+  speaks only `PlaybookPorts`.
+- Records the linker inputs (FSM path, player binding, strategies) in a
+  top-of-file header comment so the file is reproducible from the same
+  inputs.
 
-The linker is free to add a second emitted artifact (e.g., a bundling
-manifest or a host configuration template) when the host requires it; that
-second artifact is host-specific and is documented in the host-bound IR
-rather than here.
+## Host adaptation (informative, not normative)
+
+A host integrates with playbooks by writing one generic adapter that:
+
+1. Accepts a path to a `PlaybookRuntime` module via its own config
+   surface.
+2. Imports the module and constructs the runtime with
+   host-supplied `options` (forwarded verbatim from the host config).
+3. Implements `PlaybookPorts` by wrapping the host's own primitives —
+   for cligent/tmux-play this is `callPlayer ← context.callRole`,
+   `callJudge ← context.callCaptain`, `emitStatus`/`emitTelemetry` ←
+   `session.emitStatus`/`session.emitTelemetry`.
+4. Calls `runtime.init(ports)` once at session start, forwards each
+   Boss turn to `runtime.handleBossInput`, and calls `runtime.dispose()`
+   at session end.
+
+The adapter is host-side code, owned by the host's repo. It is the same
+~30 lines regardless of which playbook is loaded — a new playbook
+requires no host change.
 
 ## Out of scope
 
-- Defining player prompts, result keys, or guard semantics — those belong
-  in the GEARS source and the FSM artifact.
-- Implementing player adapters or LLM transports — those are the host's
-  concern.
+- Defining player prompts, result keys, or guard semantics — those
+  belong in the GEARS source and the FSM artifact.
+- Host adapters, host configuration, presentation layouts — each host
+  owns these in its own repo.
 - Persisting FSM context across sessions, multi-Boss orchestration, or
   visualizer rendering — separate hosts/observers may add them without
   changing this spec.
