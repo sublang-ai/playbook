@@ -17,9 +17,16 @@ once and inherit every playbook.
 - Source: an XState v5 machine artifact (`.fsm.ts`) produced by gears2fsm.
 - Target: a `PlaybookRuntime` factory module — TypeScript, host-agnostic.
 
-Hosts are out of scope for this phase. Each host writes one generic adapter
-that loads any `PlaybookRuntime` module and supplies its own ports; the
-adapter is a host-side concern documented in that host's own repo.
+Hosts are out of scope for this phase. Each host has a small adapter
+(~30 lines) that loads a `PlaybookRuntime` module and supplies the
+host's primitives as `PlaybookPorts`. The adapter's location is a
+project-organization choice — it may live in the playbook repo
+(simplest when the playbook author owns the integration; keeps the
+host primitive a lower-layer dependency), in the host's repo (when
+the host author wants to ship an opt-in playbook Captain), or in a
+third package. This spec is silent on the placement; what it requires
+is that the adapter exist, that it speak only `PlaybookPorts` to the
+runtime, and that it not leak host types back into the runtime.
 
 Gears2fsm forbids the FSM artifact from binding a runner; link is where the
 runner is bound. The link compiler shall not modify the FSM artifact and
@@ -54,10 +61,20 @@ export default function createPlaybookRuntime(
 actor for the rest of its lifetime; `handleBossInput` runs one turn,
 `dispose` stops the actor and drains pending port emissions.
 
-`PlaybookRuntimeOptions` is host-agnostic and carries only data the
-playbook needs to bind to its world — player binding, identity strings,
-strategy overrides. The link compiler emits a typed options interface per
-playbook based on the FSM's `CodingInput` (or equivalent).
+`PlaybookRuntimeOptions` is host-agnostic and carries only *per-run*
+knobs — identity strings (e.g., the model names a playbook substitutes
+into prompt placeholders), strategy overrides the linker chose to
+expose, and any future per-session inputs. The link compiler emits a
+typed options interface per playbook based on the FSM's `CodingInput`
+(or equivalent).
+
+Player binding is a *linker-time* input (see §Linker inputs and
+§Player binding) and is baked into the emitted runtime by default. A
+linker may additionally expose the binding via `PlaybookRuntimeOptions`
+if it wants per-run remapping, but doing so is optional and a per-
+linker design choice; the contract requires only that the runtime
+ship with a deterministic binding it can apply at every `callPlayer`
+site.
 
 ## PlaybookPorts contract
 
@@ -293,12 +310,13 @@ The link compiler emits **one** TypeScript module that:
 
 ## Host adaptation (informative, not normative)
 
-A host integrates with playbooks by writing one generic adapter that:
+A host is integrated with playbooks by a small adapter that:
 
-1. Accepts a path to a `PlaybookRuntime` module via its own config
-   surface.
-2. Imports the module and constructs the runtime with
-   host-supplied `options` (forwarded verbatim from the host config).
+1. Accepts a path to a `PlaybookRuntime` module (either as a direct
+   import in a playbook-specific adapter, or via the host's config
+   surface in a generic adapter).
+2. Imports the module and constructs the runtime with options
+   forwarded verbatim from the host config.
 3. Implements `PlaybookPorts` by wrapping the host's own primitives —
    for cligent/tmux-play this is `callPlayer ← context.callRole`,
    `callJudge ← context.callCaptain`, `emitStatus`/`emitTelemetry` ←
@@ -307,16 +325,18 @@ A host integrates with playbooks by writing one generic adapter that:
    Boss turn to `runtime.handleBossInput`, and calls `runtime.dispose()`
    at session end.
 
-The adapter is host-side code, owned by the host's repo. It is the same
-~30 lines regardless of which playbook is loaded — a new playbook
-requires no host change.
+The adapter is ~30 lines regardless of which playbook is loaded. Its
+location follows the project-organization choice described at the top
+of this spec; the contract is the same in either case.
 
 ## Out of scope
 
 - Defining player prompts, result keys, or guard semantics — those
   belong in the GEARS source and the FSM artifact.
-- Host adapters, host configuration, presentation layouts — each host
-  owns these in its own repo.
+- Host adapter implementations, host configuration, presentation
+  layouts — where these live is a per-project decision (see
+  §Host adaptation); this spec only constrains the `PlaybookPorts`
+  contract they satisfy.
 - Persisting FSM context across sessions, multi-Boss orchestration, or
   visualizer rendering — separate hosts/observers may add them without
   changing this spec.

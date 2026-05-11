@@ -11,11 +11,13 @@ a host-agnostic runner that drives the actor, classifies Boss input,
 calls players, adjudicates output, and surfaces transitions through the
 small `PlaybookPorts` contract.
 
-No host code lives in this repo. tmux-play (and any future presentation
-layer) loads the runtime through a generic adapter that implements
-`PlaybookPorts` — that adapter is a cross-repo coordination point
-(typically `@sublang/cligent/captains/playbook` for tmux-play), not a
-deliverable here.
+The host adapter for tmux-play ships in this repo (per [slc/link.md
+§Host adaptation](../../slc/link.md#host-adaptation-informative-not-normative)'s
+project-organization clause). cligent is imported as a lower-layer
+dependency and stays unaware of playbook, XState, or `PlaybookRuntime`.
+A future presentation layer (web/Electron/CI) gets its own small adapter
+file alongside the CODE artifacts — same pattern, different host
+primitives.
 
 ## Inputs (linker invocation)
 
@@ -24,23 +26,35 @@ The link compiler this IR realizes shall be invoked with:
 - **FSM artifact**: `reference/sdlc/code.playbook/code.fsm.ts` (importing
   `codingMachine`, `CaptainInput`, `CaptainOutput`, `CodingInput`,
   `CodingEvent` from it).
-- **Player binding** (forwarded verbatim from the host's config through
-  `PlaybookRuntimeOptions`):
+- **Player binding** (linker-time input — *baked into the compiled
+  runtime*, not a runtime option):
 
   ```yaml
   playerBinding:
-    Coder:    coder      # opaque playerId string the host's adapter routes
+    Coder:    coder      # opaque playerId the runtime passes to callPlayer
     Reviewer: reviewer
     # Composite players resolved per slc/link.md:
     #   Committer = Coder | Reviewer  →  resolved per source item
   ```
 
+  The default rule is *lowercase the GEARS player name*; the binding
+  above is the explicit form for clarity. The host (e.g., tmux-play)
+  must declare role IDs that match the baked `playerId` strings —
+  there is no runtime knob to remap. Future per-run remapping would
+  be a separate IR.
+
 - **Boss-event mapping**: slash-prefix default, LLM-classifier fallback.
 - **Adjudication strategy**: LLM-judge for every state, marker-parse
   off by default.
 
-These four inputs are recorded verbatim in the emitted file's top-of-file
-header per [link.md §Output](../../slc/link.md#output).
+These four inputs are recorded verbatim in the emitted file's
+top-of-file header per [link.md §Output](../../slc/link.md#output).
+
+`PlaybookRuntimeOptions` carries only *runtime* knobs — the per-run
+identity strings (`coderPlayer`, `reviewerPlayer`) used to substitute
+`<coder-llm>` / `<reviewer-llm>` placeholders in player prompts, plus
+any other future per-run inputs. It does *not* carry the player
+binding.
 
 ## Player binding for CODE
 
@@ -140,8 +154,11 @@ throughout.
 Per [link.md §Session lifecycle](../../slc/link.md#session-lifecycle):
 
 - **`init(ports)`**: construct the actor with `input` derived from
-  `options.playerBinding` (host adapter forwards model/player
-  identifiers it knows about):
+  `options.coderPlayer` / `options.reviewerPlayer` (per-run model
+  identity strings forwarded by the host adapter from
+  `captain.options`; substituted into `<coder-llm>` / `<reviewer-llm>`
+  placeholders in player prompts). The player binding itself is baked
+  in at link time and does not appear here.
 
   ```ts
   createActor(
@@ -336,43 +353,97 @@ records the linker invocation:
 The file holds no host-specific types and makes no host primitive
 calls. The runtime speaks only `PlaybookPorts`.
 
-## Host coordination (informative)
+## Host adapter (tmux-play)
 
-The first host to run this runtime is cligent/tmux-play. The cligent
-side ships, in its own repo, a generic adapter at
-`@sublang/cligent/captains/playbook` that:
+The host adapter belongs in this repo, not in cligent. cligent stays a
+lower-layer primitive — it provides the tmux launcher, the Captain
+extension contract, the role cligents, and observer dispatch, with no
+awareness of playbooks, XState, or `PlaybookRuntime`. This repo
+imports cligent (as a dependency) and supplies the small adapter that
+satisfies cligent's `Captain` interface.
 
-- Accepts a `bridge` path (or specifier) via `captain.options`.
-- Imports the module and constructs the runtime with options forwarded
-  from `captain.options`.
-- Implements `PlaybookPorts` by wrapping its own primitives:
-  `callPlayer ← context.callRole`, `callJudge ← context.callCaptain`,
-  `emitStatus`/`emitTelemetry` ← `session.emitStatus`/`session.emit
-  Telemetry`.
-- Forwards `handleBossTurn(turn, context)` to `runtime.handleBossInput
-  ({ text: turn.prompt, signal: context.signal })`.
+The adapter lives at `reference/sdlc/code.playbook/code.tmux-play.ts`
+and:
 
-Example tmux-play config a user writes:
+- Imports `./code.playbook.js` (the runtime) and types from
+  `@sublang/cligent/tmux-play` (`Captain`, `BossTurn`,
+  `CaptainContext`, `CaptainSession`, `RoleRunResult`).
+- Default-exports a Captain factory `(options: unknown) => Captain`
+  per cligent's [TMUX-014](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-014).
+- In `init(session)`, constructs the runtime with `options` forwarded
+  from `captain.options` and builds a `PlaybookPorts` object.
+- Forwards `handleBossTurn(turn, context)` to
+  `runtime.handleBossInput({ text: turn.prompt, signal: context.signal })`.
+- In `dispose()`, calls `runtime.dispose()`.
+
+Port wiring (the entire mapping):
+
+| `PlaybookPorts` | cligent primitive |
+| --- | --- |
+| `callPlayer(playerId, prompt, signal)` | `context.callRole(playerId, prompt)` — pass through; `signal` already lives on `context`. Return `PlayerResult` built from the resulting `RoleRunResult` (`{ status, finalText, error }` map verbatim per [TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033)). |
+| `callJudge(prompt, signal)` | `context.callCaptain(prompt)` → return `finalText`. Throw on `status !== 'ok'`. |
+| `emitStatus(message, data?)` | `session.emitStatus(message, data)` — direct forward. |
+| `emitTelemetry({ topic, payload })` | `session.emitTelemetry({ topic, payload })` — direct forward. |
+
+The adapter is small (~40 lines once helpers are factored) and is
+playbook-specific only in that it direct-imports `./code.playbook.js`.
+A future second playbook in this repo would either copy this file with
+one import swapped, or — if the duplication earns it — graduate to a
+shared generic adapter under `slc/` that reads a `bridge` path from
+`captain.options`.
+
+**Role-id requirement on tmux-play config.** Because the player binding
+is baked into the runtime at link time (§Inputs), the user's
+`tmux-play.config.yaml` `roles[]` shall declare role IDs that match
+the baked `playerId` strings. For CODE that is `coder` and `reviewer`.
+The adapter does not remap. If a future IR adds runtime-configurable
+binding, this constraint relaxes; until then, naming a role
+`claude-coder` would simply mean Coder's `callRole('coder', …)` finds
+no matching role and the cligent runtime surfaces the failure
+naturally.
+
+### Build step (dev) and ESM loading
+
+cligent's session imports `captain.from` via Node's native `import()`.
+Native ESM rejects `.ts` without a loader hook, so the adapter must
+exist as compiled `.js` at the path `captain.from` references. This IR
+ships a build step (TypeScript → ESM `.js`) that emits `code.playbook.js`
+and `code.tmux-play.js` next to the `.ts` sources. The package.json
+declares `"type": "module"` so Node treats the emitted `.js` as ESM,
+matching cligent's own ESM convention; the `.ts` source files use
+NodeNext-style `import './code.fsm.js'` specifiers that resolve to the
+compiled sibling at runtime. The build is the same pipeline that
+produces the published `@sublang/playbook` package, so dev and release
+paths converge.
+
+Example `tmux-play.config.yaml` shipped at
+`reference/sdlc/code.playbook/tmux-play.config.yaml`. Local
+`captain.from` resolves against this file's directory per
+[TMUX-013](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-013),
+so the sibling form `./code.tmux-play.js` is correct:
 
 ```yaml
+# Dev (this repo, after `pnpm build`):
 captain:
-  from: '@sublang/cligent/captains/playbook'
+  from: ./code.tmux-play.js        # sibling of this config; built from code.tmux-play.ts
   adapter: claude
   model: claude-opus-4-7
   options:
-    bridge: ../../reference/sdlc/code.playbook/code.playbook.ts
-    coderPlayer: claude
-    reviewerPlayer: codex
+    coderPlayer: claude            # forwarded to PlaybookRuntimeOptions; substitutes <coder-llm>
+    reviewerPlayer: codex          # substitutes <reviewer-llm>
 roles:
-  - id: coder
+  - id: coder                      # must match the baked playerId (Coder → 'coder')
     adapter: claude
-  - id: reviewer
+  - id: reviewer                   # must match the baked playerId (Reviewer → 'reviewer')
     adapter: codex
 ```
 
-That config is owned by the user, not by this repo. This IR's deliverables
-stop at the runtime; the cligent adapter is tracked separately in
-cligent's own IRs.
+After release as `@sublang/playbook`, the same config swaps
+`captain.from` to the package specifier — e.g.,
+`'@sublang/playbook/code/tmux-play'` (final specifier confirmed at
+publish time) — and the user installs `@sublang/cligent` and
+`@sublang/playbook` side-by-side. Roles, options, and the rest of the
+config are unchanged.
 
 ## Deliverables
 
@@ -384,18 +455,41 @@ cligent's own IRs.
   unit tests with a hand-rolled fake `PlaybookPorts`. Asserts the
   Boss-event classifier, player-id resolution, judge JSON parsing,
   the quiescence drive loop, and the natural-rejection abort path.
+- [ ] **`reference/sdlc/code.playbook/code.tmux-play.ts`** — the
+  tmux-play host adapter (per §Host adapter (tmux-play)). Imports
+  `./code.playbook.js` and types from `@sublang/cligent/tmux-play`;
+  default-exports a Captain factory that wires `PlaybookPorts` to
+  cligent primitives.
+- [ ] **`reference/sdlc/code.playbook/code.tmux-play.test.ts`** —
+  unit tests with stubbed `CaptainContext` / `CaptainSession` that
+  assert port wiring, `RoleRunResult` ↔ `PlayerResult` identity,
+  `handleBossTurn → handleBossInput` forwarding, and lifecycle
+  ordering.
+- [ ] **`reference/sdlc/code.playbook/tmux-play.config.yaml`** — the
+  example config shown in §Host adapter (tmux-play), with
+  `captain.from: ./code.tmux-play.js` (sibling path; resolves
+  correctly under [TMUX-013](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-013)).
+- [ ] **Build pipeline** — a `package.json` with `"type": "module"`
+  and a `pnpm build` (or `npm run build`) script that emits
+  `code.playbook.js` and `code.tmux-play.js` next to the `.ts`
+  sources. TypeScript → ESM `.js`; no bundler needed. The same
+  pipeline is the publish pipeline for `@sublang/playbook`. Source
+  `.ts` and built `.js` both ship in the npm tarball; `.js` is what
+  `captain.from` resolves to in either dev or release. NodeNext-style
+  `.js` import specifiers in the `.ts` sources resolve to the
+  compiled siblings.
 - [ ] **`reference/sdlc/code.playbook/README.md`** — quickstart
   pointing at the runtime module, a fake-ports example for local
-  iteration, and a "running under tmux-play" subsection that links
-  out to the cligent-side `@sublang/cligent/captains/playbook`
-  adapter (or notes "not yet shipped" while that is true).
+  iteration, a "running under tmux-play" subsection that links the
+  example YAML config, and a "release usage" note showing the
+  package-specifier form (`@sublang/playbook/code/tmux-play`).
+- [ ] **`package.json`** — declare `@sublang/cligent` as a
+  `peerDependency` (or `dependency` while the playbook is unpublished
+  and is consumed via local link); set up a `pnpm`/`npm` script to
+  link a local cligent checkout for development.
 - [ ] **`specs/map.md`** — update IR-004 row to match the new file
-  name and summary.
-
-The tmux-play YAML config and the end-to-end tmux acceptance run are
-*not* deliverables here — they depend on the cligent-side adapter
-landing. This IR can ship and be useful before then; cligent
-coordination follows in its own IR.
+  name and summary. *(Already updated to reflect the rename;
+  re-verify summary on close-out.)*
 
 ## Tasks
 
@@ -405,34 +499,44 @@ Each task is a commit. Order keeps `main` building at every commit.
    new filename `004-link-code-fsm-to-playbook-runtime.md`). Remove
    the old `004-link-code-fsm-to-tmux-play.md`. Update `specs/map.md`
    in the same commit.
-2. **Scaffold the runtime module** — create `code.playbook.ts` with
+2. **Bootstrap the build pipeline.** Add a minimal `package.json`
+   (with `"type": "module"`), `tsconfig.json` (NodeNext module
+   resolution), and `pnpm build` script under
+   `reference/sdlc/code.playbook/` (or wherever the workspace root
+   for this artifact set sits). The script shall emit `.js` next to
+   every `.ts` source. Wire `@sublang/cligent` as a peer/devDependency
+   per §Deliverables. Verify `pnpm install && pnpm build` is clean
+   on a fresh checkout before any source file is added.
+3. **Scaffold the runtime module** — create `code.playbook.ts` with
    the top-of-file header from §Simulated compiler output, the
    imports, the factory export, the `PlaybookPorts`/`PlaybookRuntime`
    types, and TODO stubs for the five helpers. The file shall
    typecheck against `./code.fsm.js` and `xstate` only — no host
-   imports.
-3. **Implement the player-prompt composer** (`composePlayerPrompt`).
+   imports. Verify `pnpm build` emits `code.playbook.js`.
+4. **Implement the player-prompt composer** (`composePlayerPrompt`).
    Unit test round-trips every placeholder token (`<#>`,
    `<coder-llm>`, `<reviewer-llm>`) and every labelled block
    (`intent`, `reviews`, `challenges`, `taskDescription`).
-4. **Implement the player-id resolver** (`resolvePlayerId`). Cover
-   CODE-15/16/17 alias resolution in the test.
-5. **Implement the LLM judge** (`judgeResult`). Each invocation's
+5. **Implement the player-id resolver** (`resolvePlayerId`). Cover
+   CODE-15/16/17 alias resolution in the test. The baked binding
+   table is the link-time input from §Inputs; resolver returns
+   `coder` or `reviewer` per the table.
+6. **Implement the LLM judge** (`judgeResult`). Each invocation's
    judge prompt is built from `input.result` — XState hands the
    runtime the per-state contract directly. Test against a fake
    `ports.callJudge` that returns a fixed JSON; assert the prompt
    body contains every key listed in `input.result` with its
    description verbatim.
-6. **Implement the Boss-event classifier** (`classifyBossInput`).
+7. **Implement the Boss-event classifier** (`classifyBossInput`).
    Slash forms first; LLM-classifier fallback via `ports.callJudge`
    second. Test the slash table and one LLM-fallback path with a
    fake `callJudge`.
-7. **Wire the Captain-actor bridge** (`captainBridge(ports)` +
+8. **Wire the Captain-actor bridge** (`captainBridge(ports)` +
    `.provide({ actors: { captain: … } })`) inside
    `createPlaybookRuntime`. Test that an actor driven through one
    fake turn end-to-end with stubbed `callPlayer`/`callJudge` ports
    transitions through the expected states.
-8. **Drive-to-quiescence loop + abort**. Implement `handleBossInput`
+9. **Drive-to-quiescence loop + abort**. Implement `handleBossInput`
    proper, including the `final`-state dispose/reconstruct path. On
    `signal` abort the runtime takes no FSM action — it relies on
    the natural rejection → `onError` → `#failed` path. Test three
@@ -440,16 +544,47 @@ Each task is a commit. Order keeps `main` building at every commit.
    lands at `failed` with the abort error in `lastError`; explicit
    `/interrupt <stateId>` slash redirects to that state via
    `BOSS_INTERRUPT`.
-9. **Status/telemetry hookup** (`ports.emitStatus` /
-   `ports.emitTelemetry`). Subscribe to actor snapshots, emit on
-   every transition. Test with a fake `PlaybookPorts` that records
-   emissions.
-10. **README**. Document the fake-ports example, the public
-    `PlaybookRuntime`/`PlaybookPorts` types, and the tmux-play
-    integration path (linking out to the cligent-side adapter).
-11. **Spec deltas**. Update `specs/map.md` to mark IR-004 deliverables
-    complete; if anything diverged from this IR's design, record the
-    delta in a one-paragraph addendum at the bottom of this file.
+10. **Status/telemetry hookup** (`ports.emitStatus` /
+    `ports.emitTelemetry`). Subscribe to actor snapshots, emit on
+    every transition. Test with a fake `PlaybookPorts` that records
+    emissions.
+11. **Author the tmux-play adapter** (`code.tmux-play.ts` per §Host
+    adapter (tmux-play)). Default-export the Captain factory; import
+    types from `@sublang/cligent/tmux-play` and the runtime from
+    `./code.playbook.js`. Unit-test with stubbed `CaptainContext` /
+    `CaptainSession`: assert `callRole`/`callCaptain` forwarding,
+    `RoleRunResult` ↔ `PlayerResult` identity, `signal` propagation,
+    and the `init → handleBossTurn → dispose` lifecycle ordering.
+    Verify `pnpm build` emits `code.tmux-play.js`.
+12. **Example config** (`tmux-play.config.yaml`). Ship the dev form
+    with `captain.from: ./code.tmux-play.js` (sibling path);
+    document the release-form swap inline as a YAML comment; declare
+    `roles[].id` as `coder` and `reviewer` to match the baked
+    `playerId` strings.
+13. **README**. Document the fake-ports example, the public
+    `PlaybookRuntime`/`PlaybookPorts` types, the tmux-play
+    integration path (the example YAML config + how to run
+    `pnpm build && tmux-play --config …`), and the "release usage"
+    subsection showing the `@sublang/playbook` package-specifier
+    form.
+14. **End-to-end tmux-play acceptance** (manual, but recorded as a
+    `code.tmux-play.acceptance.md` log next to the YAML config).
+    Steps: `pnpm install && pnpm build`, optionally `pnpm link
+    @sublang/cligent` to point at a local cligent checkout,
+    `tmux-play --config
+    reference/sdlc/code.playbook/tmux-play.config.yaml`, type
+    `/start <intent>`, observe the Captain pane status line walking
+    through `planAndImplement → commitCoderInitial → reviewBossCommit*`,
+    confirm the coder pane streams a reply, type `/interrupt
+    ready`, confirm the FSM jumps to `ready`. Hit Ctrl-C, confirm
+    the tmux session tears down cleanly per [TMUX-026](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026).
+    If any cligent or tmux-play bug surfaces during this step, file
+    it in cligent's repo per the maintainer agreement and proceed
+    once fixed; do not patch around cligent from this repo.
+15. **Spec deltas**. Update `specs/map.md` to mark IR-004
+    deliverables complete; if anything diverged from this IR's
+    design, record the delta in a one-paragraph addendum at the
+    bottom of this file.
 
 ## Acceptance criteria
 
@@ -475,22 +610,34 @@ Each task is a commit. Order keeps `main` building at every commit.
   - `done` cleanly disposes the actor; the next Boss turn starts
     fresh from `ready`.
 - `code.playbook.ts` has no FSM-specific prose other than what it
-  derives from importing `code.fsm.ts` at runtime.
+  derives from importing `code.fsm.ts` at runtime, and no host-
+  specific imports (it speaks only `PlaybookPorts`).
+- `code.tmux-play.ts` is the *only* file in this IR that imports
+  from `@sublang/cligent/tmux-play`. Removing that import shall not
+  affect `code.playbook.ts` or its tests.
 - All `reference/sdlc/code.playbook/**` source files carry SPDX
   headers per the project's licensing spec.
-- End-to-end under tmux-play is verified separately, after the
-  cligent-side `@sublang/cligent/captains/playbook` adapter ships
-  (cligent's own IR). When that lands, a tmux-play config of the
-  shape shown in §Host coordination shall run the CODE playbook
-  unmodified.
+- End-to-end under tmux-play (per Task 14): launching `tmux-play`
+  with the bundled YAML config shows the standard 4/6/6 layout
+  (Captain | Coder | Reviewer); `/start <intent>` drives the FSM
+  through at least `planAndImplement → commitCoderInitial →
+  reviewBossCommit*`, with the coder pane streaming a real reply
+  from the configured adapter and the Captain pane showing the
+  FSM-state status lines; `/interrupt ready` redirects to `ready`;
+  Ctrl-C tears the session down cleanly per [TMUX-026](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026).
 
 ## Out of scope
 
-- The cligent-side `@sublang/cligent/captains/playbook` adapter — its
-  own IR in the cligent repo.
 - Building a second host (web/Electron/CI runner). The runtime is
   host-agnostic and ready for those; each host writes its own
-  ~30-line adapter against `PlaybookPorts`.
+  ~30-line adapter against `PlaybookPorts` (mirroring
+  `code.tmux-play.ts` for tmux-play).
+- Generalizing `code.tmux-play.ts` into a shared adapter under
+  `slc/` that reads a `bridge` path from `captain.options`. Not
+  needed until a second playbook ships from this repo.
+- Patching cligent or tmux-play from this repo. If a cligent or
+  tmux-play bug blocks Task 14, file and fix it in the cligent repo
+  per the maintainer agreement, then proceed.
 - Re-deriving any FSM behavior, prompts, guard keys, or result
   semantics. Those live in `code.gears.md` and `code.fsm.ts`.
 - Visualizer rendering. The visualizer is IR-003's deliverable; this
