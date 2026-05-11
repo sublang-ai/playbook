@@ -5,11 +5,8 @@
 
 ## Goal
 
-Compile `reference/sdlc/code.playbook/code.fsm.ts` into a `PlaybookRuntime`
-module per [slc/link.md](../../slc/link.md), with CODE-specific bindings
-pinned by [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md).
-Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires
-`PlaybookPorts` to cligent's Captain primitives.
+Compile `reference/sdlc/code.playbook/code.fsm.ts` into a `PlaybookRuntime` module per [slc/link.md](../../slc/link.md), with CODE-specific bindings pinned by [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md).
+Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `PlaybookPorts` to cligent's Captain primitives.
 
 ## Deliverables
 
