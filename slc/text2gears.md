@@ -3,13 +3,13 @@
 
 # Text-to-GEARS Transformation
 
-This is the first phase in defining a playbook — a state-machine-powered AI agent that coordinates multiple AI agents to carry out a defined procedure.
-This phase transforms user input into normative spec items.
+First phase of a playbook (a state-machine agent orchestrating other agents).
+Transforms a user's procedure description into normative GEARS [[1]] spec items.
 
-- Source: the user's description of the procedure in free-form natural language.
-- Target: a package of spec items in the GEARS format [[1]] that define the procedure.
+- Source: free-form natural-language description.
+- Target: a package of GEARS spec items.
 
-The second phase transforms spec items into state machines, which is outside the scope of this transformation.
+The second phase (spec items → state machine) is out of scope.
 
 ## Formats
 
@@ -20,32 +20,27 @@ The second phase transforms spec items into state machines, which is outside the
 
 ## Players
 
-Both Source and Target use player names to refer to AI agents and the user.
+Players name AI agents and the user.
 
-The playbook has two default players:
+Two default players:
 
-- Boss: the human user who provides input
-- Captain: the coordinating agent that drives the procedure
+- Boss: the human user
+- Captain: the coordinating agent
 
-Source may define additional players in an opening `Players:` section.
-A player may be declared as an alias of other players using `=` and `|`; at runtime, Boss picks one of the listed players to play it.
+Source may declare additional players in an opening `Players:` section.
+A player may alias other players with `=` and `|`; Boss picks one at runtime.
 E.g.:
 
 - Coder
 - Reviewer
 - Committer = Coder | Reviewer
 
-The playbook runtime maps these players to AI agents and invokes them.
-
-For accurate mapping, capitalize English player names (e.g., `Writer`).
-In other languages, quote player names such as `作者` if necessary to
-distinguish them from ordinary text.
+Capitalize English player names (e.g., `Writer`); quote non-English names (e.g., `作者`) when needed to distinguish from prose.
 
 ## Behaviors
 
-Target specifies state-machine behaviors including which prompt to give to which player under which conditions.
-All prompts shall be blockquoted.
-A prompt consists of concise, clearly organized points, one per line.
+Each spec item names a condition, the player to prompt, and the prompt itself.
+Prompts shall be blockquoted, one point per line.
 
 E.g.:
 
@@ -62,13 +57,27 @@ Target should be written in the same language as Source.
 
 ## Composition
 
-Source may contain individual prompt snippets with overlapping or duplicate content.
-When composing snippets into a spec item, text2gears shall deduplicate identical prompt lines so the item's final prompt has each line at most once.
+Source snippets may overlap or duplicate.
+When composing them into a spec item, text2gears shall deduplicate identical prompt lines.
 
-Each spec item shall address one well-defined state behavior and carry the full final prompt (the static part) for that state.
-The same line may appear in multiple spec items where each addresses a different state behavior; cross-item duplication is acceptable, since spec items are compiled artifacts and Source is what users maintain.
+Each spec item addresses one state behavior and carries its full final prompt (the static part).
+Cross-item duplication is acceptable: spec items are compiled artifacts; Source is what users maintain.
 
-Test: a human shall be able to simulate an agent run by reading individual spec items and copying their full prompts verbatim, without manually composing prompts across items.
+Test: a human shall be able to simulate a run by copying any single item's prompt verbatim — no cross-item composition needed.
+
+### Placeholders vs literals
+
+Use `<placeholder>` for dynamic values in blockquoted prompts.
+Everything else inside a blockquote is static text, not an example; examples belong in surrounding prose.
+
+### Split by content discriminator
+
+Partition items by every variable that determines prompt content — including accumulated state when the trigger alone doesn't.
+
+### Prune dead disjuncts
+
+Drop disjunctive branches incompatible with the rest of an item's condition or prompt.
+Dead branches mislead readers and downstream phases.
 
 ## References
 

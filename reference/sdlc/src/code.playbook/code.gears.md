@@ -60,7 +60,7 @@ Rounds continue until Reviewer raises no findings.
 
 ### CODE-5
 
-When Committer commits Initial Changes from a Boss coding intent involving @specs/user/, @specs/dev/, or @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
+When Committer commits Initial Changes from a Boss coding intent involving changes only in @specs/user/, @specs/dev/, or @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Verify any affected spec items are:
@@ -75,7 +75,7 @@ When Committer commits Initial Changes from a Boss coding intent involving @spec
 
 ### CODE-6
 
-When Committer commits Initial Changes from a Boss coding intent involving changes outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
+When Committer commits Initial Changes from a Boss coding intent involving changes only outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
@@ -85,7 +85,24 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 
 ### CODE-7
 
-When Committer commits Initial Changes from an IR task involving @specs/user/, @specs/dev/, or @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
+When Committer commits Initial Changes from a Boss coding intent involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
+> Review the latest commit.
+> Refer to the commit message.
+> Verify any affected spec items are:
+>
+> - Complete & coherent: sufficient for you to reimplement code.
+> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Minimal: essential and concise; every item earns its place; also check with other items.
+>
+> Flag anything missing, redundant, over-specified, or under-specified.
+> Flag any issues or improvements (numbered; no duplication).
+> Think thoroughly — don't just approve or reject.
+> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> If the change is ready to commit or push, don't raise nitpicks.
+
+### CODE-8
+
+When Committer commits Initial Changes from an IR task involving changes only in @specs/user/, @specs/dev/, or @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Verify any affected spec items are:
@@ -98,9 +115,9 @@ When Committer commits Initial Changes from an IR task involving @specs/user/, @
 > Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
-### CODE-8
+### CODE-9
 
-When Committer commits Initial Changes from an IR task involving changes outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
+When Committer commits Initial Changes from an IR task involving changes only outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
@@ -108,11 +125,11 @@ When Committer commits Initial Changes from an IR task involving changes outside
 > Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
-### CODE-9
+### CODE-10
 
-When Coder makes unreviewed changes (outside of any Initial Changes) involving @specs/user/, @specs/dev/, or @specs/test/, Captain shall prompt Reviewer to begin a review round:
-> Review the unstaged/untracked changes.
-> Understand the intent.
+When Committer commits Initial Changes from an IR task involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
+> Review the latest commit.
+> Refer to the commit message.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
@@ -120,14 +137,6 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving @
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
-> If the change is ready to commit or push, don't raise nitpicks.
-
-### CODE-10
-
-When Coder makes unreviewed changes (outside of any Initial Changes) involving changes outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall prompt Reviewer to begin a review round:
-> Review the unstaged/untracked changes.
-> Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
 > Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
@@ -135,13 +144,67 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 
 ### CODE-11
 
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only in @specs/user/, @specs/dev/, or @specs/test/, Captain shall prompt Reviewer to begin a review round:
+> Review the unstaged/untracked changes.
+> Understand the intent.
+> Verify any affected spec items are:
+>
+> - Complete & coherent: sufficient for you to reimplement code.
+> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Minimal: essential and concise; every item earns its place; also check with other items.
+>
+> Flag anything missing, redundant, over-specified, or under-specified.
+> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> If the change is ready to commit or push, don't raise nitpicks.
+
+### CODE-12
+
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall prompt Reviewer to begin a review round:
+> Review the unstaged/untracked changes.
+> Understand the intent.
+> Flag any issues or improvements (numbered; no duplication).
+> Think thoroughly — don't just approve or reject.
+> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> If the change is ready to commit or push, don't raise nitpicks.
+
+### CODE-13
+
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall prompt Reviewer to begin a review round:
+> Review the unstaged/untracked changes.
+> Understand the intent.
+> Verify any affected spec items are:
+>
+> - Complete & coherent: sufficient for you to reimplement code.
+> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Minimal: essential and concise; every item earns its place; also check with other items.
+>
+> Flag anything missing, redundant, over-specified, or under-specified.
+> Flag any issues or improvements (numbered; no duplication).
+> Think thoroughly — don't just approve or reject.
+> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> If the change is ready to commit or push, don't raise nitpicks.
+
+### CODE-14
+
 When Coder raises any rebuttals, Captain shall relay them to Reviewer along with the following prompt:
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
 ## Committer
 
-### CODE-12
+### CODE-15
 
-When Coder makes any Initial Changes or Reviewer raises no findings on uncommitted changes, Captain shall prompt Committer:
+When Coder makes any Initial Changes and Reviewer has not played since the last commit, Captain shall prompt Committer:
+> Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Coder is <coder-llm>.
+
+### CODE-16
+
+When Reviewer raises no findings on uncommitted changes and Coder has not played since the last commit, Captain shall prompt Committer:
+> Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Reviewer is <reviewer-llm>.
+
+### CODE-17
+
+When Coder makes any Initial Changes and Reviewer has played since the last commit, or Reviewer raises no findings on uncommitted changes and Coder has played since the last commit, Captain shall prompt Committer:
 > Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Coder is <coder-llm>; Reviewer is <reviewer-llm>.
