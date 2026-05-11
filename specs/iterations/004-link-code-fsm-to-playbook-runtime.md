@@ -28,8 +28,7 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires
   handleBossInput` forwarding, and lifecycle ordering.
 - [ ] `reference/sdlc/code.playbook/tmux-play.config.yaml` — example
   config per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play),
-  with `captain.from: ./code.tmux-play.js` (sibling path per
-  [TMUX-013](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-013)).
+  with `captain.from: ./code.tmux-play.js`.
 - [ ] Build pipeline — `package.json` with `"type": "module"` and a
   `pnpm build` (or `npm run build`) script that emits `code.playbook.js`
   and `code.tmux-play.js` next to the `.ts` sources.
@@ -132,8 +131,8 @@ Order keeps `main` building at every commit.
     type `/start <intent>`; observe Captain pane walking through
     `planAndImplement → commitCoderInitial → reviewBossCommit*`;
     confirm coder pane streams a reply; type `/interrupt ready`;
-    confirm the FSM jumps to `ready`; Ctrl-C, confirm tmux session
-    teardown per [TMUX-026](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026).
+    confirm the FSM jumps to `ready`; Ctrl-C, confirm the tmux session
+    tears down cleanly.
     If a cligent or tmux-play bug surfaces, file and fix in cligent's
     repo per the maintainer agreement; do not patch around cligent
     from this repo.
@@ -180,5 +179,5 @@ Order keeps `main` building at every commit.
   at least `planAndImplement → commitCoderInitial → reviewBossCommit*`,
   with the coder pane streaming a real reply from the configured adapter
   and the Captain pane showing FSM-state status lines;
-  `/interrupt ready` redirects to `ready`; Ctrl-C tears the session down
-  cleanly per [TMUX-026](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026).
+  `/interrupt ready` redirects to `ready`; Ctrl-C tears the session
+  down cleanly.

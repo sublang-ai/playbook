@@ -16,9 +16,8 @@ The CODE playbook needs concrete choices for player binding,
 Boss-event mapping, adjudication, session lifecycle, prompt composition,
 captain-actor bridge, abort behavior, telemetry, and the tmux-play host
 adapter (the only host this repo ships).
-[IR-004](../iterations/004-link-code-fsm-to-playbook-runtime.md)
-realizes these as code; this DR is what IR-004 (and any later FSM-fix
-iteration) builds against without re-deciding.
+This DR pins those choices so any implementation iteration builds
+against a stable contract without re-deciding.
 
 The host adapter ships in this repo, not in cligent.
 cligent stays a lower-layer primitive (tmux launcher, Captain contract,
@@ -229,7 +228,7 @@ Hosts typically wire it to the host's Captain LLM (cligent:
 - **Re-entry from `failed`** — the runtime accepts another Boss turn
   from `failed` per the FSM's `readyEvents`.
   Whether the host allows it is the host's decision (tmux-play's SIGINT
-  is terminal per [TMUX-026](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026)).
+  is terminal per TMUX-026 [[3]]).
 
 ### 9. Status and telemetry
 
@@ -293,7 +292,7 @@ It:
   `@sublang/cligent/tmux-play` (`Captain`, `BossTurn`, `CaptainContext`,
   `CaptainSession`, `RoleRunResult`).
 - Default-exports a Captain factory `(options: unknown) => Captain` per
-  [TMUX-014](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-014).
+  TMUX-014 [[2]].
 - In `init(session)` constructs the runtime with `options` forwarded
   from `captain.options` and builds `PlaybookPorts`.
 - Forwards `handleBossTurn(turn, context) →
@@ -304,7 +303,7 @@ Port wiring (the entire mapping):
 
 | `PlaybookPorts` | cligent primitive |
 | --- | --- |
-| `callPlayer(playerId, prompt, signal)` | `context.callRole(playerId, prompt)` — pass through; `signal` lives on `context`. Build `PlayerResult` from `RoleRunResult` (`{ status, finalText, error }`) per [TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033) |
+| `callPlayer(playerId, prompt, signal)` | `context.callRole(playerId, prompt)` — pass through; `signal` lives on `context`. Build `PlayerResult` from `RoleRunResult` (`{ status, finalText, error }`) per TMUX-033 [[4]] |
 | `callJudge(prompt, signal)` | `context.callCaptain(prompt)` → return `finalText`; throw on `status !== 'ok'` |
 | `emitStatus(message, data?)` | `session.emitStatus(message, data)` |
 | `emitTelemetry({ topic, payload })` | `session.emitTelemetry({ topic, payload })` |
@@ -328,8 +327,7 @@ The package ships a TypeScript → ESM `.js` build emitting
 NodeNext-style `import './code.fsm.js'` specifiers that resolve to the
 compiled sibling.
 
-Example config (dev form, sibling path per
-[TMUX-013](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-013)):
+Example config (dev form, sibling path per TMUX-013 [[1]]):
 
 ```yaml
 captain:
@@ -380,4 +378,7 @@ config are unchanged.
 
 ## References
 
-[1]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md "cligent tmux-play user spec"
+[1]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-013 "TMUX-013 — `captain.from` path resolution"
+[2]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-014 "TMUX-014 — Captain factory contract"
+[3]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026 "TMUX-026 — SIGINT terminal teardown"
+[4]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033 "TMUX-033 — `RoleRunResult` shape"
