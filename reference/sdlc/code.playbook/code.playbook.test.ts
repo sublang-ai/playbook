@@ -2,11 +2,20 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { describe, expect, it } from 'vitest';
-import type { CaptainInput } from './code.fsm.js';
-import { _internal, type PlaybookPorts } from './code.playbook.js';
+import { createActor } from 'xstate';
+import { codingMachine, type CaptainInput } from './code.fsm.js';
+import createPlaybookRuntime, {
+  _internal,
+  type PlaybookPorts,
+} from './code.playbook.js';
 
-const { composePlayerPrompt, resolvePlayerId, adjudicate, classifyBossText } =
-  _internal;
+const {
+  composePlayerPrompt,
+  resolvePlayerId,
+  adjudicate,
+  classifyBossText,
+  captainBridge,
+} = _internal;
 
 function makeFakePorts(
   overrides: Partial<PlaybookPorts> = {},
@@ -583,5 +592,93 @@ describe('classifyBossText (LLM fallback — DR-004 §3)', () => {
       await classifyBossText('please do something', ports, sig()),
     ).toBeUndefined();
     expect(statuses[0]).toContain('BOGUS');
+  });
+});
+
+describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
+  function buildActor(ports: PlaybookPorts) {
+    return createActor(
+      codingMachine.provide({ actors: { captain: captainBridge(ports) } }),
+      { input: { coderPlayer: 'claude', reviewerPlayer: 'codex' } },
+    );
+  }
+
+  function settleAt(actor: ReturnType<typeof createActor>, values: readonly string[]) {
+    return new Promise<void>((resolve) => {
+      const sub = actor.subscribe((snap) => {
+        if (typeof snap.value === 'string' && values.includes(snap.value)) {
+          sub.unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+
+  it('drives one fake turn through callPlayer + callJudge and advances the FSM', async () => {
+    const playerCalls: Array<{ playerId: string; prompt: string }> = [];
+    const judgeCalls: string[] = [];
+
+    const ports = makeFakePorts({
+      callPlayer: async (playerId, prompt) => {
+        playerCalls.push({ playerId, prompt });
+        return {
+          status: 'ok',
+          finalText: 'I cannot proceed without more input from Boss.',
+        };
+      },
+      callJudge: async (prompt) => {
+        judgeCalls.push(prompt);
+        return JSON.stringify({ guard: 'needsBossInput' });
+      },
+    });
+
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'START_CODING', intent: 'add a button' });
+
+    await settleAt(actor, ['ready', 'failed', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('ready');
+    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls[0].playerId).toBe('coder');
+    expect(playerCalls[0].prompt).toContain('add a button');
+    expect(judgeCalls).toHaveLength(1);
+    expect(judgeCalls[0]).toContain('needsBossInput');
+  });
+
+  it('lands at #failed when callPlayer returns status="aborted"', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'aborted', error: 'host signal' }),
+    });
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'START_CODING', intent: 'do something' });
+
+    await settleAt(actor, ['failed', 'ready', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('failed');
+  });
+
+  it('lands at #failed when callPlayer returns status="error"', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'error', error: 'player crashed' }),
+    });
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'START_CODING', intent: 'do' });
+
+    await settleAt(actor, ['failed', 'ready', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('failed');
+  });
+});
+
+describe('createPlaybookRuntime.init (Task 8 wiring)', () => {
+  it('constructs and starts the actor without throwing', async () => {
+    const runtime = createPlaybookRuntime({
+      coderPlayer: 'claude',
+      reviewerPlayer: 'codex',
+    });
+    await expect(runtime.init(makeFakePorts())).resolves.toBeUndefined();
   });
 });

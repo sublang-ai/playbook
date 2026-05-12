@@ -26,7 +26,7 @@ declare function composePlayerPrompt(input: CaptainInput): string;
 declare function resolvePlayerId(input: CaptainInput): string;
 declare function adjudicate(input: CaptainInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal): Promise<CaptainOutput>;
 declare function classifyBossText(text: string, ports: PlaybookPorts, signal: AbortSignal): Promise<CodingEvent | undefined>;
-declare function captainBridge(_ports: PlaybookPorts): import("xstate").PromiseActorLogic<never, import("xstate").NonReducibleUnknown, import("xstate").EventObject>;
+declare function captainBridge(ports: PlaybookPorts): import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     resolvePlayerId: typeof resolvePlayerId;

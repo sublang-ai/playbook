@@ -269,10 +269,26 @@ function buildClassifierPrompt(text) {
         '```',
     ].join('\n');
 }
-// Captain-actor bridge — DR-004 §7.
-function captainBridge(_ports) {
-    return fromPromise(async () => {
-        throw new Error('captainBridge: not yet implemented (IR-004 Task 8)');
+// Captain-actor bridge — DR-004 §7. One PromiseActorLogic that the
+// codingMachine invokes from every captain-invoking state. Per turn:
+// resolve playerId, compose the player prompt, await
+// ports.callPlayer, adjudicate the finalText. PlayerResult status of
+// 'aborted' or 'error' throws so XState routes via onError → #failed
+// (the single fail-stop sink for both Captain errors and player
+// failures).
+function captainBridge(ports) {
+    return fromPromise(async ({ input, signal }) => {
+        const playerId = resolvePlayerId(input);
+        const prompt = composePlayerPrompt(input);
+        const result = await ports.callPlayer(playerId, prompt, signal);
+        if (result.status !== 'ok') {
+            throw new Error(result.error ??
+                `captainBridge: callPlayer status "${result.status}"`);
+        }
+        if (result.finalText === undefined) {
+            throw new Error('captainBridge: callPlayer returned status=ok with no finalText');
+        }
+        return adjudicate(input, result.finalText, ports, signal);
     });
 }
 // Internal export surface for tests. Not part of the stable public API;
@@ -287,17 +303,17 @@ export const _internal = {
     captainBridge,
 };
 export default function createPlaybookRuntime(options) {
-    // Drive-to-quiescence loop and lifecycle wiring land in IR-004
-    // Tasks 8–10. References below keep noUnusedLocals satisfied on
-    // the scaffold.
-    void options;
-    void codingMachine;
-    void createActor;
+    let actor;
     return {
-        async init(_ports) {
-            throw new Error('createPlaybookRuntime.init: not yet implemented (IR-004 Task 9)');
+        async init(ports) {
+            const machine = codingMachine.provide({
+                actors: { captain: captainBridge(ports) },
+            });
+            actor = createActor(machine, { input: options });
+            actor.start();
         },
         async handleBossInput(_turn) {
+            void actor;
             throw new Error('createPlaybookRuntime.handleBossInput: not yet implemented (IR-004 Task 9)');
         },
         async dispose() {
