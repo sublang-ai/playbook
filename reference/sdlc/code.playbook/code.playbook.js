@@ -309,6 +309,27 @@ export const _internal = {
     classifyBossText,
     captainBridge,
 };
+// Boss-relevant states per DR-004 §9: every transition into one of
+// these emits a one-line status via ports.emitStatus. Telemetry
+// fires on *every* transition (Boss-relevant or not).
+const BOSS_RELEVANT_STATES = new Set([
+    'ready',
+    'reviewBossCommitSpecs',
+    'reviewBossCommitCode',
+    'reviewBossCommitMixed',
+    'reviewIrTaskCommitSpecs',
+    'reviewIrTaskCommitCode',
+    'reviewIrTaskCommitMixed',
+    'reviewChangesSpecs',
+    'reviewChangesCode',
+    'reviewChangesMixed',
+    'adjudicateChallenges',
+    'commitCoderInitial',
+    'commitReviewerCleared',
+    'commitJoint',
+    'failed',
+    'done',
+]);
 export default function createPlaybookRuntime(options) {
     let actor;
     let savedPorts;
@@ -316,16 +337,80 @@ export default function createPlaybookRuntime(options) {
     // ports.callPlayer / callJudge see the right cancellation source.
     // null between turns; set by handleBossInput.
     let activeSignal;
+    // Previous root-machine state for the inspect-driven telemetry /
+    // status emitter. undefined before the first inspect firing.
+    let priorState;
+    // Emission queue. slc/link.md says emissions "shall be ordered,
+    // awaited, and never-dropped"; subscribe/inspect callbacks are
+    // synchronous and can't await, so each emit is enqueued and a
+    // single drainer processes them sequentially.
+    const emitQueue = [];
+    let drainer;
+    function enqueueEmit(fn) {
+        emitQueue.push(fn);
+        if (!drainer) {
+            drainer = (async () => {
+                while (emitQueue.length > 0) {
+                    try {
+                        await emitQueue.shift()();
+                    }
+                    catch {
+                        // Suppress host-side emission errors; the control plane
+                        // surfaces real failures via handleBossInput throws.
+                    }
+                }
+                drainer = undefined;
+            })();
+        }
+    }
+    function drainEmissions() {
+        return drainer ?? Promise.resolve();
+    }
     function buildActor(ports) {
+        priorState = undefined;
         return createActor(codingMachine.provide({
             actors: { captain: captainBridge(ports, () => activeSignal) },
-        }), { input: options });
+        }), {
+            input: options,
+            inspect: (inspectionEvent) => {
+                if (inspectionEvent.type !== '@xstate.snapshot')
+                    return;
+                const snap = inspectionEvent.snapshot;
+                // Filter out captain sub-actor (fromPromise) snapshots —
+                // only the root codingMachine snapshot has a string value.
+                if (typeof snap.value !== 'string')
+                    return;
+                const to = snap.value;
+                if (priorState === to)
+                    return;
+                const from = priorState;
+                priorState = to;
+                // Telemetry on every transition (DR-004 §9).
+                enqueueEmit(() => ports.emitTelemetry({
+                    topic: 'playbook.fsm.state',
+                    payload: { from, to, event: inspectionEvent.event },
+                }));
+                // Status on Boss-relevant transitions, with lastError
+                // surfaced on entry to failed.
+                if (BOSS_RELEVANT_STATES.has(to)) {
+                    const message = `State → ${to}`;
+                    if (to === 'failed') {
+                        const lastError = snap.context?.lastError;
+                        enqueueEmit(() => ports.emitStatus(message, { lastError }));
+                    }
+                    else {
+                        enqueueEmit(() => ports.emitStatus(message));
+                    }
+                }
+            },
+        });
     }
     const runtime = {
         async init(ports) {
             savedPorts = ports;
             actor = buildActor(ports);
             actor.start();
+            await drainEmissions();
         },
         async handleBossInput({ text, signal, }) {
             if (!actor || !savedPorts) {
@@ -337,8 +422,10 @@ export default function createPlaybookRuntime(options) {
                 const event = await classifyBossText(text, savedPorts, signal);
                 // Unknown slash or empty input — classifier already surfaced
                 // status; nothing to send.
-                if (event === undefined)
+                if (event === undefined) {
+                    await drainEmissions();
                     return;
+                }
                 // 2. final state ('done') cannot accept new events — dispose
                 //    and reconstruct per DR-004 §5.
                 if (actor.getSnapshot().status === 'done') {
@@ -354,6 +441,9 @@ export default function createPlaybookRuntime(options) {
                 //    onError → #failed, and this loop sees the quiescent
                 //    snapshot and returns (DR-004 §8 natural rejection).
                 await driveToQuiescence(actor);
+                // Drain transition emissions before returning so the Boss
+                // sees the final status line for this turn.
+                await drainEmissions();
             }
             finally {
                 activeSignal = undefined;
@@ -364,12 +454,17 @@ export default function createPlaybookRuntime(options) {
                 actor.stop();
                 actor = undefined;
             }
+            // Drain any in-flight emissions per slc/link.md §Session
+            // lifecycle ("stop the actor and drain pending port emissions").
+            await drainEmissions();
             savedPorts = undefined;
         },
         // @internal — test-only escape hatch for inspecting the
-        // underlying actor's snapshot. Not part of the slc/link.md
-        // PlaybookRuntime contract; Task 10 supersedes this with
-        // proper status/telemetry.
+        // underlying actor's snapshot. Most state assertions are now
+        // expressible via the recorded emitStatus / emitTelemetry
+        // calls (DR-004 §9); the hatch stays for the few cases where
+        // direct context inspection is clearer (e.g., the dispose
+        // teardown test).
         _getActor() {
             return actor;
         },

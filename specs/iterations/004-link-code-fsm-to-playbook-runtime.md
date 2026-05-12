@@ -10,9 +10,9 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
 
 ## Deliverables
 
-- [ ] `reference/sdlc/code.playbook/code.playbook.ts` — emitted runtime
+- [x] `reference/sdlc/code.playbook/code.playbook.ts` — emitted runtime
   module per [DR-004 §10](../decisions/004-link-code-fsm-to-playbook-runtime.md#10-emitted-module--codeplaybookts).
-- [ ] `reference/sdlc/code.playbook/code.playbook.test.ts` — unit tests
+- [x] `reference/sdlc/code.playbook/code.playbook.test.ts` — unit tests
   with a hand-rolled fake `PlaybookPorts`.
   Covers the Boss-event classifier, player-id resolution, judge JSON
   parsing, the quiescence drive loop, and the natural-rejection abort

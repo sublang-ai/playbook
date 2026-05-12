@@ -815,9 +815,148 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
     await runtime.handleBossInput({ text: '/bogus stuff', signal: sig() });
 
-    expect(statuses[0]).toContain('/bogus');
+    expect(statuses.some((m) => m.includes('/bogus'))).toBe(true);
     expect(playerCalls).toBe(0);
     expect(judgeCalls).toBe(0);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+});
+
+describe('status and telemetry (Task 10 — DR-004 §9)', () => {
+  type StatusCall = { message: string; data?: unknown };
+  type TelemetryCall = { topic: string; payload: unknown };
+
+  function makeRecordingPorts(
+    overrides: Partial<PlaybookPorts> = {},
+  ): {
+    ports: PlaybookPorts;
+    statuses: StatusCall[];
+    telemetry: TelemetryCall[];
+  } {
+    const statuses: StatusCall[] = [];
+    const telemetry: TelemetryCall[] = [];
+    return {
+      ports: makeFakePorts({
+        emitStatus: async (message, data) => {
+          statuses.push({ message, data });
+        },
+        emitTelemetry: async (event) => {
+          telemetry.push(event);
+        },
+        ...overrides,
+      }),
+      statuses,
+      telemetry,
+    };
+  }
+
+  it('emits one status on initial entry to ready', async () => {
+    const { ports, statuses } = makeRecordingPorts();
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    expect(statuses.map((s) => s.message)).toContain('State → ready');
+  });
+
+  it('emits telemetry on every transition with topic playbook.fsm.state', async () => {
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({
+      text: '/start fix',
+      signal: sig(),
+    });
+    // Expect at least 3 telemetry events:
+    //   ⊥ → ready (initial)
+    //   ready → planAndImplement
+    //   planAndImplement → ready
+    expect(telemetry.length).toBeGreaterThanOrEqual(3);
+    for (const t of telemetry) {
+      expect(t.topic).toBe('playbook.fsm.state');
+      const payload = t.payload as Record<string, unknown>;
+      expect(payload).toHaveProperty('from');
+      expect(payload).toHaveProperty('to');
+      expect(payload).toHaveProperty('event');
+    }
+    const transitions = telemetry.map(
+      (t) => (t.payload as { to: string }).to,
+    );
+    expect(transitions).toContain('planAndImplement');
+    expect(transitions).toContain('ready');
+  });
+
+  it('emitStatus skips non-Boss-relevant states (planAndImplement)', async () => {
+    const { ports, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({
+      text: '/start fix',
+      signal: sig(),
+    });
+    const messages = statuses.map((s) => s.message);
+    expect(messages).not.toContain('State → planAndImplement');
+    // ready (initial + return) is Boss-relevant and shows up.
+    expect(messages.filter((m) => m === 'State → ready').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('emitStatus on entry to failed includes lastError in data', async () => {
+    const controller = new AbortController();
+    const { ports, statuses } = makeRecordingPorts({
+      callPlayer: async (_id, _p, signal) => {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { status: 'aborted', error: 'host signal' };
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    setTimeout(() => controller.abort(), 5);
+    await runtime.handleBossInput({
+      text: '/start x',
+      signal: controller.signal,
+    });
+    const failedStatus = statuses.find((s) => s.message === 'State → failed');
+    expect(failedStatus).toBeDefined();
+    expect(failedStatus?.data).toEqual(
+      expect.objectContaining({ lastError: expect.anything() }),
+    );
+  });
+
+  it('emissions are ordered and awaited (drainer serializes the queue)', async () => {
+    const ordered: string[] = [];
+    let inFlight = 0;
+    const trackingEmit = async (label: string) => {
+      inFlight++;
+      // If anything else is already running, ordering broke.
+      expect(inFlight).toBe(1);
+      await new Promise<void>((r) => setTimeout(r, 0));
+      ordered.push(label);
+      inFlight--;
+    };
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      emitStatus: async (m) => trackingEmit(`s:${m}`),
+      emitTelemetry: async (e) => {
+        const p = e.payload as { to: string };
+        return trackingEmit(`t:${p.to}`);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({
+      text: '/start fix',
+      signal: sig(),
+    });
+    // Telemetry emitted first per transition, then status if
+    // Boss-relevant; enqueue order is preserved.
+    expect(ordered[0]).toBe('t:ready');
+    expect(ordered[1]).toBe('s:State → ready');
   });
 });
