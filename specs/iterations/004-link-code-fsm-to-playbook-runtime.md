@@ -17,23 +17,12 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
   Covers the Boss-event classifier, player-id resolution, judge JSON
   parsing, the quiescence drive loop, and the natural-rejection abort
   path.
-- [ ] `reference/sdlc/code.playbook/code.tmux-play.ts` — tmux-play host
+- [x] `reference/sdlc/code.playbook/code.tmux-play.ts` — tmux-play host
   adapter per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
-  *Source landed; `pnpm build` emits `code.tmux-play.js` for
-  developers who have linked a local cligent checkout into this
-  package (published `@sublang/cligent` does not yet export
-  `./tmux-play`).
-  Local linking is the accepted prerequisite for this IR —
-  paralleling the playbook's own "consumed via local link" pattern
-  in the `package.json` deliverable above — so the gate for `[x]`
-  is Task 13's README landing with the link recipe, at which point
-  the prerequisite is no longer hidden.*
-- [ ] `reference/sdlc/code.playbook/code.tmux-play.test.ts` — unit tests
+- [x] `reference/sdlc/code.playbook/code.tmux-play.test.ts` — unit tests
   with stubbed `CaptainContext` / `CaptainSession` asserting port wiring,
   `RoleRunResult` ↔ `PlayerResult` identity, `handleBossTurn →
   handleBossInput` forwarding, and lifecycle ordering.
-  *Tests pass under the same local-link setup; same Task-13 README
-  gate as `code.tmux-play.ts`.*
 - [x] `reference/sdlc/code.playbook/tmux-play.config.yaml` — example
   config per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play),
   with `captain.from: ./code.tmux-play.js`.
@@ -43,7 +32,7 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
   TypeScript → ESM `.js`; no bundler.
   Source `.ts` and built `.js` both ship in the npm tarball; `.js` is
   what `captain.from` resolves to in dev or release.
-- [ ] `reference/sdlc/code.playbook/README.md` — quickstart for the
+- [x] `reference/sdlc/code.playbook/README.md` — quickstart for the
   runtime module, a fake-ports example, a "running under tmux-play"
   subsection linking the example YAML, and a "release usage" note
   showing the `@sublang/playbook/code/tmux-play` package-specifier form.
