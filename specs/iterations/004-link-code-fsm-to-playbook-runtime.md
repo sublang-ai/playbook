@@ -17,9 +17,9 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
   Covers the Boss-event classifier, player-id resolution, judge JSON
   parsing, the quiescence drive loop, and the natural-rejection abort
   path.
-- [ ] `reference/sdlc/code.playbook/code.tmux-play.ts` — tmux-play host
+- [x] `reference/sdlc/code.playbook/code.tmux-play.ts` — tmux-play host
   adapter per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
-- [ ] `reference/sdlc/code.playbook/code.tmux-play.test.ts` — unit tests
+- [x] `reference/sdlc/code.playbook/code.tmux-play.test.ts` — unit tests
   with stubbed `CaptainContext` / `CaptainSession` asserting port wiring,
   `RoleRunResult` ↔ `PlayerResult` identity, `handleBossTurn →
   handleBossInput` forwarding, and lifecycle ordering.
