@@ -119,19 +119,7 @@ Order keeps `main` building at every commit.
     package-specifier form.
     Landing this task flips the two tmux-play deliverable checkboxes
     above to `[x]`.
-14. **End-to-end tmux-play acceptance** (manual; recorded as
-    `code.tmux-play.acceptance.md` next to the YAML config).
-    Steps: `pnpm install`; `pnpm build`;
-    `tmux-play --config reference/sdlc/code.playbook/tmux-play.config.yaml`;
-    type `/start <intent>`; observe Captain pane walking through
-    `planAndImplement → commitCoderInitial → reviewBossCommit*`;
-    confirm coder pane streams a reply; type `/interrupt ready`;
-    confirm the FSM jumps to `ready`; Ctrl-C, confirm the tmux session
-    tears down cleanly.
-    If a cligent or tmux-play bug surfaces, file and fix in cligent's
-    repo per the maintainer agreement; do not patch around cligent
-    from this repo.
-15. **Spec deltas.**
+14. **Spec deltas.**
     Update `specs/map.md` to mark IR-004 deliverables complete.
     If anything diverged from DR-004, record the delta in a
     one-paragraph addendum at the bottom of DR-004 (or open a follow-up
@@ -168,11 +156,3 @@ Order keeps `main` building at every commit.
   Removing that import shall not affect `code.playbook.ts` or its tests.
 - All `reference/sdlc/code.playbook/**` source files carry SPDX headers
   per the project's licensing spec.
-- End-to-end under tmux-play (per Task 14): launching `tmux-play` with
-  the bundled YAML config shows the standard 4/6/6 layout
-  (Captain | Coder | Reviewer); `/start <intent>` drives the FSM through
-  at least `planAndImplement → commitCoderInitial → reviewBossCommit*`,
-  with the coder pane streaming a real reply from the configured adapter
-  and the Captain pane showing FSM-state status lines;
-  `/interrupt ready` redirects to `ready`; Ctrl-C tears the session
-  down cleanly.
