@@ -51,8 +51,37 @@ export type CodePlaybookOptions = CodingInput;
 // TODO marker.
 
 // Player-prompt composer — DR-004 §6.
-function composePlayerPrompt(_input: CaptainInput): string {
-  throw new Error('composePlayerPrompt: not yet implemented (IR-004 Task 4)');
+// Substitutes the three placeholder tokens in `input.prompt` (literal
+// string replace, no escaping) and prepends labelled blocks for any
+// populated structured field. The FSM's prompt body is never re-flowed.
+function composePlayerPrompt(input: CaptainInput): string {
+  const blocks: string[] = [];
+  if (input.intent !== undefined) {
+    blocks.push(`Boss intent:\n${input.intent}`);
+  }
+  if (input.reviews !== undefined) {
+    blocks.push(`Review items:\n${input.reviews}`);
+  }
+  if (input.challenges !== undefined) {
+    blocks.push(`Rebuttals:\n${input.challenges}`);
+  }
+  if (input.taskDescription !== undefined) {
+    blocks.push(`Task description:\n${input.taskDescription}`);
+  }
+
+  let body = input.prompt;
+  if (input.irNumber !== undefined) {
+    body = body.replaceAll('<#>', input.irNumber);
+  }
+  if (input.coderPlayer !== undefined) {
+    body = body.replaceAll('<coder-llm>', input.coderPlayer);
+  }
+  if (input.reviewerPlayer !== undefined) {
+    body = body.replaceAll('<reviewer-llm>', input.reviewerPlayer);
+  }
+
+  blocks.push(body);
+  return blocks.join('\n\n');
 }
 
 // Player-id resolver — DR-004 §2.
@@ -86,6 +115,18 @@ function captainBridge(_ports: PlaybookPorts) {
   });
 }
 
+// Internal export surface for tests. Not part of the stable public API;
+// the leading underscore signals "subject to change." Each member is
+// referenced here so `noUnusedLocals` stays clean while later tasks
+// wire the factory body to use them.
+export const _internal = {
+  composePlayerPrompt,
+  resolvePlayerId,
+  adjudicate,
+  classifyBossText,
+  captainBridge,
+};
+
 export default function createPlaybookRuntime(
   options: CodePlaybookOptions,
 ): PlaybookRuntime {
@@ -95,11 +136,6 @@ export default function createPlaybookRuntime(
   void options;
   void codingMachine;
   void createActor;
-  void composePlayerPrompt;
-  void resolvePlayerId;
-  void adjudicate;
-  void classifyBossText;
-  void captainBridge;
   return {
     async init(_ports: PlaybookPorts): Promise<void> {
       throw new Error(

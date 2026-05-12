@@ -1,4 +1,4 @@
-import { type CodingInput } from './code.fsm.js';
+import { type CaptainInput, type CaptainOutput, type CodingEvent, type CodingInput } from './code.fsm.js';
 export interface PlayerResult {
     status: 'ok' | 'aborted' | 'error';
     finalText?: string;
@@ -22,4 +22,17 @@ export interface PlaybookRuntime {
     dispose(): Promise<void>;
 }
 export type CodePlaybookOptions = CodingInput;
+declare function composePlayerPrompt(input: CaptainInput): string;
+declare function resolvePlayerId(_input: CaptainInput): string;
+declare function adjudicate(_input: CaptainInput, _finalText: string, _ports: PlaybookPorts, _signal: AbortSignal): Promise<CaptainOutput>;
+declare function classifyBossText(_text: string, _ports: PlaybookPorts, _signal: AbortSignal): Promise<CodingEvent | undefined>;
+declare function captainBridge(_ports: PlaybookPorts): import("xstate").PromiseActorLogic<never, import("xstate").NonReducibleUnknown, import("xstate").EventObject>;
+export declare const _internal: {
+    composePlayerPrompt: typeof composePlayerPrompt;
+    resolvePlayerId: typeof resolvePlayerId;
+    adjudicate: typeof adjudicate;
+    classifyBossText: typeof classifyBossText;
+    captainBridge: typeof captainBridge;
+};
 export default function createPlaybookRuntime(options: CodePlaybookOptions): PlaybookRuntime;
+export {};

@@ -16,5 +16,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["*.ts"],
-  "exclude": ["**/*.test.ts", "node_modules"]
+  "exclude": ["**/*.test.ts", "vitest.config.ts", "node_modules"]
 }
