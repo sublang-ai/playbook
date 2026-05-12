@@ -31,7 +31,6 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
     "link:cligent": "pnpm link --global @sublang/cligent"
   },
   "peerDependencies": {
@@ -39,9 +38,9 @@
     "xstate": "^5.0.0"
   },
   "devDependencies": {
+    "@sublang/cligent": "^0.2.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0",
-    "vitest": "^3.0.0",
     "xstate": "^5.19.4"
   }
 }
