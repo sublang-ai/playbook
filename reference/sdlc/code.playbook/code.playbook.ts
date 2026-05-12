@@ -199,12 +199,163 @@ function parseJudgeJson(raw: string): unknown {
 }
 
 // Boss-event classifier — DR-004 §3.
+// Slash forms tried first; unknown slash forms surface as
+// emitStatus and return undefined per slc/link.md ("Unknown
+// commands surface as emitStatus, not as a silently-dropped
+// turn"). Anything that isn't a slash form falls through to the
+// LLM classifier via ports.callJudge with a fixed prompt that
+// names the four event types and their payload shapes.
 async function classifyBossText(
-  _text: string,
-  _ports: PlaybookPorts,
-  _signal: AbortSignal,
+  text: string,
+  ports: PlaybookPorts,
+  signal: AbortSignal,
 ): Promise<CodingEvent | undefined> {
-  throw new Error('classifyBossText: not yet implemented (IR-004 Task 7)');
+  const trimmed = text.trim();
+  if (trimmed === '') return undefined;
+
+  if (trimmed === '/start' || trimmed.startsWith('/start ')) {
+    return { type: 'START_CODING', intent: trimmed.slice('/start'.length).trim() };
+  }
+  if (trimmed === '/continue' || trimmed.startsWith('/continue ')) {
+    return {
+      type: 'CONTINUE_IR',
+      irNumber: trimmed.slice('/continue'.length).trim(),
+    };
+  }
+  if (trimmed === '/summarize' || trimmed.startsWith('/summarize ')) {
+    return {
+      type: 'SUMMARIZE_IR',
+      irNumber: trimmed.slice('/summarize'.length).trim(),
+    };
+  }
+  if (trimmed === '/interrupt' || trimmed.startsWith('/interrupt ')) {
+    return parseInterruptSlash(trimmed, ports);
+  }
+
+  if (trimmed.startsWith('/')) {
+    const cmd = trimmed.split(/\s+/)[0];
+    await ports.emitStatus(`Unknown slash command: ${cmd}`);
+    return undefined;
+  }
+
+  return classifyWithLlm(trimmed, ports, signal);
+}
+
+// JumpableStateId is internal to code.fsm.ts (not exported), so
+// recover it from the CodingEvent union for typed casts here.
+type JumpableStateId = Extract<
+  CodingEvent,
+  { type: 'BOSS_INTERRUPT' }
+>['targetId'];
+
+async function parseInterruptSlash(
+  trimmed: string,
+  ports: PlaybookPorts,
+): Promise<CodingEvent | undefined> {
+  const rest = trimmed.slice('/interrupt'.length).trim();
+  if (rest === '') {
+    await ports.emitStatus('/interrupt requires a stateId');
+    return undefined;
+  }
+  const firstSpace = rest.search(/\s/);
+  const targetId = firstSpace === -1 ? rest : rest.slice(0, firstSpace);
+  const intent = firstSpace === -1 ? '' : rest.slice(firstSpace).trim();
+  return {
+    type: 'BOSS_INTERRUPT',
+    targetId: targetId as JumpableStateId,
+    ...(intent ? { intent } : {}),
+  };
+}
+
+async function classifyWithLlm(
+  text: string,
+  ports: PlaybookPorts,
+  signal: AbortSignal,
+): Promise<CodingEvent | undefined> {
+  const prompt = buildClassifierPrompt(text);
+  const raw = await ports.callJudge(prompt, signal);
+  const parsed = parseJudgeJson(raw);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    await ports.emitStatus('Classifier returned a non-object JSON response');
+    return undefined;
+  }
+  const obj = parsed as Record<string, unknown>;
+  const eventType = obj.event;
+  if (typeof eventType !== 'string') {
+    await ports.emitStatus('Classifier did not name an event type');
+    return undefined;
+  }
+  const payload =
+    typeof obj.payload === 'object' &&
+    obj.payload !== null &&
+    !Array.isArray(obj.payload)
+      ? (obj.payload as Record<string, unknown>)
+      : {};
+
+  switch (eventType) {
+    case 'START_CODING': {
+      if (typeof payload.intent !== 'string') {
+        await ports.emitStatus('Classifier omitted intent for START_CODING');
+        return undefined;
+      }
+      return { type: 'START_CODING', intent: payload.intent };
+    }
+    case 'CONTINUE_IR': {
+      if (typeof payload.irNumber !== 'string') {
+        await ports.emitStatus('Classifier omitted irNumber for CONTINUE_IR');
+        return undefined;
+      }
+      return { type: 'CONTINUE_IR', irNumber: payload.irNumber };
+    }
+    case 'SUMMARIZE_IR': {
+      if (typeof payload.irNumber !== 'string') {
+        await ports.emitStatus('Classifier omitted irNumber for SUMMARIZE_IR');
+        return undefined;
+      }
+      return { type: 'SUMMARIZE_IR', irNumber: payload.irNumber };
+    }
+    case 'BOSS_INTERRUPT': {
+      if (typeof payload.targetId !== 'string') {
+        await ports.emitStatus(
+          'Classifier omitted targetId for BOSS_INTERRUPT',
+        );
+        return undefined;
+      }
+      return {
+        type: 'BOSS_INTERRUPT',
+        targetId: payload.targetId as JumpableStateId,
+        ...(typeof payload.intent === 'string'
+          ? { intent: payload.intent }
+          : {}),
+        ...(typeof payload.irNumber === 'string'
+          ? { irNumber: payload.irNumber }
+          : {}),
+      };
+    }
+    default:
+      await ports.emitStatus(
+        `Classifier returned unknown event type: ${eventType}`,
+      );
+      return undefined;
+  }
+}
+
+function buildClassifierPrompt(text: string): string {
+  return [
+    'Classify the following Boss message into exactly one of these events.',
+    'Respond with JSON: { "event": "<TYPE>", "payload": { ...fields } }.',
+    '',
+    'Events:',
+    '- START_CODING: payload { intent: "<free-form goal>" }',
+    '- CONTINUE_IR: payload { irNumber: "<number>" }',
+    '- SUMMARIZE_IR: payload { irNumber: "<number>" }',
+    '- BOSS_INTERRUPT: payload { targetId: "<stateId>", intent?: "<free-form goal>", irNumber?: "<number>" }',
+    '',
+    'Boss message:',
+    '```',
+    text,
+    '```',
+  ].join('\n');
 }
 
 // Captain-actor bridge — DR-004 §7.

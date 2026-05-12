@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import type { CaptainInput } from './code.fsm.js';
 import { _internal, type PlaybookPorts } from './code.playbook.js';
 
-const { composePlayerPrompt, resolvePlayerId, adjudicate } = _internal;
+const { composePlayerPrompt, resolvePlayerId, adjudicate, classifyBossText } =
+  _internal;
 
 function makeFakePorts(
   overrides: Partial<PlaybookPorts> = {},
@@ -446,5 +447,141 @@ describe('adjudicate', () => {
         ),
       ).rejects.toThrow(/required field "challenges"/);
     });
+  });
+});
+
+describe('classifyBossText (slash forms — DR-004 §3)', () => {
+  const sig = () => new AbortController().signal;
+
+  it('/start <text> → START_CODING with intent', async () => {
+    expect(
+      await classifyBossText('/start fix the bug', makeFakePorts(), sig()),
+    ).toEqual({ type: 'START_CODING', intent: 'fix the bug' });
+  });
+
+  it('/continue <#> → CONTINUE_IR with irNumber', async () => {
+    expect(
+      await classifyBossText('/continue 4', makeFakePorts(), sig()),
+    ).toEqual({ type: 'CONTINUE_IR', irNumber: '4' });
+  });
+
+  it('/summarize <#> → SUMMARIZE_IR with irNumber', async () => {
+    expect(
+      await classifyBossText('/summarize 7', makeFakePorts(), sig()),
+    ).toEqual({ type: 'SUMMARIZE_IR', irNumber: '7' });
+  });
+
+  it('/interrupt <stateId> → BOSS_INTERRUPT with targetId only', async () => {
+    expect(
+      await classifyBossText('/interrupt ready', makeFakePorts(), sig()),
+    ).toEqual({ type: 'BOSS_INTERRUPT', targetId: 'ready' });
+  });
+
+  it('/interrupt <stateId> <rest> attaches rest as intent', async () => {
+    expect(
+      await classifyBossText(
+        '/interrupt planAndImplement fix the bug',
+        makeFakePorts(),
+        sig(),
+      ),
+    ).toEqual({
+      type: 'BOSS_INTERRUPT',
+      targetId: 'planAndImplement',
+      intent: 'fix the bug',
+    });
+  });
+
+  it('unknown slash → emitStatus + undefined (slc/link.md "not silently dropped")', async () => {
+    const statuses: string[] = [];
+    const ports = makeFakePorts({
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+    });
+    expect(await classifyBossText('/bogus rest', ports, sig())).toBeUndefined();
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]).toContain('/bogus');
+  });
+
+  it('empty (whitespace-only) text → undefined, no port calls', async () => {
+    let judgeCalled = false;
+    let statusCalled = false;
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        judgeCalled = true;
+        return '';
+      },
+      emitStatus: async () => {
+        statusCalled = true;
+      },
+    });
+    expect(await classifyBossText('   \n  ', ports, sig())).toBeUndefined();
+    expect(judgeCalled).toBe(false);
+    expect(statusCalled).toBe(false);
+  });
+
+  it('slash forms do not call ports.callJudge', async () => {
+    let called = false;
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        called = true;
+        return '';
+      },
+    });
+    await classifyBossText('/start anything', ports, sig());
+    expect(called).toBe(false);
+  });
+});
+
+describe('classifyBossText (LLM fallback — DR-004 §3)', () => {
+  const sig = () => new AbortController().signal;
+
+  it('free-form text routes through callJudge and lands on START_CODING', async () => {
+    let prompt = '';
+    const ports = makeFakePorts({
+      callJudge: async (p) => {
+        prompt = p;
+        return JSON.stringify({
+          event: 'START_CODING',
+          payload: { intent: 'fix the bug' },
+        });
+      },
+    });
+    const out = await classifyBossText('please fix the bug', ports, sig());
+    expect(out).toEqual({ type: 'START_CODING', intent: 'fix the bug' });
+    expect(prompt).toContain('please fix the bug');
+  });
+
+  it('fixed prompt names all four event types', async () => {
+    let prompt = '';
+    const ports = makeFakePorts({
+      callJudge: async (p) => {
+        prompt = p;
+        return JSON.stringify({
+          event: 'START_CODING',
+          payload: { intent: 'x' },
+        });
+      },
+    });
+    await classifyBossText('something', ports, sig());
+    expect(prompt).toContain('START_CODING');
+    expect(prompt).toContain('CONTINUE_IR');
+    expect(prompt).toContain('SUMMARIZE_IR');
+    expect(prompt).toContain('BOSS_INTERRUPT');
+  });
+
+  it('unknown event type from LLM → emitStatus + undefined', async () => {
+    const statuses: string[] = [];
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        JSON.stringify({ event: 'BOGUS', payload: {} }),
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+    });
+    expect(
+      await classifyBossText('please do something', ports, sig()),
+    ).toBeUndefined();
+    expect(statuses[0]).toContain('BOGUS');
   });
 });
