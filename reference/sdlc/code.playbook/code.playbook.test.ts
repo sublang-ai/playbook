@@ -3,9 +3,23 @@
 
 import { describe, expect, it } from 'vitest';
 import type { CaptainInput } from './code.fsm.js';
-import { _internal } from './code.playbook.js';
+import { _internal, type PlaybookPorts } from './code.playbook.js';
 
-const { composePlayerPrompt, resolvePlayerId } = _internal;
+const { composePlayerPrompt, resolvePlayerId, adjudicate } = _internal;
+
+function makeFakePorts(
+  overrides: Partial<PlaybookPorts> = {},
+): PlaybookPorts {
+  return {
+    callPlayer: async () => {
+      throw new Error('callPlayer not used in this test');
+    },
+    callJudge: async () => '{}',
+    emitStatus: async () => {},
+    emitTelemetry: async () => {},
+    ...overrides,
+  };
+}
 
 function makeInput(overrides: Partial<CaptainInput> = {}): CaptainInput {
   return {
@@ -200,5 +214,169 @@ describe('resolvePlayerId', () => {
         'coder',
       );
     });
+  });
+});
+
+describe('adjudicate', () => {
+  it('prompt contains every input.result key with its description verbatim', async () => {
+    let prompt = '';
+    const ports = makeFakePorts({
+      callJudge: async (p) => {
+        prompt = p;
+        return JSON.stringify({ guard: 'firstKey' });
+      },
+    });
+    const input = makeInput({
+      result: {
+        firstKey: 'First outcome description with detail.',
+        secondKey:
+          'Second outcome — Coder challenged the items; output includes `challenges: <numbered rebuttals>`.',
+        thirdKey: 'Third outcome described tersely.',
+      },
+    });
+    await adjudicate(input, 'player text', ports, new AbortController().signal);
+    for (const [key, description] of Object.entries(input.result)) {
+      expect(prompt).toContain(`\`${key}\``);
+      expect(prompt).toContain(description);
+    }
+  });
+
+  it('includes the player\'s verbatim output in the prompt', async () => {
+    let prompt = '';
+    const ports = makeFakePorts({
+      callJudge: async (p) => {
+        prompt = p;
+        return JSON.stringify({ guard: 'foo' });
+      },
+    });
+    const verbatim =
+      'Multi-line\nplayer reply with\nbackticks like `x` preserved.';
+    await adjudicate(
+      makeInput({ result: { foo: 'desc' } }),
+      verbatim,
+      ports,
+      new AbortController().signal,
+    );
+    expect(prompt).toContain(verbatim);
+  });
+
+  it('names the player in the prompt', async () => {
+    let prompt = '';
+    const ports = makeFakePorts({
+      callJudge: async (p) => {
+        prompt = p;
+        return JSON.stringify({ guard: 'k' });
+      },
+    });
+    await adjudicate(
+      makeInput({ player: 'Reviewer', result: { k: 'desc' } }),
+      'out',
+      ports,
+      new AbortController().signal,
+    );
+    expect(prompt).toContain('Reviewer');
+  });
+
+  it('returns the parsed JSON with all payload fields', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        JSON.stringify({ guard: 'foo', reviews: 'numbered list', extra: 1 }),
+    });
+    const out = await adjudicate(
+      makeInput({ result: { foo: 'description' } }),
+      'output',
+      ports,
+      new AbortController().signal,
+    );
+    expect(out.guard).toBe('foo');
+    expect(out.reviews).toBe('numbered list');
+    expect(out.extra).toBe(1);
+  });
+
+  it('strips a ```json code fence from the judge response', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => '```json\n{"guard":"foo"}\n```',
+    });
+    const out = await adjudicate(
+      makeInput({ result: { foo: 'desc' } }),
+      'out',
+      ports,
+      new AbortController().signal,
+    );
+    expect(out.guard).toBe('foo');
+  });
+
+  it('throws on an unknown guard', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => JSON.stringify({ guard: 'wrong' }),
+    });
+    await expect(
+      adjudicate(
+        makeInput({ result: { foo: 'desc', bar: 'desc' } }),
+        'out',
+        ports,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/unknown guard "wrong"/);
+  });
+
+  it('throws when guard is missing or non-string', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => JSON.stringify({ noGuard: true }),
+    });
+    await expect(
+      adjudicate(
+        makeInput({ result: { foo: 'desc' } }),
+        'out',
+        ports,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/missing string "guard"/);
+  });
+
+  it('throws on malformed JSON response', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => 'this is not json at all',
+    });
+    await expect(
+      adjudicate(
+        makeInput({ result: { foo: 'desc' } }),
+        'out',
+        ports,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/not valid JSON/);
+  });
+
+  it('throws when the response is a JSON array or non-object', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => '["foo", "bar"]',
+    });
+    await expect(
+      adjudicate(
+        makeInput({ result: { foo: 'desc' } }),
+        'out',
+        ports,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/not a JSON object/);
+  });
+
+  it('passes the abort signal through to ports.callJudge', async () => {
+    let received: AbortSignal | undefined;
+    const ports = makeFakePorts({
+      callJudge: async (_p, signal) => {
+        received = signal;
+        return JSON.stringify({ guard: 'k' });
+      },
+    });
+    const controller = new AbortController();
+    await adjudicate(
+      makeInput({ result: { k: 'desc' } }),
+      'out',
+      ports,
+      controller.signal,
+    );
+    expect(received).toBe(controller.signal);
   });
 });

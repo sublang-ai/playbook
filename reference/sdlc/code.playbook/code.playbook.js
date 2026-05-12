@@ -68,9 +68,57 @@ function resolvePlayerId(input) {
         }
     }
 }
-// LLM judge — DR-004 §4.
-async function adjudicate(_input, _finalText, _ports, _signal) {
-    throw new Error('adjudicate: not yet implemented (IR-004 Task 6)');
+// LLM judge — DR-004 §4. Builds a prompt that lists each declared
+// outcome verbatim, asks ports.callJudge for a JSON
+// `{ guard, …payloadFields }` response, and returns the parsed
+// object once the chosen guard is one of the input.result keys.
+// Adjudicator failures (malformed JSON, missing/unknown guard) are
+// control-plane errors and propagate via throw per slc/link.md.
+async function adjudicate(input, finalText, ports, signal) {
+    const prompt = buildJudgePrompt(input, finalText);
+    const raw = await ports.callJudge(prompt, signal);
+    const parsed = parseJudgeJson(raw);
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        throw new Error('adjudicate: judge response is not a JSON object');
+    }
+    const obj = parsed;
+    const guard = obj.guard;
+    if (typeof guard !== 'string') {
+        throw new Error('adjudicate: judge response missing string "guard" field');
+    }
+    if (!Object.prototype.hasOwnProperty.call(input.result, guard)) {
+        throw new Error(`adjudicate: unknown guard "${guard}" — declared guards: ${Object.keys(input.result).join(', ')}`);
+    }
+    return obj;
+}
+function buildJudgePrompt(input, finalText) {
+    const lines = [];
+    lines.push(`The ${input.player} just produced this output:`);
+    lines.push('');
+    lines.push('```');
+    lines.push(finalText);
+    lines.push('```');
+    lines.push('');
+    lines.push('Pick exactly one outcome by `guard` and return JSON ' +
+        '`{ guard, …payloadFields }`. Required payload fields are ' +
+        'named in the outcome description.');
+    lines.push('');
+    for (const [key, description] of Object.entries(input.result)) {
+        lines.push(`- \`${key}\` — ${description}`);
+    }
+    return lines.join('\n');
+}
+function parseJudgeJson(raw) {
+    let text = raw.trim();
+    const fence = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
+    if (fence)
+        text = fence[1].trim();
+    try {
+        return JSON.parse(text);
+    }
+    catch (e) {
+        throw new Error(`adjudicate: judge response is not valid JSON: ${e.message}`);
+    }
 }
 // Boss-event classifier — DR-004 §3.
 async function classifyBossText(_text, _ports, _signal) {
