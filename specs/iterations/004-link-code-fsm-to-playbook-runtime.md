@@ -34,7 +34,7 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
   handleBossInput` forwarding, and lifecycle ordering.
   *Tests pass under the same local-link setup; same Task-13 README
   gate as `code.tmux-play.ts`.*
-- [ ] `reference/sdlc/code.playbook/tmux-play.config.yaml` — example
+- [x] `reference/sdlc/code.playbook/tmux-play.config.yaml` — example
   config per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play),
   with `captain.from: ./code.tmux-play.js`.
 - [x] Build pipeline — `package.json` with `"type": "module"` and a

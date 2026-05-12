@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+# Example tmux-play config for the CODE playbook — DR-004 §11.
+# Run with:
+#   tmux-play --config reference/sdlc/code.playbook/tmux-play.config.yaml
+# Local-link prerequisite: while published @sublang/cligent does not
+# yet export ./tmux-play, the adapter referenced by `captain.from`
+# below requires a sibling cligent checkout linked into this package
+# via `pnpm link`. See the README for the recipe (Task 13).
+
+captain:
+  # Dev form: sibling-path import of the compiled adapter. After
+  # @sublang/playbook is published, swap this for the package
+  # specifier — e.g.
+  #   from: "@sublang/playbook/code/tmux-play"
+  # (final form confirmed at publish time per DR-004 §11). Roles,
+  # options, and the rest of the config are unchanged.
+  from: ./code.tmux-play.js
+  adapter: claude
+  model: claude-opus-4-7
+  options:
+    # Substituted into the <coder-llm> placeholder in player prompts
+    # (DR-004 §6).
+    coderPlayer: claude
+    # Substituted into <reviewer-llm>.
+    reviewerPlayer: codex
+
+# `roles[].id` shall match the baked playerId strings the adapter
+# routes to. The CODE playbook bakes Coder→'coder' and
+# Reviewer→'reviewer' at link time (DR-004 §2); the adapter does
+# not remap, so changing these ids would break callRole routing.
+roles:
+  - id: coder
+    adapter: claude
+  - id: reviewer
+    adapter: codex
