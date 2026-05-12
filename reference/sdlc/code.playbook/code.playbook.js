@@ -89,7 +89,26 @@ async function adjudicate(input, finalText, ports, signal) {
     if (!Object.prototype.hasOwnProperty.call(input.result, guard)) {
         throw new Error(`adjudicate: unknown guard "${guard}" — declared guards: ${Object.keys(input.result).join(', ')}`);
     }
+    // Per slc/link.md, a missing payload field the state's `result`
+    // description requires is a control-plane error. The FSM names
+    // required fields with the literal phrase
+    //   Output shall include `<fieldName>: <...>`
+    // so we extract those tokens and require each to be a string in
+    // the judge response.
+    for (const field of extractRequiredFields(input.result[guard])) {
+        if (typeof obj[field] !== 'string') {
+            throw new Error(`adjudicate: judge response missing required field "${field}" for guard "${guard}"`);
+        }
+    }
     return obj;
+}
+function extractRequiredFields(description) {
+    const fields = [];
+    const re = /Output shall include `([A-Za-z_][A-Za-z0-9_]*):/g;
+    for (const m of description.matchAll(re)) {
+        fields.push(m[1]);
+    }
+    return fields;
 }
 function buildJudgePrompt(input, finalText) {
     const lines = [];

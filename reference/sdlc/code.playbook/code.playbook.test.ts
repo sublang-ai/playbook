@@ -379,4 +379,72 @@ describe('adjudicate', () => {
     );
     expect(received).toBe(controller.signal);
   });
+
+  describe('required payload-field validation (slc/link.md)', () => {
+    const code2ChallengesRaised =
+      'Coder challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.';
+
+    it('throws when the chosen guard requires a field the response omits', async () => {
+      const ports = makeFakePorts({
+        callJudge: async () =>
+          JSON.stringify({ guard: 'challengesRaised' }),
+      });
+      await expect(
+        adjudicate(
+          makeInput({ result: { challengesRaised: code2ChallengesRaised } }),
+          'out',
+          ports,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(/required field "challenges"/);
+    });
+
+    it('accepts the response when every required field is present as a string', async () => {
+      const ports = makeFakePorts({
+        callJudge: async () =>
+          JSON.stringify({
+            guard: 'challengesRaised',
+            challenges: '1. counter-evidence',
+          }),
+      });
+      const out = await adjudicate(
+        makeInput({ result: { challengesRaised: code2ChallengesRaised } }),
+        'out',
+        ports,
+        new AbortController().signal,
+      );
+      expect(out.guard).toBe('challengesRaised');
+      expect(out.challenges).toBe('1. counter-evidence');
+    });
+
+    it('does not validate fields when the description names none', async () => {
+      const ports = makeFakePorts({
+        callJudge: async () => JSON.stringify({ guard: 'accepted' }),
+      });
+      const out = await adjudicate(
+        makeInput({
+          result: { accepted: 'Coder accepted without further edits.' },
+        }),
+        'out',
+        ports,
+        new AbortController().signal,
+      );
+      expect(out.guard).toBe('accepted');
+    });
+
+    it('throws when a required field is present but not a string', async () => {
+      const ports = makeFakePorts({
+        callJudge: async () =>
+          JSON.stringify({ guard: 'challengesRaised', challenges: 42 }),
+      });
+      await expect(
+        adjudicate(
+          makeInput({ result: { challengesRaised: code2ChallengesRaised } }),
+          'out',
+          ports,
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow(/required field "challenges"/);
+    });
+  });
 });
