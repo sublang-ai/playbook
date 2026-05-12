@@ -26,7 +26,7 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
 - [ ] `reference/sdlc/code.playbook/tmux-play.config.yaml` — example
   config per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play),
   with `captain.from: ./code.tmux-play.js`.
-- [ ] Build pipeline — `package.json` with `"type": "module"` and a
+- [x] Build pipeline — `package.json` with `"type": "module"` and a
   `pnpm build` (or `npm run build`) script that emits `code.playbook.js`
   and `code.tmux-play.js` next to the `.ts` sources.
   TypeScript → ESM `.js`; no bundler.
@@ -36,7 +36,7 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
   runtime module, a fake-ports example, a "running under tmux-play"
   subsection linking the example YAML, and a "release usage" note
   showing the `@sublang/playbook/code/tmux-play` package-specifier form.
-- [ ] `package.json` — declare `@sublang/cligent` as `peerDependency`
+- [x] `package.json` — declare `@sublang/cligent` as `peerDependency`
   (or `dependency` while the playbook is unpublished and consumed via
   local link); set up a script to link a local cligent checkout for
   development.

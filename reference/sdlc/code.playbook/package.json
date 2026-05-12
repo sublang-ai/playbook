@@ -1,0 +1,47 @@
+{
+  "name": "@sublang/playbook",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "FSM-to-runtime linker output for the CODE playbook, plus the tmux-play host adapter.",
+  "license": "Apache-2.0",
+  "files": [
+    "code.fsm.ts",
+    "code.fsm.js",
+    "code.fsm.d.ts",
+    "code.playbook.ts",
+    "code.playbook.js",
+    "code.playbook.d.ts",
+    "code.tmux-play.ts",
+    "code.tmux-play.js",
+    "code.tmux-play.d.ts",
+    "code.gears.md",
+    "tmux-play.config.yaml",
+    "README.md"
+  ],
+  "exports": {
+    "./code/playbook": {
+      "types": "./code.playbook.d.ts",
+      "default": "./code.playbook.js"
+    },
+    "./code/tmux-play": {
+      "types": "./code.tmux-play.d.ts",
+      "default": "./code.tmux-play.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "link:cligent": "pnpm link --global @sublang/cligent"
+  },
+  "peerDependencies": {
+    "@sublang/cligent": "*",
+    "xstate": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0",
+    "xstate": "^5.19.4"
+  }
+}
