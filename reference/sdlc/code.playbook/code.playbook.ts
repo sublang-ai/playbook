@@ -365,12 +365,22 @@ function buildClassifierPrompt(text: string): string {
 // 'aborted' or 'error' throws so XState routes via onError → #failed
 // (the single fail-stop sink for both Captain errors and player
 // failures).
-function captainBridge(ports: PlaybookPorts) {
+//
+// `getActiveSignal` is the runtime's hook for flowing the Boss's
+// `handleBossInput.signal` into the host port calls — fromPromise
+// hands the bridge XState's actor-scoped signal, which only fires
+// on actor.stop(), not on Boss abort. When omitted (e.g. direct
+// captainBridge tests), the bridge falls back to XState's signal.
+function captainBridge(
+  ports: PlaybookPorts,
+  getActiveSignal?: () => AbortSignal | undefined,
+) {
   return fromPromise<CaptainOutput, CaptainInput>(
     async ({ input, signal }) => {
+      const activeSignal = getActiveSignal?.() ?? signal;
       const playerId = resolvePlayerId(input);
       const prompt = composePlayerPrompt(input);
-      const result = await ports.callPlayer(playerId, prompt, signal);
+      const result = await ports.callPlayer(playerId, prompt, activeSignal);
       if (result.status !== 'ok') {
         throw new Error(
           result.error ??
@@ -382,7 +392,7 @@ function captainBridge(ports: PlaybookPorts) {
           'captainBridge: callPlayer returned status=ok with no finalText',
         );
       }
-      return adjudicate(input, result.finalText, ports, signal);
+      return adjudicate(input, result.finalText, ports, activeSignal);
     },
   );
 }
@@ -403,27 +413,106 @@ export default function createPlaybookRuntime(
   options: CodePlaybookOptions,
 ): PlaybookRuntime {
   let actor: ReturnType<typeof createActor> | undefined;
+  let savedPorts: PlaybookPorts | undefined;
+  // The Boss's per-turn AbortSignal, surfaced to captainBridge so
+  // ports.callPlayer / callJudge see the right cancellation source.
+  // null between turns; set by handleBossInput.
+  let activeSignal: AbortSignal | undefined;
 
-  return {
+  function buildActor(
+    ports: PlaybookPorts,
+  ): ReturnType<typeof createActor> {
+    return createActor(
+      codingMachine.provide({
+        actors: { captain: captainBridge(ports, () => activeSignal) },
+      }),
+      { input: options },
+    );
+  }
+
+  const runtime = {
     async init(ports: PlaybookPorts): Promise<void> {
-      const machine = codingMachine.provide({
-        actors: { captain: captainBridge(ports) },
-      });
-      actor = createActor(machine, { input: options });
+      savedPorts = ports;
+      actor = buildActor(ports);
       actor.start();
     },
-    async handleBossInput(
-      _turn: { text: string; signal: AbortSignal },
-    ): Promise<void> {
-      void actor;
-      throw new Error(
-        'createPlaybookRuntime.handleBossInput: not yet implemented (IR-004 Task 9)',
-      );
+
+    async handleBossInput({
+      text,
+      signal,
+    }: {
+      text: string;
+      signal: AbortSignal;
+    }): Promise<void> {
+      if (!actor || !savedPorts) {
+        throw new Error(
+          'createPlaybookRuntime.handleBossInput: init must be called first',
+        );
+      }
+      activeSignal = signal;
+      try {
+        // 1. Classify text into an FSM event (slash → event; else LLM).
+        const event = await classifyBossText(text, savedPorts, signal);
+        // Unknown slash or empty input — classifier already surfaced
+        // status; nothing to send.
+        if (event === undefined) return;
+        // 2. final state ('done') cannot accept new events — dispose
+        //    and reconstruct per DR-004 §5.
+        if (actor.getSnapshot().status === 'done') {
+          actor.stop();
+          actor = buildActor(savedPorts);
+          actor.start();
+        }
+        // 3. Send the event.
+        actor.send(event);
+        // 4. Drive to quiescence. On signal-abort we take no FSM
+        //    action: the captain bridge's awaited callPlayer rejects
+        //    naturally, the bridge throws, XState routes through
+        //    onError → #failed, and this loop sees the quiescent
+        //    snapshot and returns (DR-004 §8 natural rejection).
+        await driveToQuiescence(actor);
+      } finally {
+        activeSignal = undefined;
+      }
     },
+
     async dispose(): Promise<void> {
-      throw new Error(
-        'createPlaybookRuntime.dispose: not yet implemented (IR-004 Task 9)',
-      );
+      if (actor) {
+        actor.stop();
+        actor = undefined;
+      }
+      savedPorts = undefined;
+    },
+
+    // @internal — test-only escape hatch for inspecting the
+    // underlying actor's snapshot. Not part of the slc/link.md
+    // PlaybookRuntime contract; Task 10 supersedes this with
+    // proper status/telemetry.
+    _getActor() {
+      return actor;
     },
   };
+  return runtime as PlaybookRuntime;
+}
+
+function driveToQuiescence(
+  actor: ReturnType<typeof createActor>,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (isQuiescent(actor.getSnapshot())) {
+      resolve();
+      return;
+    }
+    const sub = actor.subscribe((snap) => {
+      if (isQuiescent(snap)) {
+        sub.unsubscribe();
+        resolve();
+      }
+    });
+  });
+}
+
+function isQuiescent(snap: { value: unknown }): boolean {
+  const v = snap.value;
+  return v === 'ready' || v === 'failed' || v === 'done';
 }

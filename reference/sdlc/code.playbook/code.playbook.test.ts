@@ -682,3 +682,142 @@ describe('createPlaybookRuntime.init (Task 8 wiring)', () => {
     await expect(runtime.init(makeFakePorts())).resolves.toBeUndefined();
   });
 });
+
+// _getActor is an @internal escape hatch on the runtime; Task 10 will
+// supersede it with proper status/telemetry assertions.
+type RuntimeWithInternals = ReturnType<typeof createPlaybookRuntime> & {
+  _getActor(): ReturnType<typeof createActor> | undefined;
+};
+
+function makeRuntimeWithInternals(): RuntimeWithInternals {
+  return createPlaybookRuntime({
+    coderPlayer: 'claude',
+    reviewerPlayer: 'codex',
+  }) as RuntimeWithInternals;
+}
+
+const sig = () => new AbortController().signal;
+
+describe('handleBossInput drive-to-quiescence (Task 9)', () => {
+  it('clean run: /start drives FSM through one captain turn back to ready', async () => {
+    const playerCalls: Array<{ playerId: string; prompt: string }> = [];
+    let judgeCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async (playerId, prompt) => {
+        playerCalls.push({ playerId, prompt });
+        return { status: 'ok', finalText: 'no progress — need more input' };
+      },
+      callJudge: async () => {
+        judgeCalls++;
+        return JSON.stringify({ guard: 'needsBossInput' });
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({ text: '/start add a button', signal: sig() });
+
+    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls[0].playerId).toBe('coder');
+    expect(playerCalls[0].prompt).toContain('add a button');
+    expect(judgeCalls).toBe(1);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('signal-abort mid-callPlayer lands at #failed with lastError captured', async () => {
+    const controller = new AbortController();
+    let judgeCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async (_id, _p, signal) => {
+        if (signal.aborted) {
+          return { status: 'aborted', error: 'aborted before start' };
+        }
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { status: 'aborted', error: 'host signal' };
+      },
+      callJudge: async () => {
+        judgeCalls++;
+        return '';
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    setTimeout(() => controller.abort(), 5);
+    await runtime.handleBossInput({
+      text: '/start do something',
+      signal: controller.signal,
+    });
+
+    const snap = runtime._getActor()?.getSnapshot();
+    expect(snap?.value).toBe('failed');
+    expect((snap?.context as { lastError?: unknown }).lastError).toBeDefined();
+    expect(judgeCalls).toBe(0); // callPlayer aborted; judge never reached
+  });
+
+  it('/interrupt <stateId> sends BOSS_INTERRUPT and redirects the FSM', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    // Normal turn lands at ready first.
+    await runtime.handleBossInput({ text: '/start anything', signal: sig() });
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+
+    // Interrupt redirects to failed (a quiescent target with no
+    // captain invoke — no extra port calls required).
+    await runtime.handleBossInput({
+      text: '/interrupt failed',
+      signal: sig(),
+    });
+    expect(runtime._getActor()?.getSnapshot().value).toBe('failed');
+  });
+
+  it('throws when handleBossInput is called before init', async () => {
+    const runtime = makeRuntimeWithInternals();
+    await expect(
+      runtime.handleBossInput({ text: '/start x', signal: sig() }),
+    ).rejects.toThrow(/init must be called first/);
+  });
+
+  it('dispose stops the actor and clears state', async () => {
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makeFakePorts());
+    expect(runtime._getActor()).toBeDefined();
+    await runtime.dispose();
+    expect(runtime._getActor()).toBeUndefined();
+  });
+
+  it('classifier-undefined text (unknown slash) returns without sending anything', async () => {
+    const statuses: string[] = [];
+    let playerCalls = 0;
+    let judgeCalls = 0;
+    const ports = makeFakePorts({
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+      callPlayer: async () => {
+        playerCalls++;
+        return { status: 'ok', finalText: '' };
+      },
+      callJudge: async () => {
+        judgeCalls++;
+        return '';
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({ text: '/bogus stuff', signal: sig() });
+
+    expect(statuses[0]).toContain('/bogus');
+    expect(playerCalls).toBe(0);
+    expect(judgeCalls).toBe(0);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+});
