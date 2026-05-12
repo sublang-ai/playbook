@@ -36,10 +36,7 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
   runtime module, a fake-ports example, a "running under tmux-play"
   subsection linking the example YAML, and a "release usage" note
   showing the `@sublang/playbook/code/tmux-play` package-specifier form.
-- [x] `package.json` — declare `@sublang/cligent` as `peerDependency`
-  (or `dependency` while the playbook is unpublished and consumed via
-  local link); set up a script to link a local cligent checkout for
-  development.
+- [x] `package.json` — declare `@sublang/cligent` as `peerDependency`.
 - [ ] `specs/map.md` — IR-004 row reflects the final summary; DR-004
   row present.
   *(Re-verify at close-out.)*
@@ -108,10 +105,7 @@ Order keeps `main` building at every commit.
     `callRole` / `callCaptain` forwarding, `RoleRunResult` ↔
     `PlayerResult` identity, `signal` propagation, and the
     `init → handleBossTurn → dispose` lifecycle order.
-    Verify `pnpm build` emits `code.tmux-play.js` (with a local
-    cligent checkout linked into this package via `pnpm link`; the
-    link is the accepted prerequisite per the Deliverables note
-    above and is documented as part of Task 13).
+    Verify `pnpm build` emits `code.tmux-play.js`.
 12. **Example config** (`tmux-play.config.yaml`) per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
     Ship the dev form with `captain.from: ./code.tmux-play.js`;
     document the release-form swap inline as a YAML comment; declare
@@ -120,20 +114,14 @@ Order keeps `main` building at every commit.
 13. **README.**
     Document the fake-ports example, the public `PlaybookRuntime` /
     `PlaybookPorts` types, the tmux-play integration path (example
-    YAML + how to run `pnpm build && tmux-play --config …`), a
+    YAML + how to run `pnpm build && tmux-play --config …`), and a
     "release usage" subsection showing the `@sublang/playbook`
-    package-specifier form, and — while published `@sublang/cligent`
-    lacks the `./tmux-play` subpath — the local-link recipe (concrete
-    `pnpm link <path-to-cligent>` invocation pointing at a sibling
-    cligent checkout) the tmux-play build and tests require.
+    package-specifier form.
     Landing this task flips the two tmux-play deliverable checkboxes
     above to `[x]`.
 14. **End-to-end tmux-play acceptance** (manual; recorded as
     `code.tmux-play.acceptance.md` next to the YAML config).
-    Steps: `pnpm install`; while published `@sublang/cligent` lacks
-    the `./tmux-play` subpath, `pnpm link <path-to-cligent>` per the
-    Task-13 README recipe (required for the adapter build, not
-    optional); `pnpm build`;
+    Steps: `pnpm install`; `pnpm build`;
     `tmux-play --config reference/sdlc/code.playbook/tmux-play.config.yaml`;
     type `/start <intent>`; observe Captain pane walking through
     `planAndImplement → commitCoderInitial → reviewBossCommit*`;

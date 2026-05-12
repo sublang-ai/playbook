@@ -40,11 +40,9 @@ These were verified during IR-004 implementation; re-run them on
 a fresh checkout if any input changed since.
 
 - [x] `pnpm install` resolves cleanly from
-  [`reference/sdlc/code.playbook/`](./).
-- [x] Local cligent checkout linked via
-  `pnpm link <path-to-cligent>` per the [README install
-  section](./README.md#install-development); verified with
-  ``node --input-type=module -e "import('@sublang/cligent/tmux-play').then(() => console.log('ok'))"``.
+  [`reference/sdlc/code.playbook/`](./), pulling
+  `@sublang/cligent` (≥ 0.3.0, which exports `./tmux-play`) from
+  the registry.
 - [x] `pnpm build` emits all four expected artifacts next to their
   `.ts` sources: `code.fsm.js`, `code.playbook.js`,
   `code.tmux-play.js`, plus the matching `.d.ts` siblings.
@@ -61,14 +59,14 @@ a fresh checkout if any input changed since.
 
 ### Environment prerequisites
 
-- [ ] `tmux` installed and on `$PATH`.
-- [ ] The two role adapters declared in `tmux-play.config.yaml`
+- [x] `tmux` installed and on `$PATH`.
+- [x] The two role adapters declared in `tmux-play.config.yaml`
   installed locally (default config uses `claude` for the coder
   and `codex` for the reviewer; the captain pane also uses
   `claude`).
-- [ ] API keys / credentials configured for each adapter per the
+- [x] API keys / credentials configured for each adapter per the
   upstream cligent docs.
-- [ ] An interactive terminal (Ctrl-C teardown can't be exercised
+- [x] An interactive terminal (Ctrl-C teardown can't be exercised
   in a non-TTY environment).
 
 ### Steps

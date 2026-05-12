@@ -28,26 +28,8 @@ cd reference/sdlc/code.playbook
 pnpm install
 ```
 
-**Local-link prerequisite.** Published `@sublang/cligent` (0.2.0)
-does not yet expose `./tmux-play` or the `Captain` contract types
-that the tmux-play adapter imports. Link a local cligent checkout
-before building the adapter or running its tests:
-
-```bash
-# From this directory (reference/sdlc/code.playbook/):
-pnpm link /path/to/cligent           # conventionally ../../../../cligent
-
-# Verify the link resolved:
-node --input-type=module -e \
-  "import('@sublang/cligent/tmux-play').then(() => console.log('ok'))"
-```
-
-The link writes a machine-specific `pnpm-workspace.yaml` (path
-relative to this directory); the file is gitignored locally. The
-link goes away once `@sublang/cligent` publishes its `./tmux-play`
-surface — at that point a plain `pnpm install` suffices and the
-two tmux-play deliverables become reproducibly buildable from a
-fresh checkout.
+This resolves `@sublang/cligent` (≥ 0.3.0, which exports
+`./tmux-play`) from the registry; no local link required.
 
 ## Quickstart — drive a turn with fake ports
 
@@ -163,9 +145,6 @@ import createPlaybookRuntime from '@sublang/playbook/code/playbook';
 - `pnpm test` — `vitest run` against the `.ts` sources
   (alias-resolved by [`vitest.config.ts`](./vitest.config.ts) so
   no prior build is required).
-- `pnpm link:cligent` — global-link convenience wrapper. For the
-  one-shot `pnpm link <path>` form, see the install section
-  above.
 
 ## Source
 

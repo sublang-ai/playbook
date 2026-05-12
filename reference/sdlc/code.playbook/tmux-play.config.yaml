@@ -4,10 +4,6 @@
 # Example tmux-play config for the CODE playbook — DR-004 §11.
 # Run with:
 #   tmux-play --config reference/sdlc/code.playbook/tmux-play.config.yaml
-# Local-link prerequisite: while published @sublang/cligent does not
-# yet export ./tmux-play, the adapter referenced by `captain.from`
-# below requires a sibling cligent checkout linked into this package
-# via `pnpm link`. See the README for the recipe (Task 13).
 
 captain:
   # Dev form: sibling-path import of the compiled adapter. After
