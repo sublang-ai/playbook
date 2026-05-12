@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import type { CaptainInput } from './code.fsm.js';
 import { _internal } from './code.playbook.js';
 
-const { composePlayerPrompt } = _internal;
+const { composePlayerPrompt, resolvePlayerId } = _internal;
 
 function makeInput(overrides: Partial<CaptainInput> = {}): CaptainInput {
   return {
@@ -142,6 +142,63 @@ describe('composePlayerPrompt', () => {
     it('returns just the prompt body when no structured fields are set', () => {
       const out = composePlayerPrompt(makeInput({ prompt: 'hello' }));
       expect(out).toBe('hello');
+    });
+  });
+});
+
+describe('resolvePlayerId', () => {
+  it('returns "coder" for non-composite Coder', () => {
+    expect(resolvePlayerId(makeInput({ player: 'Coder' }))).toBe('coder');
+  });
+
+  it('returns "reviewer" for non-composite Reviewer', () => {
+    expect(resolvePlayerId(makeInput({ player: 'Reviewer' }))).toBe(
+      'reviewer',
+    );
+  });
+
+  describe('Committer composite (DR-004 §2)', () => {
+    it('CODE-15: only coderPlayer set → "coder"', () => {
+      expect(
+        resolvePlayerId(
+          makeInput({
+            player: 'Committer',
+            sourceItem: 'CODE-15',
+            coderPlayer: 'claude',
+          }),
+        ),
+      ).toBe('coder');
+    });
+
+    it('CODE-16: only reviewerPlayer set → "reviewer"', () => {
+      expect(
+        resolvePlayerId(
+          makeInput({
+            player: 'Committer',
+            sourceItem: 'CODE-16',
+            reviewerPlayer: 'codex',
+          }),
+        ),
+      ).toBe('reviewer');
+    });
+
+    it('CODE-17: both fields set → "coder" (Coder is first in alias declaration)', () => {
+      expect(
+        resolvePlayerId(
+          makeInput({
+            player: 'Committer',
+            sourceItem: 'CODE-17',
+            coderPlayer: 'claude',
+            reviewerPlayer: 'codex',
+          }),
+        ),
+      ).toBe('coder');
+    });
+
+    it('neither field set → "coder" (alias first-alternative fallback per slc/link.md)', () => {
+      expect(resolvePlayerId(makeInput({ player: 'Committer' }))).toBe(
+        'coder',
+      );
     });
   });
 });

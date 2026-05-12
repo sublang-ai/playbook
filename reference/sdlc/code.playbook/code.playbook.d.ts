@@ -23,7 +23,7 @@ export interface PlaybookRuntime {
 }
 export type CodePlaybookOptions = CodingInput;
 declare function composePlayerPrompt(input: CaptainInput): string;
-declare function resolvePlayerId(_input: CaptainInput): string;
+declare function resolvePlayerId(input: CaptainInput): string;
 declare function adjudicate(_input: CaptainInput, _finalText: string, _ports: PlaybookPorts, _signal: AbortSignal): Promise<CaptainOutput>;
 declare function classifyBossText(_text: string, _ports: PlaybookPorts, _signal: AbortSignal): Promise<CodingEvent | undefined>;
 declare function captainBridge(_ports: PlaybookPorts): import("xstate").PromiseActorLogic<never, import("xstate").NonReducibleUnknown, import("xstate").EventObject>;

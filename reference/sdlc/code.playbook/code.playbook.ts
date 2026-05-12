@@ -85,8 +85,29 @@ function composePlayerPrompt(input: CaptainInput): string {
 }
 
 // Player-id resolver — DR-004 §2.
-function resolvePlayerId(_input: CaptainInput): string {
-  throw new Error('resolvePlayerId: not yet implemented (IR-004 Task 5)');
+// Non-composite: Coder→'coder', Reviewer→'reviewer'. The composite
+// Committer (= Coder | Reviewer per code.gears.md) resolves per
+// populated <playerName>Player field on `CaptainInput`: prefer
+// `coderPlayer` (CODE-15/17), fall back to `reviewerPlayer` (CODE-16),
+// and finally to the alias's first alternative (Coder) when neither
+// is set.
+function resolvePlayerId(input: CaptainInput): string {
+  switch (input.player) {
+    case 'Coder':
+      return 'coder';
+    case 'Reviewer':
+      return 'reviewer';
+    case 'Committer':
+      if (input.coderPlayer !== undefined) return 'coder';
+      if (input.reviewerPlayer !== undefined) return 'reviewer';
+      return 'coder';
+    default: {
+      const exhaustive: never = input.player;
+      throw new Error(
+        `resolvePlayerId: unknown player ${String(exhaustive)}`,
+      );
+    }
+  }
 }
 
 // LLM judge — DR-004 §4.
