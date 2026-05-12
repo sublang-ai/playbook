@@ -34,7 +34,7 @@
     "test": "vitest run"
   },
   "peerDependencies": {
-    "@sublang/cligent": "*",
+    "@sublang/cligent": "^0.3.0",
     "xstate": "^5.0.0"
   },
   "devDependencies": {

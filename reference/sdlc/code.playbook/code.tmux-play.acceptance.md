@@ -59,14 +59,14 @@ a fresh checkout if any input changed since.
 
 ### Environment prerequisites
 
-- [x] `tmux` installed and on `$PATH`.
-- [x] The two role adapters declared in `tmux-play.config.yaml`
+- [ ] `tmux` installed and on `$PATH`.
+- [ ] The two role adapters declared in `tmux-play.config.yaml`
   installed locally (default config uses `claude` for the coder
   and `codex` for the reviewer; the captain pane also uses
   `claude`).
-- [x] API keys / credentials configured for each adapter per the
+- [ ] API keys / credentials configured for each adapter per the
   upstream cligent docs.
-- [x] An interactive terminal (Ctrl-C teardown can't be exercised
+- [ ] An interactive terminal (Ctrl-C teardown can't be exercised
   in a non-TTY environment).
 
 ### Steps
