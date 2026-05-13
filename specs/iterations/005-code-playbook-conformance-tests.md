@@ -114,7 +114,15 @@ These are scoped enough to live in the IR rather than a separate DR.
   carries the expected `player`, `sourceItem`, structured fields,
   placeholder substitution, and labelled-block ordering per
   DR-004 §6.
-- [ ] `specs/test/playbook.md` — declare the observable acceptance
+- [x] `specs/dev/playbook.md` — declare the FSM-side conformance
+  invariants the implementation commits to: source agreement
+  (CODE-N validity, prompt body verbatim, player binding),
+  transition coverage (every `onDone` arm exercisable under
+  xstate's first-match-wins), and prompt composition (block
+  ordering per DR-004 §6, placeholder ↔ source-field wiring).
+  Required by META-20 as the verification target for the test
+  items below.
+- [x] `specs/test/playbook.md` — declare the observable acceptance
   behaviors the CODE playbook commits to per META-21:
   `pnpm test` fails when (i) an FSM state's `sourceItem` is not a
   known CODE-N in `code.gears.md`, (ii) a CODE-N prompt body
@@ -125,8 +133,9 @@ These are scoped enough to live in the IR rather than a separate DR.
   fails to substitute a declared placeholder.
   Internal test-file layout is implementation detail and is not
   part of the spec.
-- [ ] `specs/map.md` — register `test/playbook.md` under a new
-  `PLAYBOOK` package row and add the IR-005 row.
+- [x] `specs/map.md` — register `dev/playbook.md` and
+  `test/playbook.md` under a new `PLAYBOOK` package row and add
+  the IR-005 row.
 
 ## Tasks
 
@@ -156,8 +165,11 @@ Order keeps `main` building at every commit.
    Add `code.prompt-contract.test.ts` with a fixture row per
    captain-invoking state (~14 rows).
 6. **Spec items.**
-   Write `specs/test/playbook.md`; finalize `specs/map.md` with the
-   new `PLAYBOOK` package row.
+   Write `specs/dev/playbook.md` (six conformance invariants the
+   FSM commits to, PLAYBOOK-1..6) and `specs/test/playbook.md`
+   (five test items PLAYBOOK-7..11, each `Verifies:` a dev item
+   per META-20); finalize `specs/map.md` with the new `PLAYBOOK`
+   package row.
 
 ## Acceptance criteria
 

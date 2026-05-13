@@ -54,6 +54,13 @@ meta.md     The spec of specs
 | dev | [licensing.md](dev/licensing.md) | SPDX header requirements and file-scope rules |
 | test | [licensing.md](test/licensing.md) | Copyright and license header presence checks |
 
+### PLAYBOOK
+
+| Group | File | Summary |
+| --- | --- | --- |
+| dev | [playbook.md](dev/playbook.md) | CODE playbook FSM ↔ GEARS conformance contract (source agreement, transition coverage, prompt composition) |
+| test | [playbook.md](test/playbook.md) | Integration tests pinning the FSM ↔ GEARS conformance contract under `pnpm test` |
+
 ### SKETCH
 
 | Group | File | Summary |
