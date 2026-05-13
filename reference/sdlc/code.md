@@ -83,13 +83,10 @@ When Coder raises any rebuttals, Captain shall relay them to Reviewer along with
 ## Committer
 
 When Coder makes any Initial Changes or Reviewer raises no findings on uncommitted changes, Captain shall prompt Committer:
-> Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 
 When Captain prompts Committer and only Coder has played since the last commit, Captain shall also append:
 > Coder is <coder-llm>.
-
-When Captain prompts Committer and only Reviewer has played since the last commit, Captain shall also append:
-> Reviewer is <reviewer-llm>.
 
 When Captain prompts Committer and both Coder and Reviewer have played since the last commit, Captain shall also append:
 > Coder is <coder-llm>; Reviewer is <reviewer-llm>.
