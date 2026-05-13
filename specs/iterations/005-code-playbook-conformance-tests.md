@@ -63,7 +63,7 @@ These are scoped enough to live in the IR rather than a separate DR.
   left unused).
   May land as an `_internal` export of `code.playbook.ts` if a
   separate file feels heavyweight.
-- [ ] `reference/sdlc/code.playbook/code.gears-fsm.test.ts` —
+- [x] `reference/sdlc/code.playbook/code.gears-fsm.test.ts` —
   conformance.
   Parses `code.gears.md` into `Map<CODE-N, { player, promptBody }>`
   (player is the `## Coder` / `## Reviewer` / `## Committer`
