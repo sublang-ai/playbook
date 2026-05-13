@@ -41,31 +41,51 @@ These are scoped enough to live in the IR rather than a separate DR.
 
 - [ ] `reference/sdlc/code.playbook/code.fsm.introspect.ts` —
   helper exporting `enumerateCaptainStates(codingMachine)` returning
-  `{ stateId, sourceItem, getInput(context), resultGuards: string[] }[]`
-  plus the root-level event table
-  (`START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`,
+  `{ stateId, sourceItem, getInput(context), transitions: Array<{
+  target, guardName, contextFixture? }> }[]` plus the root-level
+  event table (`START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`,
   `BOSS_INTERRUPT[targetId]`).
+  Each `transitions` entry corresponds to one `onDone` arm — the
+  same `result`-map guard string may appear in multiple entries
+  when the FSM splits on `context.reviewSubject` /
+  `context.afterReview` / `context.changeOrigin`
+  (e.g., `noFindings` routes to `continueIr` / `summarizeSpecs` /
+  `done` per `noFindingsAfter` in
+  [`code.fsm.ts:138`](../../reference/sdlc/code.playbook/code.fsm.ts#L138)).
+  `contextFixture` is the minimal context override needed to make
+  that transition's guard fire; the coverage test consumes it
+  verbatim.
   May land as an `_internal` export of `code.playbook.ts` if a
   separate file feels heavyweight.
 - [ ] `reference/sdlc/code.playbook/code.gears-fsm.test.ts` —
   conformance.
-  Parses `code.gears.md` into `Map<CODE-N, { player, promptBody }>`;
-  walks `codingMachine` via the helper.
+  Parses `code.gears.md` into `Map<CODE-N, { player, promptBody }>`
+  (player is the `## Coder` / `## Reviewer` / `## Committer`
+  section heading the CODE-N falls under); walks `codingMachine`
+  via the helper.
   Asserts (a) every CODE-N from gears has at least one FSM state
-  with matching `sourceItem`, (b) every FSM `sourceItem` resolves to
-  a known CODE-N, (c) each state's `input.prompt` body equals the
-  CODE-N blockquote body modulo declared placeholders
-  (`<#>`, `<coder-llm>`, `<reviewer-llm>`).
+  with matching `sourceItem`, (b) every FSM `sourceItem` resolves
+  to a known CODE-N, (c) each state's `input.player` matches the
+  player parsed from the CODE-N's gears section, (d) each state's
+  `input.prompt` body equals the CODE-N blockquote body modulo
+  declared placeholders (`<#>`, `<coder-llm>`, `<reviewer-llm>`).
 - [ ] `reference/sdlc/code.playbook/code.fsm.coverage.test.ts` —
   edge coverage.
-  For each captain-invoking state, drives a fake actor providing
-  the `captain` invoke with a `CaptainOutput` for each declared
-  `result` guard (with the guard's required payload fields); asserts
-  the resulting FSM state.
+  For each captain-invoking state and each transition returned by
+  the helper, drives a fake `captain` actor that returns the
+  transition's `CaptainOutput` (with required payload fields) under
+  the transition's `contextFixture`; asserts the FSM lands at the
+  declared `target`.
+  This pins context-qualified edges (`noFindings` /  `accepted` /
+  `committed*`) where the same guard string routes to different
+  targets depending on `context.afterReview` or
+  `context.reviewSubject`.
   Also exercises each state's `onError` path (Captain bridge throws
   → `#failed`) and every root-level event
   (`/start`, `/continue`, `/summarize`, each `BOSS_INTERRUPT`
   target).
+  A structural assertion fails the test if any `onDone` transition
+  lacks a fixture.
 - [ ] `reference/sdlc/code.playbook/code.prompt-contract.test.ts` —
   table-driven prompt contract.
   For each captain-invoking state and each relevant context fixture
@@ -75,8 +95,17 @@ These are scoped enough to live in the IR rather than a separate DR.
   carries the expected `player`, `sourceItem`, structured fields,
   placeholder substitution, and labelled-block ordering per
   DR-004 §6.
-- [ ] `specs/test/playbook.md` — declare the three test classes as
-  the integration bar for the CODE playbook.
+- [ ] `specs/test/playbook.md` — declare the observable acceptance
+  behaviors the CODE playbook commits to per META-21:
+  `pnpm test` fails when (i) an FSM state's `sourceItem` is not a
+  known CODE-N in `code.gears.md`, (ii) a CODE-N prompt body
+  diverges from its state's `input.prompt`, (iii) a CODE-N's player
+  binding diverges from its state's `input.player`, (iv) any
+  declared `onDone` transition has no exercising fixture, or (v) a
+  state's composed prompt drops a required structured field or
+  fails to substitute a declared placeholder.
+  Internal test-file layout is implementation detail and is not
+  part of the spec.
 - [ ] `specs/map.md` — register `test/playbook.md` under a new
   `PLAYBOOK` package row and add the IR-005 row.
 
