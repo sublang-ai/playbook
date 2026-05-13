@@ -17,9 +17,9 @@ outside this project.
 
 ### PLAYBOOK-1
 
-Where `code.fsm.ts` declares a captain-invoking state, the state's
-`sourceItem` shall be a CODE-N identifier declared in
-`code.gears.md` under a `### CODE-N` heading.
+The set of CODE-N identifiers declared in `code.gears.md` under
+`### CODE-N` headings shall equal the set of `sourceItem` values
+across captain-invoking states in `code.fsm.ts`.
 
 ### PLAYBOOK-2
 

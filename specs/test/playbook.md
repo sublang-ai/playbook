@@ -18,7 +18,9 @@ Verifies: [PLAYBOOK-1](../dev/playbook.md#playbook-1)
 
 When `pnpm test` runs from `reference/sdlc/code.playbook/`, the
 test suite shall fail if any captain-invoking state's `sourceItem`
-is not a known CODE-N declared in `code.gears.md`.
+is not a known CODE-N declared in `code.gears.md`, or if any
+CODE-N declared in `code.gears.md` has no captain-invoking state
+with matching `sourceItem`.
 
 ### PLAYBOOK-8
 Verifies: [PLAYBOOK-2](../dev/playbook.md#playbook-2)
