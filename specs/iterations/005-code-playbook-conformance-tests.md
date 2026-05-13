@@ -39,7 +39,7 @@ These are scoped enough to live in the IR rather than a separate DR.
 
 ## Deliverables
 
-- [ ] `reference/sdlc/code.playbook/code.fsm.introspect.ts` —
+- [x] `reference/sdlc/code.playbook/code.fsm.introspect.ts` —
   helper exporting `enumerateCaptainStates(codingMachine)` returning
   `{ stateId, sourceItem, getInput(context), transitions: Array<{
   target, guardName, contextFixture? }> }[]` plus the root-level
@@ -121,7 +121,7 @@ Order keeps `main` building at every commit.
 2. **Introspection helper.**
    Add the helper (separate file or `_internal` export).
    Unit-test it against `codingMachine` directly (enumerated
-   sourceItems, resultGuards length per state).
+   sourceItems, transitions count per state, root-event targets).
 3. **GEARS ↔ FSM conformance test.**
    Add `code.gears-fsm.test.ts`.
    If any prompt or sourceItem has drifted between gears and FSM,
