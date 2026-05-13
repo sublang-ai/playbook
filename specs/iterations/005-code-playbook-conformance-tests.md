@@ -42,8 +42,8 @@ These are scoped enough to live in the IR rather than a separate DR.
 - [x] `reference/sdlc/code.playbook/code.fsm.introspect.ts` —
   helper exporting `enumerateCaptainStates(codingMachine)` returning
   `{ stateId, sourceItem, getInput(context), transitions: Array<{
-  target, guardName, contextFixture? }> }[]` plus the root-level
-  event table (`START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`,
+  index, target, guard }> }[]` plus the root-level event table
+  (`START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`,
   `BOSS_INTERRUPT[targetId]`).
   Each `transitions` entry corresponds to one `onDone` arm — the
   same `result`-map guard string may appear in multiple entries
@@ -52,9 +52,15 @@ These are scoped enough to live in the IR rather than a separate DR.
   (e.g., `noFindings` routes to `continueIr` / `summarizeSpecs` /
   `done` per `noFindingsAfter` in
   [`code.fsm.ts:138`](../../reference/sdlc/code.playbook/code.fsm.ts#L138)).
-  `contextFixture` is the minimal context override needed to make
-  that transition's guard fire; the coverage test consumes it
-  verbatim.
+  `guard` is the raw transition predicate function; the helper
+  stays a pure structural introspector and does not synthesize
+  fixture data.
+  The `(context, CaptainOutput)` pair that fires each arm lives
+  in Task 4's coverage test as a hand-maintained table keyed by
+  `(stateId, transitionIndex)` (the `index` field above), kept
+  honest by a structural assertion that fails the test if any
+  helper-enumerated arm is missing a fixture (or if a fixture is
+  left unused).
   May land as an `_internal` export of `code.playbook.ts` if a
   separate file feels heavyweight.
 - [ ] `reference/sdlc/code.playbook/code.gears-fsm.test.ts` —
@@ -71,21 +77,34 @@ These are scoped enough to live in the IR rather than a separate DR.
   declared placeholders (`<#>`, `<coder-llm>`, `<reviewer-llm>`).
 - [ ] `reference/sdlc/code.playbook/code.fsm.coverage.test.ts` —
   edge coverage.
-  For each captain-invoking state and each transition returned by
-  the helper, drives a fake `captain` actor that returns the
-  transition's `CaptainOutput` (with required payload fields) under
-  the transition's `contextFixture`; asserts the FSM lands at the
-  declared `target`.
-  This pins context-qualified edges (`noFindings` /  `accepted` /
+  Maintains a fixture table mapping each captain-invoking
+  `(stateId, transitionIndex)` — matching the helper's
+  `transitions[i].index` — to a `(context override, CaptainOutput)`
+  pair that satisfies that arm's guard *and* falsifies every
+  earlier arm (xstate's `onDone` is first-match-wins, so a
+  context that satisfies multiple arms still only fires the
+  earliest one).
+  `(stateId, target)` is *not* unique: four states have
+  same-target arms (`planAndImplement` / `commitCoderInitial`
+  with two same-target arms each, plus `commitReviewerCleared`
+  and `commitJoint` each routing both `committed && afterReview
+  === 'done'` and `noRelevantChanges` to `done`), so the index is
+  the keying discipline.
+  For each transition returned by the helper, drives a fake
+  `captain` actor with the fixture's `CaptainOutput` under the
+  fixture's context; asserts the FSM lands at the declared
+  `target`.
+  This pins context-qualified edges (`noFindings` / `accepted` /
   `committed*`) where the same guard string routes to different
-  targets depending on `context.afterReview` or
-  `context.reviewSubject`.
-  Also exercises each state's `onError` path (Captain bridge throws
-  → `#failed`) and every root-level event
+  targets depending on `context.afterReview` /
+  `context.reviewSubject` / `context.changeOrigin`.
+  Also exercises each state's `onError` path (Captain bridge
+  throws → `#failed`) and every root-level event
   (`/start`, `/continue`, `/summarize`, each `BOSS_INTERRUPT`
   target).
-  A structural assertion fails the test if any `onDone` transition
-  lacks a fixture.
+  A structural assertion fails the test if any helper-enumerated
+  `onDone` arm lacks a fixture, or if any fixture is left unused
+  by the helper.
 - [ ] `reference/sdlc/code.playbook/code.prompt-contract.test.ts` —
   table-driven prompt contract.
   For each captain-invoking state and each relevant context fixture

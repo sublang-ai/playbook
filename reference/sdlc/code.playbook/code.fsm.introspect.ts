@@ -24,6 +24,14 @@ export interface CaptainStateInfo {
 }
 
 export interface CaptainTransition {
+  // Position in the state's `invoke.onDone` array. Stable per FSM
+  // source — the coverage test's fixture table keys
+  // `(stateId, index)` to address each arm uniquely, since
+  // `(stateId, target)` collides for arms that share a target
+  // (e.g., `commitReviewerCleared` and `commitJoint` each route
+  // both `committed && afterReview === 'done'` and
+  // `noRelevantChanges` to `done`).
+  readonly index: number;
   readonly target: string;
   readonly guard: TransitionGuard;
 }
@@ -70,7 +78,8 @@ export function enumerateCaptainStates(
       inputFn({ context });
     const probe = getInput({});
     const transitions = toArmArray(invoke.onDone).map(
-      (arm): CaptainTransition => ({
+      (arm, index): CaptainTransition => ({
+        index,
         target: stripIdPrefix(String(arm.target ?? '')),
         guard: arm.guard ?? alwaysTrue,
       }),

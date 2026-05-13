@@ -65,6 +65,33 @@ describe('enumerateCaptainStates', () => {
     }
   });
 
+  it('transition.index matches the arm position in the source onDone array', () => {
+    for (const s of states) {
+      s.transitions.forEach((t, i) => {
+        expect(t.index).toBe(i);
+      });
+    }
+  });
+
+  it('the four states with same-target arms keep distinct indices per arm', () => {
+    // Sentinel for the keying choice in Task 4's fixture table:
+    // `(stateId, target)` is not unique, but `(stateId, index)` is.
+    const collisions: Array<[stateId: string, target: string, count: number]> = [
+      ['planAndImplement', 'commitCoderInitial', 2],
+      ['commitCoderInitial', 'ready', 2],
+      ['commitReviewerCleared', 'done', 2],
+      ['commitJoint', 'done', 2],
+    ];
+    for (const [stateId, target, count] of collisions) {
+      const state = states.find((s) => s.stateId === stateId);
+      expect(state, `${stateId} present in enumeration`).toBeDefined();
+      const arms = state!.transitions.filter((t) => t.target === target);
+      expect(arms).toHaveLength(count);
+      const indices = arms.map((t) => t.index);
+      expect(new Set(indices).size).toBe(arms.length);
+    }
+  });
+
   it('pins per-state transition counts (sentinel — bumps require updating this list)', () => {
     const counts = Object.fromEntries(
       states.map((s) => [s.stateId, s.transitions.length] as const),

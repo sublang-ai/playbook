@@ -11,7 +11,8 @@ export function enumerateCaptainStates(machine) {
         const inputFn = invoke.input;
         const getInput = (context) => inputFn({ context });
         const probe = getInput({});
-        const transitions = toArmArray(invoke.onDone).map((arm) => ({
+        const transitions = toArmArray(invoke.onDone).map((arm, index) => ({
+            index,
             target: stripIdPrefix(String(arm.target ?? '')),
             guard: arm.guard ?? alwaysTrue,
         }));

@@ -6,6 +6,7 @@ export interface CaptainStateInfo {
     readonly transitions: ReadonlyArray<CaptainTransition>;
 }
 export interface CaptainTransition {
+    readonly index: number;
     readonly target: string;
     readonly guard: TransitionGuard;
 }
