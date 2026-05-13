@@ -223,12 +223,17 @@ function machineWith(behavior: CaptainOutput | 'throw' | 'hang') {
   return codingMachine.provide({ actors: { captain: makeFakeCaptain(behavior) } });
 }
 
-// Drive from `ready` with the given context override, send `event`,
-// resolve once the actor reaches `target` or moves past `passThrough`.
+// Drive from `from` (default `ready`) with the given context
+// override, send `event`, resolve once the actor reaches `target`
+// or moves past `passThrough`.
 async function drive(args: {
   context?: Partial<CodingContext>;
   event: CodingEvent;
   behavior: CaptainOutput | 'throw' | 'hang';
+  // Starting state. Defaults to `ready`; needed otherwise for the
+  // BOSS_INTERRUPT targetId=ready test, where source=target=ready
+  // would short-circuit the subscribe before the interrupt fires.
+  from?: string;
   // If passThrough is set, resolve when the actor moves *past* that
   // state. If only target is set, resolve when the actor reaches it.
   passThrough?: string;
@@ -236,7 +241,7 @@ async function drive(args: {
 }): Promise<string> {
   const machine = machineWith(args.behavior);
   const snap = machine.resolveState({
-    value: 'ready',
+    value: args.from ?? 'ready',
     context: (args.context ?? {}) as CodingContext,
   });
   const actor = createActor(machine, { snapshot: snap });
@@ -296,6 +301,26 @@ describe('edge coverage — onDone arms', () => {
       it(`${key} → ${transition.target}`, async () => {
         const fixture = fixtures.get(key);
         expect(fixture, `missing fixture for ${key}`).toBeDefined();
+
+        // Pre-flight: assert the fixture satisfies *this* arm and
+        // falsifies every earlier arm. xstate's `onDone` is
+        // first-match-wins, so a fixture that also satisfies an
+        // earlier same-target arm would silently fire that arm
+        // instead — target-only assertion would still pass.
+        const event = { output: fixture!.captainOutput };
+        const ctx = (fixture!.context ?? {}) as CodingContext;
+        expect(
+          transition.guard({ context: ctx, event }),
+          `${key}: fixture does not satisfy its arm's guard`,
+        ).toBe(true);
+        for (let i = 0; i < transition.index; i++) {
+          const earlier = state.transitions[i];
+          expect(
+            earlier.guard({ context: ctx, event }),
+            `${key}: fixture also satisfies earlier arm at index ${i} (→ ${earlier.target}); first-match-wins would fire that arm instead`,
+          ).toBe(false);
+        }
+
         const landed = await drive({
           context: fixture!.context,
           event: { type: 'BOSS_INTERRUPT', targetId: state.stateId as never },
@@ -351,7 +376,13 @@ describe('edge coverage — root events', () => {
 
   for (const target of rootEvents.bossInterruptTargets) {
     it(`BOSS_INTERRUPT targetId=${target} → ${target}`, async () => {
+      // Start at any non-target jumpable state so the interrupt
+      // must actually route us. Otherwise (target='ready'), the
+      // subscribe would resolve on the initial snapshot before
+      // `actor.send` runs — a tautological pass.
+      const from = target === 'ready' ? 'planAndImplement' : 'ready';
       const landed = await drive({
+        from,
         event: { type: 'BOSS_INTERRUPT', targetId: target as never },
         behavior: 'hang',
         target,
