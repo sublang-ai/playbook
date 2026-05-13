@@ -75,7 +75,7 @@ These are scoped enough to live in the IR rather than a separate DR.
   player parsed from the CODE-N's gears section, (d) each state's
   `input.prompt` body equals the CODE-N blockquote body modulo
   declared placeholders (`<#>`, `<coder-llm>`, `<reviewer-llm>`).
-- [ ] `reference/sdlc/code.playbook/code.fsm.coverage.test.ts` —
+- [x] `reference/sdlc/code.playbook/code.fsm.coverage.test.ts` —
   edge coverage.
   Maintains a fixture table mapping each captain-invoking
   `(stateId, transitionIndex)` — matching the helper's
