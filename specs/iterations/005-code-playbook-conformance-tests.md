@@ -105,7 +105,7 @@ These are scoped enough to live in the IR rather than a separate DR.
   A structural assertion fails the test if any helper-enumerated
   `onDone` arm lacks a fixture, or if any fixture is left unused
   by the helper.
-- [ ] `reference/sdlc/code.playbook/code.prompt-contract.test.ts` —
+- [x] `reference/sdlc/code.playbook/code.prompt-contract.test.ts` —
   table-driven prompt contract.
   For each captain-invoking state and each relevant context fixture
   (Boss-intent vs IR-task; specs / code / mixed scope; with and
