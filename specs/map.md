@@ -54,6 +54,14 @@ meta.md     The spec of specs
 | dev | [licensing.md](dev/licensing.md) | SPDX header requirements and file-scope rules |
 | test | [licensing.md](test/licensing.md) | Copyright and license header presence checks |
 
+### PBRT
+
+| Group | File | Summary |
+| --- | --- | --- |
+| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE playbook runtime Boss surface: turn input, turn progress, tmux-play host configuration |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE playbook runtime system behavior: module boundary, session lifecycle, classification, binding, captain bridge, adjudication, abort, telemetry, tmux-play adapter |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests driving the runtime and tmux-play adapter against fake ports and stubbed cligent primitives |
+
 ### PLAYBOOK
 
 | Group | File | Summary |
