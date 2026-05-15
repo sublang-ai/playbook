@@ -107,14 +107,16 @@ extracted as the payload.
 Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
 
 When the runtime is driven through `handleBossInput` with
-non-slash text, with a classifier reply that is not a valid event
-type, with `/interrupt` lacking a target state, and with empty
-or whitespace-only text, the test suite shall fail unless
-non-slash text routes through `callJudge` and lands on the
-classifier-named FSM event, invalid replies surface one
-`emitStatus` call and leave the FSM unmoved, `/interrupt` without
-a target state surfaces one `emitStatus` call and leaves the FSM
-unmoved, and empty text makes no port calls.
+non-slash text, with a classifier reply that names no valid event
+type, with a classifier reply that names a valid event type but
+omits a required payload field, with `/interrupt` lacking a
+target state, and with empty or whitespace-only text, the test
+suite shall fail unless non-slash text routes through `callJudge`
+and lands on the classifier-named FSM event, each invalid reply
+surfaces one `emitStatus` call and leaves the FSM unmoved,
+`/interrupt` without a target state surfaces one `emitStatus`
+call and leaves the FSM unmoved, and empty text makes no port
+calls.
 
 ### PBRT-26
 Verifies: [PBRT-8](../dev/playbook-runtime.md#pbrt-8)
@@ -137,4 +139,3 @@ When the runtime is driven to the FSM's terminal state and a
 further Boss turn is submitted, the test suite shall fail unless
 the runtime disposes and reconstructs the actor so the new turn
 is processed from the idle state.
-

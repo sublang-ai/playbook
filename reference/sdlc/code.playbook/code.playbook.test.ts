@@ -837,6 +837,31 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(runtime._getActor()?.getSnapshot().value).toBe('failed');
   });
 
+  it('/interrupt <stateId> <intent> attaches the trailing text as intent', async () => {
+    // planAndImplement (CODE-1) wires `context.intent` into the
+    // captain prompt, so the trailing text shows up downstream.
+    const playerCalls: Array<{ playerId: string; prompt: string }> = [];
+    const ports = makeFakePorts({
+      callPlayer: async (playerId, prompt) => {
+        playerCalls.push({ playerId, prompt });
+        return { status: 'ok', finalText: 'need input' };
+      },
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: '/interrupt planAndImplement add a sparkly button',
+      signal: sig(),
+    });
+
+    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls[0].playerId).toBe('coder');
+    expect(playerCalls[0].prompt).toContain('add a sparkly button');
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
   it('throws when handleBossInput is called before init', async () => {
     const runtime = makeRuntimeWithInternals();
     await expect(
@@ -973,6 +998,34 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     });
 
     expect(statuses.some((m) => m.includes('BOGUS'))).toBe(true);
+    expect(playerCalls).toBe(0);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('classifier reply naming a valid event but omitting its required payload surfaces status and takes no FSM action', async () => {
+    const statuses: string[] = [];
+    let playerCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        playerCalls++;
+        return { status: 'ok', finalText: '' };
+      },
+      // START_CODING requires payload.intent (string); omit it.
+      callJudge: async () =>
+        JSON.stringify({ event: 'START_CODING', payload: {} }),
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: 'please do something',
+      signal: sig(),
+    });
+
+    expect(statuses.some((m) => m.includes('intent'))).toBe(true);
     expect(playerCalls).toBe(0);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
