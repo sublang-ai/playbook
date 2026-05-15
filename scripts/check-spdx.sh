@@ -17,7 +17,7 @@ cd "$(git rev-parse --show-toplevel)"
 # the project root.
 license_present=0
 shopt -s nullglob
-for f in LICENSE LICENSE.* LICENCE LICENCE.* COPYING; do
+for f in LICENSE LICENSE.* LICENSE-* LICENCE LICENCE.* LICENCE-* COPYING; do
   [[ -f "$f" ]] && license_present=1
 done
 shopt -u nullglob
@@ -60,15 +60,88 @@ is_excluded() {
     *.d.ts) return 0 ;;
   esac
 
-  # License / legal documents.
+  # License / legal documents (per specs/dev/licensing.md §License
+  # File Detection — includes dash-named variants like LICENSE-APACHE
+  # alongside LICENSE.txt / LICENSE.md).
   case "$base" in
-    LICENSE|LICENSE.*|LICENCE|LICENCE.*|COPYING|NOTICE) return 0 ;;
+    LICENSE|LICENSE.*|LICENSE-*|LICENCE|LICENCE.*|LICENCE-*|COPYING|NOTICE) return 0 ;;
   esac
   case "$f" in
     LICENSES/*) return 0 ;;
   esac
 
   return 1
+}
+
+# Extract the first comment block after any shebang.
+# LIC-3 / LIC-4 require the SPDX directives to live in that block,
+# not merely somewhere in the file's prologue: a file may not put
+# code before the SPDX header and still claim compliance. The block
+# is the run of consecutive comment-marker lines that begins at the
+# top (after `#!` and any leading blank lines) and ends at the
+# first blank line or the first non-comment line.
+#
+# Comment markers differ by file type. In particular, `#` is a
+# heading in Markdown, not a comment, so a Markdown file that opens
+# with `# Title` followed by `<!-- SPDX-... -->` must not be lumped
+# into a single block. Each case below picks the right marker set;
+# regexes are baked into the awk source rather than passed via -v
+# to avoid awk's variable-value backslash processing.
+extract_first_comment_block() {
+  local f="$1"
+  local ext="${f##*.}"
+  local awk_program
+
+  # Shared scaffold: skip shebang, skip leading blanks, print
+  # consecutive comment-marker lines, exit at the first blank or
+  # non-comment line that follows the block.
+  local scaffold='
+    NR == 1 && /^#!/ { next }
+    {
+      if ($0 ~ /^[[:space:]]*$/) { if (started) exit; next }
+      if (is_comment($0)) { print; started = 1 } else exit
+    }
+  '
+
+  case "$ext" in
+    md|markdown|html|htm|xml)
+      # HTML-style comments only; `#` is a heading in Markdown.
+      awk_program='
+        function is_comment(s,    t) {
+          t = s; sub(/^[[:space:]]+/, "", t)
+          return t ~ /^(<!--|-->)/
+        }'"$scaffold" ;;
+    ts|tsx|js|jsx|mjs|cjs|css|scss|less|c|cc|cpp|h|hpp|java|go|rs|swift|kt|kts)
+      # C-style line and block comments (plus `*` continuation).
+      awk_program='
+        function is_comment(s,    t) {
+          t = s; sub(/^[[:space:]]+/, "", t)
+          return t ~ /^(\/\/|\/\*|\*)/
+        }'"$scaffold" ;;
+    sh|bash|zsh|yaml|yml|toml|cfg|conf|ini|py|rb|pl|tcl|mk)
+      # `#` line comments. Shebang is special-cased in the scaffold.
+      awk_program='
+        function is_comment(s,    t) {
+          t = s; sub(/^[[:space:]]+/, "", t)
+          return t ~ /^#/
+        }'"$scaffold" ;;
+    sql|lua|hs|ada)
+      awk_program='
+        function is_comment(s,    t) {
+          t = s; sub(/^[[:space:]]+/, "", t)
+          return t ~ /^--/
+        }'"$scaffold" ;;
+    *)
+      # Unknown or extensionless file: permissive fallback covering
+      # the common marker shapes.
+      awk_program='
+        function is_comment(s,    t) {
+          t = s; sub(/^[[:space:]]+/, "", t)
+          return t ~ /^(\/\/|<!--|#|\/\*|\*|-->)/
+        }'"$scaffold" ;;
+  esac
+
+  awk "$awk_program" "$f"
 }
 
 missing_copyright=()
@@ -80,23 +153,15 @@ while IFS= read -r f; do
   [[ -f "$f" ]] || continue
   checked=$((checked + 1))
 
-  # Inspect the first 20 lines so the SPDX directives in the file's
-  # first comment block are in scope.
-  head_content="$(head -n 20 "$f" || true)"
+  block="$(extract_first_comment_block "$f" || true)"
 
-  # Strip a leading shebang line if present (LIC-3 / LIC-4 say
-  # "first comment block after any shebang").
-  if printf '%s\n' "$head_content" | head -n 1 | grep -q '^#!'; then
-    head_content="$(printf '%s\n' "$head_content" | tail -n +2)"
-  fi
-
-  if ! printf '%s\n' "$head_content" | grep -q "SPDX-FileCopyrightText"; then
+  if [[ -z "$block" ]] || ! printf '%s\n' "$block" | grep -q "SPDX-FileCopyrightText"; then
     missing_copyright+=("$f")
     continue
   fi
 
   if [[ "$license_present" -eq 1 ]]; then
-    if ! printf '%s\n' "$head_content" | grep -q "SPDX-License-Identifier"; then
+    if ! printf '%s\n' "$block" | grep -q "SPDX-License-Identifier"; then
       missing_license+=("$f")
     fi
   fi
