@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  playbook:
+    name: code.playbook (test, build, drift)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: reference/sdlc/code.playbook
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Drop dev-only workspace override
+        # The committed pnpm-workspace.yaml links @sublang/cligent to a
+        # sibling repo on contributor machines (see this package's
+        # README). CI installs from the registry; the lockfile already
+        # records cligent@0.3.0 from npm.
+        run: rm -f pnpm-workspace.yaml
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: reference/sdlc/code.playbook/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        # Runs the vitest suite: PLAYBOOK-7..11 conformance, PBRT-17..27
+        # integration, plus the FSM introspect / coverage / prompt
+        # contract tests.
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      - name: Verify .ts and compiled siblings are in sync
+        # Catches drift like 7dcaa2f / e643fac where a .ts source change
+        # was committed without rebuilding the .js / .d.ts that ship via
+        # package.json's `files` field.
+        working-directory: ${{ github.workspace }}
+        run: |
+          git diff --exit-code -- \
+            'reference/sdlc/code.playbook/*.js' \
+            'reference/sdlc/code.playbook/*.d.ts'
+
+  sketch:
+    name: views/sketch (test, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: views/sketch
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: views/sketch/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+  licensing:
+    name: SPDX headers (LIC-3, LIC-4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify SPDX headers on git-tracked files
+        run: bash scripts/check-spdx.sh
