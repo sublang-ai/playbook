@@ -292,6 +292,34 @@ describe('createCodeTmuxPlayCaptain — RoleRunResult ↔ PlayerResult identity 
   });
 });
 
+describe('createCodeTmuxPlayCaptain — multi-stage Boss turn', () => {
+  it('reaches the reviewer role through a full /start single-commit flow', async () => {
+    const s = stubSession();
+    const guards = ['singleCommitReady', 'committedSpecs', 'noFindings'];
+    let i = 0;
+    const c = stubContext({
+      captainResult: async () => ({
+        status: 'ok',
+        turnId: 1,
+        finalText: JSON.stringify({ guard: guards[i++] }),
+      }),
+    });
+    const captain = createCodeTmuxPlayCaptain({
+      coderPlayer: 'claude',
+      reviewerPlayer: 'codex',
+    });
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/start fix the bug'), c.context);
+
+    const roleIds = c.roleCalls.map((r) => r.roleId);
+    expect(roleIds).toContain('coder');
+    expect(roleIds).toContain('reviewer');
+    expect(
+      s.statuses.some((st) => st.message === 'State → done'),
+    ).toBe(true);
+  });
+});
+
 describe('createCodeTmuxPlayCaptain — signal propagation (DR-004 §11)', () => {
   it('context.signal flows into runtime.handleBossInput via handleBossTurn', async () => {
     // Use a callRole that resolves only when the signal aborts; the

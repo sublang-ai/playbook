@@ -57,7 +57,9 @@ When the tmux-play adapter is driven through an
 `init` → `handleBossTurn` → `dispose` lifecycle with stubbed
 cligent `CaptainContext` / `CaptainSession` primitives, the test
 suite shall fail unless player calls reach `context.callRole`
-with role ids matching the runtime's baked player ids,
+with role ids matching the runtime's baked player ids (both
+`coder` via the `/start` happy path and `reviewer` via a
+multi-stage flow that drives the FSM through a Reviewer state),
 adjudication reaches `context.callCaptain`, status and telemetry
 reach the session, the per-turn `signal` flows into the runtime,
 and `handleBossTurn` invoked before `init` rejects.
@@ -72,73 +74,67 @@ is awaited, `handleBossInput` is invoked before `init` on a
 separate runtime instance, and `dispose` is called on a started
 runtime, the test suite shall fail unless `init` starts the actor
 at the idle state, the pre-`init` `handleBossInput` call rejects,
-and `dispose` stops the actor.
+`dispose` stops the actor, and `dispose` awaits any pending port
+emissions before resolving.
 
 ### PBRT-23
-Verifies: [PBRT-9](../dev/playbook-runtime.md#pbrt-9)
+Verifies: [PBRT-9](../dev/playbook-runtime.md#pbrt-9), [PBRT-10](../dev/playbook-runtime.md#pbrt-10)
 
 When the runtime's captain bridge is driven as an xstate actor
-under fake ports that return a `PlayerResult` for each status
-kind, the test suite shall fail unless `status='ok'` causes the
-bridge to call `callPlayer` and `callJudge` and advance the FSM
-through `onDone`, while `status='aborted'` and `status='error'`
-each route the FSM to the failure state through `onError`.
+under fake ports, the test suite shall fail unless:
 
-## Coverage gaps
+- `PlayerResult` `status='ok'` with `finalText` advances the FSM
+  through `onDone`;
+- `status='ok'` without `finalText`, `status='aborted'`, and
+  `status='error'` each route the FSM to the failure state
+  through `onError`;
+- a `callJudge` reply that is malformed JSON, names an
+  undeclared guard, or omits a required payload field also
+  routes the FSM to the failure state.
 
-> **Missing test.** [PBRT-12](../dev/playbook-runtime.md#pbrt-12)
-> (dispose-and-reconstruct on a Boss turn that arrives while the
-> FSM is in the terminal state) has no integration test. No
-> existing test drives the FSM to the terminal state and then
-> submits a further turn.
+## Classification and flow
 
-> **Partial coverage.** [PBRT-1](../user/playbook-runtime.md#pbrt-1):
-> the suite exercises only the `/start` mapping
-> ([PBRT-17](#pbrt-17)) and the `/interrupt` mapping
-> ([PBRT-19](#pbrt-19)) through the runtime; the `/continue` and
-> `/summarize` mappings have no integration test.
+### PBRT-24
+Verifies: [PBRT-1](../user/playbook-runtime.md#pbrt-1)
 
-> **Partial coverage.** [PBRT-2](../user/playbook-runtime.md#pbrt-2)
-> and [PBRT-7](../dev/playbook-runtime.md#pbrt-7): the suite
-> includes a test asserting that an unrecognized slash command
-> through the runtime produces one `emitStatus` call and leaves
-> the FSM unmoved, but it is not currently specced as a
-> standalone test item; the non-slash judge-classification route,
-> invalid judge replies, `/interrupt` with no target state, and
-> empty input have no integration test.
+When the integration suite drives `/start <intent>`,
+`/continue <#>`, `/summarize <#>`, and `/interrupt <stateId>`
+turns through `handleBossInput`, the test suite shall fail unless
+each form maps to its declared FSM event with the trailing text
+extracted as the payload.
 
-> **Partial coverage.** [PBRT-4](../user/playbook-runtime.md#pbrt-4):
-> [PBRT-21](#pbrt-21) exercises only the `coder` routing path
-> through the adapter (the adapter integration scenarios all
-> drive `/start` turns, which the FSM routes to a Coder
-> invocation). The `reviewer` routing path has no integration
-> test.
+### PBRT-25
+Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
 
-> **Partial coverage.** [PBRT-6](../dev/playbook-runtime.md#pbrt-6):
-> [PBRT-22](#pbrt-22) verifies that `init` starts the actor at
-> the idle state, pre-`init` `handleBossInput` rejects, and
-> `dispose` stops the actor. The dispose-drains-pending-port-
-> emissions sub-clause has no direct integration test (the
-> drainer is exercised mid-turn by [PBRT-20](#pbrt-20), but not
-> on dispose).
+When the runtime is driven through `handleBossInput` with
+non-slash text, with a classifier reply that is not a valid event
+type, with `/interrupt` lacking a target state, and with empty
+or whitespace-only text, the test suite shall fail unless
+non-slash text routes through `callJudge` and lands on the
+classifier-named FSM event, invalid replies surface one
+`emitStatus` call and leave the FSM unmoved, `/interrupt` without
+a target state surfaces one `emitStatus` call and leaves the FSM
+unmoved, and empty text makes no port calls.
 
-> **Partial coverage.** [PBRT-8](../dev/playbook-runtime.md#pbrt-8):
-> [PBRT-17](#pbrt-17) and [PBRT-23](#pbrt-23) exercise only the
-> `Coder → coder` mapping. `Reviewer → reviewer` and the
-> `Committer` composite resolutions are not reachable through the
-> existing integration scenarios (which do not drive the FSM past
-> `planAndImplement`) and have no integration test.
+### PBRT-26
+Verifies: [PBRT-8](../dev/playbook-runtime.md#pbrt-8)
 
-> **Partial coverage.** [PBRT-9](../dev/playbook-runtime.md#pbrt-9):
-> [PBRT-23](#pbrt-23) exercises the captain bridge under
-> `PlayerResult` `status='ok'` with `finalText`, `status='aborted'`,
-> and `status='error'`. The `status='ok'` with absent `finalText`
-> case — which the contract also routes through the FSM's error
-> path — has no integration test.
+When the runtime is driven through full multi-stage Boss turns
+that reach each captain-invoking state involved in player
+binding — the single-commit flow (Coder, Committer CODE-15,
+Reviewer, ending at the terminal state), the Reviewer-cleared
+flow (CODE-16 with only `reviewerPlayer` populated), and the
+joint-commit flow (CODE-17 with both `coderPlayer` and
+`reviewerPlayer` populated) — the test suite shall fail unless
+each captain invocation resolves to the expected `playerId`:
+`coder` for Coder, `reviewer` for Reviewer, `coder` for CODE-15,
+`reviewer` for CODE-16, and `coder` for CODE-17.
 
-> **Partial coverage.** [PBRT-10](../dev/playbook-runtime.md#pbrt-10):
-> [PBRT-17](#pbrt-17) and [PBRT-23](#pbrt-23) exercise only the
-> happy adjudication path (the judge returns a valid guard and
-> the FSM advances). The fail-loud paths — malformed JSON, an
-> undeclared guard, or an omitted required payload field driving
-> the FSM to the failure state — have no integration test.
+### PBRT-27
+Verifies: [PBRT-12](../dev/playbook-runtime.md#pbrt-12)
+
+When the runtime is driven to the FSM's terminal state and a
+further Boss turn is submitted, the test suite shall fail unless
+the runtime disposes and reconstructs the actor so the new turn
+is processed from the idle state.
+

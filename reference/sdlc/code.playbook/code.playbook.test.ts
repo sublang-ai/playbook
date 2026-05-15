@@ -671,6 +671,65 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
 
     expect(actor.getSnapshot().value).toBe('failed');
   });
+
+  it('lands at #failed when callPlayer returns status="ok" with no finalText', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok' }),
+    });
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'START_CODING', intent: 'do' });
+
+    await settleAt(actor, ['failed', 'ready', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('failed');
+  });
+
+  it('lands at #failed when callJudge returns malformed JSON', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'x' }),
+      callJudge: async () => 'not json at all',
+    });
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'START_CODING', intent: 'do' });
+
+    await settleAt(actor, ['failed', 'ready', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('failed');
+  });
+
+  it('lands at #failed when callJudge picks an undeclared guard', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'x' }),
+      callJudge: async () => JSON.stringify({ guard: 'notAGuard' }),
+    });
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'START_CODING', intent: 'do' });
+
+    await settleAt(actor, ['failed', 'ready', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('failed');
+  });
+
+  it('lands at #failed when callJudge omits a required payload field', async () => {
+    // CODE-3 (continueIr) declares `taskReady` with a required
+    // `taskDescription` field. Driving /CONTINUE_IR there and
+    // returning the guard without the field exercises the
+    // payload-required check.
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'x' }),
+      callJudge: async () => JSON.stringify({ guard: 'taskReady' }),
+    });
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'CONTINUE_IR', irNumber: '4' });
+
+    await settleAt(actor, ['failed', 'ready', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('failed');
+  });
 });
 
 describe('createPlaybookRuntime.init (Task 8 wiring)', () => {
@@ -820,6 +879,216 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(judgeCalls).toBe(0);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
+
+  it('/continue <#> drives the FSM through continueIr back to ready', async () => {
+    const playerCalls: Array<{ playerId: string; prompt: string }> = [];
+    const ports = makeFakePorts({
+      callPlayer: async (playerId, prompt) => {
+        playerCalls.push({ playerId, prompt });
+        return { status: 'ok', finalText: 'need more input' };
+      },
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({ text: '/continue 7', signal: sig() });
+
+    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls[0].playerId).toBe('coder');
+    expect(playerCalls[0].prompt).toContain('IR-7');
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('/summarize <#> drives the FSM through summarizeSpecs back to ready', async () => {
+    const playerCalls: Array<{ playerId: string; prompt: string }> = [];
+    const ports = makeFakePorts({
+      callPlayer: async (playerId, prompt) => {
+        playerCalls.push({ playerId, prompt });
+        return { status: 'ok', finalText: 'need more input' };
+      },
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({ text: '/summarize 8', signal: sig() });
+
+    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls[0].playerId).toBe('coder');
+    expect(playerCalls[0].prompt).toContain('IR-8');
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('non-slash text routes through callJudge classifier and advances the FSM', async () => {
+    let classifyCalled = false;
+    let adjudicateCalled = false;
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
+      callJudge: async (prompt) => {
+        if (prompt.startsWith('Classify the following Boss message')) {
+          classifyCalled = true;
+          return JSON.stringify({
+            event: 'START_CODING',
+            payload: { intent: 'fix the bug' },
+          });
+        }
+        adjudicateCalled = true;
+        return JSON.stringify({ guard: 'needsBossInput' });
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: 'please fix the bug',
+      signal: sig(),
+    });
+
+    expect(classifyCalled).toBe(true);
+    expect(adjudicateCalled).toBe(true);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('invalid classifier reply surfaces status and takes no FSM action', async () => {
+    const statuses: string[] = [];
+    let playerCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        playerCalls++;
+        return { status: 'ok', finalText: '' };
+      },
+      callJudge: async () =>
+        JSON.stringify({ event: 'BOGUS', payload: {} }),
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: 'please do something',
+      signal: sig(),
+    });
+
+    expect(statuses.some((m) => m.includes('BOGUS'))).toBe(true);
+    expect(playerCalls).toBe(0);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('/interrupt without a target state surfaces status and takes no FSM action', async () => {
+    const statuses: string[] = [];
+    let playerCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        playerCalls++;
+        return { status: 'ok', finalText: '' };
+      },
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({ text: '/interrupt', signal: sig() });
+
+    expect(
+      statuses.some((m) => m.includes('requires a stateId')),
+    ).toBe(true);
+    expect(playerCalls).toBe(0);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('empty input takes no FSM action and makes no port calls', async () => {
+    const statuses: string[] = [];
+    let judgeCalls = 0;
+    let playerCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        playerCalls++;
+        return { status: 'ok', finalText: '' };
+      },
+      callJudge: async () => {
+        judgeCalls++;
+        return '';
+      },
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    const statusesAtInit = statuses.length;
+
+    await runtime.handleBossInput({ text: '   \n  ', signal: sig() });
+
+    expect(judgeCalls).toBe(0);
+    expect(playerCalls).toBe(0);
+    expect(statuses.length).toBe(statusesAtInit);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('turn arriving after the FSM reaches done disposes and reconstructs the actor', async () => {
+    let judgeInvocation = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'x' }),
+      callJudge: async () => {
+        judgeInvocation++;
+        if (judgeInvocation === 1) {
+          return JSON.stringify({ guard: 'noSpecChanges' });
+        }
+        return JSON.stringify({ guard: 'needsBossInput' });
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    // Drive /summarize → summarizeSpecs → done (terminal/final).
+    await runtime.handleBossInput({ text: '/summarize 9', signal: sig() });
+    expect(runtime._getActor()?.getSnapshot().status).toBe('done');
+
+    // Next Boss turn must trigger dispose + reconstruct so the FSM
+    // can accept new events from the idle state.
+    await runtime.handleBossInput({ text: '/start fresh', signal: sig() });
+
+    expect(judgeInvocation).toBe(2);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+    expect(runtime._getActor()?.getSnapshot().status).toBe('active');
+  });
+
+  it('dispose awaits in-flight port emissions before resolving', async () => {
+    let release: (() => void) | undefined;
+    const order: string[] = [];
+    const ports = makeFakePorts({
+      emitTelemetry: async () => {
+        order.push('t-start');
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        order.push('t-end');
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    // Do not await init — let the initial-transition telemetry start,
+    // then stall in-flight.
+    const initPromise = runtime.init(ports);
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(order).toEqual(['t-start']);
+
+    let disposed = false;
+    const disposePromise = runtime.dispose().then(() => {
+      disposed = true;
+    });
+    await new Promise<void>((r) => setTimeout(r, 10));
+    expect(disposed).toBe(false);
+
+    release!();
+    await initPromise;
+    await disposePromise;
+    expect(order).toContain('t-end');
+  });
 });
 
 describe('status and telemetry (Task 10 — DR-004 §9)', () => {
@@ -958,5 +1227,131 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     // Boss-relevant; enqueue order is preserved.
     expect(ordered[0]).toBe('t:ready');
     expect(ordered[1]).toBe('s:State → ready');
+  });
+});
+
+describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
+  it('full /start single-commit flow exercises coder, committer (CODE-15), and reviewer routing in one turn', async () => {
+    const playerCalls: Array<{ playerId: string; prompt: string }> = [];
+    // Per-state judge replies, in transition order:
+    //   1. planAndImplement → singleCommitReady → commitCoderInitial
+    //   2. commitCoderInitial → committedSpecs → reviewBossCommitSpecs
+    //   3. reviewBossCommitSpecs → noFindings → done (afterReview='done')
+    const guards = ['singleCommitReady', 'committedSpecs', 'noFindings'];
+    let guardIdx = 0;
+    const ports = makeFakePorts({
+      callPlayer: async (playerId, prompt) => {
+        playerCalls.push({ playerId, prompt });
+        return { status: 'ok', finalText: 'progress noted' };
+      },
+      callJudge: async () => JSON.stringify({ guard: guards[guardIdx++] }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({ text: '/start fix-bug', signal: sig() });
+
+    // Three captain invocations, with the player ids exercising:
+    //   - Coder → 'coder' (planAndImplement)
+    //   - Committer composite CODE-15 (coderPlayer set) → 'coder'
+    //   - Reviewer → 'reviewer' (reviewBossCommitSpecs)
+    expect(playerCalls.map((c) => c.playerId)).toEqual([
+      'coder',
+      'coder',
+      'reviewer',
+    ]);
+    // The second call is the Committer state; CODE-15's prompt body
+    // names "Commit the changes ...".
+    expect(playerCalls[1].prompt).toContain('Commit the changes');
+    // The third call is Reviewer; CODE-5's prompt body opens with
+    // "Review the latest commit."
+    expect(playerCalls[2].prompt).toContain('Review the latest commit');
+    expect(runtime._getActor()?.getSnapshot().status).toBe('done');
+  });
+
+  it('drives a Reviewer-cleared flow exercising Committer composite CODE-16 (reviewer only)', async () => {
+    // Path: /start → planAndImplement → commitCoderInitial →
+    //   reviewBossCommitSpecs (hasFindings) → respondToReview
+    //   (changesMadeSpecs) → reviewChangesSpecs (noFindings) →
+    //   commitReviewerCleared (committed, afterReview='done') → done
+    const judgeReplies: Array<Record<string, unknown>> = [
+      { guard: 'singleCommitReady' },
+      { guard: 'committedSpecs' },
+      { guard: 'hasFindings', reviews: '1. tweak X' },
+      { guard: 'changesMadeSpecs' },
+      { guard: 'noFindings' },
+      { guard: 'committed' },
+    ];
+    let i = 0;
+    const playerCalls: Array<{ playerId: string }> = [];
+    const ports = makeFakePorts({
+      callPlayer: async (playerId) => {
+        playerCalls.push({ playerId });
+        return { status: 'ok', finalText: 'progress' };
+      },
+      callJudge: async () => JSON.stringify(judgeReplies[i++]),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({ text: '/start spec-tweak', signal: sig() });
+
+    // Per-invocation player resolution:
+    //   1. CODE-1 planAndImplement → Coder      → 'coder'
+    //   2. CODE-15 commitCoderInitial → Committer(coderPlayer) → 'coder'
+    //   3. CODE-5 reviewBossCommitSpecs → Reviewer  → 'reviewer'
+    //   4. CODE-2 respondToReview → Coder       → 'coder'
+    //   5. CODE-11 reviewChangesSpecs → Reviewer → 'reviewer'
+    //   6. CODE-16 commitReviewerCleared → Committer(reviewerPlayer only) → 'reviewer'
+    expect(playerCalls.map((c) => c.playerId)).toEqual([
+      'coder',
+      'coder',
+      'reviewer',
+      'coder',
+      'reviewer',
+      'reviewer',
+    ]);
+    expect(runtime._getActor()?.getSnapshot().status).toBe('done');
+  });
+
+  it('drives a joint-commit flow exercising Committer composite CODE-17 (coder + reviewer)', async () => {
+    // Path: /start → planAndImplement → commitCoderInitial →
+    //   reviewBossCommitSpecs (hasFindings) → respondToReview
+    //   (changesMadeSpecs) → reviewChangesSpecs (hasFindings) →
+    //   respondToReview (accepted, reviewSubject='changes') →
+    //   commitJoint (committed, afterReview='done') → done
+    const judgeReplies: Array<Record<string, unknown>> = [
+      { guard: 'singleCommitReady' },
+      { guard: 'committedSpecs' },
+      { guard: 'hasFindings', reviews: '1. tweak X' },
+      { guard: 'changesMadeSpecs' },
+      { guard: 'hasFindings', reviews: '1. one more tweak' },
+      { guard: 'accepted' },
+      { guard: 'committed' },
+    ];
+    let i = 0;
+    const playerCalls: Array<{ playerId: string }> = [];
+    const ports = makeFakePorts({
+      callPlayer: async (playerId) => {
+        playerCalls.push({ playerId });
+        return { status: 'ok', finalText: 'progress' };
+      },
+      callJudge: async () => JSON.stringify(judgeReplies[i++]),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({ text: '/start joint', signal: sig() });
+
+    // Step 7 is CODE-17 commitJoint with both coderPlayer and
+    // reviewerPlayer set → composite resolves to 'coder'.
+    expect(playerCalls.map((c) => c.playerId)).toEqual([
+      'coder',
+      'coder',
+      'reviewer',
+      'coder',
+      'reviewer',
+      'coder',
+      'coder',
+    ]);
+    expect(runtime._getActor()?.getSnapshot().status).toBe('done');
   });
 });
