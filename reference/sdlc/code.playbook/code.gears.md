@@ -50,7 +50,9 @@ When an IR is done, Captain shall prompt Coder:
 > The spec items should be the *minimal* set needed to reimplement code without the IR.
 > The set should be complete and coherent.
 > Avoid implementation specifics.
-> Avoid redundant spec items.
+> Spec items should reflect the latest code, excluding behaviors that have been superseded or bugs already fixed.
+> They may flag missing tests.
+> Avoid duplicating existing spec items.
 > Consult @specs/map.md for relevant context and update it to reflect your changes.
 
 ## Reviewer
