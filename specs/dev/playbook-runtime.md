@@ -48,15 +48,17 @@ is called before `init`, the runtime shall throw.
 ### PBRT-7
 
 When the runtime classifies a Boss turn, it shall first try the
-slash forms in [PBRT-1](../user/playbook-runtime.md#pbrt-1). A
-recognized slash command with missing required arguments, or an
-unrecognized slash command, shall produce one `emitStatus` call
-and no event. On non-slash text the runtime shall call `callJudge`
-with a fixed prompt naming the FSM's four Boss-event types and
-their payload fields, then parse the JSON `{ event, payload }`
-reply; a reply that does not name a valid event with its required
-payload shall produce one `emitStatus` call and no event. Empty
-or whitespace-only text shall produce no event and no port call.
+slash forms in [PBRT-1](../user/playbook-runtime.md#pbrt-1). The
+`/start`, `/continue`, and `/summarize` forms shall map to their
+event even when the trailing payload is empty. An `/interrupt`
+command with no target state, or an unrecognized slash command,
+shall produce one `emitStatus` call and no event. On non-slash
+text the runtime shall call `callJudge` with a fixed prompt naming
+the FSM's four Boss-event types and their payload fields, then
+parse the JSON `{ event, payload }` reply; a reply that does not
+name a valid event with its required payload shall produce one
+`emitStatus` call and no event. Empty or whitespace-only text
+shall produce no event and no port call.
 
 ## Player binding
 

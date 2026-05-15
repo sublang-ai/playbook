@@ -33,12 +33,13 @@ token as the target state and any remaining text as the intent.
 
 When the Boss submits turn text that is not a recognized slash
 command, the runtime shall classify it into one FSM event by
-consulting the judge. When the text is a recognized slash command
-with missing required arguments or an unrecognized slash command,
-or when the judge does not yield a valid event, the runtime shall
+consulting the judge. When the text is an unrecognized slash
+command, an `/interrupt` command with no target state, or text
+the judge does not resolve to a valid event, the runtime shall
 report the reason to the Boss and take no FSM action. When the
 text is empty or whitespace-only, the runtime shall take no FSM
-action.
+action. The `/start`, `/continue`, and `/summarize` commands
+shall map to their event even when their payload is empty.
 
 ## Turn progress
 
