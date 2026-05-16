@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { createActor } from 'xstate';
 import { codingMachine, type CaptainInput } from './code.fsm.js';
+import { enumerateCaptainStates } from './code.fsm.introspect.js';
 import createPlaybookRuntime, {
   _internal,
   type PlaybookPorts,
@@ -1294,9 +1295,18 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     expect(ordered[1]).toBe('s:◆ ready');
   });
 
-  it('STATE_LABELS covers every captain-invoking state', () => {
-    for (const [stateId] of _internal.stateMetadata) {
-      expect(_internal.STATE_LABELS[stateId], `${stateId} missing label`).toBeDefined();
+  it('STATE_LABELS covers every captain-invoking state in the FSM', () => {
+    // Compare against the canonical FSM enumeration rather than
+    // stateMetadata: the metadata builder skips/throws on missing
+    // labels, so iterating its keys would never catch a captain
+    // state that has no label entry. PBRT-3's widening to "every
+    // captain-invoking state" is what we're enforcing here.
+    const fsmStates = enumerateCaptainStates(codingMachine);
+    for (const s of fsmStates) {
+      expect(
+        _internal.STATE_LABELS[s.stateId],
+        `${s.stateId} missing from STATE_LABELS`,
+      ).toBeDefined();
     }
   });
 

@@ -35,7 +35,7 @@ interface StateMetadata {
 declare function formatStateEntry(stateId: string): string;
 declare function formatTransition(event: unknown): string | undefined;
 declare function formatBossEcho(text: string, eventType?: string): string;
-declare function formatRiders(stateId: string, context: Record<string, unknown>): string | undefined;
+declare function formatRiders(context: Record<string, unknown>): string;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     resolvePlayerId: typeof resolvePlayerId;

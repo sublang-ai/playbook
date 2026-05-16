@@ -447,7 +447,11 @@ const stateMetadata: ReadonlyMap<string, StateMetadata> = (() => {
   const m = new Map<string, StateMetadata>();
   for (const s of enumerateCaptainStates(codingMachine)) {
     const label = STATE_LABELS[s.stateId];
-    if (!label) continue;
+    if (!label) {
+      throw new Error(
+        `code.playbook.ts: STATE_LABELS missing entry for captain-invoking state '${s.stateId}'`,
+      );
+    }
     const input = s.getInput({});
     m.set(s.stateId, { player: input.player, sourceItem: s.sourceItem, label });
   }
@@ -488,45 +492,31 @@ function formatTransition(event: unknown): string | undefined {
     }
   }
   const suffix = tallies.length > 0 ? `  ${tallies.join(' ')}` : '';
-  return `  ⤷ ${output.guard}${suffix}`;
+  return `⤷ ${output.guard}${suffix}`;
 }
 
 function formatBossEcho(text: string, eventType?: string): string {
   return eventType !== undefined
-    ? `▸ BOSS  ${text}\n        → ${eventType}`
+    ? `▸ BOSS  ${text}  → ${eventType}`
     : `▸ BOSS  ${text}`;
 }
 
-// Per-state context fields worth surfacing as a one-line rider under
-// the state entry. Only fields that affect the upcoming player call's
-// prompt are listed; routing-only context (reviewSubject, afterReview)
-// stays out of the pane and is visible via emitTelemetry instead.
-const RIDER_FIELDS: Readonly<Record<string, readonly string[]>> = {
-  planAndImplement: ['intent'],
-  continueIr: ['irNumber'],
-  summarizeSpecs: ['irNumber'],
-  reviewBossCommitSpecs: ['intent'],
-  reviewBossCommitCode: ['intent'],
-  reviewBossCommitMixed: ['intent'],
-  reviewIrTaskCommitSpecs: ['irNumber', 'taskDescription'],
-  reviewIrTaskCommitCode: ['irNumber', 'taskDescription'],
-  reviewIrTaskCommitMixed: ['irNumber', 'taskDescription'],
-};
+// Rider fields PBRT-14 names — surfaced inline on a state entry
+// whenever the FSM context populates them, regardless of which
+// captain-invoking state is being entered. Routing-only context
+// (reviewSubject, afterReview, etc.) stays out of the pane and is
+// visible via emitTelemetry instead.
+const RIDER_FIELDS = ['intent', 'irNumber', 'taskDescription'] as const;
 
-function formatRiders(
-  stateId: string,
-  context: Record<string, unknown>,
-): string | undefined {
-  const fields = RIDER_FIELDS[stateId];
-  if (!fields) return undefined;
-  const lines: string[] = [];
-  for (const f of fields) {
+function formatRiders(context: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const f of RIDER_FIELDS) {
     const v = context[f];
     if (typeof v === 'string' && v.length > 0) {
-      lines.push(`    ${f}=${JSON.stringify(v)}`);
+      parts.push(`${f}=${JSON.stringify(v)}`);
     }
   }
-  return lines.length > 0 ? lines.join('\n') : undefined;
+  return parts.length > 0 ? `  ${parts.join(' ')}` : '';
 }
 
 // Internal export surface for tests. Not part of the stable public API;
@@ -629,11 +619,10 @@ export default function createPlaybookRuntime(
             enqueueEmit(() => ports.emitStatus(transitionLine));
           }
           const entryLine = formatStateEntry(to);
-          const riderLine = stateMetadata.has(to)
-            ? formatRiders(to, snap.context ?? {})
-            : undefined;
-          const message =
-            riderLine !== undefined ? `${entryLine}\n${riderLine}` : entryLine;
+          const riderSuffix = stateMetadata.has(to)
+            ? formatRiders(snap.context ?? {})
+            : '';
+          const message = entryLine + riderSuffix;
           if (to === 'failed') {
             const lastError = (snap.context as { lastError?: unknown })
               ?.lastError;
