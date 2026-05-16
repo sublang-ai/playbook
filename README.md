@@ -3,6 +3,8 @@
 
 # playbook
 
+[![npm version](https://img.shields.io/npm/v/@sublang/playbook)](https://www.npmjs.com/package/@sublang/playbook)
+[![Node.js](https://img.shields.io/node/v/@sublang/playbook)](https://nodejs.org/)
 [![CI](https://github.com/sublang-ai/playbook/actions/workflows/ci.yml/badge.svg)](https://github.com/sublang-ai/playbook/actions/workflows/ci.yml)
 
 *Skills made reliable through state machines and visualization.*
@@ -34,33 +36,52 @@ The reference is the canonical worked example —
 [FSM](reference/sdlc/code.playbook/code.fsm.ts) → runtime — with the
 runtime ported to cligent's `tmux-play` host out of the box.
 
-Install:
+### Install (users)
+
+Install the package globally alongside its `@sublang/cligent` peer:
 
 ```sh
-cd reference/sdlc/code.playbook
-pnpm install
+npm install -g @sublang/playbook @sublang/cligent
 ```
 
-This resolves `@sublang/cligent` (≥ 0.3.0, which exports `./tmux-play`)
-from the registry; no local link required. To point pnpm at a local
-`cligent` checkout instead, copy
-[`pnpm-workspace.yaml.example`](reference/sdlc/code.playbook/pnpm-workspace.yaml.example)
-into place; the override is gitignored so it never leaks into a
-production install.
-
-Build and test:
+Then launch the reference playbook in a `tmux-play` session:
 
 ```sh
+playbook-code
+```
+
+The `playbook-code` bin resolves the bundled
+`tmux-play.production.config.yaml` and execs `tmux-play` against it; any
+extra flags pass through (`playbook-code --help` lists `tmux-play`'s).
+
+### Install (contributors / from source)
+
+Clone, install, and run the suite locally:
+
+```sh
+git clone https://github.com/sublang-ai/playbook.git
+cd playbook/reference/sdlc/code.playbook
+pnpm install
 pnpm build
 pnpm test
 ```
 
-Drive a Boss turn under `tmux-play`:
+`pnpm install` resolves `@sublang/cligent` (≥ 0.3.0) from the registry;
+no local link required. To point pnpm at a local `cligent` checkout
+instead, copy
+[`pnpm-workspace.yaml.example`](reference/sdlc/code.playbook/pnpm-workspace.yaml.example)
+into place; the override is gitignored so it never leaks into a
+production install.
+
+Drive a Boss turn against the source tree (uses the developer
+[`tmux-play.config.yaml`](reference/sdlc/code.playbook/tmux-play.config.yaml)
+that imports the compiled adapter via relative path):
 
 ```sh
-pnpm build
 tmux-play --config tmux-play.config.yaml
 ```
+
+### Running a Boss turn
 
 The Boss pane accepts four slash commands per
 [PBRT-1](specs/user/playbook-runtime.md#pbrt-1):
@@ -83,7 +104,7 @@ Construct the runtime against your own ports:
 ```ts
 import createPlaybookRuntime, {
   type PlaybookPorts,
-} from './reference/sdlc/code.playbook/code.playbook.js';
+} from '@sublang/playbook/code/playbook';
 
 const ports: PlaybookPorts = {
   callPlayer: async (playerId, prompt, signal) => { /* … */ },
