@@ -50,26 +50,35 @@ fx('planAndImplement', 0, { captainOutput: { guard: 'singleCommitReady' } });
 fx('planAndImplement', 1, { captainOutput: { guard: 'irDrafted' } });
 fx('planAndImplement', 2, { captainOutput: { guard: 'needsBossInput' } });
 
-// CODE-2 — respondToReview (8 arms)
+// CODE-2 — respondToReview (11 arms)
 fx('respondToReview', 0, { captainOutput: { guard: 'changesMadeSpecs' } });
 fx('respondToReview', 1, { captainOutput: { guard: 'changesMadeCode' } });
 fx('respondToReview', 2, { captainOutput: { guard: 'changesMadeMixed' } });
 fx('respondToReview', 3, {
-  captainOutput: { guard: 'challengesRaised', challenges: '1. rebut x' },
+  captainOutput: { guard: 'changesMadeSpecsAndChallenged', challenges: '1. rebut x' },
 });
 fx('respondToReview', 4, {
+  captainOutput: { guard: 'changesMadeCodeAndChallenged', challenges: '1. rebut x' },
+});
+fx('respondToReview', 5, {
+  captainOutput: { guard: 'changesMadeMixedAndChallenged', challenges: '1. rebut x' },
+});
+fx('respondToReview', 6, {
+  captainOutput: { guard: 'challengesRaised', challenges: '1. rebut x' },
+});
+fx('respondToReview', 7, {
   context: { reviewSubject: 'changes' },
   captainOutput: { guard: 'accepted' },
 });
-fx('respondToReview', 5, {
+fx('respondToReview', 8, {
   context: { reviewSubject: 'commit', afterReview: 'continueIr' },
   captainOutput: { guard: 'accepted' },
 });
-fx('respondToReview', 6, {
+fx('respondToReview', 9, {
   context: { reviewSubject: 'commit', afterReview: 'summarizeSpecs' },
   captainOutput: { guard: 'accepted' },
 });
-fx('respondToReview', 7, {
+fx('respondToReview', 10, {
   context: { reviewSubject: 'commit', afterReview: 'done' },
   captainOutput: { guard: 'accepted' },
 });
@@ -126,6 +135,19 @@ for (const s of reviewChangesStates) {
   });
 }
 
+// CODE-15..17 — reviewChangesAndChallenges* (2 arms each)
+const reviewChangesAndChallengesStates = [
+  'reviewChangesAndChallengesSpecs',
+  'reviewChangesAndChallengesCode',
+  'reviewChangesAndChallengesMixed',
+] as const;
+for (const s of reviewChangesAndChallengesStates) {
+  fx(s, 0, { captainOutput: { guard: 'approved' } });
+  fx(s, 1, {
+    captainOutput: { guard: 'needsRevision', reviews: '1. finding' },
+  });
+}
+
 // CODE-14 — adjudicateChallenges (5 arms)
 fx('adjudicateChallenges', 0, {
   context: { reviewSubject: 'changes' },
@@ -145,7 +167,7 @@ fx('adjudicateChallenges', 3, {
 });
 fx('adjudicateChallenges', 4, { captainOutput: { guard: 'challengeRejected' } });
 
-// CODE-15 — commitCoderInitial (8 arms)
+// CODE-18 — commitCoderInitial (8 arms)
 fx('commitCoderInitial', 0, {
   context: { changeOrigin: 'bossIntent' },
   captainOutput: { guard: 'committedSpecs' },
@@ -173,23 +195,7 @@ fx('commitCoderInitial', 5, {
 fx('commitCoderInitial', 6, { captainOutput: { guard: 'noRelevantChanges' } });
 fx('commitCoderInitial', 7, { captainOutput: { guard: 'needsBossInput' } });
 
-// CODE-16 — commitReviewerCleared (5 arms)
-fx('commitReviewerCleared', 0, {
-  context: { afterReview: 'continueIr' },
-  captainOutput: { guard: 'committed' },
-});
-fx('commitReviewerCleared', 1, {
-  context: { afterReview: 'summarizeSpecs' },
-  captainOutput: { guard: 'committed' },
-});
-fx('commitReviewerCleared', 2, {
-  context: { afterReview: 'done' },
-  captainOutput: { guard: 'committed' },
-});
-fx('commitReviewerCleared', 3, { captainOutput: { guard: 'noRelevantChanges' } });
-fx('commitReviewerCleared', 4, { captainOutput: { guard: 'needsBossInput' } });
-
-// CODE-17 — commitJoint (5 arms, same shape as CODE-16)
+// CODE-19 — commitJoint (5 arms)
 fx('commitJoint', 0, {
   context: { afterReview: 'continueIr' },
   captainOutput: { guard: 'committed' },

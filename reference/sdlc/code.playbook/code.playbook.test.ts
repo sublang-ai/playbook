@@ -182,36 +182,24 @@ describe('resolvePlayerId', () => {
   });
 
   describe('Committer composite (DR-004 §2)', () => {
-    it('CODE-15: only coderPlayer set → "coder"', () => {
+    it('CODE-18: only coderPlayer set → "coder"', () => {
       expect(
         resolvePlayerId(
           makeInput({
             player: 'Committer',
-            sourceItem: 'CODE-15',
+            sourceItem: 'CODE-18',
             coderPlayer: 'claude',
           }),
         ),
       ).toBe('coder');
     });
 
-    it('CODE-16: only reviewerPlayer set → "reviewer"', () => {
+    it('CODE-19: both fields set → "coder" (Coder is first in alias declaration)', () => {
       expect(
         resolvePlayerId(
           makeInput({
             player: 'Committer',
-            sourceItem: 'CODE-16',
-            reviewerPlayer: 'codex',
-          }),
-        ),
-      ).toBe('reviewer');
-    });
-
-    it('CODE-17: both fields set → "coder" (Coder is first in alias declaration)', () => {
-      expect(
-        resolvePlayerId(
-          makeInput({
-            player: 'Committer',
-            sourceItem: 'CODE-17',
+            sourceItem: 'CODE-19',
             coderPlayer: 'claude',
             reviewerPlayer: 'codex',
           }),
@@ -1284,7 +1272,7 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
 });
 
 describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
-  it('full /start single-commit flow exercises coder, committer (CODE-15), and reviewer routing in one turn', async () => {
+  it('full /start single-commit flow exercises coder, committer (CODE-18), and reviewer routing in one turn', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
     // Per-state judge replies, in transition order:
     //   1. planAndImplement → singleCommitReady → commitCoderInitial
@@ -1306,27 +1294,27 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
 
     // Three captain invocations, with the player ids exercising:
     //   - Coder → 'coder' (planAndImplement)
-    //   - Committer composite CODE-15 (coderPlayer set) → 'coder'
+    //   - Committer composite CODE-18 (coderPlayer set) → 'coder'
     //   - Reviewer → 'reviewer' (reviewBossCommitSpecs)
     expect(playerCalls.map((c) => c.playerId)).toEqual([
       'coder',
       'coder',
       'reviewer',
     ]);
-    // The second call is the Committer state; CODE-15's prompt body
-    // names "Commit the changes ...".
-    expect(playerCalls[1].prompt).toContain('Commit the changes');
+    // The second call is the Committer state; CODE-18's prompt body
+    // names "Make a commit of the changes ...".
+    expect(playerCalls[1].prompt).toContain('Make a commit of the changes');
     // The third call is Reviewer; CODE-5's prompt body opens with
     // "Review the latest commit."
     expect(playerCalls[2].prompt).toContain('Review the latest commit');
     expect(runtime._getActor()?.getSnapshot().status).toBe('done');
   });
 
-  it('drives a Reviewer-cleared flow exercising Committer composite CODE-16 (reviewer only)', async () => {
+  it('drives a Reviewer-cleared flow exercising Committer composite CODE-19 via reviewChangesSpecs', async () => {
     // Path: /start → planAndImplement → commitCoderInitial →
     //   reviewBossCommitSpecs (hasFindings) → respondToReview
     //   (changesMadeSpecs) → reviewChangesSpecs (noFindings) →
-    //   commitReviewerCleared (committed, afterReview='done') → done
+    //   commitJoint (committed, afterReview='done') → done
     const judgeReplies: Array<Record<string, unknown>> = [
       { guard: 'singleCommitReady' },
       { guard: 'committedSpecs' },
@@ -1350,23 +1338,23 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
 
     // Per-invocation player resolution:
     //   1. CODE-1 planAndImplement → Coder      → 'coder'
-    //   2. CODE-15 commitCoderInitial → Committer(coderPlayer) → 'coder'
+    //   2. CODE-18 commitCoderInitial → Committer(coderPlayer) → 'coder'
     //   3. CODE-5 reviewBossCommitSpecs → Reviewer  → 'reviewer'
     //   4. CODE-2 respondToReview → Coder       → 'coder'
     //   5. CODE-11 reviewChangesSpecs → Reviewer → 'reviewer'
-    //   6. CODE-16 commitReviewerCleared → Committer(reviewerPlayer only) → 'reviewer'
+    //   6. CODE-19 commitJoint → Committer(coder+reviewer) → 'coder'
     expect(playerCalls.map((c) => c.playerId)).toEqual([
       'coder',
       'coder',
       'reviewer',
       'coder',
       'reviewer',
-      'reviewer',
+      'coder',
     ]);
     expect(runtime._getActor()?.getSnapshot().status).toBe('done');
   });
 
-  it('drives a joint-commit flow exercising Committer composite CODE-17 (coder + reviewer)', async () => {
+  it('drives a joint-commit flow exercising Committer composite CODE-19 (coder + reviewer)', async () => {
     // Path: /start → planAndImplement → commitCoderInitial →
     //   reviewBossCommitSpecs (hasFindings) → respondToReview
     //   (changesMadeSpecs) → reviewChangesSpecs (hasFindings) →
@@ -1394,7 +1382,7 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
     await runtime.init(ports);
     await runtime.handleBossInput({ text: '/start joint', signal: sig() });
 
-    // Step 7 is CODE-17 commitJoint with both coderPlayer and
+    // Step 7 is CODE-19 commitJoint with both coderPlayer and
     // reviewerPlayer set → composite resolves to 'coder'.
     expect(playerCalls.map((c) => c.playerId)).toEqual([
       'coder',

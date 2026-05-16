@@ -84,9 +84,9 @@ const states = enumerateCaptainStates(codingMachine);
 const fsmBySourceItem = new Map(states.map((s) => [s.sourceItem, s]));
 
 describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
-  it('parses CODE-1..17 (17 items)', () => {
-    expect(gears.size).toBe(17);
-    for (let i = 1; i <= 17; i++) {
+  it('parses CODE-1..19 (19 items)', () => {
+    expect(gears.size).toBe(19);
+    for (let i = 1; i <= 19; i++) {
       expect(gears.has(`CODE-${i}`)).toBe(true);
     }
   });
@@ -107,11 +107,13 @@ describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
       12: 'Reviewer',
       13: 'Reviewer',
       14: 'Reviewer',
-      15: 'Committer',
-      16: 'Committer',
-      17: 'Committer',
+      15: 'Reviewer',
+      16: 'Reviewer',
+      17: 'Reviewer',
+      18: 'Committer',
+      19: 'Committer',
     };
-    for (let i = 1; i <= 17; i++) {
+    for (let i = 1; i <= 19; i++) {
       expect(gears.get(`CODE-${i}`)?.player).toBe(expectedPlayer[i]);
     }
   });

@@ -12,7 +12,7 @@ import {
 } from './code.fsm.introspect.js';
 
 const STATE_ID_RE = /^[a-zA-Z][a-zA-Z0-9]*$/;
-const SOURCE_ITEM_RE = /^CODE-(?:[1-9]|1[0-7])$/;
+const SOURCE_ITEM_RE = /^CODE-(?:[1-9]|1[0-9])$/;
 const KNOWN_PLAYERS = new Set(['Coder', 'Reviewer', 'Committer']);
 
 describe('enumerateCaptainStates', () => {
@@ -23,8 +23,8 @@ describe('enumerateCaptainStates', () => {
     ),
   );
 
-  it('returns one entry per captain-invoking state (17 total)', () => {
-    expect(states).toHaveLength(17);
+  it('returns one entry per captain-invoking state (19 total)', () => {
+    expect(states).toHaveLength(19);
   });
 
   it('every entry has a valid stateId, sourceItem, and getInput', () => {
@@ -35,9 +35,9 @@ describe('enumerateCaptainStates', () => {
     }
   });
 
-  it('sourceItems cover CODE-1..17 exactly once each', () => {
+  it('sourceItems cover CODE-1..19 exactly once each', () => {
     const seen = states.map((s) => s.sourceItem).sort();
-    const expected = Array.from({ length: 17 }, (_, i) => `CODE-${i + 1}`).sort();
+    const expected = Array.from({ length: 19 }, (_, i) => `CODE-${i + 1}`).sort();
     expect(seen).toEqual(expected);
   });
 
@@ -73,13 +73,12 @@ describe('enumerateCaptainStates', () => {
     }
   });
 
-  it('the four states with same-target arms keep distinct indices per arm', () => {
+  it('the three states with same-target arms keep distinct indices per arm', () => {
     // Sentinel for the keying choice in Task 4's fixture table:
     // `(stateId, target)` is not unique, but `(stateId, index)` is.
     const collisions: Array<[stateId: string, target: string, count: number]> = [
       ['planAndImplement', 'commitCoderInitial', 2],
       ['commitCoderInitial', 'ready', 2],
-      ['commitReviewerCleared', 'done', 2],
       ['commitJoint', 'done', 2],
     ];
     for (const [stateId, target, count] of collisions) {
@@ -98,7 +97,7 @@ describe('enumerateCaptainStates', () => {
     );
     expect(counts).toEqual({
       planAndImplement: 3,
-      respondToReview: 8,
+      respondToReview: 11,
       continueIr: 3,
       summarizeSpecs: 3,
       reviewBossCommitSpecs: 4,
@@ -110,9 +109,11 @@ describe('enumerateCaptainStates', () => {
       reviewChangesSpecs: 2,
       reviewChangesCode: 2,
       reviewChangesMixed: 2,
+      reviewChangesAndChallengesSpecs: 2,
+      reviewChangesAndChallengesCode: 2,
+      reviewChangesAndChallengesMixed: 2,
       adjudicateChallenges: 5,
       commitCoderInitial: 8,
-      commitReviewerCleared: 5,
       commitJoint: 5,
     });
   });
@@ -127,7 +128,7 @@ describe('enumerateRootEvents', () => {
     expect(events.summarizeIr.target).toBe('summarizeSpecs');
   });
 
-  it('bossInterruptTargets enumerates all 19 jumpable states without `#` prefixes', () => {
+  it('bossInterruptTargets enumerates all 21 jumpable states without `#` prefixes', () => {
     expect(events.bossInterruptTargets).toEqual([
       'ready',
       'planAndImplement',
@@ -143,9 +144,11 @@ describe('enumerateRootEvents', () => {
       'reviewChangesSpecs',
       'reviewChangesCode',
       'reviewChangesMixed',
+      'reviewChangesAndChallengesSpecs',
+      'reviewChangesAndChallengesCode',
+      'reviewChangesAndChallengesMixed',
       'adjudicateChallenges',
       'commitCoderInitial',
-      'commitReviewerCleared',
       'commitJoint',
       'failed',
     ]);
