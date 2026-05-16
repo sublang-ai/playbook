@@ -1,5 +1,5 @@
 type Player = 'Coder' | 'Reviewer' | 'Committer';
-type JumpableStateId = 'ready' | 'planAndImplement' | 'respondToReview' | 'continueIr' | 'summarizeSpecs' | 'reviewBossCommitSpecs' | 'reviewBossCommitCode' | 'reviewBossCommitMixed' | 'reviewIrTaskCommitSpecs' | 'reviewIrTaskCommitCode' | 'reviewIrTaskCommitMixed' | 'reviewChangesSpecs' | 'reviewChangesCode' | 'reviewChangesMixed' | 'adjudicateChallenges' | 'commitCoderInitial' | 'commitReviewerCleared' | 'commitJoint' | 'failed';
+type JumpableStateId = 'ready' | 'planAndImplement' | 'respondToReview' | 'continueIr' | 'summarizeSpecs' | 'reviewBossCommitSpecs' | 'reviewBossCommitCode' | 'reviewBossCommitMixed' | 'reviewIrTaskCommitSpecs' | 'reviewIrTaskCommitCode' | 'reviewIrTaskCommitMixed' | 'reviewChangesSpecs' | 'reviewChangesCode' | 'reviewChangesMixed' | 'reviewChangesAndChallengesSpecs' | 'reviewChangesAndChallengesCode' | 'reviewChangesAndChallengesMixed' | 'adjudicateChallenges' | 'commitCoderInitial' | 'commitJoint' | 'failed';
 type WorkflowKind = 'singleCommit' | 'iteration' | 'specSummary';
 type ChangeOrigin = 'bossIntent' | 'irTask';
 type ReviewSubject = 'commit' | 'changes';

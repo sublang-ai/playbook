@@ -28,9 +28,11 @@ type JumpableStateId =
   | 'reviewChangesSpecs'
   | 'reviewChangesCode'
   | 'reviewChangesMixed'
+  | 'reviewChangesAndChallengesSpecs'
+  | 'reviewChangesAndChallengesCode'
+  | 'reviewChangesAndChallengesMixed'
   | 'adjudicateChallenges'
   | 'commitCoderInitial'
-  | 'commitReviewerCleared'
   | 'commitJoint'
   | 'failed';
 
@@ -114,9 +116,11 @@ const jumpableStateIds = [
   'reviewChangesSpecs',
   'reviewChangesCode',
   'reviewChangesMixed',
+  'reviewChangesAndChallengesSpecs',
+  'reviewChangesAndChallengesCode',
+  'reviewChangesAndChallengesMixed',
   'adjudicateChallenges',
   'commitCoderInitial',
-  'commitReviewerCleared',
   'commitJoint',
   'failed',
 ] as const satisfies readonly JumpableStateId[];
@@ -311,7 +315,7 @@ export const codingMachine = setup({
           sourceItem: 'CODE-2',
           reviews: context.reviews,
           prompt: [
-            'For each review item below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
+            'For each review item below for the above changes, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
             'Stage all current changes that belong in the repo before making any edits, and leave your edits unstaged/untracked.',
           ].join('\n'),
           result: {
@@ -321,8 +325,14 @@ export const codingMachine = setup({
               'Coder accepted items and produced unstaged/untracked edits outside @specs/{user,dev,test}/ only.',
             changesMadeMixed:
               'Coder accepted items and produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files.',
+            changesMadeSpecsAndChallenged:
+              'Coder produced unstaged/untracked edits in @specs/{user,dev,test}/ only AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
+            changesMadeCodeAndChallenged:
+              'Coder produced unstaged/untracked edits outside @specs/{user,dev,test}/ only AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
+            changesMadeMixedAndChallenged:
+              'Coder produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
             challengesRaised:
-              'Coder challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
+              'Coder challenged one or more review items without producing any code edits. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
             accepted:
               'Coder accepted the review outcome without further edits.',
           },
@@ -341,6 +351,21 @@ export const codingMachine = setup({
           {
             guard: guardIs('changesMadeMixed'),
             target: '#reviewChangesMixed',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: guardIs('changesMadeSpecsAndChallenged'),
+            target: '#reviewChangesAndChallengesSpecs',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: guardIs('changesMadeCodeAndChallenged'),
+            target: '#reviewChangesAndChallengesCode',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: guardIs('changesMadeMixedAndChallenged'),
+            target: '#reviewChangesAndChallengesMixed',
             actions: rememberCaptainOutput,
           },
           {
@@ -455,9 +480,7 @@ export const codingMachine = setup({
             'The spec items should be the *minimal* set needed to reimplement code without the IR.',
             'The set should be complete and coherent.',
             'Avoid implementation specifics.',
-            'Spec items should reflect the latest code, excluding behaviors that have been superseded or bugs already fixed.',
-            'They may flag missing tests.',
-            'Avoid duplicating existing spec items.',
+            'Avoid redundant spec items.',
             'Consult @specs/map.md for relevant context and update it to reflect your changes.',
           ].join('\n'),
           result: {
@@ -744,7 +767,7 @@ export const codingMachine = setup({
     reviewChangesSpecs: {
       id: 'reviewChangesSpecs',
       description:
-        'CODE-11: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/.',
+        'CODE-11: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ with no accompanying rebuttals.',
       invoke: {
         src: 'captain',
         input: (): CaptainInput => ({
@@ -772,7 +795,7 @@ export const codingMachine = setup({
         onDone: [
           {
             guard: guardIs('noFindings'),
-            target: '#commitReviewerCleared',
+            target: '#commitJoint',
             actions: rememberCaptainOutput,
           },
           {
@@ -788,7 +811,7 @@ export const codingMachine = setup({
     reviewChangesCode: {
       id: 'reviewChangesCode',
       description:
-        'CODE-12: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/.',
+        'CODE-12: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ with no accompanying rebuttals.',
       invoke: {
         src: 'captain',
         input: (): CaptainInput => ({
@@ -811,7 +834,7 @@ export const codingMachine = setup({
         onDone: [
           {
             guard: guardIs('noFindings'),
-            target: '#commitReviewerCleared',
+            target: '#commitJoint',
             actions: rememberCaptainOutput,
           },
           {
@@ -827,7 +850,7 @@ export const codingMachine = setup({
     reviewChangesMixed: {
       id: 'reviewChangesMixed',
       description:
-        'CODE-13: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files.',
+        'CODE-13: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files with no accompanying rebuttals.',
       invoke: {
         src: 'captain',
         input: (): CaptainInput => ({
@@ -857,7 +880,7 @@ export const codingMachine = setup({
         onDone: [
           {
             guard: guardIs('noFindings'),
-            target: '#commitReviewerCleared',
+            target: '#commitJoint',
             actions: rememberCaptainOutput,
           },
           {
@@ -870,9 +893,150 @@ export const codingMachine = setup({
       },
     },
 
+    reviewChangesAndChallengesSpecs: {
+      id: 'reviewChangesAndChallengesSpecs',
+      description:
+        'CODE-15: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ and adjudicates accompanying rebuttals in one round.',
+      invoke: {
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Reviewer',
+          sourceItem: 'CODE-15',
+          reviews: context.reviews,
+          challenges: context.challenges,
+          prompt: [
+            'Review the unstaged/untracked changes.',
+            'Understand the intent.',
+            'Verify any affected spec items are:',
+            '',
+            '- Complete & coherent: sufficient for you to reimplement code.',
+            '- Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Minimal: essential and concise; every item earns its place; also check with other items.',
+            '',
+            'Flag anything missing, redundant, over-specified, or under-specified.',
+            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            "If the change is ready to commit or push, don't raise nitpicks.",
+            'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
+          ].join('\n'),
+          result: {
+            approved:
+              'The new spec-only changes are ready to commit and every rebuttal was accepted (or no items remained open).',
+            needsRevision:
+              'The combined round needs more work: the review produced findings, one or more rebuttals were rejected, or both. Output shall include `reviews: <numbered list of any new findings or rejected rebuttals to address>`.',
+          },
+        }),
+        onDone: [
+          {
+            guard: guardIs('approved'),
+            target: '#commitJoint',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: guardIs('needsRevision'),
+            target: '#respondToReview',
+            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
+          },
+        ],
+        onError: captainError,
+      },
+    },
+
+    reviewChangesAndChallengesCode: {
+      id: 'reviewChangesAndChallengesCode',
+      description:
+        'CODE-16: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ and adjudicates accompanying rebuttals in one round.',
+      invoke: {
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Reviewer',
+          sourceItem: 'CODE-16',
+          reviews: context.reviews,
+          challenges: context.challenges,
+          prompt: [
+            'Review the unstaged/untracked changes.',
+            'Understand the intent.',
+            'Flag any issues or improvements (numbered; no duplication).',
+            "Think thoroughly — don't just approve or reject.",
+            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            "If the change is ready to commit or push, don't raise nitpicks.",
+            'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
+          ].join('\n'),
+          result: {
+            approved:
+              'The new code-only changes are ready to commit and every rebuttal was accepted (or no items remained open).',
+            needsRevision:
+              'The combined round needs more work: the review produced findings, one or more rebuttals were rejected, or both. Output shall include `reviews: <numbered list of any new findings or rejected rebuttals to address>`.',
+          },
+        }),
+        onDone: [
+          {
+            guard: guardIs('approved'),
+            target: '#commitJoint',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: guardIs('needsRevision'),
+            target: '#respondToReview',
+            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
+          },
+        ],
+        onError: captainError,
+      },
+    },
+
+    reviewChangesAndChallengesMixed: {
+      id: 'reviewChangesAndChallengesMixed',
+      description:
+        'CODE-17: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files and adjudicates accompanying rebuttals in one round.',
+      invoke: {
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Reviewer',
+          sourceItem: 'CODE-17',
+          reviews: context.reviews,
+          challenges: context.challenges,
+          prompt: [
+            'Review the unstaged/untracked changes.',
+            'Understand the intent.',
+            'Verify any affected spec items are:',
+            '',
+            '- Complete & coherent: sufficient for you to reimplement code.',
+            '- Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Minimal: essential and concise; every item earns its place; also check with other items.',
+            '',
+            'Flag anything missing, redundant, over-specified, or under-specified.',
+            'Flag any issues or improvements (numbered; no duplication).',
+            "Think thoroughly — don't just approve or reject.",
+            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            "If the change is ready to commit or push, don't raise nitpicks.",
+            'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
+          ].join('\n'),
+          result: {
+            approved:
+              'The new mixed changes are ready to commit and every rebuttal was accepted (or no items remained open).',
+            needsRevision:
+              'The combined round needs more work: the review produced findings, one or more rebuttals were rejected, or both. Output shall include `reviews: <numbered list of any new findings or rejected rebuttals to address>`.',
+          },
+        }),
+        onDone: [
+          {
+            guard: guardIs('approved'),
+            target: '#commitJoint',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: guardIs('needsRevision'),
+            target: '#respondToReview',
+            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
+          },
+        ],
+        onError: captainError,
+      },
+    },
+
     adjudicateChallenges: {
       id: 'adjudicateChallenges',
-      description: 'CODE-14: Reviewer adjudicates Coder rebuttals against the prior review.',
+      description: 'CODE-14: Reviewer adjudicates Coder rebuttals against the prior review when Coder produced no code edits this round.',
       invoke: {
         src: 'captain',
         input: ({ context }): CaptainInput => ({
@@ -940,15 +1104,15 @@ export const codingMachine = setup({
     commitCoderInitial: {
       id: 'commitCoderInitial',
       description:
-        'CODE-15: Committer commits Coder Initial Changes when Reviewer has not played since the last commit.',
+        'CODE-18: Committer commits Coder Initial Changes when Reviewer has not played since the last commit.',
       invoke: {
         src: 'captain',
         input: ({ context }): CaptainInput => ({
           player: 'Committer',
-          sourceItem: 'CODE-15',
+          sourceItem: 'CODE-18',
           coderPlayer: context.coderPlayer,
           prompt: [
-            'Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
+            'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
             'Coder is <coder-llm>.',
           ].join('\n'),
           result: {
@@ -997,65 +1161,19 @@ export const codingMachine = setup({
       },
     },
 
-    commitReviewerCleared: {
-      id: 'commitReviewerCleared',
-      description:
-        'CODE-16: Committer commits changes Reviewer cleared in the same round when Coder has not played since the last commit.',
-      invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Committer',
-          sourceItem: 'CODE-16',
-          reviewerPlayer: context.reviewerPlayer,
-          prompt: [
-            'Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
-            'Reviewer is <reviewer-llm>.',
-          ].join('\n'),
-          result: {
-            committed: 'Relevant changes were committed.',
-            noRelevantChanges: 'There are no relevant changes to commit.',
-            needsBossInput: 'Committing requires additional Boss input.',
-          },
-        }),
-        onDone: [
-          {
-            guard: ({ context, event }) =>
-              outputOf(event)?.guard === 'committed' && context.afterReview === 'continueIr',
-            target: '#continueIr',
-            actions: rememberCaptainOutput,
-          },
-          {
-            guard: ({ context, event }) =>
-              outputOf(event)?.guard === 'committed' && context.afterReview === 'summarizeSpecs',
-            target: '#summarizeSpecs',
-            actions: rememberCaptainOutput,
-          },
-          {
-            guard: ({ context, event }) =>
-              outputOf(event)?.guard === 'committed' && context.afterReview === 'done',
-            target: '#done',
-            actions: rememberCaptainOutput,
-          },
-          { guard: guardIs('noRelevantChanges'), target: '#done', actions: rememberCaptainOutput },
-          { guard: guardIs('needsBossInput'), target: '#ready', actions: rememberCaptainOutput },
-        ],
-        onError: captainError,
-      },
-    },
-
     commitJoint: {
       id: 'commitJoint',
       description:
-        'CODE-17: Committer commits changes when both Coder and Reviewer have played since the last commit.',
+        'CODE-19: Committer commits changes when both Coder and Reviewer have played since the last commit.',
       invoke: {
         src: 'captain',
         input: ({ context }): CaptainInput => ({
           player: 'Committer',
-          sourceItem: 'CODE-17',
+          sourceItem: 'CODE-19',
           coderPlayer: context.coderPlayer,
           reviewerPlayer: context.reviewerPlayer,
           prompt: [
-            'Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
+            'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
             'Coder is <coder-llm>; Reviewer is <reviewer-llm>.',
           ].join('\n'),
           result: {
