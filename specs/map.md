@@ -69,6 +69,12 @@ meta.md     The spec of specs
 | dev | [playbook.md](dev/playbook.md) | CODE playbook FSM ↔ GEARS conformance contract (source agreement, transition coverage, prompt composition) |
 | test | [playbook.md](test/playbook.md) | Integration tests pinning the FSM ↔ GEARS conformance contract under `pnpm test` |
 
+### RELEASE
+
+| Group | File | Summary |
+| --- | --- | --- |
+| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` (semver, changelog, tag-driven CI, OIDC trusted publishing) |
+
 ### SKETCH
 
 | Group | File | Summary |
