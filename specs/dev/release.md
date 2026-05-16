@@ -14,7 +14,7 @@ to npm and tagging the corresponding GitHub release.
 
 ### RELEASE-1
 
-The project shall follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html):
+The project shall follow Semantic Versioning 2.0.0 [[1]]:
 `MAJOR.MINOR.PATCH` where MAJOR indicates breaking changes, MINOR
 indicates new features, and PATCH indicates bug fixes.
 
@@ -29,8 +29,7 @@ shall verify this match before publishing.
 ### RELEASE-3
 
 All notable changes shall be documented in `CHANGELOG.md` at the
-repository root, following the
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+repository root, following the Keep a Changelog format [[2]].
 
 ### RELEASE-4
 
@@ -100,3 +99,8 @@ Before tagging a release, the developer/agent shall verify:
 - [ ] `reference/sdlc/code.playbook/package.json` `version` is
       bumped and `private` is unset (or `false`).
 - [ ] All changes are committed and pushed to `main`.
+
+## References
+
+[1]: https://semver.org/spec/v2.0.0.html "Semantic Versioning 2.0.0"
+[2]: https://keepachangelog.com/en/1.1.0/ "Keep a Changelog 1.1.0"
