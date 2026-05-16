@@ -78,8 +78,12 @@ Drive a Boss turn against the source tree (uses the developer
 that imports the compiled adapter via relative path):
 
 ```sh
-tmux-play --config tmux-play.config.yaml
+pnpm exec tmux-play --config tmux-play.config.yaml
 ```
+
+`pnpm exec` resolves `tmux-play` from the package's local
+`node_modules/.bin/`, so this works whether or not `@sublang/cligent` is
+installed globally.
 
 ### Running a Boss turn
 
