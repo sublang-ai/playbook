@@ -1,10 +1,30 @@
 {
   "name": "@sublang/playbook",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
   "type": "module",
-  "description": "FSM-to-runtime linker output for the CODE playbook, plus the tmux-play host adapter.",
+  "description": "Reference CODE playbook — XState v5 FSM, host-agnostic runtime, and tmux-play adapter for a coder/reviewer/committer loop driven by GEARS spec items.",
   "license": "Apache-2.0",
+  "homepage": "https://github.com/sublang-ai/playbook#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sublang-ai/playbook.git",
+    "directory": "reference/sdlc/code.playbook"
+  },
+  "bugs": "https://github.com/sublang-ai/playbook/issues",
+  "keywords": [
+    "ai",
+    "agent",
+    "playbook",
+    "state-machine",
+    "xstate",
+    "gears",
+    "sdlc",
+    "cligent",
+    "tmux-play"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
     "code.fsm.ts",
     "code.fsm.js",
@@ -17,8 +37,12 @@
     "code.tmux-play.d.ts",
     "code.gears.md",
     "tmux-play.config.yaml",
-    "tmux-play.production.config.yaml"
+    "tmux-play.production.config.yaml",
+    "bin"
   ],
+  "bin": {
+    "playbook-code": "./bin/playbook-code.js"
+  },
   "exports": {
     "./code/playbook": {
       "types": "./code.playbook.d.ts",
@@ -32,6 +56,10 @@
   "scripts": {
     "build": "tsc",
     "test": "vitest run"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "peerDependencies": {
     "@sublang/cligent": "^0.3.0",
