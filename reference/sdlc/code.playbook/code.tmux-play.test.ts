@@ -195,7 +195,7 @@ describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
     await captain.handleBossTurn(turn('/start x'), c.context);
 
     const failedStatus = s.statuses.find(
-      (st) => st.message === 'State → failed',
+      (st) => st.message === '◆ failed',
     );
     expect(failedStatus).toBeDefined();
   });
@@ -208,9 +208,9 @@ describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
       reviewerPlayer: 'codex',
     });
     await captain.init!(s.session);
-    // init emits 'State → ready' on initial entry — verify that
+    // init emits '◆ ready' on initial entry — verify that
     // session.emitStatus was the recipient.
-    expect(s.statuses.map((x) => x.message)).toContain('State → ready');
+    expect(s.statuses.map((x) => x.message)).toContain('◆ ready');
   });
 
   it('emitTelemetry forwards verbatim to session.emitTelemetry', async () => {
@@ -239,7 +239,7 @@ describe('createCodeTmuxPlayCaptain — RoleRunResult ↔ PlayerResult identity 
     await captain.handleBossTurn(turn('/start x'), c.context);
     // Verify the turn completed by ending at ready (needsBossInput).
     expect(
-      s.statuses.map((st) => st.message).filter((m) => m === 'State → ready')
+      s.statuses.map((st) => st.message).filter((m) => m === '◆ ready')
         .length,
     ).toBeGreaterThanOrEqual(1);
   });
@@ -262,7 +262,7 @@ describe('createCodeTmuxPlayCaptain — RoleRunResult ↔ PlayerResult identity 
     await captain.handleBossTurn(turn('/start x'), c.context);
 
     const failedStatus = s.statuses.find(
-      (st) => st.message === 'State → failed',
+      (st) => st.message === '◆ failed',
     );
     expect(failedStatus).toBeDefined();
     expect(failedStatus?.data).toEqual(
@@ -287,7 +287,7 @@ describe('createCodeTmuxPlayCaptain — RoleRunResult ↔ PlayerResult identity 
     await captain.init!(s.session);
     await captain.handleBossTurn(turn('/start x'), c.context);
     expect(
-      s.statuses.find((st) => st.message === 'State → failed'),
+      s.statuses.find((st) => st.message === '◆ failed'),
     ).toBeDefined();
   });
 });
@@ -315,7 +315,7 @@ describe('createCodeTmuxPlayCaptain — multi-stage Boss turn', () => {
     expect(roleIds).toContain('coder');
     expect(roleIds).toContain('reviewer');
     expect(
-      s.statuses.some((st) => st.message === 'State → done'),
+      s.statuses.some((st) => st.message === '◆ done'),
     ).toBe(true);
   });
 });
@@ -348,7 +348,7 @@ describe('createCodeTmuxPlayCaptain — signal propagation (DR-004 §11)', () =>
     await captain.handleBossTurn(turn('/start x'), c.context);
 
     expect(
-      s.statuses.find((st) => st.message === 'State → failed'),
+      s.statuses.find((st) => st.message === '◆ failed'),
     ).toBeDefined();
   });
 });

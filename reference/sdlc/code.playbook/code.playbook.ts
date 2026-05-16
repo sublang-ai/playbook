@@ -18,6 +18,7 @@ import {
   type CodingEvent,
   type CodingInput,
 } from './code.fsm.js';
+import { enumerateCaptainStates } from './code.fsm.introspect.js';
 
 // Public contract — `PlayerResult`, `PlaybookPorts`, `PlaybookRuntime`,
 // `CodePlaybookOptions`, and the default `createPlaybookRuntime` factory
@@ -401,6 +402,133 @@ function captainBridge(
   );
 }
 
+// Captain pane display — PBRT-3 / PBRT-14.
+// The Captain pane is a stream keyed on four glyphs so a reader can
+// parse each line at a glance:
+//   ◆  terminal entry (ready / done / failed)
+//   ▸  Boss input echo
+//   ⮕  captain-invoking state entry (label + player + CODE-N)
+//   ⤷  transition (guard fired by the just-finished captain call)
+// Prompts and full player output ride the player panes; the Captain
+// pane keeps to the state-machine shape.
+
+const STATE_LABELS: Readonly<Record<string, string>> = {
+  planAndImplement: 'plan & implement',
+  respondToReview: 'respond to review',
+  continueIr: 'continue IR task',
+  summarizeSpecs: 'summarize IR into specs',
+  reviewBossCommitSpecs: 'review Boss-intent commit (specs only)',
+  reviewBossCommitCode: 'review Boss-intent commit (code only)',
+  reviewBossCommitMixed: 'review Boss-intent commit (specs + code)',
+  reviewIrTaskCommitSpecs: 'review IR-task commit (specs only)',
+  reviewIrTaskCommitCode: 'review IR-task commit (code only)',
+  reviewIrTaskCommitMixed: 'review IR-task commit (specs + code)',
+  reviewChangesSpecs: 'review uncommitted edits (specs only)',
+  reviewChangesCode: 'review uncommitted edits (code only)',
+  reviewChangesMixed: 'review uncommitted edits (specs + code)',
+  reviewChangesAndChallengesSpecs:
+    'review uncommitted edits + rebuttals (specs only)',
+  reviewChangesAndChallengesCode:
+    'review uncommitted edits + rebuttals (code only)',
+  reviewChangesAndChallengesMixed:
+    'review uncommitted edits + rebuttals (specs + code)',
+  adjudicateChallenges: 'adjudicate rebuttals',
+  commitCoderInitial: "commit Coder's initial changes",
+  commitJoint: 'commit reviewed changes',
+};
+
+interface StateMetadata {
+  player: CaptainInput['player'];
+  sourceItem: string;
+  label: string;
+}
+
+const stateMetadata: ReadonlyMap<string, StateMetadata> = (() => {
+  const m = new Map<string, StateMetadata>();
+  for (const s of enumerateCaptainStates(codingMachine)) {
+    const label = STATE_LABELS[s.stateId];
+    if (!label) continue;
+    const input = s.getInput({});
+    m.set(s.stateId, { player: input.player, sourceItem: s.sourceItem, label });
+  }
+  return m;
+})();
+
+const TERMINAL_STATES: ReadonlySet<string> = new Set([
+  'ready',
+  'done',
+  'failed',
+]);
+
+// Captain-pane surface (PBRT-3): every captain-invoking state plus
+// the three terminal/idle states. Wider than the prior
+// "Boss-relevant" set per slc/link.md's default "emit on every
+// transition; let the host filter."
+const CAPTAIN_PANE_STATES: ReadonlySet<string> = new Set([
+  ...stateMetadata.keys(),
+  ...TERMINAL_STATES,
+]);
+
+function formatStateEntry(stateId: string): string {
+  if (TERMINAL_STATES.has(stateId)) return `◆ ${stateId}`;
+  const meta = stateMetadata.get(stateId);
+  if (!meta) return `⮕ ${stateId}`;
+  return `⮕ ${meta.label}  ${meta.player} per ${meta.sourceItem}`;
+}
+
+function formatTransition(event: unknown): string | undefined {
+  const output = (event as { output?: Record<string, unknown> })?.output;
+  if (!output || typeof output.guard !== 'string') return undefined;
+  const tallies: string[] = [];
+  for (const field of ['reviews', 'challenges'] as const) {
+    const value = output[field];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      const items = value.match(/^\s*\d+\.\s/gm);
+      tallies.push(`${field}=${items ? items.length : 1}`);
+    }
+  }
+  const suffix = tallies.length > 0 ? `  ${tallies.join(' ')}` : '';
+  return `  ⤷ ${output.guard}${suffix}`;
+}
+
+function formatBossEcho(text: string, eventType?: string): string {
+  return eventType !== undefined
+    ? `▸ BOSS  ${text}\n        → ${eventType}`
+    : `▸ BOSS  ${text}`;
+}
+
+// Per-state context fields worth surfacing as a one-line rider under
+// the state entry. Only fields that affect the upcoming player call's
+// prompt are listed; routing-only context (reviewSubject, afterReview)
+// stays out of the pane and is visible via emitTelemetry instead.
+const RIDER_FIELDS: Readonly<Record<string, readonly string[]>> = {
+  planAndImplement: ['intent'],
+  continueIr: ['irNumber'],
+  summarizeSpecs: ['irNumber'],
+  reviewBossCommitSpecs: ['intent'],
+  reviewBossCommitCode: ['intent'],
+  reviewBossCommitMixed: ['intent'],
+  reviewIrTaskCommitSpecs: ['irNumber', 'taskDescription'],
+  reviewIrTaskCommitCode: ['irNumber', 'taskDescription'],
+  reviewIrTaskCommitMixed: ['irNumber', 'taskDescription'],
+};
+
+function formatRiders(
+  stateId: string,
+  context: Record<string, unknown>,
+): string | undefined {
+  const fields = RIDER_FIELDS[stateId];
+  if (!fields) return undefined;
+  const lines: string[] = [];
+  for (const f of fields) {
+    const v = context[f];
+    if (typeof v === 'string' && v.length > 0) {
+      lines.push(`    ${f}=${JSON.stringify(v)}`);
+    }
+  }
+  return lines.length > 0 ? lines.join('\n') : undefined;
+}
+
 // Internal export surface for tests. Not part of the stable public API;
 // the leading underscore signals "subject to change." Each member is
 // referenced here so `noUnusedLocals` stays clean while later tasks
@@ -411,29 +539,13 @@ export const _internal = {
   adjudicate,
   classifyBossText,
   captainBridge,
+  STATE_LABELS,
+  stateMetadata,
+  formatStateEntry,
+  formatTransition,
+  formatBossEcho,
+  formatRiders,
 };
-
-// Boss-relevant states per DR-004 §9: every transition into one of
-// these emits a one-line status via ports.emitStatus. Telemetry
-// fires on *every* transition (Boss-relevant or not).
-const BOSS_RELEVANT_STATES: ReadonlySet<string> = new Set([
-  'ready',
-  'reviewBossCommitSpecs',
-  'reviewBossCommitCode',
-  'reviewBossCommitMixed',
-  'reviewIrTaskCommitSpecs',
-  'reviewIrTaskCommitCode',
-  'reviewIrTaskCommitMixed',
-  'reviewChangesSpecs',
-  'reviewChangesCode',
-  'reviewChangesMixed',
-  'adjudicateChallenges',
-  'commitCoderInitial',
-  'commitReviewerCleared',
-  'commitJoint',
-  'failed',
-  'done',
-]);
 
 export default function createPlaybookRuntime(
   options: CodePlaybookOptions,
@@ -490,7 +602,7 @@ export default function createPlaybookRuntime(
           if (inspectionEvent.type !== '@xstate.snapshot') return;
           const snap = inspectionEvent.snapshot as {
             value?: unknown;
-            context?: { lastError?: unknown };
+            context?: Record<string, unknown>;
           };
           // Filter out captain sub-actor (fromPromise) snapshots —
           // only the root codingMachine snapshot has a string value.
@@ -499,23 +611,35 @@ export default function createPlaybookRuntime(
           if (priorState === to) return;
           const from = priorState;
           priorState = to;
-          // Telemetry on every transition (DR-004 §9).
+          // Telemetry on every transition (PBRT-14).
           enqueueEmit(() =>
             ports.emitTelemetry({
               topic: 'playbook.fsm.state',
               payload: { from, to, event: inspectionEvent.event },
             }),
           );
-          // Status on Boss-relevant transitions, with lastError
-          // surfaced on entry to failed.
-          if (BOSS_RELEVANT_STATES.has(to)) {
-            const message = `State → ${to}`;
-            if (to === 'failed') {
-              const lastError = snap.context?.lastError;
-              enqueueEmit(() => ports.emitStatus(message, { lastError }));
-            } else {
-              enqueueEmit(() => ports.emitStatus(message));
-            }
+          // Captain pane (PBRT-3 / PBRT-14): show the transition
+          // guard first (when this is an actor-done transition with
+          // a known guard), then the new state entry, then any
+          // context riders the entering state cares about. Terminal
+          // entry to `failed` carries `lastError` as the data arg.
+          if (!CAPTAIN_PANE_STATES.has(to)) return;
+          const transitionLine = formatTransition(inspectionEvent.event);
+          if (transitionLine !== undefined) {
+            enqueueEmit(() => ports.emitStatus(transitionLine));
+          }
+          const entryLine = formatStateEntry(to);
+          const riderLine = stateMetadata.has(to)
+            ? formatRiders(to, snap.context ?? {})
+            : undefined;
+          const message =
+            riderLine !== undefined ? `${entryLine}\n${riderLine}` : entryLine;
+          if (to === 'failed') {
+            const lastError = (snap.context as { lastError?: unknown })
+              ?.lastError;
+            enqueueEmit(() => ports.emitStatus(message, { lastError }));
+          } else {
+            enqueueEmit(() => ports.emitStatus(message));
           }
         },
       },
@@ -552,16 +676,24 @@ export default function createPlaybookRuntime(
           await drainEmissions();
           return;
         }
-        // 2. final state ('done') cannot accept new events — dispose
+        // 2. Captain-pane Boss-input echo (PBRT-14): the verbatim
+        //    Boss text and the FSM event it classified to, before
+        //    the FSM advances. Enqueued so it interleaves cleanly
+        //    with the inspect-driven transition emissions.
+        const echoPorts = savedPorts;
+        enqueueEmit(() =>
+          echoPorts.emitStatus(formatBossEcho(text, event.type)),
+        );
+        // 3. final state ('done') cannot accept new events — dispose
         //    and reconstruct per DR-004 §5.
         if (actor.getSnapshot().status === 'done') {
           actor.stop();
           actor = buildActor(savedPorts);
           actor.start();
         }
-        // 3. Send the event.
+        // 4. Send the event.
         actor.send(event);
-        // 4. Drive to quiescence. On signal-abort we take no FSM
+        // 5. Drive to quiescence. On signal-abort we take no FSM
         //    action: the captain bridge's awaited callPlayer rejects
         //    naturally, the bridge throws, XState routes through
         //    onError → #failed, and this loop sees the quiescent

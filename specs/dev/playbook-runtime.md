@@ -133,12 +133,28 @@ runtime surfaces per [PBRT-14](#pbrt-14).
 ### PBRT-14
 
 On every FSM transition the runtime shall call `emitTelemetry`
-with topic `playbook.fsm.state` and payload `{ from, to, event }`,
-and shall call `emitStatus` for transitions into a Boss-relevant
-state ([PBRT-3](../user/playbook-runtime.md#pbrt-3)), passing the
-failure state's `lastError` as the status data argument. All port
-emissions shall be issued in order, each awaited before the next,
-and never dropped.
+with topic `playbook.fsm.state` and payload `{ from, to, event }`.
+
+For transitions into a Boss-relevant state
+([PBRT-3](../user/playbook-runtime.md#pbrt-3)) the runtime shall
+call `emitStatus` to render the Captain pane line for that event,
+using the four-glyph vocabulary in PBRT-3. State entries shall
+include the state's human-readable label, the state's player, the
+state's CODE-N source item, and any rider field whose value is
+populated in the FSM context (`intent`, `irNumber`,
+`taskDescription`). Transition emissions shall include the FSM
+guard that fired and per-payload-field item tallies (`reviews=N`,
+`challenges=N`) when the guard's payload populates those fields.
+Entry to the failure state shall pass `lastError` as the
+`emitStatus` data argument.
+
+For each Boss turn whose text classifies to an FSM event, the
+runtime shall additionally call `emitStatus` once with a Boss-input
+echo that names the verbatim turn text and the classified event
+type, before the FSM advances.
+
+All port emissions shall be issued in order, each awaited before
+the next, and never dropped.
 
 ## Host adapter
 

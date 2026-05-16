@@ -27,12 +27,27 @@ declare function resolvePlayerId(input: CaptainInput): string;
 declare function adjudicate(input: CaptainInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal): Promise<CaptainOutput>;
 declare function classifyBossText(text: string, ports: PlaybookPorts, signal: AbortSignal): Promise<CodingEvent | undefined>;
 declare function captainBridge(ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined): import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
+interface StateMetadata {
+    player: CaptainInput['player'];
+    sourceItem: string;
+    label: string;
+}
+declare function formatStateEntry(stateId: string): string;
+declare function formatTransition(event: unknown): string | undefined;
+declare function formatBossEcho(text: string, eventType?: string): string;
+declare function formatRiders(stateId: string, context: Record<string, unknown>): string | undefined;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     resolvePlayerId: typeof resolvePlayerId;
     adjudicate: typeof adjudicate;
     classifyBossText: typeof classifyBossText;
     captainBridge: typeof captainBridge;
+    STATE_LABELS: Readonly<Record<string, string>>;
+    stateMetadata: ReadonlyMap<string, StateMetadata>;
+    formatStateEntry: typeof formatStateEntry;
+    formatTransition: typeof formatTransition;
+    formatBossEcho: typeof formatBossEcho;
+    formatRiders: typeof formatRiders;
 };
 export default function createPlaybookRuntime(options: CodePlaybookOptions): PlaybookRuntime;
 export {};

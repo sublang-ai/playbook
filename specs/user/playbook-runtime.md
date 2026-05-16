@@ -45,13 +45,24 @@ shall map to their event even when their payload is empty.
 
 ### PBRT-3
 
-While a Boss turn is in progress, when the FSM enters a
-Boss-relevant state — a state whose semantics matter to the Boss:
-the idle state, the review and adjudication states, the commit
-states, the failure state, and the terminal state — the runtime
-shall surface a human-readable status line naming the state. On
-entry to the failure state the status line shall additionally
-carry the error that caused it.
+While a Boss turn is in progress, the runtime shall surface a
+human-readable status stream that lets the Boss follow the FSM
+without reading the player panes. The stream uses four glyphs so
+each line is parseable at a glance:
+
+- `▸` for the Boss-input echo: the verbatim turn text and the
+  FSM event it classified to.
+- `⮕` for entry into any captain-invoking state — the Coder,
+  Reviewer, and Committer states — carrying the state's
+  human-readable label, the player, the CODE-N source item, and
+  any rider field whose value is populated in the FSM context
+  (`intent`, `irNumber`, `taskDescription`).
+- `⤷` for the transition that drove the FSM into a new
+  captain-invoking state: the guard that fired and item tallies
+  for any payload fields the guard populated.
+- `◆` for entry into the idle state, the failure state, and the
+  terminal state. On entry to the failure state the line shall
+  additionally carry the error that caused it.
 
 ## Host configuration
 

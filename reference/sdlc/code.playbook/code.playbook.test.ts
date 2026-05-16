@@ -1178,11 +1178,11 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     };
   }
 
-  it('emits one status on initial entry to ready', async () => {
+  it('emits one terminal status on initial entry to ready', async () => {
     const { ports, statuses } = makeRecordingPorts();
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
-    expect(statuses.map((s) => s.message)).toContain('State → ready');
+    expect(statuses.map((s) => s.message)).toContain('◆ ready');
   });
 
   it('emits telemetry on every transition with topic playbook.fsm.state', async () => {
@@ -1215,7 +1215,7 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     expect(transitions).toContain('ready');
   });
 
-  it('emitStatus skips non-Boss-relevant states (planAndImplement)', async () => {
+  it('emitStatus surfaces every captain-invoking state (PBRT-3 widened)', async () => {
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
       callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
@@ -1227,9 +1227,15 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       signal: sig(),
     });
     const messages = statuses.map((s) => s.message);
-    expect(messages).not.toContain('State → planAndImplement');
-    // ready (initial + return) is Boss-relevant and shows up.
-    expect(messages.filter((m) => m === 'State → ready').length).toBeGreaterThanOrEqual(1);
+    // The Coder state on the /start happy path now surfaces with
+    // its label + player + CODE-N tag.
+    expect(
+      messages.some((m) => m.startsWith('⮕ plan & implement  Coder per CODE-1')),
+    ).toBe(true);
+    // ready (initial + return) is terminal and rendered with ◆.
+    expect(messages.filter((m) => m.startsWith('◆ ready')).length).toBeGreaterThanOrEqual(1);
+    // Boss echo lands before the FSM advances.
+    expect(messages.some((m) => m.startsWith('▸ BOSS  /start fix'))).toBe(true);
   });
 
   it('emitStatus on entry to failed includes lastError in data', async () => {
@@ -1249,7 +1255,7 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       text: '/start x',
       signal: controller.signal,
     });
-    const failedStatus = statuses.find((s) => s.message === 'State → failed');
+    const failedStatus = statuses.find((s) => s.message.startsWith('◆ failed'));
     expect(failedStatus).toBeDefined();
     expect(failedStatus?.data).toEqual(
       expect.objectContaining({ lastError: expect.anything() }),
@@ -1282,10 +1288,81 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       text: '/start fix',
       signal: sig(),
     });
-    // Telemetry emitted first per transition, then status if
-    // Boss-relevant; enqueue order is preserved.
+    // Telemetry emitted first per transition, then status; enqueue
+    // order is preserved.
     expect(ordered[0]).toBe('t:ready');
-    expect(ordered[1]).toBe('s:State → ready');
+    expect(ordered[1]).toBe('s:◆ ready');
+  });
+
+  it('STATE_LABELS covers every captain-invoking state', () => {
+    for (const [stateId] of _internal.stateMetadata) {
+      expect(_internal.STATE_LABELS[stateId], `${stateId} missing label`).toBeDefined();
+    }
+  });
+
+  it('transition guard line precedes state entry with payload tallies', async () => {
+    const { ports, statuses } = makeRecordingPorts({
+      // Drive: /start → planAndImplement → singleCommitReady →
+      //   commitCoderInitial → committedSpecs →
+      //   reviewBossCommitSpecs → hasFindings (with 2 reviews) →
+      //   respondToReview → accepted → done
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: (() => {
+        const replies = [
+          { guard: 'singleCommitReady' },
+          { guard: 'committedSpecs' },
+          { guard: 'hasFindings', reviews: '1. tweak\n2. another' },
+          { guard: 'accepted' },
+        ];
+        let i = 0;
+        return async () => JSON.stringify(replies[i++]);
+      })(),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({ text: '/start x', signal: sig() });
+    const messages = statuses.map((s) => s.message);
+    // The hasFindings transition carries `reviews=2`.
+    expect(
+      messages.some(
+        (m) => m.includes('⤷ hasFindings') && m.includes('reviews=2'),
+      ),
+    ).toBe(true);
+  });
+
+  it('state entry includes the intent rider on planAndImplement', async () => {
+    const { ports, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({
+      text: '/start add a settings toggle',
+      signal: sig(),
+    });
+    const entry = statuses
+      .map((s) => s.message)
+      .find((m) => m.startsWith('⮕ plan & implement'));
+    expect(entry).toBeDefined();
+    expect(entry).toContain('Coder per CODE-1');
+    expect(entry).toContain('intent="add a settings toggle"');
+  });
+
+  it('Boss echo includes the verbatim text and the classified event type', async () => {
+    const { ports, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
+      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({ text: '/continue 7', signal: sig() });
+    const echo = statuses
+      .map((s) => s.message)
+      .find((m) => m.startsWith('▸ BOSS'));
+    expect(echo).toBeDefined();
+    expect(echo).toContain('/continue 7');
+    expect(echo).toContain('→ CONTINUE_IR');
   });
 });
 

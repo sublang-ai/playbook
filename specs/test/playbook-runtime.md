@@ -43,10 +43,14 @@ named state and `handleBossInput` returns.
 Verifies: [PBRT-14](../dev/playbook-runtime.md#pbrt-14)
 
 When a Boss turn is driven through the runtime, the test suite
-shall fail unless telemetry is emitted for every transition under
-the `playbook.fsm.state` topic, status is emitted only for
-Boss-relevant states, the failure-state status carries
-`lastError`, and emissions are observed in enqueue order.
+shall fail unless: telemetry is emitted for every transition
+under the `playbook.fsm.state` topic; the four-glyph Captain-pane
+status emits cover the Boss-input echo, every captain-invoking
+state entry (with label + player + CODE-N + any populated rider
+field), every transition guard that drove an entry (with payload
+item tallies when applicable), and the idle / failure / terminal
+markers; the failure-state status carries `lastError`; and
+emissions are observed in enqueue order.
 
 ## Host adapter
 
