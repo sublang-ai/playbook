@@ -31,6 +31,29 @@ pnpm install
 This resolves `@sublang/cligent` (≥ 0.3.0, which exports
 `./tmux-play`) from the registry; no local link required.
 
+If a local `pnpm-workspace.yaml` exists, pnpm may apply local
+overrides. For a production-shaped install from this checkout, ignore
+that local file explicitly:
+
+```bash
+pnpm install --ignore-workspace --frozen-lockfile
+```
+
+### Optional: link a local cligent checkout
+
+To consume a local `cligent` source tree instead of the registry
+version, copy the template into place and re-install:
+
+```bash
+cp pnpm-workspace.yaml.example pnpm-workspace.yaml
+# edit the path inside if your cligent checkout isn't a sibling of
+# the playbook repo, then:
+pnpm install
+```
+
+`pnpm-workspace.yaml` is intentionally ignored so this local link does
+not become part of the production path.
+
 ## Quickstart — drive a turn with fake ports
 
 ```ts
@@ -108,7 +131,7 @@ Boss-relevant state (DR-004 §9). Entry to `failed` carries
 
 The bundled config — [`tmux-play.config.yaml`](./tmux-play.config.yaml)
 — declares the Captain factory and the two roles the CODE
-playbook expects (`coder`, `reviewer`):
+playbook expects (`coder`, `reviewer`) for local source-tree runs:
 
 ```bash
 pnpm build
@@ -122,8 +145,9 @@ LLM-classifier.
 
 ## Release usage (post-publish)
 
-After `@sublang/playbook` ships, `captain.from` in the YAML swaps
-to the package specifier:
+After `@sublang/playbook` ships, use
+[`tmux-play.production.config.yaml`](./tmux-play.production.config.yaml)
+or swap `captain.from` in your own YAML to the package specifier:
 
 ```yaml
 captain:
@@ -154,3 +178,5 @@ import createPlaybookRuntime from '@sublang/playbook/code/playbook';
 - [`code.tmux-play.ts`](./code.tmux-play.ts) — tmux-play adapter
 - [`tmux-play.config.yaml`](./tmux-play.config.yaml) — example
   config
+- [`tmux-play.production.config.yaml`](./tmux-play.production.config.yaml)
+  — package-specifier config for post-publish production runs

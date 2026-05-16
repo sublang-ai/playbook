@@ -1,1 +1,2 @@
+# Local-only pnpm override for linking a sibling cligent checkout.
 pnpm-workspace.yaml

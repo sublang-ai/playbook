@@ -17,6 +17,7 @@
     "code.tmux-play.d.ts",
     "code.gears.md",
     "tmux-play.config.yaml",
+    "tmux-play.production.config.yaml",
     "README.md"
   ],
   "exports": {

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+# Optional dev override: link @sublang/cligent to a local checkout
+# instead of resolving the registry version pinned in pnpm-lock.yaml.
+#
+# Production installs should not use this file. Copy it into place only
+# when you want pnpm to consume your local cligent source tree:
+#
+#   cp pnpm-workspace.yaml.example pnpm-workspace.yaml
+#   # adjust the relative path to your local cligent checkout, then
+#   pnpm install
+#
+# Adjust the path below to point at your local cligent checkout. The
+# default assumes cligent sits beside this `playbook` repo:
+#   <parent>/cligent
+#   <parent>/playbook/reference/sdlc/code.playbook  <- you are here
+packages:
+  - .
+
+overrides:
+  '@sublang/cligent': link:../../../../cligent
