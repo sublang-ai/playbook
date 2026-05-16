@@ -19,7 +19,7 @@ When Boss gives a coding intent, Captain shall relay it to Coder along with the 
 The resulting changes are regarded as Initial Changes.
 
 When Reviewer raises any findings, Captain shall relay them to Coder along with the following prompt:
-> For each review item below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
+> For each review item below for the above changes, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 > Stage all current changes that belong in the repo before making any edits, and leave your edits unstaged/untracked.
 
 When a new IR or IR task passes review and is committed, Captain shall prompt Coder:
@@ -46,6 +46,7 @@ When an IR is done, Captain shall prompt Coder:
 ## Reviewer
 
 For each finding in a review round, Coder either addresses it with changes or challenges it with a rebuttal.
+Any code change to address findings starts a new round of review, no matter if some findings are also rebutted.
 Rounds continue until Reviewer raises no findings.
 
 When Reviewer begins the first review round on changes from a Boss coding intent, Captain shall relay the intent to Reviewer.
