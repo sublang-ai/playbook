@@ -188,9 +188,9 @@ export const codingMachine = setup({
                         'Stage all current changes that belong in the repo before making any edits, and leave your edits unstaged/untracked.',
                     ].join('\n'),
                     result: {
-                        changesMadeSpecs: 'Coder accepted items and produced unstaged/untracked edits in @specs/{user,dev,test}/ only.',
-                        changesMadeCode: 'Coder accepted items and produced unstaged/untracked edits outside @specs/{user,dev,test}/ only.',
-                        changesMadeMixed: 'Coder accepted items and produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files.',
+                        changesMadeSpecs: 'Coder accepted items and produced unstaged/untracked edits in @specs/{user,dev,test}/ only, without raising any rebuttals.',
+                        changesMadeCode: 'Coder accepted items and produced unstaged/untracked edits outside @specs/{user,dev,test}/ only, without raising any rebuttals.',
+                        changesMadeMixed: 'Coder accepted items and produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files, without raising any rebuttals.',
                         changesMadeSpecsAndChallenged: 'Coder produced unstaged/untracked edits in @specs/{user,dev,test}/ only AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
                         changesMadeCodeAndChallenged: 'Coder produced unstaged/untracked edits outside @specs/{user,dev,test}/ only AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
                         changesMadeMixedAndChallenged: 'Coder produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',

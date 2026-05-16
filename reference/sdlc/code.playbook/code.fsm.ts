@@ -320,11 +320,11 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             changesMadeSpecs:
-              'Coder accepted items and produced unstaged/untracked edits in @specs/{user,dev,test}/ only.',
+              'Coder accepted items and produced unstaged/untracked edits in @specs/{user,dev,test}/ only, without raising any rebuttals.',
             changesMadeCode:
-              'Coder accepted items and produced unstaged/untracked edits outside @specs/{user,dev,test}/ only.',
+              'Coder accepted items and produced unstaged/untracked edits outside @specs/{user,dev,test}/ only, without raising any rebuttals.',
             changesMadeMixed:
-              'Coder accepted items and produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files.',
+              'Coder accepted items and produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files, without raising any rebuttals.',
             changesMadeSpecsAndChallenged:
               'Coder produced unstaged/untracked edits in @specs/{user,dev,test}/ only AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
             changesMadeCodeAndChallenged:
