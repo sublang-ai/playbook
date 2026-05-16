@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    name: publish @sublang/playbook
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: reference/sdlc/code.playbook
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Drop dev-only workspace override
+        # The committed pnpm-workspace.yaml links @sublang/cligent to a
+        # sibling repo on contributor machines. The release pipeline
+        # installs from the registry; the lockfile already records
+        # cligent@^0.3.0 from npm.
+        run: rm -f pnpm-workspace.yaml
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: pnpm
+          cache-dependency-path: reference/sdlc/code.playbook/pnpm-lock.yaml
+
+      - name: Verify tag matches package.json version
+        # RELEASE-2: tag without `v` prefix must equal
+        # reference/sdlc/code.playbook/package.json `version`.
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          PKG_VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG_VERSION" ]; then
+            echo "::error::Tag $TAG does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Upgrade npm for trusted-publisher OIDC support
+        # OIDC trusted publishing requires npm >= 11.5; bundled npm on
+        # Node 22 is older. We publish through npm directly (not
+        # `pnpm publish`) so the upgraded CLI handles the OIDC token
+        # exchange.
+        run: npm install -g npm@11.8.0
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Test
+        run: pnpm test
+
+      - name: Extract release notes from CHANGELOG.md
+        # RELEASE-7 step 4. Write to a file (not GITHUB_OUTPUT) so the
+        # body stays opaque to later steps — `gh release create
+        # --notes-file` reads it verbatim, so backticks, $(), and other
+        # shell-meaningful chars in the changelog cannot be interpreted
+        # as commands when the release is created.
+        working-directory: ${{ github.workspace }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VERSION" '
+            /^## \[/ { if (found) exit; if ($0 == "## [" ver "]" || index($0, "## [" ver "] -")) found=1; next }
+            found { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+          if ! [ -s /tmp/release-notes.md ] || ! grep -q '[^[:space:]]' /tmp/release-notes.md; then
+            echo "::error::No release notes found for version $VERSION in CHANGELOG.md"
+            exit 1
+          fi
+
+      - name: Publish to npm with provenance
+        # RELEASE-8 / RELEASE-9: --provenance attaches a signed
+        # attestation linking the tarball to this workflow run;
+        # --access public is required for scoped packages on the
+        # default npm registry.
+        run: npm publish --provenance --access public
+
+      - name: Create GitHub Release
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md
