@@ -207,6 +207,24 @@ describe('resolvePlayerId', () => {
       ).toBe('coder');
     });
 
+    it('only reviewerPlayer set → "reviewer" (PBRT-8 runtime contract, even if no current gear ships such an input)', () => {
+      // Pins the reviewerPlayer fallback branch in resolvePlayerId
+      // (specs/dev/playbook-runtime.md PBRT-8). No CODE-N currently
+      // emits a Committer input with only reviewerPlayer set — the
+      // old reviewer-only Committer item was pruned as a dead
+      // disjunct — but the runtime contract still requires this
+      // path so a future gear (or a hand-built test harness) can
+      // rely on it without an FSM round-trip.
+      expect(
+        resolvePlayerId(
+          makeInput({
+            player: 'Committer',
+            reviewerPlayer: 'codex',
+          }),
+        ),
+      ).toBe('reviewer');
+    });
+
     it('neither field set → "coder" (alias first-alternative fallback per slc/link.md)', () => {
       expect(resolvePlayerId(makeInput({ player: 'Committer' }))).toBe(
         'coder',
