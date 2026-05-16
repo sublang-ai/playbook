@@ -10,8 +10,12 @@ on:
 
 jobs:
   playbook:
-    name: code.playbook (test, build, drift)
+    name: code.playbook (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
     defaults:
       run:
         working-directory: reference/sdlc/code.playbook
@@ -31,7 +35,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node-version }}
           cache: pnpm
           cache-dependency-path: reference/sdlc/code.playbook/pnpm-lock.yaml
 
@@ -39,9 +43,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Test
-        # Runs the vitest suite: PLAYBOOK-7..11 conformance, PBRT-17..27
-        # integration, plus the FSM introspect / coverage / prompt
-        # contract tests.
+        # Vitest suite covering FSM ↔ gears conformance (PLAYBOOK-*),
+        # runtime behavior (PBRT-*), prompt contracts, introspect
+        # helpers, and onDone arm coverage.
         run: pnpm test
 
       - name: Build
@@ -50,7 +54,9 @@ jobs:
       - name: Verify .ts and compiled siblings are in sync
         # Catches drift like 7dcaa2f / e643fac where a .ts source change
         # was committed without rebuilding the .js / .d.ts that ship via
-        # package.json's `files` field.
+        # package.json's `files` field. The check is Node-independent,
+        # so it runs on one matrix entry only.
+        if: matrix.node-version == '22'
         working-directory: ${{ github.workspace }}
         run: |
           git diff --exit-code -- \
