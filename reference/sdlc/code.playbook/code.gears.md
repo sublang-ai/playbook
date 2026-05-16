@@ -50,9 +50,7 @@ When an IR is done, Captain shall prompt Coder:
 > The spec items should be the *minimal* set needed to reimplement code without the IR.
 > The set should be complete and coherent.
 > Avoid implementation specifics.
-> Spec items should reflect the latest code, excluding behaviors that have been superseded or bugs already fixed.
-> They may flag missing tests.
-> Avoid duplicating existing spec items.
+> Avoid redundant spec items.
 > Consult @specs/map.md for relevant context and update it to reflect your changes.
 
 ## Reviewer
@@ -196,17 +194,11 @@ When Coder raises any rebuttals, Captain shall relay them to Reviewer along with
 ### CODE-15
 
 When Coder makes any Initial Changes and Reviewer has not played since the last commit, Captain shall prompt Committer:
-> Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Coder is <coder-llm>.
 
 ### CODE-16
 
-When Reviewer raises no findings on uncommitted changes and Coder has not played since the last commit, Captain shall prompt Committer:
-> Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
-> Reviewer is <reviewer-llm>.
-
-### CODE-17
-
 When Coder makes any Initial Changes and Reviewer has played since the last commit, or Reviewer raises no findings on uncommitted changes and Coder has played since the last commit, Captain shall prompt Committer:
-> Commit the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Coder is <coder-llm>; Reviewer is <reviewer-llm>.
