@@ -40,11 +40,18 @@ runtime ported to cligent's `tmux-play` host out of the box.
 
 ### Install (users)
 
-Install the package globally alongside its `@sublang/cligent` peer:
+Install the package globally alongside its `@sublang/cligent` peer.
+The bundled production config wires Anthropic (Captain + Coder) and
+OpenAI Codex (Reviewer); both SDKs come along as direct dependencies
+of `@sublang/playbook`, so no extra install is needed:
 
 ```sh
 npm install -g @sublang/playbook @sublang/cligent
 ```
+
+Each adapter reads its own auth: the Claude SDK uses your local
+Claude Code auth (or `ANTHROPIC_API_KEY`); the Codex SDK uses your
+local codex CLI auth (or `OPENAI_API_KEY`).
 
 Then launch the reference playbook in a `tmux-play` session:
 
