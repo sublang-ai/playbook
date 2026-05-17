@@ -3,33 +3,36 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 // Thin shim that resolves the bundled tmux-play.production.config.yaml
-// relative to this script's own location and execs `tmux-play` against
-// it. Extra argv is forwarded verbatim, so callers can pass flags like
-// --window or override the config with a later --config of their own
-// (tmux-play uses the last --config wins).
-//
-// `tmux-play` is provided by the @sublang/cligent peer; this shim
-// expects it to be discoverable on PATH (npm install -g or a project's
-// node_modules/.bin).
+// relative to this script's own location and execs cligent's tmux-play
+// CLI from inside @sublang/playbook's own node_modules tree. We resolve
+// the CLI through cligent's `./tmux-play` subpath export instead of
+// relying on `tmux-play` being on PATH — npm global installs only link
+// bins from top-level packages, so a transitive cligent's bin won't
+// reach the user's PATH but its files are still resolvable here.
 
 import { spawn } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const configPath = resolve(here, '..', 'tmux-play.production.config.yaml');
 
+// cligent's `./tmux-play` subpath export only declares "import"
+// (no "require"/"default"), so createRequire(...).resolve trips
+// ERR_PACKAGE_PATH_NOT_EXPORTED. import.meta.resolve uses ESM rules
+// and follows the "import" condition — works from Node 20.6+.
+const tmuxPlayIndexUrl = import.meta.resolve('@sublang/cligent/tmux-play');
+const tmuxPlayBin = join(dirname(fileURLToPath(tmuxPlayIndexUrl)), 'cli.js');
+
 const child = spawn(
-  'tmux-play',
-  ['--config', configPath, ...process.argv.slice(2)],
+  process.execPath,
+  [tmuxPlayBin, '--config', configPath, ...process.argv.slice(2)],
   { stdio: 'inherit' },
 );
 
 child.on('error', (err) => {
-  const reason = err && err.code === 'ENOENT' ? 'not found on PATH' : err.message;
   process.stderr.write(
-    `playbook-code: failed to launch tmux-play: ${reason}\n` +
-      "Install @sublang/cligent (which provides 'tmux-play') alongside @sublang/playbook.\n",
+    `playbook-code: failed to launch tmux-play (${tmuxPlayBin}): ${err.message}\n`,
   );
   process.exit(127);
 });

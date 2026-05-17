@@ -40,13 +40,13 @@ runtime ported to cligent's `tmux-play` host out of the box.
 
 ### Install (users)
 
-Install the package globally alongside its `@sublang/cligent` peer.
-The bundled production config wires Anthropic (Captain + Coder) and
-OpenAI Codex (Reviewer); both SDKs come along as direct dependencies
-of `@sublang/playbook`, so no extra install is needed:
+Install the package globally. The bundled production config wires
+Anthropic (Captain + Coder) and OpenAI Codex (Reviewer); `@sublang/
+cligent`, the two adapter SDKs, and `xstate` are all direct
+dependencies, so a single install pulls in everything:
 
 ```sh
-npm install -g @sublang/playbook @sublang/cligent
+npm install -g @sublang/playbook
 ```
 
 Each adapter reads its own auth: the Claude SDK uses your local
@@ -60,8 +60,10 @@ playbook-code
 ```
 
 The `playbook-code` bin resolves the bundled
-`tmux-play.production.config.yaml` and execs `tmux-play` against it; any
-extra flags pass through (`playbook-code --help` lists `tmux-play`'s).
+`tmux-play.production.config.yaml` and execs the bundled `tmux-play`
+CLI (from playbook's own `node_modules/@sublang/cligent`) against it;
+any extra flags pass through (`playbook-code --help` lists
+`tmux-play`'s).
 
 ### Install (contributors / from source)
 

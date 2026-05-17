@@ -90,7 +90,7 @@ jobs:
         run: bash scripts/check-spdx.sh
 
   smoke:
-    name: Smoke install (tarball)
+    name: Smoke install (global tarball)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -105,22 +105,33 @@ jobs:
         # siblings are committed and pinned by the drift check above.
         run: npm pack --pack-destination /tmp
 
-      - name: Install tarball + cligent in isolation
-        # Mirrors what a fresh user does:
-        #   npm install -g @sublang/playbook @sublang/cligent
-        # Runs in /tmp/smoke so module resolution can't bleed back
-        # into the repo's own node_modules.
+      - name: Global-install the tarball under a temp prefix
+        # Mirrors the README's `npm install -g @sublang/playbook`.
+        # --prefix points npm at a temp tree instead of the runner's
+        # real global root. Global topology DOES NOT hoist between
+        # separately-named top-level packages, so this is the only
+        # install shape that reflects what users actually get.
         run: |
-          mkdir -p /tmp/smoke
-          cd /tmp/smoke
-          npm init -y --silent > /dev/null
-          npm install /tmp/sublang-playbook-*.tgz @sublang/cligent
+          mkdir -p /tmp/global
+          npm install --prefix /tmp/global -g /tmp/sublang-playbook-*.tgz
 
-      - name: Probe adapter SDKs in the install closure
-        # The script is copied into the install dir so Node's
-        # specifier resolution starts from /tmp/smoke, not the
-        # repo. Otherwise dev node_modules masks the failure.
+      - name: Verify cligent is bundled under playbook
+        # @sublang/cligent must be a regular dependency so it lands
+        # INSIDE playbook's tree. Otherwise the SDK-resolution walk
+        # from cligent's file location can't reach playbook's deps
+        # (the v0.1.0 / v0.1.1 failure mode).
         run: |
-          cp scripts/smoke-adapters.mjs /tmp/smoke/
-          cd /tmp/smoke
+          test -d /tmp/global/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent \
+            || { echo "::error::cligent did not install transitively under @sublang/playbook"; exit 1; }
+
+      - name: Probe adapter SDKs from cligent's installed location
+        # The probe must run from cligent's installed dir so Node's
+        # walk-up for the SDK starts at the SAME tree cligent will
+        # use at runtime. Probing from anywhere else (or from a
+        # hoisted local install) silently passes even when the SDK
+        # is unreachable to cligent.
+        run: |
+          SMOKE_DIR=/tmp/global/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent
+          cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
+          cd "$SMOKE_DIR"
           node ./smoke-adapters.mjs
