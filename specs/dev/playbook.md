@@ -6,9 +6,9 @@
 ## Intent
 
 This spec pins the conformance contract between the CODE playbook's
-emitted state machine (`reference/sdlc/code.playbook/code.fsm.ts`)
+emitted state machine (`code.fsm.ts`)
 and its canonical source
-(`reference/sdlc/code.playbook/code.gears.md`).
+(`code.gears.md`).
 The two in-repo file paths are essential to the package's intent
 per [META-15](../meta.md#meta-15); the package shall not be reused
 outside this project.

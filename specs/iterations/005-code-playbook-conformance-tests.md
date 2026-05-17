@@ -7,12 +7,12 @@
 
 Add automated tests that catch drift between the GEARS source for
 the CODE playbook
-([`reference/sdlc/code.playbook/code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md))
+([`code.gears.md`](../../code.gears.md))
 and the emitted FSM
-([`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts)),
+([`code.fsm.ts`](../../code.fsm.ts)),
 and that exercise every declared FSM edge at least once.
 IR-004's acceptance gate was a manual e2e runbook
-([dropped in `9c36355`](../../reference/sdlc/code.playbook/));
+([dropped in `9c36355`](../../));
 this IR replaces it with type-checked, in-CI verification of the
 invariants that runbook was meant to spot-check.
 
@@ -39,7 +39,7 @@ These are scoped enough to live in the IR rather than a separate DR.
 
 ## Deliverables
 
-- [x] `reference/sdlc/code.playbook/code.fsm.introspect.ts` —
+- [x] `code.fsm.introspect.ts` —
   helper exporting `enumerateCaptainStates(codingMachine)` returning
   `{ stateId, sourceItem, getInput(context), transitions: Array<{
   index, target, guard }> }[]` plus the root-level event table
@@ -51,7 +51,7 @@ These are scoped enough to live in the IR rather than a separate DR.
   `context.afterReview` / `context.changeOrigin`
   (e.g., `noFindings` routes to `continueIr` / `summarizeSpecs` /
   `done` per `noFindingsAfter` in
-  [`code.fsm.ts:138`](../../reference/sdlc/code.playbook/code.fsm.ts#L138)).
+  [`code.fsm.ts:138`](../../code.fsm.ts#L138)).
   `guard` is the raw transition predicate function; the helper
   stays a pure structural introspector and does not synthesize
   fixture data.
@@ -63,7 +63,7 @@ These are scoped enough to live in the IR rather than a separate DR.
   left unused).
   May land as an `_internal` export of `code.playbook.ts` if a
   separate file feels heavyweight.
-- [x] `reference/sdlc/code.playbook/code.gears-fsm.test.ts` —
+- [x] `code.gears-fsm.test.ts` —
   conformance.
   Parses `code.gears.md` into `Map<CODE-N, { player, promptBody }>`
   (player is the `## Coder` / `## Reviewer` / `## Committer`
@@ -75,7 +75,7 @@ These are scoped enough to live in the IR rather than a separate DR.
   player parsed from the CODE-N's gears section, (d) each state's
   `input.prompt` body equals the CODE-N blockquote body modulo
   declared placeholders (`<#>`, `<coder-llm>`, `<reviewer-llm>`).
-- [x] `reference/sdlc/code.playbook/code.fsm.coverage.test.ts` —
+- [x] `code.fsm.coverage.test.ts` —
   edge coverage.
   Maintains a fixture table mapping each captain-invoking
   `(stateId, transitionIndex)` — matching the helper's
@@ -105,7 +105,7 @@ These are scoped enough to live in the IR rather than a separate DR.
   A structural assertion fails the test if any helper-enumerated
   `onDone` arm lacks a fixture, or if any fixture is left unused
   by the helper.
-- [x] `reference/sdlc/code.playbook/code.prompt-contract.test.ts` —
+- [x] `code.prompt-contract.test.ts` —
   table-driven prompt contract.
   For each captain-invoking state and each relevant context fixture
   (Boss-intent vs IR-task; specs / code / mixed scope; with and
@@ -173,7 +173,7 @@ Order keeps `main` building at every commit.
 
 ## Acceptance criteria
 
-- `pnpm test` from `reference/sdlc/code.playbook/` is green and the
+- `pnpm test` from `` is green and the
   test count grows by at least one row per CODE-N item plus one row
   per declared root-level event.
 - The conformance test fails immediately if a CODE-N is added to

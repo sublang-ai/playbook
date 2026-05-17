@@ -15,9 +15,6 @@ jobs:
   release:
     name: publish @sublang/playbook
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: reference/sdlc/code.playbook
     steps:
       - uses: actions/checkout@v4
 
@@ -37,11 +34,11 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: pnpm
-          cache-dependency-path: reference/sdlc/code.playbook/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Verify tag matches package.json version
-        # RELEASE-2: tag without `v` prefix must equal
-        # reference/sdlc/code.playbook/package.json `version`.
+        # RELEASE-2: tag without `v` prefix must equal package.json
+        # `version`.
         run: |
           TAG="${GITHUB_REF_NAME}"
           PKG_VERSION="v$(node -p "require('./package.json').version")"
@@ -72,7 +69,6 @@ jobs:
         # --notes-file` reads it verbatim, so backticks, $(), and other
         # shell-meaningful chars in the changelog cannot be interpreted
         # as commands when the release is created.
-        working-directory: ${{ github.workspace }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           awk -v ver="$VERSION" '
@@ -92,7 +88,6 @@ jobs:
         run: npm publish --provenance --access public
 
       - name: Create GitHub Release
-        working-directory: ${{ github.workspace }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file /tmp/release-notes.md

@@ -24,16 +24,18 @@ spec written in plain prose. Three phases take prose to runtime:
    module that drives Boss turns through ports the host wires up
    (cligent's `tmux-play` is one such host).
 
-The repository ships an end-to-end worked example: an SDLC coding
-workflow at [`reference/sdlc/code.playbook`](reference/sdlc/code.playbook)
-that drives a coder/reviewer/committer loop.
+The repository is itself an end-to-end worked example: this
+package — `@sublang/playbook` — is the SDLC coding workflow,
+generated from [`reference/sdlc/code.md`](reference/sdlc/code.md)
+as its prose source. The runtime drives a coder / reviewer /
+committer loop end to end.
 
 ## Getting started — the reference CODE playbook
 
 The reference is the canonical worked example —
 [CODE source](reference/sdlc/code.md) →
-[gears](reference/sdlc/code.playbook/code.gears.md) →
-[FSM](reference/sdlc/code.playbook/code.fsm.ts) → runtime — with the
+[gears](code.gears.md) →
+[FSM](code.fsm.ts) → runtime — with the
 runtime ported to cligent's `tmux-play` host out of the box.
 
 ### Install (users)
@@ -60,7 +62,7 @@ Clone, install, and run the suite locally:
 
 ```sh
 git clone https://github.com/sublang-ai/playbook.git
-cd playbook/reference/sdlc/code.playbook
+cd playbook
 pnpm install
 pnpm build
 pnpm test
@@ -69,12 +71,12 @@ pnpm test
 `pnpm install` resolves `@sublang/cligent` (≥ 0.3.0) from the registry;
 no local link required. To point pnpm at a local `cligent` checkout
 instead, copy
-[`pnpm-workspace.yaml.example`](reference/sdlc/code.playbook/pnpm-workspace.yaml.example)
+[`pnpm-workspace.yaml.example`](pnpm-workspace.yaml.example)
 into place; the override is gitignored so it never leaks into a
 production install.
 
 Drive a Boss turn against the source tree (uses the developer
-[`tmux-play.config.yaml`](reference/sdlc/code.playbook/tmux-play.config.yaml)
+[`tmux-play.config.yaml`](tmux-play.config.yaml)
 that imports the compiled adapter via relative path):
 
 ```sh
@@ -131,7 +133,7 @@ await runtime.dispose();
 ```
 
 See
-[`reference/sdlc/code.playbook/code.playbook.test.ts`](reference/sdlc/code.playbook/code.playbook.test.ts)
+[`code.playbook.test.ts`](code.playbook.test.ts)
 for the full range of port shapes (classifier, judge, abort, interrupt,
 status/telemetry) the runtime is contract-tested against.
 

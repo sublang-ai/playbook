@@ -5,25 +5,25 @@
 
 ## Goal
 
-Compile `reference/sdlc/code.playbook/code.fsm.ts` into a `PlaybookRuntime` module per [slc/link.md](../../slc/link.md), with CODE-specific bindings pinned by [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md).
+Compile `code.fsm.ts` into a `PlaybookRuntime` module per [slc/link.md](../../slc/link.md), with CODE-specific bindings pinned by [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md).
 Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `PlaybookPorts` to cligent's Captain primitives.
 
 ## Deliverables
 
-- [x] `reference/sdlc/code.playbook/code.playbook.ts` — emitted runtime
+- [x] `code.playbook.ts` — emitted runtime
   module per [DR-004 §10](../decisions/004-link-code-fsm-to-playbook-runtime.md#10-emitted-module--codeplaybookts).
-- [x] `reference/sdlc/code.playbook/code.playbook.test.ts` — unit tests
+- [x] `code.playbook.test.ts` — unit tests
   with a hand-rolled fake `PlaybookPorts`.
   Covers the Boss-event classifier, player-id resolution, judge JSON
   parsing, the quiescence drive loop, and the natural-rejection abort
   path.
-- [x] `reference/sdlc/code.playbook/code.tmux-play.ts` — tmux-play host
+- [x] `code.tmux-play.ts` — tmux-play host
   adapter per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
-- [x] `reference/sdlc/code.playbook/code.tmux-play.test.ts` — unit tests
+- [x] `code.tmux-play.test.ts` — unit tests
   with stubbed `CaptainContext` / `CaptainSession` asserting port wiring,
   `RoleRunResult` ↔ `PlayerResult` identity, `handleBossTurn →
   handleBossInput` forwarding, and lifecycle ordering.
-- [x] `reference/sdlc/code.playbook/tmux-play.config.yaml` — example
+- [x] `tmux-play.config.yaml` — example
   config per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play),
   with `captain.from: ./code.tmux-play.js`.
 - [x] Build pipeline — `package.json` with `"type": "module"` and a
@@ -32,7 +32,7 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
   TypeScript → ESM `.js`; no bundler.
   Source `.ts` and built `.js` both ship in the npm tarball; `.js` is
   what `captain.from` resolves to in dev or release.
-- [x] `reference/sdlc/code.playbook/README.md` — quickstart for the
+- [x] `README.md` — quickstart for the
   runtime module, a fake-ports example, a "running under tmux-play"
   subsection linking the example YAML, and a "release usage" note
   showing the `@sublang/playbook/code/tmux-play` package-specifier form.
@@ -51,7 +51,7 @@ Order keeps `main` building at every commit.
 2. **Bootstrap the build pipeline.**
    Add a minimal `package.json` (with `"type": "module"`),
    `tsconfig.json` (NodeNext module resolution), and `pnpm build`
-   script under `reference/sdlc/code.playbook/`.
+   script under ``.
    The script shall emit `.js` next to every `.ts` source.
    Wire `@sublang/cligent` as a peer/devDependency.
    Verify `pnpm install && pnpm build` is clean on a fresh checkout
@@ -154,5 +154,5 @@ Order keeps `main` building at every commit.
 - `code.tmux-play.ts` is the *only* file in this IR that imports from
   `@sublang/cligent/tmux-play`.
   Removing that import shall not affect `code.playbook.ts` or its tests.
-- All `reference/sdlc/code.playbook/**` source files carry SPDX headers
+- All `**` source files carry SPDX headers
   per the project's licensing spec.

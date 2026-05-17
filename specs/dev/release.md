@@ -7,7 +7,7 @@
 
 This spec defines the release workflow for publishing the
 `@sublang/playbook` package — the reference CODE playbook
-runtime + tmux-play adapter at `reference/sdlc/code.playbook/` —
+runtime + tmux-play adapter at `` —
 to npm and tagging the corresponding GitHub release.
 
 ## Versioning
@@ -20,7 +20,7 @@ indicates new features, and PATCH indicates bug fixes.
 
 ### RELEASE-2
 
-The `version` in `reference/sdlc/code.playbook/package.json` shall
+The `version` in `package.json` shall
 match the git tag (without the `v` prefix). The release workflow
 shall verify this match before publishing.
 
@@ -59,11 +59,11 @@ pattern `vMAJOR.MINOR.PATCH` (e.g., `v0.1.0`).
 The release workflow on GitHub shall:
 
 1. Verify the tag version matches the `version` field in
-   `reference/sdlc/code.playbook/package.json`.
+   `package.json`.
 2. Drop the dev-only `pnpm-workspace.yaml` override before install
    so the build sees the registry-pinned `@sublang/cligent` rather
    than the contributor-machine local link (see
-   `reference/sdlc/code.playbook/.gitignore`).
+   `.gitignore`).
 3. Install with `pnpm install --frozen-lockfile`, then `pnpm build`
    and `pnpm test`.
 4. Extract release notes for the tag version from the root
@@ -91,12 +91,12 @@ The scoped `@sublang/playbook` package shall be published with
 Before tagging a release, the developer/agent shall verify:
 
 - [ ] All tests pass (`pnpm test` in
-      `reference/sdlc/code.playbook/`).
+      ``).
 - [ ] The compiled `.js` / `.d.ts` siblings are in sync with their
       `.ts` sources (the CI drift check from
       [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).
 - [ ] `CHANGELOG.md` is updated with the new version and date.
-- [ ] `reference/sdlc/code.playbook/package.json` `version` is
+- [ ] `package.json` `version` is
       bumped and `private` is unset (or `false`).
 - [ ] All changes are committed and pushed to `main`.
 

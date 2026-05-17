@@ -23,7 +23,7 @@ cligent stays a lower-layer primitive (tmux launcher, Captain contract, role cli
 
 | Input | Value |
 | --- | --- |
-| FSM artifact | `reference/sdlc/code.playbook/code.fsm.ts` (imports `codingMachine`, `CaptainInput`, `CaptainOutput`, `CodingInput`, `CodingEvent`) |
+| FSM artifact | `code.fsm.ts` (imports `codingMachine`, `CaptainInput`, `CaptainOutput`, `CodingInput`, `CodingEvent`) |
 | Player binding | Link-time, baked: `Coder → coder`, `Reviewer → reviewer`; composite `Committer = Coder \| Reviewer` resolved per source item (see §2) |
 | Boss-event mapping | Slash-prefix with LLM-classifier fallback (see §3) |
 | Adjudication strategy | LLM-judge for every state; marker-parse off |
@@ -35,7 +35,7 @@ Player binding is *not* a runtime option; future per-run remapping would be a se
 
 ### 2. Player binding for CODE
 
-CODE declares `Coder`, `Reviewer`, and the alias `Committer = Coder | Reviewer` ([code.gears.md](../../reference/sdlc/code.playbook/code.gears.md)).
+CODE declares `Coder`, `Reviewer`, and the alias `Committer = Coder | Reviewer` ([code.gears.md](../../code.gears.md)).
 Non-composite states bind trivially (Coder → `coder`, Reviewer → `reviewer`).
 Composite states resolve `Committer` per source item via the populated `<playerName>Player` field on `CaptainInput`:
 
@@ -217,7 +217,7 @@ Player prompts and adjudicator JSON ride the host's record channels (cligent's `
 
 ### 10. Emitted module — `code.playbook.ts`
 
-The link compiler emits exactly one file at `reference/sdlc/code.playbook/code.playbook.ts` with a top-of-file header recording the linker invocation:
+The link compiler emits exactly one file at `code.playbook.ts` with a top-of-file header recording the linker invocation:
 
 ```text
 // SPDX-License-Identifier: Apache-2.0
@@ -249,7 +249,7 @@ Internal capabilities (names illustrative): player-prompt composer, Boss-event c
 
 ### 11. Host adapter — tmux-play
 
-Adapter file `reference/sdlc/code.playbook/code.tmux-play.ts`:
+Adapter file `code.tmux-play.ts`:
 
 - Imports `./code.playbook.js` and types from
   `@sublang/cligent/tmux-play` (`Captain`, `BossTurn`, `CaptainContext`,

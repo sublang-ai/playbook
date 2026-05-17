@@ -10,15 +10,12 @@ on:
 
 jobs:
   playbook:
-    name: code.playbook (Node ${{ matrix.node-version }})
+    name: playbook (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         node-version: [20, 22]
-    defaults:
-      run:
-        working-directory: reference/sdlc/code.playbook
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +34,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
-          cache-dependency-path: reference/sdlc/code.playbook/pnpm-lock.yaml
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install
         run: pnpm install --frozen-lockfile
@@ -57,11 +54,8 @@ jobs:
         # package.json's `files` field. The check is Node-independent,
         # so it runs on one matrix entry only.
         if: matrix.node-version == '22'
-        working-directory: ${{ github.workspace }}
         run: |
-          git diff --exit-code -- \
-            'reference/sdlc/code.playbook/*.js' \
-            'reference/sdlc/code.playbook/*.d.ts'
+          git diff --exit-code -- 'code.*.js' 'code.*.d.ts'
 
   sketch:
     name: views/sketch (test, build)

@@ -14,9 +14,9 @@
 # Adjust the path below to point at your local cligent checkout. The
 # default assumes cligent sits beside this `playbook` repo:
 #   <parent>/cligent
-#   <parent>/playbook/reference/sdlc/code.playbook  <- you are here
+#   <parent>/playbook   <- you are here
 packages:
   - .
 
 overrides:
-  '@sublang/cligent': link:../../../../cligent
+  '@sublang/cligent': link:../cligent

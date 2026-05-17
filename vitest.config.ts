@@ -15,4 +15,11 @@ export default defineConfig({
       { find: /^(\.\/.*)\.js$/, replacement: '$1.ts' },
     ],
   },
+  test: {
+    // Confine the suite to this package's tests at the repo root.
+    // Subpackages (e.g., views/sketch) carry their own vitest config
+    // and dependencies (jsdom, etc.); running them from here would
+    // pull deps that aren't in this package's lockfile.
+    include: ['code.*.test.ts'],
+  },
 });

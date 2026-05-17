@@ -3,7 +3,7 @@
 
 # Example tmux-play config for the CODE playbook — DR-004 §11.
 # Run with:
-#   tmux-play --config reference/sdlc/code.playbook/tmux-play.config.yaml
+#   tmux-play --config tmux-play.config.yaml
 
 captain:
   # Dev form: sibling-path import of the compiled adapter. After

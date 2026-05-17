@@ -11,7 +11,7 @@ observes as a turn progresses, and the host-configuration contract
 for running the runtime under tmux-play.
 
 The runtime module and its tmux-play host adapter live at
-`reference/sdlc/code.playbook/`; the in-repo path is essential to
+``; the in-repo path is essential to
 the package's intent per [META-15](../meta.md#meta-15). The
 tmux-play surface depends on the external `@sublang/cligent`
 package. System behavior is in
