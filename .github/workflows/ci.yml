@@ -88,3 +88,39 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify SPDX headers on git-tracked files
         run: bash scripts/check-spdx.sh
+
+  smoke:
+    name: Smoke install (tarball)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Pack the publishable tarball
+        # Same artifact `npm publish` would upload; uses package.json's
+        # `files` array. No build step needed — `.js` / `.d.ts`
+        # siblings are committed and pinned by the drift check above.
+        run: npm pack --pack-destination /tmp
+
+      - name: Install tarball + cligent in isolation
+        # Mirrors what a fresh user does:
+        #   npm install -g @sublang/playbook @sublang/cligent
+        # Runs in /tmp/smoke so module resolution can't bleed back
+        # into the repo's own node_modules.
+        run: |
+          mkdir -p /tmp/smoke
+          cd /tmp/smoke
+          npm init -y --silent > /dev/null
+          npm install /tmp/sublang-playbook-*.tgz @sublang/cligent
+
+      - name: Probe adapter SDKs in the install closure
+        # The script is copied into the install dir so Node's
+        # specifier resolution starts from /tmp/smoke, not the
+        # repo. Otherwise dev node_modules masks the failure.
+        run: |
+          cp scripts/smoke-adapters.mjs /tmp/smoke/
+          cd /tmp/smoke
+          node ./smoke-adapters.mjs
