@@ -15,6 +15,13 @@
 # default assumes cligent sits beside this `playbook` repo:
 #   <parent>/cligent
 #   <parent>/playbook   <- you are here
+#
+# Caveat: when this file is present, `pnpm install` updates
+# pnpm-lock.yaml to reference the local link instead of the
+# registry-pinned cligent. The lockfile mutation is local-only — do
+# not commit it. `pnpm install --frozen-lockfile` will refuse with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH while this override is active;
+# that's expected.
 packages:
   - .
 

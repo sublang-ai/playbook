@@ -7,7 +7,7 @@
 
 This spec defines the release workflow for publishing the
 `@sublang/playbook` package — the reference CODE playbook
-runtime + tmux-play adapter at `` —
+runtime + tmux-play adapter at the repo root —
 to npm and tagging the corresponding GitHub release.
 
 ## Versioning
@@ -90,8 +90,7 @@ The scoped `@sublang/playbook` package shall be published with
 
 Before tagging a release, the developer/agent shall verify:
 
-- [ ] All tests pass (`pnpm test` in
-      ``).
+- [ ] All tests pass (`pnpm test` from the repo root).
 - [ ] The compiled `.js` / `.d.ts` siblings are in sync with their
       `.ts` sources (the CI drift check from
       [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).

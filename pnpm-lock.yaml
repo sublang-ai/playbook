@@ -4,17 +4,13 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
-overrides:
-  '@sublang/cligent': link:../cligent
-
 importers:
 
   .:
-    dependencies:
-      '@sublang/cligent':
-        specifier: link:../cligent
-        version: link:../cligent
     devDependencies:
+      '@sublang/cligent':
+        specifier: ^0.3.0
+        version: 0.3.0
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19
@@ -326,6 +322,22 @@ packages:
     resolution: {integrity: sha512-hPt/bgL5cE+Qp+/TPHBqptcAgPzgj46mPcg/16zNUmbQk0j+mOEQV/+Lqu8QRtDV3Ek95Q6FeFITpuhl6OTsAA==}
     cpu: [x64]
     os: [win32]
+
+  '@sublang/cligent@0.3.0':
+    resolution: {integrity: sha512-eYz6eIrZH9c+UfnwOJhbr4fay/SOuPU6fRpDrfHkL+5Hul+soJhXIkMKDyizG68hpgv1O6ULi2JRFI3Z6u6QxQ==}
+    engines: {node: '>=18'}
+    hasBin: true
+    peerDependencies:
+      '@anthropic-ai/claude-agent-sdk': '>=0.2.133'
+      '@openai/codex-sdk': '>=0.129.0'
+      '@opencode-ai/sdk': '>=1.14.41'
+    peerDependenciesMeta:
+      '@anthropic-ai/claude-agent-sdk':
+        optional: true
+      '@openai/codex-sdk':
+        optional: true
+      '@opencode-ai/sdk':
+        optional: true
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -758,6 +770,10 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.60.3':
     optional: true
 
+  '@sublang/cligent@0.3.0':
+    dependencies:
+      yaml: 2.9.0
+
   '@types/chai@5.2.3':
     dependencies:
       '@types/deep-eql': 4.0.2
@@ -1049,5 +1065,4 @@ snapshots:
 
   xstate@5.31.1: {}
 
-  yaml@2.9.0:
-    optional: true
+  yaml@2.9.0: {}

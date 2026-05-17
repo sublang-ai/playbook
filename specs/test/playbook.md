@@ -7,16 +7,15 @@
 
 This spec defines integration tests that verify the FSM ↔ GEARS
 conformance invariants in [dev/playbook.md](../dev/playbook.md).
-The package targets ``; the in-repo
-path is essential to the package's intent per
-[META-15](../meta.md#meta-15).
+The package targets the repo root; the in-repo path is essential
+to the package's intent per [META-15](../meta.md#meta-15).
 
 ## Source agreement
 
 ### PLAYBOOK-7
 Verifies: [PLAYBOOK-1](../dev/playbook.md#playbook-1)
 
-When `pnpm test` runs from ``, the
+When `pnpm test` runs from the repo root, the
 test suite shall fail if any captain-invoking state's `sourceItem`
 is not a known CODE-N declared in `code.gears.md`, or if any
 CODE-N declared in `code.gears.md` has no captain-invoking state

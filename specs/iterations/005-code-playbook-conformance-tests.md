@@ -173,9 +173,9 @@ Order keeps `main` building at every commit.
 
 ## Acceptance criteria
 
-- `pnpm test` from `` is green and the
-  test count grows by at least one row per CODE-N item plus one row
-  per declared root-level event.
+- `pnpm test` from the repo root is green and the test count grows
+  by at least one row per CODE-N item plus one row per declared
+  root-level event.
 - The conformance test fails immediately if a CODE-N is added to
   gears without a corresponding `sourceItem` in `code.fsm.ts`, or
   vice versa, or if a prompt body diverges.

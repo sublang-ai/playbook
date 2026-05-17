@@ -10,8 +10,8 @@ playbook runtime and its tmux-play host adapter behaviors in
 [dev/playbook-runtime.md](../dev/playbook-runtime.md). Each test
 drives the real FSM through the runtime — or the real adapter and
 runtime together — against fake `PlaybookPorts` or stubbed cligent
-primitives. The package targets ``;
-the in-repo path is essential to the package's intent per
+primitives. The package targets the repo root; the in-repo path
+is essential to the package's intent per
 [META-15](../meta.md#meta-15).
 
 ## Runtime

@@ -51,7 +51,7 @@ Order keeps `main` building at every commit.
 2. **Bootstrap the build pipeline.**
    Add a minimal `package.json` (with `"type": "module"`),
    `tsconfig.json` (NodeNext module resolution), and `pnpm build`
-   script under ``.
+   script at the repo root.
    The script shall emit `.js` next to every `.ts` source.
    Wire `@sublang/cligent` as a peer/devDependency.
    Verify `pnpm install && pnpm build` is clean on a fresh checkout

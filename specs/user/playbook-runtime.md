@@ -10,9 +10,9 @@ runtime: how a Boss's turn input is interpreted, what the Boss
 observes as a turn progresses, and the host-configuration contract
 for running the runtime under tmux-play.
 
-The runtime module and its tmux-play host adapter live at
-``; the in-repo path is essential to
-the package's intent per [META-15](../meta.md#meta-15). The
+The runtime module and its tmux-play host adapter live at the
+repo root; the in-repo path is essential to the package's intent
+per [META-15](../meta.md#meta-15). The
 tmux-play surface depends on the external `@sublang/cligent`
 package. System behavior is in
 [dev/playbook-runtime.md](../dev/playbook-runtime.md).

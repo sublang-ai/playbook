@@ -10,7 +10,7 @@ runtime — the host-agnostic module that drives the CODE FSM
 (`code.fsm.ts`) as a runnable playbook — and of its tmux-play
 host adapter.
 
-Both live at ``; the in-repo path is
+Both live at the repo root; the in-repo path is
 essential to the package's intent per
 [META-15](../meta.md#meta-15). The adapter binds the runtime to
 the external `@sublang/cligent` package. User-visible behavior is
