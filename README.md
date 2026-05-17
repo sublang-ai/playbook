@@ -175,7 +175,10 @@ package.
 - Node.js ≥ 20.6.0 (the `playbook-code` shim uses
   `import.meta.resolve`, unflagged since this release)
 - pnpm 9 (for the reference package)
-- A configured `tmux-play` host (for live Boss turns)
+- A configured `tmux-play` host (for live Boss turns) — requires
+  `tmux` and [`glow`](https://github.com/charmbracelet/glow#installation)
+  on `PATH`; cligent 0.4+ uses `glow` to render Markdown pane
+  output and fails fast without it
 
 ## Contributing
 

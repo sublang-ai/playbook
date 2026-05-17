@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-17
+
+### Changed
+
+- Bump `@sublang/cligent` to `^0.4.0`. cligent 0.4.0 ships the new tmux-play look: Markdown-rendered pane output via [`glow`](https://github.com/charmbracelet/glow), a Catppuccin Mocha theme with per-adapter accent colors on pane borders and speaker prefixes, and a tool lifecycle prefix grammar (`tool>` invocation / `tool<` result). v0.1.2 pinned `^0.3.0` and missed all of it.
+- **Requires `glow` on `PATH`.** cligent 0.4.0's tmux-play launcher fails fast when `glow` is missing. Install via `brew install glow` (macOS), `apt install glow`, or follow [the upstream installation guide](https://github.com/charmbracelet/glow#installation).
+
 ## [0.1.2] - 2026-05-17
 
 ### Fixed
@@ -39,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/sublang-ai/playbook/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/sublang-ai/playbook/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/sublang-ai/playbook/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/sublang-ai/playbook/releases/tag/v0.1.0
