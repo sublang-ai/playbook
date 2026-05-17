@@ -43,7 +43,7 @@
     "bin"
   ],
   "bin": {
-    "playbook-code": "./bin/playbook-code.js"
+    "playbook-code": "bin/playbook-code.js"
   },
   "exports": {
     "./code/playbook": {
