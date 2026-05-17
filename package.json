@@ -22,7 +22,7 @@
     "tmux-play"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=20.6.0"
   },
   "files": [
     "code.fsm.ts",

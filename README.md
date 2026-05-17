@@ -172,7 +172,8 @@ package.
 
 ## Requirements
 
-- Node.js ≥ 20
+- Node.js ≥ 20.6.0 (the `playbook-code` shim uses
+  `import.meta.resolve`, unflagged since this release)
 - pnpm 9 (for the reference package)
 - A configured `tmux-play` host (for live Boss turns)
 
