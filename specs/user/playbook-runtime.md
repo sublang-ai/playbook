@@ -60,9 +60,15 @@ each line is parseable at a glance:
 - `⤷` for the transition that drove the FSM into a new
   captain-invoking state: the guard that fired and item tallies
   for any payload fields the guard populated.
-- `◆` for entry into the idle state, the failure state, and the
-  terminal state. On entry to the failure state the line shall
-  additionally carry the error that caused it.
+- `◆` for entry into the idle state, the failure state, the
+  terminal state, and the `awaitBossReply` Boss-reply suspension
+  state. On entry to the failure state the line shall
+  additionally carry the error that caused it. On entry to
+  `awaitBossReply` the line shall additionally carry
+  `awaiting Boss reply · <resumeStateId> · <player> ·
+  <sourceItem> · q="<first 80 chars of question>"`, so the
+  Boss sees what's being asked and can reply with plain text
+  that the runtime classifies as `BOSS_REPLY`.
 
 ## Host configuration
 

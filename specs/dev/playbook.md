@@ -64,3 +64,24 @@ Where a captain-invoking state's prompt body contains a placeholder
 the corresponding source field (`irNumber`, `coderPlayer`, or
 `reviewerPlayer`) into the `CaptainInput`, and the composer shall
 substitute the placeholder with the wired field's value.
+
+## Boss-reply suspension
+
+### PLAYBOOK-12
+
+Where a captain-invoking state's `result` map declares
+`needsBossReply` (per
+[slc/gears2fsm.md "Boss-reply suspension"](../../slc/gears2fsm.md#boss-reply-suspension)),
+the FSM shall declare a matching arm in
+`awaitBossReply.on.BOSS_REPLY` guarded on
+`context.pendingBossQuestion?.resumeStateId === '<state-id>'`
+that targets `'#<state-id>'` with `reenter: true`.
+
+### PLAYBOOK-13
+
+Where a captain-invoking state opts into `needsBossReply`, every
+non-`needsBossReply` arm in that state's `onDone` shall carry
+`actions: clearBossReplyContext`. Where the FSM declares the
+`awaitBossReply` state, every transition out of it other than a
+`BOSS_REPLY` resume arm shall carry
+`actions: clearBossReplyContext`.

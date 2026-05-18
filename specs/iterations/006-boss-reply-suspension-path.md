@@ -55,7 +55,7 @@ DR.
 
 ## Deliverables
 
-- [ ] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) —
+- [x] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) —
   amended with a new "Boss-reply suspension" subsection under
   "Boss control", documenting the `awaitBossReply` quiescent
   state pattern, the `BOSS_REPLY` typed event, the
@@ -64,7 +64,7 @@ DR.
   helper, the `setPendingBossQuestion` / `clearBossReplyContext`
   assigners, and the input-function discipline that prepends the
   continuation preamble + Q/A labelled blocks.
-- [ ] [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md)
+- [x] [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md)
   — three amendments:
   - PBRT-7: classifier branch when actor state is
     `awaitBossReply` (precedence per DR-005 §6).
@@ -72,15 +72,15 @@ DR.
     `awaitBossReply`.
   - PBRT-14: status emission on `awaitBossReply` entry carries
     the structured fields per DR-005 §10.2.
-- [ ] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md)
+- [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md)
   — PBRT-3 vocabulary section amended to document the
   `awaiting Boss reply · …` line shape under the `◆` glyph.
-- [ ] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md)
+- [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md)
   — §8 quiescent values extended to
   `'ready' | 'failed' | 'done' | 'awaitBossReply'`. Recorded as
   a one-paragraph addendum at the bottom of DR-004 citing
   DR-005, not a substantive rewrite.
-- [ ] [`specs/dev/playbook.md`](../dev/playbook.md) — two
+- [x] [`specs/dev/playbook.md`](../dev/playbook.md) — two
   new PLAYBOOK conformance items, IDs picked per META-11
   (uniqueness within `specs/`) and META-12 (new items take
   higher IDs per package). The existing range from IR-005 is
@@ -94,7 +94,7 @@ DR.
     `actions: clearBossReplyContext`; every transition out of a
     resumable state's `onDone` other than its `needsBossReply`
     arm shall declare `actions: clearBossReplyContext`.
-- [ ] [`specs/test/playbook.md`](../test/playbook.md) — two
+- [x] [`specs/test/playbook.md`](../test/playbook.md) — two
   new test items (PLAYBOOK-14, PLAYBOOK-15) per META-20 (each
   test item carries a `Verifies:` line) and META-21
   (integration-test scope), verifying PLAYBOOK-12 and

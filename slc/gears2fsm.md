@@ -119,7 +119,7 @@ Phases may set typed routing fields so terminal outcomes return to the originati
 
 ## Boss control
 
-[Boss](text2gears.md#players) input enters the machine through two surfaces: pre-emptive interrupts on active states, and typed entry events on idle or recoverable states.
+[Boss](text2gears.md#players) input enters the machine through three surfaces: pre-emptive interrupts on active states, typed entry events on idle or recoverable states, and Boss replies to player questions that suspended the FSM in a dedicated wait state.
 
 ### Boss interrupts
 
@@ -135,6 +135,57 @@ XState automatically stops the current state's invoked actor on transition [[2]]
 Entry events shall be typed alongside `BOSS_INTERRUPT` and populate context via a dedicated action.
 The two surfaces shall not be collapsed: `BOSS_INTERRUPT` cannot carry payload, and a parameterless entry event may collapse to interrupt-style routing only when state-jump semantics are identical.
 Entry events shall not be root-level transitions from every active state unless the workflow supports pre-emption; they belong on idle and recoverable states (e.g., `failed`).
+
+### Boss-reply suspension
+
+When a captain-invoking state needs a Boss decision the player cannot supply alone, the machine shall suspend in a dedicated quiescent state and resume the same state with the Q+A in the next prompt.
+This is a third Boss surface alongside `BOSS_INTERRUPT` and Boss entry events.
+
+A state opts in by declaring `needsBossReply` in its `invoke.input.result` map.
+The description shall include the parseable required-field marker `` Output shall include `question: <verbatim question text>`. `` so the runtime's adjudicator requires `question` in the JSON reply.
+
+The machine shall declare:
+
+- An `awaitBossReply` state with stable `id: 'awaitBossReply'` and `description: 'Waiting for Boss to answer a player question.'`.
+- A `BOSS_REPLY` event carrying `{ answer: string }`.
+- Context fields `pendingBossQuestion?: { resumeStateId, sourceItem, player, question }` and `bossReply?: string`.
+  Field provenance is normative: `resumeStateId`, `sourceItem`, and `player` shall come from the suspended state's invocation metadata; only `question` shall come from adjudicated player output.
+
+The compiler shall emit three helpers:
+
+- `resumableStates(ids)` — emits one `BOSS_REPLY` arm per registered state on `awaitBossReply.on.BOSS_REPLY`, each guarded on `context.pendingBossQuestion?.resumeStateId === '<id>'` and targeting `'#<id>'` with `reenter: true`.
+  Analogous to `bossInterrupts(ids)`.
+- `setPendingBossQuestion` — `assign({ pendingBossQuestion: <new>, bossReply: undefined })`.
+  Used on every `needsBossReply` arm; clearing `bossReply` here prevents a follow-up question from inheriting the prior answer.
+- `clearBossReplyContext` — `assign({ pendingBossQuestion: undefined, bossReply: undefined })`.
+  Used on every transition out of `awaitBossReply` other than the resume arm, and on every non-`needsBossReply` outcome of a resumable state.
+
+`awaitBossReply` is a quiescent state for the runtime's drive loop.
+It shall declare the standard `bossInterrupts(ids)` handler with `actions: clearBossReplyContext`, so `/interrupt <stateId>` abandons a pending question.
+The machine's root-level Boss entry events shall be re-declared on `awaitBossReply` with `actions: clearBossReplyContext`, so a slash command from Boss while waiting starts a fresh turn and clears stale context.
+
+A resumable state's `invoke.input` function shall, when both `pendingBossQuestion` and `bossReply` are present, prepend to `prompt` a continuation preamble plus `Boss question:` and `Boss reply:` labelled blocks:
+
+```text
+You previously paused this task to ask Boss a question; Boss
+has now replied. Continue the same task using the reply below.
+
+Boss question:
+<context.pendingBossQuestion.question>
+
+Boss reply:
+<context.bossReply>
+
+<the state's normal prompt body>
+```
+
+The preamble keeps FSM mechanics out of the prose — the player is told *what to do* and *why* without naming the FSM, `awaitBossReply`, or `BOSS_REPLY`.
+
+The following malformed states shall route to `failed` per [Errors and termination](#errors-and-termination):
+
+- Captain output has `guard: 'needsBossReply'` but no `question` field.
+- Captain output declares `needsBossReply` from a state not registered with `resumableStates(ids)`.
+- `BOSS_REPLY` fired with empty or whitespace-only `answer`.
 
 ## Errors and termination
 

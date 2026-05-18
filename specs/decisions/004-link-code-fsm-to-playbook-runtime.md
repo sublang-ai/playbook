@@ -334,6 +334,20 @@ Roles, options, and the rest of the config are unchanged.
 - Visualizer rendering (IR-003).
 - Persisting FSM context across runtime sessions.
 
+## Addenda
+
+### A1. §8 quiescent values extended for Boss-reply suspension (per DR-005)
+
+[DR-005](./005-boss-reply-suspension-path.md) introduces an
+`awaitBossReply` quiescent state for the CODE FSM. §8's
+quiescent-values list (`'ready'`, `'failed'`, `'done'`) is
+extended to `'ready' | 'failed' | 'done' | 'awaitBossReply'`,
+matching [PBRT-11](../dev/playbook-runtime.md#pbrt-11)'s
+amended drive-loop check. The matching constant in
+`code.playbook.ts` shall be kept in sync — drift between the
+spec list and the implementation constant would re-introduce a
+drive-loop deadlock on `awaitBossReply`.
+
 ## References
 
 [1]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-013 "TMUX-013 — `captain.from` path resolution"

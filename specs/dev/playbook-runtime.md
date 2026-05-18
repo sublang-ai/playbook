@@ -60,6 +60,22 @@ name a valid event with its required payload shall produce one
 `emitStatus` call and no event. Empty or whitespace-only text
 shall produce no event and no port call.
 
+While the actor is in `awaitBossReply` (per
+[PBRT-11](#pbrt-11)), the runtime shall apply this precedence
+instead (each rule consumes the input; later rules do not run):
+
+- Recognized slash command (`/start`, `/continue`, `/summarize`,
+  `/interrupt <id>`): emit the slash's normal event so the
+  transition out of `awaitBossReply` runs the
+  `clearBossReplyContext` action declared there.
+- Unrecognized slash command, or `/interrupt` with no target:
+  one `emitStatus` call, no event.
+- Empty or whitespace-only text: no event, no port call.
+- All other text: emit
+  `{ type: 'BOSS_REPLY', answer: <verbatim text> }`.
+
+`BOSS_REPLY` shall be synthesized only by this branch.
+
 ## Player binding
 
 ### PBRT-8
@@ -106,9 +122,11 @@ shall cause the runtime to throw.
 
 When `handleBossInput` sends a classified event to the FSM, the
 runtime shall drive the actor until its state is quiescent — the
-idle state, the failure state, or the terminal state — and only
-then return. Before returning it shall drain pending port
-emissions.
+idle state, the failure state, the terminal state, or the
+`awaitBossReply` Boss-reply suspension state (per
+[slc/gears2fsm.md "Boss-reply suspension"](../../slc/gears2fsm.md#boss-reply-suspension))
+— and only then return. Before returning it shall drain pending
+port emissions.
 
 ### PBRT-12
 
@@ -152,6 +170,15 @@ For each Boss turn whose text classifies to an FSM event, the
 runtime shall additionally call `emitStatus` once with a Boss-input
 echo that names the verbatim turn text and the classified event
 type, before the FSM advances.
+
+On entry to the `awaitBossReply` state the runtime shall call
+`emitStatus` with a single-line summary `awaiting Boss reply ·
+<resumeStateId> · <player> · <sourceItem> · q="<first 80
+chars of question>"` so Boss has enough context to compose a
+reply, and shall additionally call `emitTelemetry` with topic
+`playbook.fsm.state` carrying `pendingBossQuestion.question`
+verbatim alongside the other transition fields, so non-tmux-play
+hosts can render their own prompt.
 
 All port emissions shall be issued in order, each awaited before
 the next, and never dropped.

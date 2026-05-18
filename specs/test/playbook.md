@@ -56,3 +56,24 @@ captain-invoking state's composed prompt drops a labelled block
 whose source field is wired, fails to substitute a declared
 placeholder with its wired source field's value, or emits labelled
 blocks out of DR-004 §6 order.
+
+## Boss-reply suspension
+
+### PLAYBOOK-14
+Verifies: [PLAYBOOK-12](../dev/playbook.md#playbook-12)
+
+When `pnpm test` runs, the test suite shall fail if any
+captain-invoking state declares `needsBossReply` in its
+`result` map without a matching arm in
+`awaitBossReply.on.BOSS_REPLY` keyed by `resumeStateId`, or if
+any arm in `awaitBossReply.on.BOSS_REPLY` targets a state that
+does not declare `needsBossReply`.
+
+### PLAYBOOK-15
+Verifies: [PLAYBOOK-13](../dev/playbook.md#playbook-13)
+
+When `pnpm test` runs, the test suite shall fail if any
+non-`needsBossReply` arm in a resumable state's `onDone` omits
+`actions: clearBossReplyContext`, or if any transition out of
+`awaitBossReply` other than its `BOSS_REPLY` resume arm omits
+`actions: clearBossReplyContext`.
