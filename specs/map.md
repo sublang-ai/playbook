@@ -28,6 +28,7 @@ meta.md     The spec of specs
 | DR-002 | [002-in-page-xstate-visualizer.md](decisions/002-in-page-xstate-visualizer.md) | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) — superseded by DR-003 |
 | DR-003 | [003-sketch-controlled-shell.md](decisions/003-sketch-controlled-shell.md) | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
 | DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE playbook linker bindings (player binding, Boss-event mapping, adjudication, session lifecycle, captain bridge, abort) and tmux-play host adapter wiring |
+| DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + `needsBossReply` opt-in guard, so player questions suspend and resume the same state with the answer in context |
 
 ## Iterations
 
