@@ -81,20 +81,25 @@ DR.
   a one-paragraph addendum at the bottom of DR-004 citing
   DR-005, not a substantive rewrite.
 - [ ] [`specs/dev/playbook.md`](../dev/playbook.md) — two
-  new PLAYBOOK conformance items (PLAYBOOK-7, PLAYBOOK-8) per
-  META-20:
-  - PLAYBOOK-7: every captain-invoking state whose `result` map
-    declares `needsBossReply` shall have a matching arm in
+  new PLAYBOOK conformance items, IDs picked per META-11
+  (uniqueness within `specs/`) and META-12 (new items take
+  higher IDs per package). The existing range from IR-005 is
+  PLAYBOOK-1..6 (dev) and PLAYBOOK-7..11 (test), so the new
+  dev items are PLAYBOOK-12 and PLAYBOOK-13:
+  - PLAYBOOK-12: every captain-invoking state whose `result`
+    map declares `needsBossReply` shall have a matching arm in
     `awaitBossReply.on.BOSS_REPLY` keyed by `resumeStateId`.
-  - PLAYBOOK-8: every transition out of `awaitBossReply` other
-    than the `BOSS_REPLY` resume arm shall declare
+  - PLAYBOOK-13: every transition out of `awaitBossReply`
+    other than the `BOSS_REPLY` resume arm shall declare
     `actions: clearBossReplyContext`; every transition out of a
     resumable state's `onDone` other than its `needsBossReply`
     arm shall declare `actions: clearBossReplyContext`.
 - [ ] [`specs/test/playbook.md`](../test/playbook.md) — two
-  new test items (PLAYBOOK-9, PLAYBOOK-10) per META-21,
-  verifying PLAYBOOK-7 and PLAYBOOK-8 via the existing
-  conformance / coverage test family.
+  new test items (PLAYBOOK-14, PLAYBOOK-15) per META-20 (each
+  test item carries a `Verifies:` line) and META-21
+  (integration-test scope), verifying PLAYBOOK-12 and
+  PLAYBOOK-13 respectively via the existing conformance /
+  coverage test family.
 - [ ] [`code.gears.md`](../../code.gears.md) — per-state
   audit applied: `planAndImplement` / `continueIr` /
   `summarizeSpecs` declare `needsBossReply` (with the parseable
@@ -165,11 +170,15 @@ DR.
 
 ## Tasks
 
-Each task is one commit.
-Order keeps `main` building at every commit; spec amendments
-land first so the implementation tasks have something to point
-at, then the FSM scaffolding lands before the runtime work that
-consumes it.
+Each task is one commit. Order keeps `main` *both* building and
+test-green at every commit. Spec amendments land first so the
+implementation tasks have a contract to point at; the
+gears-and-FSM migration is one combined task so the
+`code.gears-fsm.test.ts` and `code.fsm.coverage.test.ts`
+invariants don't break and re-establish across a commit
+boundary; the runtime work is additive (existing happy paths
+are untouched) so it doesn't disturb the suite either; deep
+test coverage lands at the end.
 
 1. **Land IR-006 + map.md row.**
    This commit lands the IR doc and adds the IR-006 row to
@@ -181,38 +190,51 @@ consumes it.
    quiescence, PBRT-14 status);
    `specs/user/playbook-runtime.md` (PBRT-3 line shape);
    DR-004 §8 addendum;
-   `specs/dev/playbook.md` (PLAYBOOK-7, PLAYBOOK-8);
-   `specs/test/playbook.md` (PLAYBOOK-9, PLAYBOOK-10).
+   `specs/dev/playbook.md` (PLAYBOOK-12, PLAYBOOK-13);
+   `specs/test/playbook.md` (PLAYBOOK-14, PLAYBOOK-15).
    All prose; no code touched.
-3. **CODE gears audit and update.**
-   Apply the §9 / "Decisions baked in" audit to
-   `code.gears.md`: convert `planAndImplement` /
-   `continueIr` / `summarizeSpecs` to `needsBossReply` with the
-   parseable marker; leave `commitCoderInitial` / `commitJoint`
-   as `needsBossInput`. Update CODE-N prompts where needed so
-   the gears item tells the player to surface a specific
-   question when this guard is the right outcome.
-4. **FSM scaffolding.**
-   Extend `code.fsm.ts`: `awaitBossReply` state,
-   `resumableStates(ids)` helper, `BOSS_REPLY` event,
-   `pendingBossQuestion` / `bossReply` context fields,
-   `setPendingBossQuestion` / `clearBossReplyContext`
-   assigners; wire the three converted states' `onDone` arms
-   and the awaitBossReply transitions per DR-005 §1 and §5;
-   recompile siblings.
-   Extend `code.fsm.introspect.ts` so coverage tests can
-   enumerate the new arms.
-   Verify `pnpm build` is clean and existing tests still pass
-   (new tests come in tasks 7-8); failing tests in this commit
-   are by design — they show the new arms have no fixtures yet.
-5. **Runtime: drive-loop quiescence + classifier branch.**
+3. **CODE gears + FSM migration (combined).**
+   This commit moves gears and FSM together so the
+   conformance / coverage tests stay green at the boundary:
+   - `code.gears.md`: apply the §9 / "Decisions baked in"
+     audit — convert `planAndImplement` / `continueIr` /
+     `summarizeSpecs` to `needsBossReply` with the parseable
+     marker; leave `commitCoderInitial` / `commitJoint` as
+     `needsBossInput`. Update CODE-N prompts where needed so
+     the gears item tells the player to surface a specific
+     question when this guard is the right outcome.
+   - `code.fsm.ts`: add the `awaitBossReply` state,
+     `resumableStates(ids)` helper, `BOSS_REPLY` event,
+     `pendingBossQuestion` / `bossReply` context fields,
+     `setPendingBossQuestion` / `clearBossReplyContext`
+     assigners; wire the three converted states' `onDone`
+     arms and the `awaitBossReply` transitions per DR-005
+     §1 and §5; recompile siblings.
+   - `code.fsm.introspect.ts`: enumerate the new
+     `awaitBossReply` arms so the coverage test can pin them.
+   - `code.fsm.coverage.test.ts`: add **minimal** fixtures
+     for the new `needsBossReply` arms and the new
+     `BOSS_REPLY` arms — just enough `(context override,
+     CaptainOutput)` pairs to satisfy the structural
+     "every arm has a fixture" assertion. The deep
+     guard-vs-target / first-match-wins coverage lands in
+     task 7.
+   At the end of this commit `pnpm test` shall be green:
+   gears agreement holds (`code.gears-fsm.test.ts`), every
+   declared arm has at least one fixture
+   (`code.fsm.coverage.test.ts`), no prompt-contract
+   regression (the new preamble lands in task 5 — for now,
+   resumable states' input functions still compose the
+   original prompt body since `pendingBossQuestion` /
+   `bossReply` are never both populated yet at runtime).
+4. **Runtime: drive-loop quiescence + classifier branch.**
    Extend `code.playbook.ts`'s quiescent-state check to include
    `'awaitBossReply'` (DR-005 §10.1) and add the classifier
    branch from DR-005 §6 with the precedence table. Add the
    three failure-mode error messages from DR-005 §8.
-   Verify `handleBossInput` returns from `awaitBossReply` in a
-   one-off integration check (added to the test commit later).
-6. **Runtime: context assigns + prompt composer.**
+   The runtime changes are additive — existing happy paths
+   are untouched — so `pnpm test` stays green.
+5. **Runtime: context assigns + prompt composer.**
    Wire `setPendingBossQuestion` so the assign function reads
    the invoking state's `id` / `CaptainInput.sourceItem` /
    `CaptainInput.player` and the adjudicated
@@ -222,17 +244,23 @@ consumes it.
    preamble + `Boss question:` / `Boss reply:` labelled blocks
    when both context fields are present (DR-005 §5); ordering
    per PLAYBOOK-5 grammar.
-7. **Runtime: status emission on awaitBossReply entry.**
+6. **Runtime: status emission on awaitBossReply entry.**
    Emit the single-line pane string and structured telemetry
    record per PBRT-14 amendment and "Decisions baked in" above.
    This is the change that lets Boss actually see what's being
    asked.
-8. **Tests: conformance + coverage.**
-   Extend `code.gears-fsm.test.ts` and
-   `code.fsm.coverage.test.ts` to pin the new gears ↔ FSM
-   mapping, the new `BOSS_REPLY` arms, the new failure modes,
-   and the clearing-action discipline (PLAYBOOK-7, PLAYBOOK-8).
-9. **Tests: prompt-contract + runtime.**
+7. **Tests: deep conformance + coverage.**
+   Extend `code.gears-fsm.test.ts` to pin the
+   gears-side parseable-marker requirement for
+   `needsBossReply` declarations (PLAYBOOK-12).
+   Extend `code.fsm.coverage.test.ts` to upgrade the minimal
+   fixtures from task 3 into the full coverage discipline:
+   every new `BOSS_REPLY` arm fires under the right
+   `pendingBossQuestion.resumeStateId`; every transition out
+   of `awaitBossReply` other than the resume arm uses
+   `clearBossReplyContext` (PLAYBOOK-13); the three failure
+   modes route to `failed` with the documented errors.
+8. **Tests: prompt-contract + runtime.**
    Extend `code.prompt-contract.test.ts` with rows for the
    resumable states verifying the continuation preamble + Q/A
    blocks render in the documented order, and that absence of
@@ -242,14 +270,13 @@ consumes it.
    `awaitBossReply`, status emission carries the structured
    fields, abandon-via-slash clears both context fields,
    follow-up `needsBossReply` overwrites question and clears
-   stale reply, the three failure modes route to `failed` with
-   the documented errors.
-10. **Close-out.**
-    Update `specs/map.md` IR-006 row summary to reflect any
-    delta from this plan.
-    If anything diverged substantively from DR-005, record the
-    delta in a one-paragraph addendum at the bottom of DR-005
-    (or open a follow-up DR if it warrants more than that).
+   stale reply.
+9. **Close-out.**
+   Update `specs/map.md` IR-006 row summary to reflect any
+   delta from this plan.
+   If anything diverged substantively from DR-005, record the
+   delta in a one-paragraph addendum at the bottom of DR-005
+   (or open a follow-up DR if it warrants more than that).
 
 ## Acceptance criteria
 
@@ -277,7 +304,7 @@ consumes it.
   follow-up `needsBossReply` does not clear the prior
   `bossReply`.
 - `specs/map.md` lists IR-006 in the Iterations table.
-- DR-005 stays Proposed only until task 10; if no substantive
+- DR-005 stays Proposed only until task 9; if no substantive
   delta is recorded as an addendum, the close-out commit
   promotes DR-005 to Accepted in the same commit that updates
   map.md.

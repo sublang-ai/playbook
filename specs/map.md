@@ -39,7 +39,7 @@ meta.md     The spec of specs
 | IR-003 | [003-sketch-controlled-shell.md](iterations/003-sketch-controlled-shell.md) | Cutover to Sketch-as-controlled-shell: fork patches, parent-side adapter, retire DR-002 renderer |
 | IR-004 | [004-link-code-fsm-to-playbook-runtime.md](iterations/004-link-code-fsm-to-playbook-runtime.md) | Compile CODE FSM into `code.playbook.ts` per `slc/link.md` and DR-004; ship the in-repo tmux-play adapter `code.tmux-play.ts` |
 | IR-005 | [005-code-playbook-conformance-tests.md](iterations/005-code-playbook-conformance-tests.md) | Conformance tests pinning `code.fsm.ts` to `code.gears.md` (every CODE-N, every edge, every prompt) — replaces the dropped manual acceptance runbook |
-| IR-006 | [006-boss-reply-suspension-path.md](iterations/006-boss-reply-suspension-path.md) | Implement DR-005 end to end: spec amendments to `slc/gears2fsm.md` + PBRT-7/11/14 + PBRT-3 + DR-004 §8, CODE gears audit, `awaitBossReply` / `BOSS_REPLY` / `needsBossReply` in `code.fsm.ts`, runtime classifier branch + prompt preamble + status emission, and tests pinning PLAYBOOK-7/8 |
+| IR-006 | [006-boss-reply-suspension-path.md](iterations/006-boss-reply-suspension-path.md) | Implement DR-005 end to end: spec amendments to `slc/gears2fsm.md` + PBRT-7/11/14 + PBRT-3 + DR-004 §8, CODE gears audit, `awaitBossReply` / `BOSS_REPLY` / `needsBossReply` in `code.fsm.ts`, runtime classifier branch + prompt preamble + status emission, and tests pinning PLAYBOOK-12/13 (dev) and PLAYBOOK-14/15 (test) |
 
 ## Packages
 
