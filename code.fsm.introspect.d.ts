@@ -10,6 +10,15 @@ export interface CaptainTransition {
     readonly target: string;
     readonly guard: TransitionGuard;
 }
+export interface AwaitBossReplyInfo {
+    readonly stateId: string;
+    readonly bossReplyTransitions: ReadonlyArray<BossReplyTransition>;
+}
+export interface BossReplyTransition {
+    readonly index: number;
+    readonly target: string;
+    readonly guard: TransitionGuard;
+}
 export type TransitionGuard = (args: {
     context: CodingContext;
     event: unknown;
@@ -28,3 +37,4 @@ export interface RootEventTable {
 }
 export declare function enumerateCaptainStates(machine: typeof codingMachine): readonly CaptainStateInfo[];
 export declare function enumerateRootEvents(machine: typeof codingMachine): RootEventTable;
+export declare function enumerateAwaitBossReply(machine: typeof codingMachine): AwaitBossReplyInfo;

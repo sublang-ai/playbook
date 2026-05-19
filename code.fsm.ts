@@ -40,6 +40,7 @@ type WorkflowKind = 'singleCommit' | 'iteration' | 'specSummary';
 type ChangeOrigin = 'bossIntent' | 'irTask';
 type ReviewSubject = 'commit' | 'changes';
 type AfterReview = 'continueIr' | 'summarizeSpecs' | 'done';
+type ResumableStateId = 'planAndImplement' | 'continueIr' | 'summarizeSpecs';
 
 export type CaptainInput = {
   player: Player;
@@ -67,6 +68,7 @@ export type CaptainOutput = {
   reviews?: string;
   challenges?: string;
   summary?: string;
+  question?: string;
   [k: string]: unknown;
 };
 
@@ -88,6 +90,13 @@ export type CodingContext = CodingInput & {
   challenges?: string;
   lastResult?: CaptainOutput;
   lastError?: unknown;
+  pendingBossQuestion?: {
+    resumeStateId: ResumableStateId;
+    sourceItem: string;
+    player: Player;
+    question: string;
+  };
+  bossReply?: string;
 };
 
 export type CodingEvent =
@@ -99,7 +108,8 @@ export type CodingEvent =
       targetId: JumpableStateId;
       intent?: string;
       irNumber?: string;
-    };
+    }
+  | { type: 'BOSS_REPLY'; answer: string };
 
 const jumpableStateIds = [
   'ready',
@@ -124,6 +134,12 @@ const jumpableStateIds = [
   'commitJoint',
   'failed',
 ] as const satisfies readonly JumpableStateId[];
+
+const resumableStateIds = [
+  'planAndImplement',
+  'continueIr',
+  'summarizeSpecs',
+] as const satisfies readonly ResumableStateId[];
 
 const outputOf = (event: unknown): CaptainOutput | undefined =>
   (event as { output?: CaptainOutput }).output;
@@ -167,13 +183,59 @@ const rememberBossInput = assign({
     (event as { irNumber?: string }).irNumber ?? context.irNumber,
 });
 
-const bossInterrupts = (ids: readonly JumpableStateId[]) =>
+const setPendingBossQuestion = (
+  resumeStateId: ResumableStateId,
+  sourceItem: string,
+  player: Player,
+) =>
+  assign({
+    pendingBossQuestion: ({ event }: { event: unknown }) => ({
+      resumeStateId,
+      sourceItem,
+      player,
+      question: outputOf(event)?.question ?? '',
+    }),
+    bossReply: () => undefined,
+  });
+
+const rememberBossReply = assign({
+  bossReply: ({ event }: { event: unknown }) =>
+    (event as { answer?: string }).answer ?? '',
+});
+
+const clearBossReplyContext = assign({
+  pendingBossQuestion: () => undefined,
+  bossReply: () => undefined,
+});
+
+const actionsArray = (actions: unknown) =>
+  actions === undefined ? [] : Array.isArray(actions) ? actions : [actions];
+
+const withClearBossReplyContext = <T extends { actions?: unknown }>(transition: T): T => ({
+  ...transition,
+  actions: [clearBossReplyContext, ...actionsArray(transition.actions)],
+});
+
+const bossInterrupts = (
+  ids: readonly JumpableStateId[],
+  extraActions: readonly unknown[] = [],
+) =>
   ids.map((id) => ({
     target: `#${id}` as const,
     guard: ({ event }: { event: CodingEvent }) =>
       event.type === 'BOSS_INTERRUPT' && event.targetId === id,
     reenter: true,
-    actions: rememberBossInput,
+    actions: [...extraActions, rememberBossInput],
+  }));
+
+const resumableStates = (ids: readonly ResumableStateId[]) =>
+  ids.map((id) => ({
+    target: `#${id}` as const,
+    guard: ({ context, event }: { context: CodingContext; event: CodingEvent }) =>
+      event.type === 'BOSS_REPLY' &&
+      context.pendingBossQuestion?.resumeStateId === id,
+    reenter: true,
+    actions: rememberBossReply,
   }));
 
 const captainError = {
@@ -217,6 +279,14 @@ const readyEvents = {
   },
 };
 
+const awaitBossReplyEvents = {
+  START_CODING: withClearBossReplyContext(readyEvents.START_CODING),
+  CONTINUE_IR: withClearBossReplyContext(readyEvents.CONTINUE_IR),
+  SUMMARIZE_IR: withClearBossReplyContext(readyEvents.SUMMARIZE_IR),
+  BOSS_INTERRUPT: bossInterrupts(jumpableStateIds, [clearBossReplyContext]),
+  BOSS_REPLY: resumableStates(resumableStateIds),
+};
+
 const captainPlaceholder = fromPromise<CaptainOutput, CaptainInput>(async () => {
   throw new Error('captain actor must be provided by the runner');
 });
@@ -250,6 +320,12 @@ export const codingMachine = setup({
       on: readyEvents,
     },
 
+    awaitBossReply: {
+      id: 'awaitBossReply',
+      description: 'Waiting for Boss to answer a player question.',
+      on: awaitBossReplyEvents,
+    },
+
     planAndImplement: {
       id: 'planAndImplement',
       description:
@@ -264,6 +340,7 @@ export const codingMachine = setup({
             'Assess whether this can be completed in a single commit, following best practices.',
             'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
             'Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.',
+            'If a specific Boss answer is needed before you can proceed, ask the exact question and stop.',
             'Do not commit.',
           ].join('\n'),
           result: {
@@ -271,7 +348,8 @@ export const codingMachine = setup({
               'Coder produced uncommitted single-commit changes (Initial Changes).',
             irDrafted:
               'Coder decomposed the intent into a new IR and drafted it uncommitted (Initial Changes).',
-            needsBossInput: 'Progress requires additional Boss input.',
+            needsBossReply:
+              "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.",
           },
         }),
         onDone: [
@@ -280,6 +358,7 @@ export const codingMachine = setup({
             target: '#commitCoderInitial',
             actions: [
               rememberCaptainOutput,
+              clearBossReplyContext,
               assign({
                 workflow: () => 'singleCommit' as const,
                 changeOrigin: () => 'bossIntent' as const,
@@ -292,6 +371,7 @@ export const codingMachine = setup({
             target: '#commitCoderInitial',
             actions: [
               rememberCaptainOutput,
+              clearBossReplyContext,
               assign({
                 workflow: () => 'iteration' as const,
                 changeOrigin: () => 'bossIntent' as const,
@@ -299,7 +379,14 @@ export const codingMachine = setup({
               }),
             ],
           },
-          { guard: guardIs('needsBossInput'), target: '#ready', actions: rememberCaptainOutput },
+          {
+            guard: guardIs('needsBossReply'),
+            target: '#awaitBossReply',
+            actions: [
+              rememberCaptainOutput,
+              setPendingBossQuestion('planAndImplement', 'CODE-1', 'Coder'),
+            ],
+          },
         ],
         onError: captainError,
       },
@@ -421,13 +508,15 @@ export const codingMachine = setup({
             'Continue to implement IR-<#> if not all deliverables and tasks are done.',
             'Implement one task at a time (including corresponding tests if any).',
             'Stop after each task for review — do not commit yet.',
+            'If the next task is ambiguous and needs a specific Boss answer, ask the exact question and stop.',
             'If relevant, mark progress in the IR.',
           ].join('\n'),
           result: {
             taskReady:
               'Coder produced uncommitted changes for the next IR task (Initial Changes). Output shall include `taskDescription: <one-line description of the task just implemented>`.',
             iterationDone: 'All IR deliverables and tasks are done.',
-            needsBossInput: 'Progress requires additional Boss input.',
+            needsBossReply:
+              "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.",
           },
         }),
         onDone: [
@@ -436,6 +525,7 @@ export const codingMachine = setup({
             target: '#commitCoderInitial',
             actions: [
               rememberCaptainOutput,
+              clearBossReplyContext,
               assign({
                 workflow: () => 'iteration' as const,
                 changeOrigin: () => 'irTask' as const,
@@ -448,13 +538,21 @@ export const codingMachine = setup({
             target: '#summarizeSpecs',
             actions: [
               rememberCaptainOutput,
+              clearBossReplyContext,
               assign({
                 workflow: () => 'specSummary' as const,
                 afterReview: () => 'done' as const,
               }),
             ],
           },
-          { guard: guardIs('needsBossInput'), target: '#ready', actions: rememberCaptainOutput },
+          {
+            guard: guardIs('needsBossReply'),
+            target: '#awaitBossReply',
+            actions: [
+              rememberCaptainOutput,
+              setPendingBossQuestion('continueIr', 'CODE-3', 'Coder'),
+            ],
+          },
         ],
         onError: captainError,
       },
@@ -481,12 +579,14 @@ export const codingMachine = setup({
             'The set should be complete and coherent.',
             'Avoid implementation specifics.',
             'Avoid redundant spec items.',
+            'If the spec-summary scope needs a specific Boss answer, ask the exact question and stop.',
             'Consult @specs/map.md for relevant context and update it to reflect your changes.',
           ].join('\n'),
           result: {
             specsReady: 'Coder produced uncommitted spec updates (Initial Changes).',
             noSpecChanges: 'Existing specs already capture the iteration.',
-            needsBossInput: 'Spec summarization requires additional Boss input.',
+            needsBossReply:
+              "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.",
           },
         }),
         onDone: [
@@ -495,6 +595,7 @@ export const codingMachine = setup({
             target: '#commitCoderInitial',
             actions: [
               rememberCaptainOutput,
+              clearBossReplyContext,
               assign({
                 workflow: () => 'specSummary' as const,
                 changeOrigin: () => 'irTask' as const,
@@ -502,8 +603,19 @@ export const codingMachine = setup({
               }),
             ],
           },
-          { guard: guardIs('noSpecChanges'), target: '#done', actions: rememberCaptainOutput },
-          { guard: guardIs('needsBossInput'), target: '#ready', actions: rememberCaptainOutput },
+          {
+            guard: guardIs('noSpecChanges'),
+            target: '#done',
+            actions: [rememberCaptainOutput, clearBossReplyContext],
+          },
+          {
+            guard: guardIs('needsBossReply'),
+            target: '#awaitBossReply',
+            actions: [
+              rememberCaptainOutput,
+              setPendingBossQuestion('summarizeSpecs', 'CODE-4', 'Coder'),
+            ],
+          },
         ],
         onError: captainError,
       },

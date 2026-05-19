@@ -17,7 +17,10 @@ When Boss gives a coding intent, Captain shall relay it to Coder along with the 
 > Assess whether this can be completed in a single commit, following best practices.
 > If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.
 > Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.
+> If a specific Boss answer is needed before you can proceed, ask the exact question and stop.
 > Do not commit.
+
+Result guard: `needsBossReply` — The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.
 
 The resulting changes are Initial Changes.
 
@@ -33,7 +36,10 @@ When a new IR or IR task passes review and is committed, Captain shall prompt Co
 > Continue to implement IR-<#> if not all deliverables and tasks are done.
 > Implement one task at a time (including corresponding tests if any).
 > Stop after each task for review — do not commit yet.
+> If the next task is ambiguous and needs a specific Boss answer, ask the exact question and stop.
 > If relevant, mark progress in the IR.
+
+Result guard: `needsBossReply` — The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.
 
 The resulting changes are Initial Changes.
 
@@ -51,7 +57,10 @@ When an IR is done, Captain shall prompt Coder:
 > The set should be complete and coherent.
 > Avoid implementation specifics.
 > Avoid redundant spec items.
+> If the spec-summary scope needs a specific Boss answer, ask the exact question and stop.
 > Consult @specs/map.md for relevant context and update it to reflect your changes.
+
+Result guard: `needsBossReply` — The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.
 
 ## Reviewer
 
@@ -243,8 +252,12 @@ When Coder makes any Initial Changes and Reviewer has not played since the last 
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Coder is <coder-llm>.
 
+Result guard: `needsBossInput` — Committing requires additional Boss input or rescoping rather than a specific answer to resume this same state.
+
 ### CODE-19
 
 When Coder makes any Initial Changes and Reviewer has played since the last commit, or Reviewer raises no findings on uncommitted changes and Coder has played since the last commit, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Coder is <coder-llm>; Reviewer is <reviewer-llm>.
+
+Result guard: `needsBossInput` — Committing requires additional Boss input or rescoping rather than a specific answer to resume this same state.

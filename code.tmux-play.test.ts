@@ -64,6 +64,11 @@ function stubContext(overrides: {
   const signal = overrides.signal ?? controller.signal;
   const roleCalls: StubContext['roleCalls'] = [];
   const captainCalls: StubContext['captainCalls'] = [];
+  const defaultCaptainReplies = [
+    { guard: 'singleCommitReady' },
+    { guard: 'needsBossInput' },
+  ];
+  let defaultCaptainIndex = 0;
   return {
     context: {
       signal,
@@ -85,10 +90,18 @@ function stubContext(overrides: {
         if (overrides.captainResult) {
           return overrides.captainResult(prompt, signal);
         }
+        const reply = defaultCaptainReplies[defaultCaptainIndex++];
+        if (!reply) {
+          return {
+            status: 'error',
+            turnId: 1,
+            error: `unexpected extra captain call #${defaultCaptainIndex}`,
+          };
+        }
         return {
           status: 'ok',
           turnId: 1,
-          finalText: JSON.stringify({ guard: 'needsBossInput' }),
+          finalText: JSON.stringify(reply),
         };
       },
     },
@@ -118,8 +131,8 @@ describe('createCodeTmuxPlayCaptain — lifecycle (IR-004 Task 11)', () => {
     await captain.handleBossTurn(turn('/start fix the bug'), c.context);
     await captain.dispose!();
 
-    expect(c.roleCalls).toHaveLength(1);
-    expect(c.captainCalls).toHaveLength(1);
+    expect(c.roleCalls).toHaveLength(2);
+    expect(c.captainCalls).toHaveLength(2);
     expect(s.statuses.length).toBeGreaterThan(0);
     expect(s.telemetry.length).toBeGreaterThan(0);
   });
@@ -171,7 +184,7 @@ describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
     await captain.init!(s.session);
     await captain.handleBossTurn(turn('/start something'), c.context);
 
-    expect(c.captainCalls[0]).toContain('needsBossInput'); // result key in prompt
+    expect(c.captainCalls[0]).toContain('needsBossReply'); // result key in prompt
     expect(c.captainCalls[0]).toContain('Pick exactly one outcome');
   });
 
@@ -237,7 +250,7 @@ describe('createCodeTmuxPlayCaptain — RoleRunResult ↔ PlayerResult identity 
     });
     await captain.init!(s.session);
     await captain.handleBossTurn(turn('/start x'), c.context);
-    // Verify the turn completed by ending at ready (needsBossInput).
+    // Verify the turn completed by ending at ready.
     expect(
       s.statuses.map((st) => st.message).filter((m) => m === '◆ ready')
         .length,

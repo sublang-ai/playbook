@@ -36,6 +36,16 @@ export function enumerateRootEvents(machine) {
         bossInterruptTargets: toArmArray(rootOn.BOSS_INTERRUPT).map((arm) => stripIdPrefix(String(arm.target ?? ''))),
     };
 }
+export function enumerateAwaitBossReply(machine) {
+    const stateId = 'awaitBossReply';
+    const awaitOn = getRawConfig(machine).states?.[stateId]?.on ?? {};
+    const bossReplyTransitions = toArmArray(awaitOn.BOSS_REPLY).map((arm, index) => ({
+        index,
+        target: stripIdPrefix(String(arm.target ?? '')),
+        guard: arm.guard ?? alwaysTrue,
+    }));
+    return { stateId, bossReplyTransitions };
+}
 function getRawConfig(machine) {
     return machine.config;
 }

@@ -36,6 +36,17 @@ export interface CaptainTransition {
   readonly guard: TransitionGuard;
 }
 
+export interface AwaitBossReplyInfo {
+  readonly stateId: string;
+  readonly bossReplyTransitions: ReadonlyArray<BossReplyTransition>;
+}
+
+export interface BossReplyTransition {
+  readonly index: number;
+  readonly target: string;
+  readonly guard: TransitionGuard;
+}
+
 export type TransitionGuard = (args: {
   context: CodingContext;
   event: unknown;
@@ -111,6 +122,21 @@ export function enumerateRootEvents(
       stripIdPrefix(String(arm.target ?? '')),
     ),
   };
+}
+
+export function enumerateAwaitBossReply(
+  machine: typeof codingMachine,
+): AwaitBossReplyInfo {
+  const stateId = 'awaitBossReply';
+  const awaitOn = getRawConfig(machine).states?.[stateId]?.on ?? {};
+  const bossReplyTransitions = toArmArray(awaitOn.BOSS_REPLY).map(
+    (arm, index): BossReplyTransition => ({
+      index,
+      target: stripIdPrefix(String(arm.target ?? '')),
+      guard: arm.guard ?? alwaysTrue,
+    }),
+  );
+  return { stateId, bossReplyTransitions };
 }
 
 function getRawConfig(machine: typeof codingMachine): RawConfig {

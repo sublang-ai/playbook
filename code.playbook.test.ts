@@ -621,21 +621,25 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     });
   }
 
-  it('drives one fake turn through callPlayer + callJudge and advances the FSM', async () => {
+  it('drives a valid fake path through callPlayer + callJudge and advances the FSM', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
     const judgeCalls: string[] = [];
+    const judge = judgeSequence([
+      { guard: 'singleCommitReady' },
+      { guard: 'needsBossInput' },
+    ]);
 
     const ports = makeFakePorts({
       callPlayer: async (playerId, prompt) => {
         playerCalls.push({ playerId, prompt });
         return {
           status: 'ok',
-          finalText: 'I cannot proceed without more input from Boss.',
+          finalText: 'Progress noted.',
         };
       },
       callJudge: async (prompt) => {
         judgeCalls.push(prompt);
-        return JSON.stringify({ guard: 'needsBossInput' });
+        return judge();
       },
     });
 
@@ -646,11 +650,12 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     await settleAt(actor, ['ready', 'failed', 'done']);
 
     expect(actor.getSnapshot().value).toBe('ready');
-    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls).toHaveLength(2);
     expect(playerCalls[0].playerId).toBe('coder');
     expect(playerCalls[0].prompt).toContain('add a button');
-    expect(judgeCalls).toHaveLength(1);
-    expect(judgeCalls[0]).toContain('needsBossInput');
+    expect(judgeCalls).toHaveLength(2);
+    expect(judgeCalls[0]).toContain('needsBossReply');
+    expect(judgeCalls[1]).toContain('needsBossInput');
   });
 
   it('lands at #failed when callPlayer returns status="aborted"', async () => {
@@ -764,6 +769,17 @@ function makeRuntimeWithInternals(): RuntimeWithInternals {
 
 const sig = () => new AbortController().signal;
 
+function judgeSequence(replies: Array<Record<string, unknown>>) {
+  let i = 0;
+  return async () => {
+    const reply = replies[i++];
+    if (!reply) {
+      throw new Error(`unexpected extra judge call #${i}`);
+    }
+    return JSON.stringify(reply);
+  };
+}
+
 describe('handleBossInput drive-to-quiescence (Task 9)', () => {
   it('clean run: /start drives FSM through one captain turn back to ready', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
@@ -773,9 +789,11 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
         playerCalls.push({ playerId, prompt });
         return { status: 'ok', finalText: 'no progress — need more input' };
       },
-      callJudge: async () => {
+      callJudge: async (prompt) => {
         judgeCalls++;
-        return JSON.stringify({ guard: 'needsBossInput' });
+        return prompt.includes('singleCommitReady')
+          ? JSON.stringify({ guard: 'singleCommitReady' })
+          : JSON.stringify({ guard: 'needsBossInput' });
       },
     });
     const runtime = makeRuntimeWithInternals();
@@ -783,10 +801,10 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
     await runtime.handleBossInput({ text: '/start add a button', signal: sig() });
 
-    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls).toHaveLength(2);
     expect(playerCalls[0].playerId).toBe('coder');
     expect(playerCalls[0].prompt).toContain('add a button');
-    expect(judgeCalls).toBe(1);
+    expect(judgeCalls).toBe(2);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
 
@@ -826,7 +844,10 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
   it('/interrupt <stateId> sends BOSS_INTERRUPT and redirects the FSM', async () => {
     const ports = makeFakePorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -853,7 +874,10 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
         playerCalls.push({ playerId, prompt });
         return { status: 'ok', finalText: 'need input' };
       },
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -863,7 +887,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
       signal: sig(),
     });
 
-    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls).toHaveLength(2);
     expect(playerCalls[0].playerId).toBe('coder');
     expect(playerCalls[0].prompt).toContain('add a sparkly button');
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
@@ -919,14 +943,17 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
         playerCalls.push({ playerId, prompt });
         return { status: 'ok', finalText: 'need more input' };
       },
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'taskReady', taskDescription: 'continue IR-7' },
+        { guard: 'needsBossInput' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
 
     await runtime.handleBossInput({ text: '/continue 7', signal: sig() });
 
-    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls).toHaveLength(2);
     expect(playerCalls[0].playerId).toBe('coder');
     expect(playerCalls[0].prompt).toContain('IR-7');
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
@@ -939,14 +966,17 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
         playerCalls.push({ playerId, prompt });
         return { status: 'ok', finalText: 'need more input' };
       },
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'specsReady' },
+        { guard: 'needsBossInput' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
 
     await runtime.handleBossInput({ text: '/summarize 8', signal: sig() });
 
-    expect(playerCalls).toHaveLength(1);
+    expect(playerCalls).toHaveLength(2);
     expect(playerCalls[0].playerId).toBe('coder');
     expect(playerCalls[0].prompt).toContain('IR-8');
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
@@ -966,7 +996,9 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
           });
         }
         adjudicateCalled = true;
-        return JSON.stringify({ guard: 'needsBossInput' });
+        return prompt.includes('singleCommitReady')
+          ? JSON.stringify({ guard: 'singleCommitReady' })
+          : JSON.stringify({ guard: 'needsBossInput' });
       },
     });
     const runtime = makeRuntimeWithInternals();
@@ -1099,6 +1131,9 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
         if (judgeInvocation === 1) {
           return JSON.stringify({ guard: 'noSpecChanges' });
         }
+        if (judgeInvocation === 2) {
+          return JSON.stringify({ guard: 'singleCommitReady' });
+        }
         return JSON.stringify({ guard: 'needsBossInput' });
       },
     });
@@ -1113,7 +1148,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     // can accept new events from the idle state.
     await runtime.handleBossInput({ text: '/start fresh', signal: sig() });
 
-    expect(judgeInvocation).toBe(2);
+    expect(judgeInvocation).toBe(3);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
     expect(runtime._getActor()?.getSnapshot().status).toBe('active');
   });
@@ -1189,7 +1224,10 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
   it('emits telemetry on every transition with topic playbook.fsm.state', async () => {
     const { ports, telemetry } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -1200,7 +1238,8 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     // Expect at least 3 telemetry events:
     //   ⊥ → ready (initial)
     //   ready → planAndImplement
-    //   planAndImplement → ready
+    //   planAndImplement → commitCoderInitial
+    //   commitCoderInitial → ready
     expect(telemetry.length).toBeGreaterThanOrEqual(3);
     for (const t of telemetry) {
       expect(t.topic).toBe('playbook.fsm.state');
@@ -1219,7 +1258,10 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
   it('emitStatus surfaces every captain-invoking state (PBRT-3 widened)', async () => {
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -1276,7 +1318,10 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     };
     const { ports } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]),
       emitStatus: async (m) => trackingEmit(`s:${m}`),
       emitTelemetry: async (e) => {
         const p = e.payload as { to: string };
@@ -1343,7 +1388,10 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
   it('state entry includes the intent rider on planAndImplement', async () => {
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -1362,7 +1410,10 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
   it('Boss echo includes the verbatim text and the classified event type', async () => {
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
-      callJudge: async () => JSON.stringify({ guard: 'needsBossInput' }),
+      callJudge: judgeSequence([
+        { guard: 'taskReady', taskDescription: 'continue IR-7' },
+        { guard: 'needsBossInput' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);

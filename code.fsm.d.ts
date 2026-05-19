@@ -4,6 +4,7 @@ type WorkflowKind = 'singleCommit' | 'iteration' | 'specSummary';
 type ChangeOrigin = 'bossIntent' | 'irTask';
 type ReviewSubject = 'commit' | 'changes';
 type AfterReview = 'continueIr' | 'summarizeSpecs' | 'done';
+type ResumableStateId = 'planAndImplement' | 'continueIr' | 'summarizeSpecs';
 export type CaptainInput = {
     player: Player;
     sourceItem: string;
@@ -24,6 +25,7 @@ export type CaptainOutput = {
     reviews?: string;
     challenges?: string;
     summary?: string;
+    question?: string;
     [k: string]: unknown;
 };
 export type CodingInput = {
@@ -43,6 +45,13 @@ export type CodingContext = CodingInput & {
     challenges?: string;
     lastResult?: CaptainOutput;
     lastError?: unknown;
+    pendingBossQuestion?: {
+        resumeStateId: ResumableStateId;
+        sourceItem: string;
+        player: Player;
+        question: string;
+    };
+    bossReply?: string;
 };
 export type CodingEvent = {
     type: 'START_CODING';
@@ -58,6 +67,9 @@ export type CodingEvent = {
     targetId: JumpableStateId;
     intent?: string;
     irNumber?: string;
+} | {
+    type: 'BOSS_REPLY';
+    answer: string;
 };
 export declare const codingMachine: import("xstate").StateMachine<CodingContext, {
     type: "START_CODING";
@@ -73,6 +85,9 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     targetId: JumpableStateId;
     intent?: string;
     irNumber?: string;
+} | {
+    type: "BOSS_REPLY";
+    answer: string;
 }, {
     [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>> | undefined;
 }, {

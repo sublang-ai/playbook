@@ -29,6 +29,7 @@ import type {
   CodingEvent,
 } from './code.fsm.js';
 import {
+  enumerateAwaitBossReply,
   enumerateCaptainStates,
   enumerateRootEvents,
 } from './code.fsm.introspect.js';
@@ -45,10 +46,27 @@ function fx(stateId: string, index: number, fixture: Fixture): void {
   fixtures.set(`${stateId}#${index}`, fixture);
 }
 
+const bossReplyFixtures = new Map<number, { context: Partial<CodingContext>; event: CodingEvent }>();
+function bossReplyFx(index: number, resumeStateId: string): void {
+  bossReplyFixtures.set(index, {
+    context: {
+      pendingBossQuestion: {
+        resumeStateId: resumeStateId as never,
+        sourceItem: 'CODE-X',
+        player: 'Coder',
+        question: 'Which scope should I use?',
+      },
+    },
+    event: { type: 'BOSS_REPLY', answer: 'Use the narrow scope.' },
+  });
+}
+
 // CODE-1 — planAndImplement (3 arms)
 fx('planAndImplement', 0, { captainOutput: { guard: 'singleCommitReady' } });
 fx('planAndImplement', 1, { captainOutput: { guard: 'irDrafted' } });
-fx('planAndImplement', 2, { captainOutput: { guard: 'needsBossInput' } });
+fx('planAndImplement', 2, {
+  captainOutput: { guard: 'needsBossReply', question: 'Which scope should I use?' },
+});
 
 // CODE-2 — respondToReview (11 arms)
 fx('respondToReview', 0, { captainOutput: { guard: 'changesMadeSpecs' } });
@@ -88,12 +106,21 @@ fx('continueIr', 0, {
   captainOutput: { guard: 'taskReady', taskDescription: 'do x' },
 });
 fx('continueIr', 1, { captainOutput: { guard: 'iterationDone' } });
-fx('continueIr', 2, { captainOutput: { guard: 'needsBossInput' } });
+fx('continueIr', 2, {
+  captainOutput: { guard: 'needsBossReply', question: 'Which task should I do?' },
+});
 
 // CODE-4 — summarizeSpecs (3 arms)
 fx('summarizeSpecs', 0, { captainOutput: { guard: 'specsReady' } });
 fx('summarizeSpecs', 1, { captainOutput: { guard: 'noSpecChanges' } });
-fx('summarizeSpecs', 2, { captainOutput: { guard: 'needsBossInput' } });
+fx('summarizeSpecs', 2, {
+  captainOutput: { guard: 'needsBossReply', question: 'Which spec scope should I summarize?' },
+});
+
+// awaitBossReply — BOSS_REPLY arms, ordered by resumableStateIds.
+bossReplyFx(0, 'planAndImplement');
+bossReplyFx(1, 'continueIr');
+bossReplyFx(2, 'summarizeSpecs');
 
 // CODE-5..10 — review*Commit*  (4 arms each, identical shape)
 const reviewCommitStates = [
@@ -299,6 +326,7 @@ async function drive(args: {
 
 const states = enumerateCaptainStates(codingMachine);
 const rootEvents = enumerateRootEvents(codingMachine);
+const awaitBossReply = enumerateAwaitBossReply(codingMachine);
 
 describe('edge coverage — onDone arms', () => {
   for (const state of states) {
@@ -398,6 +426,45 @@ describe('edge coverage — root events', () => {
   }
 });
 
+describe('edge coverage — awaitBossReply BOSS_REPLY arms', () => {
+  for (const transition of awaitBossReply.bossReplyTransitions) {
+    it(`BOSS_REPLY#${transition.index} → ${transition.target}`, async () => {
+      const fixture = bossReplyFixtures.get(transition.index);
+      expect(
+        fixture,
+        `missing BOSS_REPLY fixture for index ${transition.index}`,
+      ).toBeDefined();
+
+      expect(
+        transition.guard({
+          context: fixture!.context as CodingContext,
+          event: fixture!.event,
+        }),
+        `BOSS_REPLY#${transition.index}: fixture does not satisfy its arm's guard`,
+      ).toBe(true);
+      for (let i = 0; i < transition.index; i++) {
+        const earlier = awaitBossReply.bossReplyTransitions[i];
+        expect(
+          earlier.guard({
+            context: fixture!.context as CodingContext,
+            event: fixture!.event,
+          }),
+          `BOSS_REPLY#${transition.index}: fixture also satisfies earlier arm at index ${i}`,
+        ).toBe(false);
+      }
+
+      const landed = await drive({
+        from: awaitBossReply.stateId,
+        context: fixture!.context,
+        event: fixture!.event,
+        behavior: 'hang',
+        target: transition.target,
+      });
+      expect(landed).toBe(transition.target);
+    });
+  }
+});
+
 describe('edge coverage — structural', () => {
   it('every helper-enumerated onDone arm has a fixture', () => {
     const missing: string[] = [];
@@ -427,5 +494,34 @@ describe('edge coverage — structural', () => {
   it('total fixture count equals the total `onDone` arm count', () => {
     const armCount = states.reduce((sum, s) => sum + s.transitions.length, 0);
     expect(fixtures.size).toBe(armCount);
+  });
+
+  it('every needsBossReply state has a matching awaitBossReply BOSS_REPLY arm', () => {
+    const needsBossReplyStates = states
+      .filter((s) => 'needsBossReply' in s.getInput({}).result)
+      .map((s) => s.stateId)
+      .sort();
+    const bossReplyTargets = awaitBossReply.bossReplyTransitions
+      .map((t) => t.target)
+      .sort();
+
+    expect(bossReplyTargets).toEqual(needsBossReplyStates);
+  });
+
+  it('every awaitBossReply BOSS_REPLY arm has a fixture', () => {
+    const missing: number[] = [];
+    for (const t of awaitBossReply.bossReplyTransitions) {
+      if (!bossReplyFixtures.has(t.index)) missing.push(t.index);
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('no awaitBossReply BOSS_REPLY fixture is unused', () => {
+    const indexes = new Set(awaitBossReply.bossReplyTransitions.map((t) => t.index));
+    const unused: number[] = [];
+    for (const index of bossReplyFixtures.keys()) {
+      if (!indexes.has(index)) unused.push(index);
+    }
+    expect(unused).toEqual([]);
   });
 });
