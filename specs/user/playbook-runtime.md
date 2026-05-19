@@ -33,13 +33,19 @@ token as the target state and any remaining text as the intent.
 
 When the Boss submits turn text that is not a recognized slash
 command, the runtime shall classify it into one FSM event by
-consulting the judge. When the text is an unrecognized slash
-command, an `/interrupt` command with no target state, or text
-the judge does not resolve to a valid event, the runtime shall
-report the reason to the Boss and take no FSM action. When the
-text is empty or whitespace-only, the runtime shall take no FSM
-action. The `/start`, `/continue`, and `/summarize` commands
-shall map to their event even when their payload is empty.
+consulting the judge — except while the actor is in the
+`awaitBossReply` Boss-reply suspension state, where the runtime
+shall take the verbatim text as the answer to the pending
+question and emit `BOSS_REPLY` without a judge call. When the
+text is an unrecognized slash command, an `/interrupt` command
+with no target state, or text the judge does not resolve to a
+valid event, the runtime shall report the reason to the Boss and
+take no FSM action. When the text is empty or whitespace-only,
+the runtime shall take no FSM action. The `/start`,
+`/continue`, and `/summarize` commands shall map to their event
+even when their payload is empty, including while in
+`awaitBossReply` (where they additionally abandon the pending
+question).
 
 ## Turn progress
 

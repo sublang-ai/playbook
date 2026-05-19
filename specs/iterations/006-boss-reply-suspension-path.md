@@ -73,8 +73,21 @@ DR.
   - PBRT-14: status emission on `awaitBossReply` entry carries
     the structured fields per DR-005 §10.2.
 - [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md)
-  — PBRT-3 vocabulary section amended to document the
-  `awaiting Boss reply · …` line shape under the `◆` glyph.
+  — two amendments:
+  - PBRT-2: classifier exception so non-slash text in
+    `awaitBossReply` becomes `BOSS_REPLY` without a judge call;
+    `/start` / `/continue` / `/summarize` while waiting
+    additionally abandon the pending question.
+  - PBRT-3: `◆` vocabulary entry covers `awaitBossReply` entry
+    and documents the `awaiting Boss reply · …` line shape.
+- [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md)
+  — two changes so user / dev / test specs stay in agreement on
+  PBRT-2 / PBRT-7's classifier branch:
+  - PBRT-25 scoped to "outside `awaitBossReply`" so it stops
+    over-claiming for the suspension path.
+  - New PBRT-28 (next free ID after PBRT-27) verifies the
+    in-`awaitBossReply` branch: non-slash → `BOSS_REPLY` with
+    no `callJudge`, recognized slash → normal event, etc.
 - [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md)
   — §8 quiescent values extended to
   `'ready' | 'failed' | 'done' | 'awaitBossReply'`. Recorded as

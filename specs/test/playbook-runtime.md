@@ -110,12 +110,13 @@ extracted as the payload.
 ### PBRT-25
 Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
 
-When the runtime is driven through `handleBossInput` with
-non-slash text, with a classifier reply that names no valid event
-type, with a classifier reply that names a valid event type but
-omits a required payload field, with `/interrupt` lacking a
-target state, and with empty or whitespace-only text, the test
-suite shall fail unless non-slash text routes through `callJudge`
+When the runtime is driven through `handleBossInput` while the
+actor is outside `awaitBossReply`, with non-slash text, with a
+classifier reply that names no valid event type, with a
+classifier reply that names a valid event type but omits a
+required payload field, with `/interrupt` lacking a target
+state, and with empty or whitespace-only text, the test suite
+shall fail unless non-slash text routes through `callJudge`
 and lands on the classifier-named FSM event, each invalid reply
 surfaces one `emitStatus` call and leaves the FSM unmoved,
 `/interrupt` without a target state surfaces one `emitStatus`
@@ -143,3 +144,18 @@ When the runtime is driven to the FSM's terminal state and a
 further Boss turn is submitted, the test suite shall fail unless
 the runtime disposes and reconstructs the actor so the new turn
 is processed from the idle state.
+
+### PBRT-28
+Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
+
+When the runtime is driven through `handleBossInput` while the
+actor is in `awaitBossReply`, with non-slash text, with a
+recognized slash command, with an unrecognized slash command,
+with `/interrupt` lacking a target state, and with empty or
+whitespace-only text, the test suite shall fail unless
+non-slash text emits `BOSS_REPLY` with the verbatim text as
+`answer` and never calls `callJudge`, each recognized slash
+form fires its normal FSM event (transitioning out of
+`awaitBossReply`), unrecognized slash and `/interrupt` without
+a target state each surface one `emitStatus` call and leave
+the FSM unmoved, and empty text makes no port calls.
