@@ -256,6 +256,10 @@ Boss reply:
 <the state's normal prompt body>
 ```
 
+The line break inside the preamble in the fenced example is for
+document readability only; runtime output may render the preamble
+as one continuous line.
+
 The preamble names Captain's continuation role explicitly so the
 player does not have to infer it from the labelled blocks alone.
 It also keeps FSM mechanics out of the prose: the player is told

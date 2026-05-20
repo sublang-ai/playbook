@@ -75,8 +75,7 @@ function composePlayerPrompt(input: CaptainInput): string {
     input.bossReply !== undefined
   ) {
     blocks.push(
-      'You previously paused this task to ask Boss a question; Boss\n' +
-        'has now replied. Continue the same task using the reply below.',
+      'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.',
     );
     blocks.push(`Boss question:\n${input.pendingBossQuestion.question}`);
     blocks.push(`Boss reply:\n${input.bossReply}`);

@@ -179,6 +179,10 @@ Boss reply:
 <the state's normal prompt body>
 ```
 
+The line break inside the preamble in the fenced example is for
+document readability only; runtime output may render the preamble
+as one continuous line.
+
 The preamble keeps FSM mechanics out of the prose — the player is told *what to do* and *why* without naming the FSM, `awaitBossReply`, or `BOSS_REPLY`.
 
 The following malformed states shall route to `failed` per [Errors and termination](#errors-and-termination):
