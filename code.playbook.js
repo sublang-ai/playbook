@@ -11,7 +11,12 @@
 // Adjudication:  LLM-judge per state
 import { createActor, fromPromise } from 'xstate';
 import { codingMachine, } from './code.fsm.js';
-import { enumerateCaptainStates } from './code.fsm.introspect.js';
+import { enumerateAwaitBossReply, enumerateCaptainStates, } from './code.fsm.introspect.js';
+const BOSS_REPLY_ERRORS = {
+    missingQuestion: "needsBossReply outcome missing 'question' field",
+    unregisteredState: (stateId) => `state ${stateId} declared needsBossReply but is not registered as resumable`,
+    emptyAnswer: 'BOSS_REPLY received empty answer',
+};
 // Internal capabilities (DR-004 §10). Each ships with its final
 // signature; behavior lands in the per-capability task noted by the
 // TODO marker.
@@ -102,6 +107,9 @@ async function adjudicate(input, finalText, ports, signal) {
     // the judge response.
     for (const field of extractRequiredFields(input.result[guard])) {
         if (typeof obj[field] !== 'string') {
+            if (guard === 'needsBossReply' && field === 'question') {
+                throw new Error(BOSS_REPLY_ERRORS.missingQuestion);
+            }
             throw new Error(`adjudicate: judge response missing required field "${field}" for guard "${guard}"`);
         }
     }
@@ -148,13 +156,25 @@ function parseJudgeJson(raw) {
 // Slash forms tried first; unknown slash forms surface as
 // emitStatus and return undefined per slc/link.md ("Unknown
 // commands surface as emitStatus, not as a silently-dropped
-// turn"). Anything that isn't a slash form falls through to the
-// LLM classifier via ports.callJudge with a fixed prompt that
-// names the four event types and their payload shapes.
-async function classifyBossText(text, ports, signal) {
+// turn"). While the FSM waits in awaitBossReply, non-slash text
+// becomes BOSS_REPLY without an LLM call. Otherwise, non-slash
+// text falls through to the LLM classifier via ports.callJudge
+// with a fixed prompt that names the four event types and their
+// payload shapes.
+async function classifyBossText(text, ports, signal, currentState) {
     const trimmed = text.trim();
     if (trimmed === '')
         return undefined;
+    const slashEvent = await classifySlashText(trimmed, ports);
+    if (slashEvent !== NOT_SLASH)
+        return slashEvent;
+    if (currentState === 'awaitBossReply') {
+        return bossReplyEvent(text);
+    }
+    return classifyWithLlm(trimmed, ports, signal);
+}
+const NOT_SLASH = Symbol('not slash');
+async function classifySlashText(trimmed, ports) {
     if (trimmed === '/start' || trimmed.startsWith('/start ')) {
         return { type: 'START_CODING', intent: trimmed.slice('/start'.length).trim() };
     }
@@ -178,7 +198,13 @@ async function classifyBossText(text, ports, signal) {
         await ports.emitStatus(`Unknown slash command: ${cmd}`);
         return undefined;
     }
-    return classifyWithLlm(trimmed, ports, signal);
+    return NOT_SLASH;
+}
+function bossReplyEvent(answer) {
+    if (answer.trim() === '') {
+        throw new Error(BOSS_REPLY_ERRORS.emptyAnswer);
+    }
+    return { type: 'BOSS_REPLY', answer };
 }
 async function parseInterruptSlash(trimmed, ports) {
     const rest = trimmed.slice('/interrupt'.length).trim();
@@ -300,7 +326,9 @@ function captainBridge(ports, getActiveSignal) {
         if (result.finalText === undefined) {
             throw new Error('captainBridge: callPlayer returned status=ok with no finalText');
         }
-        return adjudicate(input, result.finalText, ports, activeSignal);
+        const output = await adjudicate(input, result.finalText, ports, activeSignal);
+        validateBossReplyOutput(input, output);
+        return output;
     });
 }
 // Captain pane display — PBRT-3 / PBRT-14.
@@ -345,6 +373,22 @@ const stateMetadata = (() => {
     }
     return m;
 })();
+const stateIdBySourceItem = new Map([...stateMetadata.entries()].map(([stateId, meta]) => [
+    meta.sourceItem,
+    stateId,
+]));
+const registeredResumableStateIds = new Set(enumerateAwaitBossReply(codingMachine).bossReplyTransitions.map((transition) => transition.target));
+function validateBossReplyOutput(input, output) {
+    if (output.guard !== 'needsBossReply')
+        return;
+    if (typeof output.question !== 'string') {
+        throw new Error(BOSS_REPLY_ERRORS.missingQuestion);
+    }
+    const stateId = stateIdBySourceItem.get(input.sourceItem);
+    if (stateId === undefined || !registeredResumableStateIds.has(stateId)) {
+        throw new Error(BOSS_REPLY_ERRORS.unregisteredState(stateId ?? input.sourceItem));
+    }
+}
 const TERMINAL_STATES = new Set([
     'ready',
     'done',
@@ -520,7 +564,7 @@ export default function createPlaybookRuntime(options) {
             activeSignal = signal;
             try {
                 // 1. Classify text into an FSM event (slash → event; else LLM).
-                const event = await classifyBossText(text, savedPorts, signal);
+                const event = await classifyBossText(text, savedPorts, signal, actor.getSnapshot().value);
                 // Unknown slash or empty input — classifier already surfaced
                 // status; nothing to send.
                 if (event === undefined) {
@@ -594,5 +638,8 @@ function driveToQuiescence(actor) {
 }
 function isQuiescent(snap) {
     const v = snap.value;
-    return v === 'ready' || v === 'failed' || v === 'done';
+    return (v === 'ready' ||
+        v === 'awaitBossReply' ||
+        v === 'failed' ||
+        v === 'done');
 }

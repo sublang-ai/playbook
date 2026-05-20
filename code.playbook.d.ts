@@ -25,7 +25,7 @@ export type CodePlaybookOptions = CodingInput;
 declare function composePlayerPrompt(input: CaptainInput): string;
 declare function resolvePlayerId(input: CaptainInput): string;
 declare function adjudicate(input: CaptainInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal): Promise<CaptainOutput>;
-declare function classifyBossText(text: string, ports: PlaybookPorts, signal: AbortSignal): Promise<CodingEvent | undefined>;
+declare function classifyBossText(text: string, ports: PlaybookPorts, signal: AbortSignal, currentState?: unknown): Promise<CodingEvent | undefined>;
 declare function captainBridge(ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined): import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
 interface StateMetadata {
     player: CaptainInput['player'];
