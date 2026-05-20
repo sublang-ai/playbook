@@ -15,7 +15,6 @@ import { enumerateAwaitBossReply, enumerateCaptainStates, } from './code.fsm.int
 const BOSS_REPLY_ERRORS = {
     missingQuestion: "needsBossReply outcome missing 'question' field",
     unregisteredState: (stateId) => `state ${stateId} declared needsBossReply but is not registered as resumable`,
-    emptyAnswer: 'BOSS_REPLY received empty answer',
 };
 // Internal capabilities (DR-004 §10). Each ships with its final
 // signature; behavior lands in the per-capability task noted by the
@@ -201,9 +200,6 @@ async function classifySlashText(trimmed, ports) {
     return NOT_SLASH;
 }
 function bossReplyEvent(answer) {
-    if (answer.trim() === '') {
-        throw new Error(BOSS_REPLY_ERRORS.emptyAnswer);
-    }
     return { type: 'BOSS_REPLY', answer };
 }
 async function parseInterruptSlash(trimmed, ports) {
@@ -334,7 +330,7 @@ function captainBridge(ports, getActiveSignal) {
 // Captain pane display — PBRT-3 / PBRT-14.
 // The Captain pane is a stream keyed on four glyphs so a reader can
 // parse each line at a glance:
-//   ◆  terminal entry (ready / done / failed)
+//   ◆  basic idle entry (ready / done / failed)
 //   ▸  Boss input echo
 //   ⮕  captain-invoking state entry (label + player + CODE-N)
 //   ⤷  transition (guard fired by the just-finished captain call)
@@ -389,21 +385,25 @@ function validateBossReplyOutput(input, output) {
         throw new Error(BOSS_REPLY_ERRORS.unregisteredState(stateId ?? input.sourceItem));
     }
 }
-const TERMINAL_STATES = new Set([
+const QUIESCENT_STATES = new Set([
     'ready',
+    'awaitBossReply',
     'done',
     'failed',
 ]);
+// awaitBossReply is quiescent too, but Task 6 gives it a custom
+// single-line status frame rather than the plain `◆ <state>` entry.
+const BASIC_IDLE_GLYPH_STATES = new Set([...QUIESCENT_STATES].filter((stateId) => stateId !== 'awaitBossReply'));
 // Captain-pane surface (PBRT-3): every captain-invoking state plus
 // the three terminal/idle states. Wider than the prior
 // "Boss-relevant" set per slc/link.md's default "emit on every
 // transition; let the host filter."
 const CAPTAIN_PANE_STATES = new Set([
     ...stateMetadata.keys(),
-    ...TERMINAL_STATES,
+    ...BASIC_IDLE_GLYPH_STATES,
 ]);
 function formatStateEntry(stateId) {
-    if (TERMINAL_STATES.has(stateId))
+    if (BASIC_IDLE_GLYPH_STATES.has(stateId))
         return `◆ ${stateId}`;
     const meta = stateMetadata.get(stateId);
     if (!meta)
@@ -638,8 +638,5 @@ function driveToQuiescence(actor) {
 }
 function isQuiescent(snap) {
     const v = snap.value;
-    return (v === 'ready' ||
-        v === 'awaitBossReply' ||
-        v === 'failed' ||
-        v === 'done');
+    return typeof v === 'string' && QUIESCENT_STATES.has(v);
 }

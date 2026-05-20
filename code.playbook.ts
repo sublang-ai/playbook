@@ -56,7 +56,6 @@ const BOSS_REPLY_ERRORS = {
   missingQuestion: "needsBossReply outcome missing 'question' field",
   unregisteredState: (stateId: string) =>
     `state ${stateId} declared needsBossReply but is not registered as resumable`,
-  emptyAnswer: 'BOSS_REPLY received empty answer',
 } as const;
 
 // Internal capabilities (DR-004 §10). Each ships with its final
@@ -279,9 +278,6 @@ async function classifySlashText(
 }
 
 function bossReplyEvent(answer: string): CodingEvent {
-  if (answer.trim() === '') {
-    throw new Error(BOSS_REPLY_ERRORS.emptyAnswer);
-  }
   return { type: 'BOSS_REPLY', answer };
 }
 
@@ -451,7 +447,7 @@ function captainBridge(
 // Captain pane display — PBRT-3 / PBRT-14.
 // The Captain pane is a stream keyed on four glyphs so a reader can
 // parse each line at a glance:
-//   ◆  terminal entry (ready / done / failed)
+//   ◆  basic idle entry (ready / done / failed)
 //   ▸  Boss input echo
 //   ⮕  captain-invoking state entry (label + player + CODE-N)
 //   ⤷  transition (guard fired by the just-finished captain call)
@@ -533,11 +529,18 @@ function validateBossReplyOutput(
   }
 }
 
-const TERMINAL_STATES: ReadonlySet<string> = new Set([
+const QUIESCENT_STATES: ReadonlySet<string> = new Set([
   'ready',
+  'awaitBossReply',
   'done',
   'failed',
 ]);
+
+// awaitBossReply is quiescent too, but Task 6 gives it a custom
+// single-line status frame rather than the plain `◆ <state>` entry.
+const BASIC_IDLE_GLYPH_STATES: ReadonlySet<string> = new Set(
+  [...QUIESCENT_STATES].filter((stateId) => stateId !== 'awaitBossReply'),
+);
 
 // Captain-pane surface (PBRT-3): every captain-invoking state plus
 // the three terminal/idle states. Wider than the prior
@@ -545,11 +548,11 @@ const TERMINAL_STATES: ReadonlySet<string> = new Set([
 // transition; let the host filter."
 const CAPTAIN_PANE_STATES: ReadonlySet<string> = new Set([
   ...stateMetadata.keys(),
-  ...TERMINAL_STATES,
+  ...BASIC_IDLE_GLYPH_STATES,
 ]);
 
 function formatStateEntry(stateId: string): string {
-  if (TERMINAL_STATES.has(stateId)) return `◆ ${stateId}`;
+  if (BASIC_IDLE_GLYPH_STATES.has(stateId)) return `◆ ${stateId}`;
   const meta = stateMetadata.get(stateId);
   if (!meta) return `⮕ ${stateId}`;
   return `⮕ ${meta.label}  ${meta.player} per ${meta.sourceItem}`;
@@ -819,10 +822,5 @@ function driveToQuiescence(
 
 function isQuiescent(snap: { value: unknown }): boolean {
   const v = snap.value;
-  return (
-    v === 'ready' ||
-    v === 'awaitBossReply' ||
-    v === 'failed' ||
-    v === 'done'
-  );
+  return typeof v === 'string' && QUIESCENT_STATES.has(v);
 }

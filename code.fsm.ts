@@ -176,6 +176,10 @@ const rememberCaptainError = assign({
   lastError: ({ event }: { event: unknown }) => (event as { error?: unknown }).error,
 });
 
+const rememberEmptyBossReplyError = assign({
+  lastError: () => new Error('BOSS_REPLY received empty answer'),
+});
+
 const rememberBossInput = assign({
   intent: ({ context, event }: { context: CodingContext; event: unknown }) =>
     (event as { intent?: string }).intent ?? context.intent,
@@ -238,6 +242,9 @@ const resumableStates = (ids: readonly ResumableStateId[]) =>
     actions: rememberBossReply,
   }));
 
+const bossReplyIsEmpty = ({ event }: { event: CodingEvent }) =>
+  event.type === 'BOSS_REPLY' && event.answer.trim() === '';
+
 const captainError = {
   target: '#failed',
   actions: rememberCaptainError,
@@ -284,7 +291,14 @@ const awaitBossReplyEvents = {
   CONTINUE_IR: withClearBossReplyContext(readyEvents.CONTINUE_IR),
   SUMMARIZE_IR: withClearBossReplyContext(readyEvents.SUMMARIZE_IR),
   BOSS_INTERRUPT: bossInterrupts(jumpableStateIds, [clearBossReplyContext]),
-  BOSS_REPLY: resumableStates(resumableStateIds),
+  BOSS_REPLY: [
+    {
+      guard: bossReplyIsEmpty,
+      target: '#failed',
+      actions: [clearBossReplyContext, rememberEmptyBossReplyError],
+    },
+    ...resumableStates(resumableStateIds),
+  ],
 };
 
 const captainPlaceholder = fromPromise<CaptainOutput, CaptainInput>(async () => {

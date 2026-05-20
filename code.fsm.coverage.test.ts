@@ -46,8 +46,15 @@ function fx(stateId: string, index: number, fixture: Fixture): void {
   fixtures.set(`${stateId}#${index}`, fixture);
 }
 
-const bossReplyFixtures = new Map<number, { context: Partial<CodingContext>; event: CodingEvent }>();
-function bossReplyFx(index: number, resumeStateId: string): void {
+const bossReplyFixtures = new Map<
+  number,
+  { context: Partial<CodingContext>; event: CodingEvent }
+>();
+function bossReplyFx(
+  index: number,
+  resumeStateId: string,
+  answer = 'Use the narrow scope.',
+): void {
   bossReplyFixtures.set(index, {
     context: {
       pendingBossQuestion: {
@@ -57,7 +64,7 @@ function bossReplyFx(index: number, resumeStateId: string): void {
         question: 'Which scope should I use?',
       },
     },
-    event: { type: 'BOSS_REPLY', answer: 'Use the narrow scope.' },
+    event: { type: 'BOSS_REPLY', answer },
   });
 }
 
@@ -117,10 +124,12 @@ fx('summarizeSpecs', 2, {
   captainOutput: { guard: 'needsBossReply', question: 'Which spec scope should I summarize?' },
 });
 
-// awaitBossReply — BOSS_REPLY arms, ordered by resumableStateIds.
-bossReplyFx(0, 'planAndImplement');
-bossReplyFx(1, 'continueIr');
-bossReplyFx(2, 'summarizeSpecs');
+// awaitBossReply — BOSS_REPLY arms: malformed empty answer, then
+// resumableStateIds in order.
+bossReplyFx(0, 'planAndImplement', '   ');
+bossReplyFx(1, 'planAndImplement');
+bossReplyFx(2, 'continueIr');
+bossReplyFx(3, 'summarizeSpecs');
 
 // CODE-5..10 — review*Commit*  (4 arms each, identical shape)
 const reviewCommitStates = [
@@ -503,6 +512,7 @@ describe('edge coverage — structural', () => {
       .sort();
     const bossReplyTargets = awaitBossReply.bossReplyTransitions
       .map((t) => t.target)
+      .filter((target) => target !== 'failed')
       .sort();
 
     expect(bossReplyTargets).toEqual(needsBossReplyStates);
