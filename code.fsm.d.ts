@@ -5,6 +5,12 @@ type ChangeOrigin = 'bossIntent' | 'irTask';
 type ReviewSubject = 'commit' | 'changes';
 type AfterReview = 'continueIr' | 'summarizeSpecs' | 'done';
 type ResumableStateId = 'planAndImplement' | 'continueIr' | 'summarizeSpecs';
+type PendingBossQuestion = {
+    resumeStateId: ResumableStateId;
+    sourceItem: string;
+    player: Player;
+    question: string;
+};
 export type CaptainInput = {
     player: Player;
     sourceItem: string;
@@ -17,6 +23,8 @@ export type CaptainInput = {
     challenges?: string;
     coderPlayer?: string;
     reviewerPlayer?: string;
+    pendingBossQuestion?: PendingBossQuestion;
+    bossReply?: string;
 };
 export type CaptainOutput = {
     guard: string;
@@ -45,12 +53,7 @@ export type CodingContext = CodingInput & {
     challenges?: string;
     lastResult?: CaptainOutput;
     lastError?: unknown;
-    pendingBossQuestion?: {
-        resumeStateId: ResumableStateId;
-        sourceItem: string;
-        player: Player;
-        question: string;
-    };
+    pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 };
 export type CodingEvent = {

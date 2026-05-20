@@ -65,9 +65,22 @@ const BOSS_REPLY_ERRORS = {
 // Player-prompt composer — DR-004 §6.
 // Substitutes the three placeholder tokens in `input.prompt` (literal
 // string replace, no escaping) and prepends labelled blocks for any
-// populated structured field. The FSM's prompt body is never re-flowed.
+// populated structured field. When a state resumes from a Boss reply,
+// the continuation preamble and Q/A blocks precede the ordinary
+// labelled blocks. The FSM's prompt body is never re-flowed.
 function composePlayerPrompt(input: CaptainInput): string {
   const blocks: string[] = [];
+  if (
+    input.pendingBossQuestion !== undefined &&
+    input.bossReply !== undefined
+  ) {
+    blocks.push(
+      'You previously paused this task to ask Boss a question; Boss\n' +
+        'has now replied. Continue the same task using the reply below.',
+    );
+    blocks.push(`Boss question:\n${input.pendingBossQuestion.question}`);
+    blocks.push(`Boss reply:\n${input.bossReply}`);
+  }
   if (input.intent !== undefined) {
     blocks.push(`Boss intent:\n${input.intent}`);
   }

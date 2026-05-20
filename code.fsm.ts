@@ -42,6 +42,13 @@ type ReviewSubject = 'commit' | 'changes';
 type AfterReview = 'continueIr' | 'summarizeSpecs' | 'done';
 type ResumableStateId = 'planAndImplement' | 'continueIr' | 'summarizeSpecs';
 
+type PendingBossQuestion = {
+  resumeStateId: ResumableStateId;
+  sourceItem: string;
+  player: Player;
+  question: string;
+};
+
 export type CaptainInput = {
   player: Player;
   sourceItem: string;
@@ -59,6 +66,8 @@ export type CaptainInput = {
   challenges?: string;
   coderPlayer?: string;
   reviewerPlayer?: string;
+  pendingBossQuestion?: PendingBossQuestion;
+  bossReply?: string;
 };
 
 export type CaptainOutput = {
@@ -90,12 +99,7 @@ export type CodingContext = CodingInput & {
   challenges?: string;
   lastResult?: CaptainOutput;
   lastError?: unknown;
-  pendingBossQuestion?: {
-    resumeStateId: ResumableStateId;
-    sourceItem: string;
-    player: Player;
-    question: string;
-  };
+  pendingBossQuestion?: PendingBossQuestion;
   bossReply?: string;
 };
 
@@ -187,18 +191,107 @@ const rememberBossInput = assign({
     (event as { irNumber?: string }).irNumber ?? context.irNumber,
 });
 
-const setPendingBossQuestion = (
-  resumeStateId: ResumableStateId,
-  sourceItem: string,
-  player: Player,
-) =>
+type ResumableCaptainInputFactory = (context: Partial<CodingContext>) => CaptainInput;
+
+const needsBossReplyDescription =
+  "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.";
+
+const bossReplyInputFields = (context: Partial<CodingContext>) => ({
+  pendingBossQuestion: context.pendingBossQuestion,
+  bossReply: context.bossReply,
+});
+
+const planAndImplementInput: ResumableCaptainInputFactory = (context) => ({
+  player: 'Coder',
+  sourceItem: 'CODE-1',
+  intent: context.intent,
+  ...bossReplyInputFields(context),
+  prompt: [
+    'Assess whether this can be completed in a single commit, following best practices.',
+    'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
+    'Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.',
+    'If a specific Boss answer is needed before you can proceed, ask the exact question and stop.',
+    'Do not commit.',
+  ].join('\n'),
+  result: {
+    singleCommitReady:
+      'Coder produced uncommitted single-commit changes (Initial Changes).',
+    irDrafted:
+      'Coder decomposed the intent into a new IR and drafted it uncommitted (Initial Changes).',
+    needsBossReply: needsBossReplyDescription,
+  },
+});
+
+const continueIrInput: ResumableCaptainInputFactory = (context) => ({
+  player: 'Coder',
+  sourceItem: 'CODE-3',
+  irNumber: context.irNumber,
+  ...bossReplyInputFields(context),
+  prompt: [
+    'Continue to implement IR-<#> if not all deliverables and tasks are done.',
+    'Implement one task at a time (including corresponding tests if any).',
+    'Stop after each task for review — do not commit yet.',
+    'If the next task is ambiguous and needs a specific Boss answer, ask the exact question and stop.',
+    'If relevant, mark progress in the IR.',
+  ].join('\n'),
+  result: {
+    taskReady:
+      'Coder produced uncommitted changes for the next IR task (Initial Changes). Output shall include `taskDescription: <one-line description of the task just implemented>`.',
+    iterationDone: 'All IR deliverables and tasks are done.',
+    needsBossReply: needsBossReplyDescription,
+  },
+});
+
+const summarizeSpecsInput: ResumableCaptainInputFactory = (context) => ({
+  player: 'Coder',
+  sourceItem: 'CODE-4',
+  irNumber: context.irNumber,
+  ...bossReplyInputFields(context),
+  prompt: [
+    'Read IR-<#> and corresponding commits.',
+    'According to @specs/meta.md, add or update spec items to fully capture:',
+    '',
+    '- the user requirements in @specs/user,',
+    '- the system behavior in @specs/dev, and',
+    '- the integration/system test cases in @specs/test.',
+    '',
+    'The spec items should be the *minimal* set needed to reimplement code without the IR.',
+    'The set should be complete and coherent.',
+    'Avoid implementation specifics.',
+    'Avoid redundant spec items.',
+    'If the spec-summary scope needs a specific Boss answer, ask the exact question and stop.',
+    'Consult @specs/map.md for relevant context and update it to reflect your changes.',
+  ].join('\n'),
+  result: {
+    specsReady: 'Coder produced uncommitted spec updates (Initial Changes).',
+    noSpecChanges: 'Existing specs already capture the iteration.',
+    needsBossReply: needsBossReplyDescription,
+  },
+});
+
+const resumableCaptainInputs = {
+  planAndImplement: planAndImplementInput,
+  continueIr: continueIrInput,
+  summarizeSpecs: summarizeSpecsInput,
+} satisfies Record<ResumableStateId, ResumableCaptainInputFactory>;
+
+const setPendingBossQuestion = (resumeStateId: ResumableStateId) =>
   assign({
-    pendingBossQuestion: ({ event }: { event: unknown }) => ({
-      resumeStateId,
-      sourceItem,
-      player,
-      question: outputOf(event)?.question ?? '',
-    }),
+    pendingBossQuestion: ({
+      context,
+      event,
+    }: {
+      context: CodingContext;
+      event: unknown;
+    }) => {
+      const input = resumableCaptainInputs[resumeStateId](context);
+      return {
+        resumeStateId,
+        sourceItem: input.sourceItem,
+        player: input.player,
+        question: outputOf(event)?.question ?? '',
+      };
+    },
     bossReply: () => undefined,
   });
 
@@ -346,26 +439,7 @@ export const codingMachine = setup({
         'CODE-1: Coder assesses a Boss intent and either implements a single-commit change or drafts an IR.',
       invoke: {
         src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Coder',
-          sourceItem: 'CODE-1',
-          intent: context.intent,
-          prompt: [
-            'Assess whether this can be completed in a single commit, following best practices.',
-            'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
-            'Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.',
-            'If a specific Boss answer is needed before you can proceed, ask the exact question and stop.',
-            'Do not commit.',
-          ].join('\n'),
-          result: {
-            singleCommitReady:
-              'Coder produced uncommitted single-commit changes (Initial Changes).',
-            irDrafted:
-              'Coder decomposed the intent into a new IR and drafted it uncommitted (Initial Changes).',
-            needsBossReply:
-              "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.",
-          },
-        }),
+        input: ({ context }): CaptainInput => planAndImplementInput(context),
         onDone: [
           {
             guard: guardIs('singleCommitReady'),
@@ -398,7 +472,7 @@ export const codingMachine = setup({
             target: '#awaitBossReply',
             actions: [
               rememberCaptainOutput,
-              setPendingBossQuestion('planAndImplement', 'CODE-1', 'Coder'),
+              setPendingBossQuestion('planAndImplement'),
             ],
           },
         ],
@@ -514,25 +588,7 @@ export const codingMachine = setup({
         'CODE-3: Coder continues an IR after the previous task or IR draft passed review.',
       invoke: {
         src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Coder',
-          sourceItem: 'CODE-3',
-          irNumber: context.irNumber,
-          prompt: [
-            'Continue to implement IR-<#> if not all deliverables and tasks are done.',
-            'Implement one task at a time (including corresponding tests if any).',
-            'Stop after each task for review — do not commit yet.',
-            'If the next task is ambiguous and needs a specific Boss answer, ask the exact question and stop.',
-            'If relevant, mark progress in the IR.',
-          ].join('\n'),
-          result: {
-            taskReady:
-              'Coder produced uncommitted changes for the next IR task (Initial Changes). Output shall include `taskDescription: <one-line description of the task just implemented>`.',
-            iterationDone: 'All IR deliverables and tasks are done.',
-            needsBossReply:
-              "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.",
-          },
-        }),
+        input: ({ context }): CaptainInput => continueIrInput(context),
         onDone: [
           {
             guard: guardIs('taskReady'),
@@ -564,7 +620,7 @@ export const codingMachine = setup({
             target: '#awaitBossReply',
             actions: [
               rememberCaptainOutput,
-              setPendingBossQuestion('continueIr', 'CODE-3', 'Coder'),
+              setPendingBossQuestion('continueIr'),
             ],
           },
         ],
@@ -577,32 +633,7 @@ export const codingMachine = setup({
       description: 'CODE-4: Coder summarizes a completed IR into minimal spec items.',
       invoke: {
         src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Coder',
-          sourceItem: 'CODE-4',
-          irNumber: context.irNumber,
-          prompt: [
-            'Read IR-<#> and corresponding commits.',
-            'According to @specs/meta.md, add or update spec items to fully capture:',
-            '',
-            '- the user requirements in @specs/user,',
-            '- the system behavior in @specs/dev, and',
-            '- the integration/system test cases in @specs/test.',
-            '',
-            'The spec items should be the *minimal* set needed to reimplement code without the IR.',
-            'The set should be complete and coherent.',
-            'Avoid implementation specifics.',
-            'Avoid redundant spec items.',
-            'If the spec-summary scope needs a specific Boss answer, ask the exact question and stop.',
-            'Consult @specs/map.md for relevant context and update it to reflect your changes.',
-          ].join('\n'),
-          result: {
-            specsReady: 'Coder produced uncommitted spec updates (Initial Changes).',
-            noSpecChanges: 'Existing specs already capture the iteration.',
-            needsBossReply:
-              "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.",
-          },
-        }),
+        input: ({ context }): CaptainInput => summarizeSpecsInput(context),
         onDone: [
           {
             guard: guardIs('specsReady'),
@@ -627,7 +658,7 @@ export const codingMachine = setup({
             target: '#awaitBossReply',
             actions: [
               rememberCaptainOutput,
-              setPendingBossQuestion('summarizeSpecs', 'CODE-4', 'Coder'),
+              setPendingBossQuestion('summarizeSpecs'),
             ],
           },
         ],

@@ -154,7 +154,7 @@ DR.
   - Status emission on `awaitBossReply` entry produces the
     single-line pane string and the structured telemetry record
     (per "Decisions baked in" above).
-- [ ] Three new failure-mode error messages in the runtime per
+- [x] Three new failure-mode error messages in the runtime per
   DR-005 §8: missing `question` field, unregistered resumable
   state, empty `BOSS_REPLY` answer.
 - [ ] Tests — added or extended:
