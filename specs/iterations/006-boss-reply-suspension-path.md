@@ -266,13 +266,16 @@ test coverage lands at the end.
    Extend `code.gears-fsm.test.ts` to pin the
    gears-side parseable-marker requirement for
    `needsBossReply` declarations (PLAYBOOK-12).
-   Extend `code.fsm.coverage.test.ts` to upgrade the minimal
-   fixtures from task 3 into the full coverage discipline:
-   every new `BOSS_REPLY` arm fires under the right
-   `pendingBossQuestion.resumeStateId`; every transition out
-   of `awaitBossReply` other than the resume arm uses
-   `clearBossReplyContext` (PLAYBOOK-13); the three failure
-   modes route to `failed` with the documented errors.
+   Extend `code.fsm.coverage.test.ts` beyond task 3's
+   `BOSS_REPLY` arm fixtures with the remaining deep coverage:
+   `needsBossReply` outcomes populate `pendingBossQuestion`
+   from the suspended state's `id` / `CaptainInput.sourceItem`
+   / `CaptainInput.player`; every non-`needsBossReply` arm in
+   a resumable state's `onDone` and every transition out of
+   `awaitBossReply` other than the resume arm uses
+   `clearBossReplyContext` and actually clears both Boss-reply
+   context fields (PLAYBOOK-13); the three failure modes route
+   to `failed` with the documented errors.
 8. **Tests: prompt-contract + runtime.**
    Extend `code.prompt-contract.test.ts` with rows for the
    resumable states verifying the continuation preamble + Q/A
@@ -304,8 +307,18 @@ test coverage lands at the end.
   `resumableStates(ids)` (so no matching `BOSS_REPLY` arm
   exists in `awaitBossReply`), or if any new
   `awaitBossReply.on.BOSS_REPLY` arm has no exercising
-  fixture, or if any transition out of `awaitBossReply` (other
-  than the resume arm) lacks `clearBossReplyContext`.
+  fixture, or if any non-`needsBossReply` arm in a resumable
+  state's `onDone` lacks `clearBossReplyContext` or fails to
+  actually clear both `pendingBossQuestion` and `bossReply`
+  after the arm fires, or if any transition out of
+  `awaitBossReply` (other than the resume arm) lacks
+  `clearBossReplyContext` or fails to actually clear both
+  fields after the transition fires.
+- The coverage test fails immediately if a `needsBossReply`
+  outcome populates `pendingBossQuestion` with a
+  `resumeStateId`, `sourceItem`, or `player` different from
+  the suspended state's `id` / `CaptainInput.sourceItem` /
+  `CaptainInput.player`.
 - The prompt-contract test fails immediately if a resumable
   state's composed prompt omits the continuation preamble when
   both context fields are populated, or includes a stale
