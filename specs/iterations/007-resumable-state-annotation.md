@@ -38,8 +38,8 @@ This closes a source-of-truth divergence found while reviewing IR-006: CODE-1/3/
   — amend §4: opt-in is the source annotation + compiler
   expansion; the authored-prose mechanism is superseded.
 - [ ] [`reference/sdlc/code.md`](../../reference/sdlc/code.md) —
-  replace the three CODE-1/3/4 stopgap blockquote lines with the
-  resumable annotation.
+  add the resumable annotation to the CODE-1/3/4 source items
+  (which carry domain-only prompts today).
 - [ ] [`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md)
   — re-derived: blockquotes carry domain prompts only; resumable
   carried as the `Result guard: needsBossReply` metadata line.
@@ -58,7 +58,7 @@ This closes a source-of-truth divergence found while reviewing IR-006: CODE-1/3/
 ## Tasks
 
 Each task is one commit.
-Order keeps `main` building and test-green throughout: spec amendments land first to give the implementation a contract; the gears + FSM re-derivation moves together so conformance holds at the boundary; runtime injection is additive; tests land last.
+Order keeps `main` building and test-green throughout: spec amendments land first to give the implementation a contract; the CODE migration moves gears, FSM, and runtime injection together so the Boss-question instruction relocates from gears blockquote to runtime injection atomically — no commit leaves the `needsBossReply` guard present while the player is no longer told it may ask; the deep test-conformance additions land after.
 
 1. **Land IR-007 + map.md row.**
    This commit lands the IR doc and adds the IR-007 row to
@@ -70,28 +70,37 @@ Order keeps `main` building and test-green throughout: spec amendments land firs
    wiring); `slc/link.md` (runtime injection of the standard
    instruction); DR-005 §4 amendment.
    All prose; no code touched.
-3. **CODE source + gears re-derivation (combined).**
-   `reference/sdlc/code.md`: replace the three stopgap blockquote
-   lines with the resumable annotation.
-   `code.gears.md`: re-derive — blockquotes carry domain prompts
-   only, resumable carried as the `Result guard:` metadata line.
-   `code.fsm.ts`: the three states' `invoke.input.prompt` loses
-   the Boss-question line; `result.needsBossReply` unchanged;
-   recompile siblings.
-   Gears and FSM move together so `code.gears-fsm.test.ts` holds
-   at the boundary.
-4. **Runtime: framework instruction injection.**
-   `code.playbook.ts` composes the standard Boss-question
-   instruction into resumable states' player prompts, outside the
-   domain prompt body (per the `slc/link.md` amendment).
-   Additive — existing happy paths untouched.
-5. **Tests.**
-   Update `code.gears-fsm.test.ts` so it fails if `code.gears.md`
-   carries a blockquote line not derivable from `code.md`; update
-   `code.prompt-contract.test.ts` so the injected instruction is
-   asserted on the *composed* prompt, not the gears blockquote;
-   reconcile `code.fsm.coverage.test.ts` fixtures.
-6. **Close-out.**
+3. **CODE migration: source, gears, FSM, runtime (combined).**
+   One commit relocates the Boss-question instruction from the
+   gears blockquote to runtime injection, atomically — so no
+   committed step has the `needsBossReply` guard present while
+   the player is no longer told it may ask:
+   - `reference/sdlc/code.md`: add the resumable annotation to
+     the CODE-1/3/4 source items.
+   - `code.gears.md`: re-derive — blockquotes carry domain
+     prompts only, resumable carried as the `Result guard:`
+     metadata line.
+   - `code.fsm.ts`: the three states' `invoke.input.prompt`
+     loses the Boss-question line; `result.needsBossReply`
+     unchanged; recompile siblings.
+   - `code.playbook.ts`: the runtime composes the standard
+     Boss-question instruction into resumable states' player
+     prompts, outside the domain prompt body (per the
+     `slc/link.md` amendment).
+   Any existing test that pins the composed prompt is adjusted
+   in this same commit so `pnpm test` stays green; the new
+   conformance assertions land in task 4.
+4. **Tests.**
+   Add the new conformance assertions: `code.gears-fsm.test.ts`
+   fails if `code.gears.md` carries content not derivable from
+   `code.md` — a blockquote line with no source blockquote
+   line, or a `Result guard: needsBossReply` metadata line
+   whose source item lacks the resumable annotation, or the
+   converse (a resumable annotation with no `Result guard:`
+   line). `code.prompt-contract.test.ts` asserts the injected
+   instruction on the *composed* prompt, not the gears
+   blockquote; reconcile `code.fsm.coverage.test.ts` fixtures.
+5. **Close-out.**
    Update the `specs/map.md` IR-007 row to reflect any delta.
    Record any substantive divergence from DR-005 as a one-line
    addendum.
@@ -100,9 +109,12 @@ Order keeps `main` building and test-green throughout: spec amendments land firs
 
 - `code.gears.md` blockquotes contain only domain prompt lines —
   no Boss-question instruction or guard prose hand-added.
-- `code.gears-fsm.test.ts` fails immediately if a `code.gears.md`
-  blockquote line is not derivable from the corresponding
-  `code.md` item.
+- `code.gears-fsm.test.ts` fails immediately if `code.gears.md`
+  carries content not derivable from the corresponding `code.md`
+  item — a blockquote line with no source line, or a
+  `Result guard: needsBossReply` metadata line whose source item
+  lacks the resumable annotation (or the converse: a resumable
+  annotation with no `Result guard:` line).
 - A resumable state's *composed* player prompt (runtime output)
   contains the standard Boss-question instruction; a
   non-resumable state's composed prompt does not.
