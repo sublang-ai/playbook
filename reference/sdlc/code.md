@@ -16,6 +16,7 @@ When Boss gives a coding intent, Captain shall relay it to Coder along with the 
 > If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.
 > Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.
 > Do not commit.
+Resumable: Boss reply
 The resulting changes are regarded as Initial Changes.
 
 When Reviewer raises any findings, Captain shall relay them to Coder along with the following prompt:
@@ -27,6 +28,7 @@ When a new IR or IR task passes review and is committed, Captain shall prompt Co
 > Implement one task at a time (including corresponding tests if any).
 > Stop after each task for review — do not commit yet.
 > If relevant, mark progress in the IR.
+Resumable: Boss reply
 The resulting changes are regarded as Initial Changes.
 
 When an IR is done, Captain shall prompt Coder:
@@ -42,6 +44,7 @@ When an IR is done, Captain shall prompt Coder:
 > Avoid implementation specifics.
 > Avoid redundant spec items.
 > Consult @specs/map.md for relevant context and update it to reflect your changes.
+Resumable: Boss reply
 
 ## Reviewer
 

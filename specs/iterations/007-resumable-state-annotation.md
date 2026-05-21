@@ -38,17 +38,17 @@ This closes a source-of-truth divergence found while reviewing IR-006: CODE-1/3/
   — amend §4/§5: opt-in is the source annotation + compiler
   expansion; the authored-prose mechanism is superseded and the
   resume preamble is runtime-composed.
-- [ ] [`reference/sdlc/code.md`](../../reference/sdlc/code.md) —
+- [x] [`reference/sdlc/code.md`](../../reference/sdlc/code.md) —
   add the resumable annotation to the CODE-1/3/4 source items
   (which carry domain-only prompts today).
-- [ ] [`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md)
+- [x] [`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md)
   — re-derived: blockquotes carry domain prompts only; resumable
   carried as the `Result guard: needsBossReply` metadata line.
-- [ ] [`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts)
+- [x] [`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts)
   — the three states' `invoke.input.prompt` no longer carries the
   Boss-question line; `result.needsBossReply` unchanged. Recompile
   siblings.
-- [ ] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts)
+- [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts)
   — the runtime composes the framework Boss-question instruction
   into resumable states' prompts.
 - [ ] Tests — `code.gears-fsm.test.ts`, `code.prompt-contract.test.ts`,

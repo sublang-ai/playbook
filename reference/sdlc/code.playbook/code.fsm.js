@@ -73,7 +73,6 @@ const planAndImplementInput = (context) => ({
         'Assess whether this can be completed in a single commit, following best practices.',
         'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
         'Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.',
-        'If a specific Boss answer is needed before you can proceed, ask the exact question and stop.',
         'Do not commit.',
     ].join('\n'),
     result: {
@@ -91,7 +90,6 @@ const continueIrInput = (context) => ({
         'Continue to implement IR-<#> if not all deliverables and tasks are done.',
         'Implement one task at a time (including corresponding tests if any).',
         'Stop after each task for review — do not commit yet.',
-        'If the next task is ambiguous and needs a specific Boss answer, ask the exact question and stop.',
         'If relevant, mark progress in the IR.',
     ].join('\n'),
     result: {
@@ -117,7 +115,6 @@ const summarizeSpecsInput = (context) => ({
         'The set should be complete and coherent.',
         'Avoid implementation specifics.',
         'Avoid redundant spec items.',
-        'If the spec-summary scope needs a specific Boss answer, ask the exact question and stop.',
         'Consult @specs/map.md for relevant context and update it to reflect your changes.',
     ].join('\n'),
     result: {

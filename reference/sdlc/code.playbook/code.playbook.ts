@@ -67,7 +67,12 @@ const BOSS_REPLY_ERRORS = {
 // string replace, no escaping) and prepends labelled blocks for any
 // populated structured field. When a state resumes from a Boss reply,
 // the continuation preamble and Q/A blocks precede the ordinary
-// labelled blocks. The FSM's prompt body is never re-flowed.
+// labelled blocks. Resumable states receive a standard Boss-question
+// instruction immediately before the domain prompt body. The FSM's
+// prompt body is never re-flowed.
+const BOSS_QUESTION_INSTRUCTION =
+  'If a specific Boss answer is needed, ask the exact question and stop.';
+
 function composePlayerPrompt(input: CaptainInput): string {
   const blocks: string[] = [];
   if (
@@ -104,6 +109,9 @@ function composePlayerPrompt(input: CaptainInput): string {
     body = body.replaceAll('<reviewer-llm>', input.reviewerPlayer);
   }
 
+  if ('needsBossReply' in input.result) {
+    blocks.push(BOSS_QUESTION_INSTRUCTION);
+  }
   blocks.push(body);
   return blocks.join('\n\n');
 }
