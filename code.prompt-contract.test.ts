@@ -35,6 +35,11 @@ type ContextField =
   | 'reviewerPlayer';
 type Placeholder = '<#>' | '<coder-llm>' | '<reviewer-llm>';
 
+const CONTINUATION_PREAMBLE =
+  'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
+const CONTINUATION_QUESTION = 'Which scope should I use?';
+const CONTINUATION_REPLY = 'Use the narrow scope.';
+
 const ALL_FIELDS: readonly ContextField[] = [
   'intent',
   'irNumber',
@@ -235,6 +240,30 @@ function inputField(
   return (input as unknown as Record<ContextField, string | undefined>)[field];
 }
 
+function continuationContext(
+  stateId: string,
+): Pick<CodingContext, 'pendingBossQuestion' | 'bossReply'> {
+  const state = stateById.get(stateId);
+  const input = state?.getInput({});
+  return {
+    pendingBossQuestion: {
+      resumeStateId: stateId as never,
+      sourceItem: input?.sourceItem ?? 'CODE-X',
+      player: (input?.player ?? 'Coder') as never,
+      question: CONTINUATION_QUESTION,
+    },
+    bossReply: CONTINUATION_REPLY,
+  };
+}
+
+function substitutedPromptFirstLine(prompt: string): string {
+  return prompt
+    .split('\n')[0]
+    .replaceAll('<#>', FULL_CONTEXT.irNumber)
+    .replaceAll('<coder-llm>', FULL_CONTEXT.coderPlayer)
+    .replaceAll('<reviewer-llm>', FULL_CONTEXT.reviewerPlayer);
+}
+
 describe('prompt contract — per state', () => {
   for (const contract of contracts) {
     describe(`${contract.stateId} (${contract.sourceItem})`, () => {
@@ -339,5 +368,81 @@ describe('prompt contract — structural', () => {
       }
     }
     expect(orphans).toEqual([]);
+  });
+});
+
+describe('prompt contract — Boss-reply continuation', () => {
+  const resumableStates = contracts.filter((contract) => {
+    const state = stateById.get(contract.stateId);
+    return state !== undefined && 'needsBossReply' in state.getInput({}).result;
+  });
+
+  for (const contract of resumableStates) {
+    const state = stateById.get(contract.stateId);
+    if (!state) continue;
+
+    it(`${contract.stateId} renders continuation preamble and Q/A before ordinary blocks`, () => {
+      const input = state.getInput({
+        ...FULL_CONTEXT,
+        ...continuationContext(contract.stateId),
+      } as Partial<CodingContext>);
+      const composed = composePlayerPrompt(input);
+
+      const markers = [
+        CONTINUATION_PREAMBLE,
+        `Boss question:\n${CONTINUATION_QUESTION}`,
+        `Boss reply:\n${CONTINUATION_REPLY}`,
+        ...BLOCK_ORDER.filter((label) => composed.includes(label)),
+        substitutedPromptFirstLine(input.prompt),
+      ];
+      const positions = markers.map((marker) => composed.indexOf(marker));
+      expect(
+        positions.every((position) => position !== -1),
+        `${contract.stateId}: all continuation markers should render`,
+      ).toBe(true);
+      expect(
+        positions,
+        `${contract.stateId}: continuation blocks precede ordinary blocks and prompt body`,
+      ).toEqual([...positions].sort((a, b) => a - b));
+    });
+
+    it(`${contract.stateId} suppresses continuation blocks unless both fields are present`, () => {
+      const full = continuationContext(contract.stateId);
+      const pendingOnly = composePlayerPrompt(
+        state.getInput({
+          ...FULL_CONTEXT,
+          pendingBossQuestion: full.pendingBossQuestion,
+        } as Partial<CodingContext>),
+      );
+      const replyOnly = composePlayerPrompt(
+        state.getInput({
+          ...FULL_CONTEXT,
+          bossReply: full.bossReply,
+        } as Partial<CodingContext>),
+      );
+
+      for (const [label, composed] of [
+        ['pendingOnly', pendingOnly],
+        ['replyOnly', replyOnly],
+      ] as const) {
+        expect(composed, `${contract.stateId} ${label}: no preamble`).not.toContain(
+          CONTINUATION_PREAMBLE,
+        );
+        expect(composed, `${contract.stateId} ${label}: no question block`).not.toContain(
+          'Boss question:',
+        );
+        expect(composed, `${contract.stateId} ${label}: no reply block`).not.toContain(
+          'Boss reply:',
+        );
+      }
+    });
+  }
+
+  it('has one continuation contract row per resumable state', () => {
+    expect(resumableStates.map((contract) => contract.stateId).sort()).toEqual([
+      'continueIr',
+      'planAndImplement',
+      'summarizeSpecs',
+    ]);
   });
 });

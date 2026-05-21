@@ -602,6 +602,81 @@ describe('classifyBossText (LLM fallback — DR-004 §3)', () => {
   });
 });
 
+describe('classifyBossText (awaitBossReply branch — DR-005 §6)', () => {
+  const sig = () => new AbortController().signal;
+
+  it('plain text in awaitBossReply becomes BOSS_REPLY without calling the judge', async () => {
+    let judgeCalled = false;
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        judgeCalled = true;
+        return JSON.stringify({
+          event: 'START_CODING',
+          payload: { intent: 'wrong path' },
+        });
+      },
+    });
+
+    await expect(
+      classifyBossText('Use the narrow scope.', ports, sig(), 'awaitBossReply'),
+    ).resolves.toEqual({
+      type: 'BOSS_REPLY',
+      answer: 'Use the narrow scope.',
+    });
+    expect(judgeCalled).toBe(false);
+  });
+
+  it('plain text outside awaitBossReply still uses the LLM classifier', async () => {
+    let judgeCalled = false;
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        judgeCalled = true;
+        return JSON.stringify({
+          event: 'START_CODING',
+          payload: { intent: 'fix the bug' },
+        });
+      },
+    });
+
+    await expect(
+      classifyBossText('Use the narrow scope.', ports, sig(), 'ready'),
+    ).resolves.toEqual({
+      type: 'START_CODING',
+      intent: 'fix the bug',
+    });
+    expect(judgeCalled).toBe(true);
+  });
+
+  it('recognized slash commands keep their normal meaning while awaiting Boss reply', async () => {
+    let judgeCalled = false;
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        judgeCalled = true;
+        return '{}';
+      },
+    });
+
+    await expect(
+      classifyBossText('/continue 7', ports, sig(), 'awaitBossReply'),
+    ).resolves.toEqual({ type: 'CONTINUE_IR', irNumber: '7' });
+    expect(judgeCalled).toBe(false);
+  });
+
+  it('unknown slash commands while awaiting Boss reply emit status and do not become BOSS_REPLY', async () => {
+    const statuses: string[] = [];
+    const ports = makeFakePorts({
+      emitStatus: async (message) => {
+        statuses.push(message);
+      },
+    });
+
+    await expect(
+      classifyBossText('/bogus answer', ports, sig(), 'awaitBossReply'),
+    ).resolves.toBeUndefined();
+    expect(statuses).toEqual(['Unknown slash command: /bogus']);
+  });
+});
+
 describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
   function buildActor(ports: PlaybookPorts) {
     return createActor(
@@ -870,6 +945,9 @@ function judgeSequence(replies: Array<Record<string, unknown>>) {
 }
 
 describe('handleBossInput drive-to-quiescence (Task 9)', () => {
+  const FIRST_BOSS_QUESTION = 'Which scope should I use?';
+  const FOLLOW_UP_BOSS_QUESTION = 'Should I update docs too?';
+
   it('clean run: /start drives FSM through one captain turn back to ready', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
     let judgeCalls = 0;
@@ -895,6 +973,111 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(playerCalls[0].prompt).toContain('add a button');
     expect(judgeCalls).toBe(2);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('returns when a player question lands at awaitBossReply', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'I need Boss to choose the scope.',
+      }),
+      callJudge: judgeSequence([
+        { guard: 'needsBossReply', question: FIRST_BOSS_QUESTION },
+      ]),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: '/start ambiguous task',
+      signal: sig(),
+    });
+
+    const snap = runtime._getActor()?.getSnapshot();
+    expect(snap?.value).toBe('awaitBossReply');
+    expect(
+      (snap?.context as { pendingBossQuestion?: unknown })
+        .pendingBossQuestion,
+    ).toEqual({
+      resumeStateId: 'planAndImplement',
+      sourceItem: 'CODE-1',
+      player: 'Coder',
+      question: FIRST_BOSS_QUESTION,
+    });
+  });
+
+  it('slash abandon from awaitBossReply clears pending Boss-reply context', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'I need Boss to choose the scope.',
+      }),
+      callJudge: judgeSequence([
+        { guard: 'needsBossReply', question: FIRST_BOSS_QUESTION },
+      ]),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({
+      text: '/start ambiguous task',
+      signal: sig(),
+    });
+    expect(runtime._getActor()?.getSnapshot().value).toBe('awaitBossReply');
+
+    await runtime.handleBossInput({
+      text: '/interrupt ready',
+      signal: sig(),
+    });
+
+    const snap = runtime._getActor()?.getSnapshot();
+    expect(snap?.value).toBe('ready');
+    expect(
+      (snap?.context as { pendingBossQuestion?: unknown })
+        .pendingBossQuestion,
+    ).toBeUndefined();
+    expect((snap?.context as { bossReply?: unknown }).bossReply).toBeUndefined();
+  });
+
+  it('follow-up needsBossReply overwrites the question and clears the prior reply', async () => {
+    const playerPrompts: string[] = [];
+    const ports = makeFakePorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerPrompts.push(prompt);
+        return { status: 'ok', finalText: 'I still need Boss.' };
+      },
+      callJudge: judgeSequence([
+        { guard: 'needsBossReply', question: FIRST_BOSS_QUESTION },
+        { guard: 'needsBossReply', question: FOLLOW_UP_BOSS_QUESTION },
+      ]),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: '/start ambiguous task',
+      signal: sig(),
+    });
+    await runtime.handleBossInput({
+      text: 'Use the narrow scope.',
+      signal: sig(),
+    });
+
+    const snap = runtime._getActor()?.getSnapshot();
+    expect(snap?.value).toBe('awaitBossReply');
+    expect(
+      (snap?.context as { pendingBossQuestion?: unknown })
+        .pendingBossQuestion,
+    ).toEqual({
+      resumeStateId: 'planAndImplement',
+      sourceItem: 'CODE-1',
+      player: 'Coder',
+      question: FOLLOW_UP_BOSS_QUESTION,
+    });
+    expect((snap?.context as { bossReply?: unknown }).bossReply).toBeUndefined();
+    expect(playerPrompts[1]).toContain(
+      `Boss question:\n${FIRST_BOSS_QUESTION}`,
+    );
+    expect(playerPrompts[1]).toContain('Boss reply:\nUse the narrow scope.');
   });
 
   it('signal-abort mid-callPlayer lands at #failed with lastError captured', async () => {
@@ -1368,6 +1551,39 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     expect(messages.filter((m) => m.startsWith('◆ ready')).length).toBeGreaterThanOrEqual(1);
     // Boss echo lands before the FSM advances.
     expect(messages.some((m) => m.startsWith('▸ BOSS  /start fix'))).toBe(true);
+  });
+
+  it('awaitBossReply entry emits the structured status line and full-question telemetry', async () => {
+    const question =
+      'Which scope should I use?\nPlease answer with the exact package boundary.';
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'I need Boss to choose the scope.',
+      }),
+      callJudge: judgeSequence([{ guard: 'needsBossReply', question }]),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: '/start ambiguous task',
+      signal: sig(),
+    });
+
+    const expectedExcerpt = question.replace(/[\r\n]+/g, ' ').slice(0, 80);
+    expect(statuses.map((s) => s.message)).toContain(
+      `◆ awaiting Boss reply · planAndImplement · Coder · CODE-1 · q=${JSON.stringify(expectedExcerpt)}`,
+    );
+    const awaitTelemetry = telemetry.find(
+      (t) => (t.payload as { to?: string }).to === 'awaitBossReply',
+    );
+    expect(awaitTelemetry).toBeDefined();
+    expect(
+      (awaitTelemetry?.payload as {
+        pendingBossQuestion?: { question?: string };
+      }).pendingBossQuestion?.question,
+    ).toBe(question);
   });
 
   it('emitStatus on entry to failed includes lastError in data', async () => {

@@ -157,7 +157,7 @@ DR.
 - [x] Three new failure-mode error messages in the runtime per
   DR-005 §8: missing `question` field, unregistered resumable
   state, empty `BOSS_REPLY` answer.
-- [ ] Tests — added or extended:
+- [x] Tests — added or extended:
   - [x] `code.gears-fsm.test.ts`: every CODE-N opted into
     `needsBossReply` in gears matches a state whose `result`
     map carries the guard + the parseable marker.
@@ -165,11 +165,11 @@ DR.
     new `needsBossReply` arm and every new `BOSS_REPLY` arm
     in `awaitBossReply`; structural assertion catches
     unregistered resumable states.
-  - [ ] `code.prompt-contract.test.ts`: row per resumable state
+  - [x] `code.prompt-contract.test.ts`: row per resumable state
     asserting the continuation preamble + Q/A blocks render
     in the documented order when both context fields are
     populated, and do NOT render when either is absent.
-  - [ ] `code.playbook.test.ts`: classifier branch routes plain
+  - [x] `code.playbook.test.ts`: classifier branch routes plain
     text to `BOSS_REPLY` only in `awaitBossReply`;
     `handleBossInput` returns at `awaitBossReply`; status
     emission carries the structured fields; abandon-via-slash
@@ -180,7 +180,7 @@ DR.
     helpers already landed in task 7 because those errors arise
     in the runtime adjudicator / captain bridge rather than the
     pure FSM driver.
-- [ ] [`specs/map.md`](../map.md) — IR-006 row reflects the
+- [x] [`specs/map.md`](../map.md) — IR-006 row reflects the
   final summary; DR-005 row already present from the prior
   commit. *(Re-verify at close-out.)*
 
