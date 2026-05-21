@@ -55,7 +55,7 @@ This closes a source-of-truth divergence found while reviewing IR-006: CODE-1/3/
   `code.prompt-contract.test.ts` updated for the new arrangement;
   `code.fsm.coverage.test.ts` fixtures verified unchanged because
   the FSM arms and guards did not change.
-- [ ] [`specs/map.md`](../map.md) — IR-007 row reflects the final
+- [x] [`specs/map.md`](../map.md) — IR-007 row reflects the final
   summary. *(Re-verify at close-out.)*
 
 ## Tasks
@@ -107,6 +107,8 @@ Order keeps `main` building and test-green throughout: spec amendments land firs
    Update the `specs/map.md` IR-007 row to reflect any delta.
    Record any substantive divergence from DR-005 as a one-line
    addendum.
+
+Close-out addendum: Task 2 amended DR-005 §4/§5, so the final implementation carries no remaining substantive divergence from DR-005.
 
 ## Acceptance criteria
 

@@ -40,7 +40,7 @@ meta.md     The spec of specs
 | IR-004 | [004-link-code-fsm-to-playbook-runtime.md](iterations/004-link-code-fsm-to-playbook-runtime.md) | Compile CODE FSM into `code.playbook.ts` per `slc/link.md` and DR-004; ship the in-repo tmux-play adapter `code.tmux-play.ts` |
 | IR-005 | [005-code-playbook-conformance-tests.md](iterations/005-code-playbook-conformance-tests.md) | Conformance tests pinning `code.fsm.ts` to `code.gears.md` (every CODE-N, every edge, every prompt) — replaces the dropped manual acceptance runbook |
 | IR-006 | [006-boss-reply-suspension-path.md](iterations/006-boss-reply-suspension-path.md) | Implemented DR-005 end to end: `awaitBossReply` / `BOSS_REPLY` / `needsBossReply` suspension-resume path across specs, CODE gears/FSM/runtime, status/telemetry, and conformance/prompt/runtime tests |
-| IR-007 | [007-resumable-state-annotation.md](iterations/007-resumable-state-annotation.md) | Make the `needsBossReply` opt-in a source-level annotation the compiler expands — `code.md` carries domain prompts only, `code.gears.md` becomes a faithful `text2gears` output, and the Boss-question instruction is framework-injected |
+| IR-007 | [007-resumable-state-annotation.md](iterations/007-resumable-state-annotation.md) | Implemented source-level `Resumable: Boss reply` annotations for `needsBossReply`; CODE GEARS/FSM prompts stay domain-only, runtime injects the Boss-question instruction, and tests pin source ↔ GEARS metadata plus composed prompts |
 
 ## Packages
 
