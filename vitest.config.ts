@@ -16,10 +16,11 @@ export default defineConfig({
     ],
   },
   test: {
-    // Confine the suite to this package's tests at the repo root.
-    // Subpackages (e.g., views/sketch) carry their own vitest config
-    // and dependencies (jsdom, etc.); running them from here would
-    // pull deps that aren't in this package's lockfile.
-    include: ['code.*.test.ts'],
+    // Confine the suite to the CODE playbook's tests under the slc
+    // artifact directory. Subpackages (e.g., views/sketch) carry
+    // their own vitest config and dependencies (jsdom, etc.);
+    // running them from here would pull deps that aren't in this
+    // package's lockfile.
+    include: ['reference/sdlc/code.playbook/code.*.test.ts'],
   },
 });

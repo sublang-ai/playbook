@@ -35,7 +35,7 @@ Player binding is *not* a runtime option; future per-run remapping would be a se
 
 ### 2. Player binding for CODE
 
-CODE declares `Coder`, `Reviewer`, and the alias `Committer = Coder | Reviewer` ([code.gears.md](../../code.gears.md)).
+CODE declares `Coder`, `Reviewer`, and the alias `Committer = Coder | Reviewer` ([code.gears.md](../../reference/sdlc/code.playbook/code.gears.md)).
 Non-composite states bind trivially (Coder → `coder`, Reviewer → `reviewer`).
 Composite states resolve `Committer` per source item via the populated `<playerName>Player` field on `CaptainInput`:
 

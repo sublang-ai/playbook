@@ -7,9 +7,9 @@
 
 Add automated tests that catch drift between the GEARS source for
 the CODE playbook
-([`code.gears.md`](../../code.gears.md))
+([`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md))
 and the emitted FSM
-([`code.fsm.ts`](../../code.fsm.ts)),
+([`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts)),
 and that exercise every declared FSM edge at least once.
 IR-004's acceptance gate was a manual e2e runbook
 ([dropped in `9c36355`](../../));
@@ -51,7 +51,7 @@ These are scoped enough to live in the IR rather than a separate DR.
   `context.afterReview` / `context.changeOrigin`
   (e.g., `noFindings` routes to `continueIr` / `summarizeSpecs` /
   `done` per `noFindingsAfter` in
-  [`code.fsm.ts:138`](../../code.fsm.ts#L138)).
+  [`code.fsm.ts:138`](../../reference/sdlc/code.playbook/code.fsm.ts#L138)).
   `guard` is the raw transition predicate function; the helper
   stays a pure structural introspector and does not synthesize
   fixture data.

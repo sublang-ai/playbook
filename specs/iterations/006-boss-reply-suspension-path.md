@@ -113,14 +113,14 @@ DR.
   (integration-test scope), verifying PLAYBOOK-12 and
   PLAYBOOK-13 respectively via the existing conformance /
   coverage test family.
-- [x] [`code.gears.md`](../../code.gears.md) — per-state
+- [x] [`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md) — per-state
   audit applied: `planAndImplement` / `continueIr` /
   `summarizeSpecs` declare `needsBossReply` (with the parseable
   marker); `commitCoderInitial` / `commitJoint` keep
   `needsBossInput`. CODE-N prompts updated where the gears item
   needs to tell the player to surface a specific question when
   the new guard is the right outcome.
-- [x] [`code.fsm.ts`](../../code.fsm.ts) — new
+- [x] [`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) — new
   `awaitBossReply` state with one `BOSS_REPLY` arm per
   resumable state via `resumableStates(ids)` helper; new
   `BOSS_REPLY` event in the events union; new
@@ -133,11 +133,11 @@ DR.
   `clearBossReplyContext`; BOSS_INTERRUPT handler on
   `awaitBossReply` adds `clearBossReplyContext` action.
   Recompile `code.fsm.js` / `code.fsm.d.ts` siblings.
-- [x] [`code.fsm.introspect.ts`](../../code.fsm.introspect.ts) —
+- [x] [`code.fsm.introspect.ts`](../../reference/sdlc/code.playbook/code.fsm.introspect.ts) —
   surface `awaitBossReply` and its `BOSS_REPLY` arms via the
   existing `enumerateCaptainStates` / root-event tables so the
   coverage test can pin them.
-- [x] [`code.playbook.ts`](../../code.playbook.ts) — five
+- [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — five
   changes:
   - Drive-loop quiescent set extended to include
     `'awaitBossReply'` (DR-005 §10.1).

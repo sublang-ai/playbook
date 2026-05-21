@@ -25,34 +25,34 @@
     "node": ">=20.6.0"
   },
   "files": [
-    "code.fsm.ts",
-    "code.fsm.js",
-    "code.fsm.d.ts",
-    "code.fsm.introspect.ts",
-    "code.fsm.introspect.js",
-    "code.fsm.introspect.d.ts",
-    "code.playbook.ts",
-    "code.playbook.js",
-    "code.playbook.d.ts",
-    "code.tmux-play.ts",
-    "code.tmux-play.js",
-    "code.tmux-play.d.ts",
-    "code.gears.md",
-    "tmux-play.config.yaml",
-    "tmux-play.production.config.yaml",
-    "bin"
+    "reference/sdlc/code.playbook/code.fsm.ts",
+    "reference/sdlc/code.playbook/code.fsm.js",
+    "reference/sdlc/code.playbook/code.fsm.d.ts",
+    "reference/sdlc/code.playbook/code.fsm.introspect.ts",
+    "reference/sdlc/code.playbook/code.fsm.introspect.js",
+    "reference/sdlc/code.playbook/code.fsm.introspect.d.ts",
+    "reference/sdlc/code.playbook/code.playbook.ts",
+    "reference/sdlc/code.playbook/code.playbook.js",
+    "reference/sdlc/code.playbook/code.playbook.d.ts",
+    "reference/sdlc/code.playbook/code.tmux-play.ts",
+    "reference/sdlc/code.playbook/code.tmux-play.js",
+    "reference/sdlc/code.playbook/code.tmux-play.d.ts",
+    "reference/sdlc/code.playbook/code.gears.md",
+    "reference/sdlc/code.playbook/tmux-play.config.yaml",
+    "reference/sdlc/code.playbook/tmux-play.production.config.yaml",
+    "reference/sdlc/code.playbook/bin"
   ],
   "bin": {
-    "playbook-code": "bin/playbook-code.js"
+    "playbook-code": "reference/sdlc/code.playbook/bin/playbook-code.js"
   },
   "exports": {
     "./code/playbook": {
-      "types": "./code.playbook.d.ts",
-      "default": "./code.playbook.js"
+      "types": "./reference/sdlc/code.playbook/code.playbook.d.ts",
+      "default": "./reference/sdlc/code.playbook/code.playbook.js"
     },
     "./code/tmux-play": {
-      "types": "./code.tmux-play.d.ts",
-      "default": "./code.tmux-play.js"
+      "types": "./reference/sdlc/code.playbook/code.tmux-play.d.ts",
+      "default": "./reference/sdlc/code.playbook/code.tmux-play.js"
     }
   },
   "scripts": {

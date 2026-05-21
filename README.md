@@ -34,9 +34,12 @@ committer loop end to end.
 
 The reference is the canonical worked example —
 [CODE source](reference/sdlc/code.md) →
-[gears](code.gears.md) →
-[FSM](code.fsm.ts) → runtime — with the
-runtime ported to cligent's `tmux-play` host out of the box.
+[gears](reference/sdlc/code.playbook/code.gears.md) →
+[FSM](reference/sdlc/code.playbook/code.fsm.ts) → runtime — with
+the runtime ported to cligent's `tmux-play` host out of the box.
+The compiled artifacts live under
+[`reference/sdlc/code.playbook/`](reference/sdlc/code.playbook),
+the slc pipeline's `<basename>.<pipeline>/` output directory.
 
 ### Install (users)
 
@@ -85,11 +88,11 @@ into place; the override is gitignored so it never leaks into a
 production install.
 
 Drive a Boss turn against the source tree (uses the developer
-[`tmux-play.config.yaml`](tmux-play.config.yaml)
+[`tmux-play.config.yaml`](reference/sdlc/code.playbook/tmux-play.config.yaml)
 that imports the compiled adapter via relative path):
 
 ```sh
-pnpm exec tmux-play --config tmux-play.config.yaml
+pnpm exec tmux-play --config reference/sdlc/code.playbook/tmux-play.config.yaml
 ```
 
 `pnpm exec` resolves `tmux-play` from the package's local
@@ -142,7 +145,7 @@ await runtime.dispose();
 ```
 
 See
-[`code.playbook.test.ts`](code.playbook.test.ts)
+[`code.playbook.test.ts`](reference/sdlc/code.playbook/code.playbook.test.ts)
 for the full range of port shapes (classifier, judge, abort, interrupt,
 status/telemetry) the runtime is contract-tested against.
 

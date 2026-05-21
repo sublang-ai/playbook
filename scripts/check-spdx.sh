@@ -54,8 +54,8 @@ is_excluded() {
   # TypeScript declaration files: emitted by `tsc` without preserving
   # leading line comments, so the SPDX header on the .ts source does
   # not survive into the .d.ts sibling. The .d.ts files ship alongside
-  # the .js (per code.playbook/package.json's `files` field) and are
-  # already covered by the source .ts.
+  # the .js (per package.json's `files` field) and are already
+  # covered by the source .ts.
   case "$f" in
     *.d.ts) return 0 ;;
   esac

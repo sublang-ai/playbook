@@ -55,7 +55,9 @@ jobs:
         # so it runs on one matrix entry only.
         if: matrix.node-version == '22'
         run: |
-          git diff --exit-code -- 'code.*.js' 'code.*.d.ts'
+          git diff --exit-code -- \
+            'reference/sdlc/code.playbook/code.*.js' \
+            'reference/sdlc/code.playbook/code.*.d.ts'
 
   sketch:
     name: views/sketch (test, build)

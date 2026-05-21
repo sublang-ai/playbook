@@ -25,7 +25,7 @@ Neither surface fits the three-actor message-passing shape that arises when a pl
 > (a fresh player turn — not necessarily the same cligent
 > conversation or tool session; see §7).
 
-The reference CODE FSM ([`code.fsm.ts`](../../code.fsm.ts)) partially recognizes this: five captain-invoking states (`planAndImplement`, `continueIr`, `summarizeSpecs`, `commitCoderInitial`, `commitJoint`) declare a `needsBossInput` guard routing to `#ready`.
+The reference CODE FSM ([`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts)) partially recognizes this: five captain-invoking states (`planAndImplement`, `continueIr`, `summarizeSpecs`, `commitCoderInitial`, `commitJoint`) declare a `needsBossInput` guard routing to `#ready`.
 That is lossy on three counts:
 
 1. The question is not preserved — Boss sees the FSM at the idle hub with no record of what was asked.
@@ -278,7 +278,7 @@ Future gears items shall name the guard by intent:
 - **The classifier becomes state-aware.** Boss input is disambiguated by current FSM state, not just slash prefix or LLM heuristic; the judge sees only genuinely ambiguous input.
 - **Test surface grows.** Conformance must cover every `needsBossReply` arm and its `BOSS_REPLY` resume arm, plus question-lands, resume-Q+A, context-survives, slash-preempts, and clear-on-success.
 - **cligent and the SDKs are untouched.** Transcript embedding makes the DR implementable with no cligent coordination.
-- **CODE author discipline shifts slightly.** Adding `needsBossReply` to a state means registering it resumable and giving downstream transitions `clearBossReplyContext`; [`code.fsm.coverage.test.ts`](../../code.fsm.coverage.test.ts) fails closed on omissions.
+- **CODE author discipline shifts slightly.** Adding `needsBossReply` to a state means registering it resumable and giving downstream transitions `clearBossReplyContext`; [`code.fsm.coverage.test.ts`](../../reference/sdlc/code.playbook/code.fsm.coverage.test.ts) fails closed on omissions.
 
 ## References
 
