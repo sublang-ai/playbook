@@ -152,28 +152,9 @@ Output that declares the guard but omits the field is malformed; the runtime rou
 ### 5. Resume mechanics: prompt-composer discipline
 
 A resumable state's `invoke.input`, when `context.pendingBossQuestion` and `context.bossReply` are both present, shall expose those fields to the linked runtime.
-The runtime prompt composer shall prepend a continuation preamble and the Q+A labelled blocks to the composed player prompt ([DR-004 §6](./004-link-code-fsm-to-playbook-runtime.md) grammar):
-
-```
-You previously paused this task to ask Boss a question; Boss
-has now replied. Continue the same task using the reply below.
-
-Boss question:
-<context.pendingBossQuestion.question>
-
-Boss reply:
-<context.bossReply>
-
-<the state's normal prompt body>
-```
-
-The line break inside the preamble above is for document readability only; runtime output may render it as one line.
-
-The preamble names Captain's continuation role explicitly, so the player need not infer it from the labelled blocks.
-It keeps FSM mechanics out of the prose: the player is told *what to do* and *why* without ever naming `awaitBossReply`, `BOSS_REPLY`, or the FSM.
+The runtime prompt composer shall render the continuation preamble and Q&A labelled blocks per [link.md "Player prompt composition"](../../slc/link.md#player-prompt-composition).
+That section owns the exact runtime text and ordering.
 The GEARS-derived `invoke.input.prompt` remains the domain prompt body; neither the continuation preamble nor the standard Boss-question instruction is stored in that body.
-
-The composer shall place the question + reply blocks **before** the state's other structured blocks (`intent`, `reviews`, `challenges`, `taskDescription`), so the player reads the conversation context first.
 
 The compiler shall emit two assigner helpers, used everywhere pending-question / reply context is touched:
 

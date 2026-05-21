@@ -146,7 +146,8 @@ This metadata is not blockquoted prompt content.
 The FSM compiler shall preserve the GEARS blockquote as the state's domain `prompt` body and shall not inject the standard Boss-question instruction into `invoke.input.prompt`.
 
 For an opted-in item, the compiler shall add `needsBossReply` to the state's `invoke.input.result` map.
-The description shall include the parseable required-field marker `` Output shall include `question: <verbatim question text>`. `` so the runtime's adjudicator requires `question` in the JSON reply.
+The description shall be carried verbatim from the GEARS item result metadata.
+It shall include the load-bearing substring `` Output shall include `question: `` so the runtime's adjudicator requires `question` in the JSON reply.
 The linked runtime supplies the player-visible instruction per [link.md "Player prompt composition"](link.md#player-prompt-composition).
 
 The machine shall declare:
@@ -170,27 +171,8 @@ It shall declare the standard `bossInterrupts(ids)` handler with `actions: clear
 The machine's root-level Boss entry events shall be re-declared on `awaitBossReply` with `actions: clearBossReplyContext`, so a slash command from Boss while waiting starts a fresh turn and clears stale context.
 
 A resumable state's `invoke.input` function shall carry `pendingBossQuestion` and `bossReply` fields when present so the linked runtime can compose the continuation prompt.
-When both fields are present, the linked runtime shall prepend to the composed player prompt a continuation preamble plus `Boss question:` and `Boss reply:` labelled blocks:
-
-```text
-You previously paused this task to ask Boss a question; Boss
-has now replied. Continue the same task using the reply below.
-
-Boss question:
-<context.pendingBossQuestion.question>
-
-Boss reply:
-<context.bossReply>
-
-<the state's normal prompt body>
-```
-
-The line break inside the preamble in the fenced example is for
-document readability only; runtime output may render the preamble
-as one continuous line.
-
-The preamble keeps FSM mechanics out of the prose — the player is told *what to do* and *why* without naming the FSM, `awaitBossReply`, or `BOSS_REPLY`.
-The FSM artifact shall not bake this preamble into the GEARS-derived `prompt` body.
+When both fields are present, the linked runtime shall compose the continuation preamble and labelled Q&A blocks per [link.md "Player prompt composition"](link.md#player-prompt-composition).
+The FSM artifact shall not bake the continuation preamble into the GEARS-derived `prompt` body.
 
 The following malformed states shall route to `failed` per [Errors and termination](#errors-and-termination):
 

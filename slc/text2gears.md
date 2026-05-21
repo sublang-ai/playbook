@@ -55,21 +55,6 @@ When Reviewer is about to review any change, Captain shall prompt Reviewer:
 
 Target should be written in the same language as Source.
 
-## Composition
-
-Source snippets may overlap or duplicate.
-When composing them into a spec item, text2gears shall deduplicate identical prompt lines.
-
-Each spec item addresses one state behavior and carries its full final prompt (the static part).
-Cross-item duplication is acceptable: spec items are compiled artifacts; Source is what users maintain.
-
-Test: a human shall be able to simulate a run by copying any single item's prompt verbatim — no cross-item composition needed.
-
-### Placeholders vs literals
-
-Use `<placeholder>` for dynamic values in blockquoted prompts.
-Everything else inside a blockquote is static text, not an example; examples belong in surrounding prose.
-
 ### Resumable Boss replies
 
 A source behavior may opt in to Boss-reply suspension by placing this standalone annotation after the behavior's prompt block:
@@ -92,6 +77,21 @@ Result guard: `needsBossReply` — The player's prose surfaces a clarifying ques
 
 This metadata is consumed by [gears2fsm](gears2fsm.md#boss-reply-suspension).
 The player-visible instruction that tells the player how to ask is supplied later by [link](link.md#player-prompt-composition), outside the domain prompt body.
+
+## Composition
+
+Source snippets may overlap or duplicate.
+When composing them into a spec item, text2gears shall deduplicate identical prompt lines.
+
+Each spec item addresses one state behavior and carries its full final prompt (the static part).
+Cross-item duplication is acceptable: spec items are compiled artifacts; Source is what users maintain.
+
+Test: a human shall be able to simulate a run by copying any single item's prompt verbatim — no cross-item composition needed.
+
+### Placeholders vs literals
+
+Use `<placeholder>` for dynamic values in blockquoted prompts.
+Everything else inside a blockquote is static text, not an example; examples belong in surrounding prose.
 
 ### Split by content discriminator
 
