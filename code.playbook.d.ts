@@ -32,10 +32,19 @@ interface StateMetadata {
     sourceItem: string;
     label: string;
 }
-declare function formatStateEntry(stateId: string): string;
+interface PendingBossQuestionForStatus {
+    resumeStateId: string;
+    sourceItem: string;
+    player: string;
+    question: string;
+}
+declare function pendingBossQuestionFromContext(context: Record<string, unknown>): PendingBossQuestionForStatus | undefined;
+declare function formatAwaitBossReplyEntry(context: Record<string, unknown>): string;
+declare function formatStateEntry(stateId: string, context?: Record<string, unknown>): string;
 declare function formatTransition(event: unknown): string | undefined;
 declare function formatBossEcho(text: string, eventType?: string): string;
 declare function formatRiders(context: Record<string, unknown>): string;
+declare function stateTelemetryPayload(from: unknown, to: string, event: unknown, context: Record<string, unknown>): Record<string, unknown>;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     resolvePlayerId: typeof resolvePlayerId;
@@ -44,10 +53,13 @@ export declare const _internal: {
     captainBridge: typeof captainBridge;
     STATE_LABELS: Readonly<Record<string, string>>;
     stateMetadata: ReadonlyMap<string, StateMetadata>;
+    pendingBossQuestionFromContext: typeof pendingBossQuestionFromContext;
+    formatAwaitBossReplyEntry: typeof formatAwaitBossReplyEntry;
     formatStateEntry: typeof formatStateEntry;
     formatTransition: typeof formatTransition;
     formatBossEcho: typeof formatBossEcho;
     formatRiders: typeof formatRiders;
+    stateTelemetryPayload: typeof stateTelemetryPayload;
 };
 export default function createPlaybookRuntime(options: CodePlaybookOptions): PlaybookRuntime;
 export {};

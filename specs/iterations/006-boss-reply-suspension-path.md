@@ -137,7 +137,7 @@ DR.
   surface `awaitBossReply` and its `BOSS_REPLY` arms via the
   existing `enumerateCaptainStates` / root-event tables so the
   coverage test can pin them.
-- [ ] [`code.playbook.ts`](../../code.playbook.ts) — five
+- [x] [`code.playbook.ts`](../../code.playbook.ts) — five
   changes:
   - Drive-loop quiescent set extended to include
     `'awaitBossReply'` (DR-005 §10.1).

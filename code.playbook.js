@@ -399,18 +399,50 @@ const QUIESCENT_STATES = new Set([
     'done',
     'failed',
 ]);
-// awaitBossReply is quiescent too, but Task 6 gives it a custom
-// single-line status frame rather than the plain `◆ <state>` entry.
+// awaitBossReply is quiescent too, but uses a custom single-line
+// status frame rather than the plain `◆ <state>` entry.
 const BASIC_IDLE_GLYPH_STATES = new Set([...QUIESCENT_STATES].filter((stateId) => stateId !== 'awaitBossReply'));
 // Captain-pane surface (PBRT-3): every captain-invoking state plus
-// the three terminal/idle states. Wider than the prior
+// the quiescent states. Wider than the prior
 // "Boss-relevant" set per slc/link.md's default "emit on every
 // transition; let the host filter."
 const CAPTAIN_PANE_STATES = new Set([
     ...stateMetadata.keys(),
-    ...BASIC_IDLE_GLYPH_STATES,
+    ...QUIESCENT_STATES,
 ]);
-function formatStateEntry(stateId) {
+function pendingBossQuestionFromContext(context) {
+    const pending = context.pendingBossQuestion;
+    if (pending === undefined || typeof pending !== 'object') {
+        return undefined;
+    }
+    const candidate = pending;
+    if (typeof candidate.resumeStateId !== 'string' ||
+        typeof candidate.sourceItem !== 'string' ||
+        typeof candidate.player !== 'string' ||
+        typeof candidate.question !== 'string') {
+        return undefined;
+    }
+    return {
+        resumeStateId: candidate.resumeStateId,
+        sourceItem: candidate.sourceItem,
+        player: candidate.player,
+        question: candidate.question,
+    };
+}
+function questionExcerpt(question) {
+    return question.replace(/[\r\n]+/g, ' ').slice(0, 80);
+}
+function formatAwaitBossReplyEntry(context) {
+    const pending = pendingBossQuestionFromContext(context);
+    const resumeStateId = pending?.resumeStateId ?? 'unknown';
+    const player = pending?.player ?? 'unknown';
+    const sourceItem = pending?.sourceItem ?? 'unknown';
+    const question = questionExcerpt(pending?.question ?? '');
+    return `◆ awaiting Boss reply · ${resumeStateId} · ${player} · ${sourceItem} · q=${JSON.stringify(question)}`;
+}
+function formatStateEntry(stateId, context = {}) {
+    if (stateId === 'awaitBossReply')
+        return formatAwaitBossReplyEntry(context);
     if (BASIC_IDLE_GLYPH_STATES.has(stateId))
         return `◆ ${stateId}`;
     const meta = stateMetadata.get(stateId);
@@ -454,6 +486,16 @@ function formatRiders(context) {
     }
     return parts.length > 0 ? `  ${parts.join(' ')}` : '';
 }
+function stateTelemetryPayload(from, to, event, context) {
+    const payload = { from, to, event };
+    if (to === 'awaitBossReply') {
+        const pendingBossQuestion = pendingBossQuestionFromContext(context);
+        if (pendingBossQuestion !== undefined) {
+            payload.pendingBossQuestion = pendingBossQuestion;
+        }
+    }
+    return payload;
+}
 // Internal export surface for tests. Not part of the stable public API;
 // the leading underscore signals "subject to change." Each member is
 // referenced here so `noUnusedLocals` stays clean while later tasks
@@ -466,10 +508,13 @@ export const _internal = {
     captainBridge,
     STATE_LABELS,
     stateMetadata,
+    pendingBossQuestionFromContext,
+    formatAwaitBossReplyEntry,
     formatStateEntry,
     formatTransition,
     formatBossEcho,
     formatRiders,
+    stateTelemetryPayload,
 };
 export default function createPlaybookRuntime(options) {
     let actor;
@@ -527,9 +572,10 @@ export default function createPlaybookRuntime(options) {
                 const from = priorState;
                 priorState = to;
                 // Telemetry on every transition (PBRT-14).
+                const context = snap.context ?? {};
                 enqueueEmit(() => ports.emitTelemetry({
                     topic: 'playbook.fsm.state',
-                    payload: { from, to, event: inspectionEvent.event },
+                    payload: stateTelemetryPayload(from, to, inspectionEvent.event, context),
                 }));
                 // Captain pane (PBRT-3 / PBRT-14): show the transition
                 // guard first (when this is an actor-done transition with
@@ -542,9 +588,9 @@ export default function createPlaybookRuntime(options) {
                 if (transitionLine !== undefined) {
                     enqueueEmit(() => ports.emitStatus(transitionLine));
                 }
-                const entryLine = formatStateEntry(to);
+                const entryLine = formatStateEntry(to, context);
                 const riderSuffix = stateMetadata.has(to)
-                    ? formatRiders(snap.context ?? {})
+                    ? formatRiders(context)
                     : '';
                 const message = entryLine + riderSuffix;
                 if (to === 'failed') {
