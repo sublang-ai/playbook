@@ -9,7 +9,9 @@
 //   (b) FSM `sourceItem` not declared in gears,
 //   (c) player binding drift (gears section vs FSM `input.player`),
 //   (d) prompt-body drift (gears blockquote vs FSM `input.prompt`),
-//   (e) hidden prompt/result metadata not traceable to `code.md`.
+//   (e) `needsBossReply` result-map drift,
+//   (f) hidden prompt lines not traceable to `code.md`,
+//   (g) hidden `needsBossReply` metadata not traceable to `code.md`.
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -213,7 +215,7 @@ describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
   });
 });
 
-describe('GEARS ↔ FSM conformance — assertions (a)–(d)', () => {
+describe('GEARS ↔ FSM conformance — assertions (a)–(g)', () => {
   it('(a) every CODE-N in gears has an FSM state with matching sourceItem', () => {
     for (const id of gears.keys()) {
       expect(fsmBySourceItem.has(id), `gears CODE-${id.slice(5)} has no FSM state`).toBe(true);
