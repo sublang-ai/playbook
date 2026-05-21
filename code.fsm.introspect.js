@@ -15,6 +15,7 @@ export function enumerateCaptainStates(machine) {
             index,
             target: stripIdPrefix(String(arm.target ?? '')),
             guard: arm.guard ?? alwaysTrue,
+            actions: arm.actions,
         }));
         out.push({
             stateId,
@@ -39,12 +40,20 @@ export function enumerateRootEvents(machine) {
 export function enumerateAwaitBossReply(machine) {
     const stateId = 'awaitBossReply';
     const awaitOn = getRawConfig(machine).states?.[stateId]?.on ?? {};
+    const transitions = Object.entries(awaitOn).flatMap(([eventType, value]) => toArmArray(value).map((arm, index) => ({
+        eventType,
+        index,
+        target: stripIdPrefix(String(arm.target ?? '')),
+        guard: arm.guard ?? alwaysTrue,
+        actions: arm.actions,
+    })));
     const bossReplyTransitions = toArmArray(awaitOn.BOSS_REPLY).map((arm, index) => ({
         index,
         target: stripIdPrefix(String(arm.target ?? '')),
         guard: arm.guard ?? alwaysTrue,
+        actions: arm.actions,
     }));
-    return { stateId, bossReplyTransitions };
+    return { stateId, bossReplyTransitions, transitions };
 }
 function getRawConfig(machine) {
     return machine.config;

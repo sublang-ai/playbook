@@ -25,6 +25,7 @@ interface GearsItem {
   id: string;
   player: Player;
   promptBody: string;
+  resultGuards: ReadonlyMap<string, string>;
 }
 
 function parseGears(text: string): Map<string, GearsItem> {
@@ -32,6 +33,7 @@ function parseGears(text: string): Map<string, GearsItem> {
   let currentPlayer: Player | undefined;
   let currentId: string | undefined;
   let buf: string[] | undefined;
+  let resultGuards = new Map<string, string>();
   let exitedBlockquote = false;
 
   function commit(): void {
@@ -40,10 +42,12 @@ function parseGears(text: string): Map<string, GearsItem> {
         id: currentId,
         player: currentPlayer,
         promptBody: buf.join('\n'),
+        resultGuards: resultGuards,
       });
     }
     currentId = undefined;
     buf = undefined;
+    resultGuards = new Map<string, string>();
     exitedBlockquote = false;
   }
 
@@ -59,6 +63,13 @@ function parseGears(text: string): Map<string, GearsItem> {
       commit();
       currentId = idMatch[1];
       continue;
+    }
+    if (currentId) {
+      const resultMatch = /^Result guard: `([^`]+)` — (.+)$/.exec(line);
+      if (resultMatch) {
+        resultGuards.set(resultMatch[1], resultMatch[2]);
+        continue;
+      }
     }
     if (!currentId || exitedBlockquote) continue;
     if (line.startsWith('> ')) {
@@ -160,5 +171,38 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(d)', () => {
         `${s.stateId} (${s.sourceItem}): prompt drift`,
       ).toBe(g.promptBody);
     }
+  });
+
+  it('(e) needsBossReply declarations agree and carry the parseable question marker', () => {
+    const marker =
+      "Output shall include `question: <verbatim question text from the player's prose>`.";
+    const gearsNeedsBossReply: string[] = [];
+    const fsmNeedsBossReply: string[] = [];
+
+    for (const item of gears.values()) {
+      const description = item.resultGuards.get('needsBossReply');
+      if (description === undefined) continue;
+      gearsNeedsBossReply.push(item.id);
+      expect(
+        description,
+        `${item.id}: needsBossReply must declare the parseable question marker`,
+      ).toContain(marker);
+
+      const fsm = fsmBySourceItem.get(item.id);
+      expect(fsm, `${item.id}: needsBossReply has no FSM state`).toBeDefined();
+      const fsmDescription = fsm?.getInput({}).result.needsBossReply;
+      expect(
+        fsmDescription,
+        `${item.id}: FSM result map missing needsBossReply`,
+      ).toBe(description);
+    }
+
+    for (const s of states) {
+      if ('needsBossReply' in s.getInput({}).result) {
+        fsmNeedsBossReply.push(s.sourceItem);
+      }
+    }
+
+    expect(gearsNeedsBossReply.sort()).toEqual(fsmNeedsBossReply.sort());
   });
 });

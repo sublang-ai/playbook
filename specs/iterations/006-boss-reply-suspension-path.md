@@ -158,18 +158,18 @@ DR.
   DR-005 §8: missing `question` field, unregistered resumable
   state, empty `BOSS_REPLY` answer.
 - [ ] Tests — added or extended:
-  - `code.gears-fsm.test.ts`: every CODE-N opted into
+  - [x] `code.gears-fsm.test.ts`: every CODE-N opted into
     `needsBossReply` in gears matches a state whose `result`
     map carries the guard + the parseable marker.
-  - `code.fsm.coverage.test.ts`: fixture coverage for every
+  - [x] `code.fsm.coverage.test.ts`: fixture coverage for every
     new `needsBossReply` arm and every new `BOSS_REPLY` arm
     in `awaitBossReply`; structural assertion catches
     unregistered resumable states.
-  - `code.prompt-contract.test.ts`: row per resumable state
+  - [ ] `code.prompt-contract.test.ts`: row per resumable state
     asserting the continuation preamble + Q/A blocks render
     in the documented order when both context fields are
     populated, and do NOT render when either is absent.
-  - `code.playbook.test.ts`: classifier branch routes plain
+  - [ ] `code.playbook.test.ts`: classifier branch routes plain
     text to `BOSS_REPLY` only in `awaitBossReply`;
     `handleBossInput` returns at `awaitBossReply`; status
     emission carries the structured fields; abandon-via-slash

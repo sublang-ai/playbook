@@ -9,15 +9,25 @@ export interface CaptainTransition {
     readonly index: number;
     readonly target: string;
     readonly guard: TransitionGuard;
+    readonly actions: unknown;
 }
 export interface AwaitBossReplyInfo {
     readonly stateId: string;
     readonly bossReplyTransitions: ReadonlyArray<BossReplyTransition>;
+    readonly transitions: ReadonlyArray<AwaitBossReplyTransition>;
 }
 export interface BossReplyTransition {
     readonly index: number;
     readonly target: string;
     readonly guard: TransitionGuard;
+    readonly actions: unknown;
+}
+export interface AwaitBossReplyTransition {
+    readonly eventType: string;
+    readonly index: number;
+    readonly target: string;
+    readonly guard: TransitionGuard;
+    readonly actions: unknown;
 }
 export type TransitionGuard = (args: {
     context: CodingContext;

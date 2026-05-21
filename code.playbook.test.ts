@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { describe, expect, it } from 'vitest';
-import { createActor } from 'xstate';
+import { assign, createActor, setup } from 'xstate';
 import { codingMachine, type CaptainInput } from './code.fsm.js';
 import { enumerateCaptainStates } from './code.fsm.introspect.js';
 import createPlaybookRuntime, {
@@ -621,6 +621,50 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     });
   }
 
+  function buildBridgeValidationActor(
+    input: CaptainInput,
+    ports: PlaybookPorts,
+  ) {
+    const machine = setup({
+      types: {} as {
+        context: { lastError?: unknown };
+      },
+      actors: { captain: captainBridge(ports) },
+    }).createMachine({
+      context: {},
+      initial: 'ask',
+      states: {
+        ask: {
+          invoke: {
+            src: 'captain',
+            input: () => input,
+            onDone: { target: 'done' },
+            onError: {
+              target: 'failed',
+              actions: assign({
+                lastError: ({ event }) => event.error,
+              }),
+            },
+          },
+        },
+        done: {},
+        failed: {},
+      },
+    });
+    return createActor(machine);
+  }
+
+  const needsBossReplyDescription =
+    "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.";
+
+  function expectLastErrorMessage(
+    actor: ReturnType<typeof createActor>,
+    message: string,
+  ): void {
+    const lastError = actor.getSnapshot().context.lastError;
+    expect((lastError as Error).message).toBe(message);
+  }
+
   it('drives a valid fake path through callPlayer + callJudge and advances the FSM', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
     const judgeCalls: string[] = [];
@@ -741,6 +785,51 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     await settleAt(actor, ['failed', 'ready', 'done']);
 
     expect(actor.getSnapshot().value).toBe('failed');
+  });
+
+  it('lands at #failed with the documented error when needsBossReply omits question', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'question needed' }),
+      callJudge: async () => JSON.stringify({ guard: 'needsBossReply' }),
+    });
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'START_CODING', intent: 'do' });
+
+    await settleAt(actor, ['failed', 'ready', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('failed');
+    expectLastErrorMessage(
+      actor,
+      "needsBossReply outcome missing 'question' field",
+    );
+  });
+
+  it('lands at #failed with the documented error when needsBossReply comes from an unregistered state', async () => {
+    const ports = makeFakePorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'question needed' }),
+      callJudge: async () =>
+        JSON.stringify({
+          guard: 'needsBossReply',
+          question: 'Which scope should I use?',
+        }),
+    });
+    const actor = buildBridgeValidationActor(
+      makeInput({
+        sourceItem: 'CODE-X',
+        result: { needsBossReply: needsBossReplyDescription },
+      }),
+      ports,
+    );
+    actor.start();
+
+    await settleAt(actor, ['failed', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('failed');
+    expectLastErrorMessage(
+      actor,
+      'state CODE-X declared needsBossReply but is not registered as resumable',
+    );
   });
 });
 

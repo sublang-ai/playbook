@@ -68,6 +68,81 @@ function bossReplyFx(
   });
 }
 
+const staleBossReplyContext: Pick<
+  CodingContext,
+  'pendingBossQuestion' | 'bossReply'
+> = {
+  pendingBossQuestion: {
+    resumeStateId: 'planAndImplement',
+    sourceItem: 'CODE-1',
+    player: 'Coder',
+    question: 'Stale question?',
+  },
+  bossReply: 'stale reply',
+};
+
+function actionArray(actions: unknown): unknown[] {
+  if (actions === undefined) return [];
+  return Array.isArray(actions) ? actions : [actions];
+}
+
+function actionClearsBossReplyContext(action: unknown): boolean {
+  const assignment = (action as { assignment?: unknown })?.assignment;
+  if (assignment === undefined || typeof assignment !== 'object') {
+    return false;
+  }
+  const assigners = assignment as Record<string, unknown>;
+  const pendingBossQuestion = assigners.pendingBossQuestion;
+  const bossReply = assigners.bossReply;
+  if (
+    typeof pendingBossQuestion !== 'function' ||
+    typeof bossReply !== 'function'
+  ) {
+    return false;
+  }
+  const args = { context: {}, event: {} };
+  try {
+    return pendingBossQuestion(args) === undefined && bossReply(args) === undefined;
+  } catch {
+    return false;
+  }
+}
+
+function hasClearBossReplyContextAction(actions: unknown): boolean {
+  return actionArray(actions).some(actionClearsBossReplyContext);
+}
+
+function expectBossReplyContextCleared(
+  context: CodingContext,
+  label: string,
+): void {
+  expect(context.pendingBossQuestion, `${label}: pendingBossQuestion`).toBeUndefined();
+  expect(context.bossReply, `${label}: bossReply`).toBeUndefined();
+}
+
+function awaitBossReplyEventFor(transition: {
+  eventType: string;
+  target: string;
+}): CodingEvent {
+  switch (transition.eventType) {
+    case 'START_CODING':
+      return { type: 'START_CODING', intent: 'new task' };
+    case 'CONTINUE_IR':
+      return { type: 'CONTINUE_IR', irNumber: '006' };
+    case 'SUMMARIZE_IR':
+      return { type: 'SUMMARIZE_IR', irNumber: '006' };
+    case 'BOSS_INTERRUPT':
+      return {
+        type: 'BOSS_INTERRUPT',
+        targetId: transition.target as never,
+      };
+    case 'BOSS_REPLY':
+      return { type: 'BOSS_REPLY', answer: '   ' };
+    default:
+      throw new Error(`unhandled awaitBossReply event ${transition.eventType}`);
+  }
+}
+
 // CODE-1 — planAndImplement (3 arms)
 fx('planAndImplement', 0, { captainOutput: { guard: 'singleCommitReady' } });
 fx('planAndImplement', 1, { captainOutput: { guard: 'irDrafted' } });
@@ -265,10 +340,15 @@ function machineWith(behavior: CaptainOutput | 'throw' | 'hang') {
   return codingMachine.provide({ actors: { captain: makeFakeCaptain(behavior) } });
 }
 
+type DrivenSnapshot = {
+  value: string;
+  context: CodingContext;
+};
+
 // Drive from `from` (default `ready`) with the given context
 // override, send `event`, resolve once the actor reaches `target`
 // or moves past `passThrough`.
-async function drive(args: {
+async function driveSnapshot(args: {
   context?: Partial<CodingContext>;
   event: CodingEvent;
   behavior: CaptainOutput | 'throw' | 'hang';
@@ -280,7 +360,7 @@ async function drive(args: {
   // state. If only target is set, resolve when the actor reaches it.
   passThrough?: string;
   target?: string;
-}): Promise<string> {
+}): Promise<DrivenSnapshot> {
   const machine = machineWith(args.behavior);
   const snap = machine.resolveState({
     value: args.from ?? 'ready',
@@ -288,7 +368,7 @@ async function drive(args: {
   });
   const actor = createActor(machine, { snapshot: snap });
 
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<DrivenSnapshot>((resolve, reject) => {
     let visitedPassThrough = !args.passThrough;
     let settled = false;
     const finish = (action: () => void): void => {
@@ -321,7 +401,12 @@ async function drive(args: {
         ? val === args.target
         : visitedPassThrough && val !== args.passThrough;
       if (shouldResolve) {
-        finish(() => resolve(val));
+        finish(() =>
+          resolve({
+            value: val,
+            context: s.context as CodingContext,
+          }),
+        );
       }
     });
     actor.start();
@@ -331,6 +416,12 @@ async function drive(args: {
     // sending would emit a "stopped actor" warning.
     if (!settled) actor.send(args.event);
   });
+}
+
+async function drive(
+  args: Parameters<typeof driveSnapshot>[0],
+): Promise<string> {
+  return (await driveSnapshot(args)).value;
 }
 
 const states = enumerateCaptainStates(codingMachine);
@@ -371,6 +462,74 @@ describe('edge coverage — onDone arms', () => {
           passThrough: state.stateId,
         });
         expect(landed).toBe(transition.target);
+      });
+    }
+  }
+});
+
+describe('edge coverage — needsBossReply provenance', () => {
+  for (const state of states.filter(
+    (s) => 'needsBossReply' in s.getInput({}).result,
+  )) {
+    const transition = state.transitions.find((t) => t.target === 'awaitBossReply');
+    it(`${state.stateId} needsBossReply populates pendingBossQuestion from invocation metadata`, async () => {
+      expect(transition, `${state.stateId}: missing needsBossReply arm`).toBeDefined();
+      const fixture = fixtures.get(`${state.stateId}#${transition!.index}`);
+      expect(
+        fixture?.captainOutput.guard,
+        `${state.stateId}: fixture is not needsBossReply`,
+      ).toBe('needsBossReply');
+
+      const initialContext = {
+        ...(fixture!.context ?? {}),
+        ...staleBossReplyContext,
+      };
+      const snap = await driveSnapshot({
+        context: initialContext,
+        event: { type: 'BOSS_INTERRUPT', targetId: state.stateId as never },
+        behavior: fixture!.captainOutput,
+        target: 'awaitBossReply',
+      });
+      const input = state.getInput(initialContext);
+      expect(snap.context.pendingBossQuestion).toEqual({
+        resumeStateId: state.stateId,
+        sourceItem: input.sourceItem,
+        player: input.player,
+        question: fixture!.captainOutput.question,
+      });
+      expect(snap.context.bossReply).toBeUndefined();
+    });
+  }
+});
+
+describe('edge coverage — PLAYBOOK-13 clearing on resumable exits', () => {
+  for (const state of states.filter(
+    (s) => 'needsBossReply' in s.getInput({}).result,
+  )) {
+    for (const transition of state.transitions) {
+      const fixture = fixtures.get(`${state.stateId}#${transition.index}`);
+      if (fixture?.captainOutput.guard === 'needsBossReply') continue;
+
+      it(`${state.stateId}#${transition.index} declares and performs clearBossReplyContext`, async () => {
+        expect(
+          hasClearBossReplyContextAction(transition.actions),
+          `${state.stateId}#${transition.index}: missing clearBossReplyContext action`,
+        ).toBe(true);
+
+        const snap = await driveSnapshot({
+          context: {
+            ...(fixture?.context ?? {}),
+            ...staleBossReplyContext,
+          },
+          event: { type: 'BOSS_INTERRUPT', targetId: state.stateId as never },
+          behavior: fixture!.captainOutput,
+          passThrough: state.stateId,
+        });
+        expect(snap.value).toBe(transition.target);
+        expectBossReplyContextCleared(
+          snap.context,
+          `${state.stateId}#${transition.index}`,
+        );
       });
     }
   }
@@ -462,14 +621,46 @@ describe('edge coverage — awaitBossReply BOSS_REPLY arms', () => {
         ).toBe(false);
       }
 
-      const landed = await drive({
+      const snap = await driveSnapshot({
         from: awaitBossReply.stateId,
         context: fixture!.context,
         event: fixture!.event,
         behavior: 'hang',
         target: transition.target,
       });
-      expect(landed).toBe(transition.target);
+      expect(snap.value).toBe(transition.target);
+      if (transition.target === 'failed') {
+        expectBossReplyContextCleared(snap.context, `BOSS_REPLY#${transition.index}`);
+        expect((snap.context.lastError as Error).message).toBe(
+          'BOSS_REPLY received empty answer',
+        );
+      }
+    });
+  }
+});
+
+describe('edge coverage — PLAYBOOK-13 clearing on awaitBossReply exits', () => {
+  for (const transition of awaitBossReply.transitions.filter(
+    (t) => !(t.eventType === 'BOSS_REPLY' && t.target !== 'failed'),
+  )) {
+    it(`${transition.eventType}#${transition.index} → ${transition.target} declares and performs clearBossReplyContext`, async () => {
+      expect(
+        hasClearBossReplyContextAction(transition.actions),
+        `${transition.eventType}#${transition.index}: missing clearBossReplyContext action`,
+      ).toBe(true);
+
+      const snap = await driveSnapshot({
+        from: awaitBossReply.stateId,
+        context: staleBossReplyContext,
+        event: awaitBossReplyEventFor(transition),
+        behavior: 'hang',
+        target: transition.target,
+      });
+      expect(snap.value).toBe(transition.target);
+      expectBossReplyContextCleared(
+        snap.context,
+        `${transition.eventType}#${transition.index}`,
+      );
     });
   }
 });

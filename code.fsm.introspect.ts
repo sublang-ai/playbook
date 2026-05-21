@@ -34,17 +34,28 @@ export interface CaptainTransition {
   readonly index: number;
   readonly target: string;
   readonly guard: TransitionGuard;
+  readonly actions: unknown;
 }
 
 export interface AwaitBossReplyInfo {
   readonly stateId: string;
   readonly bossReplyTransitions: ReadonlyArray<BossReplyTransition>;
+  readonly transitions: ReadonlyArray<AwaitBossReplyTransition>;
 }
 
 export interface BossReplyTransition {
   readonly index: number;
   readonly target: string;
   readonly guard: TransitionGuard;
+  readonly actions: unknown;
+}
+
+export interface AwaitBossReplyTransition {
+  readonly eventType: string;
+  readonly index: number;
+  readonly target: string;
+  readonly guard: TransitionGuard;
+  readonly actions: unknown;
 }
 
 export type TransitionGuard = (args: {
@@ -68,6 +79,7 @@ type RawInvoke = {
 type RawStateDef = { invoke?: RawInvoke; on?: Record<string, unknown> };
 
 type RawArm = { target?: unknown; guard?: TransitionGuard };
+type RawArmWithActions = RawArm & { actions?: unknown };
 
 type RawConfig = {
   states?: Record<string, RawStateDef>;
@@ -93,6 +105,7 @@ export function enumerateCaptainStates(
         index,
         target: stripIdPrefix(String(arm.target ?? '')),
         guard: arm.guard ?? alwaysTrue,
+        actions: arm.actions,
       }),
     );
     out.push({
@@ -129,23 +142,35 @@ export function enumerateAwaitBossReply(
 ): AwaitBossReplyInfo {
   const stateId = 'awaitBossReply';
   const awaitOn = getRawConfig(machine).states?.[stateId]?.on ?? {};
+  const transitions = Object.entries(awaitOn).flatMap(([eventType, value]) =>
+    toArmArray(value).map(
+      (arm, index): AwaitBossReplyTransition => ({
+        eventType,
+        index,
+        target: stripIdPrefix(String(arm.target ?? '')),
+        guard: arm.guard ?? alwaysTrue,
+        actions: arm.actions,
+      }),
+    ),
+  );
   const bossReplyTransitions = toArmArray(awaitOn.BOSS_REPLY).map(
     (arm, index): BossReplyTransition => ({
       index,
       target: stripIdPrefix(String(arm.target ?? '')),
       guard: arm.guard ?? alwaysTrue,
+      actions: arm.actions,
     }),
   );
-  return { stateId, bossReplyTransitions };
+  return { stateId, bossReplyTransitions, transitions };
 }
 
 function getRawConfig(machine: typeof codingMachine): RawConfig {
   return (machine as unknown as { config: RawConfig }).config;
 }
 
-function toArmArray(value: unknown): RawArm[] {
+function toArmArray(value: unknown): RawArmWithActions[] {
   if (value === undefined || value === null) return [];
-  return (Array.isArray(value) ? value : [value]) as RawArm[];
+  return (Array.isArray(value) ? value : [value]) as RawArmWithActions[];
 }
 
 function stripIdPrefix(target: string): string {
