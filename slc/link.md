@@ -118,6 +118,39 @@ Resolution shall be deterministic and recorded in the emitted module so future m
 
 The linker shall not invent player identifiers and shall not silently collapse aliases at the FSM level — composite players keep their `player: 'Committer'` value on `CaptainInput`; resolution decides only the `callPlayer` invocation.
 
+## Player prompt composition
+
+The runtime shall compose the actual player prompt from the state's `CaptainInput`.
+`input.prompt` is the GEARS-derived domain prompt body and shall not be mutated, re-flowed, or treated as a place to store framework control instructions.
+
+The composer may prepend structured labelled blocks from typed `CaptainInput` fields the FSM exposes (for example `Boss intent:`, `Review items:`, `Rebuttals:`, or `Task description:`).
+Those blocks are outside the domain prompt body.
+
+When `input.result` declares `needsBossReply`, the composer shall inject this standard player-visible instruction outside the domain prompt body:
+
+```text
+If a specific Boss answer is needed, ask the exact question and stop.
+```
+
+The instruction shall be injected for every resumable player call, including resumed calls that may need a follow-up question.
+Non-resumable states shall not receive it.
+The instruction shall appear after any continuation or ordinary structured labelled blocks and immediately before `input.prompt`.
+
+When `CaptainInput` carries both `pendingBossQuestion` and `bossReply`, the composer shall prepend the continuation preamble and labelled Q&A blocks before ordinary structured blocks and before the domain prompt body:
+
+```text
+You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.
+
+Boss question:
+<pendingBossQuestion.question>
+
+Boss reply:
+<bossReply>
+```
+
+The continuation preamble and the standard Boss-question instruction are framework text supplied by the runtime.
+They are not part of the GEARS blockquote and shall not appear in `invoke.input.prompt`.
+
 ## Boss-event mapping
 
 The FSM's `events` union enumerates every Boss-originated event.

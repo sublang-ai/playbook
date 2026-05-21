@@ -22,21 +22,22 @@ This closes a source-of-truth divergence found while reviewing IR-006: CODE-1/3/
 
 ## Deliverables
 
-- [ ] [`slc/text2gears.md`](../../slc/text2gears.md) — define the
+- [x] [`slc/text2gears.md`](../../slc/text2gears.md) — define the
   resumable source annotation: a recognized non-prompt per-state
   marker, its syntax and semantics, and how `text2gears` carries
   it into the GEARS output as result metadata rather than prompt
   text.
-- [ ] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — define that a
+- [x] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — define that a
   resumable-annotated GEARS item expands to the `needsBossReply`
   result guard and the `awaitBossReply` / `resumableStates`
   wiring.
-- [ ] [`slc/link.md`](../../slc/link.md) — define that the runtime
+- [x] [`slc/link.md`](../../slc/link.md) — define that the runtime
   injects the standard Boss-question instruction into a resumable
   state's composed player prompt, outside the domain prompt body.
-- [ ] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md)
-  — amend §4: opt-in is the source annotation + compiler
-  expansion; the authored-prose mechanism is superseded.
+- [x] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md)
+  — amend §4/§5: opt-in is the source annotation + compiler
+  expansion; the authored-prose mechanism is superseded and the
+  resume preamble is runtime-composed.
 - [ ] [`reference/sdlc/code.md`](../../reference/sdlc/code.md) —
   add the resumable annotation to the CODE-1/3/4 source items
   (which carry domain-only prompts today).

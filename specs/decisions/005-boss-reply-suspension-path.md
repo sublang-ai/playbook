@@ -108,9 +108,13 @@ Field provenance is normative: the first three come from the suspended state's i
 `pendingBossQuestion` is set when a state routes via `needsBossReply` (§4); `bossReply` is set when `BOSS_REPLY` fires.
 Both shall be cleared by an `assign` on any non-`needsBossReply` outcome of the resumed state (§5).
 
-### 4. New opt-in guard: `needsBossReply`
+### 4. Source opt-in annotation and `needsBossReply`
 
-Captain-invoking states **opt in** by adding to their `invoke.input.result` map a description targeted at the [PBRT-10 adjudicator](../dev/playbook-runtime.md#pbrt-10):
+Captain-invoking states **opt in** at source level with the `Resumable: Boss reply` annotation defined in [text2gears.md](../../slc/text2gears.md#resumable-boss-replies).
+The annotation is non-prompt metadata; it is not a blockquoted instruction and shall not be hand-authored into `code.gears.md` as prompt prose.
+
+`text2gears` carries the annotation into the GEARS item as result metadata declaring the `needsBossReply` guard.
+`gears2fsm` then adds this result key to the state's `invoke.input.result` map with a description targeted at the [PBRT-10 adjudicator](../dev/playbook-runtime.md#pbrt-10):
 
 ```typescript
 needsBossReply:
@@ -125,8 +129,16 @@ Removing the marker would silently weaken that guarantee.
 
 Past the marker, the description tells the adjudicator when to pick the guard and what field to extract.
 The player never sees this description and never chooses the guard directly (see *Authority and message flow*).
+The player-visible instruction is supplied by the linked runtime's prompt composer, outside the GEARS domain prompt body:
 
-Opt-in is per-state, declared in the gears item and mirrored in the FSM result map per [gears2fsm.md "Setup"](../../slc/gears2fsm.md#setup).
+```text
+If a specific Boss answer is needed, ask the exact question and stop.
+```
+
+The instruction shall appear after any continuation or ordinary structured labelled blocks and immediately before the GEARS-derived prompt body.
+
+The old authored-prose mechanism is superseded: a Boss-question instruction in a GEARS blockquote is a source-of-truth defect unless the source domain prompt itself contains that line.
+Opt-in is per-state, declared by the source annotation, carried as GEARS result metadata, and mirrored in the FSM result map per [gears2fsm.md "Setup"](../../slc/gears2fsm.md#setup).
 
 When a state declares `needsBossReply`:
 
@@ -137,9 +149,10 @@ When a state declares `needsBossReply`:
 Captain output shall include a `question: string` whenever `guard === 'needsBossReply'`.
 Output that declares the guard but omits the field is malformed; the runtime routes to `failed` with a clear error (§8).
 
-### 5. Resume mechanics: input function discipline
+### 5. Resume mechanics: prompt-composer discipline
 
-A resumable state's `invoke.input`, when `context.pendingBossQuestion` and `context.bossReply` are both present, shall prepend a continuation preamble and the Q+A labelled blocks to the composed `prompt` ([DR-004 §6](./004-link-code-fsm-to-playbook-runtime.md) grammar):
+A resumable state's `invoke.input`, when `context.pendingBossQuestion` and `context.bossReply` are both present, shall expose those fields to the linked runtime.
+The runtime prompt composer shall prepend a continuation preamble and the Q+A labelled blocks to the composed player prompt ([DR-004 §6](./004-link-code-fsm-to-playbook-runtime.md) grammar):
 
 ```
 You previously paused this task to ask Boss a question; Boss
@@ -158,6 +171,7 @@ The line break inside the preamble above is for document readability only; runti
 
 The preamble names Captain's continuation role explicitly, so the player need not infer it from the labelled blocks.
 It keeps FSM mechanics out of the prose: the player is told *what to do* and *why* without ever naming `awaitBossReply`, `BOSS_REPLY`, or the FSM.
+The GEARS-derived `invoke.input.prompt` remains the domain prompt body; neither the continuation preamble nor the standard Boss-question instruction is stored in that body.
 
 The composer shall place the question + reply blocks **before** the state's other structured blocks (`intent`, `reviews`, `challenges`, `taskDescription`), so the player reads the conversation context first.
 
