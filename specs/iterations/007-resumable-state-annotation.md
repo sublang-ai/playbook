@@ -51,8 +51,10 @@ This closes a source-of-truth divergence found while reviewing IR-006: CODE-1/3/
 - [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts)
   — the runtime composes the framework Boss-question instruction
   into resumable states' prompts.
-- [ ] Tests — `code.gears-fsm.test.ts`, `code.prompt-contract.test.ts`,
-  `code.fsm.coverage.test.ts` updated for the new arrangement.
+- [x] Tests — `code.gears-fsm.test.ts` and
+  `code.prompt-contract.test.ts` updated for the new arrangement;
+  `code.fsm.coverage.test.ts` fixtures verified unchanged because
+  the FSM arms and guards did not change.
 - [ ] [`specs/map.md`](../map.md) — IR-007 row reflects the final
   summary. *(Re-verify at close-out.)*
 

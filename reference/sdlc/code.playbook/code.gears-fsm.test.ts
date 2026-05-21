@@ -8,7 +8,8 @@
 //   (a) CODE-N in gears without a matching FSM `sourceItem`,
 //   (b) FSM `sourceItem` not declared in gears,
 //   (c) player binding drift (gears section vs FSM `input.player`),
-//   (d) prompt-body drift (gears blockquote vs FSM `input.prompt`).
+//   (d) prompt-body drift (gears blockquote vs FSM `input.prompt`),
+//   (e) hidden prompt/result metadata not traceable to `code.md`.
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -26,6 +27,41 @@ interface GearsItem {
   player: Player;
   promptBody: string;
   resultGuards: ReadonlyMap<string, string>;
+}
+
+interface SourceBehavior {
+  promptBody: string;
+  resumable: boolean;
+}
+
+function parseSource(text: string): SourceBehavior[] {
+  const behaviors: SourceBehavior[] = [];
+  let buf: string[] | undefined;
+
+  function commit(resumable: boolean): void {
+    if (buf !== undefined) {
+      behaviors.push({ promptBody: buf.join('\n'), resumable });
+    }
+    buf = undefined;
+  }
+
+  for (const line of text.split('\n')) {
+    if (line.startsWith('> ')) {
+      buf = buf ?? [];
+      buf.push(line.slice(2));
+      continue;
+    }
+    if (line === '>') {
+      buf = buf ?? [];
+      buf.push('');
+      continue;
+    }
+    if (buf !== undefined) {
+      commit(line === 'Resumable: Boss reply');
+    }
+  }
+  commit(false);
+  return behaviors;
 }
 
 function parseGears(text: string): Map<string, GearsItem> {
@@ -90,6 +126,12 @@ const gearsPath = resolve(
   dirname(fileURLToPath(import.meta.url)),
   'code.gears.md',
 );
+const sourcePath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  'code.md',
+);
+const sourceBehaviors = parseSource(readFileSync(sourcePath, 'utf8'));
 const gears = parseGears(readFileSync(gearsPath, 'utf8'));
 const states = enumerateCaptainStates(codingMachine);
 const fsmBySourceItem = new Map(states.map((s) => [s.sourceItem, s]));
@@ -133,6 +175,41 @@ describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
     for (const item of gears.values()) {
       expect(item.promptBody.length, item.id).toBeGreaterThan(0);
     }
+  });
+
+  it('parses the three source resumable annotations', () => {
+    const resumablePrompts = sourceBehaviors
+      .filter((behavior) => behavior.resumable)
+      .map((behavior) => behavior.promptBody);
+
+    expect(resumablePrompts).toEqual([
+      [
+        'Assess whether this can be completed in a single commit, following best practices.',
+        'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
+        'Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.',
+        'Do not commit.',
+      ].join('\n'),
+      [
+        'Continue to implement IR-<#> if not all deliverables and tasks are done.',
+        'Implement one task at a time (including corresponding tests if any).',
+        'Stop after each task for review — do not commit yet.',
+        'If relevant, mark progress in the IR.',
+      ].join('\n'),
+      [
+        'Read IR-<#> and corresponding commits.',
+        'According to @specs/meta.md, add or update spec items to fully capture:',
+        '',
+        '- the user requirements in @specs/user,',
+        '- the system behavior in @specs/dev, and',
+        '- the integration/system test cases in @specs/test.',
+        '',
+        'The spec items should be the *minimal* set needed to reimplement code without the IR.',
+        'The set should be complete and coherent.',
+        'Avoid implementation specifics.',
+        'Avoid redundant spec items.',
+        'Consult @specs/map.md for relevant context and update it to reflect your changes.',
+      ].join('\n'),
+    ]);
   });
 });
 
@@ -204,5 +281,48 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(d)', () => {
     }
 
     expect(gearsNeedsBossReply.sort()).toEqual(fsmNeedsBossReply.sort());
+  });
+
+  it('(f) every non-empty GEARS blockquote line is present in code.md source blockquotes', () => {
+    const sourceLines = new Set(
+      sourceBehaviors.flatMap((behavior) =>
+        behavior.promptBody.split('\n').filter((line) => line !== ''),
+      ),
+    );
+    const extraLines: string[] = [];
+
+    for (const item of gears.values()) {
+      for (const line of item.promptBody.split('\n')) {
+        if (line !== '' && !sourceLines.has(line)) {
+          extraLines.push(`${item.id}: ${line}`);
+        }
+      }
+    }
+
+    expect(extraLines).toEqual([]);
+  });
+
+  it('(g) needsBossReply metadata is derived from source resumable annotations', () => {
+    const sourceResumablePrompts = new Set(
+      sourceBehaviors
+        .filter((behavior) => behavior.resumable)
+        .map((behavior) => behavior.promptBody),
+    );
+    const gearsResumablePrompts = new Set(
+      [...gears.values()]
+        .filter((item) => item.resultGuards.has('needsBossReply'))
+        .map((item) => item.promptBody),
+    );
+
+    const missingMetadata = [...sourceResumablePrompts].filter(
+      (prompt) => !gearsResumablePrompts.has(prompt),
+    );
+    const missingSourceAnnotation = [...gears.values()]
+      .filter((item) => item.resultGuards.has('needsBossReply'))
+      .filter((item) => !sourceResumablePrompts.has(item.promptBody))
+      .map((item) => item.id);
+
+    expect(missingMetadata).toEqual([]);
+    expect(missingSourceAnnotation).toEqual([]);
   });
 });
