@@ -176,7 +176,10 @@ DR.
     clears both context fields; follow-up `needsBossReply`
     overwrites question and clears the prior reply; the three
     failure modes from DR-005 §8 each route to `failed` with
-    the documented error.
+    the documented error. Failure-mode tests #1/#2 and their
+    helpers already landed in task 7 because those errors arise
+    in the runtime adjudicator / captain bridge rather than the
+    pure FSM driver.
 - [ ] [`specs/map.md`](../map.md) — IR-006 row reflects the
   final summary; DR-005 row already present from the prior
   commit. *(Re-verify at close-out.)*
