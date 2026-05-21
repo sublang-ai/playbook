@@ -186,15 +186,8 @@ DR.
 
 ## Tasks
 
-Each task is one commit. Order keeps `main` *both* building and
-test-green at every commit. Spec amendments land first so the
-implementation tasks have a contract to point at; the
-gears-and-FSM migration is one combined task so the
-`code.gears-fsm.test.ts` and `code.fsm.coverage.test.ts`
-invariants don't break and re-establish across a commit
-boundary; the runtime work is additive (existing happy paths
-are untouched) so it doesn't disturb the suite either; deep
-test coverage lands at the end.
+Each task is one commit.
+Order keeps `main` both building and test-green throughout: specs land first to give the implementation a contract; gears + FSM migrate in one combined task so the conformance / coverage invariants don't break mid-boundary; runtime work is additive (existing happy paths untouched); deep test coverage lands last.
 
 1. **Land IR-006 + map.md row.**
    This commit lands the IR doc and adds the IR-006 row to
