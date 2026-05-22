@@ -141,13 +141,18 @@ Entry events shall not be root-level transitions from every active state unless 
 When a captain-invoking state needs a Boss decision the player cannot supply alone, the machine shall suspend in a dedicated quiescent state and resume the same state with the Q+A in the next prompt.
 This is a third Boss surface alongside `BOSS_INTERRUPT` and Boss entry events.
 
-A GEARS item opts in when its result metadata declares the `needsBossReply` guard emitted from the [text2gears resumable annotation](text2gears.md#resumable-boss-replies).
-This metadata is not blockquoted prompt content.
+Every captain-invoking state supports this path.
+There is no source-level opt-in annotation and no `needsBossReply` result metadata in GEARS output.
 The FSM compiler shall preserve the GEARS blockquote as the state's domain `prompt` body and shall not inject the standard Boss-question instruction into `invoke.input.prompt`.
 
-For an opted-in item, the compiler shall add `needsBossReply` to the state's `invoke.input.result` map.
-The description shall be carried verbatim from the GEARS item result metadata.
-It shall include the load-bearing substring `` Output shall include `question: `` so the runtime's adjudicator requires `question` in the JSON reply.
+For every captain-invoking state, the compiler shall add `needsBossReply` to the state's `invoke.input.result` map.
+The description shall be the standard adjudicator-facing text:
+
+```text
+The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.
+```
+
+It shall include the load-bearing substring ``Output shall include `question:`` so the runtime's adjudicator requires `question` in the JSON reply.
 The linked runtime supplies the player-visible instruction per [link.md "Player prompt composition"](link.md#player-prompt-composition).
 
 The machine shall declare:
@@ -160,17 +165,18 @@ The machine shall declare:
 The compiler shall emit three helpers:
 
 - `resumableStates(ids)` — emits one `BOSS_REPLY` arm per registered state on `awaitBossReply.on.BOSS_REPLY`, each guarded on `context.pendingBossQuestion?.resumeStateId === '<id>'` and targeting `'#<id>'` with `reenter: true`.
-  Analogous to `bossInterrupts(ids)`.
+  The compiler shall register every captain-invoking state id with this helper.
+  The helper is analogous to `bossInterrupts(ids)`.
 - `setPendingBossQuestion` — `assign({ pendingBossQuestion: <new>, bossReply: undefined })`.
   Used on every `needsBossReply` arm; clearing `bossReply` here prevents a follow-up question from inheriting the prior answer.
 - `clearBossReplyContext` — `assign({ pendingBossQuestion: undefined, bossReply: undefined })`.
-  Used on every transition out of `awaitBossReply` other than the resume arm, and on every non-`needsBossReply` outcome of a resumable state.
+  Used on every transition out of `awaitBossReply` other than the resume arm, and on every non-`needsBossReply` outcome of a captain-invoking state.
 
 `awaitBossReply` is a quiescent state for the runtime's drive loop.
 It shall declare the standard `bossInterrupts(ids)` handler with `actions: clearBossReplyContext`, so `/interrupt <stateId>` abandons a pending question.
 The machine's root-level Boss entry events shall be re-declared on `awaitBossReply` with `actions: clearBossReplyContext`, so a slash command from Boss while waiting starts a fresh turn and clears stale context.
 
-A resumable state's `invoke.input` function shall carry `pendingBossQuestion` and `bossReply` fields when present so the linked runtime can compose the continuation prompt.
+A captain-invoking state's `invoke.input` function shall carry `pendingBossQuestion` and `bossReply` fields when present so the linked runtime can compose the continuation prompt.
 When both fields are present, the linked runtime shall compose the continuation preamble and labelled Q&A blocks per [link.md "Player prompt composition"](link.md#player-prompt-composition).
 The FSM artifact shall not bake the continuation preamble into the GEARS-derived `prompt` body.
 

@@ -24,18 +24,18 @@ IR-008 supersedes IR-007: the IR-007 record is deleted, while its commits stay i
 ## Deliverables
 
 - [x] IR-008 doc and its `map.md` row landed; the IR-007 doc deleted and its `map.md` row removed.
-- [ ] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md) — §4 made universal; §1 drops the "resumable" qualifier; §9 per-state audit removed; the no-both rule replaced.
-- [ ] [`slc/text2gears.md`](../../slc/text2gears.md) — the "Resumable Boss replies" section removed.
-- [ ] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — `needsBossReply` and the `awaitBossReply` / `resumableStates` wiring made universal for captain-invoking states; annotation-driven language removed.
-- [ ] [`slc/link.md`](../../slc/link.md) — the standard Boss-question instruction injected into every captain prompt.
-- [ ] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-12/13 reworded for universal coverage: every captain-invoking state declares `needsBossReply`; the "opts into" opt-in framing dropped.
-- [ ] [`specs/test/playbook.md`](../test/playbook.md) — PLAYBOOK-14/15 reworded so the conformance tests assert universal `needsBossReply` coverage.
+- [x] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md) — §4 made universal; §1 drops the "resumable" qualifier; §9 per-state audit removed; the no-both rule replaced.
+- [x] [`slc/text2gears.md`](../../slc/text2gears.md) — the "Resumable Boss replies" section removed.
+- [x] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — `needsBossReply` and the `awaitBossReply` / `resumableStates` wiring made universal for captain-invoking states; annotation-driven language removed.
+- [x] [`slc/link.md`](../../slc/link.md) — the standard Boss-question instruction injected into every captain prompt.
+- [x] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-12/13 reworded for universal coverage: every captain-invoking state declares `needsBossReply`; the "opts into" opt-in framing dropped.
+- [x] [`specs/test/playbook.md`](../test/playbook.md) — PLAYBOOK-14/15 reworded so the conformance tests assert universal `needsBossReply` coverage.
 - [ ] [`reference/sdlc/code.md`](../../reference/sdlc/code.md) — the three `Resumable: Boss reply` lines removed.
 - [ ] [`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md) — the three `Result guard: needsBossReply` lines removed.
 - [ ] [`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) — every captain-invoking state carries `needsBossReply` and is registered with `resumableStates`; recompile siblings.
 - [ ] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — the composer covers every captain prompt; verify whether the universal result map already satisfies the existing condition.
 - [ ] Tests — `code.gears-fsm.test.ts` and `code.prompt-contract.test.ts` updated for universal coverage; the source-annotation parser removed.
-- [ ] [`specs/map.md`](../map.md) — DR-005 row no longer says "opt-in" after the DR-005 amendment.
+- [x] [`specs/map.md`](../map.md) — DR-005 row no longer says "opt-in" after the DR-005 amendment.
 
 ## Tasks
 

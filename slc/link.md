@@ -126,14 +126,13 @@ The runtime shall compose the actual player prompt from the state's `CaptainInpu
 The composer may prepend structured labelled blocks from typed `CaptainInput` fields the FSM exposes (for example `Boss intent:`, `Review items:`, `Rebuttals:`, or `Task description:`).
 Those blocks are outside the domain prompt body.
 
-When `input.result` declares `needsBossReply`, the composer shall inject this standard player-visible instruction outside the domain prompt body:
+For every player call driven by a captain-invoking state's `CaptainInput`, the composer shall inject this standard player-visible instruction outside the domain prompt body:
 
 ```text
 If a specific Boss answer is needed, ask the exact question and stop.
 ```
 
-The instruction shall be injected for every resumable player call, including resumed calls that may need a follow-up question.
-Non-resumable states shall not receive it.
+The instruction shall be injected for initial calls and resumed calls that may need a follow-up question.
 The instruction shall appear after any continuation or ordinary structured labelled blocks and immediately before `input.prompt`.
 
 When `CaptainInput` carries both `pendingBossQuestion` and `bossReply`, the composer shall prepend the continuation preamble and labelled Q&A blocks before ordinary structured blocks and before the domain prompt body:

@@ -68,15 +68,15 @@ This separation matters because: (a) players cannot know FSM state ids; (b) embe
 
 ### 1. New quiescent state: `awaitBossReply`
 
-`gears2fsm.md` shall require every machine with at least one resumable captain-invoking state to declare an `awaitBossReply` state with:
+`gears2fsm.md` shall require every machine with at least one captain-invoking state to declare an `awaitBossReply` state with:
 
 - A stable `id` of `'awaitBossReply'`.
 - A `description` of `'Waiting for Boss to answer a player question.'`.
-- One `BOSS_REPLY` arm per *resumable* captain-invoking state, each guarded on `context.pendingBossQuestion?.resumeStateId === '<state-id>'`, targeting `'#<state-id>'` with `reenter: true`, and assigning the reply into context (§3).
+- One `BOSS_REPLY` arm per captain-invoking state, each guarded on `context.pendingBossQuestion?.resumeStateId === '<state-id>'`, targeting `'#<state-id>'` with `reenter: true`, and assigning the reply into context (§3).
 - The standard `BOSS_INTERRUPT` handler from `bossInterrupts(ids)` per [gears2fsm.md "Boss interrupts"](../../slc/gears2fsm.md#boss-interrupts), with `actions: clearBossReplyContext` (§5) so `/interrupt <stateId>` abandons the pending question.
 - The machine's root-level Boss entry events (e.g., `START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`), re-declared on `awaitBossReply` with `actions: clearBossReplyContext` so a slash command while waiting starts a fresh turn and discards the pending question and any stale reply.
 
-The compiler shall emit a `resumableStates(ids)` helper analogous to `bossInterrupts(ids)`, generating the `BOSS_REPLY` arm array from a registered list.
+The compiler shall emit a `resumableStates(ids)` helper analogous to `bossInterrupts(ids)`, generating the `BOSS_REPLY` arm array from the registered list of all captain-invoking states.
 
 `awaitBossReply` is a quiescent state for the runtime drive loop; see §10 for the PBRT-11 / PBRT-14 / PBRT-3 / DR-004 §8 amendments.
 
@@ -108,13 +108,12 @@ Field provenance is normative: the first three come from the suspended state's i
 `pendingBossQuestion` is set when a state routes via `needsBossReply` (§4); `bossReply` is set when `BOSS_REPLY` fires.
 Both shall be cleared by an `assign` on any non-`needsBossReply` outcome of the resumed state (§5).
 
-### 4. Source opt-in annotation and `needsBossReply`
+### 4. Universal `needsBossReply`
 
-Captain-invoking states **opt in** at source level with the `Resumable: Boss reply` annotation defined in [text2gears.md](../../slc/text2gears.md#resumable-boss-replies).
-The annotation is non-prompt metadata; it is not a blockquoted instruction and shall not be hand-authored into `code.gears.md` as prompt prose.
+Every captain-invoking state shall support Boss-reply suspension.
+There is no source-level opt-in annotation and no `needsBossReply` metadata in GEARS output; `text2gears` emits only the domain prompt body and any domain result metadata.
 
-`text2gears` carries the annotation into the GEARS item as result metadata declaring the `needsBossReply` guard.
-`gears2fsm` then adds this result key to the state's `invoke.input.result` map with a description targeted at the [PBRT-10 adjudicator](../dev/playbook-runtime.md#pbrt-10):
+`gears2fsm` shall add `needsBossReply` to every captain-invoking state's `invoke.input.result` map with a standard description targeted at the [PBRT-10 adjudicator](../dev/playbook-runtime.md#pbrt-10):
 
 ```typescript
 needsBossReply:
@@ -137,13 +136,13 @@ If a specific Boss answer is needed, ask the exact question and stop.
 
 The instruction shall appear after any continuation or ordinary structured labelled blocks and immediately before the GEARS-derived prompt body.
 
-The old authored-prose mechanism is superseded: a Boss-question instruction in a GEARS blockquote is a source-of-truth defect unless the source domain prompt itself contains that line.
-Opt-in is per-state, declared by the source annotation, carried as GEARS result metadata, and mirrored in the FSM result map per [gears2fsm.md "Setup"](../../slc/gears2fsm.md#setup).
+The old authored-prose and source-annotation mechanisms are superseded: a Boss-question instruction in a GEARS blockquote is a source-of-truth defect unless the source domain prompt itself contains that line, and a `Result guard: needsBossReply` line in GEARS output is stale compiler metadata.
+The FSM result map is the first artifact that carries the universal `needsBossReply` guard per [gears2fsm.md "Setup"](../../slc/gears2fsm.md#setup).
 
-When a state declares `needsBossReply`:
+For every captain-invoking state:
 
 - The compiler shall emit an `onDone` arm guarded on `guardIs('needsBossReply')`, targeting `#awaitBossReply`, with `actions: setPendingBossQuestion` — which assigns `pendingBossQuestion` from the captain output and the state's known `sourceItem` / `player` / `id`, **and clears `bossReply`** so a follow-up question cannot inherit the prior answer (§5).
-- The state shall not also declare `needsBossInput` for the same intent. `needsBossInput → #ready` stays valid for the distinct "I'm stuck, please redirect" intent with no specific question to resume against (§11).
+- The state may also declare `needsBossInput` for the distinct "I'm stuck, please redirect" intent with no specific question to resume against (§11).
 - The state shall be registered with `resumableStates(ids)` so its arm appears in `awaitBossReply.on.BOSS_REPLY`.
 
 Captain output shall include a `question: string` whenever `guard === 'needsBossReply'`.
@@ -151,7 +150,7 @@ Output that declares the guard but omits the field is malformed; the runtime rou
 
 ### 5. Resume mechanics: prompt-composer discipline
 
-A resumable state's `invoke.input`, when `context.pendingBossQuestion` and `context.bossReply` are both present, shall expose those fields to the linked runtime.
+A captain-invoking state's `invoke.input`, when `context.pendingBossQuestion` and `context.bossReply` are both present, shall expose those fields to the linked runtime.
 The runtime prompt composer shall render the continuation preamble and Q&A labelled blocks per [link.md "Player prompt composition"](../../slc/link.md#player-prompt-composition).
 That section owns the exact runtime text and ordering.
 The GEARS-derived `invoke.input.prompt` remains the domain prompt body; neither the continuation preamble nor the standard Boss-question instruction is stored in that body.
@@ -218,19 +217,13 @@ Cancellation is via slash command (`/interrupt`, `/start`, …), not a timer.
 
 ### 9. CODE FSM migration
 
-The five existing `needsBossInput → #ready` paths shall be audited per-state: keep `needsBossInput` (no specific question; Boss redirects) or convert to `needsBossReply → #awaitBossReply` (a specific question Boss answers).
-The audit lives in the implementing IR; its expected outcome:
+The implementing IR shall add `needsBossReply` to every CODE captain-invoking state and register every such state with `resumableStates(ids)`.
+The existing `needsBossInput → #ready` paths shall be retained where they represent a distinct "no specific question; Boss should redirect or rescope" outcome.
 
-| State | Likely classification (subject to gears review) |
-|-------|------------------------------------------------|
-| `planAndImplement` | `needsBossReply` — player typically has a specific scope question |
-| `continueIr` | `needsBossReply` — player typically asks about ambiguous tasks |
-| `summarizeSpecs` | `needsBossReply` — player typically asks about spec-extraction scope |
-| `commitCoderInitial` | Audit — may stay `needsBossInput` ("can't form a clean commit, please rescope") |
-| `commitJoint` | Audit — same as `commitCoderInitial` |
+In particular, the CODE Committer states shall carry both guards:
 
-Extending `needsBossReply` to other states (reviewers, committers) shall be deliberate per-state gears authoring; default is opt-out.
-Reviewer states in particular shall not opt in: the Reviewer-as-judge contract (CODE-2 etc.) requires committing to findings from what is in front of them, not pausing mid-review.
+- `needsBossReply` for a specific question Boss can answer before the same state resumes.
+- `needsBossInput` for a broader rescoping request that should abandon the current state and return to the idle hub.
 
 ### 10. Runtime contract amendments
 
@@ -261,19 +254,17 @@ The IR shall also have the telemetry topic carry the same fields, so non-tmux-pl
 `needsBossInput → #ready` remains valid for a distinct intent: the player cannot proceed and has no specific question — Boss please give a fresh turn.
 This is a real outcome (e.g. the workflow is wedged and needs a rescope), qualitatively different from a clarifying question.
 
-Future gears items shall name the guard by intent:
-
-- `needsBossReply` if a specific question can be surfaced.
-- `needsBossInput` if no specific question exists; Boss should rescope or redirect.
+The universal `needsBossReply` guard handles the specific-question case for every captain-invoking state.
+Authored GEARS may still declare `needsBossInput` when no specific question exists and Boss should rescope or redirect.
 
 ## Consequences
 
-- **gears2fsm grows a third Boss surface.** `BOSS_INTERRUPT` and Boss entry events keep their semantics; mid-state suspension is now a first-class pattern any playbook can opt into.
-- **CODE becomes conversational.** Players in the converted states can ask Boss questions without losing context — no more manual `/continue <#>` reconstruction after a question.
+- **gears2fsm grows a third Boss surface.** `BOSS_INTERRUPT` and Boss entry events keep their semantics; mid-state suspension is now a first-class pattern for every captain-invoking state.
+- **CODE becomes conversational.** Players in any captain-invoking state can ask Boss questions without losing context — no more manual `/continue <#>` reconstruction after a question.
 - **The classifier becomes state-aware.** Boss input is disambiguated by current FSM state, not just slash prefix or LLM heuristic; the judge sees only genuinely ambiguous input.
 - **Test surface grows.** Conformance must cover every `needsBossReply` arm and its `BOSS_REPLY` resume arm, plus question-lands, resume-Q+A, context-survives, slash-preempts, and clear-on-success.
 - **cligent and the SDKs are untouched.** Transcript embedding makes the DR implementable with no cligent coordination.
-- **CODE author discipline shifts slightly.** Adding `needsBossReply` to a state means registering it resumable and giving downstream transitions `clearBossReplyContext`; [`code.fsm.coverage.test.ts`](../../reference/sdlc/code.playbook/code.fsm.coverage.test.ts) fails closed on omissions.
+- **CODE author discipline shifts slightly.** Adding a captain-invoking state means giving it the universal `needsBossReply` arm, registering it resumable, and giving downstream transitions `clearBossReplyContext`; [`code.fsm.coverage.test.ts`](../../reference/sdlc/code.playbook/code.fsm.coverage.test.ts) fails closed on omissions.
 
 ## References
 
