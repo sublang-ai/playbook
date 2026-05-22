@@ -106,8 +106,9 @@ classifier replies name `START_CODING`, `CONTINUE_IR`,
 `SUMMARIZE_IR`, and `BOSS_INTERRUPT`, the test suite shall fail
 unless each reply maps to its declared FSM event with the
 classifier-supplied payload.
-For `BOSS_INTERRUPT`, the suite shall fail unless the classifier must supply a valid `targetId` selected
-from the FSM's jumpable states.
+For `BOSS_INTERRUPT`, the suite shall fail unless each reply
+carries a valid `targetId` selected from the FSM's jumpable
+states.
 
 ### PBRT-25
 Verifies: [PBRT-1](../user/playbook-runtime.md#pbrt-1), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
