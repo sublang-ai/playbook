@@ -10,6 +10,8 @@ captain:
   from: "@sublang/playbook/code/tmux-play"
   adapter: claude
   model: claude-opus-4-7
+  permissions:
+    mode: auto
   options:
     coderPlayer: claude
     reviewerPlayer: codex
@@ -17,5 +19,9 @@ captain:
 roles:
   - id: coder
     adapter: claude
+    permissions:
+      mode: auto
   - id: reviewer
     adapter: codex
+    permissions:
+      mode: auto

@@ -15,6 +15,10 @@ captain:
   from: ./code.tmux-play.js
   adapter: claude
   model: claude-opus-4-7
+  # Agents run in cligent's classifier/reviewer-protected auto mode
+  # (cligent DR-005): claude → permissionMode auto, codex → auto_review.
+  permissions:
+    mode: auto
   options:
     # Substituted into the <coder-llm> placeholder in player prompts
     # (DR-004 §6).
@@ -29,5 +33,9 @@ captain:
 roles:
   - id: coder
     adapter: claude
+    permissions:
+      mode: auto
   - id: reviewer
     adapter: codex
+    permissions:
+      mode: auto
