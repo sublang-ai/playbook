@@ -21,31 +21,36 @@ package. System behavior is in
 
 ### PBRT-1
 
-When the Boss submits a turn whose text begins with a recognized
-slash command, the runtime shall map it to the corresponding FSM
-event and extract the trailing text as the event payload:
-`/start <intent>` to `START_CODING`; `/continue <#>` and
-`/summarize <#>` to `CONTINUE_IR` and `SUMMARIZE_IR`;
-`/interrupt <stateId> [intent]` to `BOSS_INTERRUPT` with the first
-token as the target state and any remaining text as the intent.
+When the Boss submits a non-empty turn while the runtime is not
+waiting for a Boss reply, the runtime shall classify the text by
+consulting the judge.
+The judge shall resolve it to one FSM Boss event — `START_CODING`,
+`CONTINUE_IR`, `SUMMARIZE_IR`, or
+`BOSS_INTERRUPT` — with the required payload, or to no FSM action.
+For `BOSS_INTERRUPT`, the judge shall select the target from the
+FSM's jumpable states.
+
+The runtime shall define and recognize no in-playbook slash
+commands.
+Any `/command` playbook-selection UX happens before text
+reaches the runtime; text beginning with `/` that does reach the
+runtime is classified as ordinary Boss text.
 
 ### PBRT-2
 
-When the Boss submits turn text that is not a recognized slash
-command, the runtime shall classify it into one FSM event by
-consulting the judge — except while the actor is in the
-`awaitBossReply` Boss-reply suspension state, where the runtime
-shall take the verbatim text as the answer to the pending
-question and emit `BOSS_REPLY` without a judge call. When the
-text is an unrecognized slash command, an `/interrupt` command
-with no target state, or text the judge does not resolve to a
-valid event, the runtime shall report the reason to the Boss and
-take no FSM action. When the text is empty or whitespace-only,
-the runtime shall take no FSM action. The `/start`,
-`/continue`, and `/summarize` commands shall map to their event
-even when their payload is empty, including while in
-`awaitBossReply` (where they additionally abandon the pending
-question).
+When the Boss submits a non-empty turn while the actor is in the
+`awaitBossReply` Boss-reply suspension state, the runtime shall
+classify the text by consulting the judge with the pending
+question as context.
+The judge shall resolve the text either to
+`BOSS_REPLY` with the verbatim answer for the pending question, or
+to a fresh Boss directive event that abandons the pending question
+via `clearBossReplyContext`.
+
+When the text is empty or whitespace-only, the runtime shall take
+no FSM action and make no judge call.
+When the judge does not resolve the text to a valid event and payload, the runtime shall
+report the reason to the Boss and take no FSM action.
 
 ## Turn progress
 

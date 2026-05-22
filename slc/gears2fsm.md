@@ -173,8 +173,8 @@ The compiler shall emit three helpers:
   Used on every transition out of `awaitBossReply` other than the resume arm, and on every non-`needsBossReply` outcome of a captain-invoking state.
 
 `awaitBossReply` is a quiescent state for the runtime's drive loop.
-It shall declare the standard `bossInterrupts(ids)` handler with `actions: clearBossReplyContext`, so `/interrupt <stateId>` abandons a pending question.
-The machine's root-level Boss entry events shall be re-declared on `awaitBossReply` with `actions: clearBossReplyContext`, so a slash command from Boss while waiting starts a fresh turn and clears stale context.
+It shall declare the standard `bossInterrupts(ids)` handler with `actions: clearBossReplyContext`, so a Boss interrupt event abandons a pending question.
+The machine's root-level Boss entry events shall be re-declared on `awaitBossReply` with `actions: clearBossReplyContext`, so a fresh Boss directive while waiting starts a fresh turn and clears stale context.
 
 A captain-invoking state's `invoke.input` function shall carry `pendingBossQuestion` and `bossReply` fields when present so the linked runtime can compose the continuation prompt.
 When both fields are present, the linked runtime shall compose the continuation preamble and labelled Q&A blocks per [link.md "Player prompt composition"](link.md#player-prompt-composition).

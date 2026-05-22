@@ -19,11 +19,11 @@ is essential to the package's intent per
 ### PBRT-17
 Verifies: [PBRT-11](../dev/playbook-runtime.md#pbrt-11)
 
-When a `/start` turn is driven through `createPlaybookRuntime`
-with fake ports that return a valid guard from the judge, the
-test suite shall fail unless `handleBossInput` drives the FSM
-through one captain invocation and returns with the FSM at the
-idle state.
+When a free-text coding turn is driven through `createPlaybookRuntime`
+with fake ports that classify the Boss text as `START_CODING` and
+then return a valid guard from the judge, the test suite shall fail
+unless `handleBossInput` drives the FSM through one captain
+invocation and returns with the FSM at the idle state.
 
 ### PBRT-18
 Verifies: [PBRT-13](../dev/playbook-runtime.md#pbrt-13)
@@ -35,9 +35,9 @@ with `lastError` populated and returns from the turn.
 ### PBRT-19
 Verifies: [PBRT-11](../dev/playbook-runtime.md#pbrt-11)
 
-When an `/interrupt <stateId>` turn is driven through the runtime,
-the test suite shall fail unless the FSM is redirected to the
-named state and `handleBossInput` returns.
+When a Boss turn is classified as `BOSS_INTERRUPT` with a valid
+`targetId`, the test suite shall fail unless the FSM is redirected
+to the named state and `handleBossInput` returns.
 
 ### PBRT-20
 Verifies: [PBRT-14](../dev/playbook-runtime.md#pbrt-14)
@@ -62,7 +62,7 @@ When the tmux-play adapter is driven through an
 cligent `CaptainContext` / `CaptainSession` primitives, the test
 suite shall fail unless player calls reach `context.callRole`
 with role ids matching the runtime's baked player ids (both
-`coder` via the `/start` happy path and `reviewer` via a
+`coder` via the free-text coding happy path and `reviewer` via a
 multi-stage flow that drives the FSM through a Reviewer state),
 adjudication reaches `context.callCaptain`, status and telemetry
 reach the session, the per-turn `signal` flows into the runtime,
@@ -101,27 +101,28 @@ under fake ports, the test suite shall fail unless:
 ### PBRT-24
 Verifies: [PBRT-1](../user/playbook-runtime.md#pbrt-1)
 
-When the integration suite drives `/start <intent>`,
-`/continue <#>`, `/summarize <#>`, and `/interrupt <stateId>`
-turns through `handleBossInput`, the test suite shall fail unless
-each form maps to its declared FSM event with the trailing text
-extracted as the payload.
+When the integration suite drives non-empty Boss turns whose
+classifier replies name `START_CODING`, `CONTINUE_IR`,
+`SUMMARIZE_IR`, and `BOSS_INTERRUPT`, the test suite shall fail
+unless each reply maps to its declared FSM event with the
+classifier-supplied payload.
+For `BOSS_INTERRUPT`, the suite shall fail unless the classifier must supply a valid `targetId` selected
+from the FSM's jumpable states.
 
 ### PBRT-25
-Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
+Verifies: [PBRT-1](../user/playbook-runtime.md#pbrt-1), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
 
 When the runtime is driven through `handleBossInput` while the
-actor is outside `awaitBossReply`, with non-slash text, with a
-classifier reply that names no valid event type, with a
+actor is outside `awaitBossReply`, with non-empty text, with text
+beginning with `/`, with a classifier reply that names no valid event type, with a
 classifier reply that names a valid event type but omits a
-required payload field, with `/interrupt` lacking a target
-state, and with empty or whitespace-only text, the test suite
-shall fail unless non-slash text routes through `callJudge`
-and lands on the classifier-named FSM event, each invalid reply
-surfaces one `emitStatus` call and leaves the FSM unmoved,
-`/interrupt` without a target state surfaces one `emitStatus`
-call and leaves the FSM unmoved, and empty text makes no port
-calls.
+required payload field, with a `BOSS_INTERRUPT` reply lacking a
+target state, and with empty or whitespace-only text, the test
+suite shall fail unless every non-empty text routes through
+`callJudge` and lands on the classifier-named FSM event, text
+beginning with `/` receives no special parsing, each invalid reply
+surfaces one `emitStatus` call and leaves the FSM unmoved, and
+empty text makes no port calls.
 
 ### PBRT-26
 Verifies: [PBRT-8](../dev/playbook-runtime.md#pbrt-8)
@@ -149,13 +150,14 @@ is processed from the idle state.
 Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
 
 When the runtime is driven through `handleBossInput` while the
-actor is in `awaitBossReply`, with non-slash text, with a
-recognized slash command, with an unrecognized slash command,
-with `/interrupt` lacking a target state, and with empty or
-whitespace-only text, the test suite shall fail unless
-non-slash text emits `BOSS_REPLY` with the verbatim text as
-`answer` and never calls `callJudge`, each recognized slash
-form fires its normal FSM event (transitioning out of
-`awaitBossReply`), unrecognized slash and `/interrupt` without
-a target state each surface one `emitStatus` call and leave
-the FSM unmoved, and empty text makes no port calls.
+actor is in `awaitBossReply`, with text that the classifier names
+as `BOSS_REPLY`, with text that the classifier names as a fresh
+directive event, with a classifier reply that is invalid for the
+current state, with text beginning with `/`, and with empty or
+whitespace-only text, the test suite shall fail unless every
+non-empty text routes through `callJudge`, `BOSS_REPLY` carries the
+verbatim answer and resumes the pending state, a fresh directive
+event transitions out of `awaitBossReply` and clears the pending
+reply context, text beginning with `/` receives no special parsing,
+invalid replies surface one `emitStatus` call and leave the FSM
+unmoved, and empty text makes no port calls.

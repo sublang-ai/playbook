@@ -25,7 +25,7 @@ cligent stays a lower-layer primitive (tmux launcher, Captain contract, role cli
 | --- | --- |
 | FSM artifact | `code.fsm.ts` (imports `codingMachine`, `CaptainInput`, `CaptainOutput`, `CodingInput`, `CodingEvent`) |
 | Player binding | Link-time, baked: `Coder → coder`, `Reviewer → reviewer`; composite `Committer = Coder \| Reviewer` resolved per source item (see §2) |
-| Boss-event mapping | Slash-prefix with LLM-classifier fallback (see §3) |
+| Boss-event mapping | Free-text judge classification (see §3) |
 | Adjudication strategy | LLM-judge for every state; marker-parse off |
 
 All four are recorded verbatim in the emitted file's top-of-file header per [link.md §Output](../../slc/link.md#output).
@@ -56,21 +56,20 @@ CODE's `events` union:
 | { type: 'CONTINUE_IR'; irNumber: string }
 | { type: 'SUMMARIZE_IR'; irNumber: string }
 | { type: 'BOSS_INTERRUPT'; targetId: JumpableStateId; intent?; irNumber? }
+| { type: 'BOSS_REPLY'; answer: string }
 ```
 
-Slash forms:
+Every non-empty Boss line is classified by `callJudge`.
+The classifier prompt is fixed text the linker emits once: names the valid event types for the current state, the placeholder set for each payload field, the valid `BOSS_INTERRUPT.targetId` values from the FSM's jumpable states, and enough state context to distinguish a fresh directive from a Boss reply while the actor is in `awaitBossReply`.
+It demands JSON carrying either one of the typed events and its payload, or an explicit no-action result.
+Empty or whitespace-only text produces no FSM event and no port call.
+`BOSS_REPLY` is valid only while the actor is in `awaitBossReply`, per [DR-005 §6](./005-boss-reply-suspension-path.md#6-runtime-classifier-state-context-aware-boss-input).
 
-| Boss line | Event |
-| --- | --- |
-| `/start <text>` | `{ type: 'START_CODING', intent: '<text>' }` |
-| `/continue <#>` | `{ type: 'CONTINUE_IR', irNumber: '<#>' }` |
-| `/summarize <#>` | `{ type: 'SUMMARIZE_IR', irNumber: '<#>' }` |
-| `/interrupt <stateId> [args…]` | `{ type: 'BOSS_INTERRUPT', targetId, … }` |
-| anything else | LLM-classifier via `callJudge` |
+CODE defines no in-playbook slash commands.
+The `/command` namespace is reserved for host-level playbook selection before input reaches the CODE runtime.
+If text beginning with `/` is forwarded to the runtime, it is classified as ordinary Boss text through `callJudge`.
 
-The LLM-classifier prompt is fixed text the linker emits once: names the four event types, the placeholder set for each payload field, demands JSON, no FSM internals beyond the event union.
-
-`BOSS_INTERRUPT` is reached only through explicit `/interrupt` (or the LLM-classifier picking it).
+`BOSS_INTERRUPT` is reached only when the judge picks it and supplies a valid target.
 It is not the abort surface — see §8.
 
 ### 4. Captain adjudication
@@ -119,10 +118,12 @@ Per [link.md §Session lifecycle](../../slc/link.md#session-lifecycle):
   ```
 
 - **`handleBossInput({ text, signal })`**:
-  1. Classify `text` (slash → event; else LLM-classifier).
-  2. If the actor is in a final state (`done`), dispose and reconstruct.
-  3. `actor.send(event)`.
-  4. Drive to quiescence (set in §8): invoke `captain` → build prompt →
+  1. Classify `text`; non-empty text goes through `callJudge`, while
+     empty text produces no event and no port call.
+  2. If no event is produced, return after draining port emissions.
+  3. If the actor is in a final state (`done`), dispose and reconstruct.
+  4. `actor.send(event)`.
+  5. Drive to quiescence (set in §8): invoke `captain` → build prompt →
      `callPlayer` → adjudicate → resolve.
      Honor `signal` between resolves.
 - **`dispose()`** — stop the actor and drain pending port emissions.
@@ -192,8 +193,8 @@ Hosts typically wire it to the host's Captain LLM (cligent: `context.callCaptain
 - **`BOSS_INTERRUPT` is reserved for explicit Boss redirects** (the
   gears2fsm contract — *"jumps into an active machine, pre-empting
   whichever state is running"*).
-  The classifier slash form `/interrupt <stateId> [args]` is the
-  supported path.
+  The supported path is the free-text classifier returning
+  `BOSS_INTERRUPT` with a valid `targetId`.
 - **Re-entry from `failed`** — the runtime accepts another Boss turn
   from `failed` per the FSM's `readyEvents`.
   Whether the host allows it is the host's decision (tmux-play's SIGINT
@@ -227,7 +228,7 @@ The link compiler emits exactly one file at `code.playbook.ts` with a top-of-fil
 // Source FSM:    ./code.fsm.ts
 // Player bind:   Coder→coder, Reviewer→reviewer,
 //                Committer→{coder per CODE-15/17, reviewer per CODE-16}
-// Boss event:    slash-prefix (LLM-classifier fallback)
+// Boss event:    free-text judge classification
 // Adjudication:  LLM-judge per state
 ```
 

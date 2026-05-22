@@ -47,34 +47,36 @@ is called before `init`, the runtime shall throw.
 
 ### PBRT-7
 
-When the runtime classifies a Boss turn, it shall first try the
-slash forms in [PBRT-1](../user/playbook-runtime.md#pbrt-1). The
-`/start`, `/continue`, and `/summarize` forms shall map to their
-event even when the trailing payload is empty. An `/interrupt`
-command with no target state, or an unrecognized slash command,
-shall produce one `emitStatus` call and no event. On non-slash
-text the runtime shall call `callJudge` with a fixed prompt naming
-the FSM's four Boss-event types and their payload fields, then
-parse the JSON `{ event, payload }` reply; a reply that does not
-name a valid event with its required payload shall produce one
-`emitStatus` call and no event. Empty or whitespace-only text
-shall produce no event and no port call.
+When the runtime classifies a Boss turn, empty or whitespace-only
+text shall produce no event and no port call.
+For every non-empty Boss turn, the runtime shall call `callJudge` with a fixed prompt that
+names the current FSM state, the valid Boss-event types for that
+state, and every required payload field.
+The prompt shall require a JSON reply that either names a valid event with its payload or
+names no FSM action.
 
-While the actor is in `awaitBossReply` (per
-[PBRT-11](#pbrt-11)), the runtime shall apply this precedence
-instead (each rule consumes the input; later rules do not run):
+Outside `awaitBossReply` (per [PBRT-11](#pbrt-11)), the valid
+Boss-event types are `START_CODING`, `CONTINUE_IR`,
+`SUMMARIZE_IR`, and `BOSS_INTERRUPT`.
+For `BOSS_INTERRUPT`, the prompt shall list the FSM's jumpable state ids and descriptions,
+and the reply shall carry a valid `targetId`.
 
-- Recognized slash command (`/start`, `/continue`, `/summarize`,
-  `/interrupt <id>`): emit the slash's normal event so the
-  transition out of `awaitBossReply` runs the
-  `clearBossReplyContext` action declared there.
-- Unrecognized slash command, or `/interrupt` with no target:
-  one `emitStatus` call, no event.
-- Empty or whitespace-only text: no event, no port call.
-- All other text: emit
-  `{ type: 'BOSS_REPLY', answer: <verbatim text> }`.
+While the actor is in `awaitBossReply`, the prompt shall also
+include the pending Boss question.
+In that state, `BOSS_REPLY` is a valid classification result and shall carry the verbatim answer.
+The judge may instead return a fresh directive event, including
+`BOSS_INTERRUPT`; the transition out of `awaitBossReply` shall run
+the `clearBossReplyContext` action declared there.
 
-`BOSS_REPLY` shall be synthesized only by this branch.
+A reply that does not name a valid event for the current state, or
+omits a required payload field, shall produce one `emitStatus` call
+and no event.
+The runtime shall define no slash-prefix fast path:
+text beginning with `/` shall be sent to `callJudge` like any other
+non-empty Boss text.
+
+`BOSS_REPLY` shall be synthesized only while the actor is in
+`awaitBossReply`.
 
 ## Player binding
 

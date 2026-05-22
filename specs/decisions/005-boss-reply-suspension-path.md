@@ -30,9 +30,9 @@ That fallback is lossy on three counts when the player has a specific question:
 
 1. The question is not preserved — Boss sees the FSM at the idle hub with no record of what was asked.
 2. The pending continuation (which state, IR task, player, sourceItem) is dropped — Boss must reconstruct it from transcript scrollback.
-3. Boss has no protocol to *answer* — `/start`, `/continue`, `/summarize`, `/interrupt` are the only surfaces, and none means "this is the reply to your question."
+3. Boss has no protocol to *answer* — ordinary Boss input is interpreted as a fresh directive, and no surface means "this is the reply to your question."
 
-The runtime's Boss-event classifier ([PBRT-7](../dev/playbook-runtime.md#pbrt-7)) is not state-aware: it matches a slash prefix or routes free text to the LLM judge, which cannot tell *"SQLite"* as a fresh `/start SQLite` from a reply to *"which database?"*.
+The runtime's Boss-event classifier ([PBRT-7](../dev/playbook-runtime.md#pbrt-7)) needs current-state context: the judge cannot tell whether *"SQLite"* is a fresh directive or a reply to *"which database?"* unless it knows the actor is waiting for a Boss answer.
 
 This DR adds a third surface — **mid-state suspension and resume** — in `slc/gears2fsm.md`, so every playbook benefits, not just CODE.
 
@@ -73,8 +73,8 @@ This separation matters because: (a) players cannot know FSM state ids; (b) embe
 - A stable `id` of `'awaitBossReply'`.
 - A `description` of `'Waiting for Boss to answer a player question.'`.
 - One `BOSS_REPLY` arm per captain-invoking state, each guarded on `context.pendingBossQuestion?.resumeStateId === '<state-id>'`, targeting `'#<state-id>'` with `reenter: true`, and assigning the reply into context (§3).
-- The standard `BOSS_INTERRUPT` handler from `bossInterrupts(ids)` per [gears2fsm.md "Boss interrupts"](../../slc/gears2fsm.md#boss-interrupts), with `actions: clearBossReplyContext` (§5) so `/interrupt <stateId>` abandons the pending question.
-- The machine's root-level Boss entry events (e.g., `START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`), re-declared on `awaitBossReply` with `actions: clearBossReplyContext` so a slash command while waiting starts a fresh turn and discards the pending question and any stale reply.
+- The standard `BOSS_INTERRUPT` handler from `bossInterrupts(ids)` per [gears2fsm.md "Boss interrupts"](../../slc/gears2fsm.md#boss-interrupts), with `actions: clearBossReplyContext` (§5) so a Boss interrupt abandons the pending question.
+- The machine's root-level Boss entry events (e.g., `START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`), re-declared on `awaitBossReply` with `actions: clearBossReplyContext` so a fresh directive while waiting starts a fresh turn and discards the pending question and any stale reply.
 
 The compiler shall emit a `resumableStates(ids)` helper analogous to `bossInterrupts(ids)`, generating the `BOSS_REPLY` arm array from the registered list of all captain-invoking states.
 
@@ -162,18 +162,20 @@ Recursive Q&A is supported by construction.
 
 ### 6. Runtime classifier: state-context-aware Boss input
 
-[PBRT-7](../dev/playbook-runtime.md#pbrt-7) shall gain a state-context branch that runs **before** the LLM-judge fallback, applied only when the actor is in `'awaitBossReply'`.
-The branch classifies in strict precedence — each rule consumes the input; later rules do not run:
+[PBRT-7](../dev/playbook-runtime.md#pbrt-7) shall make Boss-event classification state-context-aware.
+The runtime shall not use slash-prefix parsing.
+For every non-empty Boss turn it shall call `callJudge` with the current FSM state and the valid Boss events for that state.
+When the actor is in `'awaitBossReply'`, the prompt shall include the pending question and allow `BOSS_REPLY` only in that state.
 
 | Input shape | Classification | Rationale |
 |-------------|---------------|-----------|
-| Recognized slash (`/start`, `/continue`, `/summarize`, `/interrupt <id>`) | Emit the slash's normal event (transitions out of `awaitBossReply` per §1; `clearBossReplyContext` runs) | Boss explicitly abandons the pending question |
-| Unrecognized slash (e.g. `/foo`) or `/interrupt` without a target | One `emitStatus` call, no event (per PBRT-7) | Preserves PBRT-7; does not re-classify a typo as a reply |
+| Judge returns `BOSS_REPLY` with a non-empty `answer` while actor is in `awaitBossReply` | `{ type: 'BOSS_REPLY', answer }` | Boss answered the pending question |
+| Judge returns a root-level Boss entry event or `BOSS_INTERRUPT` while actor is in `awaitBossReply` | Emit that event (transitions out of `awaitBossReply` per §1; `clearBossReplyContext` runs) | Boss explicitly abandons the pending question with a fresh directive |
+| Judge returns no action or an invalid event/payload | One `emitStatus` call, no event (per PBRT-7) | A malformed classifier response must not silently move the FSM |
 | Empty or whitespace-only text | No event, no port call (per PBRT-7) | Preserves PBRT-7; an empty BOSS_REPLY is malformed per §8 |
-| All other text | `{ type: 'BOSS_REPLY', answer: <verbatim text> }` | The only path that synthesizes BOSS_REPLY |
 
-Outside `awaitBossReply`, classification is unchanged (slash forms first, then LLM judge).
-The in-state branch avoids asking the judge whether `"SQLite"` is a fresh task or a reply.
+Outside `awaitBossReply`, `BOSS_REPLY` is not a valid classification result.
+The in-state context lets the judge decide whether `"SQLite"` is a fresh directive or a reply.
 
 ### 7. Transcript embedding over SDK session resume
 
@@ -205,7 +207,7 @@ The following malformed states shall route to `failed` (per [gears2fsm.md "Error
 | `BOSS_REPLY` fired with empty/whitespace-only `answer` | `"BOSS_REPLY received empty answer"` |
 
 There is no `awaitBossReply` timeout — Boss is human, long pauses are normal.
-Cancellation is via slash command (`/interrupt`, `/start`, …), not a timer.
+Cancellation is via a fresh Boss directive or interrupt, not a timer.
 
 ### 9. CODE FSM migration
 
@@ -252,9 +254,9 @@ Authored GEARS may still declare `needsBossInput` when no specific question exis
 ## Consequences
 
 - **gears2fsm grows a third Boss surface.** `BOSS_INTERRUPT` and Boss entry events keep their semantics; mid-state suspension is now a first-class pattern for every captain-invoking state.
-- **CODE becomes conversational.** Players in any captain-invoking state can ask Boss questions without losing context — no more manual `/continue <#>` reconstruction after a question.
-- **The classifier becomes state-aware.** Boss input is disambiguated by current FSM state, not just slash prefix or LLM heuristic; the judge sees only genuinely ambiguous input.
-- **Test surface grows.** Conformance must cover every `needsBossReply` arm and its `BOSS_REPLY` resume arm, plus question-lands, resume-Q+A, context-survives, slash-preempts, and clear-on-success.
+- **CODE becomes conversational.** Players in any captain-invoking state can ask Boss questions without losing context — no more manual fresh-turn reconstruction after a question.
+- **The classifier becomes state-aware.** Boss input is disambiguated by current FSM state, not just event-union heuristics; the judge receives the pending-question context when it matters.
+- **Test surface grows.** Conformance must cover every `needsBossReply` arm and its `BOSS_REPLY` resume arm, plus question-lands, resume-Q+A, context-survives, fresh-directive pre-emption, and clear-on-success.
 - **cligent and the SDKs are untouched.** Transcript embedding makes the DR implementable with no cligent coordination.
 - **CODE author discipline shifts slightly.** Adding a captain-invoking state means giving it the universal `needsBossReply` arm, registering it resumable, and giving downstream transitions `clearBossReplyContext`; [`code.fsm.coverage.test.ts`](../../reference/sdlc/code.playbook/code.fsm.coverage.test.ts) fails closed on omissions.
 

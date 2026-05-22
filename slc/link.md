@@ -96,8 +96,8 @@ The link compiler shall accept:
   [text2gears](text2gears.md#players) source) to opaque player-identifier
   strings.
 - An **adjudication strategy** (default: LLM-judge per state) and a
-  **Boss-event mapping** (default: slash-prefix with LLM-classifier
-  fallback). Both strategies are host-agnostic.
+  **Boss-event mapping** (default: free-text judge classification).
+  Both strategies are host-agnostic.
 
 The host's identity does not enter compilation; the linked module runs unchanged under any host that implements `PlaybookPorts`.
 
@@ -153,22 +153,20 @@ They are not part of the GEARS blockquote and shall not appear in `invoke.input.
 ## Boss-event mapping
 
 The FSM's `events` union enumerates every Boss-originated event.
-The runtime receives Boss input as a free-form string (`handleBossInput.text`) and shall classify each turn into exactly one of the FSM's events plus its payload.
+The runtime receives Boss input as a free-form string (`handleBossInput.text`) and shall classify each non-empty turn into one of the FSM's events plus its payload, or no FSM action, by invoking `callJudge`.
+Empty or whitespace-only text produces no event and no port call.
 
-Two default classifier strategies, in selection order:
+The classifier prompt shall demand JSON against the FSM's typed event union and any state-specific Boss input contract, including the payload fields required for each event.
+When the FSM supports a Boss-reply suspension state, the prompt shall include the current state and the pending Boss question so the judge can distinguish a reply from a fresh directive.
 
-- **Slash-prefix** (default): the Boss types a leading slash command
-  (`/start <prompt>`, `/continue <irNumber>`, …). The linker generates
-  one parser per event from the `events` union; payload extraction is
-  positional and explicit. Unknown commands surface as `emitStatus`, not
-  as a silently-dropped turn.
-- **LLM-classifier** (fallback): when no slash matches, the runtime
-  invokes `callJudge` with a fixed classification prompt that demands a
-  JSON `{ event, payload }` answer against the FSM's typed event union.
+A playbook runtime shall not define slash-prefix commands for states or features inside that playbook.
+The `/command` namespace is reserved for host-level or playbook-selection UX before a turn reaches `handleBossInput`.
+If a host forwards text beginning with `/` to `handleBossInput`, the runtime treats it as ordinary Boss text and classifies it through `callJudge`.
 
-Hosts that deliver structured Boss turns (a programmatic API, a CI host with pre-typed payloads) shall classify before calling `handleBossInput` and may use a slash form that round-trips their structured payload.
+Hosts that receive structured control input shall resolve host-level concerns before choosing a playbook runtime.
+Once they call `handleBossInput`, they shall pass the Boss content as text and shall not pre-classify in-playbook FSM events or rely on slash forms as a runtime protocol.
 
-`BOSS_INTERRUPT` (or the FSM's equivalent explicit-state-jump event) is reached only through the `/interrupt <stateId>` slash form or the LLM-classifier choosing it.
+`BOSS_INTERRUPT` (or the FSM's equivalent explicit-state-jump event) is reached only by the judge choosing it and supplying its required target payload.
 It is *not* an abort surface; aborts go through the abort signal and the strategies in §Abort.
 Hosts where the abort signal is terminal (e.g., SIGINT runs shutdown) shall not route abort to `BOSS_INTERRUPT`.
 
@@ -214,7 +212,8 @@ The `PlaybookRuntime` shall:
   actor snapshots so each transition can be surfaced via `emitStatus`
   and `emitTelemetry` before the next event fires. Start the actor.
 - Per `handleBossInput`:
-  1. Classify `turn.text` (slash → event; else LLM-classifier).
+  1. Classify `turn.text` through the Boss-event mapping.
+     If it produces no event, return after draining any port emissions.
   2. If the actor is in a `final` state, dispose and reconstruct it —
      `final` is terminal and cannot accept new events.
   3. Send the classified event to the actor.
