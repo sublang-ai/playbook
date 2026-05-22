@@ -57,6 +57,10 @@ Order keeps `main` building and test-green: spec amendments land first to give t
 5. **Close-out.**
    Re-verify `map.md`; record any substantive divergence from DR-005 as a one-line addendum.
 
+## Close-out
+
+- `specs/map.md` re-verified; no substantive divergence from DR-005 remains after correcting DR-005's stale historical `needsBossInput` context note.
+
 ## Acceptance criteria
 
 - No captain-invoking state requires a source annotation to be resumable; `code.md` and `code.gears.md` contain no Boss-reply opt-in marker or guard metadata.

@@ -25,8 +25,8 @@ Neither surface fits the three-actor message-passing shape that arises when a pl
 > (a fresh player turn — not necessarily the same cligent
 > conversation or tool session; see §7).
 
-The reference CODE FSM ([`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts)) partially recognizes this: five captain-invoking states (`planAndImplement`, `continueIr`, `summarizeSpecs`, `commitCoderInitial`, `commitJoint`) declare a `needsBossInput` guard routing to `#ready`.
-That is lossy on three counts:
+Before this DR, the reference CODE FSM ([`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts)) partially recognized this through `needsBossInput` guards routing to `#ready`; after the universal migration, only `commitCoderInitial` and `commitJoint` retain `needsBossInput` for the broader rescoping intent described in §11.
+That fallback is lossy on three counts when the player has a specific question:
 
 1. The question is not preserved — Boss sees the FSM at the idle hub with no record of what was asked.
 2. The pending continuation (which state, IR task, player, sourceItem) is dropped — Boss must reconstruct it from transcript scrollback.
