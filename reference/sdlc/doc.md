@@ -3,6 +3,8 @@
 
 # Documentation
 
+_Status: draft. This documentation playbook is not yet compiled to gears/FSM/runtime, has no `specs/` package, and ships in no released artifact._
+
 Players:
 
 - Writer

@@ -3,6 +3,8 @@
 
 # Document
 
+_Status: draft. Meta-format for the draft documentation playbook ([doc.md](doc.md)); not yet compiled or covered by a `specs/` package._
+
 - 文档是对用户功能、系统模块等对象的描述。
 - 文档应采用 Markdown 文件格式。
 - 文档应包含如下 4 个部分：
