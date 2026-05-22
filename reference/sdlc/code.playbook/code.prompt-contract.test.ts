@@ -348,24 +348,16 @@ describe('prompt contract — per state', () => {
         ).toEqual([...present].sort((a, b) => a - b));
       });
 
-      it('composer injects the Boss-question instruction only for resumable states', () => {
+      it('composer injects the Boss-question instruction before every domain prompt', () => {
         const input = state.getInput(FULL_CONTEXT as Partial<CodingContext>);
         const composed = composePlayerPrompt(input);
-        const expected = 'needsBossReply' in input.result;
-
-        if (expected) {
-          expect(composed, contract.stateId).toContain(BOSS_QUESTION_INSTRUCTION);
-          expect(
-            composed.endsWith(
-              `${BOSS_QUESTION_INSTRUCTION}\n\n${substitutedPrompt(input.prompt)}`,
-            ),
-            `${contract.stateId}: instruction immediately before domain prompt`,
-          ).toBe(true);
-        } else {
-          expect(composed, contract.stateId).not.toContain(
-            BOSS_QUESTION_INSTRUCTION,
-          );
-        }
+        expect(composed, contract.stateId).toContain(BOSS_QUESTION_INSTRUCTION);
+        expect(
+          composed.endsWith(
+            `${BOSS_QUESTION_INSTRUCTION}\n\n${substitutedPrompt(input.prompt)}`,
+          ),
+          `${contract.stateId}: instruction immediately before domain prompt`,
+        ).toBe(true);
       });
     });
   }
@@ -397,12 +389,12 @@ describe('prompt contract — structural', () => {
 });
 
 describe('prompt contract — Boss-reply continuation', () => {
-  const resumableStates = contracts.filter((contract) => {
+  const bossReplyStates = contracts.filter((contract) => {
     const state = stateById.get(contract.stateId);
     return state !== undefined && 'needsBossReply' in state.getInput({}).result;
   });
 
-  for (const contract of resumableStates) {
+  for (const contract of bossReplyStates) {
     const state = stateById.get(contract.stateId);
     if (!state) continue;
 
@@ -464,11 +456,9 @@ describe('prompt contract — Boss-reply continuation', () => {
     });
   }
 
-  it('has one continuation contract row per resumable state', () => {
-    expect(resumableStates.map((contract) => contract.stateId).sort()).toEqual([
-      'continueIr',
-      'planAndImplement',
-      'summarizeSpecs',
-    ]);
+  it('has one continuation contract row per captain-invoking state', () => {
+    expect(bossReplyStates.map((contract) => contract.stateId).sort()).toEqual(
+      contracts.map((contract) => contract.stateId).sort(),
+    );
   });
 });

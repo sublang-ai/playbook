@@ -18,9 +18,6 @@ When Boss gives a coding intent, Captain shall relay it to Coder along with the 
 > If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.
 > Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.
 > Do not commit.
-
-Result guard: `needsBossReply` — The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.
-
 The resulting changes are Initial Changes.
 
 ### CODE-2
@@ -36,9 +33,6 @@ When a new IR or IR task passes review and is committed, Captain shall prompt Co
 > Implement one task at a time (including corresponding tests if any).
 > Stop after each task for review — do not commit yet.
 > If relevant, mark progress in the IR.
-
-Result guard: `needsBossReply` — The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.
-
 The resulting changes are Initial Changes.
 
 ### CODE-4
@@ -56,9 +50,6 @@ When an IR is done, Captain shall prompt Coder:
 > Avoid implementation specifics.
 > Avoid redundant spec items.
 > Consult @specs/map.md for relevant context and update it to reflect your changes.
-
-Result guard: `needsBossReply` — The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.
-
 ## Reviewer
 
 For each finding in a review round, Coder either addresses it with changes or challenges it with a rebuttal.

@@ -33,8 +33,24 @@ const jumpableStateIds = [
 ];
 const resumableStateIds = [
     'planAndImplement',
+    'respondToReview',
     'continueIr',
     'summarizeSpecs',
+    'reviewBossCommitSpecs',
+    'reviewBossCommitCode',
+    'reviewBossCommitMixed',
+    'reviewIrTaskCommitSpecs',
+    'reviewIrTaskCommitCode',
+    'reviewIrTaskCommitMixed',
+    'reviewChangesSpecs',
+    'reviewChangesCode',
+    'reviewChangesMixed',
+    'reviewChangesAndChallengesSpecs',
+    'reviewChangesAndChallengesCode',
+    'reviewChangesAndChallengesMixed',
+    'adjudicateChallenges',
+    'commitCoderInitial',
+    'commitJoint',
 ];
 const outputOf = (event) => event.output;
 const guardIs = (guard) => ({ event }) => outputOf(event)?.guard === guard;
@@ -44,6 +60,8 @@ const noFindingsAfter = (afterReview) => ({ context, event }) => outputOf(event)
 const rememberCaptainOutput = assign({
     lastResult: ({ event }) => outputOf(event),
     lastError: () => undefined,
+    pendingBossQuestion: () => undefined,
+    bossReply: () => undefined,
     irNumber: ({ context, event }) => outputOf(event)?.irNumber ?? context.irNumber,
     taskDescription: ({ context, event }) => outputOf(event)?.taskDescription ?? context.taskDescription,
     reviews: ({ context, event }) => outputOf(event)?.reviews ?? context.reviews,
@@ -64,6 +82,31 @@ const bossReplyInputFields = (context) => ({
     pendingBossQuestion: context.pendingBossQuestion,
     bossReply: context.bossReply,
 });
+const withNeedsBossReply = (result) => ({
+    ...result,
+    needsBossReply: needsBossReplyDescription,
+});
+const captainStateMetadata = {
+    planAndImplement: { sourceItem: 'CODE-1', player: 'Coder' },
+    respondToReview: { sourceItem: 'CODE-2', player: 'Coder' },
+    continueIr: { sourceItem: 'CODE-3', player: 'Coder' },
+    summarizeSpecs: { sourceItem: 'CODE-4', player: 'Coder' },
+    reviewBossCommitSpecs: { sourceItem: 'CODE-5', player: 'Reviewer' },
+    reviewBossCommitCode: { sourceItem: 'CODE-6', player: 'Reviewer' },
+    reviewBossCommitMixed: { sourceItem: 'CODE-7', player: 'Reviewer' },
+    reviewIrTaskCommitSpecs: { sourceItem: 'CODE-8', player: 'Reviewer' },
+    reviewIrTaskCommitCode: { sourceItem: 'CODE-9', player: 'Reviewer' },
+    reviewIrTaskCommitMixed: { sourceItem: 'CODE-10', player: 'Reviewer' },
+    reviewChangesSpecs: { sourceItem: 'CODE-11', player: 'Reviewer' },
+    reviewChangesCode: { sourceItem: 'CODE-12', player: 'Reviewer' },
+    reviewChangesMixed: { sourceItem: 'CODE-13', player: 'Reviewer' },
+    reviewChangesAndChallengesSpecs: { sourceItem: 'CODE-15', player: 'Reviewer' },
+    reviewChangesAndChallengesCode: { sourceItem: 'CODE-16', player: 'Reviewer' },
+    reviewChangesAndChallengesMixed: { sourceItem: 'CODE-17', player: 'Reviewer' },
+    adjudicateChallenges: { sourceItem: 'CODE-14', player: 'Reviewer' },
+    commitCoderInitial: { sourceItem: 'CODE-18', player: 'Committer' },
+    commitJoint: { sourceItem: 'CODE-19', player: 'Committer' },
+};
 const planAndImplementInput = (context) => ({
     player: 'Coder',
     sourceItem: 'CODE-1',
@@ -75,11 +118,10 @@ const planAndImplementInput = (context) => ({
         'Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.',
         'Do not commit.',
     ].join('\n'),
-    result: {
+    result: withNeedsBossReply({
         singleCommitReady: 'Coder produced uncommitted single-commit changes (Initial Changes).',
         irDrafted: 'Coder decomposed the intent into a new IR and drafted it uncommitted (Initial Changes).',
-        needsBossReply: needsBossReplyDescription,
-    },
+    }),
 });
 const continueIrInput = (context) => ({
     player: 'Coder',
@@ -92,11 +134,10 @@ const continueIrInput = (context) => ({
         'Stop after each task for review — do not commit yet.',
         'If relevant, mark progress in the IR.',
     ].join('\n'),
-    result: {
+    result: withNeedsBossReply({
         taskReady: 'Coder produced uncommitted changes for the next IR task (Initial Changes). Output shall include `taskDescription: <one-line description of the task just implemented>`.',
         iterationDone: 'All IR deliverables and tasks are done.',
-        needsBossReply: needsBossReplyDescription,
-    },
+    }),
 });
 const summarizeSpecsInput = (context) => ({
     player: 'Coder',
@@ -117,20 +158,14 @@ const summarizeSpecsInput = (context) => ({
         'Avoid redundant spec items.',
         'Consult @specs/map.md for relevant context and update it to reflect your changes.',
     ].join('\n'),
-    result: {
+    result: withNeedsBossReply({
         specsReady: 'Coder produced uncommitted spec updates (Initial Changes).',
         noSpecChanges: 'Existing specs already capture the iteration.',
-        needsBossReply: needsBossReplyDescription,
-    },
+    }),
 });
-const resumableCaptainInputs = {
-    planAndImplement: planAndImplementInput,
-    continueIr: continueIrInput,
-    summarizeSpecs: summarizeSpecsInput,
-};
 const setPendingBossQuestion = (resumeStateId) => assign({
     pendingBossQuestion: ({ context, event, }) => {
-        const input = resumableCaptainInputs[resumeStateId](context);
+        const input = captainStateMetadata[resumeStateId];
         return {
             resumeStateId,
             sourceItem: input.sourceItem,
@@ -166,6 +201,14 @@ const resumableStates = (ids) => ids.map((id) => ({
     actions: rememberBossReply,
 }));
 const bossReplyIsEmpty = ({ event }) => event.type === 'BOSS_REPLY' && event.answer.trim() === '';
+const withNeedsBossReplyTransition = (resumeStateId, transitions) => [
+    ...transitions,
+    {
+        guard: guardIs('needsBossReply'),
+        target: '#awaitBossReply',
+        actions: [rememberCaptainOutput, setPendingBossQuestion(resumeStateId)],
+    },
+];
 const captainError = {
     target: '#failed',
     actions: rememberCaptainError,
@@ -257,7 +300,7 @@ export const codingMachine = setup({
             invoke: {
                 src: 'captain',
                 input: ({ context }) => planAndImplementInput(context),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('planAndImplement', [
                     {
                         guard: guardIs('singleCommitReady'),
                         target: '#commitCoderInitial',
@@ -284,15 +327,7 @@ export const codingMachine = setup({
                             }),
                         ],
                     },
-                    {
-                        guard: guardIs('needsBossReply'),
-                        target: '#awaitBossReply',
-                        actions: [
-                            rememberCaptainOutput,
-                            setPendingBossQuestion('planAndImplement'),
-                        ],
-                    },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -304,6 +339,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Coder',
                     sourceItem: 'CODE-2',
+                    ...bossReplyInputFields(context),
                     reviews: context.reviews,
                     prompt: [
                         'For each review item below for the above changes, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
@@ -318,9 +354,10 @@ export const codingMachine = setup({
                         changesMadeMixedAndChallenged: 'Coder produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
                         challengesRaised: 'Coder challenged one or more review items without producing any code edits. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
                         accepted: 'Coder accepted the review outcome without further edits.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('respondToReview', [
                     {
                         guard: guardIs('changesMadeSpecs'),
                         target: '#reviewChangesSpecs',
@@ -382,7 +419,7 @@ export const codingMachine = setup({
                         target: '#done',
                         actions: rememberCaptainOutput,
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -392,7 +429,7 @@ export const codingMachine = setup({
             invoke: {
                 src: 'captain',
                 input: ({ context }) => continueIrInput(context),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('continueIr', [
                     {
                         guard: guardIs('taskReady'),
                         target: '#commitCoderInitial',
@@ -418,15 +455,7 @@ export const codingMachine = setup({
                             }),
                         ],
                     },
-                    {
-                        guard: guardIs('needsBossReply'),
-                        target: '#awaitBossReply',
-                        actions: [
-                            rememberCaptainOutput,
-                            setPendingBossQuestion('continueIr'),
-                        ],
-                    },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -436,7 +465,7 @@ export const codingMachine = setup({
             invoke: {
                 src: 'captain',
                 input: ({ context }) => summarizeSpecsInput(context),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('summarizeSpecs', [
                     {
                         guard: guardIs('specsReady'),
                         target: '#commitCoderInitial',
@@ -455,15 +484,7 @@ export const codingMachine = setup({
                         target: '#done',
                         actions: [rememberCaptainOutput, clearBossReplyContext],
                     },
-                    {
-                        guard: guardIs('needsBossReply'),
-                        target: '#awaitBossReply',
-                        actions: [
-                            rememberCaptainOutput,
-                            setPendingBossQuestion('summarizeSpecs'),
-                        ],
-                    },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -475,6 +496,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-5',
+                    ...bossReplyInputFields(context),
                     intent: context.intent,
                     prompt: [
                         'Review the latest commit.',
@@ -492,9 +514,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The spec-only commit has no review findings.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewBossCommitSpecs', [
                     { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
@@ -503,7 +526,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -515,6 +538,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-6',
+                    ...bossReplyInputFields(context),
                     intent: context.intent,
                     prompt: [
                         'Review the latest commit.',
@@ -527,9 +551,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The code-only commit has no review findings.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewBossCommitCode', [
                     { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
@@ -538,7 +563,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -550,6 +575,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-7',
+                    ...bossReplyInputFields(context),
                     intent: context.intent,
                     prompt: [
                         'Review the latest commit.',
@@ -569,9 +595,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The mixed commit has no review findings.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewBossCommitMixed', [
                     { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
@@ -580,7 +607,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -592,6 +619,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-8',
+                    ...bossReplyInputFields(context),
                     irNumber: context.irNumber,
                     taskDescription: context.taskDescription,
                     prompt: [
@@ -610,9 +638,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The IR-task spec-only commit has no review findings.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewIrTaskCommitSpecs', [
                     { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
@@ -621,7 +650,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -633,6 +662,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-9',
+                    ...bossReplyInputFields(context),
                     irNumber: context.irNumber,
                     taskDescription: context.taskDescription,
                     prompt: [
@@ -646,9 +676,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The IR-task code-only commit has no review findings.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewIrTaskCommitCode', [
                     { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
@@ -657,7 +688,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -669,6 +700,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-10',
+                    ...bossReplyInputFields(context),
                     irNumber: context.irNumber,
                     taskDescription: context.taskDescription,
                     prompt: [
@@ -689,9 +721,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The IR-task mixed commit has no review findings.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewIrTaskCommitMixed', [
                     { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
                     { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
@@ -700,7 +733,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -709,9 +742,10 @@ export const codingMachine = setup({
             description: 'CODE-11: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ with no accompanying rebuttals.',
             invoke: {
                 src: 'captain',
-                input: () => ({
+                input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-11',
+                    ...bossReplyInputFields(context),
                     prompt: [
                         'Review the unstaged/untracked changes.',
                         'Understand the intent.',
@@ -728,9 +762,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The uncommitted spec-only changes are ready to commit.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewChangesSpecs', [
                     {
                         guard: guardIs('noFindings'),
                         target: '#commitJoint',
@@ -741,7 +776,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -750,9 +785,10 @@ export const codingMachine = setup({
             description: 'CODE-12: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ with no accompanying rebuttals.',
             invoke: {
                 src: 'captain',
-                input: () => ({
+                input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-12',
+                    ...bossReplyInputFields(context),
                     prompt: [
                         'Review the unstaged/untracked changes.',
                         'Understand the intent.',
@@ -764,9 +800,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The uncommitted code-only changes are ready to commit.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewChangesCode', [
                     {
                         guard: guardIs('noFindings'),
                         target: '#commitJoint',
@@ -777,7 +814,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -786,9 +823,10 @@ export const codingMachine = setup({
             description: 'CODE-13: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files with no accompanying rebuttals.',
             invoke: {
                 src: 'captain',
-                input: () => ({
+                input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-13',
+                    ...bossReplyInputFields(context),
                     prompt: [
                         'Review the unstaged/untracked changes.',
                         'Understand the intent.',
@@ -807,9 +845,10 @@ export const codingMachine = setup({
                     result: {
                         noFindings: 'The uncommitted mixed changes are ready to commit.',
                         hasFindings: 'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewChangesMixed', [
                     {
                         guard: guardIs('noFindings'),
                         target: '#commitJoint',
@@ -820,7 +859,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -832,6 +871,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-15',
+                    ...bossReplyInputFields(context),
                     reviews: context.reviews,
                     challenges: context.challenges,
                     prompt: [
@@ -851,9 +891,10 @@ export const codingMachine = setup({
                     result: {
                         approved: 'The new spec-only changes are ready to commit and every rebuttal was accepted (or no items remained open).',
                         needsRevision: 'The combined round needs more work: the review produced findings, one or more rebuttals were rejected, or both. Output shall include `reviews: <numbered list of any new findings or rejected rebuttals to address>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewChangesAndChallengesSpecs', [
                     {
                         guard: guardIs('approved'),
                         target: '#commitJoint',
@@ -864,7 +905,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -876,6 +917,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-16',
+                    ...bossReplyInputFields(context),
                     reviews: context.reviews,
                     challenges: context.challenges,
                     prompt: [
@@ -890,9 +932,10 @@ export const codingMachine = setup({
                     result: {
                         approved: 'The new code-only changes are ready to commit and every rebuttal was accepted (or no items remained open).',
                         needsRevision: 'The combined round needs more work: the review produced findings, one or more rebuttals were rejected, or both. Output shall include `reviews: <numbered list of any new findings or rejected rebuttals to address>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewChangesAndChallengesCode', [
                     {
                         guard: guardIs('approved'),
                         target: '#commitJoint',
@@ -903,7 +946,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -915,6 +958,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-17',
+                    ...bossReplyInputFields(context),
                     reviews: context.reviews,
                     challenges: context.challenges,
                     prompt: [
@@ -936,9 +980,10 @@ export const codingMachine = setup({
                     result: {
                         approved: 'The new mixed changes are ready to commit and every rebuttal was accepted (or no items remained open).',
                         needsRevision: 'The combined round needs more work: the review produced findings, one or more rebuttals were rejected, or both. Output shall include `reviews: <numbered list of any new findings or rejected rebuttals to address>`.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('reviewChangesAndChallengesMixed', [
                     {
                         guard: guardIs('approved'),
                         target: '#commitJoint',
@@ -949,7 +994,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' })],
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -961,6 +1006,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Reviewer',
                     sourceItem: 'CODE-14',
+                    ...bossReplyInputFields(context),
                     reviews: context.reviews,
                     challenges: context.challenges,
                     prompt: [
@@ -970,9 +1016,10 @@ export const codingMachine = setup({
                         challengeAccepted: 'Reviewer accepted the rebuttal — no further review edits are required.',
                         challengeRejected: 'Reviewer rejected the rebuttal — Coder must respond again.',
                         noOpenItems: 'No review items remain open.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('adjudicateChallenges', [
                     {
                         guard: ({ context, event }) => (outputOf(event)?.guard === 'challengeAccepted' ||
                             outputOf(event)?.guard === 'noOpenItems') &&
@@ -1009,7 +1056,7 @@ export const codingMachine = setup({
                         target: '#respondToReview',
                         actions: rememberCaptainOutput,
                     },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -1021,6 +1068,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Committer',
                     sourceItem: 'CODE-18',
+                    ...bossReplyInputFields(context),
                     coderPlayer: context.coderPlayer,
                     prompt: [
                         'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
@@ -1032,9 +1080,10 @@ export const codingMachine = setup({
                         committedMixed: 'Committed changes that span both @specs/{user,dev,test}/ and other files.',
                         noRelevantChanges: 'There are no relevant changes to commit.',
                         needsBossInput: 'Committing requires additional Boss input.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('commitCoderInitial', [
                     {
                         guard: guardAndOrigin('committedSpecs', 'bossIntent'),
                         target: '#reviewBossCommitSpecs',
@@ -1067,7 +1116,7 @@ export const codingMachine = setup({
                     },
                     { guard: guardIs('noRelevantChanges'), target: '#ready', actions: rememberCaptainOutput },
                     { guard: guardIs('needsBossInput'), target: '#ready', actions: rememberCaptainOutput },
-                ],
+                ]),
                 onError: captainError,
             },
         },
@@ -1079,6 +1128,7 @@ export const codingMachine = setup({
                 input: ({ context }) => ({
                     player: 'Committer',
                     sourceItem: 'CODE-19',
+                    ...bossReplyInputFields(context),
                     coderPlayer: context.coderPlayer,
                     reviewerPlayer: context.reviewerPlayer,
                     prompt: [
@@ -1089,9 +1139,10 @@ export const codingMachine = setup({
                         committed: 'Relevant changes were committed.',
                         noRelevantChanges: 'There are no relevant changes to commit.',
                         needsBossInput: 'Committing requires additional Boss input.',
+                        needsBossReply: needsBossReplyDescription,
                     },
                 }),
-                onDone: [
+                onDone: withNeedsBossReplyTransition('commitJoint', [
                     {
                         guard: ({ context, event }) => outputOf(event)?.guard === 'committed' && context.afterReview === 'continueIr',
                         target: '#continueIr',
@@ -1109,7 +1160,7 @@ export const codingMachine = setup({
                     },
                     { guard: guardIs('noRelevantChanges'), target: '#done', actions: rememberCaptainOutput },
                     { guard: guardIs('needsBossInput'), target: '#ready', actions: rememberCaptainOutput },
-                ],
+                ]),
                 onError: captainError,
             },
         },

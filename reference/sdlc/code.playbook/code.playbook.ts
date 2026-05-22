@@ -67,8 +67,9 @@ const BOSS_REPLY_ERRORS = {
 // string replace, no escaping) and prepends labelled blocks for any
 // populated structured field. When a state resumes from a Boss reply,
 // the continuation preamble and Q/A blocks precede the ordinary
-// labelled blocks. Resumable states receive a standard Boss-question
-// instruction immediately before the domain prompt body. The FSM's
+// labelled blocks. Every generated captain-invoking state declares
+// needsBossReply, so it receives the standard Boss-question instruction
+// immediately before the domain prompt body. The FSM's
 // prompt body is never re-flowed.
 const BOSS_QUESTION_INSTRUCTION =
   'If a specific Boss answer is needed, ask the exact question and stop.';

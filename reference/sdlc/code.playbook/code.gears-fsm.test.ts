@@ -9,9 +9,9 @@
 //   (b) FSM `sourceItem` not declared in gears,
 //   (c) player binding drift (gears section vs FSM `input.player`),
 //   (d) prompt-body drift (gears blockquote vs FSM `input.prompt`),
-//   (e) `needsBossReply` result-map drift,
+//   (e) generated `needsBossReply` result-map drift,
 //   (f) hidden prompt lines not traceable to `code.md`,
-//   (g) hidden `needsBossReply` metadata not traceable to `code.md`.
+//   (g) stale source/gears `needsBossReply` metadata.
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -33,16 +33,15 @@ interface GearsItem {
 
 interface SourceBehavior {
   promptBody: string;
-  resumable: boolean;
 }
 
 function parseSource(text: string): SourceBehavior[] {
   const behaviors: SourceBehavior[] = [];
   let buf: string[] | undefined;
 
-  function commit(resumable: boolean): void {
+  function commit(): void {
     if (buf !== undefined) {
-      behaviors.push({ promptBody: buf.join('\n'), resumable });
+      behaviors.push({ promptBody: buf.join('\n') });
     }
     buf = undefined;
   }
@@ -59,10 +58,10 @@ function parseSource(text: string): SourceBehavior[] {
       continue;
     }
     if (buf !== undefined) {
-      commit(line === 'Resumable: Boss reply');
+      commit();
     }
   }
-  commit(false);
+  commit();
   return behaviors;
 }
 
@@ -179,39 +178,10 @@ describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
     }
   });
 
-  it('parses the three source resumable annotations', () => {
-    const resumablePrompts = sourceBehaviors
-      .filter((behavior) => behavior.resumable)
-      .map((behavior) => behavior.promptBody);
-
-    expect(resumablePrompts).toEqual([
-      [
-        'Assess whether this can be completed in a single commit, following best practices.',
-        'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
-        'Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.',
-        'Do not commit.',
-      ].join('\n'),
-      [
-        'Continue to implement IR-<#> if not all deliverables and tasks are done.',
-        'Implement one task at a time (including corresponding tests if any).',
-        'Stop after each task for review — do not commit yet.',
-        'If relevant, mark progress in the IR.',
-      ].join('\n'),
-      [
-        'Read IR-<#> and corresponding commits.',
-        'According to @specs/meta.md, add or update spec items to fully capture:',
-        '',
-        '- the user requirements in @specs/user,',
-        '- the system behavior in @specs/dev, and',
-        '- the integration/system test cases in @specs/test.',
-        '',
-        'The spec items should be the *minimal* set needed to reimplement code without the IR.',
-        'The set should be complete and coherent.',
-        'Avoid implementation specifics.',
-        'Avoid redundant spec items.',
-        'Consult @specs/map.md for relevant context and update it to reflect your changes.',
-      ].join('\n'),
-    ]);
+  it('source carries no Boss-reply annotation lines', () => {
+    expect(readFileSync(sourcePath, 'utf8')).not.toContain(
+      'Resumable: Boss reply',
+    );
   });
 });
 
@@ -252,37 +222,24 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(g)', () => {
     }
   });
 
-  it('(e) needsBossReply declarations agree and carry the parseable question marker', () => {
+  it('(e) FSM-generated needsBossReply declarations carry the parseable question marker', () => {
     const marker =
       "Output shall include `question: <verbatim question text from the player's prose>`.";
-    const gearsNeedsBossReply: string[] = [];
-    const fsmNeedsBossReply: string[] = [];
 
     for (const item of gears.values()) {
-      const description = item.resultGuards.get('needsBossReply');
-      if (description === undefined) continue;
-      gearsNeedsBossReply.push(item.id);
       expect(
-        description,
-        `${item.id}: needsBossReply must declare the parseable question marker`,
-      ).toContain(marker);
-
-      const fsm = fsmBySourceItem.get(item.id);
-      expect(fsm, `${item.id}: needsBossReply has no FSM state`).toBeDefined();
-      const fsmDescription = fsm?.getInput({}).result.needsBossReply;
-      expect(
-        fsmDescription,
-        `${item.id}: FSM result map missing needsBossReply`,
-      ).toBe(description);
+        item.resultGuards.has('needsBossReply'),
+        `${item.id}: GEARS output must not carry needsBossReply metadata`,
+      ).toBe(false);
     }
 
     for (const s of states) {
-      if ('needsBossReply' in s.getInput({}).result) {
-        fsmNeedsBossReply.push(s.sourceItem);
-      }
+      const fsmDescription = s.getInput({}).result.needsBossReply;
+      expect(
+        fsmDescription,
+        `${s.stateId} (${s.sourceItem}): FSM result map missing needsBossReply`,
+      ).toContain(marker);
     }
-
-    expect(gearsNeedsBossReply.sort()).toEqual(fsmNeedsBossReply.sort());
   });
 
   it('(f) every non-empty GEARS blockquote line is present in code.md source blockquotes', () => {
@@ -304,27 +261,14 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(g)', () => {
     expect(extraLines).toEqual([]);
   });
 
-  it('(g) needsBossReply metadata is derived from source resumable annotations', () => {
-    const sourceResumablePrompts = new Set(
-      sourceBehaviors
-        .filter((behavior) => behavior.resumable)
-        .map((behavior) => behavior.promptBody),
+  it('(g) neither source nor GEARS carries Boss-reply opt-in metadata', () => {
+    expect(readFileSync(sourcePath, 'utf8')).not.toContain(
+      'Resumable: Boss reply',
     );
-    const gearsResumablePrompts = new Set(
-      [...gears.values()]
-        .filter((item) => item.resultGuards.has('needsBossReply'))
-        .map((item) => item.promptBody),
-    );
-
-    const missingMetadata = [...sourceResumablePrompts].filter(
-      (prompt) => !gearsResumablePrompts.has(prompt),
-    );
-    const missingSourceAnnotation = [...gears.values()]
-      .filter((item) => item.resultGuards.has('needsBossReply'))
-      .filter((item) => !sourceResumablePrompts.has(item.promptBody))
-      .map((item) => item.id);
-
-    expect(missingMetadata).toEqual([]);
-    expect(missingSourceAnnotation).toEqual([]);
+    expect(
+      [...gears.values()].filter((item) =>
+        item.resultGuards.has('needsBossReply'),
+      ),
+    ).toEqual([]);
   });
 });

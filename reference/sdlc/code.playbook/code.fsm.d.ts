@@ -4,7 +4,7 @@ type WorkflowKind = 'singleCommit' | 'iteration' | 'specSummary';
 type ChangeOrigin = 'bossIntent' | 'irTask';
 type ReviewSubject = 'commit' | 'changes';
 type AfterReview = 'continueIr' | 'summarizeSpecs' | 'done';
-type ResumableStateId = 'planAndImplement' | 'continueIr' | 'summarizeSpecs';
+type ResumableStateId = Exclude<JumpableStateId, 'ready' | 'failed'>;
 type PendingBossQuestion = {
     resumeStateId: ResumableStateId;
     sourceItem: string;

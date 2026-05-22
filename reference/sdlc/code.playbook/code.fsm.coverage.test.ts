@@ -46,6 +46,16 @@ function fx(stateId: string, index: number, fixture: Fixture): void {
   fixtures.set(`${stateId}#${index}`, fixture);
 }
 
+function needsBossReplyFx(
+  stateId: string,
+  index: number,
+  question = 'Which scope should I use?',
+): void {
+  fx(stateId, index, {
+    captainOutput: { guard: 'needsBossReply', question },
+  });
+}
+
 const bossReplyFixtures = new Map<
   number,
   { context: Partial<CodingContext>; event: CodingEvent }
@@ -182,6 +192,7 @@ fx('respondToReview', 10, {
   context: { reviewSubject: 'commit', afterReview: 'done' },
   captainOutput: { guard: 'accepted' },
 });
+needsBossReplyFx('respondToReview', 11);
 
 // CODE-3 — continueIr (3 arms)
 fx('continueIr', 0, {
@@ -199,14 +210,7 @@ fx('summarizeSpecs', 2, {
   captainOutput: { guard: 'needsBossReply', question: 'Which spec scope should I summarize?' },
 });
 
-// awaitBossReply — BOSS_REPLY arms: malformed empty answer, then
-// resumableStateIds in order.
-bossReplyFx(0, 'planAndImplement', '   ');
-bossReplyFx(1, 'planAndImplement');
-bossReplyFx(2, 'continueIr');
-bossReplyFx(3, 'summarizeSpecs');
-
-// CODE-5..10 — review*Commit*  (4 arms each, identical shape)
+// CODE-5..10 — review*Commit*  (5 arms each, identical shape)
 const reviewCommitStates = [
   'reviewBossCommitSpecs',
   'reviewBossCommitCode',
@@ -231,9 +235,10 @@ for (const s of reviewCommitStates) {
   fx(s, 3, {
     captainOutput: { guard: 'hasFindings', reviews: '1. finding' },
   });
+  needsBossReplyFx(s, 4);
 }
 
-// CODE-11..13 — reviewChanges* (2 arms each)
+// CODE-11..13 — reviewChanges* (3 arms each)
 const reviewChangesStates = [
   'reviewChangesSpecs',
   'reviewChangesCode',
@@ -244,9 +249,10 @@ for (const s of reviewChangesStates) {
   fx(s, 1, {
     captainOutput: { guard: 'hasFindings', reviews: '1. finding' },
   });
+  needsBossReplyFx(s, 2);
 }
 
-// CODE-15..17 — reviewChangesAndChallenges* (2 arms each)
+// CODE-15..17 — reviewChangesAndChallenges* (3 arms each)
 const reviewChangesAndChallengesStates = [
   'reviewChangesAndChallengesSpecs',
   'reviewChangesAndChallengesCode',
@@ -257,9 +263,10 @@ for (const s of reviewChangesAndChallengesStates) {
   fx(s, 1, {
     captainOutput: { guard: 'needsRevision', reviews: '1. finding' },
   });
+  needsBossReplyFx(s, 2);
 }
 
-// CODE-14 — adjudicateChallenges (5 arms)
+// CODE-14 — adjudicateChallenges (6 arms)
 fx('adjudicateChallenges', 0, {
   context: { reviewSubject: 'changes' },
   captainOutput: { guard: 'challengeAccepted' },
@@ -277,8 +284,9 @@ fx('adjudicateChallenges', 3, {
   captainOutput: { guard: 'challengeAccepted' },
 });
 fx('adjudicateChallenges', 4, { captainOutput: { guard: 'challengeRejected' } });
+needsBossReplyFx('adjudicateChallenges', 5);
 
-// CODE-18 — commitCoderInitial (8 arms)
+// CODE-18 — commitCoderInitial (9 arms)
 fx('commitCoderInitial', 0, {
   context: { changeOrigin: 'bossIntent' },
   captainOutput: { guard: 'committedSpecs' },
@@ -305,8 +313,9 @@ fx('commitCoderInitial', 5, {
 });
 fx('commitCoderInitial', 6, { captainOutput: { guard: 'noRelevantChanges' } });
 fx('commitCoderInitial', 7, { captainOutput: { guard: 'needsBossInput' } });
+needsBossReplyFx('commitCoderInitial', 8);
 
-// CODE-19 — commitJoint (5 arms)
+// CODE-19 — commitJoint (6 arms)
 fx('commitJoint', 0, {
   context: { afterReview: 'continueIr' },
   captainOutput: { guard: 'committed' },
@@ -321,6 +330,7 @@ fx('commitJoint', 2, {
 });
 fx('commitJoint', 3, { captainOutput: { guard: 'noRelevantChanges' } });
 fx('commitJoint', 4, { captainOutput: { guard: 'needsBossInput' } });
+needsBossReplyFx('commitJoint', 5);
 
 function makeFakeCaptain(behavior: CaptainOutput | 'throw' | 'hang') {
   let called = 0;
@@ -427,6 +437,14 @@ async function drive(
 const states = enumerateCaptainStates(codingMachine);
 const rootEvents = enumerateRootEvents(codingMachine);
 const awaitBossReply = enumerateAwaitBossReply(codingMachine);
+
+for (const transition of awaitBossReply.bossReplyTransitions) {
+  if (transition.target === 'failed') {
+    bossReplyFx(transition.index, 'planAndImplement', '   ');
+  } else {
+    bossReplyFx(transition.index, transition.target);
+  }
+}
 
 describe('edge coverage — onDone arms', () => {
   for (const state of states) {
