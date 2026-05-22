@@ -182,8 +182,6 @@ const noFindingsAfter = (afterReview: AfterReview) =>
 const rememberCaptainOutput = assign({
   lastResult: ({ event }: { event: unknown }) => outputOf(event),
   lastError: () => undefined,
-  pendingBossQuestion: () => undefined,
-  bossReply: () => undefined,
   irNumber: ({ context, event }: { context: CodingContext; event: unknown }) =>
     outputOf(event)?.irNumber ?? context.irNumber,
   taskDescription: ({ context, event }: { context: CodingContext; event: unknown }) =>
@@ -380,7 +378,7 @@ const withNeedsBossReplyTransition = <
   resumeStateId: ResumableStateId,
   transitions: T,
 ) => [
-  ...transitions,
+  ...transitions.map((transition) => withClearBossReplyContext(transition)),
   {
     guard: guardIs('needsBossReply'),
     target: '#awaitBossReply',
@@ -496,7 +494,6 @@ export const codingMachine = setup({
             target: '#commitCoderInitial',
             actions: [
               rememberCaptainOutput,
-              clearBossReplyContext,
               assign({
                 workflow: () => 'singleCommit' as const,
                 changeOrigin: () => 'bossIntent' as const,
@@ -509,7 +506,6 @@ export const codingMachine = setup({
             target: '#commitCoderInitial',
             actions: [
               rememberCaptainOutput,
-              clearBossReplyContext,
               assign({
                 workflow: () => 'iteration' as const,
                 changeOrigin: () => 'bossIntent' as const,
@@ -639,7 +635,6 @@ export const codingMachine = setup({
             target: '#commitCoderInitial',
             actions: [
               rememberCaptainOutput,
-              clearBossReplyContext,
               assign({
                 workflow: () => 'iteration' as const,
                 changeOrigin: () => 'irTask' as const,
@@ -652,7 +647,6 @@ export const codingMachine = setup({
             target: '#summarizeSpecs',
             actions: [
               rememberCaptainOutput,
-              clearBossReplyContext,
               assign({
                 workflow: () => 'specSummary' as const,
                 afterReview: () => 'done' as const,
@@ -676,7 +670,6 @@ export const codingMachine = setup({
             target: '#commitCoderInitial',
             actions: [
               rememberCaptainOutput,
-              clearBossReplyContext,
               assign({
                 workflow: () => 'specSummary' as const,
                 changeOrigin: () => 'irTask' as const,
@@ -687,7 +680,7 @@ export const codingMachine = setup({
           {
             guard: guardIs('noSpecChanges'),
             target: '#done',
-            actions: [rememberCaptainOutput, clearBossReplyContext],
+            actions: rememberCaptainOutput,
           },
         ]),
         onError: captainError,
