@@ -520,7 +520,7 @@ describe('edge coverage — needsBossReply provenance', () => {
   }
 });
 
-describe('edge coverage — PLAYBOOK-13 clearing on resumable exits', () => {
+describe('edge coverage — PLAYBOOK-13 clearing on captain exits', () => {
   for (const state of states.filter(
     (s) => 'needsBossReply' in s.getInput({}).result,
   )) {
@@ -714,17 +714,27 @@ describe('edge coverage — structural', () => {
     expect(fixtures.size).toBe(armCount);
   });
 
-  it('every needsBossReply state has a matching awaitBossReply BOSS_REPLY arm', () => {
-    const needsBossReplyStates = states
-      .filter((s) => 'needsBossReply' in s.getInput({}).result)
-      .map((s) => s.stateId)
-      .sort();
+  it('every captain-invoking state has a matching awaitBossReply BOSS_REPLY arm', () => {
+    const captainStateIds = states.map((s) => s.stateId).sort();
     const bossReplyTargets = awaitBossReply.bossReplyTransitions
       .map((t) => t.target)
       .filter((target) => target !== 'failed')
       .sort();
 
-    expect(bossReplyTargets).toEqual(needsBossReplyStates);
+    expect(bossReplyTargets).toEqual(captainStateIds);
+  });
+
+  it('every awaitBossReply BOSS_REPLY resume target declares needsBossReply', () => {
+    const stateById = new Map(states.map((s) => [s.stateId, s] as const));
+    const targetsMissingNeedsBossReply = awaitBossReply.bossReplyTransitions
+      .map((t) => t.target)
+      .filter((target) => target !== 'failed')
+      .filter((target) => {
+        const state = stateById.get(target);
+        return state === undefined || !('needsBossReply' in state.getInput({}).result);
+      });
+
+    expect(targetsMissingNeedsBossReply).toEqual([]);
   });
 
   it('every awaitBossReply BOSS_REPLY arm has a fixture', () => {

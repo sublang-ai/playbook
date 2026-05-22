@@ -178,11 +178,6 @@ describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
     }
   });
 
-  it('source carries no Boss-reply annotation lines', () => {
-    expect(readFileSync(sourcePath, 'utf8')).not.toContain(
-      'Resumable: Boss reply',
-    );
-  });
 });
 
 describe('GEARS ↔ FSM conformance — assertions (a)–(g)', () => {
@@ -222,16 +217,9 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(g)', () => {
     }
   });
 
-  it('(e) FSM-generated needsBossReply declarations carry the parseable question marker', () => {
+  it('(e) every captain-invoking FSM state has the generated needsBossReply declaration', () => {
     const marker =
       "Output shall include `question: <verbatim question text from the player's prose>`.";
-
-    for (const item of gears.values()) {
-      expect(
-        item.resultGuards.has('needsBossReply'),
-        `${item.id}: GEARS output must not carry needsBossReply metadata`,
-      ).toBe(false);
-    }
 
     for (const s of states) {
       const fsmDescription = s.getInput({}).result.needsBossReply;

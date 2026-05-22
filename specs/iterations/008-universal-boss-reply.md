@@ -34,7 +34,7 @@ IR-008 supersedes IR-007: the IR-007 record is deleted, while its commits stay i
 - [x] [`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md) — the three `Result guard: needsBossReply` lines removed.
 - [x] [`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) — every captain-invoking state carries `needsBossReply` and is registered with `resumableStates`; recompile siblings.
 - [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — the composer covers every captain prompt; verify whether the universal result map already satisfies the existing condition.
-- [ ] Tests — `code.gears-fsm.test.ts` and `code.prompt-contract.test.ts` updated for universal coverage; the source-annotation parser removed.
+- [x] Tests — `code.gears-fsm.test.ts` and `code.prompt-contract.test.ts` updated for universal coverage; the source-annotation parser removed.
 - [x] [`specs/map.md`](../map.md) — DR-005 row no longer says "opt-in" after the DR-005 amendment.
 
 ## Tasks

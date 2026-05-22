@@ -389,12 +389,7 @@ describe('prompt contract — structural', () => {
 });
 
 describe('prompt contract — Boss-reply continuation', () => {
-  const bossReplyStates = contracts.filter((contract) => {
-    const state = stateById.get(contract.stateId);
-    return state !== undefined && 'needsBossReply' in state.getInput({}).result;
-  });
-
-  for (const contract of bossReplyStates) {
+  for (const contract of contracts) {
     const state = stateById.get(contract.stateId);
     if (!state) continue;
 
@@ -455,10 +450,4 @@ describe('prompt contract — Boss-reply continuation', () => {
       }
     });
   }
-
-  it('has one continuation contract row per captain-invoking state', () => {
-    expect(bossReplyStates.map((contract) => contract.stateId).sort()).toEqual(
-      contracts.map((contract) => contract.stateId).sort(),
-    );
-  });
 });
