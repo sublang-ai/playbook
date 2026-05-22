@@ -47,6 +47,21 @@ Changelog entries shall be grouped under these headings (in
 order): `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`,
 `Security`.
 
+## Development dependency override
+
+### RELEASE-11
+
+A local-development link of `@sublang/cligent` to a local
+checkout shall be applied only by copying the tracked
+`pnpm-workspace.yaml.example` to `pnpm-workspace.yaml`, which
+overrides the registry version pinned in `pnpm-lock.yaml`.
+
+That override is local-only: `pnpm-workspace.yaml` shall stay
+git-ignored and the `pnpm-lock.yaml` mutation it induces shall
+not be committed, so the override is absent from the published
+package and from every production and CI install — the release
+workflow drops it before install ([RELEASE-7](#release-7)).
+
 ## Release Process
 
 ### RELEASE-6
@@ -63,7 +78,7 @@ The release workflow on GitHub shall:
 2. Drop the dev-only `pnpm-workspace.yaml` override before install
    so the build sees the registry-pinned `@sublang/cligent` rather
    than the contributor-machine local link (see
-   `.gitignore`).
+   [RELEASE-11](#release-11)).
 3. Install with `pnpm install --frozen-lockfile`, then `pnpm build`
    and `pnpm test`.
 4. Extract release notes for the tag version from the root
