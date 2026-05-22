@@ -1347,6 +1347,43 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
 
+  it('known slash-looking forms are ordinary text and obey classifier no-action', async () => {
+    for (const text of [
+      '/start fix the bug',
+      '/continue 7',
+      '/summarize 8',
+      '/interrupt failed',
+    ]) {
+      const statuses: string[] = [];
+      let playerCalls = 0;
+      let judgeCalls = 0;
+      const ports = makeFakePorts({
+        emitStatus: async (m) => {
+          statuses.push(m);
+        },
+        callPlayer: async () => {
+          playerCalls++;
+          return { status: 'ok', finalText: '' };
+        },
+        callJudge: async (prompt) => {
+          expect(isClassifierPrompt(prompt)).toBe(true);
+          expect(prompt).toContain(text);
+          judgeCalls++;
+          return JSON.stringify({ event: 'NO_ACTION', payload: {} });
+        },
+      });
+      const runtime = makeRuntimeWithInternals();
+      await runtime.init(ports);
+
+      await runtime.handleBossInput({ text, signal: sig() });
+
+      expect(playerCalls, text).toBe(0);
+      expect(judgeCalls, text).toBe(1);
+      expect(statuses, text).toEqual(['◆ ready']);
+      expect(runtime._getActor()?.getSnapshot().value, text).toBe('ready');
+    }
+  });
+
   it('/continue <#> drives the FSM through continueIr back to ready', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
     const ports = makeFakePorts({
@@ -1533,6 +1570,217 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(playerCalls).toBe(0);
     expect(statuses.length).toBe(statusesAtInit);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('awaitBossReply BOSS_REPLY resumes through the classifier and clears reply context', async () => {
+    const classifierPrompts: string[] = [];
+    const playerPrompts: string[] = [];
+    const adjudicatorReplies: Array<Record<string, unknown>> = [
+      { guard: 'needsBossReply', question: FIRST_BOSS_QUESTION },
+      { guard: 'singleCommitReady' },
+      { guard: 'needsBossInput' },
+    ];
+    let adjudicatorIndex = 0;
+    const ports = makeFakePorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerPrompts.push(prompt);
+        return { status: 'ok', finalText: 'progress' };
+      },
+      callJudge: async (prompt) => {
+        if (isClassifierPrompt(prompt)) {
+          classifierPrompts.push(prompt);
+          if (classifierPrompts.length === 1) {
+            return JSON.stringify({
+              event: 'START_CODING',
+              payload: { intent: 'ambiguous task' },
+            });
+          }
+          return JSON.stringify({
+            event: 'BOSS_REPLY',
+            payload: { answer: '/continue 9' },
+          });
+        }
+        return JSON.stringify(adjudicatorReplies[adjudicatorIndex++]);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: 'Please do the ambiguous task.',
+      signal: sig(),
+    });
+    expect(runtime._getActor()?.getSnapshot().value).toBe('awaitBossReply');
+
+    await runtime.handleBossInput({
+      text: '/continue 9',
+      signal: sig(),
+    });
+
+    const snap = runtime._getActor()?.getSnapshot();
+    expect(classifierPrompts).toHaveLength(2);
+    expect(classifierPrompts[1]).toContain('Current state: awaitBossReply');
+    expect(classifierPrompts[1]).toContain(
+      `Pending Boss question: ${FIRST_BOSS_QUESTION}`,
+    );
+    expect(playerPrompts[1]).toContain(
+      `Boss question:\n${FIRST_BOSS_QUESTION}`,
+    );
+    expect(playerPrompts[1]).toContain('Boss reply:\n/continue 9');
+    expect(snap?.value).toBe('ready');
+    expect(
+      (snap?.context as { pendingBossQuestion?: unknown })
+        .pendingBossQuestion,
+    ).toBeUndefined();
+    expect(
+      (snap?.context as { bossReply?: unknown }).bossReply,
+    ).toBeUndefined();
+  });
+
+  it('awaitBossReply fresh directive abandons the question and clears reply context', async () => {
+    const classifierPrompts: string[] = [];
+    const ports = makeFakePorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'I need Boss to choose the scope.',
+      }),
+      callJudge: async (prompt) => {
+        if (isClassifierPrompt(prompt)) {
+          classifierPrompts.push(prompt);
+          if (classifierPrompts.length === 1) {
+            return JSON.stringify({
+              event: 'START_CODING',
+              payload: { intent: 'ambiguous task' },
+            });
+          }
+          return JSON.stringify({
+            event: 'BOSS_INTERRUPT',
+            payload: { targetId: 'ready' },
+          });
+        }
+        return JSON.stringify({
+          guard: 'needsBossReply',
+          question: FIRST_BOSS_QUESTION,
+        });
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: 'Please do the ambiguous task.',
+      signal: sig(),
+    });
+    expect(runtime._getActor()?.getSnapshot().value).toBe('awaitBossReply');
+
+    await runtime.handleBossInput({
+      text: 'Actually stop and go back to ready.',
+      signal: sig(),
+    });
+
+    const snap = runtime._getActor()?.getSnapshot();
+    expect(classifierPrompts).toHaveLength(2);
+    expect(classifierPrompts[1]).toContain('Current state: awaitBossReply');
+    expect(snap?.value).toBe('ready');
+    expect(
+      (snap?.context as { pendingBossQuestion?: unknown })
+        .pendingBossQuestion,
+    ).toBeUndefined();
+    expect((snap?.context as { bossReply?: unknown }).bossReply).toBeUndefined();
+  });
+
+  it('awaitBossReply invalid classifier reply emits status and leaves the pending question in place', async () => {
+    const statuses: string[] = [];
+    const ports = makeFakePorts({
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'I need Boss to choose the scope.',
+      }),
+      callJudge: (() => {
+        let classifierCount = 0;
+        return async (prompt) => {
+          if (isClassifierPrompt(prompt)) {
+            classifierCount++;
+            if (classifierCount === 1) {
+              return JSON.stringify({
+                event: 'START_CODING',
+                payload: { intent: 'ambiguous task' },
+              });
+            }
+            return JSON.stringify({ event: 'BOGUS', payload: {} });
+          }
+          return JSON.stringify({
+            guard: 'needsBossReply',
+            question: FIRST_BOSS_QUESTION,
+          });
+        };
+      })(),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: 'Please do the ambiguous task.',
+      signal: sig(),
+    });
+    await runtime.handleBossInput({
+      text: 'not enough information',
+      signal: sig(),
+    });
+
+    const snap = runtime._getActor()?.getSnapshot();
+    expect(statuses.some((m) => m.includes('BOGUS'))).toBe(true);
+    expect(snap?.value).toBe('awaitBossReply');
+    expect(
+      (snap?.context as { pendingBossQuestion?: { question?: string } })
+        .pendingBossQuestion?.question,
+    ).toBe(FIRST_BOSS_QUESTION);
+  });
+
+  it('awaitBossReply empty input takes no action and makes no extra port calls', async () => {
+    let judgeCalls = 0;
+    let playerCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        playerCalls++;
+        return {
+          status: 'ok',
+          finalText: 'I need Boss to choose the scope.',
+        };
+      },
+      callJudge: async (prompt) => {
+        judgeCalls++;
+        if (isClassifierPrompt(prompt)) {
+          return JSON.stringify({
+            event: 'START_CODING',
+            payload: { intent: 'ambiguous task' },
+          });
+        }
+        return JSON.stringify({
+          guard: 'needsBossReply',
+          question: FIRST_BOSS_QUESTION,
+        });
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: 'Please do the ambiguous task.',
+      signal: sig(),
+    });
+    expect(runtime._getActor()?.getSnapshot().value).toBe('awaitBossReply');
+    const judgeCallsBeforeEmpty = judgeCalls;
+    const playerCallsBeforeEmpty = playerCalls;
+
+    await runtime.handleBossInput({ text: ' \n\t ', signal: sig() });
+
+    expect(judgeCalls).toBe(judgeCallsBeforeEmpty);
+    expect(playerCalls).toBe(playerCallsBeforeEmpty);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('awaitBossReply');
   });
 
   it('turn arriving after the FSM reaches done disposes and reconstructs the actor', async () => {
