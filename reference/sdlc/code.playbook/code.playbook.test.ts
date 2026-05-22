@@ -466,38 +466,83 @@ describe('adjudicate', () => {
   });
 });
 
-describe('classifyBossText (slash forms — DR-004 §3)', () => {
+describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
   const sig = () => new AbortController().signal;
 
-  it('/start <text> → START_CODING with intent', async () => {
+  it('slash-looking text routes through callJudge and lands on START_CODING', async () => {
+    let prompt = '';
+    let called = false;
+    const ports = makeFakePorts({
+      callJudge: async (p) => {
+        called = true;
+        prompt = p;
+        return JSON.stringify({
+          event: 'START_CODING',
+          payload: { intent: 'fix the bug' },
+        });
+      },
+    });
     expect(
-      await classifyBossText('/start fix the bug', makeFakePorts(), sig()),
+      await classifyBossText('/start fix the bug', ports, sig()),
     ).toEqual({ type: 'START_CODING', intent: 'fix the bug' });
+    expect(called).toBe(true);
+    expect(prompt).toContain('/start fix the bug');
   });
 
-  it('/continue <#> → CONTINUE_IR with irNumber', async () => {
+  it('free-form text routes through callJudge and lands on CONTINUE_IR', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        JSON.stringify({
+          event: 'CONTINUE_IR',
+          payload: { irNumber: '4' },
+        }),
+    });
     expect(
-      await classifyBossText('/continue 4', makeFakePorts(), sig()),
+      await classifyBossText('continue IR 4', ports, sig()),
     ).toEqual({ type: 'CONTINUE_IR', irNumber: '4' });
   });
 
-  it('/summarize <#> → SUMMARIZE_IR with irNumber', async () => {
+  it('free-form text routes through callJudge and lands on SUMMARIZE_IR', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        JSON.stringify({
+          event: 'SUMMARIZE_IR',
+          payload: { irNumber: '7' },
+        }),
+    });
     expect(
-      await classifyBossText('/summarize 7', makeFakePorts(), sig()),
+      await classifyBossText('summarize IR 7', ports, sig()),
     ).toEqual({ type: 'SUMMARIZE_IR', irNumber: '7' });
   });
 
-  it('/interrupt <stateId> → BOSS_INTERRUPT with targetId only', async () => {
+  it('free-form text routes through callJudge and lands on BOSS_INTERRUPT', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        JSON.stringify({
+          event: 'BOSS_INTERRUPT',
+          payload: { targetId: 'ready' },
+        }),
+    });
     expect(
-      await classifyBossText('/interrupt ready', makeFakePorts(), sig()),
+      await classifyBossText('pause and return to ready', ports, sig()),
     ).toEqual({ type: 'BOSS_INTERRUPT', targetId: 'ready' });
   });
 
-  it('/interrupt <stateId> <rest> attaches rest as intent', async () => {
+  it('BOSS_INTERRUPT attaches optional intent from classifier payload', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        JSON.stringify({
+          event: 'BOSS_INTERRUPT',
+          payload: {
+            targetId: 'planAndImplement',
+            intent: 'fix the bug',
+          },
+        }),
+    });
     expect(
       await classifyBossText(
-        '/interrupt planAndImplement fix the bug',
-        makeFakePorts(),
+        'switch to implementing the fix',
+        ports,
         sig(),
       ),
     ).toEqual({
@@ -507,16 +552,32 @@ describe('classifyBossText (slash forms — DR-004 §3)', () => {
     });
   });
 
-  it('unknown slash → emitStatus + undefined (slc/link.md "not silently dropped")', async () => {
+  it('classifier no-action reply returns undefined', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        JSON.stringify({ event: 'NO_ACTION', payload: {} }),
+    });
+    expect(
+      await classifyBossText('/bogus rest', ports, sig()),
+    ).toBeUndefined();
+  });
+
+  it('invalid BOSS_INTERRUPT target emits status and returns undefined', async () => {
     const statuses: string[] = [];
     const ports = makeFakePorts({
+      callJudge: async () =>
+        JSON.stringify({
+          event: 'BOSS_INTERRUPT',
+          payload: { targetId: 'notAState' },
+        }),
       emitStatus: async (m) => {
         statuses.push(m);
       },
     });
-    expect(await classifyBossText('/bogus rest', ports, sig())).toBeUndefined();
-    expect(statuses).toHaveLength(1);
-    expect(statuses[0]).toContain('/bogus');
+    expect(
+      await classifyBossText('jump to notAState', ports, sig()),
+    ).toBeUndefined();
+    expect(statuses[0]).toContain('notAState');
   });
 
   it('empty (whitespace-only) text → undefined, no port calls', async () => {
@@ -536,39 +597,7 @@ describe('classifyBossText (slash forms — DR-004 §3)', () => {
     expect(statusCalled).toBe(false);
   });
 
-  it('slash forms do not call ports.callJudge', async () => {
-    let called = false;
-    const ports = makeFakePorts({
-      callJudge: async () => {
-        called = true;
-        return '';
-      },
-    });
-    await classifyBossText('/start anything', ports, sig());
-    expect(called).toBe(false);
-  });
-});
-
-describe('classifyBossText (LLM fallback — DR-004 §3)', () => {
-  const sig = () => new AbortController().signal;
-
-  it('free-form text routes through callJudge and lands on START_CODING', async () => {
-    let prompt = '';
-    const ports = makeFakePorts({
-      callJudge: async (p) => {
-        prompt = p;
-        return JSON.stringify({
-          event: 'START_CODING',
-          payload: { intent: 'fix the bug' },
-        });
-      },
-    });
-    const out = await classifyBossText('please fix the bug', ports, sig());
-    expect(out).toEqual({ type: 'START_CODING', intent: 'fix the bug' });
-    expect(prompt).toContain('please fix the bug');
-  });
-
-  it('fixed prompt names all four event types', async () => {
+  it('fixed prompt names all Boss event types plus no-action', async () => {
     let prompt = '';
     const ports = makeFakePorts({
       callJudge: async (p) => {
@@ -584,9 +613,12 @@ describe('classifyBossText (LLM fallback — DR-004 §3)', () => {
     expect(prompt).toContain('CONTINUE_IR');
     expect(prompt).toContain('SUMMARIZE_IR');
     expect(prompt).toContain('BOSS_INTERRUPT');
+    expect(prompt).toContain('BOSS_REPLY');
+    expect(prompt).toContain('NO_ACTION');
+    expect(prompt).toContain('targetId must be one of');
   });
 
-  it('unknown event type from LLM → emitStatus + undefined', async () => {
+  it('unknown event type from classifier → emitStatus + undefined', async () => {
     const statuses: string[] = [];
     const ports = makeFakePorts({
       callJudge: async () =>
@@ -605,14 +637,16 @@ describe('classifyBossText (LLM fallback — DR-004 §3)', () => {
 describe('classifyBossText (awaitBossReply branch — DR-005 §6)', () => {
   const sig = () => new AbortController().signal;
 
-  it('plain text in awaitBossReply becomes BOSS_REPLY without calling the judge', async () => {
+  it('plain text in awaitBossReply uses the state-aware classifier to become BOSS_REPLY', async () => {
     let judgeCalled = false;
+    let prompt = '';
     const ports = makeFakePorts({
-      callJudge: async () => {
+      callJudge: async (p) => {
         judgeCalled = true;
+        prompt = p;
         return JSON.stringify({
-          event: 'START_CODING',
-          payload: { intent: 'wrong path' },
+          event: 'BOSS_REPLY',
+          payload: { answer: 'Use the narrow scope.' },
         });
       },
     });
@@ -623,57 +657,82 @@ describe('classifyBossText (awaitBossReply branch — DR-005 §6)', () => {
       type: 'BOSS_REPLY',
       answer: 'Use the narrow scope.',
     });
-    expect(judgeCalled).toBe(false);
+    expect(judgeCalled).toBe(true);
+    expect(prompt).toContain('Current state: awaitBossReply');
   });
 
-  it('plain text outside awaitBossReply still uses the LLM classifier', async () => {
-    let judgeCalled = false;
+  it('classifier prompt includes pending Boss question when snapshot context carries it', async () => {
+    let prompt = '';
     const ports = makeFakePorts({
-      callJudge: async () => {
-        judgeCalled = true;
+      callJudge: async (p) => {
+        prompt = p;
         return JSON.stringify({
-          event: 'START_CODING',
-          payload: { intent: 'fix the bug' },
+          event: 'BOSS_REPLY',
+          payload: { answer: 'Use the narrow scope.' },
         });
       },
     });
 
     await expect(
-      classifyBossText('Use the narrow scope.', ports, sig(), 'ready'),
+      classifyBossText('Use the narrow scope.', ports, sig(), {
+        value: 'awaitBossReply',
+        context: {
+          pendingBossQuestion: {
+            resumeStateId: 'planAndImplement',
+            sourceItem: 'CODE-1',
+            player: 'Coder',
+            question: 'Which scope should I use?',
+          },
+        },
+      }),
     ).resolves.toEqual({
-      type: 'START_CODING',
-      intent: 'fix the bug',
+      type: 'BOSS_REPLY',
+      answer: 'Use the narrow scope.',
     });
-    expect(judgeCalled).toBe(true);
+    expect(prompt).toContain('Pending Boss question: Which scope should I use?');
+    expect(prompt).toContain('Pending resume state: planAndImplement');
   });
 
-  it('recognized slash commands keep their normal meaning while awaiting Boss reply', async () => {
-    let judgeCalled = false;
-    const ports = makeFakePorts({
-      callJudge: async () => {
-        judgeCalled = true;
-        return '{}';
-      },
-    });
-
-    await expect(
-      classifyBossText('/continue 7', ports, sig(), 'awaitBossReply'),
-    ).resolves.toEqual({ type: 'CONTINUE_IR', irNumber: '7' });
-    expect(judgeCalled).toBe(false);
-  });
-
-  it('unknown slash commands while awaiting Boss reply emit status and do not become BOSS_REPLY', async () => {
+  it('BOSS_REPLY outside awaitBossReply emits status and returns undefined', async () => {
     const statuses: string[] = [];
     const ports = makeFakePorts({
+      callJudge: async () => {
+        return JSON.stringify({
+          event: 'BOSS_REPLY',
+          payload: { answer: 'Use the narrow scope.' },
+        });
+      },
       emitStatus: async (message) => {
         statuses.push(message);
       },
     });
 
     await expect(
-      classifyBossText('/bogus answer', ports, sig(), 'awaitBossReply'),
+      classifyBossText('Use the narrow scope.', ports, sig(), 'ready'),
     ).resolves.toBeUndefined();
-    expect(statuses).toEqual(['Unknown slash command: /bogus']);
+    expect(statuses).toEqual([
+      'Classifier returned BOSS_REPLY outside awaitBossReply',
+    ]);
+  });
+
+  it('fresh directive while awaiting Boss reply can classify to another Boss event', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        return JSON.stringify({
+          event: 'CONTINUE_IR',
+          payload: { irNumber: '7' },
+        });
+      },
+    });
+
+    await expect(
+      classifyBossText(
+        'Actually continue IR 7 instead.',
+        ports,
+        sig(),
+        'awaitBossReply',
+      ),
+    ).resolves.toEqual({ type: 'CONTINUE_IR', irNumber: '7' });
   });
 });
 
@@ -933,9 +992,68 @@ function makeRuntimeWithInternals(): RuntimeWithInternals {
 
 const sig = () => new AbortController().signal;
 
+function isClassifierPrompt(prompt: string): boolean {
+  return prompt.startsWith('Classify the following Boss message');
+}
+
+function classifierReplyForTestPrompt(prompt: string): Record<string, unknown> {
+  const message =
+    prompt.match(/Boss message:\n```\n([\s\S]*?)\n```/)?.[1] ?? '';
+  const trimmed = message.trim();
+  const awaiting = prompt.includes('Current state: awaitBossReply');
+  const slash = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(trimmed);
+  if (slash) {
+    const [, command, rest = ''] = slash;
+    const arg = rest.trim();
+    if (command === 'start') {
+      return {
+        event: 'START_CODING',
+        payload: { intent: arg },
+      };
+    }
+    if (command === 'continue') {
+      return {
+        event: 'CONTINUE_IR',
+        payload: { irNumber: arg },
+      };
+    }
+    if (command === 'summarize') {
+      return {
+        event: 'SUMMARIZE_IR',
+        payload: { irNumber: arg },
+      };
+    }
+    if (command === 'interrupt') {
+      const firstSpace = arg.search(/\s/);
+      const targetId = firstSpace === -1 ? arg : arg.slice(0, firstSpace);
+      const intent = firstSpace === -1 ? '' : arg.slice(firstSpace).trim();
+      return {
+        event: 'BOSS_INTERRUPT',
+        payload: {
+          targetId,
+          ...(intent ? { intent } : {}),
+        },
+      };
+    }
+  }
+  if (awaiting) {
+    return {
+      event: 'BOSS_REPLY',
+      payload: { answer: message },
+    };
+  }
+  return {
+    event: 'START_CODING',
+    payload: { intent: trimmed },
+  };
+}
+
 function judgeSequence(replies: Array<Record<string, unknown>>) {
   let i = 0;
-  return async () => {
+  return async (prompt = '') => {
+    if (isClassifierPrompt(prompt)) {
+      return JSON.stringify(classifierReplyForTestPrompt(prompt));
+    }
     const reply = replies[i++];
     if (!reply) {
       throw new Error(`unexpected extra judge call #${i}`);
@@ -950,14 +1068,19 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
   it('clean run: /start drives FSM through one captain turn back to ready', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
-    let judgeCalls = 0;
+    let classifierCalls = 0;
+    let adjudicatorCalls = 0;
     const ports = makeFakePorts({
       callPlayer: async (playerId, prompt) => {
         playerCalls.push({ playerId, prompt });
         return { status: 'ok', finalText: 'no progress — need more input' };
       },
       callJudge: async (prompt) => {
-        judgeCalls++;
+        if (isClassifierPrompt(prompt)) {
+          classifierCalls++;
+          return JSON.stringify(classifierReplyForTestPrompt(prompt));
+        }
+        adjudicatorCalls++;
         return prompt.includes('singleCommitReady')
           ? JSON.stringify({ guard: 'singleCommitReady' })
           : JSON.stringify({ guard: 'needsBossInput' });
@@ -971,7 +1094,8 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(playerCalls).toHaveLength(2);
     expect(playerCalls[0].playerId).toBe('coder');
     expect(playerCalls[0].prompt).toContain('add a button');
-    expect(judgeCalls).toBe(2);
+    expect(classifierCalls).toBe(1);
+    expect(adjudicatorCalls).toBe(2);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
 
@@ -1082,7 +1206,8 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
   it('signal-abort mid-callPlayer lands at #failed with lastError captured', async () => {
     const controller = new AbortController();
-    let judgeCalls = 0;
+    let classifierCalls = 0;
+    let adjudicatorCalls = 0;
     const ports = makeFakePorts({
       callPlayer: async (_id, _p, signal) => {
         if (signal.aborted) {
@@ -1093,9 +1218,13 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
         });
         return { status: 'aborted', error: 'host signal' };
       },
-      callJudge: async () => {
-        judgeCalls++;
-        return '';
+      callJudge: async (prompt) => {
+        if (isClassifierPrompt(prompt)) {
+          classifierCalls++;
+          return JSON.stringify(classifierReplyForTestPrompt(prompt));
+        }
+        adjudicatorCalls++;
+        return JSON.stringify({ guard: 'singleCommitReady' });
       },
     });
     const runtime = makeRuntimeWithInternals();
@@ -1110,7 +1239,8 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     const snap = runtime._getActor()?.getSnapshot();
     expect(snap?.value).toBe('failed');
     expect((snap?.context as { lastError?: unknown }).lastError).toBeDefined();
-    expect(judgeCalls).toBe(0); // callPlayer aborted; judge never reached
+    expect(classifierCalls).toBe(1);
+    expect(adjudicatorCalls).toBe(0); // callPlayer aborted; adjudication never reached
   });
 
   it('/interrupt <stateId> sends BOSS_INTERRUPT and redirects the FSM', async () => {
@@ -1180,7 +1310,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(runtime._getActor()).toBeUndefined();
   });
 
-  it('classifier-undefined text (unknown slash) returns without sending anything', async () => {
+  it('classifier no-action returns without sending anything', async () => {
     const statuses: string[] = [];
     let playerCalls = 0;
     let judgeCalls = 0;
@@ -1194,7 +1324,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
       },
       callJudge: async () => {
         judgeCalls++;
-        return '';
+        return JSON.stringify({ event: 'NO_ACTION', payload: {} });
       },
     });
     const runtime = makeRuntimeWithInternals();
@@ -1202,9 +1332,9 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
     await runtime.handleBossInput({ text: '/bogus stuff', signal: sig() });
 
-    expect(statuses.some((m) => m.includes('/bogus'))).toBe(true);
     expect(playerCalls).toBe(0);
-    expect(judgeCalls).toBe(0);
+    expect(judgeCalls).toBe(1);
+    expect(statuses).toEqual([{ message: '◆ ready' }].map((s) => s.message));
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
 
@@ -1341,7 +1471,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
 
-  it('/interrupt without a target state surfaces status and takes no FSM action', async () => {
+  it('classifier BOSS_INTERRUPT without a target state surfaces status and takes no FSM action', async () => {
     const statuses: string[] = [];
     let playerCalls = 0;
     const ports = makeFakePorts({
@@ -1349,6 +1479,8 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
         playerCalls++;
         return { status: 'ok', finalText: '' };
       },
+      callJudge: async () =>
+        JSON.stringify({ event: 'BOSS_INTERRUPT', payload: {} }),
       emitStatus: async (m) => {
         statuses.push(m);
       },
@@ -1359,7 +1491,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     await runtime.handleBossInput({ text: '/interrupt', signal: sig() });
 
     expect(
-      statuses.some((m) => m.includes('requires a stateId')),
+      statuses.some((m) => m.includes('targetId')),
     ).toBe(true);
     expect(playerCalls).toBe(0);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
@@ -1395,15 +1527,20 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
   });
 
   it('turn arriving after the FSM reaches done disposes and reconstructs the actor', async () => {
-    let judgeInvocation = 0;
+    let classifierInvocation = 0;
+    let guardInvocation = 0;
     const ports = makeFakePorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'x' }),
-      callJudge: async () => {
-        judgeInvocation++;
-        if (judgeInvocation === 1) {
+      callJudge: async (prompt) => {
+        if (isClassifierPrompt(prompt)) {
+          classifierInvocation++;
+          return JSON.stringify(classifierReplyForTestPrompt(prompt));
+        }
+        guardInvocation++;
+        if (guardInvocation === 1) {
           return JSON.stringify({ guard: 'noSpecChanges' });
         }
-        if (judgeInvocation === 2) {
+        if (guardInvocation === 2) {
           return JSON.stringify({ guard: 'singleCommitReady' });
         }
         return JSON.stringify({ guard: 'needsBossInput' });
@@ -1420,7 +1557,8 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     // can accept new events from the idle state.
     await runtime.handleBossInput({ text: '/start fresh', signal: sig() });
 
-    expect(judgeInvocation).toBe(3);
+    expect(classifierInvocation).toBe(2);
+    expect(guardInvocation).toBe(3);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
     expect(runtime._getActor()?.getSnapshot().status).toBe('active');
   });
@@ -1595,6 +1733,7 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
         });
         return { status: 'aborted', error: 'host signal' };
       },
+      callJudge: judgeSequence([]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -1667,16 +1806,12 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       //   reviewBossCommitSpecs → hasFindings (with 2 reviews) →
       //   respondToReview → accepted → done
       callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
-      callJudge: (() => {
-        const replies = [
-          { guard: 'singleCommitReady' },
-          { guard: 'committedSpecs' },
-          { guard: 'hasFindings', reviews: '1. tweak\n2. another' },
-          { guard: 'accepted' },
-        ];
-        let i = 0;
-        return async () => JSON.stringify(replies[i++]);
-      })(),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'committedSpecs' },
+        { guard: 'hasFindings', reviews: '1. tweak\n2. another' },
+        { guard: 'accepted' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -1739,14 +1874,16 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
     //   1. planAndImplement → singleCommitReady → commitCoderInitial
     //   2. commitCoderInitial → committedSpecs → reviewBossCommitSpecs
     //   3. reviewBossCommitSpecs → noFindings → done (afterReview='done')
-    const guards = ['singleCommitReady', 'committedSpecs', 'noFindings'];
-    let guardIdx = 0;
     const ports = makeFakePorts({
       callPlayer: async (playerId, prompt) => {
         playerCalls.push({ playerId, prompt });
         return { status: 'ok', finalText: 'progress noted' };
       },
-      callJudge: async () => JSON.stringify({ guard: guards[guardIdx++] }),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'committedSpecs' },
+        { guard: 'noFindings' },
+      ]),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -1784,14 +1921,13 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
       { guard: 'noFindings' },
       { guard: 'committed' },
     ];
-    let i = 0;
     const playerCalls: Array<{ playerId: string }> = [];
     const ports = makeFakePorts({
       callPlayer: async (playerId) => {
         playerCalls.push({ playerId });
         return { status: 'ok', finalText: 'progress' };
       },
-      callJudge: async () => JSON.stringify(judgeReplies[i++]),
+      callJudge: judgeSequence(judgeReplies),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
@@ -1830,14 +1966,13 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
       { guard: 'accepted' },
       { guard: 'committed' },
     ];
-    let i = 0;
     const playerCalls: Array<{ playerId: string }> = [];
     const ports = makeFakePorts({
       callPlayer: async (playerId) => {
         playerCalls.push({ playerId });
         return { status: 'ok', finalText: 'progress' };
       },
-      callJudge: async () => JSON.stringify(judgeReplies[i++]),
+      callJudge: judgeSequence(judgeReplies),
     });
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);

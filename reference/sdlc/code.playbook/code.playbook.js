@@ -7,11 +7,11 @@
 //                Committer→{coder per CODE-18/19} (CODE-19 wires both
 //                coderPlayer and reviewerPlayer; Coder wins as the
 //                alias's first alternative)
-// Boss event:    slash-prefix (LLM-classifier fallback)
+// Boss event:    free-text judge classification
 // Adjudication:  LLM-judge per state
 import { createActor, fromPromise } from 'xstate';
 import { codingMachine, } from './code.fsm.js';
-import { enumerateAwaitBossReply, enumerateCaptainStates, } from './code.fsm.introspect.js';
+import { enumerateAwaitBossReply, enumerateCaptainStates, enumerateRootEvents, } from './code.fsm.introspect.js';
 const BOSS_REPLY_ERRORS = {
     missingQuestion: "needsBossReply outcome missing 'question' field",
     unregisteredState: (stateId) => `state ${stateId} declared needsBossReply but is not registered as resumable`,
@@ -167,73 +167,22 @@ function parseJudgeJson(raw) {
     }
 }
 // Boss-event classifier — DR-004 §3.
-// Slash forms tried first; unknown slash forms surface as
-// emitStatus and return undefined per slc/link.md ("Unknown
-// commands surface as emitStatus, not as a silently-dropped
-// turn"). While the FSM waits in awaitBossReply, non-slash text
-// becomes BOSS_REPLY without an LLM call. Otherwise, non-slash
-// text falls through to the LLM classifier via ports.callJudge
-// with a fixed prompt that names the four event types and their
-// payload shapes.
-async function classifyBossText(text, ports, signal, currentState) {
+// Every non-empty Boss turn goes through ports.callJudge. Slash-prefixed
+// text is ordinary content once a host has routed the turn to this
+// playbook; `/command` selection belongs outside handleBossInput. The
+// classifier is state-aware so awaitBossReply can distinguish a direct
+// answer (BOSS_REPLY) from a fresh directive that abandons the pending
+// question through the FSM's existing transitions.
+async function classifyBossText(text, ports, signal, snapshotOrState) {
     const trimmed = text.trim();
     if (trimmed === '')
         return undefined;
-    const slashEvent = await classifySlashText(trimmed, ports);
-    if (slashEvent !== NOT_SLASH)
-        return slashEvent;
-    if (currentState === 'awaitBossReply') {
-        return bossReplyEvent(text);
-    }
-    return classifyWithLlm(trimmed, ports, signal);
+    return classifyWithLlm(text, ports, signal, snapshotOrState);
 }
-const NOT_SLASH = Symbol('not slash');
-async function classifySlashText(trimmed, ports) {
-    if (trimmed === '/start' || trimmed.startsWith('/start ')) {
-        return { type: 'START_CODING', intent: trimmed.slice('/start'.length).trim() };
-    }
-    if (trimmed === '/continue' || trimmed.startsWith('/continue ')) {
-        return {
-            type: 'CONTINUE_IR',
-            irNumber: trimmed.slice('/continue'.length).trim(),
-        };
-    }
-    if (trimmed === '/summarize' || trimmed.startsWith('/summarize ')) {
-        return {
-            type: 'SUMMARIZE_IR',
-            irNumber: trimmed.slice('/summarize'.length).trim(),
-        };
-    }
-    if (trimmed === '/interrupt' || trimmed.startsWith('/interrupt ')) {
-        return parseInterruptSlash(trimmed, ports);
-    }
-    if (trimmed.startsWith('/')) {
-        const cmd = trimmed.split(/\s+/)[0];
-        await ports.emitStatus(`Unknown slash command: ${cmd}`);
-        return undefined;
-    }
-    return NOT_SLASH;
-}
-function bossReplyEvent(answer) {
-    return { type: 'BOSS_REPLY', answer };
-}
-async function parseInterruptSlash(trimmed, ports) {
-    const rest = trimmed.slice('/interrupt'.length).trim();
-    if (rest === '') {
-        await ports.emitStatus('/interrupt requires a stateId');
-        return undefined;
-    }
-    const firstSpace = rest.search(/\s/);
-    const targetId = firstSpace === -1 ? rest : rest.slice(0, firstSpace);
-    const intent = firstSpace === -1 ? '' : rest.slice(firstSpace).trim();
-    return {
-        type: 'BOSS_INTERRUPT',
-        targetId: targetId,
-        ...(intent ? { intent } : {}),
-    };
-}
-async function classifyWithLlm(text, ports, signal) {
-    const prompt = buildClassifierPrompt(text);
+const bossInterruptTargetIds = new Set(enumerateRootEvents(codingMachine).bossInterruptTargets);
+async function classifyWithLlm(text, ports, signal, snapshotOrState) {
+    const state = classifierState(snapshotOrState);
+    const prompt = buildClassifierPrompt(text, state);
     const raw = await ports.callJudge(prompt, signal);
     const parsed = parseJudgeJson(raw);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
@@ -252,6 +201,10 @@ async function classifyWithLlm(text, ports, signal) {
         ? obj.payload
         : {};
     switch (eventType) {
+        case 'NO_ACTION':
+        case 'NO_FSM_ACTION':
+        case 'NONE':
+            return undefined;
         case 'START_CODING': {
             if (typeof payload.intent !== 'string') {
                 await ports.emitStatus('Classifier omitted intent for START_CODING');
@@ -278,6 +231,10 @@ async function classifyWithLlm(text, ports, signal) {
                 await ports.emitStatus('Classifier omitted targetId for BOSS_INTERRUPT');
                 return undefined;
             }
+            if (!bossInterruptTargetIds.has(payload.targetId)) {
+                await ports.emitStatus(`Classifier supplied invalid targetId for BOSS_INTERRUPT: ${payload.targetId}`);
+                return undefined;
+            }
             return {
                 type: 'BOSS_INTERRUPT',
                 targetId: payload.targetId,
@@ -289,27 +246,60 @@ async function classifyWithLlm(text, ports, signal) {
                     : {}),
             };
         }
+        case 'BOSS_REPLY': {
+            if (state.value !== 'awaitBossReply') {
+                await ports.emitStatus('Classifier returned BOSS_REPLY outside awaitBossReply');
+                return undefined;
+            }
+            if (typeof payload.answer !== 'string') {
+                await ports.emitStatus('Classifier omitted answer for BOSS_REPLY');
+                return undefined;
+            }
+            return { type: 'BOSS_REPLY', answer: payload.answer };
+        }
         default:
             await ports.emitStatus(`Classifier returned unknown event type: ${eventType}`);
             return undefined;
     }
 }
-function buildClassifierPrompt(text) {
-    return [
+function classifierState(snapshotOrState) {
+    if (snapshotOrState !== null &&
+        typeof snapshotOrState === 'object' &&
+        'value' in snapshotOrState) {
+        const candidate = snapshotOrState;
+        return {
+            value: candidate.value,
+            context: candidate.context !== null &&
+                typeof candidate.context === 'object' &&
+                !Array.isArray(candidate.context)
+                ? candidate.context
+                : {},
+        };
+    }
+    return { value: snapshotOrState, context: {} };
+}
+function buildClassifierPrompt(text, state) {
+    const currentState = typeof state.value === 'string' ? state.value : 'unknown';
+    const pendingBossQuestion = pendingBossQuestionFromContext(state.context);
+    const lines = [
         'Classify the following Boss message into exactly one of these events.',
         'Respond with JSON: { "event": "<TYPE>", "payload": { ...fields } }.',
+        'Use { "event": "NO_ACTION", "payload": {} } when no FSM action should be taken.',
         '',
-        'Events:',
-        '- START_CODING: payload { intent: "<free-form goal>" }',
-        '- CONTINUE_IR: payload { irNumber: "<number>" }',
-        '- SUMMARIZE_IR: payload { irNumber: "<number>" }',
-        '- BOSS_INTERRUPT: payload { targetId: "<stateId>", intent?: "<free-form goal>", irNumber?: "<number>" }',
-        '',
-        'Boss message:',
-        '```',
-        text,
-        '```',
-    ].join('\n');
+        `Current state: ${currentState}`,
+    ];
+    if (pendingBossQuestion !== undefined) {
+        lines.push(`Pending Boss question: ${pendingBossQuestion.question}`, `Pending resume state: ${pendingBossQuestion.resumeStateId}`);
+    }
+    lines.push('', 'Events:', '- START_CODING: payload { intent: "<free-form goal>" }', '- CONTINUE_IR: payload { irNumber: "<number>" }', '- SUMMARIZE_IR: payload { irNumber: "<number>" }', '- BOSS_INTERRUPT: payload { targetId: "<stateId>", intent?: "<free-form goal>", irNumber?: "<number>" }', `  targetId must be one of: ${[...bossInterruptTargetIds].join(', ')}`);
+    if (currentState === 'awaitBossReply') {
+        lines.push('- BOSS_REPLY: payload { answer: "<verbatim Boss answer>" }');
+    }
+    else {
+        lines.push('- BOSS_REPLY: valid only when Current state is awaitBossReply');
+    }
+    lines.push('', 'Boss message:', '```', text, '```');
+    return lines.join('\n');
 }
 // Captain-actor bridge — DR-004 §7. One PromiseActorLogic that the
 // codingMachine invokes from every captain-invoking state. Per turn:
@@ -624,10 +614,10 @@ export default function createPlaybookRuntime(options) {
             }
             activeSignal = signal;
             try {
-                // 1. Classify text into an FSM event (slash → event; else LLM).
-                const event = await classifyBossText(text, savedPorts, signal, actor.getSnapshot().value);
-                // Unknown slash or empty input — classifier already surfaced
-                // status; nothing to send.
+                // 1. Classify non-empty text into an FSM event through the judge.
+                const event = await classifyBossText(text, savedPorts, signal, actor.getSnapshot());
+                // Empty input, no-action classifier output, or invalid classifier
+                // output — nothing to send.
                 if (event === undefined) {
                     await drainEmissions();
                     return;

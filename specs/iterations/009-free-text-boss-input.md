@@ -28,8 +28,8 @@ After IR-009 the runtime has a single Boss-input path — `callJudge` — with n
 - [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md) — PBRT-1/PBRT-2 reworked: all turn input is free text, judge-classified, plus the `awaitBossReply` reply-vs-directive rule.
 - [x] [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md) — PBRT-7 reworked: `callJudge` sole classifier, `BOSS_INTERRUPT` target selection, `awaitBossReply` state-aware classification.
 - [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — drop the slash-form test items; add judge-classification and `awaitBossReply` items.
-- [ ] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — remove slash parsing; route every non-empty turn through `callJudge`; recompile siblings.
-- [ ] `code.playbook.test.ts` (and `code.tmux-play.test.ts` if affected) — updated for the free-text path.
+- [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — remove slash parsing; route every non-empty turn through `callJudge`; recompile siblings.
+- [x] `code.playbook.test.ts` (and `code.tmux-play.test.ts` if affected) — updated for the free-text path.
 - [ ] [`specs/map.md`](../map.md) — DR-004 and PBRT row summaries refreshed.
 
 ## Tasks

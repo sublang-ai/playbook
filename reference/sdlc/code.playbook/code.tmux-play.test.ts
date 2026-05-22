@@ -48,6 +48,48 @@ interface StubContext {
   captainCalls: string[];
 }
 
+function isClassifierPrompt(prompt: string): boolean {
+  return prompt.startsWith('Classify the following Boss message');
+}
+
+function classifierReplyForTestPrompt(prompt: string): Record<string, unknown> {
+  const message =
+    prompt.match(/Boss message:\n```\n([\s\S]*?)\n```/)?.[1] ?? '';
+  const trimmed = message.trim();
+  const awaiting = prompt.includes('Current state: awaitBossReply');
+  const slash = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(trimmed);
+  if (slash) {
+    const [, command, rest = ''] = slash;
+    const arg = rest.trim();
+    if (command === 'start') {
+      return { event: 'START_CODING', payload: { intent: arg } };
+    }
+    if (command === 'continue') {
+      return { event: 'CONTINUE_IR', payload: { irNumber: arg } };
+    }
+    if (command === 'summarize') {
+      return { event: 'SUMMARIZE_IR', payload: { irNumber: arg } };
+    }
+    if (command === 'interrupt') {
+      const firstSpace = arg.search(/\s/);
+      const targetId = firstSpace === -1 ? arg : arg.slice(0, firstSpace);
+      const intent = firstSpace === -1 ? '' : arg.slice(firstSpace).trim();
+      return {
+        event: 'BOSS_INTERRUPT',
+        payload: { targetId, ...(intent ? { intent } : {}) },
+      };
+    }
+  }
+  if (awaiting) {
+    return { event: 'BOSS_REPLY', payload: { answer: message } };
+  }
+  return { event: 'START_CODING', payload: { intent: trimmed } };
+}
+
+function adjudicationPrompts(context: StubContext): string[] {
+  return context.captainCalls.filter((prompt) => !isClassifierPrompt(prompt));
+}
+
 function stubContext(overrides: {
   roleResult?: (
     roleId: string,
@@ -87,6 +129,13 @@ function stubContext(overrides: {
       },
       callCaptain: async (prompt) => {
         captainCalls.push(prompt);
+        if (isClassifierPrompt(prompt)) {
+          return {
+            status: 'ok',
+            turnId: 1,
+            finalText: JSON.stringify(classifierReplyForTestPrompt(prompt)),
+          };
+        }
         if (overrides.captainResult) {
           return overrides.captainResult(prompt, signal);
         }
@@ -132,7 +181,7 @@ describe('createCodeTmuxPlayCaptain — lifecycle (IR-004 Task 11)', () => {
     await captain.dispose!();
 
     expect(c.roleCalls).toHaveLength(2);
-    expect(c.captainCalls).toHaveLength(2);
+    expect(c.captainCalls).toHaveLength(3);
     expect(s.statuses.length).toBeGreaterThan(0);
     expect(s.telemetry.length).toBeGreaterThan(0);
   });
@@ -184,8 +233,9 @@ describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
     await captain.init!(s.session);
     await captain.handleBossTurn(turn('/start something'), c.context);
 
-    expect(c.captainCalls[0]).toContain('needsBossReply'); // result key in prompt
-    expect(c.captainCalls[0]).toContain('Pick exactly one outcome');
+    const adjudication = adjudicationPrompts(c);
+    expect(adjudication[0]).toContain('needsBossReply'); // result key in prompt
+    expect(adjudication[0]).toContain('Pick exactly one outcome');
   });
 
   it('callJudge throws when callCaptain status !== "ok"', async () => {
