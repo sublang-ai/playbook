@@ -179,7 +179,9 @@ async function classifyBossText(text, ports, signal, snapshotOrState) {
         return undefined;
     return classifyWithLlm(text, ports, signal, snapshotOrState);
 }
-const bossInterruptTargetIds = new Set(enumerateRootEvents(codingMachine).bossInterruptTargets);
+const rootEvents = enumerateRootEvents(codingMachine);
+const bossInterruptTargets = rootEvents.bossInterruptTargetDescriptions;
+const bossInterruptTargetIds = new Set(bossInterruptTargets.map((target) => target.stateId));
 async function classifyWithLlm(text, ports, signal, snapshotOrState) {
     const state = classifierState(snapshotOrState);
     const prompt = buildClassifierPrompt(text, state);
@@ -291,7 +293,10 @@ function buildClassifierPrompt(text, state) {
     if (pendingBossQuestion !== undefined) {
         lines.push(`Pending Boss question: ${pendingBossQuestion.question}`, `Pending resume state: ${pendingBossQuestion.resumeStateId}`);
     }
-    lines.push('', 'Events:', '- START_CODING: payload { intent: "<free-form goal>" }', '- CONTINUE_IR: payload { irNumber: "<number>" }', '- SUMMARIZE_IR: payload { irNumber: "<number>" }', '- BOSS_INTERRUPT: payload { targetId: "<stateId>", intent?: "<free-form goal>", irNumber?: "<number>" }', `  targetId must be one of: ${[...bossInterruptTargetIds].join(', ')}`);
+    lines.push('', 'Events:', '- START_CODING: payload { intent: "<free-form goal>" }', '- CONTINUE_IR: payload { irNumber: "<number>" }', '- SUMMARIZE_IR: payload { irNumber: "<number>" }', '- BOSS_INTERRUPT: payload { targetId: "<stateId>", intent?: "<free-form goal>", irNumber?: "<number>" }', '  targetId must be one of these jumpable states:');
+    for (const target of bossInterruptTargets) {
+        lines.push(`  - ${target.stateId}: ${target.description}`);
+    }
     if (currentState === 'awaitBossReply') {
         lines.push('- BOSS_REPLY: payload { answer: "<verbatim Boss answer>" }');
     }

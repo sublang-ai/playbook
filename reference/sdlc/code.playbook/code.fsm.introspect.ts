@@ -68,6 +68,10 @@ export interface RootEventTable {
   readonly continueIr: { readonly target: string };
   readonly summarizeIr: { readonly target: string };
   readonly bossInterruptTargets: ReadonlyArray<string>;
+  readonly bossInterruptTargetDescriptions: ReadonlyArray<{
+    readonly stateId: string;
+    readonly description: string;
+  }>;
 }
 
 type RawInvoke = {
@@ -76,7 +80,11 @@ type RawInvoke = {
   onDone?: unknown;
 };
 
-type RawStateDef = { invoke?: RawInvoke; on?: Record<string, unknown> };
+type RawStateDef = {
+  description?: unknown;
+  invoke?: RawInvoke;
+  on?: Record<string, unknown>;
+};
 
 type RawArm = { target?: unknown; guard?: TransitionGuard };
 type RawArmWithActions = RawArm & { actions?: unknown };
@@ -127,13 +135,21 @@ export function enumerateRootEvents(
     { target?: string }
   >;
   const rootOn = (cfg.on ?? {}) as Record<string, unknown>;
+  const bossInterruptTargets = toArmArray(rootOn.BOSS_INTERRUPT).map((arm) =>
+    stripIdPrefix(String(arm.target ?? '')),
+  );
   return {
     startCoding: { target: stripIdPrefix(String(readyOn.START_CODING?.target ?? '')) },
     continueIr: { target: stripIdPrefix(String(readyOn.CONTINUE_IR?.target ?? '')) },
     summarizeIr: { target: stripIdPrefix(String(readyOn.SUMMARIZE_IR?.target ?? '')) },
-    bossInterruptTargets: toArmArray(rootOn.BOSS_INTERRUPT).map((arm) =>
-      stripIdPrefix(String(arm.target ?? '')),
-    ),
+    bossInterruptTargets,
+    bossInterruptTargetDescriptions: bossInterruptTargets.map((stateId) => {
+      const description = cfg.states?.[stateId]?.description;
+      return {
+        stateId,
+        description: typeof description === 'string' ? description : '',
+      };
+    }),
   };
 }
 

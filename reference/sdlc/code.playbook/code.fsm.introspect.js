@@ -30,11 +30,19 @@ export function enumerateRootEvents(machine) {
     const cfg = getRawConfig(machine);
     const readyOn = (cfg.states?.ready?.on ?? {});
     const rootOn = (cfg.on ?? {});
+    const bossInterruptTargets = toArmArray(rootOn.BOSS_INTERRUPT).map((arm) => stripIdPrefix(String(arm.target ?? '')));
     return {
         startCoding: { target: stripIdPrefix(String(readyOn.START_CODING?.target ?? '')) },
         continueIr: { target: stripIdPrefix(String(readyOn.CONTINUE_IR?.target ?? '')) },
         summarizeIr: { target: stripIdPrefix(String(readyOn.SUMMARIZE_IR?.target ?? '')) },
-        bossInterruptTargets: toArmArray(rootOn.BOSS_INTERRUPT).map((arm) => stripIdPrefix(String(arm.target ?? ''))),
+        bossInterruptTargets,
+        bossInterruptTargetDescriptions: bossInterruptTargets.map((stateId) => {
+            const description = cfg.states?.[stateId]?.description;
+            return {
+                stateId,
+                description: typeof description === 'string' ? description : '',
+            };
+        }),
     };
 }
 export function enumerateAwaitBossReply(machine) {

@@ -263,8 +263,10 @@ type JumpableStateId = Extract<
   { type: 'BOSS_INTERRUPT' }
 >['targetId'];
 
+const rootEvents = enumerateRootEvents(codingMachine);
+const bossInterruptTargets = rootEvents.bossInterruptTargetDescriptions;
 const bossInterruptTargetIds: ReadonlySet<string> = new Set(
-  enumerateRootEvents(codingMachine).bossInterruptTargets,
+  bossInterruptTargets.map((target) => target.stateId),
 );
 
 async function classifyWithLlm(
@@ -417,8 +419,11 @@ function buildClassifierPrompt(text: string, state: ClassifierState): string {
     '- CONTINUE_IR: payload { irNumber: "<number>" }',
     '- SUMMARIZE_IR: payload { irNumber: "<number>" }',
     '- BOSS_INTERRUPT: payload { targetId: "<stateId>", intent?: "<free-form goal>", irNumber?: "<number>" }',
-    `  targetId must be one of: ${[...bossInterruptTargetIds].join(', ')}`,
+    '  targetId must be one of these jumpable states:',
   );
+  for (const target of bossInterruptTargets) {
+    lines.push(`  - ${target.stateId}: ${target.description}`);
+  }
   if (currentState === 'awaitBossReply') {
     lines.push('- BOSS_REPLY: payload { answer: "<verbatim Boss answer>" }');
   } else {

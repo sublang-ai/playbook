@@ -44,6 +44,10 @@ export interface RootEventTable {
         readonly target: string;
     };
     readonly bossInterruptTargets: ReadonlyArray<string>;
+    readonly bossInterruptTargetDescriptions: ReadonlyArray<{
+        readonly stateId: string;
+        readonly description: string;
+    }>;
 }
 export declare function enumerateCaptainStates(machine: typeof codingMachine): readonly CaptainStateInfo[];
 export declare function enumerateRootEvents(machine: typeof codingMachine): RootEventTable;

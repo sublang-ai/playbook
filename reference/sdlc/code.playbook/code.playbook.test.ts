@@ -615,7 +615,16 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
     expect(prompt).toContain('BOSS_INTERRUPT');
     expect(prompt).toContain('BOSS_REPLY');
     expect(prompt).toContain('NO_ACTION');
-    expect(prompt).toContain('targetId must be one of');
+    expect(prompt).toContain('targetId must be one of these jumpable states');
+    expect(prompt).toContain(
+      'ready: Idle hub: waits for Boss to start or resume a coding sub-procedure.',
+    );
+    expect(prompt).toContain(
+      'planAndImplement: CODE-1: Coder assesses a Boss intent',
+    );
+    expect(prompt).toContain(
+      'reviewBossCommitSpecs: CODE-5: Reviewer reviews a Boss-intent commit whose changes are only in @specs/{user,dev,test}/.',
+    );
   });
 
   it('unknown event type from classifier → emitStatus + undefined', async () => {
