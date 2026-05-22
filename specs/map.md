@@ -56,6 +56,13 @@ meta.md     The spec of specs
 | dev | [licensing.md](dev/licensing.md) | SPDX header requirements and file-scope rules |
 | test | [licensing.md](test/licensing.md) | Copyright and license header presence checks |
 
+### PBCODE
+
+| Group | File | Summary |
+| --- | --- | --- |
+| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global command: launch, argument pass-through, exit/signal behavior |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: production-config and cligent-CLI resolution, Node engine floor |
+
 ### PBRT
 
 | Group | File | Summary |
