@@ -21,7 +21,9 @@ After IR-009 the runtime has a single Boss-input path — `callJudge` — with n
 ## Deliverables
 
 - [ ] IR-009 doc and its `map.md` row landed.
-- [ ] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md) — the Boss-event-mapping section: free-text adjudication replaces the slash-prefix mapping; record the `/command` reservation.
+- [ ] [`slc/link.md`](../../slc/link.md) — the Linker-inputs strategy line, the Boss-event-mapping section, and the session-lifecycle classify step: free-text judge classification becomes the sole strategy, slash-prefix is removed, and the `/command` reservation is recorded.
+- [ ] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — the `awaitBossReply` "Boss-reply suspension" prose: `/interrupt <stateId>` and "a slash command from Boss" reworded as slash-free Boss-interrupt / fresh-directive wording, with the FSM mechanics unchanged.
+- [ ] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md) — the CODE Boss-event mapping follows `slc/link.md`'s free-text classification; the `/start` … `/interrupt` slash mapping is dropped.
 - [ ] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md) — the Context paragraph and `awaitBossReply` entry-event references reworded for free-text classification, with no `/start` … `/interrupt`.
 - [ ] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md) — PBRT-1/PBRT-2 reworked: all turn input is free text, judge-classified, plus the `awaitBossReply` reply-vs-directive rule.
 - [ ] [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md) — PBRT-7 reworked: `callJudge` sole classifier, `BOSS_INTERRUPT` target selection, `awaitBossReply` state-aware classification.
@@ -39,7 +41,7 @@ Order keeps `main` building and test-green: spec amendments land first to give t
    Add this IR doc and its `map.md` row.
    No code or behavior change.
 2. **Spec amendments.**
-   DR-004 (Boss-event mapping → free-text adjudication, `/command` reservation); DR-005 (Context and `awaitBossReply` references); PBRT user PBRT-1/PBRT-2; PBRT dev PBRT-7; PBRT test items.
+   `slc/link.md` (Boss-event mapping → free-text-only, `/command` reservation); `slc/gears2fsm.md` (the `awaitBossReply` prose drops the slash spellings); DR-004 (CODE Boss-event mapping follows `slc/link.md`); DR-005 (Context and `awaitBossReply` references); PBRT user PBRT-1/PBRT-2; PBRT dev PBRT-7; PBRT test items.
    All prose; no code touched.
 3. **Runtime change.**
    `code.playbook.ts` drops slash parsing and routes every non-empty Boss turn through `callJudge`, which selects the `BOSS_INTERRUPT` target and performs the `awaitBossReply` reply-vs-directive classification; recompile siblings.
@@ -52,6 +54,7 @@ Order keeps `main` building and test-green: spec amendments land first to give t
 ## Acceptance criteria
 
 - The runtime defines and recognizes no slash commands; no `/start`, `/continue`, `/summarize`, or `/interrupt` handling remains.
+- `slc/link.md` defines Boss-event classification as free-text judge classification only, and no slc spec names a `/`-prefixed command for in-playbook Boss input.
 - Every non-empty Boss turn is classified by `callJudge`; empty or whitespace-only text produces no FSM action and no judge call.
 - The judge resolves `START_CODING`, `CONTINUE_IR`, `SUMMARIZE_IR`, and `BOSS_INTERRUPT` from free text, selecting the `BOSS_INTERRUPT` target from the FSM's jumpable states.
 - At `awaitBossReply`, plain free text resumes the pending question via `BOSS_REPLY`, and a free-text fresh directive abandons it via `clearBossReplyContext`.
