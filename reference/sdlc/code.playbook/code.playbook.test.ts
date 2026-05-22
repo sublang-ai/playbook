@@ -1250,7 +1250,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(adjudicatorCalls).toBe(0); // callPlayer aborted; adjudication never reached
   });
 
-  it('/interrupt <stateId> sends BOSS_INTERRUPT and redirects the FSM', async () => {
+  it('classifier BOSS_INTERRUPT redirects the FSM to the target state', async () => {
     const ports = makeFakePorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
       callJudge: judgeSequence([
@@ -1274,7 +1274,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(runtime._getActor()?.getSnapshot().value).toBe('failed');
   });
 
-  it('/interrupt <stateId> <intent> attaches the trailing text as intent', async () => {
+  it('classifier BOSS_INTERRUPT payload carries intent into the target state', async () => {
     // planAndImplement (CODE-1) wires `context.intent` into the
     // captain prompt, so the trailing text shows up downstream.
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
@@ -1382,7 +1382,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     }
   });
 
-  it('/continue <#> drives the FSM through continueIr back to ready', async () => {
+  it('classifier CONTINUE_IR drives the FSM through continueIr back to ready', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
     const ports = makeFakePorts({
       callPlayer: async (playerId, prompt) => {
@@ -1405,7 +1405,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
 
-  it('/summarize <#> drives the FSM through summarizeSpecs back to ready', async () => {
+  it('classifier SUMMARIZE_IR drives the FSM through summarizeSpecs back to ready', async () => {
     const playerCalls: Array<{ playerId: string; prompt: string }> = [];
     const ports = makeFakePorts({
       callPlayer: async (playerId, prompt) => {
