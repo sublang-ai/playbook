@@ -30,7 +30,7 @@ After IR-009 the runtime has a single Boss-input path — `callJudge` — with n
 - [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — drop the slash-form test items; add judge-classification and `awaitBossReply` items.
 - [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — remove slash parsing; route every non-empty turn through `callJudge`; recompile siblings.
 - [x] `code.playbook.test.ts` (and `code.tmux-play.test.ts` if affected) — updated for the free-text path and Task 4 coverage.
-- [ ] [`specs/map.md`](../map.md) — DR-004 and PBRT row summaries refreshed.
+- [x] [`specs/map.md`](../map.md) — DR-004 and PBRT row summaries refreshed.
 
 ## Tasks
 
@@ -50,6 +50,8 @@ Order keeps `main` building and test-green: spec amendments land first to give t
    Cover free-text classification of every Boss event, `BOSS_INTERRUPT` target selection, and the `awaitBossReply` reply-vs-directive split; assert no slash form is specially recognized.
 5. **Close-out.**
    Re-verify `map.md`; record any substantive divergence from DR-004 or DR-005 as a one-line addendum.
+
+Close-out addendum: Re-verified `map.md` against DR-004, DR-005, and PBRT; no substantive divergence found.
 
 ## Acceptance criteria
 

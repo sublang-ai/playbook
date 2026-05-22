@@ -27,7 +27,7 @@ meta.md     The spec of specs
 | DR-001 | [001-state-machine-tooling.md](decisions/001-state-machine-tooling.md) | XState + Stately Sketch for state machine modeling, visualization, and simulation |
 | DR-002 | [002-in-page-xstate-visualizer.md](decisions/002-in-page-xstate-visualizer.md) | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) — superseded by DR-003 |
 | DR-003 | [003-sketch-controlled-shell.md](decisions/003-sketch-controlled-shell.md) | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
-| DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE playbook linker bindings (player binding, Boss-event mapping, adjudication, session lifecycle, captain bridge, abort) and tmux-play host adapter wiring |
+| DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: baked player binding, free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and tmux-play adapter wiring |
 | DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + universal `needsBossReply` guard for captain-invoking states, so player questions suspend and resume the same state with the answer in context |
 
 ## Iterations
@@ -68,9 +68,9 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE playbook runtime Boss surface: turn input, turn progress, tmux-play host configuration |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE playbook runtime system behavior: module boundary, session lifecycle, classification, binding, captain bridge, adjudication, abort, telemetry, tmux-play adapter |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests driving the runtime and tmux-play adapter against fake ports and stubbed cligent primitives |
+| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface: free-text turn classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, session lifecycle, binding, captain bridge, adjudication, abort, telemetry, and tmux-play adapter |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, `awaitBossReply`, status/telemetry, lifecycle, player binding, and tmux-play adapter wiring with fake ports/stubbed cligent primitives |
 
 ### PLAYBOOK
 
