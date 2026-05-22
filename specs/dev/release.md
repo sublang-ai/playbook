@@ -99,6 +99,21 @@ trusted publishing — static npm tokens shall not be used.
 The scoped `@sublang/playbook` package shall be published with
 `--access public` to ensure public availability.
 
+## Install closure
+
+### RELEASE-12
+
+The published `@sublang/playbook` package shall declare
+`@sublang/cligent` and every adapter SDK wired by the bundled
+production config (currently `@anthropic-ai/claude-agent-sdk`
+and `@openai/codex-sdk`) as regular runtime `dependencies`, not
+as optional or peer dependencies.
+
+A global install of the package shall therefore yield a
+self-contained closure: `@sublang/cligent` nests inside
+`@sublang/playbook`'s module tree, and each adapter SDK resolves
+from `@sublang/cligent`'s installed location.
+
 ## Pre-release Checklist
 
 ### RELEASE-10
