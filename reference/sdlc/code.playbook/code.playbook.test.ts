@@ -4,7 +4,10 @@
 import { describe, expect, it } from 'vitest';
 import { assign, createActor, setup } from 'xstate';
 import { codingMachine, type CaptainInput } from './code.fsm.js';
-import { enumerateCaptainStates } from './code.fsm.introspect.js';
+import {
+  enumerateCaptainStates,
+  enumerateRootEvents,
+} from './code.fsm.introspect.js';
 import createPlaybookRuntime, {
   _internal,
   type PlaybookPorts,
@@ -616,15 +619,10 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
     expect(prompt).toContain('BOSS_REPLY');
     expect(prompt).toContain('NO_ACTION');
     expect(prompt).toContain('targetId must be one of these jumpable states');
-    expect(prompt).toContain(
-      'ready: Idle hub: waits for Boss to start or resume a coding sub-procedure.',
-    );
-    expect(prompt).toContain(
-      'planAndImplement: CODE-1: Coder assesses a Boss intent',
-    );
-    expect(prompt).toContain(
-      'reviewBossCommitSpecs: CODE-5: Reviewer reviews a Boss-intent commit whose changes are only in @specs/{user,dev,test}/.',
-    );
+    for (const target of enumerateRootEvents(codingMachine)
+      .bossInterruptTargetDescriptions) {
+      expect(prompt).toContain(`${target.stateId}: ${target.description}`);
+    }
   });
 
   it('unknown event type from classifier → emitStatus + undefined', async () => {
@@ -1538,6 +1536,38 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
     expect(
       statuses.some((m) => m.includes('targetId')),
+    ).toBe(true);
+    expect(playerCalls).toBe(0);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('classifier BOSS_INTERRUPT with an invalid target state surfaces status and takes no FSM action', async () => {
+    const statuses: string[] = [];
+    let playerCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        playerCalls++;
+        return { status: 'ok', finalText: '' };
+      },
+      callJudge: async () =>
+        JSON.stringify({
+          event: 'BOSS_INTERRUPT',
+          payload: { targetId: 'notAState' },
+        }),
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+
+    await runtime.handleBossInput({
+      text: 'Jump to notAState.',
+      signal: sig(),
+    });
+
+    expect(
+      statuses.some((m) => m.includes('notAState')),
     ).toBe(true);
     expect(playerCalls).toBe(0);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');

@@ -153,4 +153,13 @@ describe('enumerateRootEvents', () => {
       'failed',
     ]);
   });
+
+  it('bossInterruptTargetDescriptions pairs every jumpable state with its FSM description', () => {
+    expect(
+      events.bossInterruptTargetDescriptions.map((target) => target.stateId),
+    ).toEqual(events.bossInterruptTargets);
+    for (const target of events.bossInterruptTargetDescriptions) {
+      expect(target.description.length, target.stateId).toBeGreaterThan(0);
+    }
+  });
 });
