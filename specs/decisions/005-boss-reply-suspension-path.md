@@ -113,15 +113,7 @@ Both shall be cleared by an `assign` on any non-`needsBossReply` outcome of the 
 Every captain-invoking state shall support Boss-reply suspension.
 There is no source-level opt-in annotation and no `needsBossReply` metadata in GEARS output; `text2gears` emits only the domain prompt body and any domain result metadata.
 
-`gears2fsm` shall add `needsBossReply` to every captain-invoking state's `invoke.input.result` map with a standard description targeted at the [PBRT-10 adjudicator](../dev/playbook-runtime.md#pbrt-10):
-
-```typescript
-needsBossReply:
-  "The player's prose surfaces a clarifying question for Boss " +
-  "that the player cannot answer alone. " +
-  "Output shall include `question: <verbatim question text " +
-  "from the player's prose>`."
-```
+`gears2fsm` shall add `needsBossReply` to every captain-invoking state's `invoke.input.result` map with the standard adjudicator-facing description defined in [gears2fsm.md "Boss-reply suspension"](../../slc/gears2fsm.md#boss-reply-suspension).
 
 The literal ``Output shall include `question:`` substring is load-bearing: `code.playbook.ts`'s `extractRequiredFields` regex parses it to make `question` a required reply field, which triggers §8's missing-`question` failure mode.
 Removing the marker would silently weaken that guarantee.
