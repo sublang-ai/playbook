@@ -20,9 +20,9 @@ The Boss-reply suspend/resume machinery is unchanged — only the player-facing 
 ## Deliverables
 
 - [x] IR-010 doc and its `map.md` row landed.
-- [ ] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md) — §4/§5: the player-visible Boss-question instruction is removed; the guard and resume mechanics are retained.
-- [ ] [`slc/link.md`](../../slc/link.md) — "Player prompt composition": the Boss-question instruction injection is removed.
-- [ ] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — "Boss-reply suspension": the reference to a runtime-supplied player-visible instruction is removed.
+- [x] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md) — §4/§5: the player-visible Boss-question instruction is removed; the guard and resume mechanics are retained.
+- [x] [`slc/link.md`](../../slc/link.md) — "Player prompt composition": the Boss-question instruction injection is removed.
+- [x] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — "Boss-reply suspension": the reference to a runtime-supplied player-visible instruction is removed.
 - [ ] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — `BOSS_QUESTION_INSTRUCTION` and its injection are removed from `composePlayerPrompt`; recompile siblings.
 - [ ] [`code.prompt-contract.test.ts`](../../reference/sdlc/code.playbook/code.prompt-contract.test.ts) — the instruction-injection assertions are removed; the continuation-prompt test reconciled.
 

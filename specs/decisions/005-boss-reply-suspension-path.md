@@ -120,15 +120,10 @@ Removing the marker would silently weaken that guarantee.
 
 Past the marker, the description tells the adjudicator when to pick the guard and what field to extract.
 The player never sees this description and never chooses the guard directly (see *Authority and message flow*).
-The player-visible instruction is supplied by the linked runtime's prompt composer, outside the GEARS domain prompt body:
+The linked runtime shall not add a player-visible Boss-question instruction to the composed player prompt.
+A player question that naturally appears in the player's prose is still detected by the adjudicator through the `needsBossReply` description.
 
-```text
-If a specific Boss answer is needed, ask the exact question and stop.
-```
-
-The instruction shall appear after any continuation or ordinary structured labelled blocks and immediately before the GEARS-derived prompt body.
-
-The old authored-prose and source-annotation mechanisms are superseded: a Boss-question instruction in a GEARS blockquote is a source-of-truth defect unless the source domain prompt itself contains that line, and a `Result guard: needsBossReply` line in GEARS output is stale compiler metadata.
+The old source-annotation mechanism is superseded: a `Result guard: needsBossReply` line in GEARS output is stale compiler metadata.
 The FSM result map is the first artifact that carries the universal `needsBossReply` guard per [gears2fsm.md "Setup"](../../slc/gears2fsm.md#setup).
 
 For every captain-invoking state:
@@ -145,7 +140,7 @@ Output that declares the guard but omits the field is malformed; the runtime rou
 A captain-invoking state's `invoke.input`, when `context.pendingBossQuestion` and `context.bossReply` are both present, shall expose those fields to the linked runtime.
 The runtime prompt composer shall render the continuation preamble and Q&A labelled blocks per [link.md "Player prompt composition"](../../slc/link.md#player-prompt-composition).
 That section owns the exact runtime text and ordering.
-The GEARS-derived `invoke.input.prompt` remains the domain prompt body; neither the continuation preamble nor the standard Boss-question instruction is stored in that body.
+The GEARS-derived `invoke.input.prompt` remains the domain prompt body; the continuation preamble is not stored in that body.
 
 The compiler shall emit two assigner helpers, used everywhere pending-question / reply context is touched:
 

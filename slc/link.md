@@ -126,14 +126,8 @@ The runtime shall compose the actual player prompt from the state's `CaptainInpu
 The composer may prepend structured labelled blocks from typed `CaptainInput` fields the FSM exposes (for example `Boss intent:`, `Review items:`, `Rebuttals:`, or `Task description:`).
 Those blocks are outside the domain prompt body.
 
-For every player call driven by a captain-invoking state's `CaptainInput`, the composer shall inject this standard player-visible instruction outside the domain prompt body:
-
-```text
-If a specific Boss answer is needed, ask the exact question and stop.
-```
-
-The instruction shall be injected for initial calls and resumed calls that may need a follow-up question.
-The instruction shall appear after any continuation or ordinary structured labelled blocks and immediately before `input.prompt`.
+The composer shall not inject a player-visible Boss-question instruction.
+Boss-question detection is adjudicator-facing: it comes from the state's `needsBossReply` result description, not from extra prompt text.
 
 When `CaptainInput` carries both `pendingBossQuestion` and `bossReply`, the composer shall prepend the continuation preamble and labelled Q&A blocks before ordinary structured blocks and before the domain prompt body:
 
@@ -147,8 +141,8 @@ Boss reply:
 <bossReply>
 ```
 
-The continuation preamble and the standard Boss-question instruction are framework text supplied by the runtime.
-They are not part of the GEARS blockquote and shall not appear in `invoke.input.prompt`.
+The continuation preamble is framework text supplied by the runtime.
+It is not part of the GEARS blockquote and shall not appear in `invoke.input.prompt`.
 
 ## Boss-event mapping
 

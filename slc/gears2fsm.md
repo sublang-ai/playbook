@@ -143,7 +143,7 @@ This is a third Boss surface alongside `BOSS_INTERRUPT` and Boss entry events.
 
 Every captain-invoking state supports this path.
 There is no source-level opt-in annotation and no `needsBossReply` result metadata in GEARS output.
-The FSM compiler shall preserve the GEARS blockquote as the state's domain `prompt` body and shall not inject the standard Boss-question instruction into `invoke.input.prompt`.
+The FSM compiler shall preserve the GEARS blockquote as the state's domain `prompt` body and shall not inject any Boss-question instruction into `invoke.input.prompt`.
 
 For every captain-invoking state, the compiler shall add `needsBossReply` to the state's `invoke.input.result` map.
 The description shall be the standard adjudicator-facing text:
@@ -153,7 +153,7 @@ The player's prose surfaces a clarifying question for Boss that the player canno
 ```
 
 It shall include the load-bearing substring ``Output shall include `question:`` so the runtime's adjudicator requires `question` in the JSON reply.
-The linked runtime supplies the player-visible instruction per [link.md "Player prompt composition"](link.md#player-prompt-composition).
+The linked runtime composes player prompts per [link.md "Player prompt composition"](link.md#player-prompt-composition), without adding a player-visible Boss-question instruction.
 
 The machine shall declare:
 
