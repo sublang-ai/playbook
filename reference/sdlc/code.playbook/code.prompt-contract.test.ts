@@ -39,8 +39,6 @@ const CONTINUATION_PREAMBLE =
   'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 const CONTINUATION_QUESTION = 'Which scope should I use?';
 const CONTINUATION_REPLY = 'Use the narrow scope.';
-const BOSS_QUESTION_INSTRUCTION =
-  'If a specific Boss answer is needed, ask the exact question and stop.';
 
 const ALL_FIELDS: readonly ContextField[] = [
   'intent',
@@ -348,17 +346,6 @@ describe('prompt contract — per state', () => {
         ).toEqual([...present].sort((a, b) => a - b));
       });
 
-      it('composer injects the Boss-question instruction before every domain prompt', () => {
-        const input = state.getInput(FULL_CONTEXT as Partial<CodingContext>);
-        const composed = composePlayerPrompt(input);
-        expect(composed, contract.stateId).toContain(BOSS_QUESTION_INSTRUCTION);
-        expect(
-          composed.endsWith(
-            `${BOSS_QUESTION_INSTRUCTION}\n\n${substitutedPrompt(input.prompt)}`,
-          ),
-          `${contract.stateId}: instruction immediately before domain prompt`,
-        ).toBe(true);
-      });
     });
   }
 });
@@ -405,7 +392,6 @@ describe('prompt contract — Boss-reply continuation', () => {
         `Boss question:\n${CONTINUATION_QUESTION}`,
         `Boss reply:\n${CONTINUATION_REPLY}`,
         ...BLOCK_ORDER.filter((label) => composed.includes(label)),
-        BOSS_QUESTION_INSTRUCTION,
         substitutedPromptFirstLine(input.prompt),
       ];
       const positions = markers.map((marker) => composed.indexOf(marker));

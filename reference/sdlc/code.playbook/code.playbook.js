@@ -24,11 +24,7 @@ const BOSS_REPLY_ERRORS = {
 // string replace, no escaping) and prepends labelled blocks for any
 // populated structured field. When a state resumes from a Boss reply,
 // the continuation preamble and Q/A blocks precede the ordinary
-// labelled blocks. Every generated captain-invoking state declares
-// needsBossReply, so it receives the standard Boss-question instruction
-// immediately before the domain prompt body. The FSM's
-// prompt body is never re-flowed.
-const BOSS_QUESTION_INSTRUCTION = 'If a specific Boss answer is needed, ask the exact question and stop.';
+// labelled blocks. The FSM's prompt body is never re-flowed.
 function composePlayerPrompt(input) {
     const blocks = [];
     if (input.pendingBossQuestion !== undefined &&
@@ -58,9 +54,6 @@ function composePlayerPrompt(input) {
     }
     if (input.reviewerPlayer !== undefined) {
         body = body.replaceAll('<reviewer-llm>', input.reviewerPlayer);
-    }
-    if ('needsBossReply' in input.result) {
-        blocks.push(BOSS_QUESTION_INSTRUCTION);
     }
     blocks.push(body);
     return blocks.join('\n\n');
