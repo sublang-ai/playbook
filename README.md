@@ -56,6 +56,9 @@ Each adapter reads its own auth: the Claude SDK uses your local
 Claude Code auth (or `ANTHROPIC_API_KEY`); the Codex SDK uses your
 local codex CLI auth (or `OPENAI_API_KEY`).
 
+The bundled configs run each agent in cligent's protected auto mode
+(`permissions.mode: auto`), suppressing routine approval prompts.
+
 Then launch the reference playbook in a `tmux-play` session:
 
 ```sh
@@ -80,7 +83,7 @@ pnpm build
 pnpm test
 ```
 
-`pnpm install` resolves `@sublang/cligent` (≥ 0.3.0) from the registry;
+`pnpm install` resolves `@sublang/cligent` (^0.4.0) from the registry;
 no local link required. To point pnpm at a local `cligent` checkout
 instead, copy
 [`pnpm-workspace.yaml.example`](pnpm-workspace.yaml.example)
@@ -101,16 +104,16 @@ installed globally.
 
 ### Running a Boss turn
 
-The Boss pane accepts four slash commands per
-[PBRT-1](specs/user/playbook-runtime.md#pbrt-1):
+The Boss pane takes plain-language turns; the judge classifies each
+into an FSM event (start a coding turn, continue or summarize an IR,
+interrupt to a named state, or nothing) per
+[PBRT-1](specs/user/playbook-runtime.md#pbrt-1).
+When a player surfaces a clarifying question
+the FSM parks at `awaitBossReply` and the pane shows the question; your
+next turn is normally classified as the reply, or a fresh directive
+abandons it ([PBRT-2](specs/user/playbook-runtime.md#pbrt-2)).
 
-- `/start <intent>` — begin a single coding turn
-- `/continue <#>` — pick up an IR task
-- `/summarize <#>` — turn an IR's commits into spec items
-- `/interrupt <stateId> [intent]` — preempt the FSM into a named state
-
-Anything else falls through to an LLM classifier. The Captain pane
-streams the state machine progression with a four-glyph vocabulary —
+The Captain pane streams the state machine with a four-glyph vocabulary —
 `◆ ▸ ⮕ ⤷` per [PBRT-3](specs/user/playbook-runtime.md#pbrt-3) — while
 player prompts ride their own panes.
 
@@ -138,7 +141,7 @@ const runtime = createPlaybookRuntime({
 
 await runtime.init(ports);
 await runtime.handleBossInput({
-  text: '/start fix the bug',
+  text: 'Start fixing the bug',
   signal: new AbortController().signal,
 });
 await runtime.dispose();
