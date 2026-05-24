@@ -1,6 +1,6 @@
 {
   "name": "@sublang/playbook",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "type": "module",
   "description": "Reference CODE playbook — XState v5 FSM, host-agnostic runtime, and tmux-play adapter for a coder/reviewer/committer loop driven by GEARS spec items.",
   "license": "Apache-2.0",
