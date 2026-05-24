@@ -45,6 +45,8 @@ Order keeps `main` building and test-green: spec amendments land first, the runt
 5. **Close-out.**
    Re-verify `map.md`; record any substantive divergence from DR-005 as a one-line addendum.
 
+Close-out addendum: Re-verified `map.md` against DR-005, `slc/link.md`, `slc/gears2fsm.md`, and the CODE prompt contract; no substantive divergence found.
+
 ## Acceptance criteria
 
 - No composed player prompt contains a Boss-question instruction.
