@@ -39,6 +39,8 @@ const CONTINUATION_PREAMBLE =
   'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 const CONTINUATION_QUESTION = 'Which scope should I use?';
 const CONTINUATION_REPLY = 'Use the narrow scope.';
+const REMOVED_BOSS_QUESTION_INSTRUCTION =
+  'If a specific Boss answer is needed, ask the exact question and stop.';
 
 const ALL_FIELDS: readonly ContextField[] = [
   'intent',
@@ -345,7 +347,6 @@ describe('prompt contract — per state', () => {
           `${contract.stateId}: labelled blocks in DR-004 §6 order`,
         ).toEqual([...present].sort((a, b) => a - b));
       });
-
     });
   }
 });
@@ -372,6 +373,31 @@ describe('prompt contract — structural', () => {
       }
     }
     expect(orphans).toEqual([]);
+  });
+
+  it('no composed captain prompt carries the removed Boss-question instruction', () => {
+    for (const contract of contracts) {
+      const state = stateById.get(contract.stateId);
+      expect(state, contract.stateId).toBeDefined();
+      if (!state) continue;
+
+      const ordinary = composePlayerPrompt(
+        state.getInput(FULL_CONTEXT as Partial<CodingContext>),
+      );
+      const resumed = composePlayerPrompt(
+        state.getInput({
+          ...FULL_CONTEXT,
+          ...continuationContext(contract.stateId),
+        } as Partial<CodingContext>),
+      );
+
+      expect(ordinary, `${contract.stateId}: ordinary prompt`).not.toContain(
+        REMOVED_BOSS_QUESTION_INSTRUCTION,
+      );
+      expect(resumed, `${contract.stateId}: resumed prompt`).not.toContain(
+        REMOVED_BOSS_QUESTION_INSTRUCTION,
+      );
+    }
   });
 });
 

@@ -24,7 +24,7 @@ The Boss-reply suspend/resume machinery is unchanged — only the player-facing 
 - [x] [`slc/link.md`](../../slc/link.md) — "Player prompt composition": the Boss-question instruction injection is removed.
 - [x] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — "Boss-reply suspension": the reference to a runtime-supplied player-visible instruction is removed.
 - [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — `BOSS_QUESTION_INSTRUCTION` and its injection are removed from `composePlayerPrompt`; recompile siblings.
-- [ ] [`code.prompt-contract.test.ts`](../../reference/sdlc/code.playbook/code.prompt-contract.test.ts) — the instruction-injection assertions are removed; the continuation-prompt test reconciled.
+- [x] [`code.prompt-contract.test.ts`](../../reference/sdlc/code.playbook/code.prompt-contract.test.ts) — the instruction-injection assertions are removed; the continuation-prompt test reconciled.
 
 ## Tasks
 
