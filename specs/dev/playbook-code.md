@@ -35,10 +35,13 @@ Where `playbook-code` seeds the user config per
 resolve the bundled `playbook-code.config.template.yaml` relative
 to its own installed location in the `@sublang/playbook` package
 tree and copy that template to the resolved user config path.
-The copy shall preserve the template comments, including the inline
-comments that name the fixed `roles[].id` invariant from
-[PBRT-4](../user/playbook-runtime.md#pbrt-4), and shall not run
-when `--config` is supplied.
+The copy shall preserve the template comments, including comments
+that name the host-configuration invariants from
+[PBRT-4](../user/playbook-runtime.md#pbrt-4): `captain.from`
+points at the adapter module, `roles[].id` remains `coder` /
+`reviewer`, and `captain.options` supplies `coderPlayer` and
+`reviewerPlayer`.
+The copy shall not run when `--config` is supplied.
 
 ### PBCODE-8
 

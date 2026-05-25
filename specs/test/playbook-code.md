@@ -62,8 +62,10 @@ Where the resolved user config declares `claude` or `codex`
 adapters and the corresponding readiness predicates are false, the
 test suite shall fail unless the shim prints its help text to
 stderr, includes the config path, every failing adapter id, and the
-per-adapter auth or CLI setup pointer, exits non-zero with a status
-other than `127`, and does not launch `tmux-play`.
+per-adapter auth or CLI setup pointer, includes the agent-swap
+recipe from [PBCODE-6](../user/playbook-code.md#pbcode-6), exits
+non-zero with a status other than `127`, and does not launch
+`tmux-play`.
 
 ### PBCODE-14
 Verifies: [PBCODE-6](../user/playbook-code.md#pbcode-6), [PBCODE-8](../dev/playbook-code.md#pbcode-8)
@@ -79,4 +81,6 @@ Verifies: [PBCODE-6](../user/playbook-code.md#pbcode-6)
 Where the test suite invokes `playbook-code --help`, the test suite
 shall fail unless the shim prints its help text to stdout, exits
 with status `0`, does not seed or modify the user config, does not
-run readiness checks, and does not launch `tmux-play`.
+run readiness checks, does not launch `tmux-play`, and includes
+the config path, per-adapter auth or CLI setup pointers, and the
+agent-swap recipe from [PBCODE-6](../user/playbook-code.md#pbcode-6).
