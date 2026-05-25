@@ -63,8 +63,9 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global command: launch, argument pass-through, exit/signal behavior |
-| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: production-config and cligent-CLI resolution, Node engine floor |
+| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run user-config seed, readiness gate, help, exit/signal behavior |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, template seeding, readiness heuristic, Node engine floor |
+| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, and help |
 
 ### PBRT
 

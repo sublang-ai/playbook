@@ -28,16 +28,16 @@ The bundled production YAML stops being the runtime config and becomes the seed 
 
 ## Deliverables
 
-- [ ] IR-011 doc and its `map.md` row landed.
-- [ ] [`specs/user/playbook-code.md`](../user/playbook-code.md) — PBCODE-1 amended so verbatim forwarding holds when `--config` is passed; PBCODE-5 (first-run seed) and PBCODE-6 (readiness gate + `--help`) added.
-- [ ] [`specs/dev/playbook-code.md`](../dev/playbook-code.md) — PBCODE-7 (template resolution from the package tree) and PBCODE-8 (readiness heuristic) added; PBCODE-3 reworded for the template-not-runtime-config role of the bundled YAML.
-- [ ] [`specs/test/playbook-code.md`](../test/playbook-code.md) — new test items covering seed-on-first-run, no-re-seed, `--config` bypass, readiness pass/fail per adapter, `--help` exit-code semantics.
+- [x] IR-011 doc and its `map.md` row landed.
+- [x] [`specs/user/playbook-code.md`](../user/playbook-code.md) — PBCODE-1 amended so verbatim forwarding holds when `--config` is passed; PBCODE-5 (first-run seed) and PBCODE-6 (readiness gate + `--help`) added.
+- [x] [`specs/dev/playbook-code.md`](../dev/playbook-code.md) — PBCODE-7 (template resolution from the package tree) and PBCODE-8 (readiness heuristic) added; PBCODE-3 reworded for the template-not-runtime-config role of the bundled YAML.
+- [x] [`specs/test/playbook-code.md`](../test/playbook-code.md) — new test items covering seed-on-first-run, no-re-seed, `--config` bypass, readiness pass/fail per adapter, `--help` exit-code semantics.
 - [ ] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — new comment-rich template; the existing `tmux-play.production.config.yaml` is retained for the developer flow and the release smoke test.
 - [ ] [`reference/sdlc/code.playbook/bin/playbook-code.js`](../../reference/sdlc/code.playbook/bin/playbook-code.js) — seed, readiness, `--help`, and `--config` bypass; PBCODE-2 exit/signal semantics retained for the exec path.
 - [ ] [`reference/sdlc/code.playbook/playbook-code.test.ts`](../../reference/sdlc/code.playbook/playbook-code.test.ts) — new vitest covering the shim with mocked `HOME`, `XDG_CONFIG_HOME`, env vars, and spawn.
 - [ ] [`README.md`](../../README.md) — the `Configure agents` section is rewritten around the seeded file path and the `--help` recovery path; the `Install (users)` block names npx as a supported invocation.
 - [ ] [`package.json`](../../package.json) — `files` includes the new template; `bin` unchanged.
-- [ ] [`specs/map.md`](../map.md) — PBCODE rows refreshed and IR-011 row added.
+- [x] [`specs/map.md`](../map.md) — PBCODE rows refreshed and IR-011 row added.
 
 ## Tasks
 
