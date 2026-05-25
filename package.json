@@ -40,6 +40,7 @@
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/tmux-play.config.yaml",
     "reference/sdlc/code.playbook/tmux-play.production.config.yaml",
+    "reference/sdlc/code.playbook/playbook-code.config.template.yaml",
     "reference/sdlc/code.playbook/bin"
   ],
   "bin": {
