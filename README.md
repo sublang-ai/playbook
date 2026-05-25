@@ -71,6 +71,48 @@ CLI (from playbook's own `node_modules/@sublang/cligent`) against it;
 any extra flags pass through (`playbook-code --help` lists
 `tmux-play`'s).
 
+### Configure agents
+
+Both roles accept `claude` and `codex` interchangeably. To swap them
+or change the Captain's adapter/model, create
+`playbook-code.config.yaml` with the contents below and pass it through
+`playbook-code` (arg forwarding is pinned in
+[PBCODE-1](specs/user/playbook-code.md#pbcode-1)):
+
+```yaml
+# playbook-code.config.yaml — Codex coder, Claude reviewer
+captain:
+  from: "@sublang/playbook/code/tmux-play"
+  adapter: claude
+  model: claude-opus-4-7
+  permissions:
+    mode: auto
+  options:
+    coderPlayer: codex
+    reviewerPlayer: claude
+
+roles:
+  - id: coder      # must stay `coder` — see PBRT-4
+    adapter: codex
+    permissions:
+      mode: auto
+  - id: reviewer   # must stay `reviewer` — see PBRT-4
+    adapter: claude
+    permissions:
+      mode: auto
+```
+
+```sh
+playbook-code --config ./playbook-code.config.yaml
+```
+
+Tunable fields: `captain.adapter`, `captain.model`, each role's
+`adapter`, and the values of `captain.options.coderPlayer` /
+`reviewerPlayer`. `roles[].id` must stay `coder` and `reviewer`
+([PBRT-4](specs/user/playbook-runtime.md#pbrt-4)), and `captain.from`
+must remain the adapter module path. Each chosen adapter still reads
+its own auth as described above.
+
 ### Install (contributors / from source)
 
 Clone, install, and run the suite locally:
