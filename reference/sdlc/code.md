@@ -14,7 +14,7 @@ Players:
 When Boss gives a coding intent, Captain shall relay it to Coder along with the following prompt:
 > Assess whether this can be completed in a single commit, following best practices.
 > If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.
-> Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.
+> Consult @specs/map.md or specs/meta.md for relevant context if needed; ensure @specs/map.md reflects the changes.
 > Do not commit.
 The resulting changes are regarded as Initial Changes.
 
@@ -75,7 +75,7 @@ When Reviewer begins a review round involving any changes outside @specs/user/, 
 > Think thoroughly — don't just approve or reject.
 
 When Reviewer begins any review round, Captain shall prompt Reviewer:
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 When Coder raises any rebuttals, Captain shall relay them to Reviewer along with the following prompt:
