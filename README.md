@@ -43,21 +43,13 @@ the slc pipeline's `<basename>.<pipeline>/` output directory.
 
 ### Install (users)
 
-Install the package globally. The bundled production config wires
-Anthropic (Captain + Coder) and OpenAI Codex (Reviewer); `@sublang/
-cligent`, the two adapter SDKs, and `xstate` are all direct
-dependencies, so a single install pulls in everything:
+Install the package globally. `@sublang/cligent`, the Claude and
+Codex adapter SDKs, and `xstate` are direct dependencies, so a single
+install pulls in the reference CODE playbook and its host:
 
 ```sh
 npm install -g @sublang/playbook
 ```
-
-Each adapter reads its own auth: the Claude SDK uses your local
-Claude Code auth (or `ANTHROPIC_API_KEY`); the Codex SDK uses your
-local codex CLI auth (or `OPENAI_API_KEY`).
-
-The bundled configs run each agent in cligent's protected auto mode
-(`permissions.mode: auto`), suppressing routine approval prompts.
 
 Then launch the reference playbook in a `tmux-play` session:
 
@@ -65,22 +57,53 @@ Then launch the reference playbook in a `tmux-play` session:
 playbook-code
 ```
 
-The `playbook-code` bin resolves the bundled
-`tmux-play.production.config.yaml` and execs the bundled `tmux-play`
-CLI (from playbook's own `node_modules/@sublang/cligent`) against it;
-any extra flags pass through (`playbook-code --help` lists
-`tmux-play`'s).
+For a one-shot run without a global install, use the same command
+through npx:
+
+```sh
+npx playbook-code
+```
+
+On first run, `playbook-code` creates a commented user config at
+`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml`
+from the bundled template, prints that path to stderr, then checks the
+declared adapters before launching. Later runs reuse that file and do
+not overwrite it.
+
+Known adapter readiness is intentionally light: `claude` is ready when
+local Claude Code auth exists or `ANTHROPIC_API_KEY` is set; `codex` is
+ready when local Codex CLI auth exists or `OPENAI_API_KEY` is set. If a
+known adapter is not ready, `playbook-code` prints its own help text
+with the config path, auth pointers, and agent-swap recipe, then exits
+without launching. You can view the same recovery text at any time:
+
+```sh
+playbook-code --help
+```
+
+The seed template runs each agent in cligent's protected auto mode
+(`permissions.mode: auto`), suppressing routine approval prompts.
 
 ### Configure agents
 
-Both roles accept `claude` and `codex` interchangeably. To swap them
-or change the Captain's adapter/model, create
-`playbook-code.config.yaml` with the contents below and pass it through
-`playbook-code` (arg forwarding is pinned in
-[PBCODE-1](specs/user/playbook-code.md#pbcode-1)):
+Edit the seeded user config when you want different coding agents:
+
+```sh
+$EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml"
+```
+
+Both CODE roles can use `claude` or `codex`; other adapter ids are
+passed through to `tmux-play` with a warning because `playbook-code`
+does not know how to preflight their auth. The safe tuning points are
+`captain.adapter`, `captain.model`, each role's `adapter`, and the
+values of `captain.options.coderPlayer` / `reviewerPlayer`. Keep
+`captain.from`, the `captain.options` key names, and the `roles[].id`
+values fixed; the runtime binds to those host-configuration invariants
+per [PBRT-4](specs/user/playbook-runtime.md#pbrt-4).
+
+For example, this swaps the Coder to Codex and the Reviewer to Claude:
 
 ```yaml
-# playbook-code.config.yaml — Codex coder, Claude reviewer
 captain:
   from: "@sublang/playbook/code/tmux-play"
   adapter: claude
@@ -102,16 +125,15 @@ roles:
       mode: auto
 ```
 
+Normal `playbook-code` runs use the seeded path above. If you need a
+separate config file for a one-off run, pass it explicitly; this bypasses
+the seed and readiness gate and forwards the arguments to `tmux-play`
+verbatim, as pinned in
+[PBCODE-1](specs/user/playbook-code.md#pbcode-1):
+
 ```sh
 playbook-code --config ./playbook-code.config.yaml
 ```
-
-Tunable fields: `captain.adapter`, `captain.model`, each role's
-`adapter`, and the values of `captain.options.coderPlayer` /
-`reviewerPlayer`. `roles[].id` must stay `coder` and `reviewer`
-([PBRT-4](specs/user/playbook-runtime.md#pbrt-4)), and `captain.from`
-must remain the adapter module path. Each chosen adapter still reads
-its own auth as described above.
 
 ### Install (contributors / from source)
 

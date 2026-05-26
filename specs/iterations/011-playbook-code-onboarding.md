@@ -35,7 +35,7 @@ The bundled production YAML stops being the runtime config and becomes the seed 
 - [x] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — new comment-rich template; the existing `tmux-play.production.config.yaml` is retained for the developer flow and the release smoke test.
 - [x] [`reference/sdlc/code.playbook/bin/playbook-code.js`](../../reference/sdlc/code.playbook/bin/playbook-code.js) — seed, readiness, `--help`, and `--config` bypass; PBCODE-2 exit/signal semantics retained for the exec path.
 - [x] [`reference/sdlc/code.playbook/playbook-code.test.ts`](../../reference/sdlc/code.playbook/playbook-code.test.ts) — new vitest covering the shim with mocked `HOME`, `XDG_CONFIG_HOME`, env vars, and spawn.
-- [ ] [`README.md`](../../README.md) — the `Configure agents` section is rewritten around the seeded file path and the `--help` recovery path; the `Install (users)` block names npx as a supported invocation.
+- [x] [`README.md`](../../README.md) — the `Configure agents` section is rewritten around the seeded file path and the `--help` recovery path; the `Install (users)` block names npx as a supported invocation.
 - [x] [`package.json`](../../package.json) — `files` includes the new template; `bin` unchanged.
 - [x] [`specs/map.md`](../map.md) — PBCODE rows refreshed and IR-011 row added.
 
