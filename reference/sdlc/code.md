@@ -14,7 +14,7 @@ Players:
 When Boss gives a coding intent, Captain shall relay it to Coder along with the following prompt:
 > Assess whether this can be completed in a single commit, following best practices.
 > If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.
-> Consult @specs/map.md or specs/meta.md for relevant context if needed; ensure @specs/map.md reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; ensure @specs/map.md reflects the changes.
 > Do not commit.
 The resulting changes are regarded as Initial Changes.
 

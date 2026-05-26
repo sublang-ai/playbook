@@ -233,7 +233,28 @@ describe('playbook-code shim — readiness and help', () => {
     expect(stdout.text()).toContain('ANTHROPIC_API_KEY');
     expect(stdout.text()).toContain('OPENAI_API_KEY');
     expect(stdout.text()).toContain('captain.adapter');
+    expect(stdout.text()).toContain('tune captain.options.coderPlayer');
     expect(stdout.text()).toContain('roles[].id');
+  });
+
+  it('accepts -h as the short help alias', async () => {
+    const home = await makeTempHome();
+    const spawn = fakeSpawn();
+    const stdout = writer();
+
+    const result = await runPlaybookCodeCli({
+      argv: ['-h'],
+      env: {},
+      homeDir: home,
+      stderr: writer(),
+      stdout,
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 0 });
+    expect(stdout.text()).toContain('Usage:');
+    expect(spawn.calls).toEqual([]);
   });
 
   it('collects adapter ids from the config shape used by the template', () => {
@@ -242,11 +263,17 @@ describe('playbook-code shim — readiness and help', () => {
         [
           'captain:',
           '  adapter: "claude" # comment',
+          '  options:',
+          '    adapter: ignored-captain-option',
+          'observer:',
+          '  adapter: ignored-observer',
           'roles:',
           '  - id: coder',
           "    adapter: 'codex'",
           '  - id: reviewer',
           '    adapter: codex',
+          '    options:',
+          '      adapter: ignored-role-option',
         ].join('\n'),
       ),
     ).toEqual(['claude', 'codex']);

@@ -69,11 +69,50 @@ export function resolveUserConfigPath(env = process.env, home = homedir()) {
 
 export function collectAdaptersFromConfig(source) {
   const adapters = new Set();
+  let section = '';
+  let captainChildIndent;
+  let roleItemIndent;
+  let roleChildIndent;
+
   for (const line of source.split(/\r?\n/)) {
-    const match = stripYamlComment(line).match(/^\s*adapter\s*:\s*(.+?)\s*$/);
-    if (!match) continue;
-    const value = unquoteYamlScalar(match[1].trim());
-    if (value) adapters.add(value);
+    const uncommented = stripYamlComment(line);
+    if (uncommented.trim() === '') continue;
+
+    const indent = leadingSpaceCount(uncommented);
+    const trimmed = uncommented.trim();
+
+    if (indent === 0) {
+      if (trimmed === 'captain:') section = 'captain';
+      else if (trimmed === 'roles:') section = 'roles';
+      else section = '';
+      captainChildIndent = undefined;
+      roleItemIndent = undefined;
+      roleChildIndent = undefined;
+      continue;
+    }
+
+    if (section === 'captain') {
+      captainChildIndent ??= indent;
+      if (indent === captainChildIndent) {
+        collectAdapterValue(trimmed, adapters);
+      }
+      continue;
+    }
+
+    if (section === 'roles') {
+      if (trimmed.startsWith('- ')) {
+        roleItemIndent = indent;
+        roleChildIndent = undefined;
+        collectAdapterValue(trimmed.slice(2).trim(), adapters);
+        continue;
+      }
+      if (roleItemIndent !== undefined && indent > roleItemIndent) {
+        roleChildIndent ??= indent;
+        if (indent === roleChildIndent) {
+          collectAdapterValue(trimmed, adapters);
+        }
+      }
+    }
   }
   return [...adapters];
 }
@@ -137,7 +176,7 @@ function helpText({ userConfigPath, failingAdapters = [] }) {
     'Agent swap recipe:',
     '  - change captain.adapter and captain.model for the Captain/Judge',
     '  - change each role adapter for the Coder and Reviewer',
-    '  - keep captain.options.coderPlayer / reviewerPlayer aligned',
+    '  - tune captain.options.coderPlayer / reviewerPlayer to match',
     '  - keep captain.from and roles[].id fixed',
     '',
   ].join('\n');
@@ -204,6 +243,17 @@ function unquoteYamlScalar(value) {
     return trimmed.slice(1, -1).trim();
   }
   return trimmed;
+}
+
+function collectAdapterValue(trimmedLine, adapters) {
+  const match = trimmedLine.match(/^adapter\s*:\s*(.+?)\s*$/);
+  if (!match) return;
+  const value = unquoteYamlScalar(match[1].trim());
+  if (value) adapters.add(value);
+}
+
+function leadingSpaceCount(line) {
+  return line.length - line.trimStart().length;
 }
 
 function errorMessage(error) {

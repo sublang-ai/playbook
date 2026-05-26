@@ -16,7 +16,7 @@ Players:
 When Boss gives a coding intent, Captain shall relay it to Coder along with the following prompt:
 > Assess whether this can be completed in a single commit, following best practices.
 > If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.
-> Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; ensure @specs/map.md reflects the changes.
 > Do not commit.
 The resulting changes are Initial Changes.
 
@@ -68,7 +68,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-6
@@ -78,7 +78,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-7
@@ -95,7 +95,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-8
@@ -110,7 +110,7 @@ When Committer commits Initial Changes from an IR task involving changes only in
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-9
@@ -120,7 +120,7 @@ When Committer commits Initial Changes from an IR task involving changes only ou
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-10
@@ -137,7 +137,7 @@ When Committer commits Initial Changes from an IR task involving changes both in
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-11
@@ -152,7 +152,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-12
@@ -162,7 +162,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-13
@@ -179,7 +179,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-14
@@ -199,7 +199,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
@@ -210,7 +210,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
@@ -228,7 +228,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md for relevant context if needed; verify it reflects the changes.
+> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 

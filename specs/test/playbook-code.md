@@ -78,9 +78,10 @@ launch on that adapter.
 ### PBCODE-15
 Verifies: [PBCODE-6](../user/playbook-code.md#pbcode-6)
 
-Where the test suite invokes `playbook-code --help`, the test suite
-shall fail unless the shim prints its help text to stdout, exits
-with status `0`, does not seed or modify the user config, does not
-run readiness checks, does not launch `tmux-play`, and includes
-the config path, per-adapter auth or CLI setup pointers, and the
-agent-swap recipe from [PBCODE-6](../user/playbook-code.md#pbcode-6).
+Where the test suite invokes `playbook-code --help` or
+`playbook-code -h`, the test suite shall fail unless the shim
+prints its help text to stdout, exits with status `0`, does not
+seed or modify the user config, does not run readiness checks, does
+not launch `tmux-play`, and includes the config path, per-adapter
+auth or CLI setup pointers, and the agent-swap recipe from
+[PBCODE-6](../user/playbook-code.md#pbcode-6).

@@ -255,7 +255,7 @@ const planAndImplementInput: CaptainInputFactory = (context) => ({
   prompt: [
     'Assess whether this can be completed in a single commit, following best practices.',
     'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
-    'Consult @specs/map.md for relevant context if needed; ensure it reflects the changes.',
+    'Consult @specs/map.md or @specs/meta.md for relevant context if needed; ensure @specs/map.md reflects the changes.',
     'Do not commit.',
   ].join('\n'),
   result: withNeedsBossReply({
@@ -708,7 +708,7 @@ export const codingMachine = setup({
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '',
             'Flag anything missing, redundant, over-specified, or under-specified.',
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -748,7 +748,7 @@ export const codingMachine = setup({
             'Refer to the commit message.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -795,7 +795,7 @@ export const codingMachine = setup({
             'Flag anything missing, redundant, over-specified, or under-specified.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -841,7 +841,7 @@ export const codingMachine = setup({
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '',
             'Flag anything missing, redundant, over-specified, or under-specified.',
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -882,7 +882,7 @@ export const codingMachine = setup({
             'Refer to the commit message.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -930,7 +930,7 @@ export const codingMachine = setup({
             'Flag anything missing, redundant, over-specified, or under-specified.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -974,7 +974,7 @@ export const codingMachine = setup({
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '',
             'Flag anything missing, redundant, over-specified, or under-specified.',
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -1015,7 +1015,7 @@ export const codingMachine = setup({
             'Understand the intent.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -1063,7 +1063,7 @@ export const codingMachine = setup({
             'Flag anything missing, redundant, over-specified, or under-specified.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -1111,7 +1111,7 @@ export const codingMachine = setup({
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '',
             'Flag anything missing, redundant, over-specified, or under-specified.',
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
@@ -1156,7 +1156,7 @@ export const codingMachine = setup({
             'Understand the intent.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
@@ -1208,7 +1208,7 @@ export const codingMachine = setup({
             'Flag anything missing, redundant, over-specified, or under-specified.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md for relevant context if needed; verify it reflects the changes.',
+            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
