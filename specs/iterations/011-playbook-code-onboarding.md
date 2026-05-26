@@ -67,6 +67,8 @@ Order keeps `main` building and `pnpm test` green: spec amendments land first as
    re-verify `map.md`;
    record any substantive divergence from PBCODE specs as a one-line addendum.
 
+Close-out addendum: Re-verified `map.md` and `README.md` against PBCODE-1, PBCODE-5 through PBCODE-8, and PBRT-4; no substantive divergence found.
+
 ## Acceptance criteria
 
 - On a fresh install where `$HOME/.config/playbook/playbook-code.config.yaml` does not exist, `playbook-code` (with no flags) creates that file from the bundled template, writes a one-line stderr notice with its path, then continues to the readiness gate.
