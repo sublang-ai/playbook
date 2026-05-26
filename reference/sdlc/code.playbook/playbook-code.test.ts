@@ -175,7 +175,7 @@ describe('playbook-code shim — readiness and help', () => {
     expect(stderr.text()).toContain('ANTHROPIC_API_KEY');
     expect(stderr.text()).toContain('OPENAI_API_KEY');
     expect(stderr.text()).toContain('captain.adapter');
-    expect(stderr.text()).toContain('roles[].id');
+    expect(stderr.text()).toContain('players[].id');
   });
 
   it('warns for unknown adapters without blocking launch', async () => {
@@ -186,7 +186,7 @@ describe('playbook-code shim — readiness and help', () => {
       [
         'captain:',
         '  adapter: gemini',
-        'roles:',
+        'players:',
         '  - id: coder',
         '    adapter: gemini',
       ].join('\n'),
@@ -234,7 +234,7 @@ describe('playbook-code shim — readiness and help', () => {
     expect(stdout.text()).toContain('OPENAI_API_KEY');
     expect(stdout.text()).toContain('captain.adapter');
     expect(stdout.text()).toContain('tune captain.options.coderPlayer');
-    expect(stdout.text()).toContain('roles[].id');
+    expect(stdout.text()).toContain('players[].id');
   });
 
   it('accepts -h as the short help alias', async () => {
@@ -267,13 +267,13 @@ describe('playbook-code shim — readiness and help', () => {
           '    adapter: ignored-captain-option',
           'observer:',
           '  adapter: ignored-observer',
-          'roles:',
+          'players:',
           '  - id: coder',
           "    adapter: 'codex'",
           '  - id: reviewer',
           '    adapter: codex',
           '    options:',
-          '      adapter: ignored-role-option',
+          '      adapter: ignored-player-option',
         ].join('\n'),
       ),
     ).toEqual(['claude', 'codex']);
@@ -322,7 +322,7 @@ function existingConfig(): string {
     '  options:',
     '    coderPlayer: claude',
     '    reviewerPlayer: codex',
-    'roles:',
+    'players:',
     '  - id: coder',
     '    adapter: claude',
     '  - id: reviewer',

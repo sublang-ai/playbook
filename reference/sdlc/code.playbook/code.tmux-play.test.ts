@@ -7,7 +7,7 @@ import type {
   CaptainContext,
   CaptainRunResult,
   CaptainSession,
-  RoleRunResult,
+  PlayerRunResult,
 } from '@sublang/cligent/tmux-play';
 import createCodeTmuxPlayCaptain from './code.tmux-play.js';
 
@@ -27,7 +27,7 @@ function stubSession(): StubSession {
   return {
     session: {
       signal: controller.signal,
-      roles: [],
+      players: [],
       emitStatus: async (message, data) => {
         statuses.push({ message, data });
       },
@@ -44,7 +44,7 @@ function stubSession(): StubSession {
 interface StubContext {
   context: CaptainContext;
   controller: AbortController;
-  roleCalls: { roleId: string; prompt: string }[];
+  playerCalls: { playerId: string; prompt: string }[];
   captainCalls: string[];
 }
 
@@ -91,11 +91,11 @@ function adjudicationPrompts(context: StubContext): string[] {
 }
 
 function stubContext(overrides: {
-  roleResult?: (
-    roleId: string,
+  playerResult?: (
+    playerId: string,
     prompt: string,
     signal: AbortSignal,
-  ) => Promise<RoleRunResult>;
+  ) => Promise<PlayerRunResult>;
   captainResult?: (
     prompt: string,
     signal: AbortSignal,
@@ -104,7 +104,7 @@ function stubContext(overrides: {
 } = {}): StubContext {
   const controller = new AbortController();
   const signal = overrides.signal ?? controller.signal;
-  const roleCalls: StubContext['roleCalls'] = [];
+  const playerCalls: StubContext['playerCalls'] = [];
   const captainCalls: StubContext['captainCalls'] = [];
   const defaultCaptainReplies = [
     { guard: 'singleCommitReady' },
@@ -114,15 +114,15 @@ function stubContext(overrides: {
   return {
     context: {
       signal,
-      roles: [],
-      callRole: async (roleId, prompt) => {
-        roleCalls.push({ roleId, prompt });
-        if (overrides.roleResult) {
-          return overrides.roleResult(roleId, prompt, signal);
+      players: [],
+      callPlayer: async (playerId, prompt) => {
+        playerCalls.push({ playerId, prompt });
+        if (overrides.playerResult) {
+          return overrides.playerResult(playerId, prompt, signal);
         }
         return {
           status: 'ok',
-          roleId,
+          playerId,
           turnId: 1,
           finalText: 'no progress — needs Boss input',
         };
@@ -155,7 +155,7 @@ function stubContext(overrides: {
       },
     },
     controller,
-    roleCalls,
+    playerCalls,
     captainCalls,
   };
 }
@@ -169,7 +169,7 @@ const turn = (prompt: string, id = 1): BossTurn => ({
 // ─── Tests ──────────────────────────────────────────────────────
 
 describe('createCodeTmuxPlayCaptain — lifecycle (IR-004 Task 11)', () => {
-  it('init → handleBossTurn → dispose drives through callRole + callCaptain', async () => {
+  it('init → handleBossTurn → dispose drives through callPlayer + callCaptain', async () => {
     const s = stubSession();
     const c = stubContext();
     const captain = createCodeTmuxPlayCaptain({
@@ -180,7 +180,7 @@ describe('createCodeTmuxPlayCaptain — lifecycle (IR-004 Task 11)', () => {
     await captain.handleBossTurn(turn('/start fix the bug'), c.context);
     await captain.dispose!();
 
-    expect(c.roleCalls).toHaveLength(2);
+    expect(c.playerCalls).toHaveLength(2);
     expect(c.captainCalls).toHaveLength(3);
     expect(s.statuses.length).toBeGreaterThan(0);
     expect(s.telemetry.length).toBeGreaterThan(0);
@@ -209,7 +209,7 @@ describe('createCodeTmuxPlayCaptain — lifecycle (IR-004 Task 11)', () => {
 });
 
 describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
-  it('callPlayer forwards (playerId, prompt) to context.callRole', async () => {
+  it('callPlayer forwards (playerId, prompt) to context.callPlayer', async () => {
     const s = stubSession();
     const c = stubContext();
     const captain = createCodeTmuxPlayCaptain({
@@ -219,8 +219,8 @@ describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
     await captain.init!(s.session);
     await captain.handleBossTurn(turn('/start add a button'), c.context);
 
-    expect(c.roleCalls[0].roleId).toBe('coder');
-    expect(c.roleCalls[0].prompt).toContain('add a button');
+    expect(c.playerCalls[0].playerId).toBe('coder');
+    expect(c.playerCalls[0].prompt).toContain('add a button');
   });
 
   it('callJudge forwards the adjudication prompt to context.callCaptain', async () => {
@@ -290,7 +290,7 @@ describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
   });
 });
 
-describe('createCodeTmuxPlayCaptain — RoleRunResult ↔ PlayerResult identity (TMUX-033)', () => {
+describe('createCodeTmuxPlayCaptain — PlayerRunResult ↔ PlayerResult identity (TMUX-033)', () => {
   it('status="ok" with finalText round-trips and drives the FSM', async () => {
     const s = stubSession();
     const c = stubContext();
@@ -310,9 +310,9 @@ describe('createCodeTmuxPlayCaptain — RoleRunResult ↔ PlayerResult identity 
   it('status="aborted" surfaces and lands FSM at #failed', async () => {
     const s = stubSession();
     const c = stubContext({
-      roleResult: async () => ({
+      playerResult: async () => ({
         status: 'aborted',
-        roleId: 'coder',
+        playerId: 'coder',
         turnId: 1,
         error: 'host aborted',
       }),
@@ -336,9 +336,9 @@ describe('createCodeTmuxPlayCaptain — RoleRunResult ↔ PlayerResult identity 
   it('status="error" surfaces and lands FSM at #failed', async () => {
     const s = stubSession();
     const c = stubContext({
-      roleResult: async () => ({
+      playerResult: async () => ({
         status: 'error',
-        roleId: 'coder',
+        playerId: 'coder',
         turnId: 1,
         error: 'coder crashed',
       }),
@@ -374,9 +374,9 @@ describe('createCodeTmuxPlayCaptain — multi-stage Boss turn', () => {
     await captain.init!(s.session);
     await captain.handleBossTurn(turn('/start fix the bug'), c.context);
 
-    const roleIds = c.roleCalls.map((r) => r.roleId);
-    expect(roleIds).toContain('coder');
-    expect(roleIds).toContain('reviewer');
+    const playerIds = c.playerCalls.map((r) => r.playerId);
+    expect(playerIds).toContain('coder');
+    expect(playerIds).toContain('reviewer');
     expect(
       s.statuses.some((st) => st.message === '◆ done'),
     ).toBe(true);
@@ -385,18 +385,18 @@ describe('createCodeTmuxPlayCaptain — multi-stage Boss turn', () => {
 
 describe('createCodeTmuxPlayCaptain — signal propagation (DR-004 §11)', () => {
   it('context.signal flows into runtime.handleBossInput via handleBossTurn', async () => {
-    // Use a callRole that resolves only when the signal aborts; the
+    // Use a callPlayer that resolves only when the signal aborts; the
     // FSM lands at #failed via the aborted status, proving that the
     // adapter wired context.signal into the player call.
     const s = stubSession();
     const c = stubContext({
-      roleResult: async (_id, _p, signal) => {
+      playerResult: async (_id, _p, signal) => {
         await new Promise<void>((resolve) => {
           signal.addEventListener('abort', () => resolve(), { once: true });
         });
         return {
           status: 'aborted',
-          roleId: 'coder',
+          playerId: 'coder',
           turnId: 1,
           error: 'aborted via context.signal',
         };

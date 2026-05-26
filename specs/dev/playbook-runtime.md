@@ -193,7 +193,7 @@ The tmux-play adapter shall be the only module in the package
 that imports `@sublang/cligent`. It shall default-export a
 Captain factory that constructs the runtime from the forwarded
 options and builds `PlaybookPorts` by wiring `callPlayer` to
-`context.callRole`, `callJudge` to `context.callCaptain` (throwing
+`context.callPlayer`, `callJudge` to `context.callCaptain` (throwing
 when the captain result status is not `ok`), and `emitStatus` /
 `emitTelemetry` to `session.emitStatus` / `session.emitTelemetry`.
 

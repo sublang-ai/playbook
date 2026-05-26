@@ -15,7 +15,7 @@ The CODE playbook needs concrete choices for player binding, Boss-event mapping,
 This DR pins those choices so any implementation iteration builds against a stable contract without re-deciding.
 
 The host adapter ships in this repo, not in cligent.
-cligent stays a lower-layer primitive (tmux launcher, Captain contract, role cligents, observer dispatch) with no awareness of playbooks, XState, or `PlaybookRuntime`; this repo imports cligent as a dependency and supplies the small adapter that satisfies cligent's `Captain` interface.
+cligent stays a lower-layer primitive (tmux launcher, Captain contract, player cligents, observer dispatch) with no awareness of playbooks, XState, or `PlaybookRuntime`; this repo imports cligent as a dependency and supplies the small adapter that satisfies cligent's `Captain` interface.
 
 ## Decision
 
@@ -45,7 +45,7 @@ Composite states resolve `Committer` per source item via the populated `<playerN
 | CODE-16 | `reviewerPlayer` | Reviewer | `reviewer` |
 | CODE-17 | both, `coderPlayer` first | Coder | `coder` |
 
-The runtime never speaks any host role id; `coder` / `reviewer` are opaque strings the host adapter routes to its primitives.
+The runtime never speaks any host player id beyond the baked `playerId`; `coder` / `reviewer` are opaque strings the host adapter routes to its primitives.
 
 ### 3. Boss-event mapping for CODE
 
@@ -254,7 +254,7 @@ Adapter file `code.tmux-play.ts`:
 
 - Imports `./code.playbook.js` and types from
   `@sublang/cligent/tmux-play` (`Captain`, `BossTurn`, `CaptainContext`,
-  `CaptainSession`, `RoleRunResult`).
+  `CaptainSession`, `PlayerRunResult`).
 - Default-exports a Captain factory `(options: unknown) => Captain` per
   TMUX-014 [[2]].
 - In `init(session)` constructs the runtime with `options` forwarded
@@ -267,15 +267,15 @@ Port wiring (the entire mapping):
 
 | `PlaybookPorts` | cligent primitive |
 | --- | --- |
-| `callPlayer(playerId, prompt, signal)` | `context.callRole(playerId, prompt)` — pass through; `signal` lives on `context`. Build `PlayerResult` from `RoleRunResult` (`{ status, finalText, error }`) per TMUX-033 [[4]] |
+| `callPlayer(playerId, prompt, signal)` | `context.callPlayer(playerId, prompt)` — pass through; `signal` lives on `context`. Build `PlayerResult` from `PlayerRunResult` (`{ status, finalText, error }`) per TMUX-033 [[4]] |
 | `callJudge(prompt, signal)` | `context.callCaptain(prompt)` → return `finalText`; throw on `status !== 'ok'` |
 | `emitStatus(message, data?)` | `session.emitStatus(message, data)` |
 | `emitTelemetry({ topic, payload })` | `session.emitTelemetry({ topic, payload })` |
 
 The adapter is ~40 lines once helpers factor out and is playbook-specific only via the `./code.playbook.js` import.
 
-**Role-id constraint.**
-Because the player binding is baked at link time (§1), the user's `tmux-play.config.yaml` `roles[]` shall declare role IDs that match the baked `playerId` strings (`coder`, `reviewer`).
+**Player-id constraint.**
+Because the player binding is baked at link time (§1), the user's `tmux-play.config.yaml` `players[]` shall declare player IDs that match the baked `playerId` strings (`coder`, `reviewer`).
 The adapter does not remap.
 
 **Build / ESM constraint.**
@@ -298,7 +298,7 @@ captain:
   options:
     coderPlayer: claude            # substitutes <coder-llm>
     reviewerPlayer: codex          # substitutes <reviewer-llm>
-roles:
+players:
   - id: coder                      # matches baked playerId
     adapter: claude
   - id: reviewer
@@ -306,7 +306,7 @@ roles:
 ```
 
 After release as `@sublang/playbook`, `captain.from` swaps to the package specifier (e.g. `'@sublang/playbook/code/tmux-play'`, final form confirmed at publish time).
-Roles, options, and the rest of the config are unchanged.
+Players, options, and the rest of the config are unchanged.
 
 ## Consequences
 
@@ -354,4 +354,4 @@ drive-loop deadlock on `awaitBossReply`.
 [1]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-013 "TMUX-013 — `captain.from` path resolution"
 [2]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-014 "TMUX-014 — Captain factory contract"
 [3]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026 "TMUX-026 — SIGINT terminal teardown"
-[4]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033 "TMUX-033 — `RoleRunResult` shape"
+[4]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033 "TMUX-033 — `PlayerRunResult` shape"

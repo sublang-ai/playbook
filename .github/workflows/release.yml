@@ -19,10 +19,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Drop dev-only workspace override
-        # The committed pnpm-workspace.yaml links @sublang/cligent to a
+        # A local pnpm-workspace.yaml links @sublang/cligent to a
         # sibling repo on contributor machines. The release pipeline
-        # installs from the registry; the lockfile already records
-        # cligent@^0.3.0 from npm.
+        # installs the registry-pinned cligent from the lockfile.
         run: rm -f pnpm-workspace.yaml
 
       - uses: pnpm/action-setup@v4

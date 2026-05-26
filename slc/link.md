@@ -75,7 +75,7 @@ interface PlayerResult {
 }
 ```
 
-`PlayerResult` mirrors cligent's `RoleRunResult` shape ([TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033)), so a tmux-play port adapter is direct assignment.
+`PlayerResult` mirrors cligent's `PlayerRunResult` shape ([TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033)), so a tmux-play port adapter is direct assignment.
 The runtime treats `status !== 'ok'` as a player failure and routes it through the FSM's error path (§Abort).
 
 `callJudge` returns free-form text.
@@ -291,7 +291,7 @@ A host integrates with playbooks via a small adapter that:
 2. Imports the module and constructs the runtime with options forwarded
    verbatim from the host config.
 3. Implements `PlaybookPorts` by wrapping the host's own primitives —
-   for cligent/tmux-play this is `callPlayer ← context.callRole`,
+   for cligent/tmux-play this is `callPlayer ← context.callPlayer`,
    `callJudge ← context.callCaptain`, `emitStatus`/`emitTelemetry` ←
    `session.emitStatus`/`session.emitTelemetry`.
 4. Calls `runtime.init(ports)` once at session start, forwards each

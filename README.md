@@ -92,12 +92,12 @@ Edit the seeded user config when you want different coding agents:
 $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml"
 ```
 
-Both CODE roles can use `claude` or `codex`; other adapter ids are
+Both CODE players can use `claude` or `codex`; other adapter ids are
 passed through to `tmux-play` with a warning because `playbook-code`
 does not know how to preflight their auth. The safe tuning points are
-`captain.adapter`, `captain.model`, each role's `adapter`, and the
+`captain.adapter`, `captain.model`, each player's `adapter`, and the
 values of `captain.options.coderPlayer` / `reviewerPlayer`. Keep
-`captain.from`, the `captain.options` key names, and the `roles[].id`
+`captain.from`, the `captain.options` key names, and the `players[].id`
 values fixed; the runtime binds to those host-configuration invariants
 per [PBRT-4](specs/user/playbook-runtime.md#pbrt-4).
 
@@ -114,7 +114,7 @@ captain:
     coderPlayer: codex
     reviewerPlayer: claude
 
-roles:
+players:
   - id: coder      # must stay `coder` — see PBRT-4
     adapter: codex
     permissions:
@@ -147,7 +147,7 @@ pnpm build
 pnpm test
 ```
 
-`pnpm install` resolves `@sublang/cligent` (^0.4.0) from the registry;
+`pnpm install` resolves `@sublang/cligent` (^0.6.0) from the registry;
 no local link required. To point pnpm at a local `cligent` checkout
 instead, copy
 [`pnpm-workspace.yaml.example`](pnpm-workspace.yaml.example)

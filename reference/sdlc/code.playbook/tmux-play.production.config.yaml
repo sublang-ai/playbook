@@ -16,7 +16,7 @@ captain:
     coderPlayer: claude
     reviewerPlayer: codex
 
-roles:
+players:
   - id: coder
     adapter: claude
     permissions:

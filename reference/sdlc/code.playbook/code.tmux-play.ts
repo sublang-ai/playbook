@@ -42,13 +42,13 @@ export default function createCodeTmuxPlayCaptain(
           if (!activeContext) {
             throw new Error('callPlayer invoked outside a Boss turn');
           }
-          // RoleRunResult per TMUX-033 already matches PlayerResult
+          // PlayerRunResult per TMUX-033 already matches PlayerResult
           // (`status: 'ok' | 'aborted' | 'error'`, `finalText?`,
           // `error?`). cligent honors context.signal internally;
           // the runtime's signal is the same source forwarded
           // through handleBossInput, so dropping `_signal` is
           // safe.
-          const r = await activeContext.callRole(playerId, prompt);
+          const r = await activeContext.callPlayer(playerId, prompt);
           return {
             status: r.status,
             finalText: r.finalText,

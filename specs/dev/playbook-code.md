@@ -38,7 +38,7 @@ tree and copy that template to the resolved user config path.
 The copy shall preserve the template comments, including comments
 that name the host-configuration invariants from
 [PBRT-4](../user/playbook-runtime.md#pbrt-4): `captain.from`
-points at the adapter module, `roles[].id` remains `coder` /
+points at the adapter module, `players[].id` remains `coder` /
 `reviewer`, and `captain.options` supplies `coderPlayer` and
 `reviewerPlayer`.
 The copy shall not run when `--config` is supplied.
@@ -48,7 +48,7 @@ The copy shall not run when `--config` is supplied.
 Where `playbook-code` runs the readiness gate per
 [PBCODE-6](../user/playbook-code.md#pbcode-6), the shim shall read
 the resolved YAML config and collect the declared `adapter` values
-from `captain.adapter` and every `roles[]` entry.
+from `captain.adapter` and every `players[]` entry.
 The shim shall treat `claude` as ready when `ANTHROPIC_API_KEY` is
 set or `$HOME/.claude/` exists, and shall treat `codex` as ready
 when `OPENAI_API_KEY` is set or `$HOME/.codex/` exists.

@@ -86,10 +86,10 @@ each line is parseable at a glance:
 ### PBRT-4
 
 Where the runtime runs under tmux-play, the adapter shall route
-each player call to the host role whose `id` equals the runtime's
+each player call to the host player whose `id` equals the runtime's
 baked player id (`coder` for Coder, `reviewer` for Reviewer),
-performing no role-id remapping. The host configuration must
+performing no player-id remapping. The host configuration must
 accordingly point `captain.from` at the adapter module, declare
-`roles[].id` values equal to those baked ids, and supply the
+`players[].id` values equal to those baked ids, and supply the
 per-run player identity strings (`coderPlayer`, `reviewerPlayer`)
 under `captain.options`.

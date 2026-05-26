@@ -7,13 +7,13 @@
 #
 # Safe tuning points:
 # - Change captain.adapter / captain.model to pick the judge/Captain agent.
-# - Change each role's adapter to pick the Coder and Reviewer agents.
+# - Change each player's adapter to pick the Coder and Reviewer agents.
 # - Keep captain.options.coderPlayer / reviewerPlayer aligned with the
-#   role adapters so player prompts name the agents you chose.
+#   player adapters so player prompts name the agents you chose.
 #
 # PBRT-4 host-configuration invariants:
 # - captain.from must keep pointing at the CODE tmux-play adapter module.
-# - roles[].id must remain exactly "coder" and "reviewer"; the runtime routes
+# - players[].id must remain exactly "coder" and "reviewer"; the runtime routes
 #   to those baked ids and does not remap them.
 # - captain.options must supply the coderPlayer and reviewerPlayer keys.
 
@@ -26,12 +26,12 @@ captain:
   permissions:
     mode: auto
   options:
-    # PBRT-4 invariant: keep this key; tune the value with the coder role.
+    # PBRT-4 invariant: keep this key; tune the value with the coder player.
     coderPlayer: claude
-    # PBRT-4 invariant: keep this key; tune the value with the reviewer role.
+    # PBRT-4 invariant: keep this key; tune the value with the reviewer player.
     reviewerPlayer: codex
 
-roles:
+players:
   # PBRT-4 invariant: keep id: coder. Tune adapter/model if desired.
   - id: coder
     adapter: claude

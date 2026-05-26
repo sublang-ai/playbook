@@ -71,8 +71,8 @@ export function collectAdaptersFromConfig(source) {
   const adapters = new Set();
   let section = '';
   let captainChildIndent;
-  let roleItemIndent;
-  let roleChildIndent;
+  let playerItemIndent;
+  let playerChildIndent;
 
   for (const line of source.split(/\r?\n/)) {
     const uncommented = stripYamlComment(line);
@@ -83,11 +83,11 @@ export function collectAdaptersFromConfig(source) {
 
     if (indent === 0) {
       if (trimmed === 'captain:') section = 'captain';
-      else if (trimmed === 'roles:') section = 'roles';
+      else if (trimmed === 'players:') section = 'players';
       else section = '';
       captainChildIndent = undefined;
-      roleItemIndent = undefined;
-      roleChildIndent = undefined;
+      playerItemIndent = undefined;
+      playerChildIndent = undefined;
       continue;
     }
 
@@ -99,16 +99,16 @@ export function collectAdaptersFromConfig(source) {
       continue;
     }
 
-    if (section === 'roles') {
+    if (section === 'players') {
       if (trimmed.startsWith('- ')) {
-        roleItemIndent = indent;
-        roleChildIndent = undefined;
+        playerItemIndent = indent;
+        playerChildIndent = undefined;
         collectAdapterValue(trimmed.slice(2).trim(), adapters);
         continue;
       }
-      if (roleItemIndent !== undefined && indent > roleItemIndent) {
-        roleChildIndent ??= indent;
-        if (indent === roleChildIndent) {
+      if (playerItemIndent !== undefined && indent > playerItemIndent) {
+        playerChildIndent ??= indent;
+        if (indent === playerChildIndent) {
           collectAdapterValue(trimmed, adapters);
         }
       }
@@ -175,9 +175,9 @@ function helpText({ userConfigPath, failingAdapters = [] }) {
     '',
     'Agent swap recipe:',
     '  - change captain.adapter and captain.model for the Captain/Judge',
-    '  - change each role adapter for the Coder and Reviewer',
+    '  - change each player adapter for the Coder and Reviewer',
     '  - tune captain.options.coderPlayer / reviewerPlayer to match',
-    '  - keep captain.from and roles[].id fixed',
+    '  - keep captain.from and players[].id fixed',
     '',
   ].join('\n');
 }

@@ -60,8 +60,8 @@ Verifies: [PBRT-4](../user/playbook-runtime.md#pbrt-4), [PBRT-15](../dev/playboo
 When the tmux-play adapter is driven through an
 `init` → `handleBossTurn` → `dispose` lifecycle with stubbed
 cligent `CaptainContext` / `CaptainSession` primitives, the test
-suite shall fail unless player calls reach `context.callRole`
-with role ids matching the runtime's baked player ids (both
+suite shall fail unless player calls reach `context.callPlayer`
+with player ids matching the runtime's baked player ids (both
 `coder` via the free-text coding happy path and `reviewer` via a
 multi-stage flow that drives the FSM through a Reviewer state),
 adjudication reaches `context.callCaptain`, status and telemetry
