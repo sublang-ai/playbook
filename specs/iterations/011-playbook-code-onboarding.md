@@ -79,6 +79,6 @@ Close-out addendum: Re-verified `map.md` and `README.md` against PBCODE-1, PBCOD
 - `playbook-code --config <path>` skips seeding and the readiness check and forwards verbatim, preserving PBCODE-1's contract for the explicit-flag path.
 - A second invocation with the seeded file present does not modify or overwrite it.
 - A YAML naming an adapter id other than `claude` or `codex` produces a one-line stderr warning and proceeds to launch; the readiness gate does not block.
-- The seeded template's `roles[].id` lines carry an inline comment citing the PBRT-4 fixed-`id` invariant.
+- The seeded template's `players[].id` lines carry an inline comment citing the PBRT-4 fixed-`id` invariant.
 - `pnpm test` from the repo root is green and the new `playbook-code.test.ts` items pass.
 - `specs/map.md` lists IR-011 and the updated PBCODE row summaries.

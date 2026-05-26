@@ -214,7 +214,7 @@ Per [link.md §Status and telemetry](../../slc/link.md#status-and-telemetry):
   per transition.
   The visualizer (`views/sketch`) listens for these.
 
-Player prompts and adjudicator JSON ride the host's record channels (cligent's `captain_*` / `role_*`); the runtime shall not duplicate them as telemetry.
+Player prompts and adjudicator JSON ride the host's record channels (cligent's `captain_*` / `player_*`); the runtime shall not duplicate them as telemetry.
 
 ### 10. Emitted module — `code.playbook.ts`
 

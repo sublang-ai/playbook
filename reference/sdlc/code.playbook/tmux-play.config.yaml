@@ -10,7 +10,7 @@ captain:
   # @sublang/playbook is published, swap this for the package
   # specifier — e.g.
   #   from: "@sublang/playbook/code/tmux-play"
-  # (final form confirmed at publish time per DR-004 §11). Roles,
+  # (final form confirmed at publish time per DR-004 §11). Players,
   # options, and the rest of the config are unchanged.
   from: ./code.tmux-play.js
   adapter: claude

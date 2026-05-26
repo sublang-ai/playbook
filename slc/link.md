@@ -195,7 +195,7 @@ The adjudicator shall fail loudly on:
 Adjudicator failures are control-plane errors.
 The runtime shall propagate them by throwing out of `handleBossInput` after attempting cleanup.
 The host adapter surfaces the throw on its control-plane channel (cligent surfaces such throws as `runtime_error` per [TMUX-025](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-025)).
-The host's player-result channels (`role_finished` and equivalents) are reserved for failures the player itself produced; the host emits them when `callPlayer` resolves with `status !== 'ok'`.
+The host's player-result channels (`player_finished` and equivalents) are reserved for failures the player itself produced; the host emits them when `callPlayer` resolves with `status !== 'ok'`.
 
 ## Session lifecycle
 
@@ -263,7 +263,7 @@ The runtime shall emit, at minimum:
   (recommended `playbook.fsm.state`), with payload `{ from, to, event }`.
   Observers consume telemetry; the runtime never interprets the topic.
 
-Player prompts and adjudicator JSON ride the host's own record channels when the host has them (cligent's `captain_*` / `role_*`).
+Player prompts and adjudicator JSON ride the host's own record channels when the host has them (cligent's `captain_*` / `player_*`).
 The runtime shall not duplicate them into `emitTelemetry`.
 
 ## Output

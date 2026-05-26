@@ -356,7 +356,7 @@ describe('createCodeTmuxPlayCaptain — PlayerRunResult ↔ PlayerResult identit
 });
 
 describe('createCodeTmuxPlayCaptain — multi-stage Boss turn', () => {
-  it('reaches the reviewer role through a full /start single-commit flow', async () => {
+  it('reaches the reviewer player through a full /start single-commit flow', async () => {
     const s = stubSession();
     const guards = ['singleCommitReady', 'committedSpecs', 'noFindings'];
     let i = 0;
