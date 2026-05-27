@@ -10,9 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-27
+
+### Added
+
+- `playbook-code` first-run onboarding (IR-011). Without `--config`, the shim resolves a user-level config at `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml`, seeds it from a bundled template if absent (with one stderr line naming the path), and launches against it instead of the in-package production yaml. A readiness gate inspects the declared `captain.adapter` and `players[].adapter` values and refuses to launch when a known adapter (`claude`, `codex`) lacks its API key or local CLI directory; unknown adapters emit a warning but don't block. `--help` / `-h` prints the resolved config path, per-adapter auth pointers, and the agent-swap recipe, then exits without seeding or launching. Specs: [PBCODE-5..8](specs/user/playbook-code.md).
+
 ### Changed
 
-- **Breaking:** `playbook-code` and the CODE tmux-play configs now match cligent's player terminology: config key `roles:` is now `players:`, help/spec text names `players[].id`, and the adapter calls `CaptainContext.callPlayer(...)`. This requires the cligent release that includes the tmux-play role-to-player rename.
+- **Breaking:** `playbook-code` and the CODE tmux-play configs now match cligent's player terminology: config key `roles:` is now `players:`, help/spec text names `players[].id`, and the adapter calls `CaptainContext.callPlayer(...)`. Requires `@sublang/cligent` ≥ 0.6.0 (the tmux-play role-to-player rename). Existing user configs must rename the top-level `roles:` key to `players:`; `players[].id` values stay `coder` and `reviewer` per PBRT-4.
+- Captain prompts now cite `meta.md` so the Captain can ground its judgments in the spec-of-specs vocabulary.
 
 ## [0.2.0] - 2026-05-24
 
@@ -66,7 +73,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/sublang-ai/playbook/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sublang-ai/playbook/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/sublang-ai/playbook/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/sublang-ai/playbook/compare/v0.1.1...v0.1.2
