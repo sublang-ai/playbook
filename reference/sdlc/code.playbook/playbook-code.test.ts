@@ -233,7 +233,7 @@ describe('playbook-code shim — readiness and help', () => {
     expect(stdout.text()).toContain('ANTHROPIC_API_KEY');
     expect(stdout.text()).toContain('OPENAI_API_KEY');
     expect(stdout.text()).toContain('captain.adapter');
-    expect(stdout.text()).toContain('tune captain.options.coderPlayer');
+    expect(stdout.text()).toContain('change each player adapter');
     expect(stdout.text()).toContain('players[].id');
   });
 
@@ -319,9 +319,6 @@ function existingConfig(): string {
     'captain:',
     '  from: "@sublang/playbook/code/tmux-play"',
     '  adapter: claude',
-    '  options:',
-    '    coderPlayer: claude',
-    '    reviewerPlayer: codex',
     'players:',
     '  - id: coder',
     '    adapter: claude',

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `captain.options.coderPlayer` / `reviewerPlayer` are no longer required in the host configuration. The tmux-play adapter now derives the per-run player identity strings (substituted into `<coder-llm>` / `<reviewer-llm>` placeholders in player prompts) from `players[].adapter` at init time per PBRT-4, removing the duplication with the `players:` section. Stale `captain.options.coderPlayer` / `reviewerPlayer` keys in existing user configs are silently ignored; delete them at your convenience. The bundled template, dev config, production config, and `playbook-code --help` text no longer mention these keys.
+
 ## [0.3.0] - 2026-05-27
 
 ### Added

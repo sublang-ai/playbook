@@ -18,25 +18,35 @@ import createPlaybookRuntime, {
 } from './code.playbook.js';
 
 // Captain factory per TMUX-014: `(options: unknown) => Captain`.
-// `options` is whatever `captain.options` carries in the YAML config;
-// for the CODE playbook this is `CodePlaybookOptions` (coderPlayer,
-// reviewerPlayer, plus the rest of CodingInput).
+// `options` is whatever `captain.options` carries in the YAML config.
+// The per-run player identity strings (`coderPlayer`, `reviewerPlayer`)
+// are derived from `session.players` at init time per PBRT-4; any
+// same-named keys in `options` are ignored.
 export default function createCodeTmuxPlayCaptain(
   options: unknown,
 ): Captain {
-  const runtime: PlaybookRuntime = createPlaybookRuntime(
-    options as CodePlaybookOptions,
-  );
-
   // CaptainSession is bound at init time and persists across turns;
   // CaptainContext is rebuilt per turn and carries the call
-  // primitives. PlaybookPorts is built once at init, so the per-turn
-  // context lives in a closure-scoped slot the port callbacks query
-  // lazily.
+  // primitives. The runtime is constructed in `init` so identity
+  // strings derived from `session.players` can flow into its options;
+  // PlaybookPorts is built once at init, so the per-turn context
+  // lives in a closure-scoped slot the port callbacks query lazily.
+  let runtime: PlaybookRuntime | undefined;
   let activeContext: CaptainContext | undefined;
 
   return {
     async init(session: CaptainSession): Promise<void> {
+      const coderPlayer = session.players.find(
+        (p) => p.id === 'coder',
+      )?.adapter;
+      const reviewerPlayer = session.players.find(
+        (p) => p.id === 'reviewer',
+      )?.adapter;
+      runtime = createPlaybookRuntime({
+        ...(options as CodePlaybookOptions),
+        coderPlayer,
+        reviewerPlayer,
+      });
       const ports: PlaybookPorts = {
         callPlayer: async (playerId, prompt, _signal) => {
           if (!activeContext) {
@@ -89,6 +99,9 @@ export default function createCodeTmuxPlayCaptain(
       turn: BossTurn,
       context: CaptainContext,
     ): Promise<void> {
+      if (!runtime) {
+        throw new Error('init must be called first');
+      }
       activeContext = context;
       try {
         // Forward the Boss prompt + cligent's per-turn signal into
@@ -104,7 +117,7 @@ export default function createCodeTmuxPlayCaptain(
     },
 
     async dispose(): Promise<void> {
-      await runtime.dispose();
+      await runtime?.dispose();
     },
   };
 }

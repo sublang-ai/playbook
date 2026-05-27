@@ -176,7 +176,6 @@ function helpText({ userConfigPath, failingAdapters = [] }) {
     'Agent swap recipe:',
     '  - change captain.adapter and captain.model for the Captain/Judge',
     '  - change each player adapter for the Coder and Reviewer',
-    '  - tune captain.options.coderPlayer / reviewerPlayer to match',
     '  - keep captain.from and players[].id fixed',
     '',
   ].join('\n');

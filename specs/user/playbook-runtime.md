@@ -89,7 +89,9 @@ Where the runtime runs under tmux-play, the adapter shall route
 each player call to the host player whose `id` equals the runtime's
 baked player id (`coder` for Coder, `reviewer` for Reviewer),
 performing no player-id remapping. The host configuration must
-accordingly point `captain.from` at the adapter module, declare
-`players[].id` values equal to those baked ids, and supply the
-per-run player identity strings (`coderPlayer`, `reviewerPlayer`)
+accordingly point `captain.from` at the adapter module and declare
+`players[].id` values equal to those baked ids; the adapter shall
+derive the per-run player identity strings (`coderPlayer`,
+`reviewerPlayer`) from each player entry's `adapter` value at init
+time, so the host configuration shall not be required to repeat them
 under `captain.options`.

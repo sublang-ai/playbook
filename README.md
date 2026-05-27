@@ -95,11 +95,12 @@ $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml"
 Both CODE players can use `claude` or `codex`; other adapter ids are
 passed through to `tmux-play` with a warning because `playbook-code`
 does not know how to preflight their auth. The safe tuning points are
-`captain.adapter`, `captain.model`, each player's `adapter`, and the
-values of `captain.options.coderPlayer` / `reviewerPlayer`. Keep
-`captain.from`, the `captain.options` key names, and the `players[].id`
-values fixed; the runtime binds to those host-configuration invariants
-per [PBRT-4](specs/user/playbook-runtime.md#pbrt-4).
+`captain.adapter`, `captain.model`, and each player's `adapter`. Keep
+`captain.from` and the `players[].id` values fixed; the runtime binds
+to those host-configuration invariants per
+[PBRT-4](specs/user/playbook-runtime.md#pbrt-4) and derives the
+`<coder-llm>` / `<reviewer-llm>` substitution strings from each
+player entry's `adapter`.
 
 For example, this swaps the Coder to Codex and the Reviewer to Claude:
 
@@ -110,9 +111,6 @@ captain:
   model: claude-opus-4-7
   permissions:
     mode: auto
-  options:
-    coderPlayer: codex
-    reviewerPlayer: claude
 
 players:
   - id: coder      # must stay `coder` — see PBRT-4

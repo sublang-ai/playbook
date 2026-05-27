@@ -27,7 +27,13 @@ function stubSession(): StubSession {
   return {
     session: {
       signal: controller.signal,
-      players: [],
+      // PBRT-4: the adapter derives coderPlayer/reviewerPlayer from
+      // these entries (find by id, take the adapter name) instead of
+      // reading captain.options.
+      players: [
+        { id: 'coder', adapter: 'claude' },
+        { id: 'reviewer', adapter: 'codex' },
+      ],
       emitStatus: async (message, data) => {
         statuses.push({ message, data });
       },
@@ -380,6 +386,81 @@ describe('createCodeTmuxPlayCaptain — multi-stage Boss turn', () => {
     expect(
       s.statuses.some((st) => st.message === '◆ done'),
     ).toBe(true);
+  });
+});
+
+describe('createCodeTmuxPlayCaptain — identity strings derived from session.players (PBRT-4)', () => {
+  // Drives the FSM from /start into the Committer (CODE-18) state,
+  // whose prompt template includes `Coder is <coder-llm>.`. The
+  // adapter is responsible for filling `<coder-llm>` from
+  // session.players[id=coder].adapter, *not* from captain.options.
+  function singleCommitContext(): StubContext {
+    const guards = ['singleCommitReady', 'committedSpecs', 'noFindings'];
+    let i = 0;
+    return stubContext({
+      captainResult: async () => ({
+        status: 'ok',
+        turnId: 1,
+        finalText: JSON.stringify({ guard: guards[i++] }),
+      }),
+    });
+  }
+
+  function committerPrompt(c: StubContext): string | undefined {
+    return c.playerCalls.find((r) =>
+      r.prompt.includes('Make a commit of the changes'),
+    )?.prompt;
+  }
+
+  function sessionWith(coder: string, reviewer: string): StubSession {
+    const base = stubSession();
+    return {
+      ...base,
+      session: {
+        ...base.session,
+        players: [
+          { id: 'coder', adapter: coder as never },
+          { id: 'reviewer', adapter: reviewer as never },
+        ],
+      },
+    };
+  }
+
+  it('overrides stale captain.options with session.players adapters in the Committer prompt', async () => {
+    // Swap session.players so the derived adapters disagree with the
+    // stale captain.options values. The new implementation must
+    // substitute the session-derived strings; the previous
+    // options-only implementation would substitute the STALE-* values.
+    const s = sessionWith('codex', 'claude');
+    const c = singleCommitContext();
+    const captain = createCodeTmuxPlayCaptain({
+      coderPlayer: 'STALE-CODER',
+      reviewerPlayer: 'STALE-REVIEWER',
+    });
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/start fix the bug'), c.context);
+
+    const prompt = committerPrompt(c);
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain('Coder is codex.');
+    expect(prompt).not.toContain('STALE-CODER');
+    expect(prompt).not.toContain('STALE-REVIEWER');
+  });
+
+  it('derives identity strings when captain.options omits them entirely', async () => {
+    // No coderPlayer / reviewerPlayer in the forwarded options — the
+    // adapter must still produce a substituted prompt from
+    // session.players, leaving no raw <coder-llm> placeholder behind.
+    const s = sessionWith('claude', 'codex');
+    const c = singleCommitContext();
+    const captain = createCodeTmuxPlayCaptain({});
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/start fix the bug'), c.context);
+
+    const prompt = committerPrompt(c);
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain('Coder is claude.');
+    expect(prompt).not.toContain('<coder-llm>');
   });
 });
 

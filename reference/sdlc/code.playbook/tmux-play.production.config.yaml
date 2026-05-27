@@ -12,9 +12,6 @@ captain:
   model: claude-opus-4-7
   permissions:
     mode: auto
-  options:
-    coderPlayer: claude
-    reviewerPlayer: codex
 
 players:
   - id: coder

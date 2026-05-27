@@ -19,17 +19,13 @@ captain:
   # (cligent DR-005): claude → permissionMode auto, codex → auto_review.
   permissions:
     mode: auto
-  options:
-    # Substituted into the <coder-llm> placeholder in player prompts
-    # (DR-004 §6).
-    coderPlayer: claude
-    # Substituted into <reviewer-llm>.
-    reviewerPlayer: codex
 
 # `players[].id` shall match the baked playerId strings the adapter
 # routes to. The CODE playbook bakes Coder→'coder' and
 # Reviewer→'reviewer' at link time (DR-004 §2); the adapter does
 # not remap, so changing these ids would break callPlayer routing.
+# Each entry's `adapter` is also substituted into the <coder-llm> /
+# <reviewer-llm> placeholders in player prompts (DR-004 §6).
 players:
   - id: coder
     adapter: claude

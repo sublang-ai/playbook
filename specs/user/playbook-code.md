@@ -59,10 +59,11 @@ shall not seed config, run readiness checks, or launch `tmux-play`.
 The help text shall include the resolved user config path, the
 auth or CLI setup pointers for known adapters, and an agent-swap
 recipe showing that users may change `captain.adapter`,
-`captain.model`, each player's `adapter`, and
-`captain.options.coderPlayer` / `reviewerPlayer` to match the
-chosen player adapters while keeping `captain.from` and `players[].id`
-fixed.
+`captain.model`, and each player's `adapter` while keeping
+`captain.from` and `players[].id` fixed. The recipe shall not
+name `captain.options.coderPlayer` / `reviewerPlayer`, since the
+adapter derives those identity strings from `players[].adapter`
+per [PBRT-4](playbook-runtime.md#pbrt-4).
 Where `playbook-code` is invoked without `--config`, `--help`, or
 `-h`, the shim shall run a readiness gate for the adapters declared
 in the resolved user config before launching `tmux-play`.
