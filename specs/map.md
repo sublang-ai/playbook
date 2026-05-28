@@ -86,7 +86,7 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` (semver, changelog, tag-driven CI, OIDC trusted publishing) |
+| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` (semver, changelog, tag-driven CI, OIDC trusted publishing, `latest`-tracking cligent dep) |
 | test | [release.md](test/release.md) | Integration test for the published install closure: `@sublang/cligent` nested under playbook, adapter SDKs resolvable |
 
 ### SKETCH

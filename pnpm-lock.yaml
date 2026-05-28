@@ -15,7 +15,7 @@ importers:
         specifier: ^0.130.0
         version: 0.130.0
       '@sublang/cligent':
-        specifier: ^0.8.0
+        specifier: latest
         version: 0.8.0(@anthropic-ai/claude-agent-sdk@0.3.143(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.130.0)
       xstate:
         specifier: ^5.19.4
