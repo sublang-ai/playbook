@@ -1066,6 +1066,7 @@ export const codingMachine = setup({
                     prompt: [
                         'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
                         'Coder is <coder-llm>.',
+                        'Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
                     ].join('\n'),
                     result: {
                         committedSpecs: 'Committed changes that touch only @specs/{user,dev,test}/.',
@@ -1127,6 +1128,7 @@ export const codingMachine = setup({
                     prompt: [
                         'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
                         'Coder is <coder-llm>; Reviewer is <reviewer-llm>.',
+                        'Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
                     ].join('\n'),
                     result: {
                         committed: 'Relevant changes were committed.',

@@ -239,6 +239,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 When Coder makes any Initial Changes and Reviewer has not played since the last commit, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Coder is <coder-llm>.
+> Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
 
 Result guard: `needsBossInput` — Committing requires additional Boss input or rescoping rather than a specific answer to resume this same state.
 
@@ -247,5 +248,6 @@ Result guard: `needsBossInput` — Committing requires additional Boss input or 
 When Coder makes any Initial Changes and Reviewer has played since the last commit, or Reviewer raises no findings on uncommitted changes and Coder has played since the last commit, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Coder is <coder-llm>; Reviewer is <reviewer-llm>.
+> Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
 
 Result guard: `needsBossInput` — Committing requires additional Boss input or rescoping rather than a specific answer to resume this same state.
