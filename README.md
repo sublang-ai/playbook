@@ -152,10 +152,21 @@ pnpm build
 pnpm test
 ```
 
-`pnpm install` resolves `@sublang/cligent` from the registry's
-`latest` dist-tag (recorded as a pinned version in `pnpm-lock.yaml`
-so CI's `--frozen-lockfile` install stays reproducible);
-no local link required. To point pnpm at a local `cligent` checkout
+`pnpm install` here installs the `@sublang/cligent` version pinned
+in the checked-in `pnpm-lock.yaml` — the same version CI installs
+via `--frozen-lockfile`, so contributor checkouts and CI agree.
+The published `package.json` declares `@sublang/cligent` as
+`latest`, so an end-user install with no lockfile (e.g., `npm
+install -g @sublang/playbook`) instead resolves whichever cligent
+release currently carries the `latest` dist-tag at install time
+(see [RELEASE-14](specs/dev/release.md#release-14)). To bump the
+contributor pin to today's `latest`, run
+`pnpm update @sublang/cligent` and commit the resulting
+`pnpm-lock.yaml` change — a plain `pnpm install` won't refresh the
+pin, since pnpm sees `specifier: latest` in the lockfile as
+already matching `package.json` and skips re-resolving the tag.
+No local link required for any of this. To point pnpm at a local
+`cligent` checkout
 instead, copy
 [`pnpm-workspace.yaml.example`](pnpm-workspace.yaml.example)
 into place; the override is gitignored so it never leaks into a
