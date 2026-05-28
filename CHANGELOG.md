@@ -10,10 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-28
+
 ### Changed
 
 - **Breaking:** `captain.options.coderPlayer` / `reviewerPlayer` are no longer required in the host configuration. The tmux-play adapter now derives the per-run player identity strings (substituted into `<coder-llm>` / `<reviewer-llm>` placeholders in player prompts) from `players[].adapter` at init time per PBRT-4, removing the duplication with the `players:` section. Stale `captain.options.coderPlayer` / `reviewerPlayer` keys in existing user configs are silently ignored; delete them at your convenience. The bundled template, dev config, production config, and `playbook-code --help` text no longer mention these keys.
 - Captain-pane status stream redesigned per PBRT-3: glyph vocabulary shrinks to three (`⤷` state entry as `<Player>: <label>`, `→` guard outcome as `→ <guard>[ · field=N]`, `◆` failure/awaitBossReply only). The `◆ ready` and `◆ done` tombstones are no longer emitted — the next `boss>` prompt is the implicit turn-over signal. The Boss-input echo is replaced with a bare classification line carrying only the FSM event type (e.g., `START_CODING`), which the host renders as captain speech. State entries no longer carry the source-item tag (`CODE-N`) or the rider fields (`intent=…`, `irNumber=…`, `taskDescription=…`); the Boss readline already shows the verbatim Boss text. The runtime emits each line as bare content with no leading whitespace; speaker chrome (the current cligent `captain> [status] …` prefix) and any visual nesting under parent lines are presentation concerns and remain the host's responsibility.
+
+### Fixed
+
+- Player-prompt composer now arranges labelled blocks around the body based on the body's directional language: `Boss intent:` and `Task description:` stay above the body as prior context, while `Review items:` and `Rebuttals:` are appended below the body so the CODE-N prompts' "for each review item below" / "for each rebuttal below" phrasing matches the rendered layout. Previously every labelled block was prepended, contradicting the body's instructions. The continuation preamble + Q/A blocks still precede every ordinary block. PLAYBOOK-5 and DR-004 §6 updated.
 
 ## [0.3.0] - 2026-05-27
 
@@ -78,7 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/sublang-ai/playbook/compare/v0.2.0...v0.4.0
 [0.3.0]: https://github.com/sublang-ai/playbook/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/sublang-ai/playbook/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/sublang-ai/playbook/compare/v0.1.2...v0.1.3
