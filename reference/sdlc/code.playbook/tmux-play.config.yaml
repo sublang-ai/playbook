@@ -14,7 +14,8 @@ captain:
   # options, and the rest of the config are unchanged.
   from: ./code.tmux-play.js
   adapter: claude
-  model: claude-opus-4-7
+  model: claude-sonnet-4-6
+  reasoningEffort: high
   # Agents run in cligent's classifier/reviewer-protected auto mode
   # (cligent DR-005): claude → permissionMode auto, codex → auto_review.
   permissions:
@@ -24,14 +25,21 @@ captain:
 # routes to. The CODE playbook bakes Coder→'coder' and
 # Reviewer→'reviewer' at link time (DR-004 §2); the adapter does
 # not remap, so changing these ids would break callPlayer routing.
-# Each entry's `adapter` is also substituted into the <coder-llm> /
-# <reviewer-llm> placeholders in player prompts (DR-004 §6).
+# Each entry's `model` (when pinned) or `adapter` (otherwise) is
+# substituted into the <coder-llm> / <reviewer-llm> placeholders in
+# player prompts (DR-004 §6, PBRT-4) — pin a concrete `model:` if
+# you want the Committer's commit-message trailers to name the
+# specific model rather than the adapter family.
 players:
   - id: coder
     adapter: claude
+    model: claude-opus-4-7
+    reasoningEffort: xhigh
     permissions:
       mode: auto
   - id: reviewer
     adapter: codex
+    model: gpt-5.5
+    reasoningEffort: xhigh
     permissions:
       mode: auto

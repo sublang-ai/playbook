@@ -434,6 +434,27 @@ describe('createCodeTmuxPlayCaptain — identity strings derived from session.pl
     };
   }
 
+  function sessionWithModels(
+    coder: { adapter: string; model: string },
+    reviewer: { adapter: string; model: string },
+  ): StubSession {
+    const base = stubSession();
+    return {
+      ...base,
+      session: {
+        ...base.session,
+        players: [
+          { id: 'coder', adapter: coder.adapter as never, model: coder.model },
+          {
+            id: 'reviewer',
+            adapter: reviewer.adapter as never,
+            model: reviewer.model,
+          },
+        ],
+      },
+    };
+  }
+
   it('overrides stale captain.options with session.players adapters in the Committer prompt', async () => {
     // Swap session.players so the derived adapters disagree with the
     // stale captain.options values. The new implementation must
@@ -469,6 +490,28 @@ describe('createCodeTmuxPlayCaptain — identity strings derived from session.pl
     expect(prompt).toBeDefined();
     expect(prompt).toContain('Coder is claude.');
     expect(prompt).not.toContain('<coder-llm>');
+  });
+
+  it('prefers session.players[].model over .adapter for identity strings', async () => {
+    // PBRT-4: when a player entry pins a model, the derived identity
+    // string is the model id (e.g. `claude-opus-4-7`), not the
+    // adapter family name (e.g. `claude`). This is what lets a
+    // Committer's commit-message trailer name the concrete model.
+    const s = sessionWithModels(
+      { adapter: 'claude', model: 'claude-opus-4-7' },
+      { adapter: 'codex', model: 'gpt-5.5' },
+    );
+    const c = singleCommitContext();
+    const captain = createCodeTmuxPlayCaptain({});
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/start fix the bug'), c.context);
+
+    const prompt = committerPrompt(c);
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain('Coder is claude-opus-4-7.');
+    // No bare adapter family name from the substitution itself —
+    // matches `Coder is claude` only as a prefix of the model id.
+    expect(prompt).not.toMatch(/Coder is claude[.;,]/);
   });
 });
 

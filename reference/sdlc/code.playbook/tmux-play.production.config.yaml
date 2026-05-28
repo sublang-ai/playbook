@@ -9,16 +9,21 @@
 captain:
   from: "@sublang/playbook/code/tmux-play"
   adapter: claude
-  model: claude-opus-4-7
+  model: claude-sonnet-4-6
+  reasoningEffort: high
   permissions:
     mode: auto
 
 players:
   - id: coder
     adapter: claude
+    model: claude-opus-4-7
+    reasoningEffort: xhigh
     permissions:
       mode: auto
   - id: reviewer
     adapter: codex
+    model: gpt-5.5
+    reasoningEffort: xhigh
     permissions:
       mode: auto

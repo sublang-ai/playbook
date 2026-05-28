@@ -39,8 +39,9 @@ The copy shall preserve the template comments, including comments
 that name the host-configuration invariants from
 [PBRT-4](../user/playbook-runtime.md#pbrt-4): `captain.from`
 points at the adapter module, and `players[].id` remains `coder`
-/ `reviewer` with each entry's `adapter` doubling as the identity
-string the adapter substitutes into player prompts.
+/ `reviewer` with each entry's `model` (when pinned) or
+`adapter` (when no model is set) doubling as the identity string
+the adapter substitutes into player prompts.
 The copy shall not run when `--config` is supplied.
 
 ### PBCODE-8

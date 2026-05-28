@@ -74,7 +74,12 @@ with player ids matching the runtime's baked player ids (both
 multi-stage flow that drives the FSM through a Reviewer state),
 adjudication reaches `context.callCaptain`, status and telemetry
 reach the session, the per-turn `signal` flows into the runtime,
-and `handleBossTurn` invoked before `init` rejects.
+the per-run player identity strings substituted into the
+Committer prompt's `<coder-llm>` / `<reviewer-llm>` placeholders
+come from `session.players[].model` when each entry pins a model
+and fall back to `session.players[].adapter` when no model is
+pinned (both branches exercised), and `handleBossTurn` invoked
+before `init` rejects.
 
 ## Lifecycle and captain bridge
 

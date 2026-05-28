@@ -20,8 +20,12 @@ import createPlaybookRuntime, {
 // Captain factory per TMUX-014: `(options: unknown) => Captain`.
 // `options` is whatever `captain.options` carries in the YAML config.
 // The per-run player identity strings (`coderPlayer`, `reviewerPlayer`)
-// are derived from `session.players` at init time per PBRT-4; any
-// same-named keys in `options` are ignored.
+// are derived from `session.players` at init time per PBRT-4 —
+// preferring each entry's `model` and falling back to `adapter` when
+// no model is pinned — so player prompts and commit-message trailers
+// carry the concrete model identity (e.g. `claude-opus-4-7`) rather
+// than the adapter family name (e.g. `claude`). Any same-named keys
+// in `options` are ignored.
 export default function createCodeTmuxPlayCaptain(
   options: unknown,
 ): Captain {
@@ -36,12 +40,12 @@ export default function createCodeTmuxPlayCaptain(
 
   return {
     async init(session: CaptainSession): Promise<void> {
-      const coderPlayer = session.players.find(
-        (p) => p.id === 'coder',
-      )?.adapter;
-      const reviewerPlayer = session.players.find(
-        (p) => p.id === 'reviewer',
-      )?.adapter;
+      const playerIdentity = (id: string): string | undefined => {
+        const entry = session.players.find((p) => p.id === id);
+        return entry?.model ?? entry?.adapter;
+      };
+      const coderPlayer = playerIdentity('coder');
+      const reviewerPlayer = playerIdentity('reviewer');
       runtime = createPlaybookRuntime({
         ...(options as CodePlaybookOptions),
         coderPlayer,

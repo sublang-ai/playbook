@@ -10,6 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bundled configs (seed template, dev `tmux-play.config.yaml`, bundled production yaml) now pin `model` and `reasoningEffort` on every entry instead of falling through to each adapter SDK's defaults: Captain is `claude-sonnet-4-6` at `reasoningEffort: high`, Coder is `claude-opus-4-7` at `reasoningEffort: xhigh`, Reviewer is `gpt-5.5` at `reasoningEffort: xhigh`. Fresh first-run seeds get these out of the box; existing user configs at `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml` are untouched per PBCODE-5 — edit them by hand to opt in.
+- tmux-play adapter now derives the player identity strings (substituted into `<coder-llm>` / `<reviewer-llm>` placeholders in player prompts) from each `players[]` entry's `model` when pinned and falls back to its `adapter` only when no model is set. Combined with the defaults above, the Committer's prompt now reads `Coder is claude-opus-4-7; Reviewer is gpt-5.5.` rather than `Coder is claude; Reviewer is codex.`, so commit-message trailers can name the concrete model per GIT-4. PBRT-4 and PBRT-15 updated.
+
 ## [0.4.0] - 2026-05-28
 
 ### Changed

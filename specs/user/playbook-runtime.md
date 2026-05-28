@@ -102,6 +102,9 @@ performing no player-id remapping. The host configuration must
 accordingly point `captain.from` at the adapter module and declare
 `players[].id` values equal to those baked ids; the adapter shall
 derive the per-run player identity strings (`coderPlayer`,
-`reviewerPlayer`) from each player entry's `adapter` value at init
-time, so the host configuration shall not be required to repeat them
-under `captain.options`.
+`reviewerPlayer`) from each player entry's `model` when pinned and
+fall back to its `adapter` when no model is set, so the host
+configuration shall not be required to repeat them under
+`captain.options` and player prompts carry the concrete model
+identity (e.g. `claude-opus-4-7`) rather than the adapter family
+name (e.g. `claude`) whenever the host has pinned a model.

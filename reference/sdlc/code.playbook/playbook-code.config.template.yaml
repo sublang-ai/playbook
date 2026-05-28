@@ -6,22 +6,27 @@
 #   ${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml
 #
 # Safe tuning points:
-# - Change captain.adapter / captain.model to pick the judge/Captain agent.
-# - Change each player's adapter to pick the Coder and Reviewer agents.
+# - Change captain.adapter / captain.model / captain.reasoningEffort to
+#   pick the judge/Captain agent and its reasoning tier.
+# - Change each player's adapter, model, and reasoningEffort to pick
+#   the Coder and Reviewer agents.
 #
 # PBRT-4 host-configuration invariants:
 # - captain.from must keep pointing at the CODE tmux-play adapter module.
 # - players[].id must remain exactly "coder" and "reviewer"; the runtime routes
 #   to those baked ids and does not remap them. The adapter derives the
-#   per-run player identity strings (substituted into player prompts) from
-#   each entry's adapter.
+#   per-run player identity strings (substituted into <coder-llm> /
+#   <reviewer-llm> in player prompts) from each entry's model when pinned
+#   and falls back to its adapter when no model is set, so the Committer's
+#   commit-message trailers can name the concrete model.
 
 captain:
   # PBRT-4 invariant: keep this adapter module path unchanged.
   from: "@sublang/playbook/code/tmux-play"
-  # Tunable: the Captain/Judge adapter and model.
+  # Tunable: the Captain/Judge adapter, model, and reasoning effort.
   adapter: claude
-  model: claude-opus-4-7
+  model: claude-sonnet-4-6
+  reasoningEffort: high
   permissions:
     mode: auto
 
@@ -29,10 +34,14 @@ players:
   # PBRT-4 invariant: keep id: coder. Tune adapter/model if desired.
   - id: coder
     adapter: claude
+    model: claude-opus-4-7
+    reasoningEffort: xhigh
     permissions:
       mode: auto
   # PBRT-4 invariant: keep id: reviewer. Tune adapter/model if desired.
   - id: reviewer
     adapter: codex
+    model: gpt-5.5
+    reasoningEffort: xhigh
     permissions:
       mode: auto
