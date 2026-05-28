@@ -21,10 +21,15 @@ const BOSS_REPLY_ERRORS = {
 // TODO marker.
 // Player-prompt composer — DR-004 §6.
 // Substitutes the three placeholder tokens in `input.prompt` (literal
-// string replace, no escaping) and prepends labelled blocks for any
-// populated structured field. When a state resumes from a Boss reply,
-// the continuation preamble and Q/A blocks precede the ordinary
-// labelled blocks. The FSM's prompt body is never re-flowed.
+// string replace, no escaping) and arranges labelled blocks around
+// the prompt body. Context blocks the body refers to as prior
+// material (`Boss intent:`, `Task description:`) are prepended;
+// action blocks the body refers to as material below
+// (`Review items:`, `Rebuttals:`) are appended after the body so the
+// CODE-N prompts' "review item below" / "rebuttal below" phrasing
+// matches the rendered layout. When a state resumes from a Boss
+// reply, the continuation preamble and Q/A blocks precede every
+// ordinary block. The FSM's prompt body is never re-flowed.
 function composePlayerPrompt(input) {
     const blocks = [];
     if (input.pendingBossQuestion !== undefined &&
@@ -35,12 +40,6 @@ function composePlayerPrompt(input) {
     }
     if (input.intent !== undefined) {
         blocks.push(`Boss intent:\n${input.intent}`);
-    }
-    if (input.reviews !== undefined) {
-        blocks.push(`Review items:\n${input.reviews}`);
-    }
-    if (input.challenges !== undefined) {
-        blocks.push(`Rebuttals:\n${input.challenges}`);
     }
     if (input.taskDescription !== undefined) {
         blocks.push(`Task description:\n${input.taskDescription}`);
@@ -56,6 +55,12 @@ function composePlayerPrompt(input) {
         body = body.replaceAll('<reviewer-llm>', input.reviewerPlayer);
     }
     blocks.push(body);
+    if (input.reviews !== undefined) {
+        blocks.push(`Review items:\n${input.reviews}`);
+    }
+    if (input.challenges !== undefined) {
+        blocks.push(`Rebuttals:\n${input.challenges}`);
+    }
     return blocks.join('\n\n');
 }
 // Player-id resolver — DR-004 §2.

@@ -106,18 +106,18 @@ describe('composePlayerPrompt', () => {
       expect(out).toBe('Boss intent:\nfix the bug\n\ndo it');
     });
 
-    it('prepends "Review items:" when input.reviews is set', () => {
+    it('appends "Review items:" after the body when input.reviews is set', () => {
       const out = composePlayerPrompt(
         makeInput({ reviews: '1. nit\n2. blocker', prompt: 'respond' }),
       );
-      expect(out).toBe('Review items:\n1. nit\n2. blocker\n\nrespond');
+      expect(out).toBe('respond\n\nReview items:\n1. nit\n2. blocker');
     });
 
-    it('prepends "Rebuttals:" when input.challenges is set', () => {
+    it('appends "Rebuttals:" after the body when input.challenges is set', () => {
       const out = composePlayerPrompt(
         makeInput({ challenges: '1. nope\n2. agreed', prompt: 'adjudicate' }),
       );
-      expect(out).toBe('Rebuttals:\n1. nope\n2. agreed\n\nadjudicate');
+      expect(out).toBe('adjudicate\n\nRebuttals:\n1. nope\n2. agreed');
     });
 
     it('prepends "Task description:" when input.taskDescription is set', () => {
@@ -132,7 +132,7 @@ describe('composePlayerPrompt', () => {
       );
     });
 
-    it('orders blocks per DR-004 §6: intent, reviews, challenges, taskDescription', () => {
+    it('orders blocks per DR-004 §6: intent → taskDescription → body → reviews → challenges', () => {
       const out = composePlayerPrompt(
         makeInput({
           intent: 'I',
@@ -143,7 +143,7 @@ describe('composePlayerPrompt', () => {
         }),
       );
       expect(out).toBe(
-        'Boss intent:\nI\n\nReview items:\nR\n\nRebuttals:\nC\n\nTask description:\nT\n\nBODY',
+        'Boss intent:\nI\n\nTask description:\nT\n\nBODY\n\nReview items:\nR\n\nRebuttals:\nC',
       );
     });
 

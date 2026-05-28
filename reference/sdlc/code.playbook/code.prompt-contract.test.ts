@@ -80,11 +80,15 @@ const LABEL_FOR_FIELD: Partial<Record<ContextField, string>> = {
   taskDescription: 'Task description:',
 };
 
+// Order in which labelled blocks may appear in a composed prompt
+// per DR-004 §6: context blocks above the prompt body, action
+// blocks below it. The body itself isn't a labelled marker, so the
+// list interleaves only the labels we can locate by string search.
 const BLOCK_ORDER: readonly string[] = [
   'Boss intent:',
+  'Task description:',
   'Review items:',
   'Rebuttals:',
-  'Task description:',
 ];
 
 interface Contract {
@@ -413,12 +417,18 @@ describe('prompt contract — Boss-reply continuation', () => {
       } as Partial<CodingContext>);
       const composed = composePlayerPrompt(input);
 
+      // Per DR-004 §6: continuation preamble + Q/A first, then
+      // context blocks (Boss intent / Task description), then the
+      // prompt body, then action blocks (Review items / Rebuttals).
+      const contextLabels = ['Boss intent:', 'Task description:'];
+      const actionLabels = ['Review items:', 'Rebuttals:'];
       const markers = [
         CONTINUATION_PREAMBLE,
         `Boss question:\n${CONTINUATION_QUESTION}`,
         `Boss reply:\n${CONTINUATION_REPLY}`,
-        ...BLOCK_ORDER.filter((label) => composed.includes(label)),
+        ...contextLabels.filter((label) => composed.includes(label)),
         substitutedPromptFirstLine(input.prompt),
+        ...actionLabels.filter((label) => composed.includes(label)),
       ];
       const positions = markers.map((marker) => composed.indexOf(marker));
       expect(
@@ -427,7 +437,7 @@ describe('prompt contract — Boss-reply continuation', () => {
       ).toBe(true);
       expect(
         positions,
-        `${contract.stateId}: continuation blocks precede ordinary blocks and prompt body`,
+        `${contract.stateId}: continuation → context blocks → body → action blocks`,
       ).toEqual([...positions].sort((a, b) => a - b));
     });
 

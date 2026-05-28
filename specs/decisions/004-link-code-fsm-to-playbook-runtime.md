@@ -140,18 +140,23 @@ The runtime substitutes:
 | `<reviewer-llm>` | `input.reviewerPlayer` |
 
 Substitution is literal string replace with no escaping.
-Boss intent, review items, rebuttals, and task descriptions are prepended as labelled blocks when set:
+Boss intent and task description are prepended as labelled context blocks above the prompt body, and review items and rebuttals are appended as labelled action blocks below it.
+The split matches the CODE-N prompts' "above changes" / "review item below" / "rebuttal below" phrasing — context the body references as prior material reads above, material the body instructs the player to act on reads below.
 
 ```
 Boss intent:
 <input.intent>
 
+Task description:
+<input.taskDescription>
+
+<input.prompt with placeholders substituted>
+
 Review items:
 <input.reviews>
 
-[etc.]
-
-<input.prompt with placeholders substituted>
+Rebuttals:
+<input.challenges>
 ```
 
 The FSM's prompt body is never modified or re-flowed.

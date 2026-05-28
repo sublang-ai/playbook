@@ -50,12 +50,17 @@ honoring xstate's first-match-wins semantics.
 ### PLAYBOOK-5
 
 Where a captain-invoking state wires a structured field (`intent`,
-`reviews`, `challenges`, or `taskDescription`) into the
-`CaptainInput`, the composer shall prepend a labelled block
-(`Boss intent:`, `Review items:`, `Rebuttals:`, or
-`Task description:`) carrying that field's value, ordered
-Boss intent → Review items → Rebuttals → Task description →
-prompt body.
+`taskDescription`, `reviews`, or `challenges`) into the
+`CaptainInput`, the composer shall emit a labelled block
+(`Boss intent:`, `Task description:`, `Review items:`, or
+`Rebuttals:`) carrying that field's value, ordered
+Boss intent → Task description → prompt body → Review items →
+Rebuttals. Context blocks the prompt body refers to as prior
+material (`Boss intent:`, `Task description:`) precede the body;
+action blocks the prompt body refers to as material below
+(`Review items:`, `Rebuttals:`) follow the body so the CODE-N
+"review item below" / "rebuttal below" phrasing matches the
+rendered layout.
 
 ### PLAYBOOK-6
 
