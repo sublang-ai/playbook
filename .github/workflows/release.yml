@@ -16,7 +16,7 @@ jobs:
     name: publish @sublang/playbook
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Drop dev-only workspace override
         # A local pnpm-workspace.yaml links @sublang/cligent to a
@@ -24,11 +24,11 @@ jobs:
         # installs the registry-pinned cligent from the lockfile.
         run: rm -f pnpm-workspace.yaml
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org

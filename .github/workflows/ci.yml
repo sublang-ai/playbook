@@ -17,7 +17,7 @@ jobs:
       matrix:
         node-version: [20, 22]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Drop dev-only workspace override
         # A local pnpm-workspace.yaml links @sublang/cligent to a
@@ -26,11 +26,11 @@ jobs:
         # lockfile.
         run: rm -f pnpm-workspace.yaml
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
         with:
           version: 9
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
           cache: pnpm
@@ -66,9 +66,9 @@ jobs:
       run:
         working-directory: views/sketch
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -87,7 +87,7 @@ jobs:
     name: SPDX headers (LIC-3, LIC-4)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Verify SPDX headers on git-tracked files
         run: bash scripts/check-spdx.sh
 
@@ -95,9 +95,9 @@ jobs:
     name: Smoke install (global tarball)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
 
