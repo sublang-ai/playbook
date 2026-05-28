@@ -152,7 +152,7 @@ pnpm build
 pnpm test
 ```
 
-`pnpm install` resolves `@sublang/cligent` (^0.6.0) from the registry;
+`pnpm install` resolves `@sublang/cligent` (^0.8.0) from the registry;
 no local link required. To point pnpm at a local `cligent` checkout
 instead, copy
 [`pnpm-workspace.yaml.example`](pnpm-workspace.yaml.example)

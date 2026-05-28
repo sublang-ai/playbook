@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `@sublang/cligent` from `^0.6.0` to `^0.8.0`. The 0.7 and 0.8 releases keep the `@sublang/cligent/tmux-play` and `@sublang/cligent/adapters/{claude-code,codex}` surfaces used by `code.tmux-play.ts` and `scripts/smoke-adapters.mjs` byte-identical (verified by diff of published `.d.ts`); the `playbook-code` shim's `import.meta.resolve('@sublang/cligent/tmux-play')` + sibling `cli.js` lookup still resolves under 0.8's restored `bin/tmux-play.mjs`. New optional `tmux-play` `theme` config field defaults to `'auto'` flavor detection — existing bundled and user configs without a `theme:` key keep working unchanged. README updated.
+
 ## [0.4.1] - 2026-05-28
 
 ### Changed
