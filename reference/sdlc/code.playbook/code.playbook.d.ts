@@ -40,10 +40,9 @@ interface PendingBossQuestionForStatus {
 }
 declare function pendingBossQuestionFromContext(context: Record<string, unknown>): PendingBossQuestionForStatus | undefined;
 declare function formatAwaitBossReplyEntry(context: Record<string, unknown>): string;
-declare function formatStateEntry(stateId: string, context?: Record<string, unknown>): string;
+declare function formatStateEntry(stateId: string, context?: Record<string, unknown>): string | undefined;
 declare function formatTransition(event: unknown): string | undefined;
-declare function formatBossEcho(text: string, eventType?: string): string;
-declare function formatRiders(context: Record<string, unknown>): string;
+declare function formatClassification(eventType: string): string;
 declare function stateTelemetryPayload(from: unknown, to: string, event: unknown, context: Record<string, unknown>): Record<string, unknown>;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
@@ -57,8 +56,7 @@ export declare const _internal: {
     formatAwaitBossReplyEntry: typeof formatAwaitBossReplyEntry;
     formatStateEntry: typeof formatStateEntry;
     formatTransition: typeof formatTransition;
-    formatBossEcho: typeof formatBossEcho;
-    formatRiders: typeof formatRiders;
+    formatClassification: typeof formatClassification;
     stateTelemetryPayload: typeof stateTelemetryPayload;
 };
 export default function createPlaybookRuntime(options: CodePlaybookOptions): PlaybookRuntime;

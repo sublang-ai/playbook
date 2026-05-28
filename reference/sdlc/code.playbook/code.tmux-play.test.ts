@@ -277,9 +277,11 @@ describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
       reviewerPlayer: 'codex',
     });
     await captain.init!(s.session);
-    // init emits '◆ ready' on initial entry — verify that
-    // session.emitStatus was the recipient.
-    expect(s.statuses.map((x) => x.message)).toContain('◆ ready');
+    // init no longer emits a `◆ ready` tombstone (PBRT-3). Drive
+    // one turn so the captain produces a real status line and
+    // verify session.emitStatus is the recipient.
+    await captain.handleBossTurn(turn('/start x'), c.context);
+    expect(s.statuses.map((x) => x.message)).toContain('START_CODING');
   });
 
   it('emitTelemetry forwards verbatim to session.emitTelemetry', async () => {
@@ -306,11 +308,12 @@ describe('createCodeTmuxPlayCaptain — PlayerRunResult ↔ PlayerResult identit
     });
     await captain.init!(s.session);
     await captain.handleBossTurn(turn('/start x'), c.context);
-    // Verify the turn completed by ending at ready.
+    // PBRT-3: ready/done entries are suppressed; verify the turn
+    // produced a classification line and reached the idle FSM state.
+    expect(s.statuses.map((st) => st.message)).toContain('START_CODING');
     expect(
-      s.statuses.map((st) => st.message).filter((m) => m === '◆ ready')
-        .length,
-    ).toBeGreaterThanOrEqual(1);
+      s.statuses.map((st) => st.message).filter((m) => /^◆ (ready|done)/.test(m)),
+    ).toEqual([]);
   });
 
   it('status="aborted" surfaces and lands FSM at #failed', async () => {
@@ -383,8 +386,13 @@ describe('createCodeTmuxPlayCaptain — multi-stage Boss turn', () => {
     const playerIds = c.playerCalls.map((r) => r.playerId);
     expect(playerIds).toContain('coder');
     expect(playerIds).toContain('reviewer');
+    // Turn-completion proof: the final telemetry transitions back to
+    // `ready` (PBRT-3 suppresses the `◆ done` tombstone, so the
+    // status stream no longer carries one).
     expect(
-      s.statuses.some((st) => st.message === '◆ done'),
+      s.telemetry.some(
+        (t) => (t.payload as { to?: string }).to === 'ready',
+      ),
     ).toBe(true);
   });
 });

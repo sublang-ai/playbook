@@ -44,13 +44,21 @@ Verifies: [PBRT-14](../dev/playbook-runtime.md#pbrt-14)
 
 When a Boss turn is driven through the runtime, the test suite
 shall fail unless: telemetry is emitted for every transition
-under the `playbook.fsm.state` topic; the four-glyph Captain-pane
-status emits cover the Boss-input echo, every captain-invoking
-state entry (with label + player + CODE-N + any populated rider
-field), every transition guard that drove an entry (with payload
-item tallies when applicable), and the idle / failure / terminal
-markers; the failure-state status carries `lastError`; and
-emissions are observed in enqueue order.
+under the `playbook.fsm.state` topic; the Captain-pane status
+emits cover the bare classification line (the FSM event type with
+no glyph and no echo of the verbatim Boss text), every
+captain-invoking state entry as `⤷ <Player>: <label>` with no
+source-item tag and no FSM-context rider field, every transition
+guard that drove an entry as `→ <guard>` with `· <field>=<count>`
+tallies when applicable and no leading whitespace, the
+failure-state marker, and the `awaitBossReply` entry summary;
+entry to the idle state or the terminal state emits no status
+line; the failure-state status carries `lastError`; entry to
+`awaitBossReply` emits `◆ awaiting Boss reply · <resumeStateId>
+· <player> · <sourceItem> · q="<first 80 chars of question>"`
+and the corresponding `playbook.fsm.state` telemetry carries
+`pendingBossQuestion.question` verbatim alongside the other
+transition fields; and emissions are observed in enqueue order.
 
 ## Host adapter
 

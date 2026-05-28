@@ -158,20 +158,24 @@ with topic `playbook.fsm.state` and payload `{ from, to, event }`.
 For transitions into a Boss-relevant state
 ([PBRT-3](../user/playbook-runtime.md#pbrt-3)) the runtime shall
 call `emitStatus` to render the Captain pane line for that event,
-using the four-glyph vocabulary in PBRT-3. State entries shall
-include the state's human-readable label, the state's player, the
-state's CODE-N source item, and any rider field whose value is
-populated in the FSM context (`intent`, `irNumber`,
-`taskDescription`). Transition emissions shall include the FSM
-guard that fired and per-payload-field item tallies (`reviews=N`,
-`challenges=N`) when the guard's payload populates those fields.
-Entry to the failure state shall pass `lastError` as the
-`emitStatus` data argument.
+using the glyph vocabulary in PBRT-3. Captain-invoking state
+entries shall be formatted `⤷ <Player>: <label>` carrying only
+the player and the state's human-readable label, with no
+source-item tag and no FSM-context rider fields. Transition
+emissions shall be formatted `→ <guard>[ · <field>=<count>]…`,
+with `· reviews=N` / `· challenges=N` tallies when the guard's
+payload populates those fields, and shall carry no leading
+whitespace — visual nesting under the preceding state entry is
+the host presenter's concern. Entry to the failure state shall
+pass `lastError` as the `emitStatus` data argument. The runtime
+shall not call `emitStatus` on entry to the idle state or the
+terminal state.
 
 For each Boss turn whose text classifies to an FSM event, the
-runtime shall additionally call `emitStatus` once with a Boss-input
-echo that names the verbatim turn text and the classified event
-type, before the FSM advances.
+runtime shall additionally call `emitStatus` once with the bare
+FSM event type (e.g., `START_CODING`), before the FSM advances,
+so the host can render it as captain speech. The runtime shall not
+echo the verbatim Boss text.
 
 On entry to the `awaitBossReply` state the runtime shall call
 `emitStatus` with a single-line summary `awaiting Boss reply ·

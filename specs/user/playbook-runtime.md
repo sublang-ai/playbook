@@ -58,28 +58,38 @@ report the reason to the Boss and take no FSM action.
 
 While a Boss turn is in progress, the runtime shall surface a
 human-readable status stream that lets the Boss follow the FSM
-without reading the player panes. The stream uses four glyphs so
-each line is parseable at a glance:
+without reading the player panes. The runtime composes each line
+as the meaningful content only; the host pane (e.g., tmux-play)
+owns any speaker chrome, line wrapping, and visual nesting.
 
-- `▸` for the Boss-input echo: the verbatim turn text and the
-  FSM event it classified to.
-- `⮕` for entry into any captain-invoking state — the Coder,
-  Reviewer, and Committer states — carrying the state's
-  human-readable label, the player, the CODE-N source item, and
-  any rider field whose value is populated in the FSM context
-  (`intent`, `irNumber`, `taskDescription`).
-- `⤷` for the transition that drove the FSM into a new
-  captain-invoking state: the guard that fired and item tallies
-  for any payload fields the guard populated.
-- `◆` for entry into the idle state, the failure state, the
-  terminal state, and the `awaitBossReply` Boss-reply suspension
-  state. On entry to the failure state the line shall
-  additionally carry the error that caused it. On entry to
-  `awaitBossReply` the line shall additionally carry
-  `awaiting Boss reply · <resumeStateId> · <player> ·
-  <sourceItem> · q="<first 80 chars of question>"`, so the
-  Boss sees what's being asked and can reply with plain text
-  that the runtime classifies as `BOSS_REPLY`.
+The stream uses three glyphs and one captain-speech act so each
+line is parseable at a glance:
+
+- Captain classification carries only the FSM event type the Boss
+  turn was classified to (e.g., `START_CODING`), with no glyph.
+  The host renders it as captain speech (e.g., prefixed
+  `captain>`). The runtime shall not echo the verbatim Boss text —
+  the Boss readline already shows it.
+- `⤷` for entry into any captain-invoking state — the Coder,
+  Reviewer, and Committer states — carrying `<Player>: <label>`
+  where `<label>` is the state's human-readable label. The line
+  shall carry no source-item tag and no FSM-context rider fields.
+- `→` for the transition that drove the FSM into a new
+  captain-invoking state, carrying the guard that fired and
+  `· <field>=<count>` tallies for any payload fields the guard
+  populated. Visual nesting under the preceding `⤷` entry is the
+  host presenter's concern; the runtime emits no leading
+  whitespace.
+- `◆` for entry into the failure state and into the
+  `awaitBossReply` Boss-reply suspension state. The runtime shall
+  emit no status line on entry to the idle state or the terminal
+  state — the next `boss>` prompt is the implicit signal. On
+  entry to the failure state the line shall additionally carry
+  the error that caused it. On entry to `awaitBossReply` the line
+  shall additionally carry `awaiting Boss reply · <resumeStateId>
+  · <player> · <sourceItem> · q="<first 80 chars of question>"`,
+  so the Boss sees what's being asked and can reply with plain
+  text that the runtime classifies as `BOSS_REPLY`.
 
 ## Host configuration
 

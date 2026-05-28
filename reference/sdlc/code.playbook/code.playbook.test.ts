@@ -1341,7 +1341,10 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
     expect(playerCalls).toBe(0);
     expect(judgeCalls).toBe(1);
-    expect(statuses).toEqual([{ message: '◆ ready' }].map((s) => s.message));
+    // PBRT-3: ready entry is suppressed (the next `boss>` prompt is
+    // the implicit "turn over" signal); no-action classifier also
+    // produces no classification line. Status stream stays empty.
+    expect(statuses).toEqual([]);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
 
@@ -1377,7 +1380,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
       expect(playerCalls, text).toBe(0);
       expect(judgeCalls, text).toBe(1);
-      expect(statuses, text).toEqual(['◆ ready']);
+      expect(statuses, text).toEqual([]);
       expect(runtime._getActor()?.getSnapshot().value, text).toBe('ready');
     }
   });
@@ -1911,11 +1914,13 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     };
   }
 
-  it('emits one terminal status on initial entry to ready', async () => {
+  it('emits no status line on initial entry to ready (PBRT-3)', async () => {
     const { ports, statuses } = makeRecordingPorts();
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
-    expect(statuses.map((s) => s.message)).toContain('◆ ready');
+    // The boss readline returning is the implicit "ready" signal;
+    // a `◆ ready` tombstone is suppressed per PBRT-3.
+    expect(statuses).toEqual([]);
   });
 
   it('emits telemetry on every transition with topic playbook.fsm.state', async () => {
@@ -1967,15 +1972,15 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       signal: sig(),
     });
     const messages = statuses.map((s) => s.message);
-    // The Coder state on the /start happy path now surfaces with
-    // its label + player + CODE-N tag.
-    expect(
-      messages.some((m) => m.startsWith('⮕ plan & implement  Coder per CODE-1')),
-    ).toBe(true);
-    // ready (initial + return) is terminal and rendered with ◆.
-    expect(messages.filter((m) => m.startsWith('◆ ready')).length).toBeGreaterThanOrEqual(1);
-    // Boss echo lands before the FSM advances.
-    expect(messages.some((m) => m.startsWith('▸ BOSS  /start fix'))).toBe(true);
+    // The Coder state on the /start happy path surfaces as
+    // `⤷ <Player>: <label>` with no CODE-N tag and no rider
+    // (PBRT-3).
+    expect(messages).toContain('⤷ Coder: plan & implement');
+    // ready (initial + return) is suppressed — no `◆ ready` line.
+    expect(messages.filter((m) => m.startsWith('◆ ready'))).toEqual([]);
+    // Classification line is the bare FSM event type (no glyph, no
+    // verbatim Boss-text echo).
+    expect(messages).toContain('START_CODING');
   });
 
   it('awaitBossReply entry emits the structured status line and full-question telemetry', async () => {
@@ -2065,10 +2070,12 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       text: '/start fix',
       signal: sig(),
     });
-    // Telemetry emitted first per transition, then status; enqueue
-    // order is preserved.
+    // Telemetry emitted first per transition; the initial `ready`
+    // entry no longer emits a status line per PBRT-3, so the first
+    // status entry corresponds to the Boss-turn classification.
     expect(ordered[0]).toBe('t:ready');
-    expect(ordered[1]).toBe('s:◆ ready');
+    expect(ordered.filter((e) => e.startsWith('s:◆ ready'))).toEqual([]);
+    expect(ordered).toContain('s:START_CODING');
   });
 
   it('STATE_LABELS covers every captain-invoking state in the FSM', () => {
@@ -2104,15 +2111,13 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     await runtime.init(ports);
     await runtime.handleBossInput({ text: '/start x', signal: sig() });
     const messages = statuses.map((s) => s.message);
-    // The hasFindings transition carries `reviews=2`.
-    expect(
-      messages.some(
-        (m) => m.includes('⤷ hasFindings') && m.includes('reviews=2'),
-      ),
-    ).toBe(true);
+    // The hasFindings transition carries `· reviews=2` as a tally
+    // suffix; no leading whitespace (visual nesting is the host
+    // presenter's concern per PBRT-3).
+    expect(messages).toContain('→ hasFindings · reviews=2');
   });
 
-  it('state entry includes the intent rider on planAndImplement', async () => {
+  it('state entry carries only Player + label (no CODE-N, no rider)', async () => {
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
       callJudge: judgeSequence([
@@ -2126,15 +2131,16 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       text: '/start add a settings toggle',
       signal: sig(),
     });
-    const entry = statuses
-      .map((s) => s.message)
-      .find((m) => m.startsWith('⮕ plan & implement'));
-    expect(entry).toBeDefined();
-    expect(entry).toContain('Coder per CODE-1');
-    expect(entry).toContain('intent="add a settings toggle"');
+    const messages = statuses.map((s) => s.message);
+    // Exact form per PBRT-3: ⤷ <Player>: <label>; no `CODE-N`, no
+    // `intent="…"` suffix (the Boss readline already carries the
+    // verbatim intent).
+    expect(messages).toContain('⤷ Coder: plan & implement');
+    expect(messages.some((m) => m.includes('CODE-1'))).toBe(false);
+    expect(messages.some((m) => m.includes('intent='))).toBe(false);
   });
 
-  it('Boss echo includes the verbatim text and the classified event type', async () => {
+  it('classification line is the bare FSM event type (no Boss-text echo)', async () => {
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
       callJudge: judgeSequence([
@@ -2145,12 +2151,11 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
     await runtime.handleBossInput({ text: '/continue 7', signal: sig() });
-    const echo = statuses
-      .map((s) => s.message)
-      .find((m) => m.startsWith('▸ BOSS'));
-    expect(echo).toBeDefined();
-    expect(echo).toContain('/continue 7');
-    expect(echo).toContain('→ CONTINUE_IR');
+    const messages = statuses.map((s) => s.message);
+    // Just the event type; no glyph, no verbatim Boss text.
+    expect(messages).toContain('CONTINUE_IR');
+    expect(messages.some((m) => m.includes('/continue 7'))).toBe(false);
+    expect(messages.some((m) => m.startsWith('▸ '))).toBe(false);
   });
 });
 

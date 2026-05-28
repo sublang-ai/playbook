@@ -331,14 +331,22 @@ function captainBridge(ports, getActiveSignal) {
     });
 }
 // Captain pane display — PBRT-3 / PBRT-14.
-// The Captain pane is a stream keyed on four glyphs so a reader can
-// parse each line at a glance:
-//   ◆  basic idle entry (ready / done / failed)
-//   ▸  Boss input echo
-//   ⮕  captain-invoking state entry (label + player + CODE-N)
-//   ⤷  transition (guard fired by the just-finished captain call)
-// Prompts and full player output ride the player panes; the Captain
-// pane keeps to the state-machine shape.
+// The Captain pane is a stream of three glyphs plus one bare
+// captain-speech act, designed so a reader can parse each line at a
+// glance:
+//   (no glyph)  bare FSM event type — host renders as captain speech
+//               (e.g., `captain> START_CODING`)
+//   ⤷           captain-invoking state entry: `<Player>: <label>`
+//   →           transition guard outcome (`· field=N` tallies
+//               appended); the host presenter owns any visual
+//               nesting under the preceding ⤷ entry
+//   ◆           failure state (with `lastError` data) and the
+//               `awaitBossReply` suspension state (custom payload)
+// The runtime emits no status line on entry to the idle state
+// (`ready`) or the terminal state (`done`); the next `boss>` prompt
+// is the implicit "turn over" signal. Prompts and full player output
+// ride the player panes; the Captain pane keeps to the state-machine
+// shape.
 const STATE_LABELS = {
     planAndImplement: 'plan & implement',
     respondToReview: 'respond to review',
@@ -394,13 +402,20 @@ const QUIESCENT_STATES = new Set([
     'done',
     'failed',
 ]);
-// awaitBossReply is quiescent too, but uses a custom single-line
-// status frame rather than the plain `◆ <state>` entry.
-const BASIC_IDLE_GLYPH_STATES = new Set([...QUIESCENT_STATES].filter((stateId) => stateId !== 'awaitBossReply'));
+// States whose entry the runtime does not surface on the Captain
+// pane per PBRT-3: the readline returning to its `boss>` prompt is
+// the implicit "turn over" signal, so a `◆ ready` / `◆ done`
+// tombstone is redundant.
+const SUPPRESSED_ENTRY_STATES = new Set([
+    'ready',
+    'done',
+]);
 // Captain-pane surface (PBRT-3): every captain-invoking state plus
-// the quiescent states. Wider than the prior
-// "Boss-relevant" set per slc/link.md's default "emit on every
-// transition; let the host filter."
+// the quiescent states whose entry still carries information
+// (failure with `lastError`, awaitBossReply with the pending
+// question). `ready` and `done` flow through the inspect handler
+// but their entries are dropped before emitStatus per
+// SUPPRESSED_ENTRY_STATES above.
 const CAPTAIN_PANE_STATES = new Set([
     ...stateMetadata.keys(),
     ...QUIESCENT_STATES,
@@ -438,12 +453,14 @@ function formatAwaitBossReplyEntry(context) {
 function formatStateEntry(stateId, context = {}) {
     if (stateId === 'awaitBossReply')
         return formatAwaitBossReplyEntry(context);
-    if (BASIC_IDLE_GLYPH_STATES.has(stateId))
-        return `◆ ${stateId}`;
+    if (SUPPRESSED_ENTRY_STATES.has(stateId))
+        return undefined;
+    if (stateId === 'failed')
+        return '◆ failed';
     const meta = stateMetadata.get(stateId);
     if (!meta)
-        return `⮕ ${stateId}`;
-    return `⮕ ${meta.label}  ${meta.player} per ${meta.sourceItem}`;
+        return `⤷ ${stateId}`;
+    return `⤷ ${meta.player}: ${meta.label}`;
 }
 function formatTransition(event) {
     const output = event?.output;
@@ -457,29 +474,15 @@ function formatTransition(event) {
             tallies.push(`${field}=${items ? items.length : 1}`);
         }
     }
-    const suffix = tallies.length > 0 ? `  ${tallies.join(' ')}` : '';
-    return `⤷ ${output.guard}${suffix}`;
+    const suffix = tallies.length > 0 ? ` · ${tallies.join(' · ')}` : '';
+    // No leading whitespace: visual nesting under the preceding ⤷
+    // entry is the host presenter's concern (cligent's writeStatusLine
+    // emits status messages verbatim, with its own chrome but no
+    // continuation indent; layout is its job, not ours).
+    return `→ ${output.guard}${suffix}`;
 }
-function formatBossEcho(text, eventType) {
-    return eventType !== undefined
-        ? `▸ BOSS  ${text}  → ${eventType}`
-        : `▸ BOSS  ${text}`;
-}
-// Rider fields PBRT-14 names — surfaced inline on a state entry
-// whenever the FSM context populates them, regardless of which
-// captain-invoking state is being entered. Routing-only context
-// (reviewSubject, afterReview, etc.) stays out of the pane and is
-// visible via emitTelemetry instead.
-const RIDER_FIELDS = ['intent', 'irNumber', 'taskDescription'];
-function formatRiders(context) {
-    const parts = [];
-    for (const f of RIDER_FIELDS) {
-        const v = context[f];
-        if (typeof v === 'string' && v.length > 0) {
-            parts.push(`${f}=${JSON.stringify(v)}`);
-        }
-    }
-    return parts.length > 0 ? `  ${parts.join(' ')}` : '';
+function formatClassification(eventType) {
+    return eventType;
 }
 function stateTelemetryPayload(from, to, event, context) {
     const payload = { from, to, event };
@@ -507,8 +510,7 @@ export const _internal = {
     formatAwaitBossReplyEntry,
     formatStateEntry,
     formatTransition,
-    formatBossEcho,
-    formatRiders,
+    formatClassification,
     stateTelemetryPayload,
 };
 export default function createPlaybookRuntime(options) {
@@ -584,17 +586,15 @@ export default function createPlaybookRuntime(options) {
                     enqueueEmit(() => ports.emitStatus(transitionLine));
                 }
                 const entryLine = formatStateEntry(to, context);
-                const riderSuffix = stateMetadata.has(to)
-                    ? formatRiders(context)
-                    : '';
-                const message = entryLine + riderSuffix;
+                if (entryLine === undefined)
+                    return;
                 if (to === 'failed') {
                     const lastError = snap.context
                         ?.lastError;
-                    enqueueEmit(() => ports.emitStatus(message, { lastError }));
+                    enqueueEmit(() => ports.emitStatus(entryLine, { lastError }));
                 }
                 else {
-                    enqueueEmit(() => ports.emitStatus(message));
+                    enqueueEmit(() => ports.emitStatus(entryLine));
                 }
             },
         });
@@ -620,12 +620,13 @@ export default function createPlaybookRuntime(options) {
                     await drainEmissions();
                     return;
                 }
-                // 2. Captain-pane Boss-input echo (PBRT-14): the verbatim
-                //    Boss text and the FSM event it classified to, before
-                //    the FSM advances. Enqueued so it interleaves cleanly
-                //    with the inspect-driven transition emissions.
+                // 2. Captain-pane classification line (PBRT-14): the bare
+                //    FSM event type, emitted before the FSM advances so the
+                //    host can render it as captain speech (e.g.,
+                //    `captain> START_CODING`). Enqueued so it interleaves
+                //    cleanly with the inspect-driven transition emissions.
                 const echoPorts = savedPorts;
-                enqueueEmit(() => echoPorts.emitStatus(formatBossEcho(text, event.type)));
+                enqueueEmit(() => echoPorts.emitStatus(formatClassification(event.type)));
                 // 3. final state ('done') cannot accept new events — dispose
                 //    and reconstruct per DR-004 §5.
                 if (actor.getSnapshot().status === 'done') {
