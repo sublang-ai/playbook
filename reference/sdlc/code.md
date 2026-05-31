@@ -14,7 +14,8 @@ Players:
 When Boss gives a coding intent, Captain shall relay it to Coder along with the following prompt:
 > Assess whether this can be completed in a single commit, following best practices.
 > If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; ensure @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Ensure @specs/map.md reflects the changes.
 > Do not commit.
 The resulting changes are regarded as Initial Changes.
 
@@ -41,12 +42,12 @@ When an IR is done, Captain shall prompt Coder:
 > The set should be complete and coherent.
 > Avoid implementation specifics.
 > Avoid redundant spec items.
-> Consult @specs/map.md for relevant context and update it to reflect your changes.
+> Ensure @specs/map.md reflects the changes.
 
 ## Reviewer
 
 For each finding in a review round, Coder either addresses it with changes or challenges it with a rebuttal.
-Any code change to address findings starts a new round of review, no matter if some findings are also rebutted.
+Any code change to address findings starts a new round of review, even if some findings are also rebutted.
 Rounds continue until Reviewer raises no findings.
 
 When Reviewer begins the first review round on changes from a Boss coding intent, Captain shall relay the intent to Reviewer.
@@ -58,7 +59,7 @@ When Committer commits Initial Changes, Captain shall prompt Reviewer to begin a
 > Refer to the commit message.
 
 When any changes are made by Coder but not reviewed (outside of any Initial Changes), Captain shall prompt Reviewer to begin a review round:
-> Review the unstaged/untracked changes.
+> Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 
 When Reviewer begins a review round involving @specs/user/, @specs/dev/, or @specs/test/, Captain shall prompt Reviewer:
@@ -75,7 +76,8 @@ When Reviewer begins a review round involving any changes outside @specs/user/, 
 > Think thoroughly — don't just approve or reject.
 
 When Reviewer begins any review round, Captain shall prompt Reviewer:
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 When Coder raises any rebuttals, Captain shall relay them to Reviewer along with the following prompt:
@@ -85,12 +87,13 @@ When Coder raises any rebuttals, Captain shall relay them to Reviewer along with
 
 When Coder makes any Initial Changes or Reviewer raises no findings on uncommitted changes, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Write concisely.
 
 When Captain prompts Committer and only Coder has played since the last commit, Captain shall also append:
-> Coder is <coder-llm>.
+> Coder is \<coder-llm\>.
 
 When Captain prompts Committer and both Coder and Reviewer have played since the last commit, Captain shall also append:
-> Coder is <coder-llm>; Reviewer is <reviewer-llm>.
+> Coder is \<coder-llm\>; Reviewer is \<reviewer-llm\>.
 
 When Captain prompts Committer, Captain shall also append:
 > Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
