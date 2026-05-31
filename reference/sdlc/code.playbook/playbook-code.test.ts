@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { EventEmitter } from 'node:events';
+import { existsSync, readFileSync } from 'node:fs';
 import {
   mkdir,
   mkdtemp,
@@ -13,6 +14,7 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 const playbookCode = await import(
   new URL('./bin/playbook-code.js', import.meta.url).href
@@ -21,7 +23,10 @@ const playbookCode = await import(
 const {
   runPlaybookCodeCli,
   resolveUserConfigPath,
-  collectAdaptersFromConfig,
+  resolveConfigHome,
+  composeRuntimeConfig,
+  adaptersFromComposedConfig,
+  CODE_ADAPTER_MODULE,
 } = playbookCode;
 
 const tempDirs: string[] = [];
@@ -34,8 +39,8 @@ afterEach(async () => {
   );
 });
 
-describe('playbook-code shim — config seeding', () => {
-  it('seeds the user config from the bundled template and launches with it', async () => {
+describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
+  it('seeds the CODE overlay from the bundled template and launches the composed temp config', async () => {
     const home = await makeTempHome();
     const spawn = fakeSpawn();
     const stderr = writer();
@@ -48,6 +53,7 @@ describe('playbook-code shim — config seeding', () => {
         OPENAI_API_KEY: 'openai-key',
       },
       homeDir: home,
+      cwd: home,
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
@@ -55,24 +61,37 @@ describe('playbook-code shim — config seeding', () => {
     });
 
     expect(result).toEqual({ code: 0 });
-    await expect(readFile(configPath, 'utf8')).resolves.toContain(
-      'PBRT-4 host-configuration invariants',
-    );
+    const seeded = await readFile(configPath, 'utf8');
+    expect(seeded).toContain('CODE overlay');
+    expect(seeded).toContain('players.coder');
+    expect(seeded).toContain('PBRT-4');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
-    expect(spawn.calls).toEqual([
-      {
-        command: process.execPath,
-        args: ['/tmp/tmux-play.js', '--config', configPath],
-        options: { stdio: 'inherit' },
-      },
+
+    // Launches the *composed temp* config, not the user overlay path.
+    expect(spawn.calls).toHaveLength(1);
+    const args = spawn.calls[0].args;
+    expect(args[0]).toBe('/tmp/tmux-play.js');
+    expect(args[1]).toBe('--config');
+    expect(args[2]).not.toBe(configPath);
+    expect(args[2].endsWith('.yaml')).toBe(true);
+
+    const composed = parseYaml(spawn.configs[0].content);
+    expect(composed.captain.from).toBe(CODE_ADAPTER_MODULE);
+    expect(composed.players.map((p: { id: string }) => p.id)).toEqual([
+      'coder',
+      'reviewer',
     ]);
+
+    // Temp config removed before the shim exits.
+    expect(spawn.configs[0].existedAtSpawn).toBe(true);
+    expect(existsSync(args[2])).toBe(false);
   });
 
-  it('does not rewrite an existing user config', async () => {
+  it('does not rewrite an existing user overlay and launches the composed config', async () => {
     const home = await makeTempHome();
     const configPath = resolveUserConfigPath({}, home);
     await mkdir(join(home, '.config', 'playbook'), { recursive: true });
-    await writeFile(configPath, existingConfig(), 'utf8');
+    await writeFile(configPath, existingOverlay(), 'utf8');
     const before = await stat(configPath);
     const spawn = fakeSpawn();
 
@@ -83,6 +102,7 @@ describe('playbook-code shim — config seeding', () => {
         OPENAI_API_KEY: 'openai-key',
       },
       homeDir: home,
+      cwd: home,
       stderr: writer(),
       stdout: writer(),
       spawn: spawn.fn,
@@ -91,16 +111,14 @@ describe('playbook-code shim — config seeding', () => {
 
     const after = await stat(configPath);
     expect(result).toEqual({ code: 0 });
-    expect(await readFile(configPath, 'utf8')).toBe(existingConfig());
+    expect(await readFile(configPath, 'utf8')).toBe(existingOverlay());
     expect(after.mtimeMs).toBe(before.mtimeMs);
-    expect(spawn.calls[0]?.args).toEqual([
-      '/tmp/tmux-play.js',
-      '--config',
-      configPath,
-    ]);
+    // Launches the composed temp config, not the overlay file itself.
+    expect(spawn.calls[0]?.args[2]).not.toBe(configPath);
+    expect(spawn.calls[0]?.args[2].endsWith('.yaml')).toBe(true);
   });
 
-  it('forwards explicit --config arguments verbatim and bypasses setup', async () => {
+  it('forwards explicit --config arguments verbatim and bypasses composition', async () => {
     const home = await makeTempHome();
     const spawn = fakeSpawn();
     const configPath = resolveUserConfigPath({}, home);
@@ -109,6 +127,7 @@ describe('playbook-code shim — config seeding', () => {
       argv: ['--config', './custom.yaml', '--cwd', '/tmp/work'],
       env: {},
       homeDir: home,
+      cwd: home,
       stderr: writer(),
       stdout: writer(),
       spawn: spawn.fn,
@@ -133,13 +152,14 @@ describe('playbook-code shim — readiness and help', () => {
     await mkdir(join(home, '.config', 'playbook'), { recursive: true });
     await mkdir(join(home, '.claude'));
     await mkdir(join(home, '.codex'));
-    await writeFile(resolveUserConfigPath({}, home), existingConfig(), 'utf8');
+    await writeFile(resolveUserConfigPath({}, home), existingOverlay(), 'utf8');
     const spawn = fakeSpawn();
 
     const result = await runPlaybookCodeCli({
       argv: [],
       env: {},
       homeDir: home,
+      cwd: home,
       stderr: writer(),
       stdout: writer(),
       spawn: spawn.fn,
@@ -154,7 +174,7 @@ describe('playbook-code shim — readiness and help', () => {
     const home = await makeTempHome();
     await mkdir(join(home, '.config', 'playbook'), { recursive: true });
     const configPath = resolveUserConfigPath({}, home);
-    await writeFile(configPath, existingConfig(), 'utf8');
+    await writeFile(configPath, existingOverlay(), 'utf8');
     const spawn = fakeSpawn();
     const stderr = writer();
 
@@ -162,6 +182,7 @@ describe('playbook-code shim — readiness and help', () => {
       argv: [],
       env: {},
       homeDir: home,
+      cwd: home,
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
@@ -175,7 +196,7 @@ describe('playbook-code shim — readiness and help', () => {
     expect(stderr.text()).toContain('ANTHROPIC_API_KEY');
     expect(stderr.text()).toContain('OPENAI_API_KEY');
     expect(stderr.text()).toContain('captain.adapter');
-    expect(stderr.text()).toContain('players[].id');
+    expect(stderr.text()).toContain('players.coder');
   });
 
   it('warns for unknown adapters without blocking launch', async () => {
@@ -187,8 +208,11 @@ describe('playbook-code shim — readiness and help', () => {
         'captain:',
         '  adapter: gemini',
         'players:',
-        '  - id: coder',
+        '  coder:',
         '    adapter: gemini',
+        '  reviewer:',
+        '    adapter: gemini',
+        '',
       ].join('\n'),
       'utf8',
     );
@@ -199,6 +223,7 @@ describe('playbook-code shim — readiness and help', () => {
       argv: [],
       env: {},
       homeDir: home,
+      cwd: home,
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
@@ -220,6 +245,7 @@ describe('playbook-code shim — readiness and help', () => {
       argv: ['--help'],
       env: {},
       homeDir: home,
+      cwd: home,
       stderr: writer(),
       stdout,
       spawn: spawn.fn,
@@ -233,8 +259,11 @@ describe('playbook-code shim — readiness and help', () => {
     expect(stdout.text()).toContain('ANTHROPIC_API_KEY');
     expect(stdout.text()).toContain('OPENAI_API_KEY');
     expect(stdout.text()).toContain('captain.adapter');
-    expect(stdout.text()).toContain('change each player adapter');
-    expect(stdout.text()).toContain('players[].id');
+    expect(stdout.text()).toContain('players.coder');
+    expect(stdout.text()).toContain('players.reviewer');
+    // The composer injects captain.from; the recipe no longer tells the
+    // user to keep it fixed.
+    expect(stdout.text()).not.toContain('players[].id');
   });
 
   it('accepts -h as the short help alias', async () => {
@@ -246,6 +275,7 @@ describe('playbook-code shim — readiness and help', () => {
       argv: ['-h'],
       env: {},
       homeDir: home,
+      cwd: home,
       stderr: writer(),
       stdout,
       spawn: spawn.fn,
@@ -257,26 +287,296 @@ describe('playbook-code shim — readiness and help', () => {
     expect(spawn.calls).toEqual([]);
   });
 
-  it('collects adapter ids from the config shape used by the template', () => {
+  it('collects adapter ids from a composed config', () => {
     expect(
-      collectAdaptersFromConfig(
-        [
-          'captain:',
-          '  adapter: "claude" # comment',
-          '  options:',
-          '    adapter: ignored-captain-option',
-          'observer:',
-          '  adapter: ignored-observer',
-          'players:',
-          '  - id: coder',
-          "    adapter: 'codex'",
-          '  - id: reviewer',
-          '    adapter: codex',
-          '    options:',
-          '      adapter: ignored-player-option',
-        ].join('\n'),
-      ),
+      adaptersFromComposedConfig({
+        captain: { from: CODE_ADAPTER_MODULE, adapter: 'claude' },
+        players: [
+          { id: 'coder', adapter: 'claude' },
+          { id: 'reviewer', adapter: 'codex' },
+        ],
+      }),
     ).toEqual(['claude', 'codex']);
+  });
+});
+
+describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
+  it('maps the overlay roles to a players[] roster and injects the invariants', () => {
+    const composed = composeRuntimeConfig(fullOverlay());
+
+    expect(composed.captain.from).toBe(CODE_ADAPTER_MODULE);
+    expect(composed.captain.adapter).toBe('claude');
+    expect(composed.captain.options).toEqual({ code: { } });
+    expect(composed.players).toEqual([
+      {
+        id: 'coder',
+        adapter: 'claude',
+        model: 'claude-opus-4-7',
+        reasoningEffort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
+      {
+        id: 'reviewer',
+        adapter: 'codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
+    ]);
+  });
+
+  it('carries captain.options.code through unchanged', () => {
+    const overlay = fullOverlay();
+    overlay.captain.options = { code: { } };
+    const composed = composeRuntimeConfig(overlay);
+    expect(composed.captain.options).toEqual({ code: { } });
+  });
+
+  it('inherits only theme and captain-judge fields from the base, never the base roster', () => {
+    const overlay = {
+      captain: { adapter: 'claude' },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    };
+    const base = {
+      theme: 'latte',
+      captain: {
+        from: '@sublang/cligent/captains/fanout',
+        adapter: 'codex',
+        model: 'base-judge-model',
+        reasoningEffort: 'medium',
+        permissions: { mode: 'auto' },
+      },
+      players: [{ id: 'solo', adapter: 'gemini' }],
+    };
+
+    const composed = composeRuntimeConfig(overlay, base);
+
+    // captain.adapter present in the overlay wins; the unset judge
+    // fields and theme are inherited from the base.
+    expect(composed.captain.adapter).toBe('claude');
+    expect(composed.captain.model).toBe('base-judge-model');
+    expect(composed.captain.reasoningEffort).toBe('medium');
+    expect(composed.theme).toBe('latte');
+    // The base roster is not mapped onto coder / reviewer.
+    expect(composed.players.map((p: { id: string }) => p.id)).toEqual([
+      'coder',
+      'reviewer',
+    ]);
+    expect(composed.players.map((p: { adapter: string }) => p.adapter)).toEqual([
+      'claude',
+      'codex',
+    ]);
+  });
+
+  it('inherits captain.adapter from the base when the overlay omits it', () => {
+    const overlay = {
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    };
+    const base = {
+      captain: { from: 'x', adapter: 'gemini' },
+      players: [{ id: 'solo', adapter: 'gemini' }],
+    };
+    const composed = composeRuntimeConfig(overlay, base);
+    expect(composed.captain.adapter).toBe('gemini');
+  });
+
+  it('rejects an overlay missing a CODE role with a path-named error', () => {
+    expect(() =>
+      composeRuntimeConfig({
+        captain: { adapter: 'claude' },
+        players: { coder: { adapter: 'claude' } },
+      }),
+    ).toThrow(/players\.reviewer/);
+  });
+
+  it('rejects an overlay naming a non-CODE role id with a path-named error', () => {
+    expect(() =>
+      composeRuntimeConfig({
+        captain: { adapter: 'claude' },
+        players: {
+          coder: { adapter: 'claude' },
+          reviewer: { adapter: 'codex' },
+          committer: { adapter: 'claude' },
+        },
+      }),
+    ).toThrow(/players\.committer/);
+  });
+
+  it('rejects an overlay missing captain.adapter with no base config', () => {
+    expect(() =>
+      composeRuntimeConfig({
+        players: {
+          coder: { adapter: 'claude' },
+          reviewer: { adapter: 'codex' },
+        },
+      }),
+    ).toThrow(/captain\.adapter/);
+  });
+
+  it('rejects a role block that omits adapter with a path-named error', () => {
+    expect(() =>
+      composeRuntimeConfig({
+        captain: { adapter: 'claude' },
+        players: {
+          coder: {},
+          reviewer: { adapter: 'codex' },
+        },
+      }),
+    ).toThrow(/players\.coder\.adapter/);
+  });
+
+  it('locates the base via findTmuxPlayConfig without writing a default config', async () => {
+    const home = await makeTempHome();
+    await writeOverlay(home, existingOverlay());
+    const spawn = fakeSpawn();
+
+    const result = await runPlaybookCodeCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' },
+      homeDir: home,
+      cwd: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 0 });
+    // No base existed, so the loader must not have written a default
+    // tmux-play config under the config home.
+    expect(
+      existsSync(join(resolveConfigHome({}, home), 'tmux-play', 'config.yaml')),
+    ).toBe(false);
+  });
+
+  it('inherits theme + judge defaults from a discovered base config end to end', async () => {
+    const home = await makeTempHome();
+    await writeOverlay(
+      home,
+      [
+        'captain:',
+        '  adapter: claude',
+        'players:',
+        '  coder:',
+        '    adapter: claude',
+        '  reviewer:',
+        '    adapter: codex',
+        '',
+      ].join('\n'),
+    );
+    await writeBaseConfig(
+      home,
+      [
+        'theme: latte',
+        'captain:',
+        '  from: "@sublang/cligent/captains/fanout"',
+        '  adapter: codex',
+        '  model: base-judge-model',
+        '  reasoningEffort: medium',
+        'players:',
+        '  - id: solo',
+        '    adapter: gemini',
+        '',
+      ].join('\n'),
+    );
+    const spawn = fakeSpawn();
+
+    const result = await runPlaybookCodeCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' },
+      homeDir: home,
+      cwd: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 0 });
+    const composed = parseYaml(spawn.configs[0].content);
+    expect(composed.theme).toBe('latte');
+    expect(composed.captain.adapter).toBe('claude');
+    expect(composed.captain.model).toBe('base-judge-model');
+    expect(composed.captain.reasoningEffort).toBe('medium');
+    expect(composed.players.map((p: { id: string }) => p.id)).toEqual([
+      'coder',
+      'reviewer',
+    ]);
+  });
+
+  it('rejects a malformed overlay at launch with a path-named error and no spawn', async () => {
+    const home = await makeTempHome();
+    await writeOverlay(
+      home,
+      ['captain:', '  adapter: claude', 'players:', '  coder:', '    adapter: claude', ''].join(
+        '\n',
+      ),
+    );
+    const spawn = fakeSpawn();
+    const stderr = writer();
+
+    const result = await runPlaybookCodeCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' },
+      homeDir: home,
+      cwd: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(spawn.calls).toEqual([]);
+    expect(stderr.text()).toContain('players.reviewer');
+  });
+
+  it('removes the temp config on a non-zero child exit', async () => {
+    const home = await makeTempHome();
+    await writeOverlay(home, existingOverlay());
+    const spawn = fakeSpawn({ exitCode: 3 });
+
+    const result = await runPlaybookCodeCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' },
+      homeDir: home,
+      cwd: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 3 });
+    expect(spawn.configs[0].existedAtSpawn).toBe(true);
+    expect(existsSync(spawn.calls[0].args[2])).toBe(false);
+  });
+
+  it('removes the temp config on the signal-forwarding path', async () => {
+    const home = await makeTempHome();
+    await writeOverlay(home, existingOverlay());
+    const spawn = fakeSpawn({ signal: 'SIGINT' });
+
+    const result = await runPlaybookCodeCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' },
+      homeDir: home,
+      cwd: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ signal: 'SIGINT' });
+    expect(spawn.configs[0].existedAtSpawn).toBe(true);
+    expect(existsSync(spawn.calls[0].args[2])).toBe(false);
   });
 });
 
@@ -286,18 +586,50 @@ async function makeTempHome(): Promise<string> {
   return dir;
 }
 
-function fakeSpawn() {
+async function writeOverlay(home: string, contents: string): Promise<void> {
+  await mkdir(join(home, '.config', 'playbook'), { recursive: true });
+  await writeFile(resolveUserConfigPath({}, home), contents, 'utf8');
+}
+
+async function writeBaseConfig(home: string, contents: string): Promise<void> {
+  const dir = join(home, '.config', 'tmux-play');
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'config.yaml'), contents, 'utf8');
+}
+
+function fakeSpawn(opts: { exitCode?: number; signal?: string } = {}) {
   const calls: {
     command: string;
     args: string[];
     options: { stdio: string };
   }[] = [];
+  const configs: {
+    path: string;
+    content: string;
+    existedAtSpawn: boolean;
+  }[] = [];
   return {
     calls,
+    configs,
     fn: (command: string, args: string[], options: { stdio: string }) => {
       calls.push({ command, args, options });
+      const idx = args.indexOf('--config');
+      if (idx !== -1 && args[idx + 1]) {
+        const path = args[idx + 1];
+        let content = '';
+        let existedAtSpawn = false;
+        try {
+          content = readFileSync(path, 'utf8');
+          existedAtSpawn = true;
+        } catch {
+          existedAtSpawn = false;
+        }
+        configs.push({ path, content, existedAtSpawn });
+      }
       const child = new EventEmitter();
-      queueMicrotask(() => child.emit('exit', 0, null));
+      queueMicrotask(() =>
+        child.emit('exit', opts.exitCode ?? 0, opts.signal ?? null),
+      );
       return child;
     },
   };
@@ -314,16 +646,43 @@ function writer() {
   };
 }
 
-function existingConfig(): string {
+// The user-level CODE overlay: tmux-play shape minus captain.from, with
+// players keyed by role rather than an array with ids (PBCODE-16).
+function existingOverlay(): string {
   return [
     'captain:',
-    '  from: "@sublang/playbook/code/tmux-play"',
     '  adapter: claude',
     'players:',
-    '  - id: coder',
+    '  coder:',
     '    adapter: claude',
-    '  - id: reviewer',
+    '  reviewer:',
     '    adapter: codex',
     '',
   ].join('\n');
+}
+
+function fullOverlay() {
+  return {
+    captain: {
+      adapter: 'claude',
+      model: 'claude-sonnet-4-6',
+      reasoningEffort: 'high',
+      permissions: { mode: 'auto' },
+      options: { code: {} },
+    },
+    players: {
+      coder: {
+        adapter: 'claude',
+        model: 'claude-opus-4-7',
+        reasoningEffort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
+      reviewer: {
+        adapter: 'codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
+    },
+  };
 }

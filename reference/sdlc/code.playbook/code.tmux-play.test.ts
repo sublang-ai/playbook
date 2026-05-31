@@ -9,7 +9,9 @@ import type {
   CaptainSession,
   PlayerRunResult,
 } from '@sublang/cligent/tmux-play';
-import createCodeTmuxPlayCaptain from './code.tmux-play.js';
+import createCodeTmuxPlayCaptain, {
+  validateCodeOptions,
+} from './code.tmux-play.js';
 
 // ─── Stub builders ──────────────────────────────────────────────
 
@@ -512,6 +514,75 @@ describe('createCodeTmuxPlayCaptain — identity strings derived from session.pl
     // No bare adapter family name from the substitution itself —
     // matches `Coder is claude` only as a prefix of the model id.
     expect(prompt).not.toMatch(/Coder is claude[.;,]/);
+  });
+});
+
+describe('createCodeTmuxPlayCaptain — captain.options.code validation (PBRT-29/30/31)', () => {
+  // Drives /start through the single-commit flow so the Committer
+  // (CODE-18) prompt is produced; its `Coder is <coder-llm>.` line lets
+  // us prove identity still comes from session.players, independent of
+  // captain.options.code.
+  function singleCommitContext(): StubContext {
+    const guards = ['singleCommitReady', 'committedSpecs', 'noFindings'];
+    let i = 0;
+    return stubContext({
+      captainResult: async () => ({
+        status: 'ok',
+        turnId: 1,
+        finalText: JSON.stringify({ guard: guards[i++] }),
+      }),
+    });
+  }
+
+  function committerPrompt(c: StubContext): string | undefined {
+    return c.playerCalls.find((r) =>
+      r.prompt.includes('Make a commit of the changes'),
+    )?.prompt;
+  }
+
+  it('validateCodeOptions returns an empty set for {}, an absent namespace, and absent options', () => {
+    expect(validateCodeOptions({ code: {} })).toEqual({});
+    expect(validateCodeOptions({})).toEqual({});
+    expect(validateCodeOptions(undefined)).toEqual({});
+  });
+
+  it('validateCodeOptions rejects an unknown key with a path-named error', () => {
+    expect(() => validateCodeOptions({ code: { tempo: 5 } })).toThrow(
+      /captain\.options\.code\.tempo/,
+    );
+  });
+
+  it('init with captain.options.code = {} initializes and derives identity from session.players', async () => {
+    const s = stubSession();
+    const c = singleCommitContext();
+    const captain = createCodeTmuxPlayCaptain({ code: {} });
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/start fix the bug'), c.context);
+
+    const prompt = committerPrompt(c);
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain('Coder is claude.');
+    expect(prompt).not.toContain('<coder-llm>');
+  });
+
+  it('init with captain.options absent initializes the same way', async () => {
+    const s = stubSession();
+    const c = singleCommitContext();
+    const captain = createCodeTmuxPlayCaptain({});
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/start fix the bug'), c.context);
+
+    const prompt = committerPrompt(c);
+    expect(prompt).toBeDefined();
+    expect(prompt).toContain('Coder is claude.');
+  });
+
+  it('init rejects when captain.options.code carries an unknown key', async () => {
+    const s = stubSession();
+    const captain = createCodeTmuxPlayCaptain({ code: { tempo: 5 } });
+    await expect(captain.init!(s.session)).rejects.toThrow(
+      /captain\.options\.code\.tempo/,
+    );
   });
 });
 

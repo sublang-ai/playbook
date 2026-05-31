@@ -1,15 +1,51 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 import createPlaybookRuntime from './code.playbook.js';
+// PBRT-29/30: CODE runtime options are carried under
+// `captain.options.code`, a namespaced object the host forwards
+// verbatim through `captain.options`. cligent neither reads nor
+// validates `options.code` (PBRT-30); this adapter is the sole
+// validator. The CODE options schema defines no keys yet, so a valid
+// `options.code` is an empty object or absent, every key is unknown
+// and rejected with a path-named error, and the adapter passes an
+// empty options set into `createPlaybookRuntime`. A new CODE option
+// shall be introduced as its own higher-numbered item that extends
+// `CODE_OPTION_KEYS`; until then the validator exists to establish the
+// seam and fail closed on stray keys.
+const CODE_OPTION_KEYS = new Set();
+export function validateCodeOptions(captainOptions) {
+    const code = readCodeNamespace(captainOptions);
+    if (code === undefined)
+        return {};
+    if (typeof code !== 'object' || code === null || Array.isArray(code)) {
+        throw new Error('captain.options.code must be an object');
+    }
+    for (const key of Object.keys(code)) {
+        if (!CODE_OPTION_KEYS.has(key)) {
+            throw new Error(`Unknown config field captain.options.code.${key}`);
+        }
+    }
+    return {};
+}
+function readCodeNamespace(captainOptions) {
+    if (typeof captainOptions !== 'object' ||
+        captainOptions === null ||
+        Array.isArray(captainOptions)) {
+        return undefined;
+    }
+    return captainOptions.code;
+}
 // Captain factory per TMUX-014: `(options: unknown) => Captain`.
-// `options` is whatever `captain.options` carries in the YAML config.
-// The per-run player identity strings (`coderPlayer`, `reviewerPlayer`)
-// are derived from `session.players` at init time per PBRT-4 —
-// preferring each entry's `model` and falling back to `adapter` when
-// no model is pinned — so player prompts and commit-message trailers
-// carry the concrete model identity (e.g. `claude-opus-4-7`) rather
-// than the adapter family name (e.g. `claude`). Any same-named keys
-// in `options` are ignored.
+// `options` is whatever `captain.options` carries in the YAML config;
+// CODE reads only the namespaced `options.code` (PBRT-30). The per-run
+// player identity strings (`coderPlayer`, `reviewerPlayer`) are
+// derived from `session.players` at init time per PBRT-4 — preferring
+// each entry's `model` and falling back to `adapter` when no model is
+// pinned — so player prompts and commit-message trailers carry the
+// concrete model identity (e.g. `claude-opus-4-7`) rather than the
+// adapter family name (e.g. `claude`). They come from `session.players`
+// independent of `captain.options.code` and override any same-named
+// keys.
 export default function createCodeTmuxPlayCaptain(options) {
     // CaptainSession is bound at init time and persists across turns;
     // CaptainContext is rebuilt per turn and carries the call
@@ -21,17 +57,24 @@ export default function createCodeTmuxPlayCaptain(options) {
     let activeContext;
     return {
         async init(session) {
+            // PBRT-30: validate `captain.options.code` before constructing
+            // the runtime so a stray key fails `init` closed with a
+            // path-named error; the empty schema yields an empty options set.
+            const codeOptions = validateCodeOptions(options);
             const playerIdentity = (id) => {
                 const entry = session.players.find((p) => p.id === id);
                 return entry?.model ?? entry?.adapter;
             };
             const coderPlayer = playerIdentity('coder');
             const reviewerPlayer = playerIdentity('reviewer');
-            runtime = createPlaybookRuntime({
-                ...options,
+            // Identity strings from `session.players` override any same-named
+            // keys and are independent of `captain.options.code` (PBRT-30).
+            const runtimeOptions = {
+                ...codeOptions,
                 coderPlayer,
                 reviewerPlayer,
-            });
+            };
+            runtime = createPlaybookRuntime(runtimeOptions);
             const ports = {
                 callPlayer: async (playerId, prompt, _signal) => {
                     if (!activeContext) {

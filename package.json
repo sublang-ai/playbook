@@ -58,7 +58,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "playbook-code": "node reference/sdlc/code.playbook/bin/playbook-code.js"
   },
   "publishConfig": {
     "access": "public",
@@ -68,7 +69,8 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.143",
     "@openai/codex-sdk": "^0.130.0",
     "@sublang/cligent": "latest",
-    "xstate": "^5.19.4"
+    "xstate": "^5.19.4",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

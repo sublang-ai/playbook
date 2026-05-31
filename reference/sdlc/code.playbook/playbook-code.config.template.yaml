@@ -1,29 +1,29 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-# Seed template for the user-level playbook-code config.
+# Seed template for the user-level playbook-code CODE overlay.
 # First run copies this file to:
 #   ${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml
 #
-# Safe tuning points:
-# - Change captain.adapter / captain.model / captain.reasoningEffort to
-#   pick the judge/Captain agent and its reasoning tier.
-# - Change each player's adapter, model, and reasoningEffort to pick
-#   the Coder and Reviewer agents.
+# This is a CODE *overlay*, not a full tmux-play config: playbook-code
+# composes the launched tmux-play config from it at startup (PBCODE-16).
+# The composer injects captain.from (the CODE adapter module) and the
+# coder / reviewer player ids, and can inherit theme plus captain-judge
+# defaults from an existing tmux-play config — so you only tune the
+# fields below.
 #
-# PBRT-4 host-configuration invariants:
-# - captain.from must keep pointing at the CODE tmux-play adapter module.
-# - players[].id must remain exactly "coder" and "reviewer"; the runtime routes
-#   to those baked ids and does not remap them. The adapter derives the
-#   per-run player identity strings (substituted into <coder-llm> /
-#   <reviewer-llm> in player prompts) from each entry's model when pinned
-#   and falls back to its adapter when no model is set, so the Committer's
-#   commit-message trailers can name the concrete model.
+# Safe tuning points:
+# - captain.adapter / model / reasoningEffort pick the judge/Captain
+#   agent and its reasoning tier.
+# - players.coder and players.reviewer pick the Coder and Reviewer
+#   agents; set each role's adapter (required) and optional model /
+#   reasoningEffort / permissions. Each role's model when pinned, else
+#   its adapter, doubles as the identity string the adapter substitutes
+#   into <coder-llm> / <reviewer-llm> in player prompts (PBRT-4), so pin
+#   a model if you want the Committer's commit-message trailers to name
+#   the concrete model.
 
 captain:
-  # PBRT-4 invariant: keep this adapter module path unchanged.
-  from: "@sublang/playbook/code/tmux-play"
-  # Tunable: the Captain/Judge adapter, model, and reasoning effort.
   adapter: claude
   model: claude-sonnet-4-6
   reasoningEffort: high
@@ -31,15 +31,13 @@ captain:
     mode: auto
 
 players:
-  # PBRT-4 invariant: keep id: coder. Tune adapter/model if desired.
-  - id: coder
+  coder:
     adapter: claude
     model: claude-opus-4-7
     reasoningEffort: xhigh
     permissions:
       mode: auto
-  # PBRT-4 invariant: keep id: reviewer. Tune adapter/model if desired.
-  - id: reviewer
+  reviewer:
     adapter: codex
     model: gpt-5.5
     reasoningEffort: xhigh
