@@ -16,7 +16,8 @@ Players:
 When Boss gives a coding intent, Captain shall relay it to Coder along with the following prompt:
 > Assess whether this can be completed in a single commit, following best practices.
 > If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; ensure @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Ensure @specs/map.md reflects the changes.
 > Do not commit.
 The resulting changes are Initial Changes.
 
@@ -49,11 +50,11 @@ When an IR is done, Captain shall prompt Coder:
 > The set should be complete and coherent.
 > Avoid implementation specifics.
 > Avoid redundant spec items.
-> Consult @specs/map.md for relevant context and update it to reflect your changes.
+> Ensure @specs/map.md reflects the changes.
 ## Reviewer
 
 For each finding in a review round, Coder either addresses it with changes or challenges it with a rebuttal.
-Any code change to address findings starts a new round of review, no matter if some findings are also rebutted.
+Any code change to address findings starts a new round of review, even if some findings are also rebutted.
 Rounds continue until Reviewer raises no findings.
 
 ### CODE-5
@@ -68,7 +69,8 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-6
@@ -78,7 +80,8 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-7
@@ -95,7 +98,8 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-8
@@ -110,7 +114,8 @@ When Committer commits Initial Changes from an IR task involving changes only in
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-9
@@ -120,7 +125,8 @@ When Committer commits Initial Changes from an IR task involving changes only ou
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-10
@@ -137,13 +143,14 @@ When Committer commits Initial Changes from an IR task involving changes both in
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-11
 
 When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only in @specs/user/, @specs/dev/, or @specs/test/ without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
-> Review the unstaged/untracked changes.
+> Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Verify any affected spec items are:
 >
@@ -152,23 +159,25 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-12
 
 When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only outside @specs/user/, @specs/dev/, and @specs/test/ without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
-> Review the unstaged/untracked changes.
+> Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-13
 
 When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/ without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
-> Review the unstaged/untracked changes.
+> Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Verify any affected spec items are:
 >
@@ -179,7 +188,8 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 
 ### CODE-14
@@ -190,7 +200,7 @@ When Coder raises rebuttals without making code changes, Captain shall relay the
 ### CODE-15
 
 When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only in @specs/user/, @specs/dev/, or @specs/test/ and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
-> Review the unstaged/untracked changes.
+> Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Verify any affected spec items are:
 >
@@ -199,25 +209,27 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
 ### CODE-16
 
 When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only outside @specs/user/, @specs/dev/, and @specs/test/ and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
-> Review the unstaged/untracked changes.
+> Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
 ### CODE-17
 
 When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/ and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
-> Review the unstaged/untracked changes.
+> Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Verify any affected spec items are:
 >
@@ -228,7 +240,8 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
-> Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.
+> For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
+> Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
@@ -238,6 +251,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 
 When Coder makes any Initial Changes and Reviewer has not played since the last commit, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Write concisely.
 > Coder is <coder-llm>.
 > Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
 
@@ -247,6 +261,7 @@ Result guard: `needsBossInput` — Committing requires additional Boss input or 
 
 When Coder makes any Initial Changes and Reviewer has played since the last commit, or Reviewer raises no findings on uncommitted changes and Coder has played since the last commit, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Write concisely.
 > Coder is <coder-llm>; Reviewer is <reviewer-llm>.
 > Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
 

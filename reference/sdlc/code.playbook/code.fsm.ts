@@ -255,7 +255,8 @@ const planAndImplementInput: CaptainInputFactory = (context) => ({
   prompt: [
     'Assess whether this can be completed in a single commit, following best practices.',
     'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
-    'Consult @specs/map.md or @specs/meta.md for relevant context if needed; ensure @specs/map.md reflects the changes.',
+    'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+    'Ensure @specs/map.md reflects the changes.',
     'Do not commit.',
   ].join('\n'),
   result: withNeedsBossReply({
@@ -301,7 +302,7 @@ const summarizeSpecsInput: CaptainInputFactory = (context) => ({
     'The set should be complete and coherent.',
     'Avoid implementation specifics.',
     'Avoid redundant spec items.',
-    'Consult @specs/map.md for relevant context and update it to reflect your changes.',
+    'Ensure @specs/map.md reflects the changes.',
   ].join('\n'),
   result: withNeedsBossReply({
     specsReady: 'Coder produced uncommitted spec updates (Initial Changes).',
@@ -708,7 +709,8 @@ export const codingMachine = setup({
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '',
             'Flag anything missing, redundant, over-specified, or under-specified.',
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -748,7 +750,8 @@ export const codingMachine = setup({
             'Refer to the commit message.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -795,7 +798,8 @@ export const codingMachine = setup({
             'Flag anything missing, redundant, over-specified, or under-specified.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -841,7 +845,8 @@ export const codingMachine = setup({
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '',
             'Flag anything missing, redundant, over-specified, or under-specified.',
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -882,7 +887,8 @@ export const codingMachine = setup({
             'Refer to the commit message.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -930,7 +936,8 @@ export const codingMachine = setup({
             'Flag anything missing, redundant, over-specified, or under-specified.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -965,7 +972,7 @@ export const codingMachine = setup({
           sourceItem: 'CODE-11',
           ...bossReplyInputFields(context),
           prompt: [
-            'Review the unstaged/untracked changes.',
+            'Review the unstaged and untracked changes in the context of the staged changes.',
             'Understand the intent.',
             'Verify any affected spec items are:',
             '',
@@ -974,7 +981,8 @@ export const codingMachine = setup({
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '',
             'Flag anything missing, redundant, over-specified, or under-specified.',
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -1011,11 +1019,12 @@ export const codingMachine = setup({
           sourceItem: 'CODE-12',
           ...bossReplyInputFields(context),
           prompt: [
-            'Review the unstaged/untracked changes.',
+            'Review the unstaged and untracked changes in the context of the staged changes.',
             'Understand the intent.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -1052,7 +1061,7 @@ export const codingMachine = setup({
           sourceItem: 'CODE-13',
           ...bossReplyInputFields(context),
           prompt: [
-            'Review the unstaged/untracked changes.',
+            'Review the unstaged and untracked changes in the context of the staged changes.',
             'Understand the intent.',
             'Verify any affected spec items are:',
             '',
@@ -1063,7 +1072,8 @@ export const codingMachine = setup({
             'Flag anything missing, redundant, over-specified, or under-specified.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
           ].join('\n'),
           result: {
@@ -1102,7 +1112,7 @@ export const codingMachine = setup({
           reviews: context.reviews,
           challenges: context.challenges,
           prompt: [
-            'Review the unstaged/untracked changes.',
+            'Review the unstaged and untracked changes in the context of the staged changes.',
             'Understand the intent.',
             'Verify any affected spec items are:',
             '',
@@ -1111,7 +1121,8 @@ export const codingMachine = setup({
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '',
             'Flag anything missing, redundant, over-specified, or under-specified.',
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
@@ -1152,11 +1163,12 @@ export const codingMachine = setup({
           reviews: context.reviews,
           challenges: context.challenges,
           prompt: [
-            'Review the unstaged/untracked changes.',
+            'Review the unstaged and untracked changes in the context of the staged changes.',
             'Understand the intent.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
@@ -1197,7 +1209,7 @@ export const codingMachine = setup({
           reviews: context.reviews,
           challenges: context.challenges,
           prompt: [
-            'Review the unstaged/untracked changes.',
+            'Review the unstaged and untracked changes in the context of the staged changes.',
             'Understand the intent.',
             'Verify any affected spec items are:',
             '',
@@ -1208,7 +1220,8 @@ export const codingMachine = setup({
             'Flag anything missing, redundant, over-specified, or under-specified.',
             'Flag any issues or improvements (numbered; no duplication).',
             "Think thoroughly — don't just approve or reject.",
-            'Consult @specs/map.md or @specs/meta.md for relevant context if needed; verify @specs/map.md reflects the changes.',
+            'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
+            'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
@@ -1318,6 +1331,7 @@ export const codingMachine = setup({
           coderPlayer: context.coderPlayer,
           prompt: [
             'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
+            'Write concisely.',
             'Coder is <coder-llm>.',
             'Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
           ].join('\n'),
@@ -1382,6 +1396,7 @@ export const codingMachine = setup({
           reviewerPlayer: context.reviewerPlayer,
           prompt: [
             'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
+            'Write concisely.',
             'Coder is <coder-llm>; Reviewer is <reviewer-llm>.',
             'Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
           ].join('\n'),

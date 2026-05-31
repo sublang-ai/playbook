@@ -90,10 +90,10 @@ When Coder makes any Initial Changes or Reviewer raises no findings on uncommitt
 > Write concisely.
 
 When Captain prompts Committer and only Coder has played since the last commit, Captain shall also append:
-> Coder is \<coder-llm\>.
+> Coder is <coder-llm>.
 
 When Captain prompts Committer and both Coder and Reviewer have played since the last commit, Captain shall also append:
-> Coder is \<coder-llm\>; Reviewer is \<reviewer-llm\>.
+> Coder is <coder-llm>; Reviewer is <reviewer-llm>.
 
 When Captain prompts Committer, Captain shall also append:
 > Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
