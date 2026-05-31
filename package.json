@@ -41,7 +41,7 @@
     "reference/sdlc/code.playbook/tmux-play.config.yaml",
     "reference/sdlc/code.playbook/tmux-play.production.config.yaml",
     "reference/sdlc/code.playbook/playbook-code.config.template.yaml",
-    "reference/sdlc/code.playbook/bin"
+    "reference/sdlc/code.playbook/bin/playbook-code.js"
   ],
   "bin": {
     "playbook-code": "reference/sdlc/code.playbook/bin/playbook-code.js"
