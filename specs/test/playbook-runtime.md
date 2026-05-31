@@ -175,3 +175,17 @@ event transitions out of `awaitBossReply` and clears the pending
 reply context, text beginning with `/` receives no special parsing,
 invalid replies surface one `emitStatus` call and leave the FSM
 unmoved, and empty text makes no port calls.
+
+## Options validation
+
+### PBRT-31
+Verifies: [PBRT-29](../user/playbook-runtime.md#pbrt-29), [PBRT-30](../dev/playbook-runtime.md#pbrt-30)
+
+When the tmux-play adapter is initialized with `captain.options.code`
+set to the empty object `{}`, set to an object carrying an unknown
+key, and absent, the test suite shall fail unless the `{}` and
+absent cases initialize and pass an empty options set into
+`createPlaybookRuntime`, the unknown-key case causes `init` to
+reject with an error naming the offending path, and the derived
+`coderPlayer` / `reviewerPlayer` identity strings still come from
+`session.players` regardless of `captain.options.code`.

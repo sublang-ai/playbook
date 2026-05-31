@@ -108,3 +108,20 @@ configuration shall not be required to repeat them under
 `captain.options` and player prompts carry the concrete model
 identity (e.g. `claude-opus-4-7`) rather than the adapter family
 name (e.g. `claude`) whenever the host has pinned a model.
+
+### PBRT-29
+
+Where the runtime runs under tmux-play, CODE-specific runtime
+options shall be carried under `captain.options.code` as a
+namespaced object, and no CODE option shall be placed elsewhere
+in the config.
+A setting that changes host-observable behavior — theme, layout,
+permissions, model or adapter routing, or timing — shall be
+expressed through tmux-play's own `captain` / `players` fields
+rather than `captain.options.code`.
+The `captain.from` adapter-module path and the `coder` /
+`reviewer` `players[].id` values are supplied by the
+`playbook-code` composer ([PBCODE-16](playbook-code.md#pbcode-16))
+and shall not be required to appear in the user-edited CODE
+overlay; this supersedes the user-maintained-invariant framing of
+[PBRT-4](#pbrt-4).

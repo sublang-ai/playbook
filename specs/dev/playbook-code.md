@@ -18,8 +18,10 @@ via `import.meta.resolve('@sublang/cligent/tmux-play')` from within
 global install links executables only for top-level packages.
 The bundled production YAML shall not be the default runtime config
 for the shim; when the user does not supply `--config`, the shim
-shall launch against the user-level config seeded per
-[PBCODE-7](#pbcode-7).
+shall compose the launched config from the user-level overlay
+seeded per [PBCODE-7](#pbcode-7) and
+[PBCODE-16](../user/playbook-code.md#pbcode-16), rather than launch
+the user-level config directly.
 
 ### PBCODE-4
 
@@ -35,24 +37,65 @@ Where `playbook-code` seeds the user config per
 resolve the bundled `playbook-code.config.template.yaml` relative
 to its own installed location in the `@sublang/playbook` package
 tree and copy that template to the resolved user config path.
-The copy shall preserve the template comments, including comments
-that name the host-configuration invariants from
-[PBRT-4](../user/playbook-runtime.md#pbrt-4): `captain.from`
-points at the adapter module, and `players[].id` remains `coder`
-/ `reviewer` with each entry's `model` (when pinned) or
-`adapter` (when no model is set) doubling as the identity string
-the adapter substitutes into player prompts.
+The bundled template shall be a CODE overlay per
+[PBCODE-16](../user/playbook-code.md#pbcode-16): a `captain` judge
+block, a `players` mapping with `coder` and `reviewer` keys (each
+with `adapter` and optional `model` / `reasoningEffort` /
+`permissions`), and any `captain.options.code`; it shall carry
+neither `captain.from` nor `players[].id`, since the composer
+injects those.
+The copy shall preserve the template comments, which shall
+describe the tunable overlay fields rather than name `captain.from`
+or `players[].id` as user-maintained invariants; the comments
+shall note that each role's `model` (when pinned) or `adapter`
+(otherwise) doubles as the identity string the adapter substitutes
+into player prompts per [PBRT-4](../user/playbook-runtime.md#pbrt-4).
 The copy shall not run when `--config` is supplied.
 
 ### PBCODE-8
 
 Where `playbook-code` runs the readiness gate per
-[PBCODE-6](../user/playbook-code.md#pbcode-6), the shim shall read
-the resolved YAML config and collect the declared `adapter` values
-from `captain.adapter` and every `players[]` entry.
+[PBCODE-6](../user/playbook-code.md#pbcode-6), the shim shall
+collect the declared `adapter` values from the composed config
+([PBCODE-16](../user/playbook-code.md#pbcode-16)) — the
+`captain.adapter`, which may have been inherited from the base
+config, and the `coder` and `reviewer` player adapters — and not
+from the raw overlay, so an inherited captain adapter is not
+missed.
 The shim shall treat `claude` as ready when `ANTHROPIC_API_KEY` is
 set or `$HOME/.claude/` exists, and shall treat `codex` as ready
 when `OPENAI_API_KEY` is set or `$HOME/.codex/` exists.
 For every distinct adapter value other than `claude` or `codex`,
 the shim shall emit one warning and shall exclude that adapter from
 the blocking readiness result.
+
+## Composition
+
+### PBCODE-17
+
+Where `playbook-code` composes the runtime config per
+[PBCODE-16](../user/playbook-code.md#pbcode-16), the shim shall
+locate any base tmux-play config with cligent's exported
+`findTmuxPlayConfig` and shall not call `loadTmuxPlayConfig`
+without a located path, since that loader writes a default config
+when none exists.
+The shim shall read the overlay (the
+[PBCODE-5](../user/playbook-code.md#pbcode-5) path): its `players`
+mapping keyed by `coder` / `reviewer`, its `captain` judge block,
+and its `captain.options.code`; the overlay carries no
+`captain.from` and no `players[].id`.
+For each `players.<role>` key it shall emit one composed
+`players[]` array entry whose `id` is the role key and whose
+`adapter`, `model`, `reasoningEffort`, and `permissions` are taken
+from that role's block; it shall reject an overlay whose `players`
+mapping omits `coder` or `reviewer`, or carries any other key,
+with a path-named error.
+It shall set the composed `captain.adapter` from the overlay when
+present, else from the base config, and shall fail with a
+path-named `captain.adapter` error when neither supplies it; the
+role `adapter`s are required in the overlay and are not inherited.
+The shim shall type the composed config with cligent's exported
+config types but shall serialize it to the temporary `.yaml` with
+its own serializer, since `@sublang/cligent/tmux-play` exports no
+config serializer; it shall depend on no cligent internals beyond
+those public exports.

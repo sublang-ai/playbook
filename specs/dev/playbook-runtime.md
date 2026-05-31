@@ -216,3 +216,24 @@ runtime — `init(session)` to `runtime.init(ports)`,
 `runtime.handleBossInput({ text: turn.prompt, signal: context.signal })`,
 and `dispose()` to `runtime.dispose()` — and shall be resolvable
 as the compiled module that the host's `captain.from` imports.
+
+### PBRT-30
+
+When constructing the runtime, the tmux-play adapter shall read
+CODE options from `captain.options.code`, validate them against
+the CODE options schema, reject unknown keys with an error that
+names the offending path, and pass the validated options into
+`createPlaybookRuntime`.
+The CODE options schema defines no keys at present: a valid
+`captain.options.code` is an empty object or absent, every key is
+unknown and rejected, and the adapter passes an empty options set
+into `createPlaybookRuntime`.
+A new CODE option shall be introduced as its own higher-numbered
+item that extends this schema; until then the validator exists to
+establish the seam and fail closed on stray keys.
+The external `@sublang/cligent` package shall not validate
+`captain.options.code`; the adapter is the sole validator.
+The derived `coderPlayer` / `reviewerPlayer` identity strings
+([PBRT-15](#pbrt-15)) shall continue to come from
+`session.players` and override any same-named keys, independent
+of `captain.options.code`.

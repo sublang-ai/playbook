@@ -29,6 +29,7 @@ meta.md     The spec of specs
 | DR-003 | [003-sketch-controlled-shell.md](decisions/003-sketch-controlled-shell.md) | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
 | DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: baked player binding, free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and tmux-play adapter wiring |
 | DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + universal `needsBossReply` guard for captain-invoking states, so player questions suspend and resume the same state with the answer in context |
+| DR-006 | [006-code-config-composition.md](decisions/006-code-config-composition.md) | CODE config via `captain.options.code` (namespaced, adapter-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config; object-launcher deferred |
 
 ## Iterations
 
@@ -63,17 +64,17 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run user-config seed, readiness gate, help, exit/signal behavior |
-| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, template seeding, readiness heuristic, Node engine floor |
-| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, and help |
+| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config) |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding, readiness heuristic, config composition (base discovery, role→`players[]` mapping, owned YAML serialization), Node engine floor |
+| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and config composition |
 
 ### PBRT
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface: free-text turn classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, session lifecycle, binding, captain bridge, adjudication, abort, telemetry, and tmux-play adapter |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, `awaitBossReply`, status/telemetry, lifecycle, player binding, and tmux-play adapter wiring with fake ports/stubbed cligent primitives |
+| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface: free-text turn classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration including the `captain.options.code` surface |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, session lifecycle, binding, captain bridge, adjudication, abort, telemetry, tmux-play adapter, and `captain.options.code` validation |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, `awaitBossReply`, status/telemetry, lifecycle, player binding, tmux-play adapter wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
 
 ### PLAYBOOK
 
