@@ -59,6 +59,70 @@ const BOSS_REPLY_ERRORS = {
     `state ${stateId} declared needsBossReply but is not registered as resumable`,
 } as const;
 
+// Required-payload fields whose value is the player's verbatim long-form
+// prose. The runtime carries `finalText.trim()` into these fields rather
+// than asking the judge to round-trip the text through JSON. Short
+// extracted fields (`question`, `taskDescription`, `irNumber`, …) stay
+// judge-extracted — they are not in this set.
+const VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
+  'reviews',
+  'challenges',
+]);
+
+// Normalize an unknown error value to the compact `{ name, message }`
+// shape used by Captain-pane / status emissions. Returns `undefined`
+// for nullish input so callers can omit absent errors.
+function normalizeErrorCompact(
+  err: unknown,
+): { name: string; message: string } | undefined {
+  if (err === undefined || err === null) return undefined;
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message };
+  }
+  if (typeof err === 'object') {
+    const o = err as Record<string, unknown>;
+    if (typeof o.message === 'string') {
+      return {
+        name: typeof o.name === 'string' ? o.name : 'Error',
+        message: o.message,
+      };
+    }
+  }
+  return { name: 'Error', message: String(err) };
+}
+
+// Normalize an unknown error value to the full `{ name, message, stack }`
+// shape used by telemetry emissions. Returns `undefined` for nullish
+// input. `stack` is omitted when not available on the source value.
+function normalizeErrorFull(
+  err: unknown,
+): { name: string; message: string; stack?: string } | undefined {
+  const compact = normalizeErrorCompact(err);
+  if (compact === undefined) return undefined;
+  if (err instanceof Error) {
+    return err.stack !== undefined ? { ...compact, stack: err.stack } : compact;
+  }
+  if (typeof err === 'object' && err !== null) {
+    const stack = (err as Record<string, unknown>).stack;
+    if (typeof stack === 'string') {
+      return { ...compact, stack };
+    }
+  }
+  return compact;
+}
+
+// Normalize any `error` field inside a telemetry event so failed
+// transitions don't leak raw Error instances through the channel.
+function normalizeEventForTelemetry(event: unknown): unknown {
+  if (event === null || typeof event !== 'object' || Array.isArray(event)) {
+    return event;
+  }
+  const e = event as Record<string, unknown>;
+  if (!('error' in e)) return event;
+  const normalized = normalizeErrorFull(e.error);
+  return { ...e, error: normalized };
+}
+
 // Internal capabilities (DR-004 §10). Each ships with its final
 // signature; behavior lands in the per-capability task noted by the
 // TODO marker.
@@ -180,8 +244,17 @@ async function adjudicate(
   // required fields with the literal phrase
   //   Output shall include `<fieldName>: <...>`
   // so we extract those tokens and require each to be a string in
-  // the judge response.
+  // the judge response — except for VERBATIM_PAYLOAD_FIELDS
+  // (`reviews`, `challenges`), where the runtime substitutes
+  // `finalText.trim()` so the long-form prose is not round-tripped
+  // through judge JSON. Short extracted fields like `question` and
+  // `taskDescription` keep the existing extract-and-validate path.
+  const verbatim = finalText.trim();
   for (const field of extractRequiredFields(input.result[guard])) {
+    if (VERBATIM_PAYLOAD_FIELDS.has(field)) {
+      obj[field] = verbatim;
+      continue;
+    }
     if (typeof obj[field] !== 'string') {
       if (guard === 'needsBossReply' && field === 'question') {
         throw new Error(BOSS_REPLY_ERRORS.missingQuestion);
@@ -214,7 +287,10 @@ function buildJudgePrompt(input: CaptainInput, finalText: string): string {
   lines.push(
     'Pick exactly one outcome by `guard` and return JSON ' +
       '`{ guard, …payloadFields }`. Required payload fields are ' +
-      'named in the outcome description.',
+      'named in the outcome description. Do not copy long-form ' +
+      'verbatim fields (`reviews`, `challenges`) — the runtime ' +
+      "carries the player's output into those fields verbatim, " +
+      'so any value you supply for them will be overwritten.',
   );
   lines.push('');
   for (const [key, description] of Object.entries(input.result)) {
@@ -692,11 +768,21 @@ function stateTelemetryPayload(
   event: unknown,
   context: Record<string, unknown>,
 ): Record<string, unknown> {
-  const payload: Record<string, unknown> = { from, to, event };
+  const payload: Record<string, unknown> = {
+    from,
+    to,
+    event: normalizeEventForTelemetry(event),
+  };
   if (to === 'awaitBossReply') {
     const pendingBossQuestion = pendingBossQuestionFromContext(context);
     if (pendingBossQuestion !== undefined) {
       payload.pendingBossQuestion = pendingBossQuestion;
+    }
+  }
+  if (to === 'failed') {
+    const lastError = normalizeErrorFull(context.lastError);
+    if (lastError !== undefined) {
+      payload.lastError = lastError;
     }
   }
   return payload;
@@ -720,6 +806,10 @@ export const _internal = {
   formatTransition,
   formatClassification,
   stateTelemetryPayload,
+  normalizeErrorCompact,
+  normalizeErrorFull,
+  normalizeEventForTelemetry,
+  VERBATIM_PAYLOAD_FIELDS,
 };
 
 export default function createPlaybookRuntime(
@@ -814,7 +904,8 @@ export default function createPlaybookRuntime(
           if (to === 'failed') {
             const lastError = (snap.context as { lastError?: unknown })
               ?.lastError;
-            enqueueEmit(() => ports.emitStatus(entryLine, { lastError }));
+            const data = { lastError: normalizeErrorCompact(lastError) };
+            enqueueEmit(() => ports.emitStatus(entryLine, data));
           } else {
             enqueueEmit(() => ports.emitStatus(entryLine));
           }

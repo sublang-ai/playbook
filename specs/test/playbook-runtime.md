@@ -53,7 +53,11 @@ guard that drove an entry as `→ <guard>` with `· <field>=<count>`
 tallies when applicable and no leading whitespace, the
 failure-state marker, and the `awaitBossReply` entry summary;
 entry to the idle state or the terminal state emits no status
-line; the failure-state status carries `lastError`; entry to
+line; the failure-state status carries `lastError` normalized to
+the compact `{ name, message }` shape (never a raw Error
+instance); the failure-state telemetry payload carries both a
+full `{ name, message, stack }` form of `lastError` and a
+normalized `event.error` with the same full shape; entry to
 `awaitBossReply` emits `◆ awaiting Boss reply · <resumeStateId>
 · <player> · <sourceItem> · q="<first 80 chars of question>"`
 and the corresponding `playbook.fsm.state` telemetry carries
@@ -105,9 +109,16 @@ under fake ports, the test suite shall fail unless:
 - `status='ok'` without `finalText`, `status='aborted'`, and
   `status='error'` each route the FSM to the failure state
   through `onError`;
-- a `callJudge` reply that is malformed JSON, names an
-  undeclared guard, or omits a required payload field also
-  routes the FSM to the failure state.
+- a `callJudge` reply that is malformed JSON, names an undeclared
+  guard, or omits a required extracted (non-verbatim) payload
+  field — for example `taskDescription` on `taskReady` or
+  `question` on `needsBossReply` — also routes the FSM to the
+  failure state;
+- a `callJudge` reply that omits a verbatim payload field
+  (`reviews` or `challenges`) does *not* throw: the runtime
+  substitutes the player's `finalText.trim()` into that field
+  and the FSM advances; any judge-supplied value for those
+  fields is overwritten by the verbatim text.
 
 ## Classification and flow
 

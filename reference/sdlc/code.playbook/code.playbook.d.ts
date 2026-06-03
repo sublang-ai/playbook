@@ -22,6 +22,16 @@ export interface PlaybookRuntime {
     dispose(): Promise<void>;
 }
 export type CodePlaybookOptions = CodingInput;
+declare function normalizeErrorCompact(err: unknown): {
+    name: string;
+    message: string;
+} | undefined;
+declare function normalizeErrorFull(err: unknown): {
+    name: string;
+    message: string;
+    stack?: string;
+} | undefined;
+declare function normalizeEventForTelemetry(event: unknown): unknown;
 declare function composePlayerPrompt(input: CaptainInput): string;
 declare function resolvePlayerId(input: CaptainInput): string;
 declare function adjudicate(input: CaptainInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal): Promise<CaptainOutput>;
@@ -58,6 +68,10 @@ export declare const _internal: {
     formatTransition: typeof formatTransition;
     formatClassification: typeof formatClassification;
     stateTelemetryPayload: typeof stateTelemetryPayload;
+    normalizeErrorCompact: typeof normalizeErrorCompact;
+    normalizeErrorFull: typeof normalizeErrorFull;
+    normalizeEventForTelemetry: typeof normalizeEventForTelemetry;
+    VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string>;
 };
 export default function createPlaybookRuntime(options: CodePlaybookOptions): PlaybookRuntime;
 export {};

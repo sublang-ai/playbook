@@ -19,6 +19,9 @@ const {
   adjudicate,
   classifyBossText,
   captainBridge,
+  normalizeErrorCompact,
+  normalizeErrorFull,
+  normalizeEventForTelemetry,
 } = _internal;
 
 function makeFakePorts(
@@ -401,40 +404,43 @@ describe('adjudicate', () => {
   });
 
   describe('required payload-field validation (slc/link.md)', () => {
-    const code2ChallengesRaised =
-      'Coder challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.';
+    // CODE-3 / `taskReady` declares a required `taskDescription`
+    // field — a short extracted value that stays judge-extracted
+    // (i.e. NOT in VERBATIM_PAYLOAD_FIELDS), so it exercises the
+    // judge-validates path.
+    const code3TaskReady =
+      'Coder produced uncommitted changes for the next IR task (Initial Changes). Output shall include `taskDescription: <one-line description of the task just implemented>`.';
 
-    it('throws when the chosen guard requires a field the response omits', async () => {
+    it('throws when the chosen guard requires an extracted field the response omits', async () => {
       const ports = makeFakePorts({
-        callJudge: async () =>
-          JSON.stringify({ guard: 'challengesRaised' }),
+        callJudge: async () => JSON.stringify({ guard: 'taskReady' }),
       });
       await expect(
         adjudicate(
-          makeInput({ result: { challengesRaised: code2ChallengesRaised } }),
+          makeInput({ result: { taskReady: code3TaskReady } }),
           'out',
           ports,
           new AbortController().signal,
         ),
-      ).rejects.toThrow(/required field "challenges"/);
+      ).rejects.toThrow(/required field "taskDescription"/);
     });
 
-    it('accepts the response when every required field is present as a string', async () => {
+    it('accepts the response when every extracted required field is present as a string', async () => {
       const ports = makeFakePorts({
         callJudge: async () =>
           JSON.stringify({
-            guard: 'challengesRaised',
-            challenges: '1. counter-evidence',
+            guard: 'taskReady',
+            taskDescription: 'rename foo to bar',
           }),
       });
       const out = await adjudicate(
-        makeInput({ result: { challengesRaised: code2ChallengesRaised } }),
+        makeInput({ result: { taskReady: code3TaskReady } }),
         'out',
         ports,
         new AbortController().signal,
       );
-      expect(out.guard).toBe('challengesRaised');
-      expect(out.challenges).toBe('1. counter-evidence');
+      expect(out.guard).toBe('taskReady');
+      expect(out.taskDescription).toBe('rename foo to bar');
     });
 
     it('does not validate fields when the description names none', async () => {
@@ -452,19 +458,195 @@ describe('adjudicate', () => {
       expect(out.guard).toBe('accepted');
     });
 
-    it('throws when a required field is present but not a string', async () => {
+    it('throws when an extracted required field is present but not a string', async () => {
       const ports = makeFakePorts({
         callJudge: async () =>
-          JSON.stringify({ guard: 'challengesRaised', challenges: 42 }),
+          JSON.stringify({ guard: 'taskReady', taskDescription: 42 }),
       });
       await expect(
         adjudicate(
-          makeInput({ result: { challengesRaised: code2ChallengesRaised } }),
+          makeInput({ result: { taskReady: code3TaskReady } }),
           'out',
           ports,
           new AbortController().signal,
         ),
-      ).rejects.toThrow(/required field "challenges"/);
+      ).rejects.toThrow(/required field "taskDescription"/);
+    });
+  });
+
+  describe('verbatim payload-field substitution (reviews / challenges)', () => {
+    // Reviewer states whose `result` description requires `reviews`
+    // (or `challenges`) get the player's verbatim `finalText.trim()`
+    // injected by the runtime — the judge does not round-trip the
+    // long-form prose through JSON.
+    const reviewsRequired =
+      'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.';
+    const challengesRequired =
+      'Coder challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.';
+
+    it('substitutes finalText.trim() for `reviews` even when the judge omits it', async () => {
+      const ports = makeFakePorts({
+        callJudge: async () => JSON.stringify({ guard: 'hasFindings' }),
+      });
+      const finalText =
+        '  1. Add missing tests.\n2. Rename function.\n3. Extract helper.  ';
+      const out = await adjudicate(
+        makeInput({ result: { hasFindings: reviewsRequired } }),
+        finalText,
+        ports,
+        new AbortController().signal,
+      );
+      expect(out.guard).toBe('hasFindings');
+      expect(out.reviews).toBe(finalText.trim());
+    });
+
+    it('overrides any judge-supplied `reviews` value with finalText.trim()', async () => {
+      const ports = makeFakePorts({
+        callJudge: async () =>
+          JSON.stringify({
+            guard: 'hasFindings',
+            reviews: 'a paraphrased and truncated copy from the judge',
+          }),
+      });
+      const finalText = '  1. Originally written reviewer prose.  ';
+      const out = await adjudicate(
+        makeInput({ result: { hasFindings: reviewsRequired } }),
+        finalText,
+        ports,
+        new AbortController().signal,
+      );
+      expect(out.reviews).toBe(finalText.trim());
+    });
+
+    it('substitutes finalText.trim() for `challenges` even when the judge omits it', async () => {
+      const ports = makeFakePorts({
+        callJudge: async () =>
+          JSON.stringify({ guard: 'challengesRaised' }),
+      });
+      const finalText = '  1. Counter-evidence A.\n2. Counter-evidence B.  ';
+      const out = await adjudicate(
+        makeInput({ result: { challengesRaised: challengesRequired } }),
+        finalText,
+        ports,
+        new AbortController().signal,
+      );
+      expect(out.guard).toBe('challengesRaised');
+      expect(out.challenges).toBe(finalText.trim());
+    });
+
+    it('judge prompt instructs against round-tripping reviews / challenges', async () => {
+      let prompt = '';
+      const ports = makeFakePorts({
+        callJudge: async (p) => {
+          prompt = p;
+          return JSON.stringify({ guard: 'hasFindings' });
+        },
+      });
+      await adjudicate(
+        makeInput({ result: { hasFindings: reviewsRequired } }),
+        'output',
+        ports,
+        new AbortController().signal,
+      );
+      expect(prompt).toContain('`reviews`');
+      expect(prompt).toContain('`challenges`');
+      expect(prompt).toMatch(/runtime[^\n]*verbatim/i);
+    });
+  });
+});
+
+describe('error normalization at emission boundaries', () => {
+  describe('normalizeErrorCompact', () => {
+    it('returns undefined for nullish input', () => {
+      expect(normalizeErrorCompact(undefined)).toBeUndefined();
+      expect(normalizeErrorCompact(null)).toBeUndefined();
+    });
+
+    it('extracts { name, message } from an Error instance, dropping stack', () => {
+      const err = new TypeError('boom');
+      const out = normalizeErrorCompact(err);
+      expect(out).toEqual({ name: 'TypeError', message: 'boom' });
+      expect(out as Record<string, unknown>).not.toHaveProperty('stack');
+    });
+
+    it('extracts { name, message } from an error-shaped plain object', () => {
+      expect(
+        normalizeErrorCompact({ name: 'CustomErr', message: 'msg', stack: 's' }),
+      ).toEqual({ name: 'CustomErr', message: 'msg' });
+    });
+
+    it('defaults name to "Error" when missing on an object with message', () => {
+      expect(normalizeErrorCompact({ message: 'msg' })).toEqual({
+        name: 'Error',
+        message: 'msg',
+      });
+    });
+
+    it('falls back to String(err) for non-Error, non-shaped values', () => {
+      expect(normalizeErrorCompact('plain string')).toEqual({
+        name: 'Error',
+        message: 'plain string',
+      });
+      expect(normalizeErrorCompact(42)).toEqual({ name: 'Error', message: '42' });
+    });
+  });
+
+  describe('normalizeErrorFull', () => {
+    it('returns undefined for nullish input', () => {
+      expect(normalizeErrorFull(undefined)).toBeUndefined();
+      expect(normalizeErrorFull(null)).toBeUndefined();
+    });
+
+    it('includes stack from an Error instance', () => {
+      const err = new Error('boom');
+      const out = normalizeErrorFull(err);
+      expect(out?.name).toBe('Error');
+      expect(out?.message).toBe('boom');
+      expect(typeof out?.stack).toBe('string');
+    });
+
+    it('includes stack from an error-shaped plain object when present', () => {
+      const out = normalizeErrorFull({
+        name: 'CustomErr',
+        message: 'msg',
+        stack: 'fake-stack',
+      });
+      expect(out).toEqual({
+        name: 'CustomErr',
+        message: 'msg',
+        stack: 'fake-stack',
+      });
+    });
+
+    it('omits stack when source does not carry one', () => {
+      expect(normalizeErrorFull({ message: 'msg' })).toEqual({
+        name: 'Error',
+        message: 'msg',
+      });
+    });
+  });
+
+  describe('normalizeEventForTelemetry', () => {
+    it('passes through events that carry no error field', () => {
+      const event = { type: 'xstate.snapshot', value: 'ready' };
+      expect(normalizeEventForTelemetry(event)).toBe(event);
+    });
+
+    it('replaces Error in event.error with full normalized form', () => {
+      const err = new TypeError('boom');
+      const event = { type: 'xstate.error.actor.captain', error: err };
+      const out = normalizeEventForTelemetry(event) as {
+        error: { name: string; message: string; stack?: unknown };
+      };
+      expect(out.error.name).toBe('TypeError');
+      expect(out.error.message).toBe('boom');
+      expect(typeof out.error.stack).toBe('string');
+      expect(out.error).not.toBeInstanceOf(Error);
+    });
+
+    it('returns nullish primitives unchanged', () => {
+      expect(normalizeEventForTelemetry(undefined)).toBeUndefined();
+      expect(normalizeEventForTelemetry(null)).toBeNull();
     });
   });
 });
@@ -2016,7 +2198,7 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     ).toBe(question);
   });
 
-  it('emitStatus on entry to failed includes lastError in data', async () => {
+  it('emitStatus on entry to failed includes normalized compact lastError in data', async () => {
     const controller = new AbortController();
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async (_id, _p, signal) => {
@@ -2036,9 +2218,81 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     });
     const failedStatus = statuses.find((s) => s.message.startsWith('◆ failed'));
     expect(failedStatus).toBeDefined();
-    expect(failedStatus?.data).toEqual(
-      expect.objectContaining({ lastError: expect.anything() }),
+    // Status data carries the compact `{ name, message }` shape so
+    // the Captain pane renders legibly and never leaks a raw Error
+    // instance (with non-serializable fields like `stack`) into the
+    // status channel.
+    const data = failedStatus?.data as {
+      lastError?: { name?: unknown; message?: unknown; stack?: unknown };
+    };
+    expect(typeof data.lastError?.name).toBe('string');
+    expect(typeof data.lastError?.message).toBe('string');
+    expect((data.lastError as Record<string, unknown>).stack).toBeUndefined();
+  });
+
+  it('failed-state telemetry carries full normalized error in event.error and lastError', async () => {
+    const controller = new AbortController();
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async (_id, _p, signal) => {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { status: 'aborted', error: 'host signal' };
+      },
+      callJudge: judgeSequence([]),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    setTimeout(() => controller.abort(), 5);
+    await runtime.handleBossInput({
+      text: '/start x',
+      signal: controller.signal,
+    });
+    const failedTelemetry = telemetry.find(
+      (t) => (t.payload as { to?: string }).to === 'failed',
     );
+    expect(failedTelemetry).toBeDefined();
+    const payload = failedTelemetry?.payload as {
+      lastError?: { name?: unknown; message?: unknown; stack?: unknown };
+      event?: { error?: { name?: unknown; message?: unknown; stack?: unknown } };
+    };
+    // Telemetry carries the full `{ name, message, stack }` shape on
+    // both `lastError` (context-level snapshot) and `event.error`
+    // (failed-transition cause), so observers can debug fail-stop
+    // paths without losing the original stack.
+    expect(typeof payload.lastError?.name).toBe('string');
+    expect(typeof payload.lastError?.message).toBe('string');
+    expect(typeof payload.lastError?.stack).toBe('string');
+    expect(typeof payload.event?.error?.name).toBe('string');
+    expect(typeof payload.event?.error?.message).toBe('string');
+    // event.error is normalized too — never a bare Error instance.
+    expect(payload.event?.error).not.toBeInstanceOf(Error);
+  });
+
+  it('non-failed telemetry payloads preserve their event shape (no spurious error key)', async () => {
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'no progress' }),
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    await runtime.handleBossInput({ text: '/start x', signal: sig() });
+    for (const t of telemetry) {
+      const payload = t.payload as {
+        to: string;
+        event: Record<string, unknown>;
+        lastError?: unknown;
+      };
+      if (payload.to !== 'failed') {
+        expect('lastError' in payload).toBe(false);
+      }
+      // Plain xstate events never carry an `error` field; the
+      // normalizer leaves them untouched.
+      expect('error' in payload.event).toBe(false);
+    }
   });
 
   it('emissions are ordered and awaited (drainer serializes the queue)', async () => {
@@ -2094,19 +2348,50 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
   });
 
   it('transition guard line precedes state entry with payload tallies', async () => {
+    // Per the verbatim-payload contract, `reviews` is filled by the
+    // runtime from the player's verbatim `finalText.trim()` — not
+    // by the judge JSON. The Reviewer-state call therefore needs
+    // its `finalText` to carry the numbered list whose tally we
+    // assert on the transition line; the other player calls keep
+    // their unrelated `finalText` so we don't perturb other tests.
+    const finalTextByGuard: Record<string, string> = {
+      singleCommitReady: 'done',
+      committedSpecs: 'done',
+      hasFindings: '1. tweak\n2. another',
+      accepted: 'done',
+    };
+    let nextGuard = 'singleCommitReady';
+    const guardOrder = [
+      'singleCommitReady',
+      'committedSpecs',
+      'hasFindings',
+      'accepted',
+    ];
+    let guardIndex = 0;
     const { ports, statuses } = makeRecordingPorts({
       // Drive: /start → planAndImplement → singleCommitReady →
       //   commitCoderInitial → committedSpecs →
       //   reviewBossCommitSpecs → hasFindings (with 2 reviews) →
       //   respondToReview → accepted → done
-      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callPlayer: async () => {
+        nextGuard = guardOrder[guardIndex] ?? 'accepted';
+        return { status: 'ok', finalText: finalTextByGuard[nextGuard] };
+      },
       callJudge: judgeSequence([
         { guard: 'singleCommitReady' },
         { guard: 'committedSpecs' },
-        { guard: 'hasFindings', reviews: '1. tweak\n2. another' },
+        { guard: 'hasFindings' },
         { guard: 'accepted' },
       ]),
     });
+    // Increment after the judge runs so the next callPlayer picks
+    // the right finalText for its state.
+    const origJudge = ports.callJudge;
+    ports.callJudge = async (prompt, signal) => {
+      const result = await origJudge(prompt, signal);
+      if (!isClassifierPrompt(prompt)) guardIndex++;
+      return result;
+    };
     const runtime = makeRuntimeWithInternals();
     await runtime.init(ports);
     await runtime.handleBossInput({ text: '/start x', signal: sig() });

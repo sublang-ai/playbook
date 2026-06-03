@@ -114,9 +114,17 @@ the player's output verbatim, and lists every guard key of the
 FSM state's `result` map with its description verbatim. It shall
 require a JSON object reply carrying a `guard` field equal to one
 of those keys, and a string value for every payload field the
-chosen guard's description marks as required. A reply that is
-malformed, names an undeclared guard, or omits a required field
-shall cause the runtime to throw.
+chosen guard's description marks as required, except for the
+verbatim payload fields `reviews` and `challenges` — for those
+the runtime shall carry `finalText.trim()` into the resulting
+`CaptainOutput` regardless of any judge-supplied value, so the
+long-form prose is not round-tripped through judge JSON.
+Short extracted fields such as `question` and `taskDescription`
+shall stay judge-extracted (the judge supplies the value; the
+runtime validates it is a string). The judge prompt shall direct
+the judge not to populate the verbatim fields. A reply that is
+malformed, names an undeclared guard, or omits a required
+extracted (non-verbatim) field shall cause the runtime to throw.
 
 ## Drive to quiescence
 
@@ -154,6 +162,16 @@ runtime surfaces per [PBRT-14](#pbrt-14).
 
 On every FSM transition the runtime shall call `emitTelemetry`
 with topic `playbook.fsm.state` and payload `{ from, to, event }`.
+Where the transition is a failed-transition event carrying an
+`error` field (e.g., `xstate.error.actor.*`), the runtime shall
+normalize that `event.error` to a full `{ name, message, stack }`
+shape; on entry to the failure state it shall additionally
+include the context-level `lastError` in the telemetry payload
+in the same full `{ name, message, stack }` shape, so observers
+can debug fail-stop paths without losing the original stack.
+`context.lastError` itself stays unchanged as the original Error
+instance for downstream FSM consumers; normalization happens only
+at emission boundaries.
 
 For transitions into a Boss-relevant state
 ([PBRT-3](../user/playbook-runtime.md#pbrt-3)) the runtime shall
@@ -167,9 +185,10 @@ with `· reviews=N` / `· challenges=N` tallies when the guard's
 payload populates those fields, and shall carry no leading
 whitespace — visual nesting under the preceding state entry is
 the host presenter's concern. Entry to the failure state shall
-pass `lastError` as the `emitStatus` data argument. The runtime
-shall not call `emitStatus` on entry to the idle state or the
-terminal state.
+pass `lastError` as the `emitStatus` data argument normalized to
+a compact `{ name, message }` shape so the Captain pane never
+leaks a raw Error instance. The runtime shall not call
+`emitStatus` on entry to the idle state or the terminal state.
 
 For each Boss turn whose text classifies to an FSM event, the
 runtime shall additionally call `emitStatus` once with the bare
