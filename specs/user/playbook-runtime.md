@@ -61,8 +61,12 @@ human-readable status stream that lets the Boss follow the FSM
 without reading the player panes. The runtime composes each line
 as the meaningful content only; the host pane (e.g., tmux-play)
 owns any speaker chrome, line wrapping, and visual nesting.
+The judge's own JSON replies — classification and adjudication —
+shall not appear on this stream; the runtime composes every line,
+so the pane stays human-readable (the host runs judge calls
+hidden per [PBRT-15](../dev/playbook-runtime.md#pbrt-15)).
 
-The stream uses three glyphs and one captain-speech act so each
+The stream uses three glyphs and two captain-speech acts so each
 line is parseable at a glance:
 
 - Captain classification carries only the FSM event type the Boss
@@ -70,6 +74,12 @@ line is parseable at a glance:
   The host renders it as captain speech (e.g., prefixed
   `captain>`). The runtime shall not echo the verbatim Boss text —
   the Boss readline already shows it.
+- A player question carries the full pending question attributed to
+  the asking player, formatted `<player> asks: <question>`, with no
+  glyph. The host renders it as captain speech. It is emitted only
+  on entry to `awaitBossReply` (see the `◆` bullet) and carries the
+  question verbatim and in full — not truncated — since the judge
+  JSON that produced it is hidden.
 - `⤷` for entry into any captain-invoking state — the Coder,
   Reviewer, and Committer states — carrying `<Player>: <label>`
   where `<label>` is the state's human-readable label. The line
@@ -85,11 +95,14 @@ line is parseable at a glance:
   emit no status line on entry to the idle state or the terminal
   state — the next `boss>` prompt is the implicit signal. On
   entry to the failure state the line shall additionally carry
-  the error that caused it. On entry to `awaitBossReply` the line
-  shall additionally carry `awaiting Boss reply · <resumeStateId>
-  · <player> · <sourceItem> · q="<first 80 chars of question>"`,
-  so the Boss sees what's being asked and can reply with plain
-  text that the runtime classifies as `BOSS_REPLY`.
+  the error that caused it. On entry to `awaitBossReply` the
+  runtime shall emit two lines: first the full pending question as
+  the captain-speech act above (`<player> asks: <question>`), so
+  the Boss sees exactly what's being asked; then the marker line
+  `◆ awaiting Boss reply · <resumeStateId> · <player> ·
+  <sourceItem>` carrying the routing metadata with no `q=` excerpt
+  rider. The Boss replies with plain text that the runtime
+  classifies as `BOSS_REPLY`.
 
 ## Host configuration
 

@@ -197,13 +197,17 @@ so the host can render it as captain speech. The runtime shall not
 echo the verbatim Boss text.
 
 On entry to the `awaitBossReply` state the runtime shall call
-`emitStatus` with a single-line summary `awaiting Boss reply ·
-<resumeStateId> · <player> · <sourceItem> · q="<first 80
-chars of question>"` so Boss has enough context to compose a
-reply, and shall additionally call `emitTelemetry` with topic
-`playbook.fsm.state` carrying `pendingBossQuestion.question`
-verbatim alongside the other transition fields, so non-tmux-play
-hosts can render their own prompt.
+`emitStatus` twice, in order: first with the full pending
+question as a captain-speech act attributed to the asking player,
+formatted `<player> asks: <question>` (no glyph, the host renders
+it as captain speech), carrying `pendingBossQuestion.question`
+verbatim and in full; then with the routing marker
+`◆ awaiting Boss reply · <resumeStateId> · <player> ·
+<sourceItem>` carrying no `q=` excerpt rider. It shall
+additionally call `emitTelemetry` with topic `playbook.fsm.state`
+carrying `pendingBossQuestion.question` verbatim alongside the
+other transition fields, so non-tmux-play hosts can render their
+own prompt.
 
 All port emissions shall be issued in order, each awaited before
 the next, and never dropped.
@@ -221,9 +225,15 @@ whose `id` is `coder` / `reviewer`, the adapter shall use that
 entry's `model` when set and shall fall back to its `adapter`
 otherwise. It shall build `PlaybookPorts` by wiring `callPlayer`
 to `context.callPlayer`, `callJudge` to `context.callCaptain`
-(throwing when the captain result status is not `ok`), and
-`emitStatus` / `emitTelemetry` to `session.emitStatus` /
-`session.emitTelemetry`. Any `coderPlayer` / `reviewerPlayer`
+invoked with the hidden-visibility option
+(`callCaptain(prompt, { visibility: 'hidden' })`) so the judge's
+JSON reply runs without streaming to the Boss pane — keeping the
+pane human-readable per
+[PBRT-3](../user/playbook-runtime.md#pbrt-3) — and throwing when
+the captain result status is not `ok`, and `emitStatus` /
+`emitTelemetry` to `session.emitStatus` / `session.emitTelemetry`.
+Every judge call — classification and adjudication — shall pass
+`{ visibility: 'hidden' }`. Any `coderPlayer` / `reviewerPlayer`
 keys in the forwarded options shall be overridden by the derived
 values.
 

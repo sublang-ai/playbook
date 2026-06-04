@@ -97,7 +97,12 @@ export default function createCodeTmuxPlayCaptain(options) {
                     if (!activeContext) {
                         throw new Error('callJudge invoked outside a Boss turn');
                     }
-                    const r = await activeContext.callCaptain(prompt);
+                    // PBRT-15 / DR-007: run the judge call hidden so its JSON
+                    // reply never reaches the Boss pane; the runtime composes the
+                    // human-readable pane lines (PBRT-3) from the parsed result.
+                    const r = await activeContext.callCaptain(prompt, {
+                        visibility: 'hidden',
+                    });
                     if (r.status !== 'ok') {
                         throw new Error(r.error ?? `callCaptain status "${r.status}"`);
                     }

@@ -714,24 +714,37 @@ function pendingBossQuestionFromContext(
   };
 }
 
-function questionExcerpt(question: string): string {
-  return question.replace(/[\r\n]+/g, ' ').slice(0, 80);
+// PBRT-3 / PBRT-14: on entry to `awaitBossReply` the runtime surfaces
+// the pending player question as a captain-speech act attributed to the
+// asking player (`<player> asks: <full question>`), emitted with no
+// glyph so the host renders it as captain speech. The question is
+// carried verbatim and in full — the judge JSON that produced it rides
+// a hidden callCaptain (PBRT-15), so this line is the Boss's only
+// legible view of what was asked.
+function formatAwaitBossReplyQuestion(
+  context: Record<string, unknown>,
+): string {
+  const pending = pendingBossQuestionFromContext(context);
+  const player = pending?.player ?? 'unknown';
+  const question = pending?.question ?? '';
+  return `${player} asks: ${question}`;
 }
 
-function formatAwaitBossReplyEntry(context: Record<string, unknown>): string {
+// The rider-less routing marker emitted right after the question line.
+// It carries only the resume target, asking player, and source item;
+// the former `q="<first 80 chars>"` excerpt rider is dropped now that
+// the full question rides the captain-speech line above.
+function formatAwaitBossReplyMarker(
+  context: Record<string, unknown>,
+): string {
   const pending = pendingBossQuestionFromContext(context);
   const resumeStateId = pending?.resumeStateId ?? 'unknown';
   const player = pending?.player ?? 'unknown';
   const sourceItem = pending?.sourceItem ?? 'unknown';
-  const question = questionExcerpt(pending?.question ?? '');
-  return `◆ awaiting Boss reply · ${resumeStateId} · ${player} · ${sourceItem} · q=${JSON.stringify(question)}`;
+  return `◆ awaiting Boss reply · ${resumeStateId} · ${player} · ${sourceItem}`;
 }
 
-function formatStateEntry(
-  stateId: string,
-  context: Record<string, unknown> = {},
-): string | undefined {
-  if (stateId === 'awaitBossReply') return formatAwaitBossReplyEntry(context);
+function formatStateEntry(stateId: string): string | undefined {
   if (SUPPRESSED_ENTRY_STATES.has(stateId)) return undefined;
   if (stateId === 'failed') return '◆ failed';
   const meta = stateMetadata.get(stateId);
@@ -801,7 +814,8 @@ export const _internal = {
   STATE_LABELS,
   stateMetadata,
   pendingBossQuestionFromContext,
-  formatAwaitBossReplyEntry,
+  formatAwaitBossReplyQuestion,
+  formatAwaitBossReplyMarker,
   formatStateEntry,
   formatTransition,
   formatClassification,
@@ -899,7 +913,18 @@ export default function createPlaybookRuntime(
           if (transitionLine !== undefined) {
             enqueueEmit(() => ports.emitStatus(transitionLine));
           }
-          const entryLine = formatStateEntry(to, context);
+          // awaitBossReply surfaces two lines per PBRT-3 / PBRT-14: the
+          // full player question as captain speech, then the rider-less
+          // routing marker. The full-question telemetry rides
+          // stateTelemetryPayload above.
+          if (to === 'awaitBossReply') {
+            const questionLine = formatAwaitBossReplyQuestion(context);
+            const markerLine = formatAwaitBossReplyMarker(context);
+            enqueueEmit(() => ports.emitStatus(questionLine));
+            enqueueEmit(() => ports.emitStatus(markerLine));
+            return;
+          }
+          const entryLine = formatStateEntry(to);
           if (entryLine === undefined) return;
           if (to === 'failed') {
             const lastError = (snap.context as { lastError?: unknown })

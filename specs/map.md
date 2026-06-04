@@ -30,6 +30,7 @@ meta.md     The spec of specs
 | DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: baked player binding, free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and tmux-play adapter wiring |
 | DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + universal `needsBossReply` guard for captain-invoking states, so player questions suspend and resume the same state with the answer in context |
 | DR-006 | [006-code-config-composition.md](decisions/006-code-config-composition.md) | CODE config via `captain.options.code` (namespaced, adapter-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config; object-launcher deferred |
+| DR-007 | [007-hidden-judge-captain-pane.md](decisions/007-hidden-judge-captain-pane.md) | No raw judge JSON on the Captain pane: route every CODE judge call through cligent's hidden `callCaptain({ visibility: 'hidden' })`, surface a suspended player's full question as captain speech then a rider-less marker, with a temporary module augmentation and a gated test until the cligent bump |
 
 ## Iterations
 
@@ -44,6 +45,7 @@ meta.md     The spec of specs
 | IR-009 | [009-free-text-boss-input.md](iterations/009-free-text-boss-input.md) | Make every Boss turn free text classified by the judge, retiring in-playbook slash commands and reserving `/command` for playbook selection |
 | IR-010 | [010-drop-boss-question-instruction.md](iterations/010-drop-boss-question-instruction.md) | Drop the injected Boss-question instruction from composed player prompts while retaining Boss-reply suspension |
 | IR-011 | [011-playbook-code-onboarding.md](iterations/011-playbook-code-onboarding.md) | Seed a user-level `playbook-code.config.yaml` on first run, gate launch on a light per-adapter readiness check, and recover from missing auth by printing the shim's own `--help` |
+| IR-012 | [012-hidden-judge-captain-pane.md](iterations/012-hidden-judge-captain-pane.md) | Implemented DR-007: every CODE judge call runs hidden via `callCaptain({ visibility: 'hidden' })`; `awaitBossReply` entry shows the full question as captain speech then a rider-less marker; temporary cligent augmentation + gated integration test |
 
 ## Packages
 

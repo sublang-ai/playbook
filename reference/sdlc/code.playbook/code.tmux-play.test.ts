@@ -54,6 +54,10 @@ interface StubContext {
   controller: AbortController;
   playerCalls: { playerId: string; prompt: string }[];
   captainCalls: string[];
+  // The options object passed alongside each `callCaptain` prompt,
+  // recorded in call order so tests can assert hidden visibility
+  // (PBRT-15 / PBRT-21). `undefined` when no options were passed.
+  captainOptions: unknown[];
 }
 
 function isClassifierPrompt(prompt: string): boolean {
@@ -114,6 +118,7 @@ function stubContext(overrides: {
   const signal = overrides.signal ?? controller.signal;
   const playerCalls: StubContext['playerCalls'] = [];
   const captainCalls: StubContext['captainCalls'] = [];
+  const captainOptions: StubContext['captainOptions'] = [];
   const defaultCaptainReplies = [
     { guard: 'singleCommitReady' },
     { guard: 'needsBossInput' },
@@ -135,8 +140,9 @@ function stubContext(overrides: {
           finalText: 'no progress — needs Boss input',
         };
       },
-      callCaptain: async (prompt) => {
+      callCaptain: async (prompt: string, options?: unknown) => {
         captainCalls.push(prompt);
+        captainOptions.push(options);
         if (isClassifierPrompt(prompt)) {
           return {
             status: 'ok',
@@ -165,6 +171,7 @@ function stubContext(overrides: {
     controller,
     playerCalls,
     captainCalls,
+    captainOptions,
   };
 }
 
@@ -244,6 +251,27 @@ describe('createCodeTmuxPlayCaptain — port wiring (DR-004 §11)', () => {
     const adjudication = adjudicationPrompts(c);
     expect(adjudication[0]).toContain('needsBossReply'); // result key in prompt
     expect(adjudication[0]).toContain('Pick exactly one outcome');
+  });
+
+  it('every callCaptain (classification + adjudication) runs hidden', async () => {
+    const s = stubSession();
+    const c = stubContext();
+    const captain = createCodeTmuxPlayCaptain({
+      coderPlayer: 'claude',
+      reviewerPlayer: 'codex',
+    });
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/start something'), c.context);
+
+    // PBRT-15 / DR-007: the judge's JSON must never stream to the Boss
+    // pane, so every callCaptain — classification and adjudication
+    // alike — passes { visibility: 'hidden' }. One options object is
+    // recorded per callCaptain call.
+    expect(c.captainCalls.length).toBeGreaterThan(0);
+    expect(c.captainOptions).toHaveLength(c.captainCalls.length);
+    for (const options of c.captainOptions) {
+      expect(options).toEqual({ visibility: 'hidden' });
+    }
   });
 
   it('callJudge throws when callCaptain status !== "ok"', async () => {
@@ -585,6 +613,29 @@ describe('createCodeTmuxPlayCaptain — captain.options.code validation (PBRT-29
     );
   });
 });
+
+// PBRT-32 / DR-007 §3 — end-to-end proof that the judge's control-plane
+// JSON never reaches the Boss pane. This needs a real tmux-play
+// runtime/presenter that honours `callCaptain(prompt, { visibility:
+// 'hidden' })`; the installed `@sublang/cligent` ("latest") does not yet
+// ship that option, so the suite is gated off until the cligent bump.
+// Flip CLIGENT_SUPPORTS_HIDDEN_CAPTAIN to `true` in the same change that
+// bumps the dependency and removes the temporary module augmentation.
+const CLIGENT_SUPPORTS_HIDDEN_CAPTAIN = false;
+describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)(
+  'judge JSON never reaches the Boss pane (PBRT-32)',
+  () => {
+    it('drives a real tmux-play turn and asserts no judge JSON on the Boss pane', async () => {
+      // Drive the adapter end-to-end against the real tmux-play
+      // runtime/presenter and assert that none of the Boss-pane records
+      // contain the judge's classification/adjudication JSON — only the
+      // runtime's composed glyph + captain-speech lines (PBRT-3/14).
+      throw new Error(
+        'PBRT-32 integration harness pending the cligent hidden-visibility bump',
+      );
+    });
+  },
+);
 
 describe('createCodeTmuxPlayCaptain — signal propagation (DR-004 §11)', () => {
   it('context.signal flows into runtime.handleBossInput via handleBossTurn', async () => {

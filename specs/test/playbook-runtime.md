@@ -51,18 +51,21 @@ captain-invoking state entry as `⤷ <Player>: <label>` with no
 source-item tag and no FSM-context rider field, every transition
 guard that drove an entry as `→ <guard>` with `· <field>=<count>`
 tallies when applicable and no leading whitespace, the
-failure-state marker, and the `awaitBossReply` entry summary;
+failure-state marker, and the `awaitBossReply` entry's two lines;
 entry to the idle state or the terminal state emits no status
 line; the failure-state status carries `lastError` normalized to
 the compact `{ name, message }` shape (never a raw Error
 instance); the failure-state telemetry payload carries both a
 full `{ name, message, stack }` form of `lastError` and a
 normalized `event.error` with the same full shape; entry to
-`awaitBossReply` emits `◆ awaiting Boss reply · <resumeStateId>
-· <player> · <sourceItem> · q="<first 80 chars of question>"`
-and the corresponding `playbook.fsm.state` telemetry carries
-`pendingBossQuestion.question` verbatim alongside the other
-transition fields; and emissions are observed in enqueue order.
+`awaitBossReply` emits two status lines — the full pending
+question as captain speech `<player> asks: <question>` (verbatim
+and untruncated) followed by the rider-less marker `◆ awaiting
+Boss reply · <resumeStateId> · <player> · <sourceItem>` with no
+`q=` excerpt — and the corresponding `playbook.fsm.state`
+telemetry carries `pendingBossQuestion.question` verbatim
+alongside the other transition fields; and emissions are observed
+in enqueue order.
 
 ## Host adapter
 
@@ -76,14 +79,32 @@ suite shall fail unless player calls reach `context.callPlayer`
 with player ids matching the runtime's baked player ids (both
 `coder` via the free-text coding happy path and `reviewer` via a
 multi-stage flow that drives the FSM through a Reviewer state),
-adjudication reaches `context.callCaptain`, status and telemetry
-reach the session, the per-turn `signal` flows into the runtime,
+adjudication reaches `context.callCaptain`, every `callCaptain`
+invocation — classification and adjudication alike — passes
+`{ visibility: 'hidden' }`, status and telemetry reach the
+session, the per-turn `signal` flows into the runtime,
 the per-run player identity strings substituted into the
 Committer prompt's `<coder-llm>` / `<reviewer-llm>` placeholders
 come from `session.players[].model` when each entry pins a model
 and fall back to `session.players[].adapter` when no model is
 pinned (both branches exercised), and `handleBossTurn` invoked
 before `init` rejects.
+
+### PBRT-32
+Verifies: [PBRT-15](../dev/playbook-runtime.md#pbrt-15)
+
+When the tmux-play adapter is driven end to end against a real
+tmux-play runtime and pane presenter through a Boss turn that
+triggers both classification and adjudication judge calls, the
+test suite shall fail unless none of the judge's JSON replies
+reach the Boss pane — only the runtime-composed status lines do.
+This integration test is gated on host support for hidden Captain
+visibility via `describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)`:
+until the host's `callCaptain` honors `{ visibility: 'hidden' }`
+(per [PBRT-15](../dev/playbook-runtime.md#pbrt-15)), the flag is
+`false` and the suite shall skip the test rather than fail it; the
+flag flips to `true` when that support ships, with no other change
+to the test.
 
 ## Lifecycle and captain bridge
 

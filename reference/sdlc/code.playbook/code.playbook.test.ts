@@ -2165,7 +2165,7 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     expect(messages).toContain('START_CODING');
   });
 
-  it('awaitBossReply entry emits the structured status line and full-question telemetry', async () => {
+  it('awaitBossReply entry emits the full-question speech line, the rider-less marker, and full-question telemetry', async () => {
     const question =
       'Which scope should I use?\nPlease answer with the exact package boundary.';
     const { ports, statuses, telemetry } = makeRecordingPorts({
@@ -2183,10 +2183,21 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       signal: sig(),
     });
 
-    const expectedExcerpt = question.replace(/[\r\n]+/g, ' ').slice(0, 80);
-    expect(statuses.map((s) => s.message)).toContain(
-      `◆ awaiting Boss reply · planAndImplement · Coder · CODE-1 · q=${JSON.stringify(expectedExcerpt)}`,
-    );
+    const messages = statuses.map((s) => s.message);
+    // PBRT-3/14: the full question rides a captain-speech line
+    // attributed to the asking player — verbatim and untruncated.
+    expect(messages).toContain(`Coder asks: ${question}`);
+    // The marker carries only routing metadata; the old
+    // `q="<first 80 chars>"` rider is dropped.
+    const marker = '◆ awaiting Boss reply · planAndImplement · Coder · CODE-1';
+    expect(messages).toContain(marker);
+    expect(messages.some((m) => m.includes('q='))).toBe(false);
+    // The question-speech line precedes the marker line.
+    const questionIdx = messages.indexOf(`Coder asks: ${question}`);
+    const markerIdx = messages.indexOf(marker);
+    expect(questionIdx).toBeGreaterThanOrEqual(0);
+    expect(markerIdx).toBeGreaterThan(questionIdx);
+    // Telemetry still carries the full question verbatim.
     const awaitTelemetry = telemetry.find(
       (t) => (t.payload as { to?: string }).to === 'awaitBossReply',
     );

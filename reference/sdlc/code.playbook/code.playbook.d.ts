@@ -49,8 +49,9 @@ interface PendingBossQuestionForStatus {
     question: string;
 }
 declare function pendingBossQuestionFromContext(context: Record<string, unknown>): PendingBossQuestionForStatus | undefined;
-declare function formatAwaitBossReplyEntry(context: Record<string, unknown>): string;
-declare function formatStateEntry(stateId: string, context?: Record<string, unknown>): string | undefined;
+declare function formatAwaitBossReplyQuestion(context: Record<string, unknown>): string;
+declare function formatAwaitBossReplyMarker(context: Record<string, unknown>): string;
+declare function formatStateEntry(stateId: string): string | undefined;
 declare function formatTransition(event: unknown): string | undefined;
 declare function formatClassification(eventType: string): string;
 declare function stateTelemetryPayload(from: unknown, to: string, event: unknown, context: Record<string, unknown>): Record<string, unknown>;
@@ -63,7 +64,8 @@ export declare const _internal: {
     STATE_LABELS: Readonly<Record<string, string>>;
     stateMetadata: ReadonlyMap<string, StateMetadata>;
     pendingBossQuestionFromContext: typeof pendingBossQuestionFromContext;
-    formatAwaitBossReplyEntry: typeof formatAwaitBossReplyEntry;
+    formatAwaitBossReplyQuestion: typeof formatAwaitBossReplyQuestion;
+    formatAwaitBossReplyMarker: typeof formatAwaitBossReplyMarker;
     formatStateEntry: typeof formatStateEntry;
     formatTransition: typeof formatTransition;
     formatClassification: typeof formatClassification;
