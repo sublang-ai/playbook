@@ -72,6 +72,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-6
 
@@ -83,6 +84,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-7
 
@@ -101,6 +103,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-8
 
@@ -117,6 +120,7 @@ When Committer commits Initial Changes from an IR task involving changes only in
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-9
 
@@ -128,6 +132,7 @@ When Committer commits Initial Changes from an IR task involving changes only ou
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-10
 
@@ -146,6 +151,7 @@ When Committer commits Initial Changes from an IR task involving changes both in
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-11
 
@@ -162,6 +168,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-12
 
@@ -173,6 +180,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-13
 
@@ -191,11 +199,13 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 ### CODE-14
 
 When Coder raises rebuttals without making code changes, Captain shall relay them to Reviewer along with the following prompt:
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
+> Do not edit files or commit; report findings only.
 
 ### CODE-15
 
@@ -212,6 +222,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
 ### CODE-16
@@ -224,6 +235,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
 ### CODE-17
@@ -243,6 +255,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
 ## Committer

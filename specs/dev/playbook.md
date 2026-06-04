@@ -70,6 +70,12 @@ the corresponding source field (`irNumber`, `coderPlayer`, or
 `reviewerPlayer`) into the `CaptainInput`, and the composer shall
 substitute the placeholder with the wired field's value.
 
+### PLAYBOOK-16
+
+Every Reviewer captain-invoking prompt in `code.gears.md` and
+`code.fsm.ts` shall include the line
+`Do not edit files or commit; report findings only.`.
+
 ## Boss-reply suspension
 
 ### PLAYBOOK-12

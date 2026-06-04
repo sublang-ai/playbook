@@ -57,6 +57,14 @@ whose source field is wired, fails to substitute a declared
 placeholder with its wired source field's value, or emits labelled
 blocks out of DR-004 §6 order.
 
+### PLAYBOOK-17
+Verifies: [PLAYBOOK-16](../dev/playbook.md#playbook-16)
+
+When `pnpm test` runs, the test suite shall fail if any Reviewer
+captain-invoking prompt in `code.gears.md` or `code.fsm.ts` omits
+the review-only instruction that forbids editing files or
+committing.
+
 ## Boss-reply suspension
 
 ### PLAYBOOK-14

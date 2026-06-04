@@ -712,6 +712,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The spec-only commit has no review findings.',
@@ -753,6 +754,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The code-only commit has no review findings.',
@@ -801,6 +803,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The mixed commit has no review findings.',
@@ -848,6 +851,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The IR-task spec-only commit has no review findings.',
@@ -890,6 +894,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The IR-task code-only commit has no review findings.',
@@ -939,6 +944,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The IR-task mixed commit has no review findings.',
@@ -984,6 +990,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The uncommitted spec-only changes are ready to commit.',
@@ -1026,6 +1033,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The uncommitted code-only changes are ready to commit.',
@@ -1075,6 +1083,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             noFindings: 'The uncommitted mixed changes are ready to commit.',
@@ -1124,6 +1133,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
           result: {
@@ -1170,6 +1180,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
           result: {
@@ -1223,6 +1234,7 @@ export const codingMachine = setup({
             'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
             'Verify @specs/map.md reflects the changes.',
             "If the change is ready to commit or push, don't raise nitpicks.",
+            'Do not edit files or commit; report findings only.',
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
           ].join('\n'),
           result: {
@@ -1262,6 +1274,7 @@ export const codingMachine = setup({
           challenges: context.challenges,
           prompt: [
             'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
+            'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
             challengeAccepted:

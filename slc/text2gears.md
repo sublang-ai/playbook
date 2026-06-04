@@ -51,6 +51,7 @@ When Reviewer is about to review any change, Captain shall prompt Reviewer:
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 ```
 
 Target should be written in the same language as Source.

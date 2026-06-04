@@ -80,8 +80,8 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [playbook.md](dev/playbook.md) | CODE playbook FSM ↔ GEARS conformance contract (source agreement, transition coverage, prompt composition) |
-| test | [playbook.md](test/playbook.md) | Integration tests pinning the FSM ↔ GEARS conformance contract under `pnpm test` |
+| dev | [playbook.md](dev/playbook.md) | CODE playbook FSM ↔ GEARS conformance contract (source agreement, transition coverage, prompt composition, Reviewer review-only prompts) |
+| test | [playbook.md](test/playbook.md) | Integration tests pinning the FSM ↔ GEARS conformance contract and Reviewer review-only prompts under `pnpm test` |
 
 ### RELEASE
 

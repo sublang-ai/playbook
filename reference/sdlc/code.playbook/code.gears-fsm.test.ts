@@ -11,7 +11,8 @@
 //   (d) prompt-body drift (gears blockquote vs FSM `input.prompt`),
 //   (e) generated `needsBossReply` result-map drift,
 //   (f) hidden prompt lines not traceable to `code.md`,
-//   (g) stale source/gears `needsBossReply` metadata.
+//   (g) stale source/gears `needsBossReply` metadata,
+//   (h) Reviewer prompts missing the review-only instruction.
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -136,6 +137,8 @@ const sourceBehaviors = parseSource(readFileSync(sourcePath, 'utf8'));
 const gears = parseGears(readFileSync(gearsPath, 'utf8'));
 const states = enumerateCaptainStates(codingMachine);
 const fsmBySourceItem = new Map(states.map((s) => [s.sourceItem, s]));
+const reviewerReadOnlyInstruction =
+  'Do not edit files or commit; report findings only.';
 
 describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
   it('parses CODE-1..19 (19 items)', () => {
@@ -180,7 +183,7 @@ describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
 
 });
 
-describe('GEARS ↔ FSM conformance — assertions (a)–(g)', () => {
+describe('GEARS ↔ FSM conformance — assertions (a)–(h)', () => {
   it('(a) every CODE-N in gears has an FSM state with matching sourceItem', () => {
     for (const id of gears.keys()) {
       expect(fsmBySourceItem.has(id), `gears CODE-${id.slice(5)} has no FSM state`).toBe(true);
@@ -258,5 +261,24 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(g)', () => {
         item.resultGuards.has('needsBossReply'),
       ),
     ).toEqual([]);
+  });
+
+  it('(h) every Reviewer prompt carries the review-only instruction', () => {
+    for (const item of gears.values()) {
+      if (item.player !== 'Reviewer') continue;
+      expect(
+        item.promptBody.split('\n'),
+        `${item.id}: GEARS Reviewer prompt missing review-only instruction`,
+      ).toContain(reviewerReadOnlyInstruction);
+    }
+
+    for (const s of states) {
+      const input = s.getInput({});
+      if (input.player !== 'Reviewer') continue;
+      expect(
+        input.prompt.split('\n'),
+        `${s.stateId} (${s.sourceItem}): FSM Reviewer prompt missing review-only instruction`,
+      ).toContain(reviewerReadOnlyInstruction);
+    }
   });
 });

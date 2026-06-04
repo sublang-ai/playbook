@@ -79,9 +79,11 @@ When Reviewer begins any review round, Captain shall prompt Reviewer:
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
+> Do not edit files or commit; report findings only.
 
 When Coder raises any rebuttals, Captain shall relay them to Reviewer along with the following prompt:
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
+> Do not edit files or commit; report findings only.
 
 ## Committer
 
