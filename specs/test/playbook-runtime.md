@@ -102,9 +102,12 @@ This integration test is gated on host support for hidden Captain
 visibility via `describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)`:
 until the host's `callCaptain` honors `{ visibility: 'hidden' }`
 (per [PBRT-15](../dev/playbook-runtime.md#pbrt-15)), the flag is
-`false` and the suite shall skip the test rather than fail it; the
-flag flips to `true` when that support ships, with no other change
-to the test.
+`false` and the suite shall skip rather than fail, standing in as
+a gated placeholder.
+The end-to-end harness asserting the behavior above shall be
+authored when that support ships — the harness cannot run against
+a host that lacks the option — at which point the flag flips to
+`true`.
 
 ## Lifecycle and captain bridge
 

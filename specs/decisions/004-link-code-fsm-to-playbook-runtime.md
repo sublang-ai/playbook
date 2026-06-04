@@ -7,6 +7,7 @@
 
 Accepted.
 Pins the CODE-specific bindings that [slc/link.md](../../slc/link.md) leaves open.
+[DR-007](007-hidden-judge-captain-pane.md) amends §11's `callJudge` port wiring to run the judge call hidden (`{ visibility: 'hidden' }`); the original row below is retained as the historical decision and carries an inline pointer.
 
 ## Context
 
@@ -273,7 +274,7 @@ Port wiring (the entire mapping):
 | `PlaybookPorts` | cligent primitive |
 | --- | --- |
 | `callPlayer(playerId, prompt, signal)` | `context.callPlayer(playerId, prompt)` — pass through; `signal` lives on `context`. Build `PlayerResult` from `PlayerRunResult` (`{ status, finalText, error }`) per TMUX-033 [[4]] |
-| `callJudge(prompt, signal)` | `context.callCaptain(prompt)` → return `finalText`; throw on `status !== 'ok'` |
+| `callJudge(prompt, signal)` | `context.callCaptain(prompt)` → return `finalText`; throw on `status !== 'ok'`. Amended by [DR-007](007-hidden-judge-captain-pane.md): pass `{ visibility: 'hidden' }` so the judge's JSON never streams to the Boss pane |
 | `emitStatus(message, data?)` | `session.emitStatus(message, data)` |
 | `emitTelemetry({ topic, payload })` | `session.emitTelemetry({ topic, payload })` |
 

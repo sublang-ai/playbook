@@ -619,8 +619,10 @@ describe('createCodeTmuxPlayCaptain — captain.options.code validation (PBRT-29
 // runtime/presenter that honours `callCaptain(prompt, { visibility:
 // 'hidden' })`; the installed `@sublang/cligent` ("latest") does not yet
 // ship that option, so the suite is gated off until the cligent bump.
-// Flip CLIGENT_SUPPORTS_HIDDEN_CAPTAIN to `true` in the same change that
-// bumps the dependency and removes the temporary module augmentation.
+// The end-to-end harness cannot run against a host that lacks the
+// option, so its body is authored in the same change that bumps the
+// dependency, removes the temporary module augmentation, and flips
+// CLIGENT_SUPPORTS_HIDDEN_CAPTAIN to `true` (PBRT-32).
 const CLIGENT_SUPPORTS_HIDDEN_CAPTAIN = false;
 describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)(
   'judge JSON never reaches the Boss pane (PBRT-32)',
