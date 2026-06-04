@@ -112,7 +112,7 @@ const planAndImplementInput = (context) => ({
     ...bossReplyInputFields(context),
     prompt: [
         'Assess whether this can be completed in a single commit, following best practices.',
-        'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations.',
+        'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations and stop without implementing any IR task.',
         'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
         'Ensure @specs/map.md reflects the changes.',
         'Do not commit.',
