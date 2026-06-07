@@ -70,12 +70,15 @@ the `clearBossReplyContext` action declared there.
 
 The runtime shall parse the judge reply with the same tolerance
 defined for adjudication ([PBRT-10](#pbrt-10)) — recovering the
-first balanced JSON value when it is wrapped in surrounding prose
-or a Markdown code fence, carries a trailing comma, or is truncated
-— before validating the event.
-A reply that does not name a valid event for the current state, or
-omits a required payload field, shall produce one `emitStatus` call
-and no event.
+intended JSON object even when it is wrapped in surrounding prose
+or a Markdown code fence (including when the prose contains other
+bracketed fragments), carries a trailing comma, or is truncated —
+before validating the event.
+A reply that does not name a valid event for the current state,
+omits a required payload field, or from which no JSON value can be
+recovered, shall produce one `emitStatus` call and no event;
+classification thus degrades gracefully where adjudication
+([PBRT-10](#pbrt-10)) instead throws.
 The runtime shall define no slash-prefix fast path:
 text beginning with `/` shall be sent to `callJudge` like any other
 non-empty Boss text.
@@ -129,12 +132,19 @@ shall stay judge-extracted (the judge supplies the value; the
 runtime validates it is a string). The judge prompt shall direct
 the judge not to populate the verbatim fields.
 The runtime shall parse the judge reply tolerantly before
-validating it: it shall recover the first balanced JSON value when
-that value is wrapped in surrounding prose or a Markdown code
-fence, carries a trailing comma before a closing brace or bracket,
-or is truncated with an unterminated string or an unclosed
-object/array (completing the unclosed structures). A reply is
-malformed only when no JSON value can be recovered from it.
+validating it: it shall recover the intended JSON object even when
+that object is wrapped in surrounding prose or a Markdown code
+fence — including when the surrounding prose contains other
+bracketed fragments (an aside such as `see [1]` shall not mask the
+real object) — carries a trailing comma before a closing brace or
+bracket, or is truncated with an unterminated string or an unclosed
+object/array (completing the unclosed structures). When the reply
+contains more than one recoverable JSON object, the runtime shall
+return the first in document order, preferring a strict parse at
+each candidate position and only then a repaired one, so an earlier
+intended object that needs repair is not overridden by a later,
+cleanly-formed object. A reply is malformed only when no JSON value
+can be recovered from it.
 A reply that is malformed, names an undeclared guard, or omits a
 required extracted (non-verbatim) field shall cause the runtime to
 throw.

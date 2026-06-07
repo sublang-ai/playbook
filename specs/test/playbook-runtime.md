@@ -147,16 +147,22 @@ under fake ports, the test suite shall fail unless:
 ### PBRT-33
 Verifies: [PBRT-7](../dev/playbook-runtime.md#pbrt-7), [PBRT-10](../dev/playbook-runtime.md#pbrt-10)
 
-When a `callJudge` reply carries a valid JSON value that is wrapped
-in surrounding prose, wrapped in a Markdown code fence with
-surrounding prose, carries a trailing comma before a closing brace
-or bracket, or is truncated with an unclosed object or an
-unterminated string, the test suite shall fail unless the runtime
-recovers the intended value — adjudication returns the named guard
-with its extracted payload fields and classification maps to the
-named FSM event with its payload. When a reply contains no
+When the runtime is driven through a Boss turn whose `callJudge`
+reply carries a valid JSON object that is wrapped in surrounding
+prose (including prose containing other bracketed fragments),
+wrapped in a Markdown code fence amid prose, carries a trailing
+comma before a closing brace or bracket, or is truncated with an
+unclosed object or an unterminated string, the test suite shall
+fail unless the runtime recovers the intended object and advances:
+a messy adjudication reply driven through the captain bridge as an
+xstate actor advances the FSM under the named guard, and a messy
+classification reply driven through `handleBossInput` maps to the
+named FSM event and advances the actor. When a reply carries no
 recoverable JSON value, the test suite shall fail unless
-adjudication throws.
+adjudication driven through the captain bridge routes the FSM to
+the failure state and classification driven through
+`handleBossInput` produces exactly one `emitStatus` call, makes no
+player call, sends no event, and leaves the actor unmoved.
 
 ## Classification and flow
 

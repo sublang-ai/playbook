@@ -223,17 +223,26 @@ function buildJudgePrompt(input, finalText) {
     }
     return lines.join('\n');
 }
-// Judge replies are meant to be a single JSON value, but LLMs
+// Judge replies are meant to be a single JSON object, but LLMs
 // routinely wrap them in prose ("Here is the result: …"), Markdown
 // code fences, or trailing commentary, and occasionally emit a
 // trailing comma or truncate the tail (a dropped closing brace, an
 // unterminated string). parseJudgeJson is deliberately lenient: it
 // first tries a strict parse of the (optionally fenced) body, then
-// falls back to extracting the first balanced JSON value and
-// repairing common damage — surrounding text, trailing commas, and
-// unclosed strings/objects/arrays. Only a reply from which no JSON
-// value can be recovered is treated as malformed and throws,
-// preserving the control-plane error contract (PBRT-7, PBRT-10).
+// scans every `{`/`[` as a possible start in document order and
+// returns the first recoverable object. At each start it prefers a
+// strict balanced span and falls back to a repaired (trailing-comma /
+// truncation) span, so a damaged object earlier in the prose is not
+// overridden by a cleaner one later. Scanning every start (not just
+// the first bracket) keeps a bracketed fragment in surrounding prose —
+// e.g. an aside like `see [1]` or `{n/a}` before the real object —
+// from masking a later, genuinely valid object. Both callers
+// (classification and adjudication) expect an object, so plain objects
+// win over arrays/scalars; the first value of any shape is remembered
+// so a legitimately array/scalar reply still surfaces to the caller's
+// own object check. Only a reply from which no JSON value can be
+// recovered is treated as malformed and throws, preserving the
+// control-plane error contract (PBRT-7, PBRT-10).
 function parseJudgeJson(raw) {
     const fenced = stripCodeFence(raw.trim());
     // Fast path: a well-formed (optionally fenced) JSON body.
@@ -243,35 +252,64 @@ function parseJudgeJson(raw) {
     catch {
         // Fall through to lenient extraction + repair.
     }
-    const repaired = extractJsonValue(fenced);
-    if (repaired !== undefined) {
-        try {
-            return JSON.parse(repaired);
-        }
-        catch {
-            // Fall through to the malformed error.
-        }
+    const starts = [];
+    for (let i = 0; i < fenced.length; i++) {
+        const ch = fenced[i];
+        if (ch === '{' || ch === '[')
+            starts.push(i);
     }
+    // Walk starts in document order. At each start prefer a strict
+    // balanced span (most trustworthy) and fall back to a repaired one
+    // for a trailing-comma / truncated tail, so the earliest intended
+    // object wins even when it needs repair. Return the first plain
+    // object; remember the first value of any shape so a legitimately
+    // array/scalar reply still surfaces to the caller's own object check.
+    let firstValue;
+    for (const start of starts) {
+        let parsedHere;
+        for (const repair of [false, true]) {
+            const candidate = extractJsonValue(fenced, start, repair);
+            if (candidate === undefined)
+                continue;
+            try {
+                parsedHere = { value: JSON.parse(candidate) };
+            }
+            catch {
+                continue; // not parseable this way — try repair, then next start
+            }
+            break; // prefer the strict span at this start over its repair
+        }
+        if (parsedHere === undefined)
+            continue;
+        if (isPlainObject(parsedHere.value))
+            return parsedHere.value;
+        if (firstValue === undefined)
+            firstValue = parsedHere;
+    }
+    if (firstValue !== undefined)
+        return firstValue.value;
     throw new Error('adjudicate: judge response is not valid JSON');
+}
+function isPlainObject(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 // Strip a single Markdown code fence that wraps the whole string.
 function stripCodeFence(text) {
     const fence = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
     return fence ? fence[1].trim() : text;
 }
-// Scan from the first `{`/`[`, tracking string and bracket-nesting
-// state, and emit a balanced JSON value. Surrounding prose is
-// dropped: anything before the opener is skipped, and once the
-// top-level value closes anything after it is ignored (so a trailing
-// code fence or commentary does not matter). Common damage is
-// repaired — a trailing comma before a close is removed, an
-// unterminated string is closed, and any brackets still open at
-// end-of-input are closed in order. Returns undefined when no `{`/`[`
-// is present.
-function extractJsonValue(text) {
-    const start = text.search(/[{[]/);
-    if (start === -1)
-        return undefined;
+// Scan from `start` (a `{`/`[` index), tracking string and
+// bracket-nesting state, and emit the balanced JSON value rooted
+// there. Anything after the top-level value closes is ignored (so a
+// trailing code fence or commentary does not matter). With
+// `repair === false` the span is returned only if it actually closes,
+// and trailing commas are left intact — so the caller can prefer a
+// cleanly-balanced span before attempting repair; if input ends
+// before the value closes, undefined is returned. With
+// `repair === true` common damage is fixed: a trailing comma before a
+// close is removed, an unterminated string is closed, and any
+// brackets still open at end-of-input are closed in order.
+function extractJsonValue(text, start, repair) {
     const stack = [];
     let out = '';
     let inString = false;
@@ -299,7 +337,8 @@ function extractJsonValue(text) {
             continue;
         }
         if (ch === '}' || ch === ']') {
-            out = dropTrailingComma(out);
+            if (repair)
+                out = dropTrailingComma(out);
             out += ch;
             stack.pop();
             if (stack.length === 0)
@@ -308,7 +347,9 @@ function extractJsonValue(text) {
         }
         out += ch;
     }
-    // End of input before the top-level value closed: repair the tail.
+    // End of input before the top-level value closed.
+    if (!repair)
+        return undefined; // strict pass: no balanced span here
     if (inString)
         out += '"';
     out = dropTrailingComma(out);
@@ -342,7 +383,18 @@ async function classifyWithLlm(text, ports, signal, snapshotOrState) {
     const state = classifierState(snapshotOrState);
     const prompt = buildClassifierPrompt(text, state);
     const raw = await ports.callJudge(prompt, signal);
-    const parsed = parseJudgeJson(raw);
+    let parsed;
+    try {
+        parsed = parseJudgeJson(raw);
+    }
+    catch {
+        // No JSON value could be recovered. Classification failures are
+        // non-fatal — unlike adjudication, which throws to the failure
+        // state (PBRT-10) — so surface one status and take no FSM action,
+        // consistent with the other invalid-reply paths below (PBRT-7).
+        await ports.emitStatus('Classifier reply was not recoverable JSON');
+        return undefined;
+    }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
         await ports.emitStatus('Classifier returned a non-object JSON response');
         return undefined;

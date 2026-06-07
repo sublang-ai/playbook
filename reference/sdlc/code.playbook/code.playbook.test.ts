@@ -405,6 +405,42 @@ describe('adjudicate', () => {
     expect(out.taskDescription).toBe('do it');
   });
 
+  it('recovers the object past a bracketed fragment in the prose', async () => {
+    // The prose contains an earlier `[…]` that is not the answer; the
+    // parser must not stop at it and must reach the real object.
+    for (const raw of [
+      'Notes [not JSON], final: {"guard":"foo"}',
+      'see item [1] then {"guard":"foo"}',
+      '{n/a} then {"guard":"foo"}',
+    ]) {
+      const ports = makeFakePorts({ callJudge: async () => raw });
+      const out = await adjudicate(
+        makeInput({ result: { foo: 'desc' } }),
+        'out',
+        ports,
+        new AbortController().signal,
+      );
+      expect(out.guard, raw).toBe('foo');
+    }
+  });
+
+  it('prefers the first object in document order over a later clean one', async () => {
+    // The intended object comes first but needs repair (trailing
+    // comma); a pristine decoy follows in trailing prose. Document
+    // order must win so the earlier intended object is not overridden.
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        'Decision: {"guard":"foo",}\nExample shape: {"guard":"bar"}',
+    });
+    const out = await adjudicate(
+      makeInput({ result: { foo: 'desc', bar: 'desc' } }),
+      'out',
+      ports,
+      new AbortController().signal,
+    );
+    expect(out.guard).toBe('foo');
+  });
+
   it('throws when no JSON value can be recovered', async () => {
     const ports = makeFakePorts({
       callJudge: async () => 'no json here, just words',
@@ -1026,6 +1062,33 @@ describe('classifyBossText (awaitBossReply branch — DR-005 §6)', () => {
   });
 });
 
+// The judge-reply damage kinds PBRT-33 requires the runtime to recover
+// from, each a transform on a canonical JSON reply. None touches a
+// value-bearing field, so the recovered object is equivalent for the
+// parts the runtime reads. Shared by the adjudication (captain-bridge)
+// and classification (handleBossInput) integration tests below so both
+// runtime paths exercise every kind, not just a representative one.
+const PBRT33_DAMAGE_KINDS: ReadonlyArray<{
+  name: string;
+  damage: (json: string) => string;
+}> = [
+  { name: 'prose-wrapped', damage: (j) => `Here is the outcome:\n${j}\nThanks.` },
+  {
+    name: 'code-fenced amid prose',
+    damage: (j) => 'My call:\n```json\n' + j + '\n```\nDone.',
+  },
+  {
+    name: 'prose with a bracketed fragment',
+    damage: (j) => `See note [1] before the verdict: ${j}`,
+  },
+  { name: 'trailing-comma', damage: (j) => j.replace(/\}\s*$/, ',}') },
+  { name: 'truncated unclosed object', damage: (j) => j.replace(/\}\s*$/, '') },
+  {
+    name: 'truncated unterminated string',
+    damage: (j) => j.replace(/\}\s*$/, ',"_note":"detail that got cut o'),
+  },
+];
+
 describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
   function buildActor(ports: PlaybookPorts) {
     return createActor(
@@ -1178,6 +1241,31 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
 
     expect(actor.getSnapshot().value).toBe('failed');
   });
+
+  it.each(PBRT33_DAMAGE_KINDS)(
+    'advances (not #failed) when the adjudication reply is $name but recoverable (PBRT-33)',
+    async ({ damage }) => {
+      // Same happy path as the valid run above, but every adjudicator
+      // reply is damaged with this kind so recovery is exercised end to
+      // end through the real captain bridge — not just at the helper.
+      const clean = judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]);
+      const ports = makeFakePorts({
+        callPlayer: async () => ({ status: 'ok', finalText: 'Progress noted.' }),
+        callJudge: async (prompt) => damage(await clean(prompt)),
+      });
+
+      const actor = buildActor(ports);
+      actor.start();
+      actor.send({ type: 'START_CODING', intent: 'add a button' });
+
+      await settleAt(actor, ['ready', 'failed', 'done']);
+
+      expect(actor.getSnapshot().value).toBe('ready');
+    },
+  );
 
   it('lands at #failed when callJudge picks an undeclared guard', async () => {
     const ports = makeFakePorts({
@@ -1387,6 +1475,65 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(classifierCalls).toBe(1);
     expect(adjudicatorCalls).toBe(2);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it.each(PBRT33_DAMAGE_KINDS)(
+    'recovers a $name classifier reply and drives the FSM (PBRT-33)',
+    async ({ damage }) => {
+      const statuses: string[] = [];
+      const cleanClassifier = JSON.stringify({
+        event: 'START_CODING',
+        payload: { intent: 'add a button' },
+      });
+      const ports = makeFakePorts({
+        callPlayer: async () => ({
+          status: 'ok',
+          finalText: 'no progress — need more input',
+        }),
+        callJudge: async (prompt) => {
+          if (isClassifierPrompt(prompt)) return damage(cleanClassifier);
+          return prompt.includes('singleCommitReady')
+            ? JSON.stringify({ guard: 'singleCommitReady' })
+            : JSON.stringify({ guard: 'needsBossInput' });
+        },
+        emitStatus: async (m) => {
+          statuses.push(m);
+        },
+      });
+      const runtime = makeRuntimeWithInternals();
+      await runtime.init(ports);
+
+      await runtime.handleBossInput({ text: 'please add a button', signal: sig() });
+
+      expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+      expect(statuses).toContain('START_CODING');
+    },
+  );
+
+  it('classifier reply with no recoverable JSON: one status, no event, FSM unmoved (PBRT-7)', async () => {
+    const statuses: string[] = [];
+    let playerCalled = false;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        playerCalled = true;
+        return { status: 'ok', finalText: 'x' };
+      },
+      callJudge: async () => 'no json here, just prose',
+      emitStatus: async (m) => {
+        statuses.push(m);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(ports);
+    const before = runtime._getActor()?.getSnapshot().value;
+
+    await expect(
+      runtime.handleBossInput({ text: 'do something', signal: sig() }),
+    ).resolves.toBeUndefined();
+
+    expect(statuses).toHaveLength(1);
+    expect(playerCalled).toBe(false);
+    expect(runtime._getActor()?.getSnapshot().value).toBe(before);
   });
 
   it('returns when a player question lands at awaitBossReply', async () => {
