@@ -144,6 +144,20 @@ under fake ports, the test suite shall fail unless:
   and the FSM advances; any judge-supplied value for those
   fields is overwritten by the verbatim text.
 
+### PBRT-33
+Verifies: [PBRT-7](../dev/playbook-runtime.md#pbrt-7), [PBRT-10](../dev/playbook-runtime.md#pbrt-10)
+
+When a `callJudge` reply carries a valid JSON value that is wrapped
+in surrounding prose, wrapped in a Markdown code fence with
+surrounding prose, carries a trailing comma before a closing brace
+or bracket, or is truncated with an unclosed object or an
+unterminated string, the test suite shall fail unless the runtime
+recovers the intended value — adjudication returns the named guard
+with its extracted payload fields and classification maps to the
+named FSM event with its payload. When a reply contains no
+recoverable JSON value, the test suite shall fail unless
+adjudication throws.
+
 ## Classification and flow
 
 ### PBRT-24

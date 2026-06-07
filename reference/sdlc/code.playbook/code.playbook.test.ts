@@ -329,6 +329,96 @@ describe('adjudicate', () => {
     expect(out.guard).toBe('foo');
   });
 
+  it('recovers JSON wrapped in surrounding prose', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        'Sure — here is the outcome:\n{"guard":"foo"}\nHope that helps!',
+    });
+    const out = await adjudicate(
+      makeInput({ result: { foo: 'desc' } }),
+      'out',
+      ports,
+      new AbortController().signal,
+    );
+    expect(out.guard).toBe('foo');
+  });
+
+  it('recovers JSON from a code fence surrounded by prose', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        'My decision:\n```json\n{"guard":"foo"}\n```\nLet me know.',
+    });
+    const out = await adjudicate(
+      makeInput({ result: { foo: 'desc' } }),
+      'out',
+      ports,
+      new AbortController().signal,
+    );
+    expect(out.guard).toBe('foo');
+  });
+
+  it('tolerates a trailing comma before a closing brace', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => '{"guard":"foo","taskDescription":"do it",}',
+    });
+    const out = await adjudicate(
+      makeInput({
+        result: { foo: 'Output shall include `taskDescription`: the task.' },
+      }),
+      'out',
+      ports,
+      new AbortController().signal,
+    );
+    expect(out.guard).toBe('foo');
+    expect(out.taskDescription).toBe('do it');
+  });
+
+  it('completes a truncated object missing its closing brace', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => '{"guard":"foo","taskDescription":"do it"',
+    });
+    const out = await adjudicate(
+      makeInput({
+        result: { foo: 'Output shall include `taskDescription`: the task.' },
+      }),
+      'out',
+      ports,
+      new AbortController().signal,
+    );
+    expect(out.guard).toBe('foo');
+    expect(out.taskDescription).toBe('do it');
+  });
+
+  it('completes a truncated unterminated string', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => '{"guard":"foo","taskDescription":"do it',
+    });
+    const out = await adjudicate(
+      makeInput({
+        result: { foo: 'Output shall include `taskDescription`: the task.' },
+      }),
+      'out',
+      ports,
+      new AbortController().signal,
+    );
+    expect(out.guard).toBe('foo');
+    expect(out.taskDescription).toBe('do it');
+  });
+
+  it('throws when no JSON value can be recovered', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () => 'no json here, just words',
+    });
+    await expect(
+      adjudicate(
+        makeInput({ result: { foo: 'desc' } }),
+        'out',
+        ports,
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(/not valid JSON/);
+  });
+
   it('throws on an unknown guard', async () => {
     const ports = makeFakePorts({
       callJudge: async () => JSON.stringify({ guard: 'wrong' }),
@@ -681,6 +771,17 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
           event: 'CONTINUE_IR',
           payload: { irNumber: '4' },
         }),
+    });
+    expect(
+      await classifyBossText('continue IR 4', ports, sig()),
+    ).toEqual({ type: 'CONTINUE_IR', irNumber: '4' });
+  });
+
+  it('classifier reply wrapped in prose with a trailing comma still classifies', async () => {
+    const ports = makeFakePorts({
+      callJudge: async () =>
+        'Classification:\n```json\n{"event":"CONTINUE_IR",' +
+        '"payload":{"irNumber":"4",}}\n```\nDone.',
     });
     expect(
       await classifyBossText('continue IR 4', ports, sig()),

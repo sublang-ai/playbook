@@ -68,6 +68,11 @@ The judge may instead return a fresh directive event, including
 `BOSS_INTERRUPT`; the transition out of `awaitBossReply` shall run
 the `clearBossReplyContext` action declared there.
 
+The runtime shall parse the judge reply with the same tolerance
+defined for adjudication ([PBRT-10](#pbrt-10)) — recovering the
+first balanced JSON value when it is wrapped in surrounding prose
+or a Markdown code fence, carries a trailing comma, or is truncated
+— before validating the event.
 A reply that does not name a valid event for the current state, or
 omits a required payload field, shall produce one `emitStatus` call
 and no event.
@@ -122,9 +127,17 @@ long-form prose is not round-tripped through judge JSON.
 Short extracted fields such as `question` and `taskDescription`
 shall stay judge-extracted (the judge supplies the value; the
 runtime validates it is a string). The judge prompt shall direct
-the judge not to populate the verbatim fields. A reply that is
-malformed, names an undeclared guard, or omits a required
-extracted (non-verbatim) field shall cause the runtime to throw.
+the judge not to populate the verbatim fields.
+The runtime shall parse the judge reply tolerantly before
+validating it: it shall recover the first balanced JSON value when
+that value is wrapped in surrounding prose or a Markdown code
+fence, carries a trailing comma before a closing brace or bracket,
+or is truncated with an unterminated string or an unclosed
+object/array (completing the unclosed structures). A reply is
+malformed only when no JSON value can be recovered from it.
+A reply that is malformed, names an undeclared guard, or omits a
+required extracted (non-verbatim) field shall cause the runtime to
+throw.
 
 ## Drive to quiescence
 

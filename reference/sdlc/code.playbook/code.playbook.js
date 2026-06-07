@@ -223,17 +223,104 @@ function buildJudgePrompt(input, finalText) {
     }
     return lines.join('\n');
 }
+// Judge replies are meant to be a single JSON value, but LLMs
+// routinely wrap them in prose ("Here is the result: …"), Markdown
+// code fences, or trailing commentary, and occasionally emit a
+// trailing comma or truncate the tail (a dropped closing brace, an
+// unterminated string). parseJudgeJson is deliberately lenient: it
+// first tries a strict parse of the (optionally fenced) body, then
+// falls back to extracting the first balanced JSON value and
+// repairing common damage — surrounding text, trailing commas, and
+// unclosed strings/objects/arrays. Only a reply from which no JSON
+// value can be recovered is treated as malformed and throws,
+// preserving the control-plane error contract (PBRT-7, PBRT-10).
 function parseJudgeJson(raw) {
-    let text = raw.trim();
-    const fence = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
-    if (fence)
-        text = fence[1].trim();
+    const fenced = stripCodeFence(raw.trim());
+    // Fast path: a well-formed (optionally fenced) JSON body.
     try {
-        return JSON.parse(text);
+        return JSON.parse(fenced);
     }
-    catch (e) {
-        throw new Error(`adjudicate: judge response is not valid JSON: ${e.message}`);
+    catch {
+        // Fall through to lenient extraction + repair.
     }
+    const repaired = extractJsonValue(fenced);
+    if (repaired !== undefined) {
+        try {
+            return JSON.parse(repaired);
+        }
+        catch {
+            // Fall through to the malformed error.
+        }
+    }
+    throw new Error('adjudicate: judge response is not valid JSON');
+}
+// Strip a single Markdown code fence that wraps the whole string.
+function stripCodeFence(text) {
+    const fence = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
+    return fence ? fence[1].trim() : text;
+}
+// Scan from the first `{`/`[`, tracking string and bracket-nesting
+// state, and emit a balanced JSON value. Surrounding prose is
+// dropped: anything before the opener is skipped, and once the
+// top-level value closes anything after it is ignored (so a trailing
+// code fence or commentary does not matter). Common damage is
+// repaired — a trailing comma before a close is removed, an
+// unterminated string is closed, and any brackets still open at
+// end-of-input are closed in order. Returns undefined when no `{`/`[`
+// is present.
+function extractJsonValue(text) {
+    const start = text.search(/[{[]/);
+    if (start === -1)
+        return undefined;
+    const stack = [];
+    let out = '';
+    let inString = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (inString) {
+            out += ch;
+            if (escaped)
+                escaped = false;
+            else if (ch === '\\')
+                escaped = true;
+            else if (ch === '"')
+                inString = false;
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            out += ch;
+            continue;
+        }
+        if (ch === '{' || ch === '[') {
+            stack.push(ch === '{' ? '}' : ']');
+            out += ch;
+            continue;
+        }
+        if (ch === '}' || ch === ']') {
+            out = dropTrailingComma(out);
+            out += ch;
+            stack.pop();
+            if (stack.length === 0)
+                return out; // top-level value complete
+            continue;
+        }
+        out += ch;
+    }
+    // End of input before the top-level value closed: repair the tail.
+    if (inString)
+        out += '"';
+    out = dropTrailingComma(out);
+    while (stack.length > 0)
+        out += stack.pop();
+    return out;
+}
+// Remove a trailing comma (and any whitespace after it) at the end of
+// the accumulated output, so `{"a":1,}` / `[1,2,]` and truncated
+// `{"a":1,` repair to valid JSON.
+function dropTrailingComma(out) {
+    return out.replace(/,(\s*)$/, '$1');
 }
 // Boss-event classifier — DR-004 §3.
 // Every non-empty Boss turn goes through ports.callJudge. Slash-prefixed

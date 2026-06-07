@@ -75,8 +75,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface: free-text turn classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration including the `captain.options.code` surface |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, session lifecycle, binding, captain bridge, adjudication, abort, telemetry, tmux-play adapter, and `captain.options.code` validation |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, `awaitBossReply`, status/telemetry, lifecycle, player binding, tmux-play adapter wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, binding, captain bridge, adjudication, abort, telemetry, tmux-play adapter, and `captain.options.code` validation |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, tmux-play adapter wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
 
 ### PLAYBOOK
 
