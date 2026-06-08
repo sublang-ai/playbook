@@ -134,6 +134,11 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    no-op, honored once cligent ships `layout` (no cligent bump here, per the
    Task-2 no-cligent-change decision). Acceptance is verified at the
    composed-config level.
+   Review follow-up: base-`layout` inheritance through a *discovered* base
+   was dead on the real path — cligent's loader strips `layout` from the base
+   before the composer sees it — so the shim now recovers a base `layout`
+   from the raw base YAML (inert once a loader preserves `layout`); added an
+   end-to-end discovered-base test that fails without the recovery.
 4. **Refresh the model lineup.**
    Template only: Captain claude `claude-sonnet-4-6`; Coder codex `gpt-5.5`
    `xhigh`; Reviewer claude `claude-opus-4-8` `xhigh`.

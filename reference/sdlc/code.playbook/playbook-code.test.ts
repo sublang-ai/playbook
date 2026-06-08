@@ -572,6 +572,63 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
     ]);
   });
 
+  it('inherits a base layout block when the overlay omits it, end to end', async () => {
+    const home = await makeTempHome();
+    await writeOverlay(
+      home,
+      [
+        'captain:',
+        '  adapter: claude',
+        'players:',
+        '  coder:',
+        '    adapter: claude',
+        '  reviewer:',
+        '    adapter: codex',
+        '',
+      ].join('\n'),
+    );
+    await writeBaseConfig(
+      home,
+      [
+        'theme: latte',
+        'layout:',
+        '  window:',
+        '    columns: 200',
+        '    rows: 60',
+        '  columnWeights: [1, 1, 1]',
+        'captain:',
+        '  from: "@sublang/cligent/captains/fanout"',
+        '  adapter: codex',
+        'players:',
+        '  - id: solo',
+        '    adapter: gemini',
+        '',
+      ].join('\n'),
+    );
+    const spawn = fakeSpawn();
+
+    const result = await runPlaybookCodeCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' },
+      homeDir: home,
+      cwd: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 0 });
+    const composed = parseYaml(spawn.configs[0].content);
+    // The overlay omits layout. cligent's loader drops the base's
+    // layout during discovery, so the shim must recover it from the
+    // raw base YAML for base inheritance to hold end to end.
+    expect(composed.layout).toEqual({
+      window: { columns: 200, rows: 60 },
+      columnWeights: [1, 1, 1],
+    });
+  });
+
   it('rejects a malformed overlay at launch with a path-named error and no spawn', async () => {
     const home = await makeTempHome();
     await writeOverlay(

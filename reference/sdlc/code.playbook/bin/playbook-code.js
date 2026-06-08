@@ -136,6 +136,17 @@ async function composeLaunchConfig({ overlayPath, cwd, configHome }) {
   let base;
   if (basePath) {
     base = (await loadTmuxPlayConfig({ configPath: basePath })).config;
+    // cligent's loader normalizes a discovered base to captain / players
+    // / theme and drops host fields it does not model yet — notably
+    // `layout`. Recover a base `layout` from the raw base YAML so base
+    // inheritance (PBCODE-16/17) holds; the `=== undefined` guard makes
+    // this inert once a future loader preserves `layout` itself.
+    if (base && base.layout === undefined) {
+      const rawBase = parseYaml(readFileSync(basePath, 'utf8'));
+      if (isObject(rawBase) && rawBase.layout !== undefined) {
+        base.layout = rawBase.layout;
+      }
+    }
   }
   return composeRuntimeConfig(overlay, base);
 }
