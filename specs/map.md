@@ -67,16 +67,16 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config) |
-| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding, readiness heuristic, config composition (base discovery, role→`players[]` mapping, owned YAML serialization), Node engine floor |
+| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config, incl. the Committer alias) |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding, readiness heuristic, config composition (base discovery, role→`players[]` mapping, Committer-alias resolution, owned YAML serialization), Node engine floor |
 | test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and config composition |
 
 ### PBRT
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface: free-text turn classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration including the `captain.options.code` surface |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, binding, captain bridge, adjudication, abort, telemetry, tmux-play adapter, and `captain.options.code` validation |
+| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface: free-text turn classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration including the `captain.options.code` surface and the Committer alias |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, tmux-play adapter, and `captain.options.code` validation |
 | test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, tmux-play adapter wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
 
 ### PLAYBOOK

@@ -34,6 +34,12 @@ Where a captain-invoking state references CODE-N via `sourceItem`,
 the state's `input.player` shall equal the section heading
 (`Coder` / `Reviewer` / `Committer`) under which CODE-N is declared
 in `code.gears.md`.
+A configured Committer alias
+([PBRT-8](playbook-runtime.md#pbrt-8)) changes only the player id
+`resolvePlayerId` returns for a `Committer` state; it shall not
+change `input.player`, which stays `Committer` for every
+Committer-section CODE-N, so the gears `Committer = Coder |
+Reviewer` agreement holds.
 
 ## Transition coverage
 

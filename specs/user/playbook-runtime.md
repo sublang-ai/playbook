@@ -132,6 +132,13 @@ A setting that changes host-observable behavior — theme, layout,
 permissions, model or adapter routing, or timing — shall be
 expressed through tmux-play's own `captain` / `players` fields
 rather than `captain.options.code`.
+The Committer alias is not such a setting: tmux-play models no
+`Committer` player, so the alias selects which of the two existing
+CODE roles the composite `Committer` binds to — CODE-internal role
+resolution, not host pane/adapter/model routing — and is therefore
+a legitimate `captain.options.code.committer` member. It adds no
+tmux-play player and changes no pane's adapter or model; the two
+panes keep the `players` adapters they already declare.
 The `captain.from` adapter-module path and the `coder` /
 `reviewer` `players[].id` values are supplied by the
 `playbook-code` composer ([PBCODE-16](playbook-code.md#pbcode-16))

@@ -8,6 +8,7 @@
 Accepted.
 Pins the CODE-specific bindings that [slc/link.md](../../slc/link.md) leaves open.
 [DR-007](007-hidden-judge-captain-pane.md) amends §11's `callJudge` port wiring to run the judge call hidden (`{ visibility: 'hidden' }`); the original row below is retained as the historical decision and carries an inline pointer.
+[IR-013](../iterations/013-player-alias-default-lineup.md) amends §2's baked Committer binding to be config-driven (a `captain.options.code.committer` alias resolved in the `playbook-code` composer and the CODE runtime, with no cligent change); see [Addendum A2](#a2-committer-composite-binding-made-configurable-per-ir-013).
 
 ## Context
 
@@ -35,6 +36,8 @@ All four are recorded verbatim in the emitted file's top-of-file header per [lin
 Player binding is *not* a runtime option; future per-run remapping would be a separate DR/IR.
 
 ### 2. Player binding for CODE
+
+> Amended by [IR-013](../iterations/013-player-alias-default-lineup.md) / [Addendum A2](#a2-committer-composite-binding-made-configurable-per-ir-013): the composite `Committer` binding is now config-driven via a `captain.options.code.committer` alias. The per-source-item table below is the fallback when no alias is configured.
 
 CODE declares `Coder`, `Reviewer`, and the alias `Committer = Coder | Reviewer` ([code.gears.md](../../reference/sdlc/code.playbook/code.gears.md)).
 Non-composite states bind trivially (Coder → `coder`, Reviewer → `reviewer`).
@@ -354,6 +357,35 @@ amended drive-loop check. The matching constant in
 `code.playbook.ts` shall be kept in sync — drift between the
 spec list and the implementation constant would re-introduce a
 drive-loop deadlock on `awaitBossReply`.
+
+### A2. Committer composite binding made configurable (per IR-013)
+
+[IR-013](../iterations/013-player-alias-default-lineup.md) makes the
+composite `Committer` binding config-driven, partially relaxing §1's
+"player binding is *not* a runtime option" for this one composite.
+
+- **Where it lives.** The CODE overlay carries an optional
+  `players.committer` string aliasing an existing role (`coder` or
+  `reviewer`). The `playbook-code` composer resolves it into the
+  composed config's `captain.options.code.committer` and emits **no**
+  extra `players[]` entry; the roster stays `coder` + `reviewer`.
+- **Why not cligent.** `Committer` is a CODE-internal role tmux-play
+  does not model, and the alias reuses an existing pane, so it is
+  resolved entirely in the playbook composer + CODE runtime. cligent
+  is **not** changed and the lockfile is **not** bumped; a generic
+  tmux-play alias is rejected as speculative (DR-006's CODE-agnostic
+  boundary).
+- **How it reaches the resolver.** The adapter validates
+  `captain.options.code.committer` ([PBRT-30](../dev/playbook-runtime.md#pbrt-30))
+  and threads it into `createPlaybookRuntime`, which carries it onto
+  the `Committer` states' `CaptainInput.committerPlayer`. The §2 table
+  becomes the fallback used only when no alias is configured
+  ([PBRT-8](../dev/playbook-runtime.md#pbrt-8)).
+- **Identity strings unaffected.** The alias is a player **id**
+  (`coder` / `reviewer`), independent of the §1 `coderPlayer` /
+  `reviewerPlayer` identity strings, so `<coder-llm>` /
+  `<reviewer-llm>` substitutions are unchanged, and `input.player`
+  stays `Committer` ([PLAYBOOK-3](../dev/playbook.md#playbook-3)).
 
 ## References
 

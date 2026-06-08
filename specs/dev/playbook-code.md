@@ -84,12 +84,20 @@ The shim shall read the overlay (the
 mapping keyed by `coder` / `reviewer`, its `captain` judge block,
 and its `captain.options.code`; the overlay carries no
 `captain.from` and no `players[].id`.
-For each `players.<role>` key it shall emit one composed
-`players[]` array entry whose `id` is the role key and whose
-`adapter`, `model`, `reasoningEffort`, and `permissions` are taken
-from that role's block; it shall reject an overlay whose `players`
-mapping omits `coder` or `reviewer`, or carries any other key,
-with a path-named error.
+For each of the `coder` and `reviewer` `players.<role>` keys it
+shall emit one composed `players[]` array entry whose `id` is the
+role key and whose `adapter`, `model`, `reasoningEffort`, and
+`permissions` are taken from that role's block; it shall reject an
+overlay whose `players` mapping omits `coder` or `reviewer`, or
+carries any key other than `coder`, `reviewer`, and the optional
+`committer` alias, with a path-named error.
+The optional `players.committer` is a string naming `coder` or
+`reviewer`; the shim shall resolve it into the composed
+`captain.options.code.committer` (the named role id) and shall not
+emit a `players[]` entry for it, so the roster stays `coder` +
+`reviewer`. It shall reject a `committer` value that is not
+`coder` or `reviewer` with a path-named error
+(`players.committer`).
 It shall set the composed `captain.adapter` from the overlay when
 present, else from the base config, and shall fail with a
 path-named `captain.adapter` error when neither supplies it; the

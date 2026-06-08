@@ -101,14 +101,24 @@ Each `players.<role>` block holds that role's `adapter` (required,
 not inherited) and optional `model`, `reasoningEffort`,
 `permissions`; CODE options, if any, live under
 `captain.options.code`; an optional top-level `theme` may be set.
+The `players` mapping may additionally carry an optional
+`committer` key — the Committer alias — whose value is a string
+naming an existing role, `coder` or `reviewer`. It is a reference,
+not a player block: it declares no `adapter` and adds no pane,
+selecting only which existing role runs the commit. An unknown
+target is rejected with a path-named error (`players.committer`).
 Where `playbook-code` is invoked without `--config`, the shim
 shall compose the runtime config rather than launch the overlay
 directly: it shall inject `captain.from` = the CODE adapter module;
 convert the `players` mapping into a `players[]` array, one entry
 per role with `id` set to the role key (`coder`, `reviewer`) and
 that role's `adapter`, `model`, `reasoningEffort`, and
-`permissions` copied across; carry the overlay's
-`captain.options.code` through; materialize the composed config to
+`permissions` copied across (the `coder` and `reviewer` roles
+only; the `committer` alias is resolved, not rostered); carry the
+overlay's `captain.options.code` through, resolving any
+`players.committer` alias into `captain.options.code.committer`
+(the named role id) without emitting a `players[]` entry for it;
+materialize the composed config to
 a temporary file; launch `tmux-play --config <temp>`; and remove
 the temporary file before the shim exits — on normal exit, on
 non-zero child exit, and before re-raising a forwarded signal per

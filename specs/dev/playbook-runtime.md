@@ -92,10 +92,22 @@ non-empty Boss text.
 
 When resolving the player id for an FSM captain invocation, the
 runtime shall map `Coder` to `coder` and `Reviewer` to
-`reviewer`. For the composite `Committer`, it shall resolve to
-`coder` when `CaptainInput.coderPlayer` is populated, to
-`reviewer` when only `reviewerPlayer` is populated, and to `coder`
-when neither is populated.
+`reviewer`. For the composite `Committer`, when a configured
+committer alias is present — the validated
+`captain.options.code.committer` ([PBRT-30](#pbrt-30)) threaded
+into the runtime as `CaptainInput.committerPlayer` — it shall
+resolve to that player id (`coder` or `reviewer`). Absent a
+configured alias it shall fall back to the
+[DR-004 §2](../decisions/004-link-code-fsm-to-playbook-runtime.md)
+baked binding: `coder` when `CaptainInput.coderPlayer` is
+populated, `reviewer` when only `reviewerPlayer` is populated, and
+`coder` when neither is populated.
+The alias selects only which host pane runs the commit; it is a
+player id, not a [PBRT-4](../user/playbook-runtime.md#pbrt-4)
+identity string, so it shall not
+affect the `<coder-llm>` / `<reviewer-llm>` substitutions, and the
+state's `input.player` stays `Committer`
+([PLAYBOOK-3](playbook.md#playbook-3)).
 
 ## Captain bridge
 
@@ -276,13 +288,19 @@ CODE options from `captain.options.code`, validate them against
 the CODE options schema, reject unknown keys with an error that
 names the offending path, and pass the validated options into
 `createPlaybookRuntime`.
-The CODE options schema defines no keys at present: a valid
-`captain.options.code` is an empty object or absent, every key is
-unknown and rejected, and the adapter passes an empty options set
-into `createPlaybookRuntime`.
-A new CODE option shall be introduced as its own higher-numbered
-item that extends this schema; until then the validator exists to
-establish the seam and fail closed on stray keys.
+The CODE options schema defines one key, `committer`: an optional
+string whose value is the resolved Committer-alias player id and
+shall be one of the baked player ids `coder` or `reviewer`. The
+adapter shall reject any other value, and any unknown key, with an
+error that names the offending path (e.g.
+`captain.options.code.committer`). A valid `captain.options.code`
+is absent, an empty object, or `{ committer: 'coder' | 'reviewer' }`;
+the adapter threads the validated `committer` into
+`createPlaybookRuntime` as the runtime's Committer player id
+([PBRT-8](#pbrt-8)).
+A further CODE option shall be introduced as its own
+higher-numbered item that extends this schema; the validator still
+fails closed on stray keys.
 The external `@sublang/cligent` package shall not validate
 `captain.options.code`; the adapter is the sole validator.
 The derived `coderPlayer` / `reviewerPlayer` identity strings
