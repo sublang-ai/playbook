@@ -22,6 +22,9 @@
 #   into <coder-llm> / <reviewer-llm> in player prompts (PBRT-4), so pin
 #   a model if you want the Committer's commit-message trailers to name
 #   the concrete model.
+# - players.committer optionally aliases the Committer to a role
+#   (coder or reviewer); that role's pane runs the commit turn. The
+#   seeded value is reviewer; omit it to fall back to the coder.
 # - layout sizes the tmux window (layout.window: columns × rows) and
 #   sets the relative column widths (layout.columnWeights) for the
 #   Boss/Captain, Coder, and Reviewer columns.
@@ -52,3 +55,4 @@ players:
     reasoningEffort: xhigh
     permissions:
       mode: auto
+  committer: reviewer

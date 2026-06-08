@@ -95,20 +95,26 @@ $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml"
 Both CODE players can use `claude` or `codex`; other adapter ids are
 passed through to `tmux-play` with a warning because `playbook-code`
 does not know how to preflight their auth. The safe tuning points are
-`captain.adapter`, `captain.model`, each player's `adapter`, and each
-player's `model`. Keep `captain.from` and the `players[].id` values
-fixed; the runtime binds to those host-configuration invariants per
-[PBRT-4](specs/user/playbook-runtime.md#pbrt-4) and derives the
-`<coder-llm>` / `<reviewer-llm>` substitution strings from each
-player entry's `model` when pinned and `adapter` otherwise — so the
-Committer's commit-message trailers can name the concrete model
-(e.g. `claude-opus-4-7`) rather than the adapter family (`claude`).
+`captain.adapter`, `captain.model`, and each role's `adapter` and
+`model` under `players.coder` / `players.reviewer`. The composer owns
+`captain.from` and the `coder` / `reviewer` role keys, so leave those
+keys as-is; the runtime binds to those host-configuration invariants
+per [PBRT-4](specs/user/playbook-runtime.md#pbrt-4) and derives the
+`<coder-llm>` / `<reviewer-llm>` substitution strings from each role's
+`model` when pinned and `adapter` otherwise — so the Committer's
+commit-message trailers can name the concrete model
+(e.g. `claude-opus-4-8`) rather than the adapter family (`claude`).
 
-For example, this swaps the Coder to Codex and the Reviewer to Claude:
+`players.committer` is an optional alias naming which role — `coder`
+or `reviewer` — runs the commit turn; the seeded overlay points it at
+the Reviewer. Absent the alias the Committer falls back to the Coder
+([PBRT-8](specs/user/playbook-runtime.md#pbrt-8)).
+
+For example, the seeded overlay runs the Coder on Codex and the
+Reviewer on Claude, with the Committer aliased to the Reviewer:
 
 ```yaml
 captain:
-  from: "@sublang/playbook/code/tmux-play"
   adapter: claude
   model: claude-sonnet-4-6
   reasoningEffort: high
@@ -116,18 +122,19 @@ captain:
     mode: auto
 
 players:
-  - id: coder      # must stay `coder` — see PBRT-4
+  coder:              # role key must stay `coder` — see PBRT-4
     adapter: codex
     model: gpt-5.5
     reasoningEffort: xhigh
     permissions:
       mode: auto
-  - id: reviewer   # must stay `reviewer` — see PBRT-4
+  reviewer:           # role key must stay `reviewer` — see PBRT-4
     adapter: claude
-    model: claude-opus-4-7
+    model: claude-opus-4-8
     reasoningEffort: xhigh
     permissions:
       mode: auto
+  committer: reviewer   # which role commits — `coder` or `reviewer`
 ```
 
 Normal `playbook-code` runs use the seeded path above. If you need a

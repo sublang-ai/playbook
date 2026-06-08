@@ -94,7 +94,7 @@ and DR-004 §2 (Addendum A2):
 - [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — alias-resolution and options-validation cases (PBRT-26 configured-alias, PBRT-31 valid/invalid `committer`).
 - [x] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-3 Committer binding stays gears-consistent.
 - [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2 baked-binding amendment (Addendum A2).
-- [ ] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — `layout` (Task 3, done), model lineup (Task 4, done), Committer alias (Task 6).
+- [x] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — `layout` (Task 3, done), model lineup (Task 4, done), Committer alias (Task 6, done).
 - [x] [`reference/sdlc/code.playbook/bin/playbook-code.js`](../../reference/sdlc/code.playbook/bin/playbook-code.js) — `layout` pass-through (Task 3, done) + alias resolution (Task 5) in the composer.
 - [x] [`reference/sdlc/code.playbook/code.tmux-play.ts`](../../reference/sdlc/code.playbook/code.tmux-play.ts) (+ `.js`) — alias option validation/threading.
 - [x] [`reference/sdlc/code.playbook/code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) (+ `.js`/`.d.ts`) and [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) (+ `.js`) — `resolvePlayerId` honors the configured alias.
@@ -161,11 +161,27 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    `playbook-code.test.ts` "non-CODE role id" rejection case was retargeted
    from `committer` to `maintainer`. The template's Committer alias slot is
    deferred to Task 6.
-6. **Default alias + close-out.**
+6. **Default alias + close-out.** _[done]_
    Set the template's Committer alias to Reviewer;
    update README's agent-swap recipe;
    re-verify `map.md`;
    record any divergence as a one-line addendum.
+   Implementation note: the template's `players` mapping gains
+   `committer: reviewer` (plus a safe-tuning comment), which the composer
+   already resolves into `captain.options.code.committer`; the seeding
+   integration test now asserts the composed config carries
+   `committer: 'reviewer'` with the roster still `[coder, reviewer]` (no
+   extra pane). `map.md` already carried the IR-013 row and the
+   alias-aware PBCODE/PBRT/DR rows from Tasks 1–2, so it needed no edit.
+   Divergence reconciled: the README "Configure agents" recipe still
+   showed the pre-composer *full* tmux-play form (`captain.from`,
+   `players: [- id: …]`) that predates the overlay; since the alias is an
+   overlay-only surface (`players.committer`; a direct
+   `captain.options.code.committer` is rejected), the recipe is rewritten
+   to the seeded *overlay* form — role-keyed `players.coder` /
+   `players.reviewer`, no `captain.from` (composer-owned), refreshed
+   models (Reviewer `claude-opus-4-8`), and the `committer: reviewer`
+   alias — matching the actual seeded template.
 
 ## Acceptance criteria
 

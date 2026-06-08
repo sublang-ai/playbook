@@ -87,6 +87,10 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
       window: { columns: 174, rows: 49 },
       columnWeights: [4, 6, 6],
     });
+    // PBCODE-16/17 + PBRT-8: the seeded Committer alias resolves into
+    // captain.options.code.committer without adding a players[] entry,
+    // so commit turns route to the reviewer pane.
+    expect(composed.captain.options.code.committer).toBe('reviewer');
 
     // Temp config removed before the shim exits.
     expect(spawn.configs[0].existedAtSpawn).toBe(true);
