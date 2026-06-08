@@ -65,7 +65,10 @@ and DR-004 §2 (Addendum A2):
   (PBRT-30) and emits no extra `players[]` entry. The alias is CODE-internal
   role resolution, not the host adapter/model routing PBRT-29 reserves for
   `players`, so `options.code` is its rightful home (carve-out added to
-  PBRT-29).
+  PBRT-29). `players.committer` is the sole overlay surface: the composer is
+  the sole writer of the composed `captain.options.code.committer`, so a
+  directly-set overlay `captain.options.code.committer` is rejected, avoiding
+  a two-source conflict.
 - **No cligent change.** Resolved entirely in the playbook composer + CODE
   runtime; `@sublang/cligent` is untouched and the lockfile unchanged. Recorded
   as a DR-004 §2 amendment (Addendum A2), not a standalone DR-008.
@@ -86,9 +89,9 @@ and DR-004 §2 (Addendum A2):
 - [ ] [`specs/decisions/006-code-config-composition.md`](../decisions/006-code-config-composition.md) §2.4 amendment adding `layout` to the base-inheritable list (today closed to `theme` + the captain-judge fields) + `map.md` row refresh.
 - [ ] [`specs/user/playbook-code.md`](../user/playbook-code.md) — PBCODE-16: overlay may carry a top-level `layout` block and a Committer alias.
 - [ ] [`specs/dev/playbook-code.md`](../dev/playbook-code.md) — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7's template *shape* refreshed for the structural additions (the `layout` block and the alias slot), not concrete model picks — PBCODE-7 documents structure, and PBCODE-6 keeps model values user-tunable.
-- [ ] [`specs/test/playbook-code.md`](../test/playbook-code.md) — PBCODE-18: `layout` and alias composition cases.
+- [ ] [`specs/test/playbook-code.md`](../test/playbook-code.md) — PBCODE-18: `layout` and alias composition cases (alias cases landed in Task 2; `layout` cases in Task 3).
 - [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md) + [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md) — PBRT-8 (configurable Committer binding), PBRT-29/30 (alias placement), PBRT-4 interaction.
-- [ ] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — alias-resolution and options-validation cases.
+- [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — alias-resolution and options-validation cases (PBRT-26 configured-alias, PBRT-31 valid/invalid `committer`).
 - [x] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-3 Committer binding stays gears-consistent.
 - [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2 baked-binding amendment (Addendum A2).
 - [ ] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — `layout`, model lineup, Committer alias.
@@ -108,6 +111,11 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    amend PBRT-8/29/30, PBCODE-16/17 (alias half), PLAYBOOK-3, and DR-004 §2
    (Addendum A2); refresh `map.md`.
    Prose only; no code.
+   Review follow-up: de-cited IR-013 from DR-004 (META-18) and refreshed its
+   `map.md` row; defined single-overlay-surface precedence (a direct overlay
+   `captain.options.code.committer` is rejected); and pinned the alias
+   test-spec cases now (PBCODE-18, PBRT-26/31) for spec coherence rather than
+   deferring them to Task 5.
 3. **Layout pass-through.**
    Composer carries a top-level `layout` block (overlay → composed, inherited
    from a base config like `theme`); PBCODE-16/17 + PBCODE-18 amended; the

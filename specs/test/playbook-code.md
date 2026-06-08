@@ -103,8 +103,15 @@ equal to `coder` and `reviewer`, each carrying the `adapter`,
 role in the overlay; `theme` and any overlay-unset captain-judge
 fields inherited from the base when present; the base `players[]`
 roster not mapped onto the CODE roster; and `captain.options.code`
-injected from the overlay; unless an overlay that omits a role or
-names a non-CODE role id is rejected with a path-named error;
+injected from the overlay; unless a `players.committer` aliasing
+`coder` or `reviewer` is resolved into
+`captain.options.code.committer` with no extra `players[]` entry,
+leaving the roster `coder` + `reviewer`; unless an overlay that
+omits `coder` or `reviewer`, carries a `players` key other than
+`coder` / `reviewer` / `committer`, sets `players.committer` to a
+value other than `coder` or `reviewer`, or sets
+`captain.options.code.committer` directly, is rejected with a
+path-named error;
 unless `captain.adapter` is inherited from the base when the
 overlay omits it, and an overlay that omits `captain.adapter` with
 no base config is rejected with a path-named error; unless the shim

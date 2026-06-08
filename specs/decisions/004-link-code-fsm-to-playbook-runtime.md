@@ -8,7 +8,7 @@
 Accepted.
 Pins the CODE-specific bindings that [slc/link.md](../../slc/link.md) leaves open.
 [DR-007](007-hidden-judge-captain-pane.md) amends §11's `callJudge` port wiring to run the judge call hidden (`{ visibility: 'hidden' }`); the original row below is retained as the historical decision and carries an inline pointer.
-[IR-013](../iterations/013-player-alias-default-lineup.md) amends §2's baked Committer binding to be config-driven (a `captain.options.code.committer` alias resolved in the `playbook-code` composer and the CODE runtime, with no cligent change); see [Addendum A2](#a2-committer-composite-binding-made-configurable-per-ir-013).
+[Addendum A2](#a2-committer-composite-binding-made-configurable) amends §2's baked Committer binding to be config-driven (a `captain.options.code.committer` alias resolved in the `playbook-code` composer and the CODE runtime, with no cligent change).
 
 ## Context
 
@@ -37,7 +37,7 @@ Player binding is *not* a runtime option; future per-run remapping would be a se
 
 ### 2. Player binding for CODE
 
-> Amended by [IR-013](../iterations/013-player-alias-default-lineup.md) / [Addendum A2](#a2-committer-composite-binding-made-configurable-per-ir-013): the composite `Committer` binding is now config-driven via a `captain.options.code.committer` alias. The per-source-item table below is the fallback when no alias is configured.
+> Amended by [Addendum A2](#a2-committer-composite-binding-made-configurable): the composite `Committer` binding is now config-driven via a `captain.options.code.committer` alias. The per-source-item table below is the fallback when no alias is configured.
 
 CODE declares `Coder`, `Reviewer`, and the alias `Committer = Coder | Reviewer` ([code.gears.md](../../reference/sdlc/code.playbook/code.gears.md)).
 Non-composite states bind trivially (Coder → `coder`, Reviewer → `reviewer`).
@@ -358,11 +358,11 @@ amended drive-loop check. The matching constant in
 spec list and the implementation constant would re-introduce a
 drive-loop deadlock on `awaitBossReply`.
 
-### A2. Committer composite binding made configurable (per IR-013)
+### A2. Committer composite binding made configurable
 
-[IR-013](../iterations/013-player-alias-default-lineup.md) makes the
-composite `Committer` binding config-driven, partially relaxing §1's
-"player binding is *not* a runtime option" for this one composite.
+This addendum makes the composite `Committer` binding config-driven,
+partially relaxing §1's "player binding is *not* a runtime option"
+for this one composite.
 
 - **Where it lives.** The CODE overlay carries an optional
   `players.committer` string aliasing an existing role (`coder` or

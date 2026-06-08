@@ -107,6 +107,11 @@ naming an existing role, `coder` or `reviewer`. It is a reference,
 not a player block: it declares no `adapter` and adds no pane,
 selecting only which existing role runs the commit. An unknown
 target is rejected with a path-named error (`players.committer`).
+`players.committer` is the only overlay surface for the alias: the
+composer is the sole writer of the composed
+`captain.options.code.committer`, so an overlay that sets
+`captain.options.code.committer` directly is rejected with a
+path-named error rather than carried through.
 Where `playbook-code` is invoked without `--config`, the shim
 shall compose the runtime config rather than launch the overlay
 directly: it shall inject `captain.from` = the CODE adapter module;

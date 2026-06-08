@@ -98,6 +98,11 @@ emit a `players[]` entry for it, so the roster stays `coder` +
 `reviewer`. It shall reject a `committer` value that is not
 `coder` or `reviewer` with a path-named error
 (`players.committer`).
+The shim is the sole writer of the composed
+`captain.options.code.committer`: it shall reject an overlay that
+sets `captain.options.code.committer` directly with a path-named
+error (`captain.options.code.committer`), and shall carry the rest
+of `captain.options.code` through unchanged.
 It shall set the composed `captain.adapter` from the overlay when
 present, else from the base config, and shall fail with a
 path-named `captain.adapter` error when neither supplies it; the

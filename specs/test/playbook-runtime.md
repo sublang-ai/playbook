@@ -206,6 +206,12 @@ joint-commit flow (CODE-17 with both `coderPlayer` and
 each captain invocation resolves to the expected `playerId`:
 `coder` for Coder, `reviewer` for Reviewer, `coder` for CODE-15,
 `reviewer` for CODE-16, and `coder` for CODE-17.
+In addition, when a configured committer alias
+(`CaptainInput.committerPlayer`) is present, the test suite shall
+fail unless every `Committer` state resolves to that player id
+(`coder` or `reviewer`) regardless of which of `coderPlayer` /
+`reviewerPlayer` is populated, while `input.player` stays
+`Committer`.
 
 ### PBRT-27
 Verifies: [PBRT-12](../dev/playbook-runtime.md#pbrt-12)
@@ -237,10 +243,15 @@ unmoved, and empty text makes no port calls.
 Verifies: [PBRT-29](../user/playbook-runtime.md#pbrt-29), [PBRT-30](../dev/playbook-runtime.md#pbrt-30)
 
 When the tmux-play adapter is initialized with `captain.options.code`
-set to the empty object `{}`, set to an object carrying an unknown
-key, and absent, the test suite shall fail unless the `{}` and
-absent cases initialize and pass an empty options set into
-`createPlaybookRuntime`, the unknown-key case causes `init` to
-reject with an error naming the offending path, and the derived
-`coderPlayer` / `reviewerPlayer` identity strings still come from
-`session.players` regardless of `captain.options.code`.
+set to the empty object `{}`, set to `{ committer: 'coder' }` and
+`{ committer: 'reviewer' }`, set to a `committer` value that is
+neither `coder` nor `reviewer`, set to an object carrying an
+unknown key, and absent, the test suite shall fail unless the `{}`
+and absent cases initialize and pass an empty options set into
+`createPlaybookRuntime`; the valid-`committer` cases pass that role
+id into `createPlaybookRuntime` as the Committer player id; the
+invalid-`committer` case and the unknown-key case each cause `init`
+to reject with an error naming the offending path
+(`captain.options.code.committer` for the invalid value); and the
+derived `coderPlayer` / `reviewerPlayer` identity strings still
+come from `session.players` regardless of `captain.options.code`.
