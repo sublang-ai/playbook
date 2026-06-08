@@ -19,9 +19,9 @@ Two coupled changes to the `playbook-code` CODE overlay and its composer.
 
 2. Refresh the seeded default overlay
    ([PBCODE-7](../dev/playbook-code.md#pbcode-7)):
-   - 4:6:6 column weights and a 174×49 window — cligent's tmux-play default,
-     sized for 18pt text on a 1080p 16:9 display — under a top-level `layout`
-     block;
+   - a 174×49 window — cligent's tmux-play default, sized for 18pt text on a
+     1080p 16:9 display — and 4:6:6 column weights, a playbook-specific override
+     of cligent's `[1,1,1]` default, both under a top-level `layout` block;
    - Captain stays claude `claude-sonnet-4-6`;
    - Coder becomes codex `gpt-5.5` at `xhigh`;
    - Reviewer becomes claude `claude-opus-4-8` at `xhigh`;
@@ -40,7 +40,8 @@ Two coupled changes to the `playbook-code` CODE overlay and its composer.
   to DR-004 §2's baked-binding design.
 - It embeds an unsettled design decision (see below) that warrants
   deliberate specification before code.
-- Touched specs span three packages (PBCODE, PBRT, PLAYBOOK) and a DR;
+- Touched specs span three packages (PBCODE, PBRT, PLAYBOOK) and two DRs
+  (DR-004 §2 baked-binding plus DR-006 §2.4 base-inheritance);
   touched code spans the composer, the adapter, the FSM, and the runtime,
   with `.js`/`.d.ts` siblings and four test files.
 - The layout and model-default refresh are independently reviewable from the
@@ -73,8 +74,9 @@ spec and code disagree.
 
 - [ ] IR-013 doc and its `map.md` row.
 - [ ] Alias-representation decision recorded (DR-004 §2 amendment, or DR-008 + map row).
+- [ ] [`specs/decisions/006-code-config-composition.md`](../decisions/006-code-config-composition.md) §2.4 amendment adding `layout` to the base-inheritable list (today closed to `theme` + the captain-judge fields) + `map.md` row refresh.
 - [ ] [`specs/user/playbook-code.md`](../user/playbook-code.md) — PBCODE-16: overlay may carry a top-level `layout` block and a Committer alias.
-- [ ] [`specs/dev/playbook-code.md`](../dev/playbook-code.md) — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7 refreshed template.
+- [ ] [`specs/dev/playbook-code.md`](../dev/playbook-code.md) — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7's template *shape* refreshed for the structural additions (the `layout` block and the alias slot), not concrete model picks — PBCODE-7 documents structure, and PBCODE-6 keeps model values user-tunable.
 - [ ] [`specs/test/playbook-code.md`](../test/playbook-code.md) — PBCODE-18: `layout` and alias composition cases.
 - [ ] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md) + [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md) — PBRT-8 (configurable Committer binding), PBRT-29/30 (alias placement), PBRT-4 interaction.
 - [ ] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — alias-resolution and options-validation cases.
@@ -99,13 +101,19 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    Prose only; no code.
 3. **Layout pass-through.**
    Composer carries a top-level `layout` block (overlay → composed, inherited
-   from a base config like `theme`); PBCODE-16/17 + PBCODE-18 amended; template
-   gains `layout: { window: { columns: 174, rows: 49 }, columnWeights: [4, 6, 6] }`.
+   from a base config like `theme`); PBCODE-16/17 + PBCODE-18 amended; the
+   structural `layout` block is added to PBCODE-7's template shape.
+   DR-006 §2.4 is amended to add `layout` to the base-inheritable list (today
+   closed to `theme` + the captain-judge fields), with a `map.md` refresh.
+   Template gains
+   `layout: { window: { columns: 174, rows: 49 }, columnWeights: [4, 6, 6] }`.
    `pnpm test` green.
 4. **Refresh the model lineup.**
    Template only: Captain claude `claude-sonnet-4-6`; Coder codex `gpt-5.5`
    `xhigh`; Reviewer claude `claude-opus-4-8` `xhigh`.
-   No spec change; the readiness gate still sees `claude` + `codex`.
+   No spec change — this swaps model *values*, and PBCODE-7 documents template
+   structure while PBCODE-6 keeps concrete models user-tunable, so neither item
+   pins these picks; the readiness gate still sees `claude` + `codex`.
 5. **Alias end-to-end.**
    Overlay schema accepts the Committer alias; the composer resolves it without
    adding a `players[]` entry and threads it to the runtime; `code.tmux-play.ts`
