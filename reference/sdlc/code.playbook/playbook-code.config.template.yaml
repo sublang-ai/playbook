@@ -41,14 +41,14 @@ captain:
 
 players:
   coder:
-    adapter: claude
-    model: claude-opus-4-7
+    adapter: codex
+    model: gpt-5.5
     reasoningEffort: xhigh
     permissions:
       mode: auto
   reviewer:
-    adapter: codex
-    model: gpt-5.5
+    adapter: claude
+    model: claude-opus-4-8
     reasoningEffort: xhigh
     permissions:
       mode: auto

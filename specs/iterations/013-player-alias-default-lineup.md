@@ -94,7 +94,7 @@ and DR-004 §2 (Addendum A2):
 - [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — alias-resolution and options-validation cases (PBRT-26 configured-alias, PBRT-31 valid/invalid `committer`).
 - [x] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-3 Committer binding stays gears-consistent.
 - [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2 baked-binding amendment (Addendum A2).
-- [ ] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — `layout` (Task 3, done), model lineup (Task 4), Committer alias (Task 6).
+- [ ] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — `layout` (Task 3, done), model lineup (Task 4, done), Committer alias (Task 6).
 - [ ] [`reference/sdlc/code.playbook/bin/playbook-code.js`](../../reference/sdlc/code.playbook/bin/playbook-code.js) — `layout` pass-through (Task 3, done) + alias resolution (Task 5) in the composer.
 - [ ] [`reference/sdlc/code.playbook/code.tmux-play.ts`](../../reference/sdlc/code.playbook/code.tmux-play.ts) (+ `.js`) — alias option validation/threading.
 - [ ] [`reference/sdlc/code.playbook/code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) (+ `.js`/`.d.ts`) and [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) (+ `.js`) — `resolvePlayerId` honors the configured alias.
@@ -139,7 +139,7 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    before the composer sees it — so the shim now recovers a base `layout`
    from the raw base YAML (inert once a loader preserves `layout`); added an
    end-to-end discovered-base test that fails without the recovery.
-4. **Refresh the model lineup.**
+4. **Refresh the model lineup.** _[done]_
    Template only: Captain claude `claude-sonnet-4-6`; Coder codex `gpt-5.5`
    `xhigh`; Reviewer claude `claude-opus-4-8` `xhigh`.
    No spec change — this swaps model *values*, and PBCODE-7 documents template
