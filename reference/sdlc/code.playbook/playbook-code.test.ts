@@ -81,6 +81,12 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
       'coder',
       'reviewer',
     ]);
+    // PBCODE-16/17: the seeded template carries a layout block, carried
+    // through to the composed config (174×49 window, 4:6:6 columns).
+    expect(composed.layout).toEqual({
+      window: { columns: 174, rows: 49 },
+      columnWeights: [4, 6, 6],
+    });
 
     // Temp config removed before the shim exits.
     expect(spawn.configs[0].existedAtSpawn).toBe(true);
@@ -369,6 +375,62 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
       'claude',
       'codex',
     ]);
+  });
+
+  it('carries a top-level layout block through from the overlay', () => {
+    const composed = composeRuntimeConfig({
+      captain: { adapter: 'claude' },
+      layout: { window: { columns: 174, rows: 49 }, columnWeights: [4, 6, 6] },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    });
+    expect(composed.layout).toEqual({
+      window: { columns: 174, rows: 49 },
+      columnWeights: [4, 6, 6],
+    });
+  });
+
+  it('inherits layout from the base when the overlay omits it, like theme', () => {
+    const overlay = {
+      captain: { adapter: 'claude' },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    };
+    const base = {
+      layout: { window: { columns: 200, rows: 60 }, columnWeights: [1, 1, 1] },
+      captain: { from: 'x', adapter: 'codex' },
+      players: [{ id: 'solo', adapter: 'gemini' }],
+    };
+    const composed = composeRuntimeConfig(overlay, base);
+    expect(composed.layout).toEqual({
+      window: { columns: 200, rows: 60 },
+      columnWeights: [1, 1, 1],
+    });
+  });
+
+  it('prefers the overlay layout over the base layout', () => {
+    const overlay = {
+      captain: { adapter: 'claude' },
+      layout: { window: { columns: 174, rows: 49 }, columnWeights: [4, 6, 6] },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    };
+    const base = {
+      layout: { window: { columns: 80, rows: 24 }, columnWeights: [1, 1, 1] },
+      captain: { from: 'x', adapter: 'codex' },
+      players: [{ id: 'solo', adapter: 'gemini' }],
+    };
+    const composed = composeRuntimeConfig(overlay, base);
+    expect(composed.layout).toEqual({
+      window: { columns: 174, rows: 49 },
+      columnWeights: [4, 6, 6],
+    });
   });
 
   it('inherits captain.adapter from the base when the overlay omits it', () => {

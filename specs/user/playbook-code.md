@@ -100,7 +100,11 @@ and `permissions` are optional.
 Each `players.<role>` block holds that role's `adapter` (required,
 not inherited) and optional `model`, `reasoningEffort`,
 `permissions`; CODE options, if any, live under
-`captain.options.code`; an optional top-level `theme` may be set.
+`captain.options.code`; optional top-level `theme` and `layout`
+blocks may be set. The `layout` block is a host-observable tmux-play
+field (window size and column weights), not a CODE option; the
+composer carries it through to the composed config without
+interpreting it.
 The `players` mapping may additionally carry an optional
 `committer` key — the Committer alias — whose value is a string
 naming an existing role, `coder` or `reviewer`. It is a reference,
@@ -123,16 +127,17 @@ only; the `committer` alias is resolved, not rostered); carry the
 overlay's `captain.options.code` through, resolving any
 `players.committer` alias into `captain.options.code.committer`
 (the named role id) without emitting a `players[]` entry for it;
-materialize the composed config to
+carry any top-level `layout` block through unchanged; materialize
+the composed config to
 a temporary file; launch `tmux-play --config <temp>`; and remove
 the temporary file before the shim exits — on normal exit, on
 non-zero child exit, and before re-raising a forwarded signal per
 [PBCODE-2](#pbcode-2).
 Where an existing base tmux-play config is present, the shim shall
-inherit from it only the `theme` and any captain-judge `adapter`,
-`model`, `reasoningEffort`, and `permissions` the overlay leaves
-unset, and shall not map the base `players[]` roster onto `coder` /
-`reviewer`.
+inherit from it only the `theme`, the top-level `layout` block, and
+any captain-judge `adapter`, `model`, `reasoningEffort`, and
+`permissions` the overlay leaves unset, and shall not map the base
+`players[]` roster onto `coder` / `reviewer`.
 When neither the overlay nor a base config supplies
 `captain.adapter`, composition shall fail with a path-named error
 (`captain.adapter`).

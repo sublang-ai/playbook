@@ -210,11 +210,13 @@ export function composeRuntimeConfig(
     }
   }
 
-  // Inherit only `theme` from the base; never the base `players[]`
-  // roster.
+  // Inherit `theme` and `layout` from the base when the overlay omits
+  // them; never the base `players[]` roster.
   const composed = {};
   const theme = overlayConfig.theme ?? base?.theme;
   if (theme !== undefined) composed.theme = theme;
+  const layout = overlayConfig.layout ?? base?.layout;
+  if (layout !== undefined) composed.layout = layout;
   composed.captain = captain;
   composed.players = players;
   return composed;

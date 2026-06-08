@@ -22,6 +22,15 @@
 #   into <coder-llm> / <reviewer-llm> in player prompts (PBRT-4), so pin
 #   a model if you want the Committer's commit-message trailers to name
 #   the concrete model.
+# - layout sizes the tmux window (layout.window: columns × rows) and
+#   sets the relative column widths (layout.columnWeights) for the
+#   Boss/Captain, Coder, and Reviewer columns.
+
+layout:
+  window:
+    columns: 174
+    rows: 49
+  columnWeights: [4, 6, 6]
 
 captain:
   adapter: claude

@@ -41,9 +41,13 @@ The bundled template shall be a CODE overlay per
 [PBCODE-16](../user/playbook-code.md#pbcode-16): a `captain` judge
 block, a `players` mapping with `coder` and `reviewer` keys (each
 with `adapter` and optional `model` / `reasoningEffort` /
-`permissions`), and any `captain.options.code`; it shall carry
-neither `captain.from` nor `players[].id`, since the composer
-injects those.
+`permissions`) plus an optional `committer` alias slot, an optional
+top-level `layout` block (window size and column weights), and any
+`captain.options.code`; it shall carry neither `captain.from` nor
+`players[].id`, since the composer injects those.
+This item fixes the template's *shape*, not its model picks; the
+concrete `adapter` / `model` / `reasoningEffort` values stay
+user-tunable per [PBCODE-6](../user/playbook-code.md#pbcode-6).
 The copy shall preserve the template comments, which shall
 describe the tunable overlay fields rather than name `captain.from`
 or `players[].id` as user-maintained invariants; the comments
@@ -107,6 +111,11 @@ It shall set the composed `captain.adapter` from the overlay when
 present, else from the base config, and shall fail with a
 path-named `captain.adapter` error when neither supplies it; the
 role `adapter`s are required in the overlay and are not inherited.
+It shall carry the optional top-level `layout` block into the
+composed config from the overlay, or inherit it from the base
+config when the overlay omits it — the same precedence as `theme` —
+without interpreting its contents, since `layout` is a
+host-observable tmux-play field, not a CODE option.
 The shim shall type the composed config with cligent's exported
 config types but shall serialize it to the temporary `.yaml` with
 its own serializer, since `@sublang/cligent/tmux-play` exports no

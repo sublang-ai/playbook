@@ -29,7 +29,7 @@ meta.md     The spec of specs
 | DR-003 | [003-sketch-controlled-shell.md](decisions/003-sketch-controlled-shell.md) | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
 | DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: player binding (Committer alias config-driven per Addendum A2), free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and tmux-play adapter wiring |
 | DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + universal `needsBossReply` guard for captain-invoking states, so player questions suspend and resume the same state with the answer in context |
-| DR-006 | [006-code-config-composition.md](decisions/006-code-config-composition.md) | CODE config via `captain.options.code` (namespaced, adapter-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config; object-launcher deferred |
+| DR-006 | [006-code-config-composition.md](decisions/006-code-config-composition.md) | CODE config via `captain.options.code` (namespaced, adapter-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config; base-inheritable host fields are `theme`, `layout`, and the captain-judge fields (§2.4); object-launcher deferred |
 | DR-007 | [007-hidden-judge-captain-pane.md](decisions/007-hidden-judge-captain-pane.md) | No raw judge JSON on the Captain pane: route every CODE judge call through cligent's hidden `callCaptain({ visibility: 'hidden' })`, surface a suspended player's full question as captain speech then a rider-less marker, with a temporary module augmentation and a gated test until the cligent bump |
 
 ## Iterations
@@ -67,8 +67,8 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config, incl. the Committer alias) |
-| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding, readiness heuristic, config composition (base discovery, role→`players[]` mapping, Committer-alias resolution, owned YAML serialization), Node engine floor |
+| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config, incl. the Committer alias and a `layout` block) |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding, readiness heuristic, config composition (base discovery, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout` inheritance, owned YAML serialization), Node engine floor |
 | test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and config composition |
 
 ### PBRT

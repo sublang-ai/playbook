@@ -100,11 +100,14 @@ suite shall fail unless the composed config the shim launches has
 `captain.from` set to the CODE adapter module; `players[].id`
 equal to `coder` and `reviewer`, each carrying the `adapter`,
 `model`, `reasoningEffort`, and `permissions` declared for that
-role in the overlay; `theme` and any overlay-unset captain-judge
-fields inherited from the base when present; the base `players[]`
-roster not mapped onto the CODE roster; and `captain.options.code`
-injected from the overlay; unless a `players.committer` aliasing
-`coder` or `reviewer` is resolved into
+role in the overlay; `theme`, the top-level `layout` block, and any
+overlay-unset captain-judge fields inherited from the base when
+present; the base `players[]` roster not mapped onto the CODE
+roster; and `captain.options.code` injected from the overlay;
+unless a top-level `layout` block is carried into the composed
+config from the overlay, and inherited from the base when the
+overlay omits it (the same precedence as `theme`); unless a
+`players.committer` aliasing `coder` or `reviewer` is resolved into
 `captain.options.code.committer` with no extra `players[]` entry,
 leaving the roster `coder` + `reviewer`; unless an overlay that
 omits `coder` or `reviewer`, carries a `players` key other than
