@@ -66,6 +66,13 @@ export type CaptainInput = {
   challenges?: string;
   coderPlayer?: string;
   reviewerPlayer?: string;
+  // Routing-only: the configured Committer-alias player id (`coder` /
+  // `reviewer`) threaded from `captain.options.code.committer`
+  // (PBRT-8 / PBRT-30). It selects which host pane runs a `Committer`
+  // commit; it is not a prompt-placeholder source, so it never affects
+  // <coder-llm> / <reviewer-llm> substitution or any labelled block,
+  // and `input.player` stays `Committer` (PLAYBOOK-3).
+  committerPlayer?: string;
   pendingBossQuestion?: PendingBossQuestion;
   bossReply?: string;
 };
@@ -1342,6 +1349,7 @@ export const codingMachine = setup({
           sourceItem: 'CODE-18',
           ...bossReplyInputFields(context),
           coderPlayer: context.coderPlayer,
+          committerPlayer: context.committerPlayer,
           prompt: [
             'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
             'Write concisely.',
@@ -1407,6 +1415,7 @@ export const codingMachine = setup({
           ...bossReplyInputFields(context),
           coderPlayer: context.coderPlayer,
           reviewerPlayer: context.reviewerPlayer,
+          committerPlayer: context.committerPlayer,
           prompt: [
             'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
             'Write concisely.',

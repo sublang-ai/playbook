@@ -23,6 +23,7 @@ export type CaptainInput = {
     challenges?: string;
     coderPlayer?: string;
     reviewerPlayer?: string;
+    committerPlayer?: string;
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 };

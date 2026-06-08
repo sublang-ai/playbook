@@ -237,6 +237,69 @@ describe('resolvePlayerId', () => {
         'coder',
       );
     });
+
+    describe('configured committer alias (PBRT-8)', () => {
+      it('committerPlayer wins over the coder-first fallback (CODE-19)', () => {
+        // Both <playerName>Player fields are populated (the CODE-19
+        // joint-commit shape), so the bare fallback would pick 'coder';
+        // the configured alias overrides it to the Reviewer pane.
+        expect(
+          resolvePlayerId(
+            makeInput({
+              player: 'Committer',
+              sourceItem: 'CODE-19',
+              coderPlayer: 'claude',
+              reviewerPlayer: 'codex',
+              committerPlayer: 'reviewer',
+            }),
+          ),
+        ).toBe('reviewer');
+      });
+
+      it('committerPlayer wins over a reviewer-only fallback (CODE-18)', () => {
+        // CODE-18 wires only coderPlayer, so the bare fallback picks
+        // 'coder'; the alias overrides it to whichever pane it names.
+        expect(
+          resolvePlayerId(
+            makeInput({
+              player: 'Committer',
+              sourceItem: 'CODE-18',
+              coderPlayer: 'claude',
+              committerPlayer: 'reviewer',
+            }),
+          ),
+        ).toBe('reviewer');
+      });
+
+      it("committerPlayer:'coder' selects the Coder pane regardless of populated fields", () => {
+        expect(
+          resolvePlayerId(
+            makeInput({
+              player: 'Committer',
+              sourceItem: 'CODE-19',
+              coderPlayer: 'claude',
+              reviewerPlayer: 'codex',
+              committerPlayer: 'coder',
+            }),
+          ),
+        ).toBe('coder');
+      });
+
+      it('the alias does not affect Coder / Reviewer routing', () => {
+        // The alias is a Committer-only host-pane selector; the
+        // non-composite players resolve by name regardless.
+        expect(
+          resolvePlayerId(
+            makeInput({ player: 'Coder', committerPlayer: 'reviewer' }),
+          ),
+        ).toBe('coder');
+        expect(
+          resolvePlayerId(
+            makeInput({ player: 'Reviewer', committerPlayer: 'coder' }),
+          ),
+        ).toBe('reviewer');
+      });
+    });
   });
 });
 
@@ -2825,6 +2888,59 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
       'coder',
       'coder',
     ]);
+    expect(runtime._getActor()?.getSnapshot().status).toBe('done');
+  });
+
+  it('a configured committer alias routes both Committer states to the named pane (PBRT-8)', async () => {
+    // Same joint-commit path as above, but the runtime is built with
+    // committerPlayer:'reviewer'. Both CODE-18 (commitCoderInitial) and
+    // CODE-19 (commitJoint) now resolve to 'reviewer' while the Coder
+    // and Reviewer states are untouched.
+    const judgeReplies: Array<Record<string, unknown>> = [
+      { guard: 'singleCommitReady' },
+      { guard: 'committedSpecs' },
+      { guard: 'hasFindings', reviews: '1. tweak X' },
+      { guard: 'changesMadeSpecs' },
+      { guard: 'hasFindings', reviews: '1. one more tweak' },
+      { guard: 'accepted' },
+      { guard: 'committed' },
+    ];
+    const playerCalls: Array<{ playerId: string; prompt: string }> = [];
+    const ports = makeFakePorts({
+      callPlayer: async (playerId, prompt) => {
+        playerCalls.push({ playerId, prompt });
+        return { status: 'ok', finalText: 'progress' };
+      },
+      callJudge: judgeSequence(judgeReplies),
+    });
+    const runtime = createPlaybookRuntime({
+      coderPlayer: 'claude',
+      reviewerPlayer: 'codex',
+      committerPlayer: 'reviewer',
+    }) as RuntimeWithInternals;
+    await runtime.init(ports);
+    await runtime.handleBossInput({ text: '/start aliased', signal: sig() });
+
+    // Invocations 2 (CODE-18) and 7 (CODE-19) are Committer states; the
+    // alias sends both to 'reviewer'. The Coder/Reviewer states keep
+    // their own panes.
+    expect(playerCalls.map((c) => c.playerId)).toEqual([
+      'coder',
+      'reviewer',
+      'reviewer',
+      'coder',
+      'reviewer',
+      'coder',
+      'reviewer',
+    ]);
+    // The two Committer commit prompts route to 'reviewer'; the
+    // <coder-llm> placeholder still substitutes the Coder identity
+    // ('claude'), since the alias is a host-pane selector, not a
+    // PBRT-4 identity string.
+    expect(playerCalls[1].prompt).toContain('Make a commit of the changes');
+    expect(playerCalls[1].prompt).toContain('Coder is claude.');
+    expect(playerCalls[6].prompt).toContain('Make a commit of the changes');
+    expect(playerCalls[6].prompt).toContain('Coder is claude; Reviewer is codex.');
     expect(runtime._getActor()?.getSnapshot().status).toBe('done');
   });
 });

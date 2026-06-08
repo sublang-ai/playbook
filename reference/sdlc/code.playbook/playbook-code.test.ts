@@ -464,10 +464,67 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
         players: {
           coder: { adapter: 'claude' },
           reviewer: { adapter: 'codex' },
-          committer: { adapter: 'claude' },
+          maintainer: { adapter: 'claude' },
         },
       }),
-    ).toThrow(/players\.committer/);
+    ).toThrow(/players\.maintainer/);
+  });
+
+  // The CODE overlay with a `players.committer` alias. Built inline
+  // (not via fullOverlay) so the loosely-typed literal can carry the
+  // optional alias key; the composer param is untyped.
+  function committerOverlay(committer: string, code?: Record<string, unknown>) {
+    return {
+      captain: { adapter: 'claude', ...(code ? { options: { code } } : {}) },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+        committer,
+      },
+    };
+  }
+
+  it('resolves players.committer into captain.options.code without a players[] entry', () => {
+    // PBCODE-17/18: the alias names an existing role; the composer
+    // emits it under captain.options.code.committer and leaves the
+    // roster at coder + reviewer (no third players[] entry).
+    const composed = composeRuntimeConfig(committerOverlay('reviewer'));
+    expect(composed.captain.options).toEqual({ code: { committer: 'reviewer' } });
+    expect(composed.players.map((p: { id: string }) => p.id)).toEqual([
+      'coder',
+      'reviewer',
+    ]);
+  });
+
+  it('resolves players.committer: coder the same way', () => {
+    const composed = composeRuntimeConfig(committerOverlay('coder'));
+    expect(composed.captain.options).toEqual({ code: { committer: 'coder' } });
+  });
+
+  it('rejects players.committer naming a non-role with a path-named error', () => {
+    expect(() => composeRuntimeConfig(committerOverlay('boss'))).toThrow(
+      /players\.committer/,
+    );
+  });
+
+  it('rejects a directly-set captain.options.code.committer (composer-owned)', () => {
+    const overlay = fullOverlay();
+    overlay.captain.options = { code: { committer: 'reviewer' } };
+    expect(() => composeRuntimeConfig(overlay)).toThrow(
+      /captain\.options\.code\.committer/,
+    );
+  });
+
+  it('layers the resolved alias on top of a carried-through code block', () => {
+    // The composer carries the overlay's captain.options.code through
+    // unchanged (it does not validate non-committer keys — that is the
+    // adapter's job per PBRT-30) and layers the resolved alias on top.
+    const composed = composeRuntimeConfig(
+      committerOverlay('reviewer', { future: 'value' }),
+    );
+    expect(composed.captain.options).toEqual({
+      code: { future: 'value', committer: 'reviewer' },
+    });
   });
 
   it('rejects an overlay missing captain.adapter with no base config', () => {

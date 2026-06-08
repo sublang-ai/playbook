@@ -6,6 +6,8 @@ declare module '@sublang/cligent/tmux-play' {
         }): Promise<CaptainRunResult>;
     }
 }
-export type CodeOptions = Record<string, never>;
+export interface CodeOptions {
+    committer?: 'coder' | 'reviewer';
+}
 export declare function validateCodeOptions(captainOptions: unknown): CodeOptions;
 export default function createCodeTmuxPlayCaptain(options: unknown): Captain;

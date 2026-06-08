@@ -5,14 +5,17 @@ import createPlaybookRuntime from './code.playbook.js';
 // `captain.options.code`, a namespaced object the host forwards
 // verbatim through `captain.options`. cligent neither reads nor
 // validates `options.code` (PBRT-30); this adapter is the sole
-// validator. The CODE options schema defines no keys yet, so a valid
-// `options.code` is an empty object or absent, every key is unknown
-// and rejected with a path-named error, and the adapter passes an
-// empty options set into `createPlaybookRuntime`. A new CODE option
-// shall be introduced as its own higher-numbered item that extends
-// `CODE_OPTION_KEYS`; until then the validator exists to establish the
-// seam and fail closed on stray keys.
-const CODE_OPTION_KEYS = new Set();
+// validator. The CODE options schema defines one key, `committer`: an
+// optional Committer-alias player id, one of the baked player ids
+// `coder` / `reviewer`. A valid `options.code` is absent, `{}`, or
+// `{ committer: 'coder' | 'reviewer' }`; every other key is unknown
+// and rejected with a path-named error, and an out-of-range
+// `committer` value is rejected naming `captain.options.code.committer`.
+// A further CODE option shall be introduced as its own higher-numbered
+// item that widens `CODE_OPTION_KEYS`; the validator still fails closed
+// on stray keys.
+const CODE_OPTION_KEYS = new Set(['committer']);
+const COMMITTER_PLAYER_IDS = new Set(['coder', 'reviewer']);
 export function validateCodeOptions(captainOptions) {
     const code = readCodeNamespace(captainOptions);
     if (code === undefined)
@@ -25,7 +28,15 @@ export function validateCodeOptions(captainOptions) {
             throw new Error(`Unknown config field captain.options.code.${key}`);
         }
     }
-    return {};
+    const options = {};
+    const committer = code.committer;
+    if (committer !== undefined) {
+        if (typeof committer !== 'string' || !COMMITTER_PLAYER_IDS.has(committer)) {
+            throw new Error("captain.options.code.committer must be 'coder' or 'reviewer'");
+        }
+        options.committer = committer;
+    }
+    return options;
 }
 function readCodeNamespace(captainOptions) {
     if (typeof captainOptions !== 'object' ||
@@ -69,10 +80,14 @@ export default function createCodeTmuxPlayCaptain(options) {
             const reviewerPlayer = playerIdentity('reviewer');
             // Identity strings from `session.players` override any same-named
             // keys and are independent of `captain.options.code` (PBRT-30).
+            // The validated `committer` alias threads in as the runtime's
+            // Committer player id (`committerPlayer`, PBRT-8).
             const runtimeOptions = {
-                ...codeOptions,
                 coderPlayer,
                 reviewerPlayer,
+                ...(codeOptions.committer !== undefined
+                    ? { committerPlayer: codeOptions.committer }
+                    : {}),
             };
             runtime = createPlaybookRuntime(runtimeOptions);
             const ports = {

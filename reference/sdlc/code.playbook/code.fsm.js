@@ -1089,6 +1089,7 @@ export const codingMachine = setup({
                     sourceItem: 'CODE-18',
                     ...bossReplyInputFields(context),
                     coderPlayer: context.coderPlayer,
+                    committerPlayer: context.committerPlayer,
                     prompt: [
                         'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
                         'Write concisely.',
@@ -1152,6 +1153,7 @@ export const codingMachine = setup({
                     ...bossReplyInputFields(context),
                     coderPlayer: context.coderPlayer,
                     reviewerPlayer: context.reviewerPlayer,
+                    committerPlayer: context.committerPlayer,
                     prompt: [
                         'Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
                         'Write concisely.',

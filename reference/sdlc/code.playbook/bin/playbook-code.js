@@ -33,6 +33,9 @@ const COMPOSITION_FAILURE_EXIT_CODE = 1;
 // overlay carries neither.
 export const CODE_ADAPTER_MODULE = '@sublang/playbook/code/tmux-play';
 const CODE_ROLES = ['coder', 'reviewer'];
+// Accepted `players` keys: the two fixed CODE roles plus the optional
+// `committer` alias (a string naming one of the roles); PBCODE-17.
+const CODE_PLAYER_KEYS = [...CODE_ROLES, 'committer'];
 // Captain-judge fields inherited from a base config when the overlay
 // leaves them unset (PBCODE-16); `adapter` is handled separately
 // because it is required in the composed config.
@@ -165,11 +168,27 @@ export function composeRuntimeConfig(
   const overlayConfig = requireObject(overlay, 'config');
   const overlayPlayers = requireObject(overlayConfig.players, 'players');
 
-  // Reject any role key other than the two fixed CODE roles.
+  // Reject any players key other than the two fixed CODE roles and the
+  // optional `committer` alias.
   for (const key of Object.keys(overlayPlayers)) {
-    if (!CODE_ROLES.includes(key)) {
+    if (!CODE_PLAYER_KEYS.includes(key)) {
       throw new Error(`Unknown config field players.${key}`);
     }
+  }
+
+  // PBCODE-17: `players.committer` is an optional string naming `coder`
+  // or `reviewer`. The composer resolves it into the composed
+  // `captain.options.code.committer` below and emits no extra
+  // `players[]` entry, so the roster stays coder + reviewer.
+  let committerAlias;
+  if (overlayPlayers.committer !== undefined) {
+    const value = overlayPlayers.committer;
+    if (!CODE_ROLES.includes(value)) {
+      throw new Error(
+        `players.committer must name one of: ${CODE_ROLES.join(', ')}`,
+      );
+    }
+    committerAlias = value;
   }
 
   // One composed `players[]` entry per role, with `id` = the role key
@@ -210,15 +229,31 @@ export function composeRuntimeConfig(
     if (value !== undefined) captain[field] = value;
   }
 
-  // Carry the overlay's `captain.options.code` through unchanged.
+  // PBCODE-17: the shim is the sole writer of the composed
+  // `captain.options.code.committer`. Read the overlay's
+  // `captain.options.code` (carried through unchanged), reject a
+  // directly-set `committer` there, then layer the resolved
+  // `players.committer` alias on top.
+  let overlayCode;
   if (overlayCaptain.options !== undefined) {
     const captainOptions = requireObject(
       overlayCaptain.options,
       'captain.options',
     );
     if (captainOptions.code !== undefined) {
-      captain.options = { code: captainOptions.code };
+      overlayCode = requireObject(captainOptions.code, 'captain.options.code');
+      if (overlayCode.committer !== undefined) {
+        throw new Error(
+          'captain.options.code.committer is composer-owned; ' +
+            'set players.committer instead',
+        );
+      }
     }
+  }
+  if (overlayCode !== undefined || committerAlias !== undefined) {
+    const code = { ...(overlayCode ?? {}) };
+    if (committerAlias !== undefined) code.committer = committerAlias;
+    captain.options = { code };
   }
 
   // Inherit `theme` and `layout` from the base when the overlay omits

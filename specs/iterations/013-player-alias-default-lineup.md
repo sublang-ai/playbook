@@ -95,10 +95,10 @@ and DR-004 §2 (Addendum A2):
 - [x] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-3 Committer binding stays gears-consistent.
 - [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2 baked-binding amendment (Addendum A2).
 - [ ] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — `layout` (Task 3, done), model lineup (Task 4, done), Committer alias (Task 6).
-- [ ] [`reference/sdlc/code.playbook/bin/playbook-code.js`](../../reference/sdlc/code.playbook/bin/playbook-code.js) — `layout` pass-through (Task 3, done) + alias resolution (Task 5) in the composer.
-- [ ] [`reference/sdlc/code.playbook/code.tmux-play.ts`](../../reference/sdlc/code.playbook/code.tmux-play.ts) (+ `.js`) — alias option validation/threading.
-- [ ] [`reference/sdlc/code.playbook/code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) (+ `.js`/`.d.ts`) and [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) (+ `.js`) — `resolvePlayerId` honors the configured alias.
-- [ ] Tests: `playbook-code.test.ts`, `code.tmux-play.test.ts`, `code.playbook.test.ts`, and the gears/prompt conformance suites.
+- [x] [`reference/sdlc/code.playbook/bin/playbook-code.js`](../../reference/sdlc/code.playbook/bin/playbook-code.js) — `layout` pass-through (Task 3, done) + alias resolution (Task 5) in the composer.
+- [x] [`reference/sdlc/code.playbook/code.tmux-play.ts`](../../reference/sdlc/code.playbook/code.tmux-play.ts) (+ `.js`) — alias option validation/threading.
+- [x] [`reference/sdlc/code.playbook/code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) (+ `.js`/`.d.ts`) and [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) (+ `.js`) — `resolvePlayerId` honors the configured alias.
+- [x] Tests: `playbook-code.test.ts`, `code.tmux-play.test.ts`, `code.playbook.test.ts`, and the gears/prompt conformance suites.
 
 ## Tasks
 
@@ -145,13 +145,22 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    No spec change — this swaps model *values*, and PBCODE-7 documents template
    structure while PBCODE-6 keeps concrete models user-tunable, so neither item
    pins these picks; the readiness gate still sees `claude` + `codex`.
-5. **Alias end-to-end.**
+5. **Alias end-to-end.** _[done]_
    Overlay schema accepts the Committer alias; the composer resolves it without
    adding a `players[]` entry and threads it to the runtime; `code.tmux-play.ts`
    validates/forwards it; `resolvePlayerId('Committer')` honors it; `.js`/`.d.ts`
    siblings regenerated; `playbook-code.test.ts`, `code.tmux-play.test.ts`,
    `code.playbook.test.ts`, and the conformance suites updated.
    Land together so spec and code agree.
+   Implementation note: `committerPlayer` threads through the FSM's
+   `CaptainInput` / `CodingInput` as a routing-only field — it selects the
+   Committer host pane in `resolvePlayerId` but never participates in prompt
+   composition, so it stays outside the prompt-contract suite's `ALL_FIELDS` /
+   `FULL_CONTEXT` and those conformance suites stay green unchanged. The
+   composer now whitelists `committer` as a `players` key, so the stale
+   `playbook-code.test.ts` "non-CODE role id" rejection case was retargeted
+   from `committer` to `maintainer`. The template's Committer alias slot is
+   deferred to Task 6.
 6. **Default alias + close-out.**
    Set the template's Committer alias to Reviewer;
    update README's agent-swap recipe;

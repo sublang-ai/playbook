@@ -45,18 +45,24 @@ declare module '@sublang/cligent/tmux-play' {
 // `captain.options.code`, a namespaced object the host forwards
 // verbatim through `captain.options`. cligent neither reads nor
 // validates `options.code` (PBRT-30); this adapter is the sole
-// validator. The CODE options schema defines no keys yet, so a valid
-// `options.code` is an empty object or absent, every key is unknown
-// and rejected with a path-named error, and the adapter passes an
-// empty options set into `createPlaybookRuntime`. A new CODE option
-// shall be introduced as its own higher-numbered item that extends
-// `CODE_OPTION_KEYS`; until then the validator exists to establish the
-// seam and fail closed on stray keys.
-const CODE_OPTION_KEYS = new Set<string>();
+// validator. The CODE options schema defines one key, `committer`: an
+// optional Committer-alias player id, one of the baked player ids
+// `coder` / `reviewer`. A valid `options.code` is absent, `{}`, or
+// `{ committer: 'coder' | 'reviewer' }`; every other key is unknown
+// and rejected with a path-named error, and an out-of-range
+// `committer` value is rejected naming `captain.options.code.committer`.
+// A further CODE option shall be introduced as its own higher-numbered
+// item that widens `CODE_OPTION_KEYS`; the validator still fails closed
+// on stray keys.
+const CODE_OPTION_KEYS = new Set<string>(['committer']);
+const COMMITTER_PLAYER_IDS = new Set<string>(['coder', 'reviewer']);
 
-// The validated CODE options set. Empty today (no keys defined); a
-// future CODE option widens both this type and `CODE_OPTION_KEYS`.
-export type CodeOptions = Record<string, never>;
+// The validated CODE options set. `committer`, when present, is the
+// resolved Committer-alias player id (PBRT-8 / PBRT-30); a future CODE
+// option widens both this type and `CODE_OPTION_KEYS`.
+export interface CodeOptions {
+  committer?: 'coder' | 'reviewer';
+}
 
 export function validateCodeOptions(captainOptions: unknown): CodeOptions {
   const code = readCodeNamespace(captainOptions);
@@ -69,7 +75,17 @@ export function validateCodeOptions(captainOptions: unknown): CodeOptions {
       throw new Error(`Unknown config field captain.options.code.${key}`);
     }
   }
-  return {};
+  const options: CodeOptions = {};
+  const committer = (code as Record<string, unknown>).committer;
+  if (committer !== undefined) {
+    if (typeof committer !== 'string' || !COMMITTER_PLAYER_IDS.has(committer)) {
+      throw new Error(
+        "captain.options.code.committer must be 'coder' or 'reviewer'",
+      );
+    }
+    options.committer = committer as 'coder' | 'reviewer';
+  }
+  return options;
 }
 
 function readCodeNamespace(captainOptions: unknown): unknown {
@@ -120,10 +136,14 @@ export default function createCodeTmuxPlayCaptain(
       const reviewerPlayer = playerIdentity('reviewer');
       // Identity strings from `session.players` override any same-named
       // keys and are independent of `captain.options.code` (PBRT-30).
+      // The validated `committer` alias threads in as the runtime's
+      // Committer player id (`committerPlayer`, PBRT-8).
       const runtimeOptions: CodePlaybookOptions = {
-        ...codeOptions,
         coderPlayer,
         reviewerPlayer,
+        ...(codeOptions.committer !== undefined
+          ? { committerPlayer: codeOptions.committer }
+          : {}),
       };
       runtime = createPlaybookRuntime(runtimeOptions);
       const ports: PlaybookPorts = {

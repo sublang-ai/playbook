@@ -122,15 +122,21 @@ function composePlayerPrompt(input) {
     }
     return blocks.join('\n\n');
 }
-// Player-id resolver — DR-004 §2.
+// Player-id resolver — DR-004 §2 / PBRT-8.
 // Non-composite: Coder→'coder', Reviewer→'reviewer'. The composite
-// Committer (= Coder | Reviewer per code.gears.md) resolves per
-// populated <playerName>Player field on `CaptainInput`: prefer
-// `coderPlayer` (CODE-18 wires only coderPlayer; CODE-19 wires both
-// so coderPlayer still wins as the alias's first alternative), fall
-// back to `reviewerPlayer` only if a future gear ships a
-// reviewer-only Committer item, and finally to the alias's first
-// alternative (Coder) when neither is set.
+// Committer (= Coder | Reviewer per code.gears.md) resolves to the
+// configured alias when present: `input.committerPlayer`, the
+// validated `captain.options.code.committer` (PBRT-8 / PBRT-30),
+// already a baked player id ('coder' / 'reviewer'). Absent a
+// configured alias it falls back to the DR-004 §2 baked binding by
+// populated <playerName>Player field: prefer `coderPlayer` (CODE-18
+// wires only coderPlayer; CODE-19 wires both so coderPlayer still wins
+// as the alias's first alternative), fall back to `reviewerPlayer`
+// only if a future gear ships a reviewer-only Committer item, and
+// finally to the alias's first alternative (Coder) when neither is
+// set. The alias selects only the host pane; it is not a PBRT-4
+// identity string, so it leaves <coder-llm> / <reviewer-llm>
+// untouched and `input.player` stays `Committer` (PLAYBOOK-3).
 function resolvePlayerId(input) {
     switch (input.player) {
         case 'Coder':
@@ -138,6 +144,8 @@ function resolvePlayerId(input) {
         case 'Reviewer':
             return 'reviewer';
         case 'Committer':
+            if (input.committerPlayer !== undefined)
+                return input.committerPlayer;
             if (input.coderPlayer !== undefined)
                 return 'coder';
             if (input.reviewerPlayer !== undefined)

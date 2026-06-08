@@ -612,6 +612,50 @@ describe('createCodeTmuxPlayCaptain — captain.options.code validation (PBRT-29
       /captain\.options\.code\.tempo/,
     );
   });
+
+  it('validateCodeOptions accepts committer alias coder / reviewer', () => {
+    expect(validateCodeOptions({ code: { committer: 'coder' } })).toEqual({
+      committer: 'coder',
+    });
+    expect(validateCodeOptions({ code: { committer: 'reviewer' } })).toEqual({
+      committer: 'reviewer',
+    });
+  });
+
+  it('validateCodeOptions rejects an out-of-range committer with a path-named error', () => {
+    expect(() =>
+      validateCodeOptions({ code: { committer: 'boss' } }),
+    ).toThrow(/captain\.options\.code\.committer/);
+  });
+
+  it('init with committer alias routes the Committer commit to the named pane while identity stays session-derived', async () => {
+    // PBRT-31: the validated alias threads into the runtime as
+    // committerPlayer, so the CODE-18 commit call runs on the
+    // 'reviewer' pane. The `<coder-llm>` placeholder still resolves
+    // from session.players (coder→claude), proving the alias is a
+    // host-pane selector, not a PBRT-4 identity string.
+    const s = stubSession();
+    const c = singleCommitContext();
+    const captain = createCodeTmuxPlayCaptain({ code: { committer: 'reviewer' } });
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/start fix the bug'), c.context);
+
+    const committerCall = c.playerCalls.find((r) =>
+      r.prompt.includes('Make a commit of the changes'),
+    );
+    expect(committerCall).toBeDefined();
+    expect(committerCall!.playerId).toBe('reviewer');
+    expect(committerCall!.prompt).toContain('Coder is claude.');
+    expect(committerCall!.prompt).not.toContain('<coder-llm>');
+  });
+
+  it('init rejects an out-of-range committer alias', async () => {
+    const s = stubSession();
+    const captain = createCodeTmuxPlayCaptain({ code: { committer: 'boss' } });
+    await expect(captain.init!(s.session)).rejects.toThrow(
+      /captain\.options\.code\.committer/,
+    );
+  });
 });
 
 // PBRT-32 / DR-007 §3 — end-to-end proof that the judge's control-plane
