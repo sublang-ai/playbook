@@ -68,8 +68,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config, incl. the Committer alias and a `layout` block) |
-| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding, readiness heuristic, config composition (base discovery, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout` inheritance, owned YAML serialization), Node engine floor |
-| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and config composition |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding with Codex `.git` writablePaths, readiness heuristic, config composition (base discovery, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout` inheritance, owned YAML serialization), Node engine floor |
+| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding including Codex `.git` writablePaths, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and config composition |
 
 ### PBRT
 

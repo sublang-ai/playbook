@@ -22,6 +22,9 @@
 #   into <coder-llm> / <reviewer-llm> in player prompts (PBRT-4), so pin
 #   a model if you want the Committer's commit-message trailers to name
 #   the concrete model.
+# - Codex roles that run git under mode: auto need .git in
+#   permissions.writablePaths so git metadata writes stay profile-scoped
+#   instead of requiring bypass permissions.
 # - players.committer optionally aliases the Committer to a role
 #   (coder or reviewer); that role's pane runs the commit turn. The
 #   seeded value is reviewer; omit it to fall back to the coder.
@@ -49,6 +52,8 @@ players:
     reasoningEffort: xhigh
     permissions:
       mode: auto
+      writablePaths:
+        - .git
   reviewer:
     adapter: claude
     model: claude-opus-4-8

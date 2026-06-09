@@ -21,6 +21,8 @@ without `--help`, with no file at the resolved user config path,
 the test suite shall fail unless the shim creates the parent
 directory, writes the bundled template to
 `playbook-code.config.yaml`, preserves the template comments,
+preserves the seeded Codex role's
+`permissions: { mode: auto, writablePaths: ['.git'] }` block,
 prints one stderr line naming the path, composes the launched
 config from that file, and launches `tmux-play` against the
 composed temp config — not the user config path — when readiness

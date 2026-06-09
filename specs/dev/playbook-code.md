@@ -54,6 +54,11 @@ or `players[].id` as user-maintained invariants; the comments
 shall note that each role's `model` (when pinned) or `adapter`
 (otherwise) doubles as the identity string the adapter substitutes
 into player prompts per [PBRT-4](../user/playbook-runtime.md#pbrt-4).
+For every role that the bundled template seeds with `adapter: codex`,
+the template shall include `permissions.mode: auto` and
+`permissions.writablePaths: ['.git']`, so the default Codex player
+can write git metadata under cligent's profile-scoped auto mode
+without switching to bypass permissions.
 The copy shall not run when `--config` is supplied.
 
 ### PBCODE-8

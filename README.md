@@ -82,7 +82,10 @@ playbook-code --help
 ```
 
 The seed template runs each agent in cligent's protected auto mode
-(`permissions.mode: auto`), suppressing routine approval prompts.
+(`permissions.mode: auto`), suppressing routine approval prompts. Its
+Codex Coder also grants `permissions.writablePaths: [.git]` so git
+metadata writes stay available under auto mode without switching to
+bypass permissions.
 
 ### Configure agents
 
@@ -128,6 +131,8 @@ players:
     reasoningEffort: xhigh
     permissions:
       mode: auto
+      writablePaths:
+        - .git          # allow git metadata writes under Codex auto mode
   reviewer:           # role key must stay `reviewer` — see PBRT-4
     adapter: claude
     model: claude-opus-4-8

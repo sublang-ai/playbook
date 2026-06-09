@@ -65,6 +65,8 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
     expect(seeded).toContain('CODE overlay');
     expect(seeded).toContain('players.coder');
     expect(seeded).toContain('PBRT-4');
+    expect(seeded).toContain('writablePaths');
+    expect(seeded).toContain('- .git');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
     // Launches the *composed temp* config, not the user overlay path.
@@ -81,6 +83,10 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
       'coder',
       'reviewer',
     ]);
+    expect(
+      composed.players.find((p: { id: string }) => p.id === 'coder')
+        ?.permissions,
+    ).toEqual({ mode: 'auto', writablePaths: ['.git'] });
     // PBCODE-16/17: the seeded template carries a layout block, carried
     // through to the composed config (174×49 window, 4:6:6 columns).
     expect(composed.layout).toEqual({
