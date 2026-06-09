@@ -69,23 +69,21 @@ emit two `emitStatus` lines, in order:
 Telemetry is unchanged: `playbook.fsm.state` still carries
 `pendingBossQuestion.question` verbatim for non-tmux-play hosts.
 
-### 3. Transitional cligent dependency
+### 3. cligent dependency
 
-The installed `@sublang/cligent` ("latest") does not yet type the
-`visibility` option.
-The dependency shall **not** be bumped and the lockfile shall
-**not** be touched for this change.
-The adapter compiles against today's published types via a
-temporary local module augmentation of `@sublang/cligent/tmux-play`
-that adds the hidden-visibility overload to `callCaptain`; it
-carries a `TODO(cligent-bump)` marker and is deleted when the
-option ships.
+`@sublang/cligent` types the `visibility` option on `callCaptain`
+through `CallCaptainOptions` (shipped in 0.11.0).
+The adapter calls `context.callCaptain(prompt, { visibility: 'hidden' })`
+directly against those published types.
 
-The end-to-end "judge JSON never reaches the Boss pane" integration
-test ([PBRT-32](../test/playbook-runtime.md#pbrt-32)) is gated
-behind a `CLIGENT_SUPPORTS_HIDDEN_CAPTAIN` flag that is `false`
-today, so `pnpm test` skips it rather than failing it; the flag
-flips to `true` with the bump.
+This DR originally landed against a cligent that did not yet type the
+option, so it introduced two transitional carries: a temporary local
+module augmentation of `@sublang/cligent/tmux-play` adding the
+hidden-visibility overload, and the
+`CLIGENT_SUPPORTS_HIDDEN_CAPTAIN`-gated PBRT-32 integration test.
+Both were removed when the repo's pinned cligent was refreshed to
+0.11.0, and [PBRT-32](../test/playbook-runtime.md#pbrt-32) now runs
+against the native option.
 
 ### 4. Scope
 
@@ -104,9 +102,9 @@ flips to `true` with the bump.
   duplicates the runtime's glyph lines.
 - The Boss sees the full player question as captain speech; the
   `awaitBossReply` marker keeps only routing metadata.
-- The only carries until the cligent bump are one self-removing
-  module augmentation and one gated test; both are removed in the
-  same change that bumps cligent.
+- The transitional carries — one self-removing module augmentation
+  and one gated test — were removed in the same change that refreshed
+  the pinned cligent to 0.11.0.
 - Hiding *all* judge calls means classification reasoning is also
   off the pane; the bare FSM event type (captain-speech
   classification line) remains the Boss's view of how a turn was

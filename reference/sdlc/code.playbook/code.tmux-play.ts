@@ -9,7 +9,6 @@ import type {
   BossTurn,
   Captain,
   CaptainContext,
-  CaptainRunResult,
   CaptainSession,
 } from '@sublang/cligent/tmux-play';
 import createPlaybookRuntime, {
@@ -17,29 +16,6 @@ import createPlaybookRuntime, {
   type PlaybookPorts,
   type PlaybookRuntime,
 } from './code.playbook.js';
-
-// ─── TEMPORARY cligent augmentation — remove on the cligent bump ────
-// DR-007 / PBRT-15: every judge call (classification + adjudication)
-// rides `context.callCaptain(prompt, { visibility: 'hidden' })` so the
-// judge's JSON never streams to the Boss pane and duplicates the
-// runtime's composed glyph lines. The installed `@sublang/cligent`
-// ("latest") still types `callCaptain(prompt)` with no options arg, so
-// this module augmentation adds the hidden-visibility overload to make
-// the adapter compile against today's published types — without bumping
-// the dependency or touching the lockfile.
-//
-// TODO(cligent-bump): DELETE this whole block once
-// `@sublang/cligent/tmux-play` ships the `visibility` option on
-// `callCaptain`. The `CLIGENT_SUPPORTS_HIDDEN_CAPTAIN` flag in
-// code.tmux-play.test.ts flips to `true` in the same change.
-declare module '@sublang/cligent/tmux-play' {
-  interface CaptainContext {
-    callCaptain(
-      prompt: string,
-      options?: { readonly visibility?: 'hidden' | 'visible' },
-    ): Promise<CaptainRunResult>;
-  }
-}
 
 // PBRT-29/30: CODE runtime options are carried under
 // `captain.options.code`, a namespaced object the host forwards

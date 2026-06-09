@@ -2,13 +2,18 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { describe, expect, it } from 'vitest';
+import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
 import type {
   BossTurn,
   CaptainContext,
   CaptainRunResult,
   CaptainSession,
+  PlayerAdapterImports,
   PlayerRunResult,
+  TmuxPlayRecord,
 } from '@sublang/cligent/tmux-play';
+import { createEvent } from '@sublang/cligent';
+import type { AgentAdapter, AgentEvent, AgentOptions } from '@sublang/cligent';
 import createCodeTmuxPlayCaptain, {
   validateCodeOptions,
 } from './code.tmux-play.js';
@@ -659,29 +664,157 @@ describe('createCodeTmuxPlayCaptain — captain.options.code validation (PBRT-29
 });
 
 // PBRT-32 / DR-007 §3 — end-to-end proof that the judge's control-plane
-// JSON never reaches the Boss pane. This needs a real tmux-play
-// runtime/presenter that honours `callCaptain(prompt, { visibility:
-// 'hidden' })`; the installed `@sublang/cligent` ("latest") does not yet
-// ship that option, so the suite is gated off until the cligent bump.
-// The end-to-end harness cannot run against a host that lacks the
-// option, so its body is authored in the same change that bumps the
-// dependency, removes the temporary module augmentation, and flips
-// CLIGENT_SUPPORTS_HIDDEN_CAPTAIN to `true` (PBRT-32).
-const CLIGENT_SUPPORTS_HIDDEN_CAPTAIN = false;
-describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)(
-  'judge JSON never reaches the Boss pane (PBRT-32)',
-  () => {
-    it('drives a real tmux-play turn and asserts no judge JSON on the Boss pane', async () => {
-      // Drive the adapter end-to-end against the real tmux-play
-      // runtime/presenter and assert that none of the Boss-pane records
-      // contain the judge's classification/adjudication JSON — only the
-      // runtime's composed glyph + captain-speech lines (PBRT-3/14).
-      throw new Error(
-        'PBRT-32 integration harness pending the cligent hidden-visibility bump',
-      );
+// JSON never reaches the Boss pane. `@sublang/cligent` now ships
+// `callCaptain(prompt, { visibility: 'hidden' })` (CallCaptainOptions),
+// so this drives the *real* tmux-play runtime in-process: our Captain
+// over fake player + captain adapters, with a RecordObserver capturing
+// the full trace. The tmux presenter skips records tagged
+// `visibility: 'hidden'`, so asserting every judge-call Captain record
+// is hidden — and that no Boss-pane-visible record carries a raw judge
+// reply — is the faithful proxy for "only the runtime-composed status
+// lines reach the pane" (PBRT-3/14). Mirrors cligent's own
+// runtime.test.ts fake-adapter + observer harness.
+
+type RunScript = (
+  prompt: string,
+  options?: AgentOptions,
+) => AsyncGenerator<AgentEvent, void, void>;
+
+function textEvent(agent: string, content: string): AgentEvent {
+  return createEvent('text', agent, { content }, 'sid');
+}
+
+function doneEvent(agent: string, result: string | undefined): AgentEvent {
+  return createEvent(
+    'done',
+    agent,
+    {
+      status: 'success',
+      result,
+      usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+      durationMs: 1,
+    },
+    'sid',
+  );
+}
+
+function adapterClass(agent: string, run: RunScript): new () => AgentAdapter {
+  return class implements AgentAdapter {
+    readonly agent = agent;
+    run(prompt: string, options?: AgentOptions) {
+      return run(prompt, options);
+    }
+    async isAvailable(): Promise<boolean> {
+      return true;
+    }
+  };
+}
+
+function adapterImports(
+  scripts: Partial<
+    Record<'claude' | 'codex' | 'gemini' | 'opencode', RunScript>
+  >,
+): PlayerAdapterImports {
+  const fallback: RunScript = async function* () {
+    yield doneEvent('test-agent', 'unused');
+  };
+  const make =
+    (name: 'claude' | 'codex' | 'gemini' | 'opencode', agent: string) =>
+    async () =>
+      adapterClass(agent, scripts[name] ?? fallback);
+  return {
+    claude: make('claude', 'claude-code'),
+    codex: make('codex', 'codex'),
+    gemini: make('gemini', 'gemini'),
+    opencode: make('opencode', 'opencode'),
+  };
+}
+
+function visibilityOf(record: TmuxPlayRecord): string | undefined {
+  return (record as { visibility?: string }).visibility;
+}
+
+function isCaptainCallRecord(record: TmuxPlayRecord): boolean {
+  return (
+    record.type === 'captain_prompt' ||
+    record.type === 'captain_event' ||
+    record.type === 'captain_finished'
+  );
+}
+
+describe('judge JSON never reaches the Boss pane (PBRT-32 / DR-007)', () => {
+  it('drives a real tmux-play turn and keeps every judge reply off the Boss pane', async () => {
+    const records: TmuxPlayRecord[] = [];
+    const judgeReplies: string[] = [];
+    // Mirror stubContext's default: classification derived from the
+    // prompt, then the singleCommitReady → needsBossInput adjudication
+    // sequence the lifecycle test proves drives /start to completion.
+    const adjudications = [
+      { guard: 'singleCommitReady' },
+      { guard: 'needsBossInput' },
+    ];
+    let adjIndex = 0;
+
+    const judgeScript: RunScript = async function* (prompt) {
+      const reply = isClassifierPrompt(prompt)
+        ? classifierReplyForTestPrompt(prompt)
+        : (adjudications[adjIndex++] ?? { guard: 'needsBossInput' });
+      const json = JSON.stringify(reply);
+      judgeReplies.push(json);
+      // The judge streams its control-plane JSON as text *and* as the
+      // final result — both must land in HIDDEN Captain records.
+      yield textEvent('claude-code', json);
+      yield doneEvent('claude-code', json);
+    };
+
+    const playerScript: RunScript = async function* () {
+      yield doneEvent('codex', 'no progress — needs Boss input');
+    };
+
+    const runtime = await createTmuxPlayRuntime({
+      captain: createCodeTmuxPlayCaptain({}),
+      captainConfig: { adapter: 'claude' },
+      players: [
+        { id: 'coder', adapter: 'codex' },
+        { id: 'reviewer', adapter: 'gemini' },
+      ],
+      observers: [{ onRecord: (r) => records.push(r as TmuxPlayRecord) }],
+      adapterImports: adapterImports({
+        claude: judgeScript,
+        codex: playerScript,
+        gemini: playerScript,
+      }),
     });
-  },
-);
+
+    await runtime.runBossTurn('/start fix the bug');
+    await runtime.dispose();
+
+    // The judge ran: one classification + at least one adjudication.
+    expect(judgeReplies.length).toBeGreaterThanOrEqual(2);
+
+    // Every Captain record — the only records that can carry judge JSON —
+    // is tagged hidden, so the tmux presenter skips it.
+    const captainRecords = records.filter(isCaptainCallRecord);
+    expect(captainRecords.length).toBeGreaterThan(0);
+    for (const record of captainRecords) {
+      expect(visibilityOf(record)).toBe('hidden');
+    }
+
+    // The Boss pane therefore receives only the runtime-composed
+    // captain_status lines — no visible Captain record at all — and none
+    // of those lines contains a raw judge JSON reply.
+    const bossPaneVisible = records.filter(
+      (record) =>
+        record.type === 'captain_status' ||
+        (isCaptainCallRecord(record) && visibilityOf(record) !== 'hidden'),
+    );
+    expect(bossPaneVisible.every((r) => r.type === 'captain_status')).toBe(true);
+    const paneText = JSON.stringify(bossPaneVisible);
+    for (const reply of judgeReplies) {
+      expect(paneText).not.toContain(reply);
+    }
+  });
+});
 
 describe('createCodeTmuxPlayCaptain — signal propagation (DR-004 §11)', () => {
   it('context.signal flows into runtime.handleBossInput via handleBossTurn', async () => {

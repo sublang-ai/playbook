@@ -669,6 +669,8 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
         'players:',
         '  - id: solo',
         '    adapter: gemini',
+        '  - id: duo',
+        '    adapter: codex',
         '',
       ].join('\n'),
     );
@@ -687,9 +689,10 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
 
     expect(result).toEqual({ code: 0 });
     const composed = parseYaml(spawn.configs[0].content);
-    // The overlay omits layout. cligent's loader drops the base's
-    // layout during discovery, so the shim must recover it from the
-    // raw base YAML for base inheritance to hold end to end.
+    // The overlay omits layout, so the composed config inherits the
+    // base's layout end to end. The base declares two players, so its
+    // 3-entry columnWeights satisfies cligent's pane-count validation on
+    // load (1 Boss/Captain column + 2 player columns).
     expect(composed.layout).toEqual({
       window: { columns: 200, rows: 60 },
       columnWeights: [1, 1, 1],

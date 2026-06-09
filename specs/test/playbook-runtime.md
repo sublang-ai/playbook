@@ -94,20 +94,17 @@ before `init` rejects.
 Verifies: [PBRT-15](../dev/playbook-runtime.md#pbrt-15)
 
 When the tmux-play adapter is driven end to end against a real
-tmux-play runtime and pane presenter through a Boss turn that
-triggers both classification and adjudication judge calls, the
-test suite shall fail unless none of the judge's JSON replies
-reach the Boss pane — only the runtime-composed status lines do.
-This integration test is gated on host support for hidden Captain
-visibility via `describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)`:
-until the host's `callCaptain` honors `{ visibility: 'hidden' }`
-(per [PBRT-15](../dev/playbook-runtime.md#pbrt-15)), the flag is
-`false` and the suite shall skip rather than fail, standing in as
-a gated placeholder.
-The end-to-end harness asserting the behavior above shall be
-authored when that support ships — the harness cannot run against
-a host that lacks the option — at which point the flag flips to
-`true`.
+`createTmuxPlayRuntime` instance — over fake player and captain
+adapters with a `RecordObserver` capturing the full record trace —
+through a Boss turn that triggers both classification and
+adjudication judge calls, the test suite shall fail unless every
+Captain-call record (`captain_prompt`, `captain_event`,
+`captain_finished`) carries `visibility: 'hidden'` and no
+Boss-pane-visible record carries a raw judge reply.
+Hidden-tagged records are exactly the ones the tmux pane presenter
+skips, so this is the standing proof that the judge's JSON never
+reaches the Boss pane — only the runtime-composed status lines do
+([PBRT-3](../user/playbook-runtime.md#pbrt-3)).
 
 ## Lifecycle and captain bridge
 
