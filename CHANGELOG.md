@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-09
+
+### Added
+
+- **CODE config composition (DR-006).** Without `--config`, `playbook-code` composes the launched `tmux-play` config from the user's CODE overlay plus an optional base config discovered via cligent's `findTmuxPlayConfig`. The overlay's `players` map (carrying the CODE invariants) maps to `players[]` + `captain.from`, and `theme`, the captain-judge fields, and the top-level `layout` block (window size + column weights) are inherited from the base when the overlay omits them. Specs: [PBCODE-16..18](specs/dev/playbook-code.md), [DR-006](specs/decisions/006-code-config-composition.md).
+- **Configurable Committer alias (IR-013).** A CODE overlay may set `players.committer: coder | reviewer`, composed into `captain.options.code.committer`, to run the Committer's commit turn on the named player's pane (validated with a path-named error). Player identity strings stay session-derived (PBRT-4), so the alias is a pane selector only. Specs: [PBRT-8/29/30/31](specs/dev/playbook-runtime.md), [IR-013](specs/iterations/013-player-alias-default-lineup.md).
+- **`playbook-code-dev` CLI** — a development entrypoint that rebuilds the reference playbook from `code.*.ts` on launch, for iterating without a separate build step.
+
+### Changed
+
+- **Bump pinned `@sublang/cligent` 0.8 → 0.11.** The repo `pnpm-lock.yaml` pin is refreshed to the release tagged `latest` ([RELEASE-14](specs/dev/release.md#release-14)); the published `package.json` keeps the `latest` specifier, so fresh installs already resolved this version. cligent 0.11 types the `visibility` option on `callCaptain` natively (`CallCaptainOptions`), so DR-007's transitional module augmentation and the `CLIGENT_SUPPORTS_HIDDEN_CAPTAIN`-gated test are removed and [PBRT-32](specs/test/playbook-runtime.md#pbrt-32) now runs the "judge JSON never reaches the Boss pane" proof end to end ([DR-007 §3](specs/decisions/007-hidden-judge-captain-pane.md)). cligent 0.11's `tmux-play` loader also now preserves a config's top-level `layout` (rather than dropping it, which makes the shim's layout recovery inert) and validates `layout.columnWeights` length against pane count (1 Boss/Captain column + one per player); the bundled and seeded configs already satisfy this.
+- **Refreshed seeded defaults.** The first-run CODE overlay now pins Captain `claude-sonnet-4-6` (`high`), Coder `codex`/`gpt-5.5` (`xhigh`, with `.git` in `writablePaths`), and Reviewer `claude`/`claude-opus-4-8` (`xhigh`); aliases the Committer to the Reviewer (`players.committer: reviewer`); and sizes the window 174×49 with `columnWeights: [4, 6, 6]`. Existing user configs are untouched per PBCODE-5.
+- **Reviewer prompts are review-only.** The Reviewer states instruct surfacing findings without editing code; the FSM / GEARS / `code.md` Reviewer prompts and the conformance suite are updated in sync ([PLAYBOOK](specs/dev/playbook.md)).
+
+### Fixed
+
+- **Judge-JSON robustness.** The runtime tolerates messy judge replies (code-fenced or prefixed JSON), trims and recovers the JSON object, and normalizes parse/transport errors instead of failing the turn; together with DR-007 the judge's control-plane JSON is kept off the Boss pane.
+- The composed config recovers a base `layout` block that cligent's pre-0.11 loader dropped during discovery, so base inheritance holds end to end (now inert under the 0.11 loader, which preserves `layout`).
+- GEARS ↔ FSM kept in sync with refined `code.md` wording, and IR-drafting prompts kept free of task work.
+
 ## [0.4.2] - 2026-05-28
 
 ### Changed
@@ -99,7 +119,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/sublang-ai/playbook/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/sublang-ai/playbook/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/sublang-ai/playbook/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/sublang-ai/playbook/compare/v0.2.0...v0.4.0
