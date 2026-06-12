@@ -7,14 +7,15 @@
 
 This spec defines the system behavior of the CODE playbook
 runtime — the host-agnostic module that drives the CODE FSM
-(`code.fsm.ts`) as a runnable playbook — and of its tmux-play
-host adapter.
+(`code.fsm.ts`) as a runnable playbook — and of the CODE registry
+entry used by the Playbook Captain shell under tmux-play.
 
 Both live at the repo root; the in-repo path is
 essential to the package's intent per
-[META-15](../meta.md#meta-15). The adapter binds the runtime to
-the external `@sublang/cligent` package. User-visible behavior is
-in [user/playbook-runtime.md](../user/playbook-runtime.md). Player
+[META-15](../meta.md#meta-15). The shell binds the registry entry
+to the external `@sublang/cligent` package per
+[CAPTAIN](playbook-captain.md). User-visible behavior is in
+[user/playbook-runtime.md](../user/playbook-runtime.md). Player
 prompt composition is specified by
 [PLAYBOOK-5](playbook.md#playbook-5) and
 [PLAYBOOK-6](playbook.md#playbook-6).
@@ -179,6 +180,10 @@ When `handleBossInput` is called while the actor is in the
 terminal state, the runtime shall dispose and reconstruct the
 actor before sending the classified event, so the turn starts
 from the idle state.
+Where CODE is hosted by the Playbook Captain shell, final-state
+turns shall normally not reach this path because the shell disposes
+final CODE engagements per
+[CAPTAIN-11](playbook-captain.md#captain-11).
 
 ## Abort
 
@@ -247,18 +252,20 @@ own prompt.
 All port emissions shall be issued in order, each awaited before
 the next, and never dropped.
 
-## Host adapter
+## Host adapter and registry
 
 ### PBRT-15
 
-The tmux-play adapter shall be the only module in the package
-that imports `@sublang/cligent`. It shall default-export a
-Captain factory that, on `init(session)`, constructs the runtime
-from the forwarded options merged with `coderPlayer` and
+The tmux-play `captain.from` target for composed CODE configs
+shall be the Playbook Captain shell adapter specified by
+[CAPTAIN](playbook-captain.md), not a direct CODE adapter.
+The CODE registry entry used by that shell shall construct the
+runtime from validated CODE options merged with `coderPlayer` and
 `reviewerPlayer` derived from `session.players`: for each entry
-whose `id` is `coder` / `reviewer`, the adapter shall use that
-entry's `model` when set and shall fall back to its `adapter`
-otherwise. It shall build `PlaybookPorts` by wiring `callPlayer`
+whose `id` is `coder` / `reviewer`, the registry entry shall use
+that entry's `model` when set and shall fall back to its `adapter`
+otherwise.
+The shell shall build CODE `PlaybookPorts` by wiring `callPlayer`
 to `context.callPlayer`, `callJudge` to `context.callCaptain`
 invoked with the hidden-visibility option
 (`callCaptain(prompt, { visibility: 'hidden' })`) so the judge's
@@ -267,42 +274,49 @@ pane human-readable per
 [PBRT-3](../user/playbook-runtime.md#pbrt-3) — and throwing when
 the captain result status is not `ok`, and `emitStatus` /
 `emitTelemetry` to `session.emitStatus` / `session.emitTelemetry`.
-Every judge call — classification and adjudication — shall pass
-`{ visibility: 'hidden' }`. Any `coderPlayer` / `reviewerPlayer`
-keys in the forwarded options shall be overridden by the derived
-values.
+Every CODE judge call — classification and adjudication — shall
+pass `{ visibility: 'hidden' }`.
+Any `coderPlayer` / `reviewerPlayer` keys in the forwarded CODE
+options shall be overridden by the derived values.
 
 ### PBRT-16
 
-The adapter shall map cligent's Captain lifecycle onto the
-runtime — `init(session)` to `runtime.init(ports)`,
-`handleBossTurn(turn, context)` to
-`runtime.handleBossInput({ text: turn.prompt, signal: context.signal })`,
-and `dispose()` to `runtime.dispose()` — and shall be resolvable
-as the compiled module that the host's `captain.from` imports.
+The Playbook Captain shell adapter shall map cligent's Captain
+lifecycle onto the shell per
+[CAPTAIN-9](playbook-captain.md#captain-9),
+[CAPTAIN-10](playbook-captain.md#captain-10), and
+[CAPTAIN-11](playbook-captain.md#captain-11).
+When the shell dispatches a Boss turn to CODE, the CODE registry
+entry shall map that dispatch to
+`runtime.handleBossInput({ text, signal: context.signal })`.
+The compiled module imported by the host's `captain.from` shall be
+the Playbook Captain shell adapter; the public `./code/tmux-play`
+export shall remain resolvable as a compatibility shim delegating
+to the same shell with CODE registered.
 
 ### PBRT-30
 
-When constructing the runtime, the tmux-play adapter shall read
-CODE options from `captain.options.code`, validate them against
-the CODE options schema, reject unknown keys with an error that
-names the offending path, and pass the validated options into
+When constructing the CODE runtime, the CODE registry entry shall
+read CODE options from `captain.options.code`, validate them
+against the CODE options schema, reject unknown keys with an error
+that names the offending path, and pass the validated options into
 `createPlaybookRuntime`.
 The CODE options schema defines one key, `committer`: an optional
 string whose value is the resolved Committer-alias player id and
-shall be one of the baked player ids `coder` or `reviewer`. The
-adapter shall reject any other value, and any unknown key, with an
-error that names the offending path (e.g.
+shall be one of the baked player ids `coder` or `reviewer`.
+The registry entry shall reject any other value, and any unknown
+key, with an error that names the offending path (e.g.
 `captain.options.code.committer`). A valid `captain.options.code`
 is absent, an empty object, or `{ committer: 'coder' | 'reviewer' }`;
-the adapter threads the validated `committer` into
+the registry entry threads the validated `committer` into
 `createPlaybookRuntime` as the runtime's Committer player id
 ([PBRT-8](#pbrt-8)).
 A further CODE option shall be introduced as its own
 higher-numbered item that extends this schema; the validator still
 fails closed on stray keys.
 The external `@sublang/cligent` package shall not validate
-`captain.options.code`; the adapter is the sole validator.
+`captain.options.code`; the CODE registry entry is the sole
+validator.
 The derived `coderPlayer` / `reviewerPlayer` identity strings
 ([PBRT-15](#pbrt-15)) shall continue to come from
 `session.players` and override any same-named keys, independent

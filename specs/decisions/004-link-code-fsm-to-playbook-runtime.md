@@ -259,6 +259,11 @@ Internal capabilities (names illustrative): player-prompt composer, Boss-event c
 
 ### 11. Host adapter — tmux-play
 
+**Addendum A3 (DR-008 shell target).**
+For tmux-play launch after [DR-008](008-playbook-captain-shell.md), the host's `captain.from` target is the Playbook Captain shell adapter with CODE registered.
+The public `./code/tmux-play` export remains as a compatibility shim that delegates to that shell.
+This section remains the direct CODE runtime port-wiring contract where not superseded by DR-008.
+
 Adapter file `code.tmux-play.ts`:
 
 - Imports `./code.playbook.js` and types from

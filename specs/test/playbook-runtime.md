@@ -6,12 +6,13 @@
 ## Intent
 
 This spec defines the integration tests that verify the CODE
-playbook runtime and its tmux-play host adapter behaviors in
+playbook runtime and its tmux-play shell registry behaviors in
 [dev/playbook-runtime.md](../dev/playbook-runtime.md). Each test
-drives the real FSM through the runtime — or the real adapter and
-runtime together — against fake `PlaybookPorts` or stubbed cligent
-primitives. The package targets the repo root; the in-repo path
-is essential to the package's intent per
+drives the real FSM through the runtime — or CODE through the
+Playbook Captain shell with CODE registered — against fake
+`PlaybookPorts` or stubbed cligent primitives. The package targets
+the repo root; the in-repo path is essential to the package's
+intent per
 [META-15](../meta.md#meta-15).
 
 ## Runtime
@@ -72,35 +73,34 @@ in enqueue order.
 ### PBRT-21
 Verifies: [PBRT-4](../user/playbook-runtime.md#pbrt-4), [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [PBRT-16](../dev/playbook-runtime.md#pbrt-16)
 
-When the tmux-play adapter is driven through an
-`init` → `handleBossTurn` → `dispose` lifecycle with stubbed
-cligent `CaptainContext` / `CaptainSession` primitives, the test
-suite shall fail unless player calls reach `context.callPlayer`
-with player ids matching the runtime's baked player ids (both
-`coder` via the free-text coding happy path and `reviewer` via a
-multi-stage flow that drives the FSM through a Reviewer state),
-adjudication reaches `context.callCaptain`, every `callCaptain`
-invocation — classification and adjudication alike — passes
-`{ visibility: 'hidden' }`, status and telemetry reach the
-session, the per-turn `signal` flows into the runtime,
-the per-run player identity strings substituted into the
-Committer prompt's `<coder-llm>` / `<reviewer-llm>` placeholders
-come from `session.players[].model` when each entry pins a model
-and fall back to `session.players[].adapter` when no model is
-pinned (both branches exercised), and `handleBossTurn` invoked
-before `init` rejects.
+When CODE is driven through the Playbook Captain shell adapter
+with stubbed cligent `CaptainContext` / `CaptainSession`
+primitives, the test suite shall fail unless player calls reach
+`context.callPlayer` with player ids matching the runtime's baked
+player ids (both `coder` via the free-text coding happy path and
+`reviewer` via a multi-stage flow that drives the FSM through a
+Reviewer state), adjudication reaches `context.callCaptain`, every
+CODE `callCaptain` invocation — classification and adjudication
+alike — passes `{ visibility: 'hidden' }`, status and telemetry
+reach the session, the per-turn `signal` flows into the runtime,
+the per-run player identity strings substituted into the Committer
+prompt's `<coder-llm>` / `<reviewer-llm>` placeholders come from
+`session.players[].model` when each entry pins a model and fall
+back to `session.players[].adapter` when no model is pinned (both
+branches exercised), and `handleBossTurn` invoked before `init`
+rejects.
 
 ### PBRT-32
 Verifies: [PBRT-15](../dev/playbook-runtime.md#pbrt-15)
 
-When the tmux-play adapter is driven end to end against a real
-`createTmuxPlayRuntime` instance — over fake player and captain
-adapters with a `RecordObserver` capturing the full record trace —
-through a Boss turn that triggers both classification and
-adjudication judge calls, the test suite shall fail unless every
-Captain-call record (`captain_prompt`, `captain_event`,
-`captain_finished`) carries `visibility: 'hidden'` and no
-Boss-pane-visible record carries a raw judge reply.
+When the Playbook Captain shell adapter is driven end to end
+against a real `createTmuxPlayRuntime` instance — over fake player
+and captain adapters with a `RecordObserver` capturing the full
+record trace — through a `/code` Boss turn that triggers both CODE
+classification and adjudication judge calls, the test suite shall
+fail unless every CODE judge Captain-call record (`captain_prompt`,
+`captain_event`, `captain_finished`) carries `visibility: 'hidden'`
+and no Boss-pane-visible record carries a raw judge reply.
 Hidden-tagged records are exactly the ones the tmux pane presenter
 skips, so this is the standing proof that the judge's JSON never
 reaches the Boss pane — only the runtime-composed status lines do
@@ -217,6 +217,9 @@ When the runtime is driven to the FSM's terminal state and a
 further Boss turn is submitted, the test suite shall fail unless
 the runtime disposes and reconstructs the actor so the new turn
 is processed from the idle state.
+The shell's final-engagement disposal behavior is covered by
+[CAPTAIN-14](playbook-captain.md#captain-14), not by this direct
+runtime test.
 
 ### PBRT-28
 Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
@@ -239,16 +242,17 @@ unmoved, and empty text makes no port calls.
 ### PBRT-31
 Verifies: [PBRT-29](../user/playbook-runtime.md#pbrt-29), [PBRT-30](../dev/playbook-runtime.md#pbrt-30)
 
-When the tmux-play adapter is initialized with `captain.options.code`
-set to the empty object `{}`, set to `{ committer: 'coder' }` and
-`{ committer: 'reviewer' }`, set to a `committer` value that is
-neither `coder` nor `reviewer`, set to an object carrying an
-unknown key, and absent, the test suite shall fail unless the `{}`
-and absent cases initialize and pass an empty options set into
-`createPlaybookRuntime`; the valid-`committer` cases pass that role
-id into `createPlaybookRuntime` as the Committer player id; the
-invalid-`committer` case and the unknown-key case each cause `init`
-to reject with an error naming the offending path
-(`captain.options.code.committer` for the invalid value); and the
-derived `coderPlayer` / `reviewerPlayer` identity strings still
-come from `session.players` regardless of `captain.options.code`.
+When the Playbook Captain shell initializes the CODE registry entry
+with `captain.options.code` set to the empty object `{}`, set to
+`{ committer: 'coder' }` and `{ committer: 'reviewer' }`, set to a
+`committer` value that is neither `coder` nor `reviewer`, set to an
+object carrying an unknown key, and absent, the test suite shall
+fail unless the `{}` and absent cases initialize and pass an empty
+options set into `createPlaybookRuntime`; the valid-`committer`
+cases pass that role id into `createPlaybookRuntime` as the
+Committer player id; the invalid-`committer` case and the
+unknown-key case each cause `init` to reject with an error naming
+the offending path (`captain.options.code.committer` for the
+invalid value); and the derived `coderPlayer` / `reviewerPlayer`
+identity strings still come from `session.players` regardless of
+`captain.options.code`.

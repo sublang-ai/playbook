@@ -118,7 +118,8 @@ composer is the sole writer of the composed
 path-named error rather than carried through.
 Where `playbook-code` is invoked without `--config`, the shim
 shall compose the runtime config rather than launch the overlay
-directly: it shall inject `captain.from` = the CODE adapter module;
+directly: it shall inject `captain.from` = the Playbook Captain
+shell adapter module with CODE registered;
 convert the `players` mapping into a `players[]` array, one entry
 per role with `id` set to the role key (`coder`, `reviewer`) and
 that role's `adapter`, `model`, `reasoningEffort`, and

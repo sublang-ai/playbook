@@ -27,9 +27,9 @@ meta.md     The spec of specs
 | DR-001 | [001-state-machine-tooling.md](decisions/001-state-machine-tooling.md) | XState + Stately Sketch for state machine modeling, visualization, and simulation |
 | DR-002 | [002-in-page-xstate-visualizer.md](decisions/002-in-page-xstate-visualizer.md) | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) — superseded by DR-003 |
 | DR-003 | [003-sketch-controlled-shell.md](decisions/003-sketch-controlled-shell.md) | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
-| DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: player binding (Committer alias config-driven per Addendum A2), free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and tmux-play adapter wiring |
+| DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: player binding (Committer alias config-driven per Addendum A2), free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and direct CODE adapter wiring superseded by DR-008 shell target per Addendum A3 |
 | DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + universal `needsBossReply` guard for captain-invoking states, so player questions suspend and resume the same state with the answer in context |
-| DR-006 | [006-code-config-composition.md](decisions/006-code-config-composition.md) | CODE config via `captain.options.code` (namespaced, adapter-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config; base-inheritable host fields are `theme`, `layout`, and the captain-judge fields (§2.4); object-launcher deferred |
+| DR-006 | [006-code-config-composition.md](decisions/006-code-config-composition.md) | CODE config via `captain.options.code` (namespaced, registry-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config and targets the DR-008 shell adapter; base-inheritable host fields are `theme`, `layout`, and the captain-judge fields (§2.4); object-launcher deferred |
 | DR-007 | [007-hidden-judge-captain-pane.md](decisions/007-hidden-judge-captain-pane.md) | No raw judge JSON on the Captain pane: route every CODE judge call through cligent's hidden `callCaptain({ visibility: 'hidden' })`, surface a suspended player's full question as captain speech then a rider-less marker (transitional augmentation + gated PBRT-32 test retired at the cligent 0.11.0 pin refresh) |
 | DR-008 | [008-playbook-captain-shell.md](decisions/008-playbook-captain-shell.md) | Built-in Playbook Captain shell over registered sub-runtimes: `/code` as top-level selection, hidden routing plus visible chat in one Captain session, telemetry-mirrored sub-state, park/resume semantics, and `./code/tmux-play` compatibility shim |
 
@@ -52,6 +52,14 @@ meta.md     The spec of specs
 
 ## Packages
 
+### CAPTAIN
+
+| Group | File | Summary |
+| --- | --- | --- |
+| user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: `/code` selection, visible chat, active-engagement routing, status pass-through, parking, dismissal, and final disposal |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, telemetry mirroring, distinct shell telemetry, and park/resume/dispose lifecycle |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, CODE registry wiring, status/telemetry pass-through, telemetry mirroring, park/resume, dismiss, and final disposal |
+
 ### GIT
 
 | Group | File | Summary |
@@ -69,17 +77,17 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config, incl. the Committer alias and a `layout` block) |
-| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding with Codex `.git` writablePaths, readiness heuristic, config composition (base discovery, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout` inheritance, owned YAML serialization), Node engine floor |
-| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding including Codex `.git` writablePaths, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and config composition |
+| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config targeting the shell adapter, incl. the Committer alias and a `layout` block) |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding with Codex `.git` writablePaths, readiness heuristic, config composition (base discovery, shell `captain.from`, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout` inheritance, owned YAML serialization), Node engine floor |
+| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding including Codex `.git` writablePaths, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and shell-targeted config composition |
 
 ### PBRT
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface: free-text turn classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration including the `captain.options.code` surface and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, tmux-play adapter, and `captain.options.code` validation |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, tmux-play adapter wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
+| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through the shell with `captain.options.code` and the Committer alias |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring, and registry-owned `options.code` validation |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
 
 ### PLAYBOOK
 

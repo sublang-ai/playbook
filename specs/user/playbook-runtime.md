@@ -6,24 +6,27 @@
 ## Intent
 
 This spec defines the user-visible behavior of the CODE playbook
-runtime: how a Boss's turn input is interpreted, what the Boss
-observes as a turn progresses, and the host-configuration contract
-for running the runtime under tmux-play.
+runtime: how a Boss's turn input is interpreted after it reaches
+CODE, what the Boss observes as a CODE turn progresses, and the
+host-configuration contract for running CODE under tmux-play
+through the Playbook Captain shell.
 
-The runtime module and its tmux-play host adapter live at the
-repo root; the in-repo path is essential to the package's intent
-per [META-15](../meta.md#meta-15). The
-tmux-play surface depends on the external `@sublang/cligent`
-package. System behavior is in
+The runtime module and its tmux-play shell registry entry live at
+the repo root; the in-repo path is essential to the package's
+intent per [META-15](../meta.md#meta-15).
+The tmux-play surface depends on the external `@sublang/cligent`
+package and the Playbook Captain shell specified in
+[CAPTAIN](playbook-captain.md).
+System behavior is in
 [dev/playbook-runtime.md](../dev/playbook-runtime.md).
 
 ## Turn input
 
 ### PBRT-1
 
-When the Boss submits a non-empty turn while the runtime is not
-waiting for a Boss reply, the runtime shall classify the text by
-consulting the judge.
+Where a Boss turn reaches the CODE runtime, when the Boss submits
+a non-empty turn while the runtime is not waiting for a Boss reply,
+the runtime shall classify the text by consulting the judge.
 The judge shall resolve it to one FSM Boss event — `START_CODING`,
 `CONTINUE_IR`, `SUMMARIZE_IR`, or
 `BOSS_INTERRUPT` — with the required payload, or to no FSM action.
@@ -38,10 +41,10 @@ runtime is classified as ordinary Boss text.
 
 ### PBRT-2
 
-When the Boss submits a non-empty turn while the actor is in the
-`awaitBossReply` Boss-reply suspension state, the runtime shall
-classify the text by consulting the judge with the pending
-question as context.
+Where a Boss turn reaches the CODE runtime, when the Boss submits
+a non-empty turn while the actor is in the `awaitBossReply`
+Boss-reply suspension state, the runtime shall classify the text by
+consulting the judge with the pending question as context.
 The judge shall resolve the text either to
 `BOSS_REPLY` with the verbatim answer for the pending question, or
 to a fresh Boss directive event that abandons the pending question
@@ -108,26 +111,28 @@ line is parseable at a glance:
 
 ### PBRT-4
 
-Where the runtime runs under tmux-play, the adapter shall route
-each player call to the host player whose `id` equals the runtime's
-baked player id (`coder` for Coder, `reviewer` for Reviewer),
-performing no player-id remapping. The host configuration must
-accordingly point `captain.from` at the adapter module and declare
-`players[].id` values equal to those baked ids; the adapter shall
-derive the per-run player identity strings (`coderPlayer`,
-`reviewerPlayer`) from each player entry's `model` when pinned and
-fall back to its `adapter` when no model is set, so the host
-configuration shall not be required to repeat them under
-`captain.options` and player prompts carry the concrete model
-identity (e.g. `claude-opus-4-7`) rather than the adapter family
-name (e.g. `claude`) whenever the host has pinned a model.
+Where CODE runs under tmux-play through the Playbook Captain shell,
+the shell's CODE registry entry shall route each player call to the
+host player whose `id` equals the runtime's baked player id
+(`coder` for Coder, `reviewer` for Reviewer), performing no
+player-id remapping.
+The host configuration must accordingly point `captain.from` at the
+Playbook Captain shell adapter and declare `players[].id` values
+equal to those baked ids; the CODE registry entry shall derive the
+per-run player identity strings (`coderPlayer`, `reviewerPlayer`)
+from each player entry's `model` when pinned and fall back to its
+`adapter` when no model is set, so the host configuration shall not
+be required to repeat them under `captain.options` and player
+prompts carry the concrete model identity (e.g. `claude-opus-4-7`)
+rather than the adapter family name (e.g. `claude`) whenever the
+host has pinned a model.
 
 ### PBRT-29
 
-Where the runtime runs under tmux-play, CODE-specific runtime
-options shall be carried under `captain.options.code` as a
-namespaced object, and no CODE option shall be placed elsewhere
-in the config.
+Where CODE runs under tmux-play through the Playbook Captain shell,
+CODE-specific runtime options shall be carried under
+`captain.options.code` as a namespaced object, and no CODE option
+shall be placed elsewhere in the config.
 A setting that changes host-observable behavior — theme, layout,
 permissions, model or adapter routing, or timing — shall be
 expressed through tmux-play's own `captain` / `players` fields
@@ -145,3 +150,7 @@ The `captain.from` adapter-module path and the `coder` /
 and shall not be required to appear in the user-edited CODE
 overlay; this supersedes the user-maintained-invariant framing of
 [PBRT-4](#pbrt-4).
+The composer-supplied `captain.from` value shall point at the
+Playbook Captain shell adapter, not at a direct CODE adapter; the
+public `./code/tmux-play` export remains a compatibility shim for
+explicit configs.
