@@ -382,6 +382,40 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
     );
   });
 
+  it.each([
+    {
+      label: 'non-ok router result',
+      result: { status: 'error', turnId: 1, error: 'router failed' },
+    },
+    {
+      label: 'ok router result without finalText',
+      result: { status: 'ok', turnId: 1 },
+    },
+  ] satisfies { label: string; result: CaptainRunResult }[])(
+    'degrades $label to visible clarification without dispatch',
+    async ({ result }) => {
+      const registry = fakeCodeEntry();
+      const shell = createPlaybookCaptainShell({}, [registry.entry]);
+      const session = stubSession();
+      const context = stubContext([
+        result,
+        { status: 'ok', turnId: 1, finalText: 'visible clarification' },
+      ]);
+
+      await shell.init!(session.session);
+      await shell.handleBossTurn(turn('what should happen here?'), context.context);
+
+      expect(registry.createRuntime).not.toHaveBeenCalled();
+      expect(context.captainCalls[0]?.options).toEqual({
+        visibility: 'hidden',
+      });
+      expect(context.captainCalls[1]?.options).toBeUndefined();
+      expect(context.captainCalls[1]?.prompt).toContain(
+        'I could not route that safely',
+      );
+    },
+  );
+
   it('continues the active runtime for router sub decisions', async () => {
     const registry = fakeCodeEntry();
     const shell = createPlaybookCaptainShell({}, [registry.entry]);
@@ -463,12 +497,23 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       'resume parked runtime',
     ]);
     expect(telemetryWithTopic(session, 'playbook.fsm.state')).toHaveLength(2);
-    expect(
-      telemetryWithTopic(session, 'playbook.captain.fsm.state').some(
-        (event) =>
-          JSON.stringify(event.payload).includes('sub-runtime:ready'),
-      ),
-    ).toBe(true);
+    expect(telemetryWithTopic(session, 'playbook.captain.fsm.state')).toEqual(
+      expect.arrayContaining([
+        {
+          topic: 'playbook.captain.fsm.state',
+          payload: expect.objectContaining({
+            from: 'engaged.driving',
+            to: 'engaged.parked',
+            event: 'sub-runtime:ready',
+            ledger: expect.objectContaining({
+              activePlaybookId: 'code',
+              mode: 'engaged.parked',
+              latestSubRuntimeStateId: 'ready',
+            }),
+          }),
+        },
+      ]),
+    );
   });
 
   it('mirrors pending Boss questions and compact errors into the router ledger', async () => {
@@ -598,7 +643,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     );
   });
 
-  it('shell dispose disposes the active runtime and drains disposal emissions', async () => {
+  it('shell dispose tears down the active runtime without shell teardown emissions', async () => {
     const registry = fakeCodeEntry(undefined, async (runtime) => {
       await runtime.ports?.emitStatus('dispose emission', { drained: true });
     });
@@ -608,6 +653,13 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code first task'), context.context);
+    const shellStatusCount = session.statuses.filter((status) =>
+      status.message.startsWith('◇ shell'),
+    ).length;
+    const shellTelemetryCount = telemetryWithTopic(
+      session,
+      'playbook.captain.fsm.state',
+    ).length;
     await shell.dispose!();
 
     expect(registry.runtimes[0]?.disposeCount).toBe(1);
@@ -615,6 +667,14 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       message: 'dispose emission',
       data: { drained: true },
     });
+    expect(
+      session.statuses.filter((status) =>
+        status.message.startsWith('◇ shell'),
+      ),
+    ).toHaveLength(shellStatusCount);
+    expect(
+      telemetryWithTopic(session, 'playbook.captain.fsm.state'),
+    ).toHaveLength(shellTelemetryCount);
   });
 });
 
@@ -676,5 +736,21 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     expect(
       telemetryWithTopic(session, 'playbook.captain.fsm.state').length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
+  it('resolves the package shell export as a CODE-registered Captain factory', async () => {
+    const mod = await import('@sublang/playbook/playbook-captain');
+    const shell = mod.default({});
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code'), context.context);
+
+    expect(context.captainCalls[0]?.prompt).toContain(
+      'Boss selected /code without a task',
+    );
   });
 });

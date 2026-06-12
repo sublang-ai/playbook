@@ -10,6 +10,9 @@ Playbook Captain shell that runs as the tmux-play Captain and hosts
 registered playbook runtimes.
 The shell is a meta-level Captain over playbooks; it does not
 replace the CODE runtime contract in [PBRT](playbook-runtime.md).
+The published `@sublang/playbook` module surface is essential to
+this package's intent because tmux-play configs import the shell by
+package specifier.
 
 ## Registry and shell state
 
