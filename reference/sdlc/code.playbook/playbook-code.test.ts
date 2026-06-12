@@ -183,6 +183,86 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
     });
   });
 
+  it.each([
+    ['malformed YAML', 'captain: [\n'],
+    ['scalar YAML', 'captain\n'],
+    ['null YAML', 'null\n'],
+    ['sequence YAML', '- captain\n'],
+  ])(
+    'leaves an existing %s user overlay unchanged and does not migrate',
+    async (_label, configSource) => {
+      const home = await makeTempHome();
+      const configPath = resolveUserConfigPath({}, home);
+      await mkdir(join(home, '.config', 'playbook'), { recursive: true });
+      await writeFile(configPath, configSource, 'utf8');
+      const before = await stat(configPath);
+      const spawn = fakeSpawn();
+      const stderr = writer();
+
+      const result = await runPlaybookCodeCli({
+        argv: [],
+        env: {
+          ANTHROPIC_API_KEY: 'anthropic-key',
+          OPENAI_API_KEY: 'openai-key',
+        },
+        homeDir: home,
+        cwd: home,
+        stderr,
+        stdout: writer(),
+        spawn: spawn.fn,
+        tmuxPlayBin: '/tmp/tmux-play.js',
+      });
+
+      const after = await stat(configPath);
+      expect(result.code).not.toBe(0);
+      expect(await readFile(configPath, 'utf8')).toBe(configSource);
+      expect(after.mtimeMs).toBe(before.mtimeMs);
+      expect(stderr.text()).not.toContain('added notifications defaults');
+      expect(spawn.calls).toEqual([]);
+    },
+  );
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '  \n'],
+    ['comment-only', '# temporarily cleared\n'],
+  ])(
+    'migrates an existing %s user overlay before composition rejects it',
+    async (_label, configSource) => {
+      const home = await makeTempHome();
+      const configPath = resolveUserConfigPath({}, home);
+      await mkdir(join(home, '.config', 'playbook'), { recursive: true });
+      await writeFile(configPath, configSource, 'utf8');
+      const spawn = fakeSpawn();
+      const stderr = writer();
+
+      const result = await runPlaybookCodeCli({
+        argv: [],
+        env: {
+          ANTHROPIC_API_KEY: 'anthropic-key',
+          OPENAI_API_KEY: 'openai-key',
+        },
+        homeDir: home,
+        cwd: home,
+        stderr,
+        stdout: writer(),
+        spawn: spawn.fn,
+        tmuxPlayBin: '/tmp/tmux-play.js',
+      });
+
+      const migrated = await readFile(configPath, 'utf8');
+      expect(result.code).not.toBe(0);
+      expect(migrated.startsWith(configSource)).toBe(true);
+      expect(migrated).toContain('notifications:');
+      expect(migrated).toContain('player_finished: bell');
+      expect(migrated).toContain('turn_finished: desktop');
+      expect(stderr.text()).toContain(
+        `added notifications defaults to config at ${configPath}`,
+      );
+      expect(spawn.calls).toEqual([]);
+    },
+  );
+
   it('forwards explicit --config arguments verbatim and bypasses composition', async () => {
     const home = await makeTempHome();
     const spawn = fakeSpawn();

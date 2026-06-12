@@ -21,7 +21,11 @@ import {
   findTmuxPlayConfig,
   loadTmuxPlayConfig,
 } from '@sublang/cligent/tmux-play';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import {
+  parse as parseYaml,
+  parseDocument as parseYamlDocument,
+  stringify as stringifyYaml,
+} from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const templatePath = resolve(here, '..', 'playbook-code.config.template.yaml');
@@ -322,7 +326,9 @@ function migrateUserConfigNotificationsIfMissing(userConfigPath, stderr) {
   const source = readFileSync(userConfigPath, 'utf8');
   let parsed;
   try {
-    parsed = parseYaml(source) ?? {};
+    const document = parseYamlDocument(source);
+    if (document.errors.length > 0) return;
+    parsed = document.contents === null ? {} : document.toJS();
   } catch {
     return;
   }

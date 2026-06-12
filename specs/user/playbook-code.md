@@ -50,12 +50,17 @@ present and already has a top-level `notifications` block, the shim
 shall not modify or overwrite it.
 Where `playbook-code` is invoked without `--config`, `--help`, or
 `-h`, when the file at the resolved user config path is already
-present, parses to a YAML object, and lacks a top-level
-`notifications` block, the shim shall update that file in place by
-adding
+present and either parses to a YAML mapping that lacks a top-level
+`notifications` block or contains no YAML document, the shim shall
+update that file in place by adding
 `notifications: { player_finished: bell, turn_finished: desktop }`
 as the tmux-play host notification defaults, and shall print one
 stderr line naming the resolved path.
+Where `playbook-code` is invoked without `--config`, `--help`, or
+`-h`, when the file at the resolved user config path is already
+present but fails YAML parsing or parses to a YAML scalar or
+sequence, the shim shall leave that file unchanged and shall not run
+the notification migration.
 The resolved user config is the CODE overlay (the composer input
 of [PBCODE-16](#pbcode-16)), not the config launched directly.
 After resolving the user config and applying any required seeding

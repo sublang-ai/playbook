@@ -77,9 +77,9 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, existing-overlay notification migration, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config targeting `@sublang/playbook/playbook-captain`, incl. the Committer alias plus `layout` and `notifications` blocks) |
-| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding with Codex `.git` writablePaths and notification defaults, append-only notification migration, readiness heuristic, config composition (base discovery, exact shell `captain.from`, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout`/`notifications` inheritance, owned YAML serialization), Node engine floor |
-| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding including Codex `.git` writablePaths and notification defaults, existing-overlay notification migration, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and exact shell-targeted config composition |
+| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, guarded existing-overlay notification migration, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config targeting `@sublang/playbook/playbook-captain`, incl. the Committer alias plus `layout` and `notifications` blocks) |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding with Codex `.git` writablePaths and notification defaults, append-only notification migration with non-mapping no-op, readiness heuristic, config composition (base discovery, exact shell `captain.from`, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout`/`notifications` inheritance, owned YAML serialization), Node engine floor |
+| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding including Codex `.git` writablePaths and notification defaults, existing-overlay notification migration and non-mapping no-op, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and exact shell-targeted config composition |
 
 ### PBRT
 
