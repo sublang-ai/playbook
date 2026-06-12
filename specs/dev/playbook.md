@@ -93,6 +93,9 @@ the prompt shall include the complete spec-review checklist:
 - `Minimal: essential and concise; every item earns its place; also check with other items.`
 - `Well organized: spec packages are finely scoped, with high cohesion and low coupling.`
 
+The prompt shall not include the legacy line
+`Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.`.
+
 ## Boss-reply suspension
 
 ### PLAYBOOK-12
