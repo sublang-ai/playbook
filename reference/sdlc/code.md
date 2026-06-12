@@ -66,8 +66,9 @@ When Reviewer begins a review round involving @specs/user/, @specs/dev/, or @spe
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 

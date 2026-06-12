@@ -65,6 +65,16 @@ captain-invoking prompt in `code.gears.md` or `code.fsm.ts` omits
 the review-only instruction that forbids editing files or
 committing.
 
+### PLAYBOOK-19
+Verifies: [PLAYBOOK-18](../dev/playbook.md#playbook-18)
+
+When `pnpm test` runs, the test suite shall fail if any Reviewer
+captain-invoking prompt in `code.gears.md` or `code.fsm.ts` asks
+Reviewer to verify affected spec items but omits any item from the
+current spec-review checklist, or if it uses
+`behavior (in @specs/dev)` instead of
+`system behavior (in @specs/dev)`.
+
 ## Boss-reply suspension
 
 ### PLAYBOOK-14

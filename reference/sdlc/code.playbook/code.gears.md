@@ -65,8 +65,9 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
@@ -94,8 +95,9 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
@@ -113,8 +115,9 @@ When Committer commits Initial Changes from an IR task involving changes only in
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
@@ -142,8 +145,9 @@ When Committer commits Initial Changes from an IR task involving changes both in
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
@@ -161,8 +165,9 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
@@ -190,8 +195,9 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).
@@ -215,8 +221,9 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
@@ -246,8 +253,9 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
+> - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
 > Flag any issues or improvements (numbered; no duplication).

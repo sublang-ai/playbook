@@ -12,7 +12,8 @@
 //   (e) generated `needsBossReply` result-map drift,
 //   (f) hidden prompt lines not traceable to `code.md`,
 //   (g) stale source/gears `needsBossReply` metadata,
-//   (h) Reviewer prompts missing the review-only instruction.
+//   (h) Reviewer prompts missing the review-only instruction,
+//   (i) Reviewer spec-checklist prompts drifting from source wording.
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -139,6 +140,15 @@ const states = enumerateCaptainStates(codingMachine);
 const fsmBySourceItem = new Map(states.map((s) => [s.sourceItem, s]));
 const reviewerReadOnlyInstruction =
   'Do not edit files or commit; report findings only.';
+const specReviewChecklistMarker = 'Verify any affected spec items are:';
+const legacySpecReviewLevelLine =
+  '- Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.';
+const specReviewChecklistLines = [
+  '- Complete & coherent: sufficient for you to reimplement code.',
+  '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+  '- Minimal: essential and concise; every item earns its place; also check with other items.',
+  '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
+] as const;
 
 describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
   it('parses CODE-1..19 (19 items)', () => {
@@ -183,7 +193,7 @@ describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
 
 });
 
-describe('GEARS ↔ FSM conformance — assertions (a)–(h)', () => {
+describe('GEARS ↔ FSM conformance — assertions (a)–(i)', () => {
   it('(a) every CODE-N in gears has an FSM state with matching sourceItem', () => {
     for (const id of gears.keys()) {
       expect(fsmBySourceItem.has(id), `gears CODE-${id.slice(5)} has no FSM state`).toBe(true);
@@ -279,6 +289,34 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(h)', () => {
         input.prompt.split('\n'),
         `${s.stateId} (${s.sourceItem}): FSM Reviewer prompt missing review-only instruction`,
       ).toContain(reviewerReadOnlyInstruction);
+    }
+  });
+
+  it('(i) every Reviewer spec-checklist prompt carries the current checklist', () => {
+    const assertCurrentChecklist = (label: string, promptBody: string) => {
+      const lines = promptBody.split('\n');
+      if (!lines.includes(specReviewChecklistMarker)) return;
+
+      expect(lines, `${label}: legacy spec checklist wording`).not.toContain(
+        legacySpecReviewLevelLine,
+      );
+      for (const line of specReviewChecklistLines) {
+        expect(lines, `${label}: missing spec checklist line`).toContain(line);
+      }
+    };
+
+    for (const item of gears.values()) {
+      if (item.player !== 'Reviewer') continue;
+      assertCurrentChecklist(`${item.id}: GEARS`, item.promptBody);
+    }
+
+    for (const s of states) {
+      const input = s.getInput({});
+      if (input.player !== 'Reviewer') continue;
+      assertCurrentChecklist(
+        `${s.stateId} (${s.sourceItem}): FSM`,
+        input.prompt,
+      );
     }
   });
 });

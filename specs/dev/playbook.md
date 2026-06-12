@@ -82,6 +82,17 @@ Every Reviewer captain-invoking prompt in `code.gears.md` and
 `code.fsm.ts` shall include the line
 `Do not edit files or commit; report findings only.`.
 
+### PLAYBOOK-18
+
+Where a Reviewer captain-invoking prompt in `code.gears.md` or
+`code.fsm.ts` includes `Verify any affected spec items are:`,
+the prompt shall include the complete spec-review checklist:
+
+- `Complete & coherent: sufficient for you to reimplement code.`
+- `Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.`
+- `Minimal: essential and concise; every item earns its place; also check with other items.`
+- `Well organized: spec packages are finely scoped, with high cohesion and low coupling.`
+
 ## Boss-reply suspension
 
 ### PLAYBOOK-12
