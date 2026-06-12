@@ -306,6 +306,14 @@ export function createPlaybookCaptainShell(
     const playbookId = engagement.entry.id;
     active = undefined;
     finalDisposalRequested = undefined;
+    if (reason === 'dispose') {
+      mode = 'chat';
+      await engagement.runtime.dispose();
+      latestSubRuntimeStateId = undefined;
+      pendingBossQuestion = undefined;
+      lastError = undefined;
+      return;
+    }
     await setMode('chat', reason, playbookId);
     await engagement.runtime.dispose();
     if (reason === 'dismiss') {

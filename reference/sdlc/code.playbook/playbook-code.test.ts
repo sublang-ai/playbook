@@ -26,7 +26,7 @@ const {
   resolveConfigHome,
   composeRuntimeConfig,
   adaptersFromComposedConfig,
-  CODE_ADAPTER_MODULE,
+  PLAYBOOK_CAPTAIN_MODULE,
 } = playbookCode;
 
 const tempDirs: string[] = [];
@@ -78,7 +78,7 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
     expect(args[2].endsWith('.yaml')).toBe(true);
 
     const composed = parseYaml(spawn.configs[0].content);
-    expect(composed.captain.from).toBe(CODE_ADAPTER_MODULE);
+    expect(composed.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(composed.players.map((p: { id: string }) => p.id)).toEqual([
       'coder',
       'reviewer',
@@ -306,7 +306,7 @@ describe('playbook-code shim — readiness and help', () => {
   it('collects adapter ids from a composed config', () => {
     expect(
       adaptersFromComposedConfig({
-        captain: { from: CODE_ADAPTER_MODULE, adapter: 'claude' },
+        captain: { from: PLAYBOOK_CAPTAIN_MODULE, adapter: 'claude' },
         players: [
           { id: 'coder', adapter: 'claude' },
           { id: 'reviewer', adapter: 'codex' },
@@ -320,7 +320,7 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
   it('maps the overlay roles to a players[] roster and injects the invariants', () => {
     const composed = composeRuntimeConfig(fullOverlay());
 
-    expect(composed.captain.from).toBe(CODE_ADAPTER_MODULE);
+    expect(composed.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(composed.captain.adapter).toBe('claude');
     expect(composed.captain.options).toEqual({ code: { } });
     expect(composed.players).toEqual([

@@ -28,10 +28,11 @@ const templatePath = resolve(here, '..', 'playbook-code.config.template.yaml');
 const READINESS_FAILURE_EXIT_CODE = 2;
 const COMPOSITION_FAILURE_EXIT_CODE = 1;
 
-// PBCODE-16: the composer injects `captain.from` (the CODE adapter
-// module) and the `coder` / `reviewer` player ids, so the user-edited
-// overlay carries neither.
-export const CODE_ADAPTER_MODULE = '@sublang/playbook/code/tmux-play';
+// PBCODE-16: the composer injects `captain.from` (the Playbook
+// Captain shell adapter module) and the `coder` / `reviewer` player
+// ids, so the user-edited overlay carries neither.
+export const PLAYBOOK_CAPTAIN_MODULE = '@sublang/playbook/playbook-captain';
+export const CODE_ADAPTER_MODULE = PLAYBOOK_CAPTAIN_MODULE;
 const CODE_ROLES = ['coder', 'reviewer'];
 // Accepted `players` keys: the two fixed CODE roles plus the optional
 // `committer` alias (a string naming one of the roles); PBCODE-17.
@@ -163,7 +164,7 @@ async function composeLaunchConfig({ overlayPath, cwd, configHome }) {
 export function composeRuntimeConfig(
   overlay,
   base,
-  adapterModule = CODE_ADAPTER_MODULE,
+  adapterModule = PLAYBOOK_CAPTAIN_MODULE,
 ) {
   const overlayConfig = requireObject(overlay, 'config');
   const overlayPlayers = requireObject(overlayConfig.players, 'players');

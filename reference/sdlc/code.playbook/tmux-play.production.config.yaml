@@ -2,12 +2,12 @@
 # SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 # Production tmux-play config for the published CODE playbook package.
-# This intentionally imports the adapter through the package export, not
-# a local repo path. The runtime still expects the host app to provide the
-# @sublang/cligent peer dependency.
+# This intentionally imports the Playbook Captain shell through the
+# package export, not a local repo path. The runtime still expects the
+# host app to provide the @sublang/cligent peer dependency.
 
 captain:
-  from: "@sublang/playbook/code/tmux-play"
+  from: "@sublang/playbook/playbook-captain"
   adapter: claude
   model: claude-sonnet-4-6
   reasoningEffort: high

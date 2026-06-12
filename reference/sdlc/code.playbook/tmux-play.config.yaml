@@ -1,18 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-# Example tmux-play config for the CODE playbook — DR-004 §11.
+# Example tmux-play config for the CODE playbook through the
+# Playbook Captain shell — DR-008 §6.
 # Run with:
 #   tmux-play --config tmux-play.config.yaml
 
 captain:
-  # Dev form: sibling-path import of the compiled adapter. After
-  # @sublang/playbook is published, swap this for the package
-  # specifier — e.g.
-  #   from: "@sublang/playbook/code/tmux-play"
-  # (final form confirmed at publish time per DR-004 §11). Players,
-  # options, and the rest of the config are unchanged.
-  from: ./code.tmux-play.js
+  # Dev form: sibling-path import of the compiled shell adapter. After
+  # @sublang/playbook is published, swap this for:
+  #   from: "@sublang/playbook/playbook-captain"
+  # Existing explicit configs that still import ./code.tmux-play.js or
+  # @sublang/playbook/code/tmux-play continue through a compatibility
+  # shim that delegates to the same shell with CODE registered.
+  from: ./playbook-captain.js
   adapter: claude
   model: claude-sonnet-4-6
   reasoningEffort: high

@@ -16,9 +16,9 @@ The end state is a built-in Playbook Captain shell as the tmux-play Captain, wit
 - [x] Playbook Captain shell adapter implemented with a registered CODE entry, bounded control ledger, visible chat envelope, hidden router envelope, hidden sub-runtime judge calls, and pass-through status/telemetry.
 - [x] Shell routing implemented for registered commands, hidden router decisions, same-playbook command continuation, different-playbook rejection while engaged, and dismiss.
 - [x] Shell park/resume/final-disposal behavior implemented from mirrored `playbook.fsm.state` telemetry.
-- [ ] CODE tmux-play compatibility shim delegates to the same shell with CODE registered.
-- [ ] `playbook-code` composer, package exports, example configs, generated `.js`/`.d.ts` siblings, and README updated for the shell adapter path while preserving explicit `./code/tmux-play` users.
-- [ ] Tests cover shell routing, hidden control calls, shared-session call surfaces, telemetry mirroring, park/resume/dismiss/final disposal, CODE option validation through the registry, compatibility shim behavior, and composer output.
+- [x] CODE tmux-play compatibility shim delegates to the same shell with CODE registered.
+- [x] `playbook-code` composer, package exports, example configs, generated `.js`/`.d.ts` siblings, and README updated for the shell adapter path while preserving explicit `./code/tmux-play` users.
+- [x] Tests cover shell routing, hidden control calls, shared-session call surfaces, telemetry mirroring, park/resume/dismiss/final disposal, CODE option validation through the registry, compatibility shim behavior, and composer output.
 - [ ] Close-out re-verifies `map.md` and records any DR-008 divergence.
 
 ## Tasks
@@ -53,10 +53,11 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Mirror sub-runtime state from `playbook.fsm.state` telemetry, park on idle/failed/awaitBossReply, resume parked CODE turns, reject different-playbook commands while engaged, dismiss active engagements, and dispose on final.
    Add tests for each lifecycle path and for the shell telemetry topic not colliding with `playbook.fsm.state`.
    Implementation note: `playbook-captain.ts` now mirrors sub-runtime FSM telemetry into the shell ledger before pass-through, parks on CODE idle/failed/`awaitBossReply`, emits shell FSM telemetry on `playbook.captain.fsm.state`, disposes final and dismissed engagements with shell status lines, and constructs replacements after disposal.
-7. **Switch public launch paths.**
+7. **Switch public launch paths.** _[done]_
    Point `playbook-code` composed configs and the primary package export at the shell adapter.
    Turn `./code/tmux-play` into the compatibility shim that delegates to the shell with CODE registered.
    Update example configs, README, generated siblings, and composer/compatibility tests.
+   Implementation note: `playbook-code` now composes `captain.from: @sublang/playbook/playbook-captain`, the package exports that shell subpath while keeping `./code/tmux-play` as a delegating shim, example configs and README name the shell path, and compatibility tests drive CODE through `/code` on the shim.
 8. **Close-out.**
    Run the relevant test suite, re-verify `specs/map.md`, and record any substantive divergence from DR-008 in this IR.
 

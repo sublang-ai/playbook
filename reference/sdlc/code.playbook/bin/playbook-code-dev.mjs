@@ -4,8 +4,8 @@
 
 // Dev counterpart to the published `playbook-code` bin. On each launch it
 // rebuilds both local checkouts — cligent (`dist/`: the tmux-play CLI and
-// runtime) and playbook (in-place `code.*.js`: the CODE adapter modules
-// loaded at runtime) — then dispatches to the same `runPlaybookCodeCli`.
+// runtime) and playbook (in-place compiled shell and CODE modules loaded
+// at runtime) — then dispatches to the same `runPlaybookCodeCli`.
 // Edits in either repo land in the next invocation without a manual
 // `npm run build` in either tree. Mirrors cligent's `tmux-play` vs
 // `tmux-play-dev` split, one level up.

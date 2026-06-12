@@ -36,7 +36,8 @@ The reference is the canonical worked example —
 [CODE source](reference/sdlc/code.md) →
 [gears](reference/sdlc/code.playbook/code.gears.md) →
 [FSM](reference/sdlc/code.playbook/code.fsm.ts) → runtime — with
-the runtime ported to cligent's `tmux-play` host out of the box.
+the runtime registered behind the built-in Playbook Captain shell for
+cligent's `tmux-play` host out of the box.
 The compiled artifacts live under
 [`reference/sdlc/code.playbook/`](reference/sdlc/code.playbook),
 the slc pipeline's `<basename>.<pipeline>/` output directory.
@@ -100,9 +101,10 @@ passed through to `tmux-play` with a warning because `playbook-code`
 does not know how to preflight their auth. The safe tuning points are
 `captain.adapter`, `captain.model`, and each role's `adapter` and
 `model` under `players.coder` / `players.reviewer`. The composer owns
-`captain.from` and the `coder` / `reviewer` role keys, so leave those
-keys as-is; the runtime binds to those host-configuration invariants
-per [PBRT-4](specs/user/playbook-runtime.md#pbrt-4) and derives the
+`captain.from` and points it at the Playbook Captain shell adapter, and
+it owns the `coder` / `reviewer` role keys, so leave those keys as-is;
+the runtime binds to those host-configuration invariants per
+[PBRT-4](specs/user/playbook-runtime.md#pbrt-4) and derives the
 `<coder-llm>` / `<reviewer-llm>` substitution strings from each role's
 `model` when pinned and `adapter` otherwise — so the Committer's
 commit-message trailers can name the concrete model
@@ -186,7 +188,7 @@ production install.
 
 Drive a Boss turn against the source tree (uses the developer
 [`tmux-play.config.yaml`](reference/sdlc/code.playbook/tmux-play.config.yaml)
-that imports the compiled adapter via relative path):
+that imports the compiled Playbook Captain shell via relative path):
 
 ```sh
 pnpm exec tmux-play --config reference/sdlc/code.playbook/tmux-play.config.yaml
@@ -198,7 +200,9 @@ installed globally.
 
 ### Running a Boss turn
 
-The Boss pane takes plain-language turns; the judge classifies each
+The Boss pane starts at the Playbook Captain shell. Use `/code <task>`
+to explicitly select the CODE playbook, or use ordinary text and let the
+shell route it. Once a turn reaches CODE, the CODE judge classifies it
 into an FSM event (start a coding turn, continue or summarize an IR,
 interrupt to a named state, or nothing) per
 [PBRT-1](specs/user/playbook-runtime.md#pbrt-1).
@@ -207,9 +211,16 @@ the FSM parks at `awaitBossReply` and the pane shows the question; your
 next turn is normally classified as the reply, or a fresh directive
 abandons it ([PBRT-2](specs/user/playbook-runtime.md#pbrt-2)).
 
-The Captain pane streams the state machine with a four-glyph vocabulary —
-`◆ ▸ ⮕ ⤷` per [PBRT-3](specs/user/playbook-runtime.md#pbrt-3) — while
-player prompts ride their own panes.
+The Captain pane shows shell engagement with `◇` lines and streams the
+CODE state machine with the four-glyph vocabulary `◆ ▸ ⮕ ⤷` per
+[PBRT-3](specs/user/playbook-runtime.md#pbrt-3), while player prompts
+ride their own panes.
+
+Published configs should import the shell adapter from
+`@sublang/playbook/playbook-captain`. Existing explicit configs that
+still import `@sublang/playbook/code/tmux-play` keep resolving through
+a compatibility shim that delegates to the same shell with CODE
+registered.
 
 ### Embedding the runtime in your own host
 

@@ -2,7 +2,7 @@
   "name": "@sublang/playbook",
   "version": "0.5.0",
   "type": "module",
-  "description": "Reference CODE playbook — XState v5 FSM, host-agnostic runtime, and tmux-play adapter for a coder/reviewer/committer loop driven by GEARS spec items.",
+  "description": "Reference CODE playbook — XState v5 FSM, host-agnostic runtime, and Playbook Captain shell for a coder/reviewer/committer loop driven by GEARS spec items.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/sublang-ai/playbook#readme",
   "repository": {
@@ -37,6 +37,9 @@
     "reference/sdlc/code.playbook/code.registry.ts",
     "reference/sdlc/code.playbook/code.registry.js",
     "reference/sdlc/code.playbook/code.registry.d.ts",
+    "reference/sdlc/code.playbook/playbook-captain.ts",
+    "reference/sdlc/code.playbook/playbook-captain.js",
+    "reference/sdlc/code.playbook/playbook-captain.d.ts",
     "reference/sdlc/code.playbook/code.tmux-play.ts",
     "reference/sdlc/code.playbook/code.tmux-play.js",
     "reference/sdlc/code.playbook/code.tmux-play.d.ts",
@@ -53,6 +56,10 @@
     "./code/playbook": {
       "types": "./reference/sdlc/code.playbook/code.playbook.d.ts",
       "default": "./reference/sdlc/code.playbook/code.playbook.js"
+    },
+    "./playbook-captain": {
+      "types": "./reference/sdlc/code.playbook/playbook-captain.d.ts",
+      "default": "./reference/sdlc/code.playbook/playbook-captain.js"
     },
     "./code/tmux-play": {
       "types": "./reference/sdlc/code.playbook/code.tmux-play.d.ts",

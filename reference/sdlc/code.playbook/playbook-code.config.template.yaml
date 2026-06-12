@@ -7,10 +7,10 @@
 #
 # This is a CODE *overlay*, not a full tmux-play config: playbook-code
 # composes the launched tmux-play config from it at startup (PBCODE-16).
-# The composer injects captain.from (the CODE adapter module) and the
-# coder / reviewer player ids, and can inherit theme plus captain-judge
-# defaults from an existing tmux-play config — so you only tune the
-# fields below.
+# The composer injects captain.from (the Playbook Captain shell adapter)
+# and the coder / reviewer player ids, and can inherit theme plus
+# captain-judge defaults from an existing tmux-play config — so you only
+# tune the fields below.
 #
 # Safe tuning points:
 # - captain.adapter / model / reasoningEffort pick the judge/Captain
