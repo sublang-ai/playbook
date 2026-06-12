@@ -57,9 +57,10 @@ the engagement only after the active turn settles, and router
 `dismiss` disposes the engagement and returns the shell to chat;
 a later dispatch after final disposal or dismissal constructs a
 replacement runtime; engagement, dismissal, and final-disposal
-status lines use the `◇ shell <event> <playbookId>` vocabulary;
-and shell `dispose()` disposes any active runtime without emitting
-shell status or shell FSM telemetry for adapter teardown.
+status lines use the `◇ shell <event> <playbookId>` vocabulary and
+carry no structured status data; and shell `dispose()` disposes any
+active runtime without emitting shell status or shell FSM telemetry
+for adapter teardown.
 
 ## Registry and options
 

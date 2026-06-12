@@ -252,7 +252,7 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
 
     expect(s.statuses).toContainEqual({
       message: '◇ shell engaged code',
-      data: { playbookId: 'code', mode: 'engaged.parked' },
+      data: undefined,
     });
     expect(s.statuses.map((st) => st.message)).toContain('START_CODING');
     expect(c.playerCalls.map((call) => call.playerId)).toContain('coder');

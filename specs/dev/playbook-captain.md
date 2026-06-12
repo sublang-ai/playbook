@@ -42,6 +42,10 @@ When the shell emits its own FSM telemetry, it shall use topic
 `playbook.captain.fsm.state`, not `playbook.fsm.state`.
 The shell FSM telemetry payload shall carry `from`, `to`, `event`,
 and a snapshot of the bounded control ledger.
+The shell shall put Boss-visible shell state in human-readable
+status message text and shall not attach structured data to
+shell-owned status emissions; structured shell state shall be
+carried through shell FSM telemetry instead.
 The shell shall reserve `playbook.fsm.state` for sub-runtime
 telemetry that it passes through.
 

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Retired the inert raw-YAML recovery path for base `layout` fields now that the pinned cligent loader returns normalized host fields directly; `playbook-code` inherits base `layout` and `notifications` from cligent's loaded config.
+- Playbook Captain shell-owned status lines no longer attach structured status data that tmux-play renders as raw JSON; the shell state remains available through `playbook.captain.fsm.state` telemetry.
 
 ## [0.5.0] - 2026-06-09
 

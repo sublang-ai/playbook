@@ -70,6 +70,9 @@ the shell shall emit Boss-visible Captain status lines
 `◇ shell engaged <playbookId>`, `◇ shell dismissed <playbookId>`,
 and `◇ shell disposed <playbookId>` for those shell events without
 changing or reusing the engaged runtime's glyph vocabulary.
+Those shell-owned status lines shall be complete human-readable
+messages and shall not attach structured status data that the host
+could render as raw JSON.
 Adapter teardown through [CAPTAIN-16](../dev/playbook-captain.md#captain-16)
 is not a Boss-facing engagement disposal and need not emit a
 Boss-visible status line.

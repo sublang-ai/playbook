@@ -171,10 +171,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         finalDisposalRequested = undefined;
         await setMode('engaged.parked', 'engage', entry.id);
         await runtime.init(createPorts());
-        await requireSession().emitStatus(`◇ shell engaged ${entry.id}`, {
-            playbookId: entry.id,
-            mode,
-        });
+        await requireSession().emitStatus(`◇ shell engaged ${entry.id}`);
         return active;
     };
     const submitToActive = async (engagement, text, signal) => {
@@ -210,16 +207,10 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         await setMode('chat', reason, playbookId);
         await engagement.runtime.dispose();
         if (reason === 'dismiss') {
-            await requireSession().emitStatus(`◇ shell dismissed ${playbookId}`, {
-                playbookId,
-                mode,
-            });
+            await requireSession().emitStatus(`◇ shell dismissed ${playbookId}`);
         }
         else if (reason === 'final') {
-            await requireSession().emitStatus(`◇ shell disposed ${playbookId}`, {
-                playbookId,
-                mode,
-            });
+            await requireSession().emitStatus(`◇ shell disposed ${playbookId}`);
         }
         latestSubRuntimeStateId = undefined;
         pendingBossQuestion = undefined;

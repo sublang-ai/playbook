@@ -255,7 +255,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     ]);
     expect(session.statuses[0]).toEqual({
       message: '◇ shell engaged code',
-      data: { playbookId: 'code', mode: 'engaged.parked' },
+      data: undefined,
     });
   });
 
@@ -587,7 +587,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     ]);
     expect(session.statuses).toContainEqual({
       message: '◇ shell disposed code',
-      data: { playbookId: 'code', mode: 'chat' },
+      data: undefined,
     });
     expect(
       telemetryWithTopic(session, 'playbook.captain.fsm.state').some(
@@ -620,7 +620,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     ]);
     expect(session.statuses).toContainEqual({
       message: '◇ shell dismissed code',
-      data: { playbookId: 'code', mode: 'chat' },
+      data: undefined,
     });
   });
 
