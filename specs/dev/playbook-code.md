@@ -130,11 +130,14 @@ blocks into the composed config from the overlay, or inherit them
 from the base config when the overlay omits them — the same
 precedence as `theme` — without interpreting their contents, since
 they are host-observable tmux-play fields, not CODE options.
-Because cligent's loader normalizes a discovered base to `captain` /
-`players` / `theme` and may drop fields it does not model, the shim
-shall recover a base `layout` or `notifications` block from the raw
-base YAML when the loader returns none, so base inheritance holds;
-this recovery is inert once a loader preserves the field itself.
+For both blocks, overlay precedence is whole-block: an overlay
+`layout` shall replace the base `layout` rather than merging nested
+`window` or `columnWeights` fields, and an overlay `notifications`
+shall replace the base `notifications` rather than merging event
+keys.
+The shim shall inherit those base fields from cligent's loaded
+config, since cligent owns tmux-play config normalization and
+validation.
 The shim shall type the composed config with cligent's exported
 config types but shall serialize it to the temporary `.yaml` with
 its own serializer, since `@sublang/cligent/tmux-play` exports no

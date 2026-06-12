@@ -102,10 +102,10 @@ not inherited) and optional `model`, `reasoningEffort`,
 `permissions`; CODE options, if any, live under
 `captain.options.code`; optional top-level `theme`, `layout`, and
 `notifications` blocks may be set. The `layout` block (window size
-and column weights) and `notifications` block (tmux-play record
-notification events to sinks) are host-observable tmux-play fields,
-not CODE options; the composer carries them through to the composed
-config without interpreting them.
+and column weights) and `notifications` block (maps notification
+events to `off`, `bell`, or `desktop` sinks) are host-observable
+tmux-play fields, not CODE options; the composer carries them
+through to the composed config without interpreting them.
 The `players` mapping may additionally carry an optional
 `committer` key — the Committer alias — whose value is a string
 naming an existing role, `coder` or `reviewer`. It is a reference,
@@ -142,6 +142,10 @@ inherit from it only the `theme`, the top-level `layout` and
 `reasoningEffort`, and `permissions` the overlay leaves unset, and
 shall not map the base `players[]` roster onto `coder` /
 `reviewer`.
+For `layout` and `notifications`, precedence shall be whole-block:
+when the overlay sets either block, that block replaces the base
+block rather than merging nested layout fields or notification event
+keys.
 When neither the overlay nor a base config supplies
 `captain.adapter`, composition shall fail with a path-named error
 (`captain.adapter`).

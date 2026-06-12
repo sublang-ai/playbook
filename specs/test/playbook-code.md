@@ -114,6 +114,9 @@ roster; and `captain.options.code` injected from the overlay;
 unless top-level `layout` and `notifications` blocks are carried
 into the composed config from the overlay, and inherited from the
 base when the overlay omits them (the same precedence as `theme`);
+unless overlay `layout` and `notifications` blocks replace base
+blocks whole rather than deep-merging nested layout fields or
+notification event keys;
 unless a
 `players.committer` aliasing `coder` or `reviewer` is resolved into
 `captain.options.code.committer` with no extra `players[]` entry,
