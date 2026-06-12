@@ -142,7 +142,7 @@ export function createPlaybookCaptainShell(
     active = { entry, runtime };
     mode = 'engaged.parked';
     await runtime.init(createPorts());
-    await requireSession().emitStatus(`◆ engaged ${entry.id}`, {
+    await requireSession().emitStatus(`◇ shell engaged ${entry.id}`, {
       playbookId: entry.id,
       mode,
     });

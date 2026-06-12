@@ -176,6 +176,20 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     expect(registry.createRuntime).not.toHaveBeenCalled();
   });
 
+  it('rejects init when registry option validation rejects', async () => {
+    const registry = fakeCodeEntry();
+    registry.validateOptions.mockImplementation(() => {
+      throw new Error('bad CODE option');
+    });
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      /bad CODE option/,
+    );
+
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
   it('dispatches /code text to a lazily constructed CODE runtime', async () => {
     const registry = fakeCodeEntry();
     const shell = createPlaybookCaptainShell({}, [registry.entry]);
@@ -197,6 +211,10 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
         signal: context.controller.signal,
       },
     ]);
+    expect(session.statuses[0]).toEqual({
+      message: '◇ shell engaged code',
+      data: { playbookId: 'code', mode: 'engaged.parked' },
+    });
   });
 
   it('bare /code engages CODE and uses visible Captain chat without dispatch', async () => {
