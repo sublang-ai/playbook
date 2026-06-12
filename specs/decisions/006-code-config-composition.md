@@ -30,6 +30,15 @@ So composition reads through cligent's API but playbook owns YAML serialization;
 
 ## Decision
 
+### Addendum A1 (DR-008 shell target)
+
+[DR-008](008-playbook-captain-shell.md) supersedes this record's
+original direct CODE adapter target for tmux-play launch.
+In this record's current text, "Playbook Captain shell adapter"
+replaces the original CODE adapter module for composed
+`captain.from`, and "CODE registry entry" replaces the direct CODE
+adapter as the owner of `captain.options.code` validation.
+
 ### 1. Extension point: `captain.options.code`
 
 - All CODE runtime options shall live under `captain.options.code`, a namespaced JSON object.
@@ -72,7 +81,7 @@ The implementing IR shall land these alongside the new items:
 - **[PBCODE-7](../dev/playbook-code.md#pbcode-7)** — the seeded template drops `captain.from` and `players[].id` (the composer injects them) and its comments no longer name those as user-maintained invariants.
 - **[PBRT-4](../user/playbook-runtime.md#pbrt-4)** — the `captain.from` and baked-id invariants are injected by the composer rather than declared by the user; `captain.from` targets the Playbook Captain shell adapter per [DR-008](008-playbook-captain-shell.md), and `captain.options.code` is named as the CODE option surface.
 
-New normative items: PBRT-29 / PBRT-30 (host config + adapter validation) and PBCODE-16 / PBCODE-17 (composer behavior + mechanics), with test items PBRT-31 / PBCODE-18.
+New normative items: PBRT-29 / PBRT-30 (host config + registry validation) and PBCODE-16 / PBCODE-17 (composer behavior + mechanics), with test items PBRT-31 / PBCODE-18.
 
 ## Consequences
 

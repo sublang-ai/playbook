@@ -57,8 +57,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: `/code` selection, visible chat, active-engagement routing, status pass-through, parking, dismissal, and final disposal |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, telemetry mirroring, distinct shell telemetry, and park/resume/dispose lifecycle |
-| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, CODE registry wiring, status/telemetry pass-through, telemetry mirroring, park/resume, dismiss, and final disposal |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: adapter lifecycle, CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, telemetry mirroring, distinct shell telemetry, and park/resume/dispose lifecycle |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, adapter lifecycle, CODE registry wiring, status/telemetry pass-through, telemetry mirroring, park/resume, dismiss, and final disposal |
 
 ### GIT
 

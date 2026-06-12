@@ -49,6 +49,12 @@ CODE registered, while CODE is engaged, when the Boss submits a
 different registered playbook command, the shell shall not dispatch
 that command and shall ask the Boss to finish, dismiss, or resolve
 the current engagement first.
+Where the Playbook Captain shell is running under tmux-play with
+CODE registered, while CODE is engaged, when the Boss submits
+ordinary text, the shell shall route the turn by hidden Captain
+routing and shall either continue the existing CODE runtime,
+respond in visible Captain chat, or dispose the CODE engagement and
+return to shell chat.
 
 ## Engagement progress
 

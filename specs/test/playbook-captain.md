@@ -23,9 +23,10 @@ to CODE with `<text>`, bare `/code` produces visible chat without
 resetting an existing CODE runtime, unregistered slash-prefixed and
 near-miss command-like inputs reach hidden routing rather than a
 negative command path, a different registered command while CODE is
-engaged produces visible resolution guidance without dispatch, and
-every dispatch to CODE calls `handleBossInput` with text rather
-than a pre-classified FSM event.
+engaged produces visible resolution guidance without dispatch,
+ordinary text while CODE is engaged, including while parked, routes
+through hidden router decisions, and every dispatch to CODE calls
+`handleBossInput` with text rather than a pre-classified FSM event.
 
 ### CAPTAIN-13
 Verifies: [CAPTAIN-1](../user/playbook-captain.md#captain-1), [CAPTAIN-7](../dev/playbook-captain.md#captain-7), [CAPTAIN-9](../dev/playbook-captain.md#captain-9)
@@ -41,7 +42,7 @@ a separate envelope that does not request or expose control JSON.
 ## Lifecycle and telemetry
 
 ### CAPTAIN-14
-Verifies: [CAPTAIN-3](../user/playbook-captain.md#captain-3), [CAPTAIN-4](../user/playbook-captain.md#captain-4), [CAPTAIN-6](../dev/playbook-captain.md#captain-6), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), [CAPTAIN-11](../dev/playbook-captain.md#captain-11)
+Verifies: [CAPTAIN-3](../user/playbook-captain.md#captain-3), [CAPTAIN-4](../user/playbook-captain.md#captain-4), [CAPTAIN-6](../dev/playbook-captain.md#captain-6), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), [CAPTAIN-11](../dev/playbook-captain.md#captain-11), [CAPTAIN-16](../dev/playbook-captain.md#captain-16)
 
 Where the test suite drives CODE under the Playbook Captain shell,
 the test suite shall fail unless sub-runtime status and telemetry
@@ -51,18 +52,23 @@ telemetry uses `playbook.captain.fsm.state`, CODE idle / failed /
 `awaitBossReply` states park the engagement, a later same-playbook
 turn resumes the same runtime instance, CODE final state disposes
 the engagement, and router `dismiss` disposes the engagement and
-returns the shell to chat.
+returns the shell to chat; a later dispatch after final disposal or
+dismissal constructs a replacement runtime; and shell `dispose()`
+disposes any active runtime and drains disposal-triggered emissions.
 
 ## Registry and options
 
 ### CAPTAIN-15
-Verifies: [CAPTAIN-5](../dev/playbook-captain.md#captain-5), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
+Verifies: [CAPTAIN-5](../dev/playbook-captain.md#captain-5), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), [CAPTAIN-16](../dev/playbook-captain.md#captain-16)
 
 Where the test suite initializes the Playbook Captain shell with
 CODE registered, the test suite shall fail unless the CODE registry
 entry is present with id `code`, command `code`, idle state `ready`,
 and final state `done`; CODE option validation is delegated to the
-CODE registry entry; CODE player calls reach `context.callPlayer`;
+CODE registry entry during shell `init`; invalid CODE options cause
+`init` to reject; valid CODE options do not construct a runtime
+until engagement; `handleBossTurn` before `init` rejects; CODE
+player calls reach `context.callPlayer`;
 CODE judge calls reach `context.callCaptain` with
 `{ visibility: 'hidden' }`; and all shell chat, routing, and
 sub-runtime judge calls use the same Captain session primitives.

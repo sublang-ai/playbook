@@ -71,7 +71,7 @@ in enqueue order.
 ## Host adapter
 
 ### PBRT-21
-Verifies: [PBRT-4](../user/playbook-runtime.md#pbrt-4), [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [PBRT-16](../dev/playbook-runtime.md#pbrt-16)
+Verifies: [PBRT-4](../user/playbook-runtime.md#pbrt-4), [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [PBRT-16](../dev/playbook-runtime.md#pbrt-16), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
 
 When CODE is driven through the Playbook Captain shell adapter
 with stubbed cligent `CaptainContext` / `CaptainSession`
@@ -87,11 +87,10 @@ the per-run player identity strings substituted into the Committer
 prompt's `<coder-llm>` / `<reviewer-llm>` placeholders come from
 `session.players[].model` when each entry pins a model and fall
 back to `session.players[].adapter` when no model is pinned (both
-branches exercised), and `handleBossTurn` invoked before `init`
-rejects.
+branches exercised).
 
 ### PBRT-32
-Verifies: [PBRT-15](../dev/playbook-runtime.md#pbrt-15)
+Verifies: [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
 
 When the Playbook Captain shell adapter is driven end to end
 against a real `createTmuxPlayRuntime` instance — over fake player
@@ -247,12 +246,12 @@ with `captain.options.code` set to the empty object `{}`, set to
 `{ committer: 'coder' }` and `{ committer: 'reviewer' }`, set to a
 `committer` value that is neither `coder` nor `reviewer`, set to an
 object carrying an unknown key, and absent, the test suite shall
-fail unless the `{}` and absent cases initialize and pass an empty
-options set into `createPlaybookRuntime`; the valid-`committer`
-cases pass that role id into `createPlaybookRuntime` as the
-Committer player id; the invalid-`committer` case and the
-unknown-key case each cause `init` to reject with an error naming
-the offending path (`captain.options.code.committer` for the
-invalid value); and the derived `coderPlayer` / `reviewerPlayer`
-identity strings still come from `session.players` regardless of
-`captain.options.code`.
+fail unless the `{}` and absent cases initialize and record an empty
+validated options set for the next CODE engagement; the
+valid-`committer` cases record that role id to pass into
+`createPlaybookRuntime` as the Committer player id when CODE is
+engaged; the invalid-`committer` case and the unknown-key case each
+cause `init` to reject with an error naming the offending path
+(`captain.options.code.committer` for the invalid value); and the
+derived `coderPlayer` / `reviewerPlayer` identity strings still
+come from `session.players` regardless of `captain.options.code`.

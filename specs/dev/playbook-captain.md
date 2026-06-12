@@ -57,6 +57,10 @@ The shell shall treat unregistered slash-prefixed text as router
 input rather than as a failed command namespace.
 The shell shall handle near-miss command-like text as visible chat
 clarification rather than as low-confidence dispatch.
+When the hidden router reply is malformed, names an unknown
+decision, names an unknown playbook id, or omits text required by
+the chosen decision, the shell shall produce visible clarification
+and shall not dispatch to a sub-runtime.
 
 ### CAPTAIN-8
 
@@ -89,6 +93,9 @@ The wrapper shall route `callPlayer` to `context.callPlayer`, route
 sub-runtime `callJudge` to hidden `context.callCaptain`, and pass
 sub-runtime `emitStatus` and `emitTelemetry` calls through to the
 host in order.
+When hidden `context.callCaptain` returns a non-`ok` status or an
+`ok` status without `finalText`, the wrapper shall throw for that
+sub-runtime `callJudge`; otherwise it shall return `finalText`.
 Before passing through `playbook.fsm.state` telemetry, the wrapper
 shall mirror the active sub-runtime state and any pending Boss
 question or normalized error fields needed for the shell ledger.
@@ -99,7 +106,8 @@ question or normalized error fields needed for the shell ledger.
 
 Where the Playbook Captain shell has an active sub-runtime, when
 the mirrored sub-runtime state is the registry entry's idle state,
-the failed state, or `awaitBossReply`, the shell shall park the
+the linker-level literal state id `failed`, or the linker-level
+literal state id `awaitBossReply`, the shell shall park the
 engagement in `engaged.parked`.
 Where the Playbook Captain shell has an active sub-runtime, when
 the mirrored sub-runtime state is the registry entry's final state
@@ -109,3 +117,32 @@ Where the Playbook Captain shell has an active sub-runtime, when
 the Boss submits text for the same playbook while it is parked, the
 shell shall reuse the existing sub-runtime rather than constructing
 a replacement.
+Where the Playbook Captain shell has no active sub-runtime, when a
+registered command or router decision engages a playbook id, the
+shell shall construct a new sub-runtime from that registry entry's
+`createRuntime` function and the validated options captured during
+`init`.
+Where the Playbook Captain shell has disposed an active sub-runtime
+because it reached its final state or was dismissed, when a later
+registered command or router decision engages the same playbook id,
+the shell shall construct a replacement sub-runtime.
+
+## Adapter lifecycle
+
+### CAPTAIN-16
+
+Where tmux-play calls the Playbook Captain shell adapter's
+`init(session)`, the shell shall store the session, derive any
+session-scoped registry bindings from `session.players`, validate
+registered options, enter `chat`, and not construct a sub-runtime.
+When registered option validation fails during `init(session)`, the
+shell shall reject `init`.
+Where tmux-play calls `handleBossTurn(turn, context)` after `init`,
+the shell shall route `turn.prompt` with `context.signal` and use
+`context` as the active per-turn target for player and Captain
+calls until that turn settles.
+When tmux-play calls `handleBossTurn(turn, context)` before
+`init(session)`, the shell shall reject the call.
+Where tmux-play calls `dispose()`, the shell shall dispose any
+active sub-runtime, clear the active turn context, and resolve only
+after disposal-triggered port emissions have drained.

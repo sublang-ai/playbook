@@ -180,10 +180,9 @@ When `handleBossInput` is called while the actor is in the
 terminal state, the runtime shall dispose and reconstruct the
 actor before sending the classified event, so the turn starts
 from the idle state.
-Where CODE is hosted by the Playbook Captain shell, final-state
-turns shall normally not reach this path because the shell disposes
-final CODE engagements per
-[CAPTAIN-11](playbook-captain.md#captain-11).
+Under the Playbook Captain shell, final CODE engagements are
+disposed per [CAPTAIN-11](playbook-captain.md#captain-11), so this
+item remains the direct-runtime behavior.
 
 ## Abort
 
@@ -256,50 +255,41 @@ the next, and never dropped.
 
 ### PBRT-15
 
-The tmux-play `captain.from` target for composed CODE configs
-shall be the Playbook Captain shell adapter specified by
-[CAPTAIN](playbook-captain.md), not a direct CODE adapter.
-The CODE registry entry used by that shell shall construct the
-runtime from validated CODE options merged with `coderPlayer` and
-`reviewerPlayer` derived from `session.players`: for each entry
-whose `id` is `coder` / `reviewer`, the registry entry shall use
-that entry's `model` when set and shall fall back to its `adapter`
-otherwise.
-The shell shall build CODE `PlaybookPorts` by wiring `callPlayer`
-to `context.callPlayer`, `callJudge` to `context.callCaptain`
-invoked with the hidden-visibility option
-(`callCaptain(prompt, { visibility: 'hidden' })`) so the judge's
-JSON reply runs without streaming to the Boss pane — keeping the
-pane human-readable per
-[PBRT-3](../user/playbook-runtime.md#pbrt-3) — and throwing when
-the captain result status is not `ok`, and `emitStatus` /
-`emitTelemetry` to `session.emitStatus` / `session.emitTelemetry`.
-Every CODE judge call — classification and adjudication — shall
-pass `{ visibility: 'hidden' }`.
+Where CODE runs under tmux-play through the Playbook Captain shell,
+the CODE registry entry shall derive `coderPlayer` and
+`reviewerPlayer` from `session.players`: for each entry whose `id`
+is `coder` / `reviewer`, the registry entry shall use that entry's
+`model` when set and shall fall back to its `adapter` otherwise.
+When the shell constructs a CODE engagement, the CODE registry
+entry shall construct the runtime from the validated CODE options
+merged with those derived identity strings.
 Any `coderPlayer` / `reviewerPlayer` keys in the forwarded CODE
 options shall be overridden by the derived values.
+CODE port wiring under tmux-play is owned by the Playbook Captain
+shell and specified in [CAPTAIN-10](playbook-captain.md#captain-10).
 
 ### PBRT-16
 
-The Playbook Captain shell adapter shall map cligent's Captain
-lifecycle onto the shell per
-[CAPTAIN-9](playbook-captain.md#captain-9),
-[CAPTAIN-10](playbook-captain.md#captain-10), and
-[CAPTAIN-11](playbook-captain.md#captain-11).
-When the shell dispatches a Boss turn to CODE, the CODE registry
-entry shall map that dispatch to
+Where CODE runs under tmux-play through composed config, the
+compiled module imported by the host's `captain.from` shall be the
+Playbook Captain shell adapter specified by
+[CAPTAIN-16](playbook-captain.md#captain-16).
+When that shell dispatches a Boss turn to CODE, the CODE registry
+entry shall map the dispatch to
 `runtime.handleBossInput({ text, signal: context.signal })`.
-The compiled module imported by the host's `captain.from` shall be
-the Playbook Captain shell adapter; the public `./code/tmux-play`
-export shall remain resolvable as a compatibility shim delegating
-to the same shell with CODE registered.
+The public `./code/tmux-play` export shall remain resolvable as a
+compatibility shim delegating to the same shell with CODE
+registered.
 
 ### PBRT-30
 
-When constructing the CODE runtime, the CODE registry entry shall
+During Playbook Captain shell `init`, the CODE registry entry shall
 read CODE options from `captain.options.code`, validate them
 against the CODE options schema, reject unknown keys with an error
-that names the offending path, and pass the validated options into
+that names the offending path, and store the validated options for
+later CODE engagements.
+When constructing the CODE runtime for an engagement, the CODE
+registry entry shall pass those validated options into
 `createPlaybookRuntime`.
 The CODE options schema defines one key, `committer`: an optional
 string whose value is the resolved Committer-alias player id and
