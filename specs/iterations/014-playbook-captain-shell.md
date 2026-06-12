@@ -19,7 +19,7 @@ The end state is a built-in Playbook Captain shell as the tmux-play Captain, wit
 - [x] CODE tmux-play compatibility shim delegates to the same shell with CODE registered.
 - [x] `playbook-code` composer, package exports, example configs, generated `.js`/`.d.ts` siblings, and README updated for the shell adapter path while preserving explicit `./code/tmux-play` users.
 - [x] Tests cover shell routing, hidden control calls, shared-session call surfaces, telemetry mirroring, park/resume/dismiss/final disposal, CODE option validation through the registry, compatibility shim behavior, and composer output.
-- [ ] Close-out re-verifies `map.md` and records any DR-008 divergence.
+- [x] Close-out re-verifies `map.md` and records any DR-008 divergence.
 
 ## Tasks
 
@@ -58,8 +58,11 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Turn `./code/tmux-play` into the compatibility shim that delegates to the shell with CODE registered.
    Update example configs, README, generated siblings, and composer/compatibility tests.
    Implementation note: `playbook-code` now composes `captain.from: @sublang/playbook/playbook-captain`, the package exports that shell subpath while keeping `./code/tmux-play` as a delegating shim, example configs and README name the shell path, and compatibility tests drive CODE through `/code` on the shim.
-8. **Close-out.**
+8. **Close-out.** _[done]_
    Run the relevant test suite, re-verify `specs/map.md`, and record any substantive divergence from DR-008 in this IR.
+   Close-out note: `specs/map.md` still reflects DR-008, IR-014, CAPTAIN, PBCODE, and PBRT after the launch-path switch.
+   Close-out note: no substantive divergence from DR-008 was found.
+   Audit note: host adapter teardown through tmux-play `Captain.dispose()` is intentionally not treated as Boss-facing engagement disposal; cligent closes session emissions before calling Captain teardown, so the shell clears local state and disposes the active sub-runtime without emitting shell status or shell FSM telemetry on that teardown path, while dismiss and final engagement disposal still emit the DR-008/CAPTAIN status and telemetry.
 
 ## Acceptance criteria
 
