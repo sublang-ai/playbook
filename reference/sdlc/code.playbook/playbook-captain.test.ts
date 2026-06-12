@@ -33,6 +33,13 @@ interface StubContext {
   captainCalls: { prompt: string; options?: CaptainCallOptions }[];
 }
 
+type CaptainReply =
+  | CaptainRunResult
+  | ((
+      prompt: string,
+      options: CaptainCallOptions | undefined,
+    ) => CaptainRunResult);
+
 type HandleHook = (
   runtime: FakeRuntime,
   turn: { text: string; signal: AbortSignal },
@@ -86,10 +93,11 @@ function stubSession(): StubSession {
   };
 }
 
-function stubContext(): StubContext {
+function stubContext(captainReplies: CaptainReply[] = []): StubContext {
   const controller = new AbortController();
   const playerCalls: StubContext['playerCalls'] = [];
   const captainCalls: StubContext['captainCalls'] = [];
+  let captainIndex = 0;
   return {
     context: {
       signal: controller.signal,
@@ -108,6 +116,11 @@ function stubContext(): StubContext {
         options,
       ): Promise<CaptainRunResult> => {
         captainCalls.push({ prompt, options });
+        const scripted = captainReplies[captainIndex++];
+        if (typeof scripted === 'function') {
+          return scripted(prompt, options);
+        }
+        if (scripted) return scripted;
         return {
           status: 'ok',
           turnId: 1,
@@ -152,6 +165,14 @@ function fakeCodeEntry(handleHook?: HandleHook): {
 
 function turn(prompt: string, id = 1): BossTurn {
   return { id, prompt, timestamp: 0 };
+}
+
+function captainJson(value: unknown): CaptainRunResult {
+  return {
+    status: 'ok',
+    turnId: 1,
+    finalText: JSON.stringify(value),
+  };
 }
 
 describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () => {
@@ -251,6 +272,141 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
       'first task',
       'second task',
     ]);
+  });
+});
+
+describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', () => {
+  it('routes ordinary text through hidden dispatch without pre-classifying it', async () => {
+    const registry = fakeCodeEntry();
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({
+        decision: 'dispatch',
+        playbookId: 'code',
+        text: 'fix routed issue',
+      }),
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('please fix the issue'), context.context);
+
+    expect(context.captainCalls[0]?.options).toEqual({
+      visibility: 'hidden',
+    });
+    expect(context.captainCalls[0]?.prompt).toContain(
+      'hidden control work',
+    );
+    expect(context.captainCalls[0]?.prompt).toContain(
+      '"command":"code"',
+    );
+    expect(registry.runtimes[0]?.inputs).toEqual([
+      {
+        text: 'fix routed issue',
+        signal: context.controller.signal,
+      },
+    ]);
+  });
+
+  it('routes near-miss command-like input through hidden chat clarification', async () => {
+    const registry = fakeCodeEntry();
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({
+        decision: 'chat',
+        text: 'Use /code with a task when you want CODE.',
+      }),
+      { status: 'ok', turnId: 1, finalText: 'visible reply' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/cod fix the issue'), context.context);
+
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+    expect(context.captainCalls[0]?.options).toEqual({
+      visibility: 'hidden',
+    });
+    expect(context.captainCalls[0]?.prompt).toContain('/cod fix the issue');
+    expect(context.captainCalls[0]?.prompt).toContain('near-miss');
+    expect(context.captainCalls[1]?.options).toBeUndefined();
+    expect(context.captainCalls[1]?.prompt).toContain('visible Boss chat');
+    expect(context.captainCalls[1]?.prompt).not.toContain(
+      'Return only one JSON object',
+    );
+    expect(context.captainCalls[1]?.prompt).not.toContain(
+      '"decision":"dispatch"',
+    );
+  });
+
+  it('degrades invalid router JSON to visible clarification without dispatch', async () => {
+    const registry = fakeCodeEntry();
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'not json' },
+      { status: 'ok', turnId: 1, finalText: 'visible clarification' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('what should happen here?'), context.context);
+
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+    expect(context.captainCalls[0]?.options).toEqual({
+      visibility: 'hidden',
+    });
+    expect(context.captainCalls[1]?.options).toBeUndefined();
+    expect(context.captainCalls[1]?.prompt).toContain(
+      'I could not route that safely',
+    );
+  });
+
+  it('continues the active runtime for router sub decisions', async () => {
+    const registry = fakeCodeEntry();
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ decision: 'sub', text: 'continue same CODE run' }),
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+    await shell.handleBossTurn(turn('continue from here', 2), context.context);
+
+    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
+    expect(context.captainCalls[0]?.options).toEqual({
+      visibility: 'hidden',
+    });
+    expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
+      'first task',
+      'continue same CODE run',
+    ]);
+  });
+
+  it('parses router dismiss decisions and returns to visible chat', async () => {
+    const registry = fakeCodeEntry();
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({
+        decision: 'dismiss',
+        text: 'CODE has been dismissed.',
+      }),
+      { status: 'ok', turnId: 1, finalText: 'visible dismissal' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+    await shell.handleBossTurn(turn('dismiss this', 2), context.context);
+
+    expect(registry.runtimes[0]?.disposeCount).toBe(1);
+    expect(context.captainCalls[0]?.options).toEqual({
+      visibility: 'hidden',
+    });
+    expect(context.captainCalls[1]?.options).toBeUndefined();
+    expect(context.captainCalls[1]?.prompt).toContain(
+      'CODE has been dismissed.',
+    );
   });
 });
 

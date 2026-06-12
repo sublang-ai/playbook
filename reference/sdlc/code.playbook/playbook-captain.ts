@@ -36,6 +36,18 @@ interface ActiveEngagement {
   runtime: PlaybookRuntime;
 }
 
+type RouterDecision =
+  | { decision: 'chat'; text: string }
+  | { decision: 'dispatch'; playbookId: string; text: string }
+  | { decision: 'sub'; text: string }
+  | { decision: 'dismiss'; text?: string };
+
+interface ControlLedger {
+  activePlaybookId?: string;
+  mode: ShellMode;
+  lastRouteDecision?: RouterDecision['decision'];
+}
+
 type ShellMode = 'chat' | 'engaged.driving' | 'engaged.parked';
 
 export const playbookCaptainRegistry: readonly PlaybookCaptainRegistryEntry[] = [
@@ -65,24 +77,28 @@ function normalizeRegistry(
 ): {
   entries: readonly PlaybookCaptainRegistryEntry[];
   byCommand: Map<string, PlaybookCaptainRegistryEntry>;
+  byId: Map<string, PlaybookCaptainRegistryEntry>;
 } {
   const byCommand = new Map<string, PlaybookCaptainRegistryEntry>();
+  const byId = new Map<string, PlaybookCaptainRegistryEntry>();
   for (const entry of registry) {
     byCommand.set(entry.command, entry);
+    byId.set(entry.id, entry);
   }
-  return { entries: registry, byCommand };
+  return { entries: registry, byCommand, byId };
 }
 
 export function createPlaybookCaptainShell(
   options: unknown,
   registry: readonly PlaybookCaptainRegistryEntry[] = playbookCaptainRegistry,
 ): Captain {
-  const { entries, byCommand } = normalizeRegistry(registry);
+  const { entries, byCommand, byId } = normalizeRegistry(registry);
   let session: CaptainSession | undefined;
   let players: readonly RegistryPlayer[] = [];
   let activeContext: CaptainContext | undefined;
   let active: ActiveEngagement | undefined;
   let mode: ShellMode = 'chat';
+  let lastRouteDecision: RouterDecision['decision'] | undefined;
 
   const requireSession = (): CaptainSession => {
     if (!session) {
@@ -164,6 +180,13 @@ export function createPlaybookCaptainShell(
     }
   };
 
+  const disposeActive = async (): Promise<void> => {
+    const engagement = active;
+    active = undefined;
+    mode = 'chat';
+    await engagement?.runtime.dispose();
+  };
+
   const callVisibleChat = async (
     context: CaptainContext,
     message: string,
@@ -174,6 +197,147 @@ export function createPlaybookCaptainShell(
         result.error ?? `callCaptain status "${result.status}"`,
       );
     }
+  };
+
+  const ledgerSnapshot = (): ControlLedger => ({
+    ...(active ? { activePlaybookId: active.entry.id } : {}),
+    mode,
+    ...(lastRouteDecision ? { lastRouteDecision } : {}),
+  });
+
+  const hiddenRouterEnvelope = (prompt: string): string =>
+    [
+      'You are the Playbook Captain shell router.',
+      'This is hidden control work. Return only one JSON object and no prose.',
+      'Allowed decisions:',
+      '{"decision":"chat","text":"visible clarification or chat reply"}',
+      '{"decision":"dispatch","playbookId":"<registered id>","text":"Boss text for that playbook"}',
+      '{"decision":"sub","text":"Boss text for the active playbook"}',
+      '{"decision":"dismiss","text":"optional visible dismissal reply"}',
+      'Use chat for near-miss command-like input or low-confidence playbook selection.',
+      'Treat unregistered slash-prefixed input as ordinary router input.',
+      `Ledger:\n${JSON.stringify(ledgerSnapshot())}`,
+      `Registry:\n${JSON.stringify(
+        entries.map((entry) => ({
+          id: entry.id,
+          command: entry.command,
+          intent: entry.intent,
+        })),
+      )}`,
+      `Boss message:\n${prompt}`,
+    ].join('\n\n');
+
+  const routerClarification = async (
+    context: CaptainContext,
+  ): Promise<void> => {
+    await callVisibleChat(
+      context,
+      'I could not route that safely. Ask Boss to clarify whether they want shell chat or /code.',
+    );
+  };
+
+  const parseRouterDecision = (
+    finalText: string,
+  ): RouterDecision | undefined => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(finalText);
+    } catch {
+      return undefined;
+    }
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return undefined;
+    }
+    const record = parsed as Record<string, unknown>;
+    const decision = record.decision;
+    if (decision === 'chat') {
+      return typeof record.text === 'string' && record.text.trim()
+        ? { decision, text: record.text.trim() }
+        : undefined;
+    }
+    if (decision === 'dispatch') {
+      return typeof record.playbookId === 'string' &&
+        byId.has(record.playbookId) &&
+        typeof record.text === 'string' &&
+        record.text.trim()
+        ? {
+            decision,
+            playbookId: record.playbookId,
+            text: record.text.trim(),
+          }
+        : undefined;
+    }
+    if (decision === 'sub') {
+      return typeof record.text === 'string' && record.text.trim()
+        ? { decision, text: record.text.trim() }
+        : undefined;
+    }
+    if (decision === 'dismiss') {
+      return typeof record.text === 'string' && record.text.trim()
+        ? { decision, text: record.text.trim() }
+        : { decision };
+    }
+    return undefined;
+  };
+
+  const routeHidden = async (
+    turn: BossTurn,
+    context: CaptainContext,
+  ): Promise<void> => {
+    const result = await context.callCaptain(
+      hiddenRouterEnvelope(turn.prompt),
+      { visibility: 'hidden' },
+    );
+    if (result.status !== 'ok' || result.finalText === undefined) {
+      await routerClarification(context);
+      return;
+    }
+    const decision = parseRouterDecision(result.finalText);
+    if (!decision) {
+      await routerClarification(context);
+      return;
+    }
+    lastRouteDecision = decision.decision;
+
+    if (decision.decision === 'chat') {
+      await callVisibleChat(context, decision.text);
+      return;
+    }
+
+    if (decision.decision === 'dispatch') {
+      const entry = byId.get(decision.playbookId);
+      if (!entry || (active && active.entry.id !== entry.id)) {
+        await routerClarification(context);
+        return;
+      }
+      const engagement = await engage(entry);
+      await submitToActive(engagement, decision.text, context.signal);
+      return;
+    }
+
+    if (decision.decision === 'sub') {
+      if (!active) {
+        await routerClarification(context);
+        return;
+      }
+      await submitToActive(active, decision.text, context.signal);
+      return;
+    }
+
+    if (!active) {
+      await routerClarification(context);
+      return;
+    }
+
+    await disposeActive();
+    await callVisibleChat(
+      context,
+      decision.text ?? 'The active playbook engagement has been dismissed.',
+    );
   };
 
   const handleRegisteredCommand = async (
@@ -227,10 +391,7 @@ export function createPlaybookCaptainShell(
           }
         }
 
-        await callVisibleChat(
-          context,
-          `Boss said: ${turn.prompt}\n\nAsk whether they want to run /code or continue in shell chat.`,
-        );
+        await routeHidden(turn, context);
       } finally {
         activeContext = undefined;
       }
@@ -238,8 +399,8 @@ export function createPlaybookCaptainShell(
 
     async dispose(): Promise<void> {
       const engagement = active;
-      active = undefined;
       activeContext = undefined;
+      active = undefined;
       mode = 'chat';
       await engagement?.runtime.dispose();
     },

@@ -45,9 +45,10 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Add focused shell tests for explicit command routing and hidden CODE judge calls.
    Upstream verification note: `@sublang/cligent@0.11.0` ships docs that define custom Captains retaining `CaptainSession` and using `context.callCaptain`, docs that define `Cligent` resume-token continuity across runs, and a tmux-play runtime that routes every `context.callCaptain` call through one `captainCligent` instance while applying per-call visibility.
    `playbook-captain.ts` now implements the CODE-registered shell factory for explicit `/code` routing, and `playbook-captain.test.ts` covers init validation, lazy engagement, bare `/code` visible chat, same-runtime continuation, and hidden sub-runtime judge calls.
-5. **Add hidden router and visible chat.**
+5. **Add hidden router and visible chat.** _[done]_
    Add the hidden router call with closed `chat` / `dispatch` / `sub` / `dismiss` decisions, unregistered-slash fallthrough, near-miss clarification, and the visible chat envelope.
    Add tests that hidden router calls pass `{ visibility: 'hidden' }` and that visible chat does not expose control JSON.
+   Implementation note: `playbook-captain.ts` now sends non-command routing through a hidden control envelope, parses closed router decisions, falls back to visible clarification on invalid router output, and keeps visible chat on a separate non-control envelope.
 6. **Add park, resume, dismiss, and final disposal.**
    Mirror sub-runtime state from `playbook.fsm.state` telemetry, park on idle/failed/awaitBossReply, resume parked CODE turns, reject different-playbook commands while engaged, dismiss active engagements, and dispose on final.
    Add tests for each lifecycle path and for the shell telemetry topic not colliding with `playbook.fsm.state`.
