@@ -36,10 +36,19 @@ Verifies: [PBCODE-5](../user/playbook-code.md#pbcode-5)
 
 Where the test suite invokes `playbook-code` without `--config` and
 without `--help`, with an existing file at the resolved user config
-path, the test suite shall fail unless the shim leaves that file's
-contents and modified time unchanged and launches `tmux-play`
-against the config composed from that file — not the file itself —
-when readiness passes.
+path that already carries top-level `notifications`, the test suite
+shall fail unless the shim leaves that file's contents and modified
+time unchanged and launches `tmux-play` against the config composed
+from that file — not the file itself — when readiness passes.
+Where the test suite invokes `playbook-code` without `--config` and
+without `--help`, with an existing file at the resolved user config
+path that parses to a YAML object and lacks top-level
+`notifications`, the test suite shall fail unless the shim preserves
+the existing content, appends a `notifications` block with
+`player_finished: bell` and `turn_finished: desktop`, prints one
+stderr line naming the path, composes the launched config from the
+migrated file, and launches `tmux-play` against the composed temp
+config when readiness passes.
 
 ### PBCODE-11
 Verifies: [PBCODE-1](../user/playbook-code.md#pbcode-1), [PBCODE-5](../user/playbook-code.md#pbcode-5), [PBCODE-6](../user/playbook-code.md#pbcode-6)

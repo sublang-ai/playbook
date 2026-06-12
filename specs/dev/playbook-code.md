@@ -64,7 +64,13 @@ the template shall include `permissions.mode: auto` and
 `permissions.writablePaths: ['.git']`, so the default Codex player
 can write git metadata under cligent's profile-scoped auto mode
 without switching to bypass permissions.
-The copy shall not run when `--config` is supplied.
+Where the resolved user config path already exists, parses to a YAML
+object, and lacks a top-level `notifications` block per
+[PBCODE-5](../user/playbook-code.md#pbcode-5), the shim shall
+append a YAML `notifications` block with `player_finished: bell`
+and `turn_finished: desktop` without rewriting the rest of the file,
+so existing user comments and formatting are preserved.
+The copy and migration shall not run when `--config` is supplied.
 
 ### PBCODE-8
 

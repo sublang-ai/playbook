@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `playbook-code` CODE overlays and bundled tmux-play configs now support cligent's top-level `notifications` block. Fresh seeds include cligent's generated-home defaults (`player_finished: bell`, `turn_finished: desktop`), and composition carries `notifications` from the overlay or inherits it from a discovered base config with the same precedence as `theme` and `layout`.
+- `playbook-code` CODE overlays and bundled tmux-play configs now support cligent's top-level `notifications` block. Fresh seeds include cligent's generated-home defaults (`player_finished: bell`, `turn_finished: desktop`), existing user overlays missing `notifications` are migrated on the next default launch, and composition carries `notifications` from the overlay or inherits it from a discovered base config with the same precedence as `theme` and `layout`.
 
 ### Changed
 

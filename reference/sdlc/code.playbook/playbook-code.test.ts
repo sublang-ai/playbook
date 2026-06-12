@@ -144,6 +144,45 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
     expect(spawn.calls[0]?.args[2].endsWith('.yaml')).toBe(true);
   });
 
+  it('migrates an existing user overlay missing notifications before launch', async () => {
+    const home = await makeTempHome();
+    const configPath = resolveUserConfigPath({}, home);
+    await mkdir(join(home, '.config', 'playbook'), { recursive: true });
+    await writeFile(configPath, legacyOverlay(), 'utf8');
+    const spawn = fakeSpawn();
+    const stderr = writer();
+
+    const result = await runPlaybookCodeCli({
+      argv: [],
+      env: {
+        ANTHROPIC_API_KEY: 'anthropic-key',
+        OPENAI_API_KEY: 'openai-key',
+      },
+      homeDir: home,
+      cwd: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 0 });
+    const migrated = await readFile(configPath, 'utf8');
+    expect(migrated.startsWith(legacyOverlay())).toBe(true);
+    expect(migrated).toContain('notifications:');
+    expect(migrated).toContain('player_finished: bell');
+    expect(migrated).toContain('turn_finished: desktop');
+    expect(stderr.text()).toContain(
+      `added notifications defaults to config at ${configPath}`,
+    );
+
+    const composed = parseYaml(spawn.configs[0].content);
+    expect(composed.notifications).toEqual({
+      player_finished: 'bell',
+      turn_finished: 'desktop',
+    });
+  });
+
   it('forwards explicit --config arguments verbatim and bypasses composition', async () => {
     const home = await makeTempHome();
     const spawn = fakeSpawn();
@@ -721,7 +760,7 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
     ]);
   });
 
-  it('inherits a base notifications block when the overlay omits it, end to end', async () => {
+  it('migrates a legacy overlay before base notification inheritance end to end', async () => {
     const home = await makeTempHome();
     await writeOverlay(
       home,
@@ -740,8 +779,9 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
       home,
       [
         'notifications:',
-        '  player_finished: bell',
+        '  player_finished: off',
         '  turn_finished: desktop',
+        '  turn_aborted: bell',
         'captain:',
         '  from: "@sublang/cligent/captains/fanout"',
         '  adapter: codex',
@@ -766,10 +806,11 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
 
     expect(result).toEqual({ code: 0 });
     const composed = parseYaml(spawn.configs[0].content);
+    // Default launch migrates the user overlay before composition, so
+    // the new overlay block wins whole over any base notifications.
     expect(composed.notifications).toEqual({
       player_finished: 'bell',
       turn_finished: 'desktop',
-      turn_aborted: 'off',
     });
   });
 
@@ -972,6 +1013,16 @@ function writer() {
 // The user-level CODE overlay: tmux-play shape minus captain.from, with
 // players keyed by role rather than an array with ids (PBCODE-16).
 function existingOverlay(): string {
+  return [
+    legacyOverlay().trimEnd(),
+    'notifications:',
+    '  player_finished: bell',
+    '  turn_finished: desktop',
+    '',
+  ].join('\n');
+}
+
+function legacyOverlay(): string {
   return [
     'captain:',
     '  adapter: claude',

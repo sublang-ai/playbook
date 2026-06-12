@@ -46,11 +46,20 @@ directories as needed, and shall print one stderr line naming the
 resolved path.
 Where `playbook-code` is invoked without `--config`, `--help`, or
 `-h`, when the file at the resolved user config path is already
-present, the shim shall not modify or overwrite it.
+present and already has a top-level `notifications` block, the shim
+shall not modify or overwrite it.
+Where `playbook-code` is invoked without `--config`, `--help`, or
+`-h`, when the file at the resolved user config path is already
+present, parses to a YAML object, and lacks a top-level
+`notifications` block, the shim shall update that file in place by
+adding
+`notifications: { player_finished: bell, turn_finished: desktop }`
+as the tmux-play host notification defaults, and shall print one
+stderr line naming the resolved path.
 The resolved user config is the CODE overlay (the composer input
 of [PBCODE-16](#pbcode-16)), not the config launched directly.
-After resolving the user config and applying any required seeding,
-the shim shall compose the launched config from it per
+After resolving the user config and applying any required seeding
+or migration, the shim shall compose the launched config from it per
 [PBCODE-16](#pbcode-16) and launch the reference CODE playbook with
 the composed config if the readiness gate passes.
 

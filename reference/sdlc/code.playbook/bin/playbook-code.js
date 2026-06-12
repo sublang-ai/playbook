@@ -27,6 +27,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const templatePath = resolve(here, '..', 'playbook-code.config.template.yaml');
 const READINESS_FAILURE_EXIT_CODE = 2;
 const COMPOSITION_FAILURE_EXIT_CODE = 1;
+const DEFAULT_NOTIFICATION_BLOCK = [
+  '',
+  '# tmux-play host notifications. Omitted turn_aborted resolves to off.',
+  'notifications:',
+  '  player_finished: bell',
+  '  turn_finished: desktop',
+  '',
+].join('\n');
 
 // PBCODE-16: the composer injects `captain.from` (the Playbook
 // Captain shell adapter module) and the `coder` / `reviewer` player
@@ -67,6 +75,7 @@ export async function runPlaybookCodeCli(options = {}) {
   }
 
   seedUserConfigIfMissing(userConfigPath, stderr);
+  migrateUserConfigNotificationsIfMissing(userConfigPath, stderr);
 
   // PBCODE-16/17: compose the launched config from the overlay plus an
   // optional base tmux-play config. Composition failures (missing role,
@@ -309,6 +318,25 @@ function seedUserConfigIfMissing(userConfigPath, stderr) {
   stderr.write(`playbook-code: created config at ${userConfigPath}\n`);
 }
 
+function migrateUserConfigNotificationsIfMissing(userConfigPath, stderr) {
+  const source = readFileSync(userConfigPath, 'utf8');
+  let parsed;
+  try {
+    parsed = parseYaml(source) ?? {};
+  } catch {
+    return;
+  }
+  if (!isObject(parsed) || hasOwn(parsed, 'notifications')) return;
+  const separator = source.endsWith('\n') ? '' : '\n';
+  writeFileSync(
+    userConfigPath,
+    `${source}${separator}${DEFAULT_NOTIFICATION_BLOCK}`,
+  );
+  stderr.write(
+    `playbook-code: added notifications defaults to config at ${userConfigPath}\n`,
+  );
+}
+
 function hasExplicitConfig(argv) {
   return argv.some((arg) => arg === '--config' || arg.startsWith('--config='));
 }
@@ -383,6 +411,10 @@ function resolveTmuxPlayBin() {
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function requireObject(value, path) {
