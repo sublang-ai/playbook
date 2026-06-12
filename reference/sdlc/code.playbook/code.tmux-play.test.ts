@@ -15,6 +15,8 @@ import type {
 import { createEvent } from '@sublang/cligent';
 import type { AgentAdapter, AgentEvent, AgentOptions } from '@sublang/cligent';
 import createCodeTmuxPlayCaptain, {
+  codePlaybookRegistryEntry,
+  createCodeRuntimeOptions,
   validateCodeOptions,
 } from './code.tmux-play.js';
 
@@ -573,10 +575,40 @@ describe('createCodeTmuxPlayCaptain — captain.options.code validation (PBRT-29
     )?.prompt;
   }
 
+  it('exposes the CODE playbook registry metadata', () => {
+    expect(codePlaybookRegistryEntry).toEqual(
+      expect.objectContaining({
+        id: 'code',
+        command: 'code',
+        intent: 'software development / SDLC coding workflow',
+        idleStateId: 'ready',
+        finalStateId: 'done',
+        validateOptions: validateCodeOptions,
+      }),
+    );
+    expect(codePlaybookRegistryEntry.createRuntime).toBeTypeOf('function');
+  });
+
   it('validateCodeOptions returns an empty set for {}, an absent namespace, and absent options', () => {
     expect(validateCodeOptions({ code: {} })).toEqual({});
     expect(validateCodeOptions({})).toEqual({});
     expect(validateCodeOptions(undefined)).toEqual({});
+  });
+
+  it('createCodeRuntimeOptions validates and derives runtime options from session players', () => {
+    expect(
+      createCodeRuntimeOptions({
+        captainOptions: { code: { committer: 'reviewer' } },
+        players: [
+          { id: 'coder', adapter: 'codex', model: 'gpt-5.5' },
+          { id: 'reviewer', adapter: 'claude' },
+        ],
+      }),
+    ).toEqual({
+      coderPlayer: 'gpt-5.5',
+      reviewerPlayer: 'claude',
+      committerPlayer: 'reviewer',
+    });
   });
 
   it('validateCodeOptions rejects an unknown key with a path-named error', () => {

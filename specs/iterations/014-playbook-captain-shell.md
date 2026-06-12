@@ -35,9 +35,10 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Add the CAPTAIN user/dev/test package for shell chat, routing, engagement status, telemetry topic separation, and park/resume/dispose behavior.
    Reconcile DR-004/DR-006 direct-adapter wording with the DR-008 shell target.
    Prose only; no code.
-3. **Extract CODE registration.**
+3. **Extract CODE registration.** _[done]_
    Factor CODE option validation and runtime construction into a registry entry that the existing direct adapter can use without changing behavior.
    Keep `code.tmux-play.ts` as the active adapter for this task and keep existing adapter tests green.
+   Implementation note: `code.registry.ts` now owns CODE metadata, option validation, and runtime construction, and the existing direct adapter delegates to it while remaining the active adapter.
 4. **Add the shell adapter for explicit CODE commands.**
    Verify upstream cligent specs pin one continuous Captain session across visible chat and delegated hidden calls, or amend upstream before relying on that contract.
    Implement the Playbook Captain shell factory with CODE registered, `/code <text>` dispatch, bare `/code` engagement chat, same-playbook command continuation, and pass-through CODE ports.

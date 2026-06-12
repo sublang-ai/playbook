@@ -11,69 +11,22 @@ import type {
   CaptainContext,
   CaptainSession,
 } from '@sublang/cligent/tmux-play';
-import createPlaybookRuntime, {
-  type CodePlaybookOptions,
+import {
   type PlaybookPorts,
   type PlaybookRuntime,
 } from './code.playbook.js';
-
-// PBRT-29/30: CODE runtime options are carried under
-// `captain.options.code`, a namespaced object the host forwards
-// verbatim through `captain.options`. cligent neither reads nor
-// validates `options.code` (PBRT-30); this adapter is the sole
-// validator. The CODE options schema defines one key, `committer`: an
-// optional Committer-alias player id, one of the baked player ids
-// `coder` / `reviewer`. A valid `options.code` is absent, `{}`, or
-// `{ committer: 'coder' | 'reviewer' }`; every other key is unknown
-// and rejected with a path-named error, and an out-of-range
-// `committer` value is rejected naming `captain.options.code.committer`.
-// A further CODE option shall be introduced as its own higher-numbered
-// item that widens `CODE_OPTION_KEYS`; the validator still fails closed
-// on stray keys.
-const CODE_OPTION_KEYS = new Set<string>(['committer']);
-const COMMITTER_PLAYER_IDS = new Set<string>(['coder', 'reviewer']);
-
-// The validated CODE options set. `committer`, when present, is the
-// resolved Committer-alias player id (PBRT-8 / PBRT-30); a future CODE
-// option widens both this type and `CODE_OPTION_KEYS`.
-export interface CodeOptions {
-  committer?: 'coder' | 'reviewer';
-}
-
-export function validateCodeOptions(captainOptions: unknown): CodeOptions {
-  const code = readCodeNamespace(captainOptions);
-  if (code === undefined) return {};
-  if (typeof code !== 'object' || code === null || Array.isArray(code)) {
-    throw new Error('captain.options.code must be an object');
-  }
-  for (const key of Object.keys(code)) {
-    if (!CODE_OPTION_KEYS.has(key)) {
-      throw new Error(`Unknown config field captain.options.code.${key}`);
-    }
-  }
-  const options: CodeOptions = {};
-  const committer = (code as Record<string, unknown>).committer;
-  if (committer !== undefined) {
-    if (typeof committer !== 'string' || !COMMITTER_PLAYER_IDS.has(committer)) {
-      throw new Error(
-        "captain.options.code.committer must be 'coder' or 'reviewer'",
-      );
-    }
-    options.committer = committer as 'coder' | 'reviewer';
-  }
-  return options;
-}
-
-function readCodeNamespace(captainOptions: unknown): unknown {
-  if (
-    typeof captainOptions !== 'object' ||
-    captainOptions === null ||
-    Array.isArray(captainOptions)
-  ) {
-    return undefined;
-  }
-  return (captainOptions as Record<string, unknown>).code;
-}
+import { codePlaybookRegistryEntry } from './code.registry.js';
+export {
+  codePlaybookRegistryEntry,
+  createCodeRuntimeOptions,
+  validateCodeOptions,
+} from './code.registry.js';
+export type {
+  CodeOptions,
+  CodePlaybookRegistryEntry,
+  CreateCodeRuntimeOptions,
+  RegistryPlayer,
+} from './code.registry.js';
 
 // Captain factory per TMUX-014: `(options: unknown) => Captain`.
 // `options` is whatever `captain.options` carries in the YAML config;
@@ -100,28 +53,10 @@ export default function createCodeTmuxPlayCaptain(
 
   return {
     async init(session: CaptainSession): Promise<void> {
-      // PBRT-30: validate `captain.options.code` before constructing
-      // the runtime so a stray key fails `init` closed with a
-      // path-named error; the empty schema yields an empty options set.
-      const codeOptions = validateCodeOptions(options);
-      const playerIdentity = (id: string): string | undefined => {
-        const entry = session.players.find((p) => p.id === id);
-        return entry?.model ?? entry?.adapter;
-      };
-      const coderPlayer = playerIdentity('coder');
-      const reviewerPlayer = playerIdentity('reviewer');
-      // Identity strings from `session.players` override any same-named
-      // keys and are independent of `captain.options.code` (PBRT-30).
-      // The validated `committer` alias threads in as the runtime's
-      // Committer player id (`committerPlayer`, PBRT-8).
-      const runtimeOptions: CodePlaybookOptions = {
-        coderPlayer,
-        reviewerPlayer,
-        ...(codeOptions.committer !== undefined
-          ? { committerPlayer: codeOptions.committer }
-          : {}),
-      };
-      runtime = createPlaybookRuntime(runtimeOptions);
+      runtime = codePlaybookRegistryEntry.createRuntime({
+        captainOptions: options,
+        players: session.players,
+      });
       const ports: PlaybookPorts = {
         callPlayer: async (playerId, prompt, _signal) => {
           if (!activeContext) {
