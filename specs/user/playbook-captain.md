@@ -68,6 +68,9 @@ Where the Playbook Captain shell is running under tmux-play, when
 the shell engages, dismisses, or disposes a playbook engagement,
 the shell shall emit Boss-visible Captain status lines for that
 shell event without changing the engaged runtime's glyph vocabulary.
+Adapter teardown through [CAPTAIN-16](../dev/playbook-captain.md#captain-16)
+is not a Boss-facing engagement disposal and need not emit a
+Boss-visible status line.
 
 ### CAPTAIN-4
 
