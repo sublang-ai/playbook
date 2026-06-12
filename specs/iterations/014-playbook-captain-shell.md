@@ -11,7 +11,8 @@ The end state is a built-in Playbook Captain shell as the tmux-play Captain, wit
 ## Deliverables
 
 - [x] IR-014 doc and its `map.md` row.
-- [ ] Runtime/user/test specs amended for DR-008: PBRT-1/2 scoped to engaged CODE turns; PBRT-15/16/30 amended for the shell target, registry construction, and CODE registry option validation; PBRT-29 and PBCODE-16 amended so composed `captain.from` points at the shell adapter; shell engagement/status behavior specified in a CAPTAIN package.
+- [ ] Runtime/user/test specs amended for DR-008: PBRT-1/2 scoped to engaged CODE turns; PBRT-15/16/30 amended for the shell target, registry construction, and CODE registry option validation; PBRT-29 and PBCODE-16 amended so composed `captain.from` points at the shell adapter; PBRT-12's direct-runtime/no-change disposition recorded; shell engagement/status behavior specified in a CAPTAIN package.
+- [ ] Upstream cligent shared-session contract verified or amended before the shell relies on one Captain session across visible chat, hidden routing, and sub-runtime judge calls.
 - [ ] Playbook Captain shell adapter implemented with a registered CODE entry, bounded control ledger, visible chat envelope, hidden router envelope, hidden sub-runtime judge calls, and pass-through status/telemetry.
 - [ ] Shell routing implemented for registered commands, hidden router decisions, same-playbook command continuation, different-playbook rejection while engaged, and dismiss.
 - [ ] Shell park/resume/final-disposal behavior implemented from mirrored `playbook.fsm.state` telemetry.
@@ -30,12 +31,14 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    No runtime behavior change.
 2. **Spec amendments.**
    Amend PBRT-1/2/15/16/29/30, PBCODE-16, and the matching test specs for DR-008.
+   Record PBRT-12's no-change disposition: direct runtime use may still restart terminal CODE actors, while the shell disposes final sub-runtime engagements instead.
    Add the CAPTAIN user/dev/test package for shell chat, routing, engagement status, telemetry topic separation, and park/resume/dispose behavior.
    Prose only; no code.
 3. **Extract CODE registration.**
    Factor CODE option validation and runtime construction into a registry entry that the existing direct adapter can use without changing behavior.
    Keep `code.tmux-play.ts` as the active adapter for this task and keep existing adapter tests green.
 4. **Add the shell adapter for explicit CODE commands.**
+   Verify upstream cligent specs pin one continuous Captain session across visible chat and delegated hidden calls, or amend upstream before relying on that contract.
    Implement the Playbook Captain shell factory with CODE registered, `/code <text>` dispatch, bare `/code` engagement chat, same-playbook command continuation, and pass-through CODE ports.
    Add focused shell tests for explicit command routing and hidden CODE judge calls.
 5. **Add hidden router and visible chat.**
