@@ -42,13 +42,21 @@ type RouterDecision =
   | { decision: 'sub'; text: string }
   | { decision: 'dismiss'; text?: string };
 
+type DisposalReason = 'dismiss' | 'final' | 'dispose';
+
 interface ControlLedger {
   activePlaybookId?: string;
   mode: ShellMode;
+  latestSubRuntimeStateId?: string;
+  pendingBossQuestion?: unknown;
+  lastError?: { name: string; message: string };
   lastRouteDecision?: RouterDecision['decision'];
 }
 
 type ShellMode = 'chat' | 'engaged.driving' | 'engaged.parked';
+
+const SUB_RUNTIME_FSM_TOPIC = 'playbook.fsm.state';
+const SHELL_FSM_TOPIC = 'playbook.captain.fsm.state';
 
 export const playbookCaptainRegistry: readonly PlaybookCaptainRegistryEntry[] = [
   codePlaybookRegistryEntry,
@@ -98,13 +106,113 @@ export function createPlaybookCaptainShell(
   let activeContext: CaptainContext | undefined;
   let active: ActiveEngagement | undefined;
   let mode: ShellMode = 'chat';
+  let latestSubRuntimeStateId: string | undefined;
+  let pendingBossQuestion: unknown;
+  let lastError: { name: string; message: string } | undefined;
   let lastRouteDecision: RouterDecision['decision'] | undefined;
+  let finalDisposalRequested: ActiveEngagement | undefined;
 
   const requireSession = (): CaptainSession => {
     if (!session) {
       throw new Error('init must be called first');
     }
     return session;
+  };
+
+  const ledgerSnapshot = (
+    playbookId: string | undefined = active?.entry.id,
+  ): ControlLedger => ({
+    ...(playbookId ? { activePlaybookId: playbookId } : {}),
+    mode,
+    ...(latestSubRuntimeStateId ? { latestSubRuntimeStateId } : {}),
+    ...(pendingBossQuestion !== undefined ? { pendingBossQuestion } : {}),
+    ...(lastError ? { lastError } : {}),
+    ...(lastRouteDecision ? { lastRouteDecision } : {}),
+  });
+
+  const emitShellTelemetry = async (
+    from: ShellMode,
+    to: ShellMode,
+    event: string,
+    playbookId: string | undefined = active?.entry.id,
+  ): Promise<void> => {
+    await requireSession().emitTelemetry({
+      topic: SHELL_FSM_TOPIC,
+      payload: {
+        from,
+        to,
+        event,
+        ledger: ledgerSnapshot(playbookId),
+      },
+    });
+  };
+
+  const setMode = async (
+    nextMode: ShellMode,
+    event: string,
+    playbookId: string | undefined = active?.entry.id,
+  ): Promise<void> => {
+    if (mode === nextMode) return;
+    const from = mode;
+    mode = nextMode;
+    await emitShellTelemetry(from, nextMode, event, playbookId);
+  };
+
+  const normalizeErrorCompact = (
+    value: unknown,
+  ): { name: string; message: string } | undefined => {
+    if (value === undefined || value === null) return undefined;
+    if (value instanceof Error) {
+      return { name: value.name, message: value.message };
+    }
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      if (typeof record.message === 'string') {
+        return {
+          name: typeof record.name === 'string' ? record.name : 'Error',
+          message: record.message,
+        };
+      }
+    }
+    return { name: 'Error', message: String(value) };
+  };
+
+  const payloadRecord = (
+    payload: unknown,
+  ): Record<string, unknown> | undefined =>
+    typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : undefined;
+
+  const mirroredStateId = (payload: unknown): string | undefined => {
+    const record = payloadRecord(payload);
+    if (!record) return undefined;
+    if (typeof record.to === 'string') return record.to;
+    return typeof record.state === 'string' ? record.state : undefined;
+  };
+
+  const mirrorSubRuntimeTelemetry = async (payload: unknown): Promise<void> => {
+    if (!active) return;
+    const record = payloadRecord(payload);
+    const stateId = mirroredStateId(payload);
+    if (stateId === undefined) return;
+
+    latestSubRuntimeStateId = stateId;
+    pendingBossQuestion = record?.pendingBossQuestion;
+    lastError = normalizeErrorCompact(record?.lastError);
+
+    if (stateId === active.entry.finalStateId) {
+      finalDisposalRequested = active;
+      return;
+    }
+
+    if (
+      stateId === active.entry.idleStateId ||
+      stateId === 'failed' ||
+      stateId === 'awaitBossReply'
+    ) {
+      await setMode('engaged.parked', `sub-runtime:${stateId}`);
+    }
   };
 
   const createPorts = (): PlaybookPorts => ({
@@ -143,6 +251,9 @@ export function createPlaybookCaptainShell(
       );
     },
     emitTelemetry: async (event) => {
+      if (event.topic === SUB_RUNTIME_FSM_TOPIC) {
+        await mirrorSubRuntimeTelemetry(event.payload);
+      }
       await requireSession().emitTelemetry(event);
     },
   });
@@ -156,7 +267,11 @@ export function createPlaybookCaptainShell(
       players,
     });
     active = { entry, runtime };
-    mode = 'engaged.parked';
+    latestSubRuntimeStateId = undefined;
+    pendingBossQuestion = undefined;
+    lastError = undefined;
+    finalDisposalRequested = undefined;
+    await setMode('engaged.parked', 'engage', entry.id);
     await runtime.init(createPorts());
     await requireSession().emitStatus(`◇ shell engaged ${entry.id}`, {
       playbookId: entry.id,
@@ -170,21 +285,43 @@ export function createPlaybookCaptainShell(
     text: string,
     signal: AbortSignal,
   ): Promise<void> => {
-    mode = 'engaged.driving';
+    await setMode('engaged.driving', 'submit');
     try {
       await engagement.runtime.handleBossInput({ text, signal });
     } finally {
-      if (active === engagement) {
-        mode = 'engaged.parked';
+      if (active === engagement && finalDisposalRequested === engagement) {
+        finalDisposalRequested = undefined;
+        await disposeActive('final');
+      } else if (active === engagement && mode === 'engaged.driving') {
+        await setMode('engaged.parked', 'turn.settled');
       }
     }
   };
 
-  const disposeActive = async (): Promise<void> => {
+  const disposeActive = async (
+    reason: DisposalReason,
+  ): Promise<void> => {
     const engagement = active;
+    if (!engagement) return;
+    const playbookId = engagement.entry.id;
     active = undefined;
-    mode = 'chat';
-    await engagement?.runtime.dispose();
+    finalDisposalRequested = undefined;
+    await setMode('chat', reason, playbookId);
+    await engagement.runtime.dispose();
+    if (reason === 'dismiss') {
+      await requireSession().emitStatus(`◇ shell dismissed ${playbookId}`, {
+        playbookId,
+        mode,
+      });
+    } else if (reason === 'final') {
+      await requireSession().emitStatus(`◇ shell disposed ${playbookId}`, {
+        playbookId,
+        mode,
+      });
+    }
+    latestSubRuntimeStateId = undefined;
+    pendingBossQuestion = undefined;
+    lastError = undefined;
   };
 
   const callVisibleChat = async (
@@ -198,12 +335,6 @@ export function createPlaybookCaptainShell(
       );
     }
   };
-
-  const ledgerSnapshot = (): ControlLedger => ({
-    ...(active ? { activePlaybookId: active.entry.id } : {}),
-    mode,
-    ...(lastRouteDecision ? { lastRouteDecision } : {}),
-  });
 
   const hiddenRouterEnvelope = (prompt: string): string =>
     [
@@ -333,7 +464,7 @@ export function createPlaybookCaptainShell(
       return;
     }
 
-    await disposeActive();
+    await disposeActive('dismiss');
     await callVisibleChat(
       context,
       decision.text ?? 'The active playbook engagement has been dismissed.',
@@ -372,7 +503,7 @@ export function createPlaybookCaptainShell(
       for (const entry of entries) {
         entry.validateOptions(options);
       }
-      mode = 'chat';
+      await setMode('chat', 'init');
     },
 
     async handleBossTurn(
@@ -398,11 +529,8 @@ export function createPlaybookCaptainShell(
     },
 
     async dispose(): Promise<void> {
-      const engagement = active;
       activeContext = undefined;
-      active = undefined;
-      mode = 'chat';
-      await engagement?.runtime.dispose();
+      await disposeActive('dispose');
     },
   };
 }

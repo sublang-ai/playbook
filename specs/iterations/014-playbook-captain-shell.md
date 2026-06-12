@@ -13,9 +13,9 @@ The end state is a built-in Playbook Captain shell as the tmux-play Captain, wit
 - [x] IR-014 doc and its `map.md` row.
 - [x] Runtime/user/test specs amended for DR-008: PBRT-1/2 scoped to engaged CODE turns; PBRT-15/16/30 amended for the shell target, registry construction, and CODE registry option validation; PBRT-29 and PBCODE-16 amended so composed `captain.from` points at the shell adapter; PBRT-12's direct-runtime/no-change disposition recorded; shell engagement/status behavior specified in a CAPTAIN package; stale DR-004/DR-006 direct-adapter wording reconciled.
 - [x] Upstream cligent shared-session contract verified or amended before the shell relies on one Captain session across visible chat, hidden routing, and sub-runtime judge calls.
-- [ ] Playbook Captain shell adapter implemented with a registered CODE entry, bounded control ledger, visible chat envelope, hidden router envelope, hidden sub-runtime judge calls, and pass-through status/telemetry.
-- [ ] Shell routing implemented for registered commands, hidden router decisions, same-playbook command continuation, different-playbook rejection while engaged, and dismiss.
-- [ ] Shell park/resume/final-disposal behavior implemented from mirrored `playbook.fsm.state` telemetry.
+- [x] Playbook Captain shell adapter implemented with a registered CODE entry, bounded control ledger, visible chat envelope, hidden router envelope, hidden sub-runtime judge calls, and pass-through status/telemetry.
+- [x] Shell routing implemented for registered commands, hidden router decisions, same-playbook command continuation, different-playbook rejection while engaged, and dismiss.
+- [x] Shell park/resume/final-disposal behavior implemented from mirrored `playbook.fsm.state` telemetry.
 - [ ] CODE tmux-play compatibility shim delegates to the same shell with CODE registered.
 - [ ] `playbook-code` composer, package exports, example configs, generated `.js`/`.d.ts` siblings, and README updated for the shell adapter path while preserving explicit `./code/tmux-play` users.
 - [ ] Tests cover shell routing, hidden control calls, shared-session call surfaces, telemetry mirroring, park/resume/dismiss/final disposal, CODE option validation through the registry, compatibility shim behavior, and composer output.
@@ -49,9 +49,10 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Add the hidden router call with closed `chat` / `dispatch` / `sub` / `dismiss` decisions, unregistered-slash fallthrough, near-miss clarification, and the visible chat envelope.
    Add tests that hidden router calls pass `{ visibility: 'hidden' }` and that visible chat does not expose control JSON.
    Implementation note: `playbook-captain.ts` now sends non-command routing through a hidden control envelope, parses closed router decisions, falls back to visible clarification on invalid router output, and keeps visible chat on a separate non-control envelope.
-6. **Add park, resume, dismiss, and final disposal.**
+6. **Add park, resume, dismiss, and final disposal.** _[done]_
    Mirror sub-runtime state from `playbook.fsm.state` telemetry, park on idle/failed/awaitBossReply, resume parked CODE turns, reject different-playbook commands while engaged, dismiss active engagements, and dispose on final.
    Add tests for each lifecycle path and for the shell telemetry topic not colliding with `playbook.fsm.state`.
+   Implementation note: `playbook-captain.ts` now mirrors sub-runtime FSM telemetry into the shell ledger before pass-through, parks on CODE idle/failed/`awaitBossReply`, emits shell FSM telemetry on `playbook.captain.fsm.state`, disposes final and dismissed engagements with shell status lines, and constructs replacements after disposal.
 7. **Switch public launch paths.**
    Point `playbook-code` composed configs and the primary package export at the shell adapter.
    Turn `./code/tmux-play` into the compatibility shim that delegates to the shell with CODE registered.

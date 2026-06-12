@@ -45,13 +45,18 @@ type HandleHook = (
   turn: { text: string; signal: AbortSignal },
 ) => Promise<void>;
 
+type DisposeHook = (runtime: FakeRuntime) => Promise<void>;
+
 class FakeRuntime implements PlaybookRuntime {
   ports: PlaybookPorts | undefined;
   readonly inputs: { text: string; signal: AbortSignal }[] = [];
   initCount = 0;
   disposeCount = 0;
 
-  constructor(private readonly handleHook?: HandleHook) {}
+  constructor(
+    private readonly handleHook?: HandleHook,
+    private readonly disposeHook?: DisposeHook,
+  ) {}
 
   async init(ports: PlaybookPorts): Promise<void> {
     this.ports = ports;
@@ -68,6 +73,7 @@ class FakeRuntime implements PlaybookRuntime {
 
   async dispose(): Promise<void> {
     this.disposeCount += 1;
+    await this.disposeHook?.(this);
   }
 }
 
@@ -134,7 +140,7 @@ function stubContext(captainReplies: CaptainReply[] = []): StubContext {
   };
 }
 
-function fakeCodeEntry(handleHook?: HandleHook): {
+function fakeCodeEntry(handleHook?: HandleHook, disposeHook?: DisposeHook): {
   entry: PlaybookCaptainRegistryEntry;
   validateOptions: ReturnType<typeof vi.fn>;
   createRuntime: ReturnType<typeof vi.fn>;
@@ -143,7 +149,7 @@ function fakeCodeEntry(handleHook?: HandleHook): {
   const runtimes: FakeRuntime[] = [];
   const validateOptions = vi.fn();
   const createRuntime = vi.fn(() => {
-    const runtime = new FakeRuntime(handleHook);
+    const runtime = new FakeRuntime(handleHook, disposeHook);
     runtimes.push(runtime);
     return runtime;
   });
@@ -163,6 +169,14 @@ function fakeCodeEntry(handleHook?: HandleHook): {
   };
 }
 
+function fakePlaybookEntry(id: string, command: string): ReturnType<typeof fakeCodeEntry> {
+  const registry = fakeCodeEntry();
+  registry.entry.id = id;
+  registry.entry.command = command;
+  registry.entry.intent = `${id} playbook`;
+  return registry;
+}
+
 function turn(prompt: string, id = 1): BossTurn {
   return { id, prompt, timestamp: 0 };
 }
@@ -173,6 +187,13 @@ function captainJson(value: unknown): CaptainRunResult {
     turnId: 1,
     finalText: JSON.stringify(value),
   };
+}
+
+function telemetryWithTopic(
+  session: StubSession,
+  topic: string,
+): { topic: string; payload: unknown }[] {
+  return session.telemetry.filter((event) => event.topic === topic);
 }
 
 describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () => {
@@ -410,6 +431,193 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
   });
 });
 
+describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', () => {
+  it('mirrors idle telemetry into the router ledger and resumes the parked runtime', async () => {
+    const registry = fakeCodeEntry(async (runtime) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'ready', event: { type: 'xstate.done' } },
+      });
+    });
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      (prompt) => {
+        expect(prompt).toContain('"mode":"engaged.parked"');
+        expect(prompt).toContain('"latestSubRuntimeStateId":"ready"');
+        return captainJson({
+          decision: 'sub',
+          text: 'resume parked runtime',
+        });
+      },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+    await shell.handleBossTurn(turn('resume it', 2), context.context);
+
+    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
+    expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
+      'first task',
+      'resume parked runtime',
+    ]);
+    expect(telemetryWithTopic(session, 'playbook.fsm.state')).toHaveLength(2);
+    expect(
+      telemetryWithTopic(session, 'playbook.captain.fsm.state').some(
+        (event) =>
+          JSON.stringify(event.payload).includes('sub-runtime:ready'),
+      ),
+    ).toBe(true);
+  });
+
+  it('mirrors pending Boss questions and compact errors into the router ledger', async () => {
+    const pendingBossQuestion = {
+      resumeStateId: 'review',
+      sourceItem: 'CODE-7',
+      player: 'Coder',
+      question: 'Which branch should I use?',
+    };
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload:
+          runtimeTurn.text === 'first task'
+            ? { to: 'awaitBossReply', pendingBossQuestion }
+            : {
+                to: 'failed',
+                lastError: {
+                  name: 'TypeError',
+                  message: 'boom',
+                  stack: 'hidden stack',
+                },
+              },
+      });
+    });
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      (prompt) => {
+        expect(prompt).toContain('"pendingBossQuestion"');
+        expect(prompt).toContain('Which branch should I use?');
+        return captainJson({ decision: 'sub', text: 'second task' });
+      },
+      (prompt) => {
+        expect(prompt).toContain('"lastError":{"name":"TypeError","message":"boom"}');
+        expect(prompt).not.toContain('hidden stack');
+        return captainJson({ decision: 'chat', text: 'visible recovery' });
+      },
+      { status: 'ok', turnId: 1, finalText: 'visible recovery reply' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+    await shell.handleBossTurn(turn('answer question', 2), context.context);
+    await shell.handleBossTurn(turn('what happened?', 3), context.context);
+
+    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes final engagements and constructs a replacement on later dispatch', async () => {
+    const registry = fakeCodeEntry(async (runtime) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'done', event: { type: 'COMPLETE' } },
+      });
+    });
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+    await shell.handleBossTurn(turn('/code second task', 2), context.context);
+
+    expect(registry.createRuntime).toHaveBeenCalledTimes(2);
+    expect(registry.runtimes[0]?.disposeCount).toBe(1);
+    expect(registry.runtimes[1]?.inputs.map((input) => input.text)).toEqual([
+      'second task',
+    ]);
+    expect(session.statuses).toContainEqual({
+      message: '◇ shell disposed code',
+      data: { playbookId: 'code', mode: 'chat' },
+    });
+    expect(
+      telemetryWithTopic(session, 'playbook.captain.fsm.state').some(
+        (event) => JSON.stringify(event.payload).includes('"event":"final"'),
+      ),
+    ).toBe(true);
+  });
+
+  it('dismiss emits shell status and later dispatch constructs a replacement', async () => {
+    const registry = fakeCodeEntry();
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({
+        decision: 'dismiss',
+        text: 'CODE has been dismissed.',
+      }),
+      { status: 'ok', turnId: 1, finalText: 'visible dismissal' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+    await shell.handleBossTurn(turn('dismiss this', 2), context.context);
+    await shell.handleBossTurn(turn('/code second task', 3), context.context);
+
+    expect(registry.createRuntime).toHaveBeenCalledTimes(2);
+    expect(registry.runtimes[0]?.disposeCount).toBe(1);
+    expect(registry.runtimes[1]?.inputs.map((input) => input.text)).toEqual([
+      'second task',
+    ]);
+    expect(session.statuses).toContainEqual({
+      message: '◇ shell dismissed code',
+      data: { playbookId: 'code', mode: 'chat' },
+    });
+  });
+
+  it('rejects a different registered command while CODE is engaged', async () => {
+    const code = fakeCodeEntry();
+    const docs = fakePlaybookEntry('docs', 'docs');
+    const shell = createPlaybookCaptainShell({}, [code.entry, docs.entry]);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+    await shell.handleBossTurn(turn('/docs write docs', 2), context.context);
+
+    expect(code.createRuntime).toHaveBeenCalledTimes(1);
+    expect(docs.createRuntime).not.toHaveBeenCalled();
+    expect(context.captainCalls[0]?.options).toBeUndefined();
+    expect(context.captainCalls[0]?.prompt).toContain(
+      'code is already engaged',
+    );
+  });
+
+  it('shell dispose disposes the active runtime and drains disposal emissions', async () => {
+    const registry = fakeCodeEntry(undefined, async (runtime) => {
+      await runtime.ports?.emitStatus('dispose emission', { drained: true });
+    });
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first task'), context.context);
+    await shell.dispose!();
+
+    expect(registry.runtimes[0]?.disposeCount).toBe(1);
+    expect(session.statuses).toContainEqual({
+      message: 'dispose emission',
+      data: { drained: true },
+    });
+  });
+});
+
 describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => {
   it('passes CODE ports through and hides sub-runtime judge calls', async () => {
     const observed: unknown[] = [];
@@ -459,11 +667,14 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       message: 'sub-runtime status',
       data: { step: 1 },
     });
-    expect(session.telemetry).toEqual([
+    expect(telemetryWithTopic(session, 'playbook.fsm.state')).toEqual([
       {
         topic: 'playbook.fsm.state',
         payload: { state: 'ready' },
       },
     ]);
+    expect(
+      telemetryWithTopic(session, 'playbook.captain.fsm.state').length,
+    ).toBeGreaterThan(0);
   });
 });
