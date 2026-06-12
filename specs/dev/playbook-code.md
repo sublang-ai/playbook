@@ -93,8 +93,9 @@ The shim shall read the overlay (the
 mapping keyed by `coder` / `reviewer`, its `captain` judge block,
 and its `captain.options.code`; the overlay carries no
 `captain.from` and no `players[].id`.
-The shim shall set the composed `captain.from` to the Playbook
-Captain shell adapter module with CODE registered.
+The shim shall set the composed `captain.from` to
+`@sublang/playbook/playbook-captain`, the Playbook Captain shell
+adapter module with CODE registered.
 For each of the `coder` and `reviewer` `players.<role>` keys it
 shall emit one composed `players[]` array entry whose `id` is the
 role key and whose `adapter`, `model`, `reasoningEffort`, and

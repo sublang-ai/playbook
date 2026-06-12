@@ -57,8 +57,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: `/code` selection, visible chat, active-engagement routing, status pass-through, parking, dismissal, and final disposal |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: adapter lifecycle, CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, telemetry mirroring, distinct shell telemetry, and park/resume/dispose lifecycle |
-| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, adapter lifecycle, CODE registry wiring, status/telemetry pass-through, telemetry mirroring, park/resume, dismiss, and final disposal |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: public `@sublang/playbook/playbook-captain` module, adapter lifecycle, CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, telemetry mirroring, distinct shell telemetry, and park/resume/dispose lifecycle |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, adapter lifecycle, public shell module resolution, CODE registry wiring, status/telemetry pass-through, telemetry mirroring, park/resume, dismiss, and final disposal |
 
 ### GIT
 
@@ -77,17 +77,17 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config targeting the shell adapter, incl. the Committer alias and a `layout` block) |
-| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding with Codex `.git` writablePaths, readiness heuristic, config composition (base discovery, shell `captain.from`, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout` inheritance, owned YAML serialization), Node engine floor |
-| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding including Codex `.git` writablePaths, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and shell-targeted config composition |
+| user | [playbook-code.md](user/playbook-code.md) | `playbook-code` global/npx command: explicit-config pass-through, first-run CODE-overlay seed, readiness gate, help, exit/signal behavior, and config composition (overlay + optional base → launched tmux-play config targeting `@sublang/playbook/playbook-captain`, incl. the Committer alias and a `layout` block) |
+| dev | [playbook-code.md](dev/playbook-code.md) | `playbook-code` shim: cligent CLI resolution, overlay-template seeding with Codex `.git` writablePaths, readiness heuristic, config composition (base discovery, exact shell `captain.from`, role→`players[]` mapping, Committer-alias resolution, `theme`/`layout` inheritance, owned YAML serialization), Node engine floor |
+| test | [playbook-code.md](test/playbook-code.md) | Integration tests for config seeding including Codex `.git` writablePaths, no-reseed, explicit-config bypass, readiness pass/fail, unknown-adapter warning, help, and exact shell-targeted config composition |
 
 ### PBRT
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through the shell with `captain.options.code` and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring, and registry-owned `options.code` validation |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
+| user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through `@sublang/playbook/playbook-captain` with `captain.options.code` and the Committer alias |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring, `@sublang/playbook/code/tmux-play` compatibility, and registry-owned `options.code` validation |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry and compatibility-shim wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
 
 ### PLAYBOOK
 
@@ -100,7 +100,7 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` (semver, changelog, tag-driven CI, OIDC trusted publishing, `latest`-tracking cligent dep) |
+| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` runtime, Playbook Captain shell, and tmux-play compatibility shim (semver, changelog, tag-driven CI, OIDC trusted publishing, `latest`-tracking cligent dep) |
 | test | [release.md](test/release.md) | Integration test for the published install closure: `@sublang/cligent` nested under playbook, adapter SDKs resolvable |
 
 ### SKETCH

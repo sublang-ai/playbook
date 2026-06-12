@@ -117,15 +117,16 @@ host player whose `id` equals the runtime's baked player id
 (`coder` for Coder, `reviewer` for Reviewer), performing no
 player-id remapping.
 The host configuration must accordingly point `captain.from` at the
-Playbook Captain shell adapter and declare `players[].id` values
-equal to those baked ids; the CODE registry entry shall derive the
-per-run player identity strings (`coderPlayer`, `reviewerPlayer`)
-from each player entry's `model` when pinned and fall back to its
-`adapter` when no model is set, so the host configuration shall not
-be required to repeat them under `captain.options` and player
-prompts carry the concrete model identity (e.g. `claude-opus-4-7`)
-rather than the adapter family name (e.g. `claude`) whenever the
-host has pinned a model.
+Playbook Captain shell adapter — the published package specifier
+`@sublang/playbook/playbook-captain` — and declare `players[].id`
+values equal to those baked ids; the CODE registry entry shall
+derive the per-run player identity strings (`coderPlayer`,
+`reviewerPlayer`) from each player entry's `model` when pinned and
+fall back to its `adapter` when no model is set, so the host
+configuration shall not be required to repeat them under
+`captain.options` and player prompts carry the concrete model
+identity (e.g. `claude-opus-4-7`) rather than the adapter family
+name (e.g. `claude`) whenever the host has pinned a model.
 
 ### PBRT-29
 
@@ -151,6 +152,7 @@ and shall not be required to appear in the user-edited CODE
 overlay; this supersedes the user-maintained-invariant framing of
 [PBRT-4](#pbrt-4).
 The composer-supplied `captain.from` value shall point at the
-Playbook Captain shell adapter, not at a direct CODE adapter; the
-public `./code/tmux-play` export remains a compatibility shim for
-explicit configs.
+published Playbook Captain shell adapter specifier
+`@sublang/playbook/playbook-captain`, not at a direct CODE adapter;
+the public `@sublang/playbook/code/tmux-play` export remains a
+compatibility shim for explicit configs.

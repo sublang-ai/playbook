@@ -22,10 +22,11 @@ development / SDLC coding workflow, idle state id `ready`, final
 state id `done`, a `createRuntime` function for the CODE runtime,
 and a `validateOptions` function for `captain.options.code`.
 The shell shall support one active engagement and shall keep only
-a bounded control ledger: active playbook id, latest sub-runtime
-state id, pending Boss question when mirrored from telemetry,
-normalized last error when mirrored from telemetry, and last route
-decision.
+a bounded control ledger: active playbook id, shell mode, latest
+sub-runtime state id, pending Boss question when mirrored from
+telemetry, normalized last error when mirrored from telemetry, and
+last route decision.
+The normalized last error shall carry only `{ name, message }`.
 The shell shall not duplicate the full Boss conversation in its
 ledger.
 
@@ -36,6 +37,8 @@ shall model durable modes `chat`, `engaged.driving`, and
 `engaged.parked`.
 When the shell emits its own FSM telemetry, it shall use topic
 `playbook.captain.fsm.state`, not `playbook.fsm.state`.
+The shell FSM telemetry payload shall carry `from`, `to`, `event`,
+and a snapshot of the bounded control ledger.
 The shell shall reserve `playbook.fsm.state` for sub-runtime
 telemetry that it passes through.
 
@@ -61,6 +64,9 @@ When the hidden router reply is malformed, names an unknown
 decision, names an unknown playbook id, or omits text required by
 the chosen decision, the shell shall produce visible clarification
 and shall not dispatch to a sub-runtime.
+When the hidden router call returns a non-`ok` status or an `ok`
+status without `finalText`, the shell shall produce visible
+clarification and shall not dispatch to a sub-runtime.
 
 ### CAPTAIN-8
 
@@ -113,6 +119,9 @@ Where the Playbook Captain shell has an active sub-runtime, when
 the mirrored sub-runtime state is the registry entry's final state
 or the router chooses `dismiss`, the shell shall dispose the active
 sub-runtime and return to `chat`.
+When the mirrored sub-runtime state is the registry entry's final
+state during a dispatched Boss turn, the shell shall defer disposal
+until that sub-runtime `handleBossInput` call settles.
 Where the Playbook Captain shell has an active sub-runtime, when
 the Boss submits text for the same playbook while it is parked, the
 shell shall reuse the existing sub-runtime rather than constructing
@@ -144,5 +153,17 @@ calls until that turn settles.
 When tmux-play calls `handleBossTurn(turn, context)` before
 `init(session)`, the shell shall reject the call.
 Where tmux-play calls `dispose()`, the shell shall dispose any
-active sub-runtime, clear the active turn context, and resolve only
-after disposal-triggered port emissions have drained.
+active sub-runtime, clear the active turn context, emit no shell
+status or shell FSM telemetry for the adapter teardown itself, and
+resolve only after the active sub-runtime's `dispose()` call
+returns.
+
+## Public module surface
+
+### CAPTAIN-17
+
+Where `@sublang/playbook` exposes the Playbook Captain shell for
+tmux-play, the package shall expose the public module specifier
+`@sublang/playbook/playbook-captain`.
+That module's default export shall be a tmux-play Captain factory
+for the Playbook Captain shell with CODE registered.

@@ -7,7 +7,8 @@
 
 This spec defines the release workflow for publishing the
 `@sublang/playbook` package — the reference CODE playbook
-runtime + tmux-play adapter at the repo root —
+runtime, Playbook Captain shell, and tmux-play compatibility shim
+at the repo root —
 to npm and tagging the corresponding GitHub release.
 
 ## Versioning

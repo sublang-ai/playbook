@@ -272,14 +272,19 @@ shell and specified in [CAPTAIN-10](playbook-captain.md#captain-10).
 
 Where CODE runs under tmux-play through composed config, the
 compiled module imported by the host's `captain.from` shall be the
-Playbook Captain shell adapter specified by
-[CAPTAIN-16](playbook-captain.md#captain-16).
+published Playbook Captain shell adapter specifier
+`@sublang/playbook/playbook-captain`, whose behavior is specified
+by [CAPTAIN-16](playbook-captain.md#captain-16) and
+[CAPTAIN-17](playbook-captain.md#captain-17).
 When that shell dispatches a Boss turn to CODE, the CODE registry
 entry shall map the dispatch to
 `runtime.handleBossInput({ text, signal: context.signal })`.
-The public `./code/tmux-play` export shall remain resolvable as a
-compatibility shim delegating to the same shell with CODE
-registered.
+The public `@sublang/playbook/code/tmux-play` export shall remain
+resolvable as a compatibility shim whose default export delegates
+to the same shell with CODE registered.
+That compatibility module shall keep exposing the CODE registry
+entry, CODE runtime-options derivation helper, CODE options
+validator, and their public types.
 
 ### PBRT-30
 

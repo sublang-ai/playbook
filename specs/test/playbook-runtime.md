@@ -73,18 +73,20 @@ in enqueue order.
 ### PBRT-21
 Verifies: [PBRT-4](../user/playbook-runtime.md#pbrt-4), [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [PBRT-16](../dev/playbook-runtime.md#pbrt-16), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
 
-When CODE is driven through the Playbook Captain shell adapter
-with stubbed cligent `CaptainContext` / `CaptainSession`
-primitives, the test suite shall fail unless player calls reach
-`context.callPlayer` with player ids matching the runtime's baked
-player ids (both `coder` via the free-text coding happy path and
-`reviewer` via a multi-stage flow that drives the FSM through a
-Reviewer state), adjudication reaches `context.callCaptain`, every
-CODE `callCaptain` invocation — classification and adjudication
-alike — passes `{ visibility: 'hidden' }`, status and telemetry
-reach the session, the per-turn `signal` flows into the runtime,
-the per-run player identity strings substituted into the Committer
-prompt's `<coder-llm>` / `<reviewer-llm>` placeholders come from
+When CODE is driven through the
+`@sublang/playbook/code/tmux-play` compatibility shim with stubbed
+cligent `CaptainContext` / `CaptainSession` primitives, the test
+suite shall fail unless the shim delegates to the Playbook Captain
+shell, player calls reach `context.callPlayer` with player ids
+matching the runtime's baked player ids (both `coder` via the
+free-text coding happy path and `reviewer` via a multi-stage flow
+that drives the FSM through a Reviewer state), adjudication reaches
+`context.callCaptain`, every CODE `callCaptain` invocation —
+classification and adjudication alike — passes
+`{ visibility: 'hidden' }`, status and telemetry reach the
+session, the per-turn `signal` flows into the runtime, the per-run
+player identity strings substituted into the Committer prompt's
+`<coder-llm>` / `<reviewer-llm>` placeholders come from
 `session.players[].model` when each entry pins a model and fall
 back to `session.players[].adapter` when no model is pinned (both
 branches exercised).
@@ -255,3 +257,7 @@ cause `init` to reject with an error naming the offending path
 (`captain.options.code.committer` for the invalid value); and the
 derived `coderPlayer` / `reviewerPlayer` identity strings still
 come from `session.players` regardless of `captain.options.code`.
+The test suite shall also fail unless the
+`@sublang/playbook/code/tmux-play` compatibility module exposes the
+CODE registry entry, runtime-options derivation helper, and options
+validator used by these assertions.

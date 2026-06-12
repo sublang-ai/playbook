@@ -99,8 +99,9 @@ Verifies: [PBCODE-16](../user/playbook-code.md#pbcode-16), [PBCODE-17](../dev/pl
 Where the test suite invokes `playbook-code` without `--config`,
 both with and without an existing base tmux-play config, the test
 suite shall fail unless the composed config the shim launches has
-`captain.from` set to the Playbook Captain shell adapter module
-with CODE registered; `players[].id` equal to `coder` and
+`captain.from` set to `@sublang/playbook/playbook-captain`, the
+Playbook Captain shell adapter module with CODE registered;
+`players[].id` equal to `coder` and
 `reviewer`, each carrying the `adapter`, `model`, `reasoningEffort`,
 and `permissions` declared for that role in the overlay; `theme`,
 the top-level `layout` block, and any overlay-unset captain-judge
