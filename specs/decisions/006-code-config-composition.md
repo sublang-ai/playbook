@@ -18,7 +18,6 @@ tmux-play's config is the host contract.
 Its `captain` / `players` fields are strict-whitelisted, but `captain.options` is an opaque JSON value forwarded verbatim to the Captain factory (cligent TMUX-006).
 Under cligent's contract (TMUX-008), when loading a config the loader rejects any unknown field — at any path — with an error that names the offending file or path.
 So `captain.options` is the only place a plugin may extend without a cligent change.
-(The current cligent implementation enforces this only within `captain` / `players` and silently drops unknown top-level keys; the contract, not that behavior, is the source of truth here.)
 
 CODE will need its own runtime options, and there is no clean home for them today.
 The current onboarding seeds a full tmux-play config the user hand-maintains ([PBCODE-5](../user/playbook-code.md#pbcode-5), [PBCODE-7](../dev/playbook-code.md#pbcode-7)), including the `captain.from` and `players[].id` values the user is told not to touch ([PBRT-4](../user/playbook-runtime.md#pbrt-4)).
@@ -48,7 +47,7 @@ adapter as the owner of `captain.options.code` validation.
 
 | A setting that changes… | Belongs in |
 | --- | --- |
-| host-observable behavior — theme, layout, permissions, model/adapter routing, timing | tmux-play's own `captain` / `players` fields |
+| host-observable behavior — theme, layout, notifications, permissions, model/adapter routing, timing | tmux-play's own top-level fields plus `captain` / `players` fields |
 | CODE-internal runtime behavior | `captain.options.code` |
 
 ### 2. `playbook-code` is a composer, not a config the user authors
@@ -56,9 +55,9 @@ adapter as the owner of `captain.options.code` validation.
 The launched tmux-play config shall be composed at launch, not hand-authored by the user:
 
 1. Locate an optional base tmux-play config with `findTmuxPlayConfig` — never the bare `loadTmuxPlayConfig`, which writes a default fanout config when none is found.
-2. Read the user-level CODE overlay (the [PBCODE-5](../user/playbook-code.md#pbcode-5) path) — a tmux-play-shaped config minus `captain.from`, with `players` keyed by role (`coder`, `reviewer`) instead of an array with `id`. Each `players.<role>` block carries that role's `adapter` and optional `model` / `reasoningEffort` / `permissions`; the `captain` block carries the judge fields; CODE options live under `captain.options.code`.
+2. Read the user-level CODE overlay (the [PBCODE-5](../user/playbook-code.md#pbcode-5) path) — a tmux-play-shaped config minus `captain.from`, with `players` keyed by role (`coder`, `reviewer`) instead of an array with `id`. Each `players.<role>` block carries that role's `adapter` and optional `model` / `reasoningEffort` / `permissions`; the `captain` block carries the judge fields; top-level host fields such as `layout` and `notifications` may be set; CODE options live under `captain.options.code`.
 3. Force the invariants and map the roster: `captain.from` = the Playbook Captain shell adapter module with CODE registered; produce one composed `players[]` entry per role with `id` = the role name (`coder`, `reviewer`) carrying that role's declared `adapter` / `model` / `reasoningEffort` / `permissions`.
-4. Inherit from the base **only** `theme`, the top-level `layout` block, and the captain-judge fields (`adapter`, `model`, `reasoningEffort`, `permissions`), filling gaps the overlay leaves; the base `players[]` roster shall **not** be auto-mapped onto `coder` / `reviewer`. `layout` is a host-observable field (per the §1 boundary table), so it rides alongside `theme` rather than under `captain.options.code`; the composer carries it through to the composed config and does not interpret it. `captain.adapter` must end up set from the overlay or the base, else composition fails with a path-named error; the role `adapter`s are required in the overlay and are not inherited.
+4. Inherit from the base **only** `theme`, the top-level `layout` and `notifications` blocks, and the captain-judge fields (`adapter`, `model`, `reasoningEffort`, `permissions`), filling gaps the overlay leaves; the base `players[]` roster shall **not** be auto-mapped onto `coder` / `reviewer`. `layout` and `notifications` are host-observable fields (per the §1 boundary table), so they ride alongside `theme` rather than under `captain.options.code`; the composer carries them through to the composed config and does not interpret them. `captain.adapter` must end up set from the overlay or the base, else composition fails with a path-named error; the role `adapter`s are required in the overlay and are not inherited.
 5. Carry the overlay's `captain.options.code` through to the composed config unchanged.
 6. Serialize the composed config to YAML with playbook's own serializer (cligent exports none), write it to a temp file, launch `tmux-play --config <temp>`, and remove it on exit.
 
@@ -87,7 +86,7 @@ New normative items: PBRT-29 / PBRT-30 (host config + registry validation) and P
 
 - **CODE gets a clean, namespaced option surface** without forking tmux-play's schema or teaching cligent about CODE.
 - **The "do not touch" invariants leave the user's file.** Onboarding shifts from "edit a full tmux-play config" to "edit a small CODE overlay"; the composer owns `captain.from` and the baked ids.
-- **A user's existing tmux-play config is reused** for theme and judge defaults, but not for the player roster — avoiding surprising adapter inheritance into the two CODE roles.
+- **A user's existing tmux-play config is reused** for theme, layout, notifications, and judge defaults, but not for the player roster — avoiding surprising adapter inheritance into the two CODE roles.
 - **Validation moves to the boundary that owns the schema.** Malformed `options.code` fails fast in the CODE registry entry with a path-named error instead of an unchecked cast.
 - **cligent is untouched.** Composition uses already-exported loader API; the object-launcher remains a deferred, optional optimization.
 - **The session-level contract is updated only at the Captain target.** DR-004 §11's direct CODE adapter is superseded by [DR-008](008-playbook-captain-shell.md) for tmux-play launch; the composer still owns the baked player ids and produces the config the session consumes.

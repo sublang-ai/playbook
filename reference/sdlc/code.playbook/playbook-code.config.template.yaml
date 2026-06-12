@@ -31,12 +31,21 @@
 # - layout sizes the tmux window (layout.window: columns × rows) and
 #   sets the relative column widths (layout.columnWeights) for the
 #   Boss/Captain, Coder, and Reviewer columns.
+# - notifications configures tmux-play's host notifications. Supported
+#   events are player_finished, turn_finished, and turn_aborted; each
+#   event accepts off, bell, or desktop. The seeded defaults match
+#   cligent's generated home config, with omitted turn_aborted resolving
+#   to off.
 
 layout:
   window:
     columns: 174
     rows: 49
   columnWeights: [4, 6, 6]
+
+notifications:
+  player_finished: bell
+  turn_finished: desktop
 
 captain:
   adapter: claude

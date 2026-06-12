@@ -135,9 +135,10 @@ CODE-specific runtime options shall be carried under
 `captain.options.code` as a namespaced object, and no CODE option
 shall be placed elsewhere in the config.
 A setting that changes host-observable behavior — theme, layout,
-permissions, model or adapter routing, or timing — shall be
-expressed through tmux-play's own `captain` / `players` fields
-rather than `captain.options.code`.
+notifications, permissions, model or adapter routing, or timing —
+shall be expressed through tmux-play's own top-level `theme` /
+`layout` / `notifications` fields or its `captain` / `players`
+fields rather than `captain.options.code`.
 The Committer alias is not such a setting: tmux-play models no
 `Committer` player, so the alias selects which of the two existing
 CODE roles the composite `Committer` binds to — CODE-internal role

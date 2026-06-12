@@ -6,6 +6,10 @@
 # Run with:
 #   tmux-play --config tmux-play.config.yaml
 
+notifications:
+  player_finished: bell
+  turn_finished: desktop
+
 captain:
   # Dev form: sibling-path import of the compiled shell adapter. After
   # @sublang/playbook is published, swap this for:

@@ -6,6 +6,10 @@
 # package export, not a local repo path. The runtime still expects the
 # host app to provide the @sublang/cligent peer dependency.
 
+notifications:
+  player_finished: bell
+  turn_finished: desktop
+
 captain:
   from: "@sublang/playbook/playbook-captain"
   adapter: claude

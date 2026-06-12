@@ -42,9 +42,14 @@ The bundled template shall be a CODE overlay per
 block, a `players` mapping with `coder` and `reviewer` keys (each
 with `adapter` and optional `model` / `reasoningEffort` /
 `permissions`) plus an optional `committer` alias slot, an optional
-top-level `layout` block (window size and column weights), and any
+top-level `layout` block (window size and column weights), an
+optional top-level `notifications` block, and any
 `captain.options.code`; it shall carry neither `captain.from` nor
 `players[].id`, since the composer injects those.
+The bundled template shall include
+`notifications: { player_finished: bell, turn_finished: desktop }`;
+omitting `turn_aborted` shall leave cligent to resolve that event to
+`off`.
 This item fixes the template's *shape*, not its model picks; the
 concrete `adapter` / `model` / `reasoningEffort` values stay
 user-tunable per [PBCODE-6](../user/playbook-code.md#pbcode-6).
@@ -91,8 +96,9 @@ when none exists.
 The shim shall read the overlay (the
 [PBCODE-5](../user/playbook-code.md#pbcode-5) path): its `players`
 mapping keyed by `coder` / `reviewer`, its `captain` judge block,
-and its `captain.options.code`; the overlay carries no
-`captain.from` and no `players[].id`.
+its optional top-level `layout` and `notifications` blocks, and its
+`captain.options.code`; the overlay carries no `captain.from` and
+no `players[].id`.
 The shim shall set the composed `captain.from` to
 `@sublang/playbook/playbook-captain`, the Playbook Captain shell
 adapter module with CODE registered.
@@ -119,16 +125,16 @@ It shall set the composed `captain.adapter` from the overlay when
 present, else from the base config, and shall fail with a
 path-named `captain.adapter` error when neither supplies it; the
 role `adapter`s are required in the overlay and are not inherited.
-It shall carry the optional top-level `layout` block into the
-composed config from the overlay, or inherit it from the base
-config when the overlay omits it — the same precedence as `theme` —
-without interpreting its contents, since `layout` is a
-host-observable tmux-play field, not a CODE option.
+It shall carry optional top-level `layout` and `notifications`
+blocks into the composed config from the overlay, or inherit them
+from the base config when the overlay omits them — the same
+precedence as `theme` — without interpreting their contents, since
+they are host-observable tmux-play fields, not CODE options.
 Because cligent's loader normalizes a discovered base to `captain` /
-`players` / `theme` and drops fields it does not model — `layout`
-among them — the shim shall recover a base `layout` from the raw
+`players` / `theme` and may drop fields it does not model, the shim
+shall recover a base `layout` or `notifications` block from the raw
 base YAML when the loader returns none, so base inheritance holds;
-this recovery is inert once a loader preserves `layout` itself.
+this recovery is inert once a loader preserves the field itself.
 The shim shall type the composed config with cligent's exported
 config types but shall serialize it to the temporary `.yaml` with
 its own serializer, since `@sublang/cligent/tmux-play` exports no

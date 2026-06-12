@@ -67,6 +67,9 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
     expect(seeded).toContain('PBRT-4');
     expect(seeded).toContain('writablePaths');
     expect(seeded).toContain('- .git');
+    expect(seeded).toContain('notifications:');
+    expect(seeded).toContain('player_finished: bell');
+    expect(seeded).toContain('turn_finished: desktop');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
     // Launches the *composed temp* config, not the user overlay path.
@@ -92,6 +95,13 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
     expect(composed.layout).toEqual({
       window: { columns: 174, rows: 49 },
       columnWeights: [4, 6, 6],
+    });
+    // PBCODE-16/17: notification settings are host-owned tmux-play
+    // config and pass through from the CODE overlay to the composed
+    // runtime config.
+    expect(composed.notifications).toEqual({
+      player_finished: 'bell',
+      turn_finished: 'desktop',
     });
     // PBCODE-16/17 + PBRT-8: the seeded Committer alias resolves into
     // captain.options.code.committer without adding a players[] entry,
@@ -348,7 +358,7 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
     expect(composed.captain.options).toEqual({ code: { } });
   });
 
-  it('inherits only theme and captain-judge fields from the base, never the base roster', () => {
+  it('inherits only host fields and captain-judge fields from the base, never the base roster', () => {
     const overlay = {
       captain: { adapter: 'claude' },
       players: {
@@ -358,6 +368,11 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
     };
     const base = {
       theme: 'latte',
+      notifications: {
+        player_finished: 'bell',
+        turn_finished: 'desktop',
+        turn_aborted: 'off',
+      },
       captain: {
         from: '@sublang/cligent/captains/fanout',
         adapter: 'codex',
@@ -376,6 +391,11 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
     expect(composed.captain.model).toBe('base-judge-model');
     expect(composed.captain.reasoningEffort).toBe('medium');
     expect(composed.theme).toBe('latte');
+    expect(composed.notifications).toEqual({
+      player_finished: 'bell',
+      turn_finished: 'desktop',
+      turn_aborted: 'off',
+    });
     // The base roster is not mapped onto coder / reviewer.
     expect(composed.players.map((p: { id: string }) => p.id)).toEqual([
       'coder',
@@ -441,6 +461,68 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
       window: { columns: 174, rows: 49 },
       columnWeights: [4, 6, 6],
     });
+  });
+
+  it('carries a top-level notifications block through from the overlay', () => {
+    const composed = composeRuntimeConfig({
+      captain: { adapter: 'claude' },
+      notifications: { player_finished: 'bell', turn_finished: 'desktop' },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    });
+    expect(composed.notifications).toEqual({
+      player_finished: 'bell',
+      turn_finished: 'desktop',
+    });
+  });
+
+  it('inherits notifications from the base when the overlay omits them, like theme', () => {
+    const overlay = {
+      captain: { adapter: 'claude' },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    };
+    const base = {
+      notifications: {
+        player_finished: 'off',
+        turn_finished: 'desktop',
+        turn_aborted: 'bell',
+      },
+      captain: { from: 'x', adapter: 'codex' },
+      players: [{ id: 'solo', adapter: 'gemini' }],
+    };
+    const composed = composeRuntimeConfig(overlay, base);
+    expect(composed.notifications).toEqual({
+      player_finished: 'off',
+      turn_finished: 'desktop',
+      turn_aborted: 'bell',
+    });
+  });
+
+  it('prefers overlay notifications over base notifications', () => {
+    const overlay = {
+      captain: { adapter: 'claude' },
+      notifications: { player_finished: 'bell' },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    };
+    const base = {
+      notifications: {
+        player_finished: 'off',
+        turn_finished: 'desktop',
+        turn_aborted: 'bell',
+      },
+      captain: { from: 'x', adapter: 'codex' },
+      players: [{ id: 'solo', adapter: 'gemini' }],
+    };
+    const composed = composeRuntimeConfig(overlay, base);
+    expect(composed.notifications).toEqual({ player_finished: 'bell' });
   });
 
   it('inherits captain.adapter from the base when the overlay omits it', () => {
@@ -637,6 +719,58 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
       'coder',
       'reviewer',
     ]);
+  });
+
+  it('inherits a base notifications block when the overlay omits it, end to end', async () => {
+    const home = await makeTempHome();
+    await writeOverlay(
+      home,
+      [
+        'captain:',
+        '  adapter: claude',
+        'players:',
+        '  coder:',
+        '    adapter: claude',
+        '  reviewer:',
+        '    adapter: codex',
+        '',
+      ].join('\n'),
+    );
+    await writeBaseConfig(
+      home,
+      [
+        'notifications:',
+        '  player_finished: bell',
+        '  turn_finished: desktop',
+        'captain:',
+        '  from: "@sublang/cligent/captains/fanout"',
+        '  adapter: codex',
+        'players:',
+        '  - id: solo',
+        '    adapter: gemini',
+        '',
+      ].join('\n'),
+    );
+    const spawn = fakeSpawn();
+
+    const result = await runPlaybookCodeCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'k', OPENAI_API_KEY: 'k' },
+      homeDir: home,
+      cwd: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+
+    expect(result).toEqual({ code: 0 });
+    const composed = parseYaml(spawn.configs[0].content);
+    expect(composed.notifications).toEqual({
+      player_finished: 'bell',
+      turn_finished: 'desktop',
+      turn_aborted: 'off',
+    });
   });
 
   it('inherits a base layout block when the overlay omits it, end to end', async () => {
