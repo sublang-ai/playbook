@@ -38,16 +38,18 @@ interface StubContext {
   captainOptions: unknown[];
 }
 
-function stubSession(): StubSession {
+function stubSession(
+  players: CaptainSession['players'] = [
+    { id: 'coder', adapter: 'claude' },
+    { id: 'reviewer', adapter: 'codex' },
+  ],
+): StubSession {
   const statuses: StubSession['statuses'] = [];
   const telemetry: StubSession['telemetry'] = [];
   return {
     session: {
       signal: new AbortController().signal,
-      players: [
-        { id: 'coder', adapter: 'claude' },
-        { id: 'reviewer', adapter: 'codex' },
-      ],
+      players,
       emitStatus: async (message, data) => {
         statuses.push({ message, data });
       },
@@ -195,6 +197,9 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
     expect(validateCodeOptions({ code: { committer: 'reviewer' } })).toEqual({
       committer: 'reviewer',
     });
+    expect(validateCodeOptions({ code: { committer: 'coder' } })).toEqual({
+      committer: 'coder',
+    });
     expect(
       createCodeRuntimeOptions({
         captainOptions: { code: { committer: 'reviewer' } },
@@ -210,10 +215,30 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
     });
   });
 
-  it('validates captain.options.code during shell init', async () => {
+  it('accepts absent captain options through shell init and CODE engagement', async () => {
+    const s = stubSession();
+    const c = stubContext();
+    const captain = createCodeTmuxPlayCaptain(undefined);
+
+    await expect(captain.init!(s.session)).resolves.toBeUndefined();
+    await captain.handleBossTurn(turn('/code /start fix the bug'), c.context);
+
+    expect(c.playerCalls.map((call) => call.playerId)).toContain('coder');
+  });
+
+  it('rejects unknown captain.options.code keys during shell init', async () => {
     const captain = createCodeTmuxPlayCaptain({ code: { tempo: 5 } });
     await expect(captain.init!(stubSession().session)).rejects.toThrow(
       /captain\.options\.code\.tempo/,
+    );
+  });
+
+  it('rejects an invalid captain.options.code.committer value during shell init', async () => {
+    const captain = createCodeTmuxPlayCaptain({
+      code: { committer: 'boss' },
+    });
+    await expect(captain.init!(stubSession().session)).rejects.toThrow(
+      /captain\.options\.code\.committer/,
     );
   });
 
@@ -252,6 +277,21 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
     );
     expect(commitCall?.playerId).toBe('reviewer');
     expect(committerPrompt(c)).toContain('Coder is claude.');
+  });
+
+  it('derives model-pinned identity strings from the tmux-play session', async () => {
+    const s = stubSession([
+      { id: 'coder', adapter: 'claude', model: 'claude-opus-4-7' },
+      { id: 'reviewer', adapter: 'codex', model: 'gpt-5.5' },
+    ]);
+    const c = stubContext();
+    const captain = createCodeTmuxPlayCaptain({});
+
+    await captain.init!(s.session);
+    await captain.handleBossTurn(turn('/code /start fix the bug'), c.context);
+
+    expect(committerPrompt(c)).toContain('Coder is claude-opus-4-7.');
+    expect(committerPrompt(c)).not.toMatch(/Coder is claude[.;,]/);
   });
 
   it('passes context.signal into CODE through the shell shim', async () => {
