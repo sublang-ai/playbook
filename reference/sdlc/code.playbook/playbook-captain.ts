@@ -70,6 +70,11 @@ interface ActiveTurnSummary {
   stateCounts: Map<string, number>;
 }
 
+const SUMMARY_VISIBLE_STATE_COUNT_LABELS = new Set([
+  'review round',
+  'rebuttal',
+]);
+
 export const playbookCaptainRegistry: readonly PlaybookCaptainRegistryEntry[] = [
   codePlaybookRegistryEntry,
 ];
@@ -100,8 +105,7 @@ function visibleTurnSummaryEnvelope(input: {
   playbookId: string;
   submittedText: string;
   counts: TurnSummaryCounts;
-  stateCountPhrase: string;
-  ledger: ControlLedger;
+  reviewProgressPhrase: string;
 }): string {
   const savedLine = `Saved you: ${input.counts.interruptions} interruptions and ${input.counts.copyPastes} copy-pastes`;
   return [
@@ -111,25 +115,15 @@ function visibleTurnSummaryEnvelope(input: {
     'Use a natural, chat-like tone and no more than two short sentences before the saved-count paragraph.',
     'State only what was done or what changed; do not explain how it was done.',
     'Do not list raw state names, transitions, guard names, prompts, tools, hidden calls, or reasoning.',
-    'If state or progress detail is useful, use only the aggregate State counts phrase supplied below.',
+    'If progress detail is useful, use only the aggregate review/rebuttal rounds phrase supplied below.',
+    'Do not mention counts for plan or implementation steps, tests green, or any other internal state.',
     `Then write one short paragraph beginning exactly: ${savedLine}`,
     'Use the exact counts supplied; do not change them.',
     `Playbook: ${input.playbookId}`,
     `Submitted Boss text:\n${input.submittedText}`,
-    `State counts:\n${input.stateCountPhrase}`,
+    `Review/rebuttal rounds:\n${input.reviewProgressPhrase}`,
     `Counts:\n${JSON.stringify(input.counts)}`,
-    `Ledger:\n${JSON.stringify(input.ledger)}`,
   ].join('\n\n');
-}
-
-function splitStateWords(stateId: string): string[] {
-  return stateId
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[^A-Za-z0-9]+/g, ' ')
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean);
 }
 
 function stateCountLabel(
@@ -140,12 +134,10 @@ function stateCountLabel(
     return undefined;
   }
   const registryLabel = entry.stateCountLabels?.[stateId]?.trim();
-  if (registryLabel) return registryLabel;
-
-  const words = splitStateWords(stateId);
-  if (words.length === 0) return `${stateId} state`;
-  const fallback = words.join(' ');
-  return fallback.endsWith(' state') ? fallback : `${fallback} state`;
+  if (!registryLabel) return undefined;
+  return SUMMARY_VISIBLE_STATE_COUNT_LABELS.has(registryLabel)
+    ? registryLabel
+    : undefined;
 }
 
 function pluralizeStateCount(label: string, count: number): string {
@@ -155,7 +147,7 @@ function pluralizeStateCount(label: string, count: number): string {
   return `${count} ${label}s`;
 }
 
-function stateCountPhrase(stateCounts: ReadonlyMap<string, number>): string {
+function reviewProgressPhrase(stateCounts: ReadonlyMap<string, number>): string {
   if (stateCounts.size === 0) return 'none';
   return [...stateCounts.entries()]
     .map(([label, count]) => pluralizeStateCount(label, count))
@@ -395,7 +387,6 @@ export function createPlaybookCaptainShell(
       copyPastes: 0,
     };
     const summaryStateCounts = new Map<string, number>();
-    let summaryLedger: ControlLedger | undefined;
     let shouldSummarize = false;
     activeTurnSummary = {
       counts: summaryCounts,
@@ -409,7 +400,6 @@ export function createPlaybookCaptainShell(
       });
       shouldSummarize = true;
     } finally {
-      summaryLedger = ledgerSnapshot(engagement.entry.id);
       activeTurnSummary = undefined;
       if (active === engagement && finalDisposalRequested === engagement) {
         finalDisposalRequested = undefined;
@@ -418,13 +408,12 @@ export function createPlaybookCaptainShell(
         await setMode('engaged.parked', 'turn.settled');
       }
     }
-    if (shouldSummarize && summaryLedger) {
+    if (shouldSummarize) {
       await callVisibleTurnSummary(context, {
         playbookId: engagement.entry.id,
         submittedText: text,
         counts: summaryCounts,
-        stateCountPhrase: stateCountPhrase(summaryStateCounts),
-        ledger: summaryLedger,
+        reviewProgressPhrase: reviewProgressPhrase(summaryStateCounts),
       });
     }
   };
@@ -476,8 +465,7 @@ export function createPlaybookCaptainShell(
       playbookId: string;
       submittedText: string;
       counts: TurnSummaryCounts;
-      stateCountPhrase: string;
-      ledger: ControlLedger;
+      reviewProgressPhrase: string;
     },
   ): Promise<void> => {
     const result = await context.callCaptain(visibleTurnSummaryEnvelope(input));

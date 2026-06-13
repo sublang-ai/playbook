@@ -24,7 +24,7 @@ CODE entry has id `code`, command `code`, intent text for software
 development / SDLC coding workflow, idle state id `ready`, final
 state id `done`, a `createRuntime` function for the CODE runtime,
 copy-paste guard names for CODE inter-player handoffs, optional
-state-count labels, and a `validateOptions` function for
+summary-visible state-count labels, and a `validateOptions` function for
 `captain.options.code`.
 The CODE entry's copy-paste guard names shall be exactly
 `accepted`, `approved`, `challengeAccepted`, `challengeRejected`,
@@ -131,19 +131,18 @@ Where the Playbook Captain shell submits text to an engaged
 playbook runtime, the shell shall collect turn-summary counts only
 for the duration of that sub-runtime `handleBossInput` call.
 For that same duration, the shell shall aggregate sub-runtime
-`playbook.fsm.state` telemetry into a state-count phrase for the
-turn-summary prompt, excluding the active registry entry's idle and
-final state ids.
-The state-count phrase shall be `none` when no counted state
-occurred.
+`playbook.fsm.state` telemetry into a review/rebuttal progress
+phrase for the turn-summary prompt, excluding the active registry
+entry's idle and final state ids.
+The review/rebuttal progress phrase shall be `none` when no
+counted review/rebuttal state occurred.
 When the active registry entry provides a state-count label for a
-state id, the shell shall count that state under the provided
-label.
+state id and that label is exactly `review round` or `rebuttal`,
+the shell shall count that state under the provided label.
 When the active registry entry does not provide a state-count label
-for a state id, the shell shall derive a fallback label by
-splitting camel-case / delimiter-separated words and counting the
-state as `<words> state`, omitting the duplicate suffix when the
-words already end in `state`.
+for a state id, or provides any label other than `review round` or
+`rebuttal`, the shell shall not count that state in the
+turn-summary prompt.
 When a wrapped sub-runtime `callPlayer` call returns a player
 reply, the shell shall count one saved interruption for that reply.
 When a wrapped hidden sub-runtime adjudication call returns a guard
@@ -166,11 +165,17 @@ shall make one visible Captain call with a turn-summary prompt
 envelope.
 The turn-summary prompt envelope shall provide the exact saved
 interruption and copy-paste counts, shall provide the aggregate
-state-count phrase, and shall instruct Captain to write the
-Boss-visible block required by
+review/rebuttal progress phrase, and shall instruct Captain to
+write the Boss-visible block required by
 [CAPTAIN-19](../user/playbook-captain.md#captain-19), including the
 paragraph prefix `Saved you: X interruptions and Y copy-pastes`
 with the supplied counts.
+The turn-summary prompt envelope shall instruct Captain not to
+include counts for plan or implementation steps, tests-green
+states, or other internal states.
+The turn-summary prompt envelope shall not include shell ledger JSON
+or raw state ids for states that are not counted in the
+review/rebuttal progress phrase.
 
 ## Lifecycle
 

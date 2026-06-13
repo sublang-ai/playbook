@@ -267,10 +267,12 @@ Any `coderPlayer` / `reviewerPlayer` keys in the forwarded CODE
 options shall be overridden by the derived values.
 The CODE registry entry shall provide state-count labels for the
 Playbook Captain shell's turn-summary aggregation
-([CAPTAIN-20](playbook-captain.md#captain-20)): `awaitBossReply`
-as `Boss reply wait`, `failed` as `failure`, `respondToReview` as
-`review response`, `adjudicateChallenges` as `rebuttal`, and every
-CODE review state id as `review round`.
+([CAPTAIN-20](playbook-captain.md#captain-20)): `adjudicateChallenges`
+as `rebuttal`, and every CODE review state id as `review round`.
+The CODE registry entry shall not provide summary-visible labels
+for `awaitBossReply`, `failed`, `respondToReview`,
+`planAndImplement`, tests-green states, or other internal CODE
+states.
 The CODE review state ids are `reviewBossCommitSpecs`,
 `reviewBossCommitCode`, `reviewBossCommitMixed`,
 `reviewIrTaskCommitSpecs`, `reviewIrTaskCommitCode`,
@@ -300,8 +302,9 @@ The public `@sublang/playbook/code/tmux-play` export shall remain
 resolvable as a compatibility shim whose default export delegates
 to the same shell with CODE registered.
 That compatibility module shall keep exposing the CODE registry
-entry, CODE state-count label map, CODE runtime-options derivation
-helper, CODE options validator, and their public types.
+entry, CODE summary-visible state-count label map, CODE
+runtime-options derivation helper, CODE options validator, and
+their public types.
 
 ### PBRT-30
 

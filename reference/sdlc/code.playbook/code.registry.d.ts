@@ -1,9 +1,6 @@
 import { type CodePlaybookOptions, type PlaybookRuntime } from './code.playbook.js';
 export declare const codeCopyPasteGuardNames: readonly ["accepted", "approved", "challengeAccepted", "challengeRejected", "challengesRaised", "changesMadeCode", "changesMadeCodeAndChallenged", "changesMadeMixed", "changesMadeMixedAndChallenged", "changesMadeSpecs", "changesMadeSpecsAndChallenged", "hasFindings", "needsRevision", "noFindings", "noOpenItems"];
 export declare const codeStateCountLabels: {
-    readonly awaitBossReply: "Boss reply wait";
-    readonly failed: "failure";
-    readonly respondToReview: "review response";
     readonly adjudicateChallenges: "rebuttal";
     readonly reviewBossCommitSpecs: "review round";
     readonly reviewBossCommitCode: "review round";

@@ -229,9 +229,6 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
       'noOpenItems',
     ]);
     expect(codeStateCountLabels).toEqual({
-      awaitBossReply: 'Boss reply wait',
-      failed: 'failure',
-      respondToReview: 'review response',
       adjudicateChallenges: 'rebuttal',
       reviewBossCommitSpecs: 'review round',
       reviewBossCommitCode: 'review round',

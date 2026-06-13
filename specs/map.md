@@ -56,9 +56,9 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: `/code` selection, visible chat, active-engagement routing, status pass-through, clear `/code` start/stop/finished status without JSON data, parking, dismissal, final disposal, and brief visible turn-summary blocks with state counts after sub-runtime turns |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: public `@sublang/playbook/playbook-captain` module, adapter lifecycle, CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, turn-summary counting/prompting with aggregate state counts, telemetry mirroring, distinct shell telemetry carrying structured shell state, and park/resume/dispose lifecycle |
-| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, adapter lifecycle, public shell module resolution, CODE registry wiring, status/telemetry pass-through, brief turn-summary prompts/counts with aggregate state counts, human-readable shell status without structured data, telemetry mirroring, park/resume, dismiss, and final disposal |
+| user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: `/code` selection, visible chat, active-engagement routing, status pass-through, clear `/code` start/stop/finished status without JSON data, parking, dismissal, final disposal, and brief visible turn-summary blocks with saved interruption/copy-paste counts plus review/rebuttal round counts after sub-runtime turns |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: public `@sublang/playbook/playbook-captain` module, adapter lifecycle, CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, turn-summary counting/prompting with saved counts and review/rebuttal progress counts only, telemetry mirroring, distinct shell telemetry carrying structured shell state, and park/resume/dispose lifecycle |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, adapter lifecycle, public shell module resolution, CODE registry wiring, status/telemetry pass-through, brief turn-summary prompts/counts with saved counts and review/rebuttal progress counts only, human-readable shell status without structured data, telemetry mirroring, park/resume, dismiss, and final disposal |
 
 ### GIT
 
@@ -86,8 +86,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through `@sublang/playbook/playbook-captain` with host-owned fields such as notifications plus `captain.options.code` and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring including CODE state-count labels, `@sublang/playbook/code/tmux-play` compatibility, and registry-owned `options.code` validation |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry and compatibility-shim wiring including state-count labels, and `options.code` validation with fake ports/stubbed cligent primitives |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring including CODE review/rebuttal summary labels, `@sublang/playbook/code/tmux-play` compatibility, and registry-owned `options.code` validation |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry and compatibility-shim wiring including review/rebuttal summary labels, and `options.code` validation with fake ports/stubbed cligent primitives |
 
 ### PLAYBOOK
 

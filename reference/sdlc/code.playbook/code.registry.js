@@ -34,9 +34,6 @@ export const codeCopyPasteGuardNames = [
     'noOpenItems',
 ];
 export const codeStateCountLabels = {
-    awaitBossReply: 'Boss reply wait',
-    failed: 'failure',
-    respondToReview: 'review response',
     adjudicateChallenges: 'rebuttal',
     reviewBossCommitSpecs: 'review round',
     reviewBossCommitCode: 'review round',

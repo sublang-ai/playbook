@@ -103,10 +103,13 @@ The summary block shall use a natural chat-like tone and clear
 formatting while remaining brief.
 The summary block shall first state only what was done or what
 changed during the completed sub-runtime turn, not how it was done.
-When the summary block mentions state or progress detail, it shall
-use aggregate counts only, such as `2 review rounds, 1 rebuttal`,
-and shall not list raw state names, transitions, guard names,
-prompts, tools, hidden calls, or reasoning.
+When the summary block mentions progress detail, it shall use only
+aggregate review/rebuttal round counts, for example:
+`2 review rounds, 1 rebuttal`.
+The summary block shall not include counts for plan or
+implementation steps, tests-green states, other internal states,
+raw state names, transitions, guard names, prompts, tools, hidden
+calls, or reasoning.
 The summary block shall then include one short paragraph beginning
 with `Saved you: X interruptions and Y copy-pastes`, where `X` and
 `Y` are decimal counts for that completed sub-runtime turn.

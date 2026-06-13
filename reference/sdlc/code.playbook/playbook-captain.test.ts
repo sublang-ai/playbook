@@ -182,6 +182,8 @@ function fakeCodeEntry(handleHook?: HandleHook, disposeHook?: DisposeHook): {
         'accepted',
       ],
       stateCountLabels: {
+        planAndImplement: 'plan and implement',
+        testsGreen: 'tests green',
         reviewBossCommitCode: 'review round',
         reviewChangesAndChallengesSpecs: 'review round',
         adjudicateChallenges: 'rebuttal',
@@ -843,7 +845,10 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       ),
     ]);
     expect(summaries[0]?.prompt).toContain('Submitted Boss text:\ncommand task');
-    expect(summaries[0]?.prompt).toContain('State counts:\nnone');
+    expect(summaries[0]?.prompt).toContain(
+      'Review/rebuttal rounds:\nnone',
+    );
+    expect(summaries[0]?.prompt).not.toContain('Ledger:');
     expect(summaries[1]?.prompt).toContain('Submitted Boss text:\nrouted task');
     expect(summaries[2]?.prompt).toContain(
       'Submitted Boss text:\nrouted continuation',
@@ -878,6 +883,14 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       });
       await runtime.ports.emitTelemetry({
         topic: 'playbook.fsm.state',
+        payload: { to: 'planAndImplement' },
+      });
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'testsGreen' },
+      });
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
         payload: { to: 'customState' },
       });
       await runtime.ports.callPlayer('coder', 'first player', runtimeTurn.signal);
@@ -908,11 +921,14 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       'Saved you: 2 interruptions and 3 copy-pastes',
     );
     expect(summary?.prompt).toContain(
-      'State counts:\n2 review rounds, 1 rebuttal, 1 custom state',
+      'Review/rebuttal rounds:\n2 review rounds, 1 rebuttal',
     );
+    expect(summary?.prompt).not.toContain('custom state');
+    expect(summary?.prompt).not.toContain('Ledger:');
     expect(summary?.prompt).toContain('State only what was done or what changed');
     expect(summary?.prompt).toContain('do not explain how it was done');
     expect(summary?.prompt).toContain('Do not list raw state names');
+    expect(summary?.prompt).toContain('Do not mention counts for plan');
     expect(summary?.prompt).toContain('natural, chat-like tone');
   });
 
