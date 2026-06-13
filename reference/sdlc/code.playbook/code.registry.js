@@ -16,6 +16,23 @@ import createPlaybookRuntime from './code.playbook.js';
 // on stray keys.
 const CODE_OPTION_KEYS = new Set(['committer']);
 const COMMITTER_PLAYER_IDS = new Set(['coder', 'reviewer']);
+export const codeCopyPasteGuardNames = [
+    'accepted',
+    'approved',
+    'challengeAccepted',
+    'challengeRejected',
+    'challengesRaised',
+    'changesMadeCode',
+    'changesMadeCodeAndChallenged',
+    'changesMadeMixed',
+    'changesMadeMixedAndChallenged',
+    'changesMadeSpecs',
+    'changesMadeSpecsAndChallenged',
+    'hasFindings',
+    'needsRevision',
+    'noFindings',
+    'noOpenItems',
+];
 export function validateCodeOptions(captainOptions) {
     const code = readCodeNamespace(captainOptions);
     if (code === undefined)
@@ -68,6 +85,7 @@ export const codePlaybookRegistryEntry = {
     intent: 'software development / SDLC coding workflow',
     idleStateId: 'ready',
     finalStateId: 'done',
+    copyPasteGuardNames: codeCopyPasteGuardNames,
     validateOptions: validateCodeOptions,
     createRuntime(options) {
         return createPlaybookRuntime(createCodeRuntimeOptions(options));

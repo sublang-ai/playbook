@@ -1,4 +1,5 @@
 import { type CodePlaybookOptions, type PlaybookRuntime } from './code.playbook.js';
+export declare const codeCopyPasteGuardNames: readonly ["accepted", "approved", "challengeAccepted", "challengeRejected", "challengesRaised", "changesMadeCode", "changesMadeCodeAndChallenged", "changesMadeMixed", "changesMadeMixedAndChallenged", "changesMadeSpecs", "changesMadeSpecsAndChallenged", "hasFindings", "needsRevision", "noFindings", "noOpenItems"];
 export interface CodeOptions {
     committer?: 'coder' | 'reviewer';
 }
@@ -17,6 +18,7 @@ export interface CodePlaybookRegistryEntry {
     intent: string;
     idleStateId: 'ready';
     finalStateId: 'done';
+    copyPasteGuardNames: readonly string[];
     validateOptions(captainOptions: unknown): CodeOptions;
     createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;
 }

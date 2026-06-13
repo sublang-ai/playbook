@@ -11,6 +11,7 @@ export interface PlaybookCaptainRegistryEntry {
     intent: string;
     idleStateId: string;
     finalStateId: string;
+    copyPasteGuardNames: readonly string[];
     validateOptions(captainOptions: unknown): unknown;
     createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
 }

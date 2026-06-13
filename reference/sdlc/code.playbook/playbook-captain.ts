@@ -27,6 +27,7 @@ export interface PlaybookCaptainRegistryEntry {
   intent: string;
   idleStateId: string;
   finalStateId: string;
+  copyPasteGuardNames: readonly string[];
   validateOptions(captainOptions: unknown): unknown;
   createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
 }
@@ -57,23 +58,6 @@ type ShellMode = 'chat' | 'engaged.driving' | 'engaged.parked';
 
 const SUB_RUNTIME_FSM_TOPIC = 'playbook.fsm.state';
 const SHELL_FSM_TOPIC = 'playbook.captain.fsm.state';
-const COPY_PASTE_GUARDS: ReadonlySet<string> = new Set([
-  'accepted',
-  'approved',
-  'challengeAccepted',
-  'challengeRejected',
-  'challengesRaised',
-  'changesMadeCode',
-  'changesMadeCodeAndChallenged',
-  'changesMadeMixed',
-  'changesMadeMixedAndChallenged',
-  'changesMadeSpecs',
-  'changesMadeSpecsAndChallenged',
-  'hasFindings',
-  'needsRevision',
-  'noFindings',
-  'noOpenItems',
-]);
 
 interface TurnSummaryCounts {
   interruptions: number;
@@ -295,7 +279,11 @@ export function createPlaybookCaptainShell(
         throw new Error('callCaptain returned status=ok with no finalText');
       }
       const guard = guardFromJudgeReply(result.finalText);
-      if (guard && COPY_PASTE_GUARDS.has(guard) && activeTurnSummaryCounts) {
+      if (
+        guard &&
+        active?.entry.copyPasteGuardNames.includes(guard) &&
+        activeTurnSummaryCounts
+      ) {
         activeTurnSummaryCounts.copyPastes++;
       }
       return result.finalText;

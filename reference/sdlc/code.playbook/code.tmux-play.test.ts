@@ -19,6 +19,7 @@ import type {
   TmuxPlayRecord,
 } from '@sublang/cligent/tmux-play';
 import createCodeTmuxPlayCaptain, {
+  codeCopyPasteGuardNames,
   codePlaybookRegistryEntry,
   createCodeRuntimeOptions,
   validateCodeOptions,
@@ -204,9 +205,27 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
         intent: 'software development / SDLC coding workflow',
         idleStateId: 'ready',
         finalStateId: 'done',
+        copyPasteGuardNames: codeCopyPasteGuardNames,
         validateOptions: validateCodeOptions,
       }),
     );
+    expect(codeCopyPasteGuardNames).toEqual([
+      'accepted',
+      'approved',
+      'challengeAccepted',
+      'challengeRejected',
+      'challengesRaised',
+      'changesMadeCode',
+      'changesMadeCodeAndChallenged',
+      'changesMadeMixed',
+      'changesMadeMixedAndChallenged',
+      'changesMadeSpecs',
+      'changesMadeSpecsAndChallenged',
+      'hasFindings',
+      'needsRevision',
+      'noFindings',
+      'noOpenItems',
+    ]);
     expect(validateCodeOptions({ code: { committer: 'reviewer' } })).toEqual({
       committer: 'reviewer',
     });

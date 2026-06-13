@@ -92,10 +92,10 @@ CODE engagement and return to shell chat.
 
 Where the Playbook Captain shell is running under tmux-play, while
 a playbook is engaged, when the shell submits a Boss turn to the
-engaged playbook runtime and that runtime's `handleBossInput` call
-settles, the shell shall append a visible Captain turn-summary
-block after the sub-runtime's ordered status and telemetry
-emissions for that turn.
+engaged playbook and that playbook finishes processing the
+submitted turn, the shell shall append a visible Captain
+turn-summary block after the sub-runtime's ordered status and
+telemetry emissions for that turn.
 The summary block shall use a natural chat-like tone and clear
 formatting.
 The summary block shall first recap the completed sub-runtime turn
@@ -103,6 +103,10 @@ in a few sentences.
 The summary block shall then include one short paragraph beginning
 with `Saved you: X interruptions and Y copy-pastes`, where `X` and
 `Y` are decimal counts for that completed sub-runtime turn.
+In that paragraph, interruptions are player replies that Boss did
+not have to relay, and copy-pastes are inter-player handoffs —
+including reviews, rebuttals, revisions, approvals, and passes —
+that Boss did not have to transfer manually.
 Where the Playbook Captain shell handles a Boss turn as shell chat,
 clarification, bare playbook selection without sub-runtime
 submission, or routing failure recovery, the shell shall not append

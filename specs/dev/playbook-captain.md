@@ -23,7 +23,18 @@ Captain, the shell shall own a registry of playbook entries whose
 CODE entry has id `code`, command `code`, intent text for software
 development / SDLC coding workflow, idle state id `ready`, final
 state id `done`, a `createRuntime` function for the CODE runtime,
-and a `validateOptions` function for `captain.options.code`.
+copy-paste guard names for CODE inter-player handoffs, and a
+`validateOptions` function for `captain.options.code`.
+The CODE entry's copy-paste guard names shall be exactly
+`accepted`, `approved`, `challengeAccepted`, `challengeRejected`,
+`challengesRaised`, `changesMadeCode`,
+`changesMadeCodeAndChallenged`, `changesMadeMixed`,
+`changesMadeMixedAndChallenged`, `changesMadeSpecs`,
+`changesMadeSpecsAndChallenged`, `hasFindings`, `needsRevision`,
+`noFindings`, and `noOpenItems`.
+These names are CODE FSM guard keys from the state `result` maps
+adjudicated under [PBRT-10](playbook-runtime.md#pbrt-10) and
+transition-covered under [PLAYBOOK-4](playbook.md#playbook-4).
 The shell shall support one active engagement and shall keep only
 a bounded control ledger: active playbook id, shell mode, latest
 sub-runtime state id, pending Boss question when mirrored from
@@ -120,13 +131,18 @@ playbook runtime, the shell shall collect turn-summary counts only
 for the duration of that sub-runtime `handleBossInput` call.
 When a wrapped sub-runtime `callPlayer` call returns a player
 reply, the shell shall count one saved interruption for that reply.
-When a wrapped hidden sub-runtime adjudication call returns a
-selected review, rebuttal, challenge, pass, approval, or revision
-guard, the shell shall count one saved copy-paste for that
-inter-player handoff.
+When a wrapped hidden sub-runtime adjudication call returns a guard
+whose name appears in the active playbook registry entry's
+copy-paste guard names, the shell shall count one saved copy-paste
+for that inter-player handoff.
 The shell shall count one saved copy-paste per adjudicated
 handoff, regardless of how many individual review findings or
 rebuttal items the handoff text contains.
+Each playbook registry entry shall own its exact copy-paste guard
+names.
+The shell shall derive copy-paste eligibility from the active
+playbook registry entry's copy-paste guard names, so an adjudicated
+guard removed from that registry list is not counted.
 The shell shall not count hidden router calls, visible chat calls,
 sub-runtime classifier/event JSON, or malformed adjudication
 replies as saved copy-pastes.

@@ -21,6 +21,23 @@ import createPlaybookRuntime, {
 // on stray keys.
 const CODE_OPTION_KEYS = new Set<string>(['committer']);
 const COMMITTER_PLAYER_IDS = new Set<string>(['coder', 'reviewer']);
+export const codeCopyPasteGuardNames = [
+  'accepted',
+  'approved',
+  'challengeAccepted',
+  'challengeRejected',
+  'challengesRaised',
+  'changesMadeCode',
+  'changesMadeCodeAndChallenged',
+  'changesMadeMixed',
+  'changesMadeMixedAndChallenged',
+  'changesMadeSpecs',
+  'changesMadeSpecsAndChallenged',
+  'hasFindings',
+  'needsRevision',
+  'noFindings',
+  'noOpenItems',
+] as const;
 
 // The validated CODE options set. `committer`, when present, is the
 // resolved Committer-alias player id (PBRT-8 / PBRT-30); a future CODE
@@ -46,6 +63,7 @@ export interface CodePlaybookRegistryEntry {
   intent: string;
   idleStateId: 'ready';
   finalStateId: 'done';
+  copyPasteGuardNames: readonly string[];
   validateOptions(captainOptions: unknown): CodeOptions;
   createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;
 }
@@ -115,6 +133,7 @@ export const codePlaybookRegistryEntry: CodePlaybookRegistryEntry = {
   intent: 'software development / SDLC coding workflow',
   idleStateId: 'ready',
   finalStateId: 'done',
+  copyPasteGuardNames: codeCopyPasteGuardNames,
   validateOptions: validateCodeOptions,
   createRuntime(options) {
     return createPlaybookRuntime(createCodeRuntimeOptions(options));

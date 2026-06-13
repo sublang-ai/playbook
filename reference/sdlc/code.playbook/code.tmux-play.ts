@@ -5,6 +5,7 @@ import type { Captain } from '@sublang/cligent/tmux-play';
 import createPlaybookCaptainShell from './playbook-captain.js';
 
 export {
+  codeCopyPasteGuardNames,
   codePlaybookRegistryEntry,
   createCodeRuntimeOptions,
   validateCodeOptions,

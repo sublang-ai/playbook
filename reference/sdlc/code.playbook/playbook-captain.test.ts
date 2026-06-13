@@ -40,6 +40,11 @@ type CaptainReply =
       options: CaptainCallOptions | undefined,
     ) => CaptainRunResult);
 
+type CaptainCallHook = (
+  prompt: string,
+  options: CaptainCallOptions | undefined,
+) => void;
+
 type HandleHook = (
   runtime: FakeRuntime,
   turn: { text: string; signal: AbortSignal },
@@ -99,7 +104,10 @@ function stubSession(): StubSession {
   };
 }
 
-function stubContext(captainReplies: CaptainReply[] = []): StubContext {
+function stubContext(
+  captainReplies: CaptainReply[] = [],
+  onCaptainCall?: CaptainCallHook,
+): StubContext {
   const controller = new AbortController();
   const playerCalls: StubContext['playerCalls'] = [];
   const captainCalls: StubContext['captainCalls'] = [];
@@ -122,6 +130,7 @@ function stubContext(captainReplies: CaptainReply[] = []): StubContext {
         options,
       ): Promise<CaptainRunResult> => {
         captainCalls.push({ prompt, options });
+        onCaptainCall?.(prompt, options);
         if (isTurnSummaryPrompt(prompt)) {
           return {
             status: 'ok',
@@ -167,6 +176,11 @@ function fakeCodeEntry(handleHook?: HandleHook, disposeHook?: DisposeHook): {
       intent: 'software development / SDLC coding workflow',
       idleStateId: 'ready',
       finalStateId: 'done',
+      copyPasteGuardNames: [
+        'hasFindings',
+        'changesMadeSpecs',
+        'accepted',
+      ],
       validateOptions,
       createRuntime,
     },
@@ -770,8 +784,16 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
 
 describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
   it('appends visible turn summaries after registered, dispatch, and sub submissions', async () => {
+    const order: string[] = [];
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitStatus(`status for ${runtimeTurn.text}`);
+      order.push('status');
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'ready' },
+      });
+      order.push('telemetry');
       await runtime.ports.callPlayer(
         'coder',
         `player prompt for ${runtimeTurn.text}`,
@@ -787,7 +809,9 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
         text: 'routed task',
       }),
       captainJson({ decision: 'sub', text: 'routed continuation' }),
-    ]);
+    ], (prompt) => {
+      if (isTurnSummaryPrompt(prompt)) order.push('summary');
+    });
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code command task'), context.context);
@@ -813,15 +837,27 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summaries[2]?.prompt).toContain(
       'Submitted Boss text:\nrouted continuation',
     );
+    expect(order).toEqual([
+      'status',
+      'telemetry',
+      'summary',
+      'status',
+      'telemetry',
+      'summary',
+      'status',
+      'telemetry',
+      'summary',
+    ]);
   });
 
-  it('counts player replies as interruptions and review/rebuttal/pass guards as copy-pastes', async () => {
+  it('counts player replies as interruptions and registry-declared guards as copy-pastes', async () => {
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await runtime.ports.callPlayer('coder', 'first player', runtimeTurn.signal);
       await runtime.ports.callPlayer('reviewer', 'second player', runtimeTurn.signal);
       await runtime.ports.callJudge('classifier event', runtimeTurn.signal);
       await runtime.ports.callJudge('malformed adjudication', runtimeTurn.signal);
+      await runtime.ports.callJudge('guard absent from registry', runtimeTurn.signal);
       await runtime.ports.callJudge('review findings', runtimeTurn.signal);
       await runtime.ports.callJudge('review revision', runtimeTurn.signal);
       await runtime.ports.callJudge('review pass', runtimeTurn.signal);
@@ -831,6 +867,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     const context = stubContext([
       captainJson({ event: 'START_CODING', payload: { intent: 'x' } }),
       { status: 'ok', turnId: 1, finalText: 'not json' },
+      captainJson({ guard: 'approved' }),
       captainJson({ guard: 'hasFindings' }),
       captainJson({ guard: 'changesMadeSpecs' }),
       captainJson({ guard: 'accepted' }),
