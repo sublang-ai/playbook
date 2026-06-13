@@ -67,11 +67,12 @@ in order.
 Where the Playbook Captain shell is running under tmux-play, when
 the shell engages, dismisses, or disposes a playbook engagement,
 the shell shall emit Boss-visible Captain status lines
-`◇ /<command> started`, `◇ /<command> stopped`, and
-`◇ /<command> finished` for those shell events, using the
-registered slash command such as `/code` rather than the internal
-playbook id, without changing or reusing the engaged runtime's
-glyph vocabulary.
+`◇ /<command> started` when it engages the playbook,
+`◇ /<command> stopped` when Boss dismisses the engagement, and
+`◇ /<command> finished` when it disposes the playbook after final
+completion, using the registered slash command such as `/code`
+rather than the internal playbook id, without changing or reusing
+the engaged runtime's glyph vocabulary.
 Those shell-owned status lines shall be complete human-readable
 messages and shall not attach structured status data that the host
 could render as raw JSON.

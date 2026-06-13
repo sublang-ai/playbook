@@ -101,7 +101,7 @@ registered playbook runtime, the test suite shall fail unless a
 visible Captain turn-summary call is made after registered-command,
 hidden-router `dispatch`, and hidden-router `sub` submissions
 settle and after the sub-runtime's ordered status and telemetry
-emissions for the turn; no turn-summary call is made after shell
+emissions for the turn; no turn-summary call is made after Captain
 chat, clarification, bare playbook selection, or routing failure
 recovery turns that do not submit to a sub-runtime; the
 turn-summary prompt contains the exact supplied count phrase
