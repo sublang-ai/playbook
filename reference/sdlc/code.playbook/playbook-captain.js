@@ -24,16 +24,70 @@ function visibleTurnSummaryEnvelope(input) {
     return [
         'You are the Playbook Captain shell.',
         'This is visible Boss chat after a sub-playbook command completed. Do not reveal hidden control JSON, hidden router decisions, or hidden judge replies.',
-        'Write a clearly formatted turn-summary block for Boss.',
-        'Use a natural, chat-like tone.',
-        'First recap the completed sub-runtime turn in a few sentences.',
+        'Write a brief, clearly formatted turn-summary block for Boss.',
+        'Use a natural, chat-like tone and no more than two short sentences before the saved-count paragraph.',
+        'State only what was done or what changed; do not explain how it was done.',
+        'Do not list raw state names, transitions, guard names, prompts, tools, hidden calls, or reasoning.',
+        'If state or progress detail is useful, use only the aggregate State counts phrase supplied below.',
         `Then write one short paragraph beginning exactly: ${savedLine}`,
         'Use the exact counts supplied; do not change them.',
         `Playbook: ${input.playbookId}`,
         `Submitted Boss text:\n${input.submittedText}`,
+        `State counts:\n${input.stateCountPhrase}`,
         `Counts:\n${JSON.stringify(input.counts)}`,
         `Ledger:\n${JSON.stringify(input.ledger)}`,
     ].join('\n\n');
+}
+function splitStateWords(stateId) {
+    return stateId
+        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+        .replace(/[^A-Za-z0-9]+/g, ' ')
+        .trim()
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean);
+}
+function stateCountLabel(stateId, entry) {
+    if (stateId === entry.idleStateId || stateId === entry.finalStateId) {
+        return undefined;
+    }
+    if (stateId === 'awaitBossReply')
+        return 'Boss reply wait';
+    if (stateId === 'failed')
+        return 'failure';
+    if (stateId === 'respondToReview')
+        return 'review response';
+    if (stateId === 'adjudicateChallenges')
+        return 'rebuttal';
+    const words = splitStateWords(stateId);
+    if (words.includes('review'))
+        return 'review round';
+    if (words.includes('rebuttal') ||
+        words.includes('challenge') ||
+        words.includes('challenges')) {
+        return 'rebuttal';
+    }
+    if (words.length === 0)
+        return `${stateId} state`;
+    return `${words.join(' ')} state`;
+}
+function pluralizeStateCount(label, count) {
+    if (count === 1)
+        return `1 ${label}`;
+    if (label === 'Boss reply wait')
+        return `${count} Boss reply waits`;
+    if (label.endsWith('y'))
+        return `${count} ${label.slice(0, -1)}ies`;
+    if (label.endsWith('s'))
+        return `${count} ${label}es`;
+    return `${count} ${label}s`;
+}
+function stateCountPhrase(stateCounts) {
+    if (stateCounts.size === 0)
+        return 'none';
+    return [...stateCounts.entries()]
+        .map(([label, count]) => pluralizeStateCount(label, count))
+        .join(', ');
 }
 function guardFromJudgeReply(finalText) {
     return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
@@ -59,7 +113,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
     let lastError;
     let lastRouteDecision;
     let finalDisposalRequested;
-    let activeTurnSummaryCounts;
+    let activeTurnSummary;
     const requireSession = () => {
         if (!session) {
             throw new Error('init must be called first');
@@ -127,6 +181,10 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         const stateId = mirroredStateId(payload);
         if (stateId === undefined)
             return;
+        const countLabel = stateCountLabel(stateId, active.entry);
+        if (activeTurnSummary && countLabel) {
+            activeTurnSummary.stateCounts.set(countLabel, (activeTurnSummary.stateCounts.get(countLabel) ?? 0) + 1);
+        }
         latestSubRuntimeStateId = stateId;
         pendingBossQuestion = record?.pendingBossQuestion;
         lastError = normalizeErrorCompact(record?.lastError);
@@ -146,8 +204,8 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
                 throw new Error('callPlayer invoked outside a Boss turn');
             }
             const result = await activeContext.callPlayer(playerId, prompt);
-            if (activeTurnSummaryCounts) {
-                activeTurnSummaryCounts.interruptions++;
+            if (activeTurnSummary) {
+                activeTurnSummary.counts.interruptions++;
             }
             return {
                 status: result.status,
@@ -171,8 +229,8 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
             const guard = guardFromJudgeReply(result.finalText);
             if (guard &&
                 active?.entry.copyPasteGuardNames.includes(guard) &&
-                activeTurnSummaryCounts) {
-                activeTurnSummaryCounts.copyPastes++;
+                activeTurnSummary) {
+                activeTurnSummary.counts.copyPastes++;
             }
             return result.finalText;
         },
@@ -208,9 +266,13 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
             interruptions: 0,
             copyPastes: 0,
         };
+        const summaryStateCounts = new Map();
         let summaryLedger;
         let shouldSummarize = false;
-        activeTurnSummaryCounts = summaryCounts;
+        activeTurnSummary = {
+            counts: summaryCounts,
+            stateCounts: summaryStateCounts,
+        };
         await setMode('engaged.driving', 'submit');
         try {
             await engagement.runtime.handleBossInput({
@@ -221,7 +283,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         }
         finally {
             summaryLedger = ledgerSnapshot(engagement.entry.id);
-            activeTurnSummaryCounts = undefined;
+            activeTurnSummary = undefined;
             if (active === engagement && finalDisposalRequested === engagement) {
                 finalDisposalRequested = undefined;
                 await disposeActive('final');
@@ -235,6 +297,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
                 playbookId: engagement.entry.id,
                 submittedText: text,
                 counts: summaryCounts,
+                stateCountPhrase: stateCountPhrase(summaryStateCounts),
                 ledger: summaryLedger,
             });
         }

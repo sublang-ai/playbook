@@ -129,6 +129,21 @@ question or normalized error fields needed for the shell ledger.
 Where the Playbook Captain shell submits text to an engaged
 playbook runtime, the shell shall collect turn-summary counts only
 for the duration of that sub-runtime `handleBossInput` call.
+For that same duration, the shell shall aggregate sub-runtime
+`playbook.fsm.state` telemetry into a state-count phrase for the
+turn-summary prompt, excluding the active registry entry's idle and
+final state ids.
+The state-count phrase shall be `none` when no counted state
+occurred.
+The state-count labels shall be derived in the shell from state ids
+by splitting camel-case / delimiter-separated words; the exact id
+`awaitBossReply` shall count as `Boss reply wait`, the exact id
+`failed` shall count as `failure`, the exact id
+`adjudicateChallenges` shall count as `rebuttal`, the exact id
+`respondToReview` shall count as `review response`, remaining ids
+containing `review` shall count as `review round`, remaining ids
+containing `challenge` / `challenges` / `rebuttal` shall count as
+`rebuttal`, and other ids shall count as `<words> state`.
 When a wrapped sub-runtime `callPlayer` call returns a player
 reply, the shell shall count one saved interruption for that reply.
 When a wrapped hidden sub-runtime adjudication call returns a guard
@@ -150,9 +165,12 @@ After the sub-runtime `handleBossInput` call settles, the shell
 shall make one visible Captain call with a turn-summary prompt
 envelope.
 The turn-summary prompt envelope shall provide the exact saved
-interruption and copy-paste counts and shall instruct Captain to
-write the Boss-visible block required by
-[CAPTAIN-19](../user/playbook-captain.md#captain-19), including the
+interruption and copy-paste counts, shall provide the aggregate
+state-count phrase, and shall instruct Captain to write the
+Boss-visible block required by
+[CAPTAIN-19](../user/playbook-captain.md#captain-19): brief, what
+was done rather than how, raw state / transition / guard names
+omitted, state detail only as aggregate counts, and including the
 paragraph prefix `Saved you: X interruptions and Y copy-pastes`
 with the supplied counts.
 

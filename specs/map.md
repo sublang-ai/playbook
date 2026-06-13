@@ -56,9 +56,9 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: `/code` selection, visible chat, active-engagement routing, status pass-through, human-readable shell status without JSON data, parking, dismissal, final disposal, and visible turn-summary blocks after sub-runtime turns |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: public `@sublang/playbook/playbook-captain` module, adapter lifecycle, CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, turn-summary counting/prompting, telemetry mirroring, distinct shell telemetry carrying structured shell state, and park/resume/dispose lifecycle |
-| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, adapter lifecycle, public shell module resolution, CODE registry wiring, status/telemetry pass-through, turn-summary prompts/counts, human-readable shell status without structured data, telemetry mirroring, park/resume, dismiss, and final disposal |
+| user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: `/code` selection, visible chat, active-engagement routing, status pass-through, human-readable shell status without JSON data, parking, dismissal, final disposal, and brief visible turn-summary blocks with state counts after sub-runtime turns |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: public `@sublang/playbook/playbook-captain` module, adapter lifecycle, CODE registry entry, bounded ledger, hidden routing, prompt envelopes, port wrapping, turn-summary counting/prompting with aggregate state counts, telemetry mirroring, distinct shell telemetry carrying structured shell state, and park/resume/dispose lifecycle |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, hidden/visible Captain calls, adapter lifecycle, public shell module resolution, CODE registry wiring, status/telemetry pass-through, brief turn-summary prompts/counts with aggregate state counts, human-readable shell status without structured data, telemetry mirroring, park/resume, dismiss, and final disposal |
 
 ### GIT
 

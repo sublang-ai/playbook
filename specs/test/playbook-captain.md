@@ -111,6 +111,9 @@ entry's copy-paste guard list increment the copy-paste count by one
 per handoff; guards absent from that registry list,
 classifier/event JSON, hidden router calls, visible chat, and
 malformed adjudication replies do not increment the copy-paste
-count; and the prompt instructs Captain to render a few-sentence
-recap followed by the saved-count paragraph in a natural chat-like
-tone with clear formatting.
+count; sub-runtime state telemetry during the turn contributes only
+an aggregate state-count phrase such as `2 review rounds, 1
+rebuttal`; and the prompt instructs Captain to render a brief
+what-was-done summary, without raw state / transition / guard names
+or how-it-was-done narration, followed by the saved-count paragraph
+in a natural chat-like tone with clear formatting.

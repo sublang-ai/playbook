@@ -97,9 +97,13 @@ submitted turn, the shell shall append a visible Captain
 turn-summary block after the sub-runtime's ordered status and
 telemetry emissions for that turn.
 The summary block shall use a natural chat-like tone and clear
-formatting.
-The summary block shall first recap the completed sub-runtime turn
-in a few sentences.
+formatting while remaining brief.
+The summary block shall first state only what was done or what
+changed during the completed sub-runtime turn, not how it was done.
+When the summary block mentions state or progress detail, it shall
+use aggregate counts only, such as `2 review rounds, 1 rebuttal`,
+and shall not list raw state names, transitions, guard names,
+prompts, tools, hidden calls, or reasoning.
 The summary block shall then include one short paragraph beginning
 with `Saved you: X interruptions and Y copy-pastes`, where `X` and
 `Y` are decimal counts for that completed sub-runtime turn.

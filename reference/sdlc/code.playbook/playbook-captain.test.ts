@@ -833,6 +833,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       ),
     ]);
     expect(summaries[0]?.prompt).toContain('Submitted Boss text:\ncommand task');
+    expect(summaries[0]?.prompt).toContain('State counts:\nnone');
     expect(summaries[1]?.prompt).toContain('Submitted Boss text:\nrouted task');
     expect(summaries[2]?.prompt).toContain(
       'Submitted Boss text:\nrouted continuation',
@@ -853,6 +854,18 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
   it('counts player replies as interruptions and registry-declared guards as copy-pastes', async () => {
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'reviewBossCommitCode' },
+      });
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'reviewChangesAndChallengesSpecs' },
+      });
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'adjudicateChallenges' },
+      });
       await runtime.ports.callPlayer('coder', 'first player', runtimeTurn.signal);
       await runtime.ports.callPlayer('reviewer', 'second player', runtimeTurn.signal);
       await runtime.ports.callJudge('classifier event', runtimeTurn.signal);
@@ -880,7 +893,10 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summary?.prompt).toContain(
       'Saved you: 2 interruptions and 3 copy-pastes',
     );
-    expect(summary?.prompt).toContain('First recap');
+    expect(summary?.prompt).toContain('State counts:\n2 review rounds, 1 rebuttal');
+    expect(summary?.prompt).toContain('State only what was done or what changed');
+    expect(summary?.prompt).toContain('do not explain how it was done');
+    expect(summary?.prompt).toContain('Do not list raw state names');
     expect(summary?.prompt).toContain('natural, chat-like tone');
   });
 
