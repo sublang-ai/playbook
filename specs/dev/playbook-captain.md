@@ -136,6 +136,9 @@ phrase for the turn-summary prompt, excluding the active registry
 entry's idle and final state ids.
 The summary-visible progress phrase shall be `none` when no
 summary-visible state occurred.
+The summary-visible progress round total shall be the sum of all
+summary-visible state counts collected for the completed
+sub-runtime turn.
 When the active registry entry provides a state-count label for a
 state id, the shell shall count that state under the provided
 label.
@@ -165,14 +168,19 @@ shall make one visible Captain call with a turn-summary prompt
 envelope.
 The turn-summary prompt envelope shall provide the exact saved
 interruption and copy-paste counts, shall provide the aggregate
-summary-visible progress phrase, and shall instruct Captain to
-write the Boss-visible block required by
+summary-visible progress phrase and round total, and shall instruct
+Captain to write the Boss-visible block required by
 [CAPTAIN-19](../user/playbook-captain.md#captain-19), including the
-paragraph prefix `Saved you: X interruptions and Y copy-pastes`
-with the supplied counts.
+saved-counts line
+`Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.`
+with the supplied counts and natural singular forms when a count is
+one.
 The turn-summary prompt envelope shall instruct Captain not to
 include counts for plan or implementation steps, tests-green
 state ids, or other internal states.
+The turn-summary prompt envelope shall instruct Captain not to
+repeat the exact review/rebuttal round count outside the
+saved-counts line.
 The turn-summary prompt envelope shall not include shell ledger JSON
 or raw state ids for states that are not counted in the
 summary-visible progress phrase.

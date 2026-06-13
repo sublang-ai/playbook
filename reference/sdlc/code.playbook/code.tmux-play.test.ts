@@ -70,7 +70,7 @@ function isClassifierPrompt(prompt: string): boolean {
 
 function isTurnSummaryPrompt(prompt: string): boolean {
   return prompt.includes('turn-summary block') &&
-    prompt.includes('Saved you:');
+    prompt.includes('Saved you ');
 }
 
 function classifierReplyForTestPrompt(prompt: string): Record<string, unknown> {
@@ -152,7 +152,7 @@ function stubContext(overrides: {
             status: 'ok',
             turnId: 1,
             finalText:
-              'Summary: CODE finished this turn.\n\nSaved you: 3 interruptions and 1 copy-pastes.',
+              'Summary: CODE finished this turn.\n\nSaved you 3 interruptions and 1 copy-paste across 0 rounds of reviews/rebuttals.',
           };
         }
         if (isClassifierPrompt(prompt)) {
@@ -452,7 +452,7 @@ describe('judge JSON through compatibility shim (PBRT-32 / DR-007)', () => {
     const judgeScript: RunScript = async function* (prompt) {
       if (isTurnSummaryPrompt(prompt)) {
         const summary =
-          'CODE finished the routed turn and stopped for Boss input.\n\nSaved you: 1 interruptions and 0 copy-pastes.';
+          'CODE finished the routed turn and stopped for Boss input.\n\nSaved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.';
         yield textEvent('claude-code', summary);
         yield doneEvent('claude-code', summary);
         return;

@@ -217,7 +217,7 @@ function captainJson(value: unknown): CaptainRunResult {
 
 function isTurnSummaryPrompt(prompt: string): boolean {
   return prompt.includes('turn-summary block') &&
-    prompt.includes('Saved you:');
+    prompt.includes('Saved you ');
 }
 
 function turnSummaryCalls(context: StubContext): StubContext['captainCalls'] {
@@ -833,13 +833,13 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summaries.every((call) => call.options === undefined)).toBe(true);
     expect(summaries.map((call) => call.prompt)).toEqual([
       expect.stringContaining(
-        'Saved you: 1 interruptions and 0 copy-pastes',
+        'Saved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.',
       ),
       expect.stringContaining(
-        'Saved you: 1 interruptions and 0 copy-pastes',
+        'Saved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.',
       ),
       expect.stringContaining(
-        'Saved you: 1 interruptions and 0 copy-pastes',
+        'Saved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.',
       ),
     ]);
     expect(summaries[0]?.prompt).toContain('Submitted Boss text:\ncommand task');
@@ -916,7 +916,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
 
     const summary = turnSummaryCalls(context)[0];
     expect(summary?.prompt).toContain(
-      'Saved you: 2 interruptions and 3 copy-pastes',
+      'Saved you 2 interruptions and 3 copy-pastes across 3 rounds of reviews/rebuttals.',
     );
     expect(summary?.prompt).toContain(
       'Progress counts:\n2 review rounds, 1 rebuttal',

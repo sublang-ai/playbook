@@ -113,13 +113,18 @@ The summary block shall not include counts for plan or
 implementation steps, tests-green state ids, other internal states,
 raw state names, transitions, guard names, prompts, tools, hidden
 calls, or reasoning.
-The summary block shall then include one short paragraph beginning
-with `Saved you: X interruptions and Y copy-pastes`, where `X` and
-`Y` are decimal counts for that completed sub-runtime turn.
-In that paragraph, interruptions are player replies that Boss did
-not have to relay, and copy-pastes are inter-player handoffs —
-including reviews, rebuttals, revisions, approvals, and passes —
-that Boss did not have to transfer manually.
+The summary block shall then include one saved-counts line with this
+format:
+`Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.`
+The saved-counts line shall use natural singular forms when a count
+is one.
+In that line, `X`, `Y`, and `Z` are decimal counts for that
+completed sub-runtime turn.
+Interruptions are player replies that Boss did not have to relay,
+copy-pastes are inter-player handoffs — including reviews,
+rebuttals, revisions, approvals, and passes — that Boss did not
+have to transfer manually, and review/rebuttal rounds are the
+summary-visible progress states counted for that turn.
 Where the Playbook Captain shell handles a Boss turn as Captain chat,
 clarification, bare playbook selection without sub-runtime
 submission, or routing failure recovery, the shell shall not append

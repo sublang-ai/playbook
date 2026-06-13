@@ -23,23 +23,41 @@ function visibleChatEnvelope(message) {
     ].join('\n\n');
 }
 function visibleTurnSummaryEnvelope(input) {
-    const savedLine = `Saved you: ${input.counts.interruptions} interruptions and ${input.counts.copyPastes} copy-pastes`;
+    const savedLine = savedCountsLine(input.counts, input.reviewRebuttalRounds);
     return [
         'You are the Playbook Captain shell.',
         'This is visible Boss chat after a sub-playbook command completed. Do not reveal hidden control JSON, hidden router decisions, or hidden judge replies.',
         'Write a brief, clearly formatted turn-summary block for Boss.',
-        'Use a natural, chat-like tone and no more than two short sentences before the saved-count paragraph.',
+        'Use a natural, chat-like tone and no more than two short sentences before the saved-counts line.',
         'State only what was done or what changed; do not explain how it was done.',
         'Do not list raw state names, transitions, guard names, prompts, tools, hidden calls, or reasoning.',
         'If progress detail is useful, use only the aggregate progress phrase supplied below.',
         'Do not mention counts for plan or implementation steps, tests green, or any other internal state.',
-        `Then write one short paragraph beginning exactly: ${savedLine}`,
+        `Then write the saved-counts line exactly: ${savedLine}`,
         'Use the exact counts supplied; do not change them.',
+        'Do not repeat the exact review/rebuttal round count outside the saved-counts line.',
         `Playbook: ${input.playbookId}`,
         `Submitted Boss text:\n${input.submittedText}`,
         `Progress counts:\n${input.progressPhrase}`,
-        `Counts:\n${JSON.stringify(input.counts)}`,
+        `Counts:\n${JSON.stringify({
+            ...input.counts,
+            reviewRebuttalRounds: input.reviewRebuttalRounds,
+        })}`,
     ].join('\n\n');
+}
+function countNoun(count, singular, plural = `${singular}s`) {
+    return `${count} ${count === 1 ? singular : plural}`;
+}
+function savedCountsLine(counts, reviewRebuttalRounds) {
+    return [
+        'Saved you',
+        countNoun(counts.interruptions, 'interruption'),
+        'and',
+        countNoun(counts.copyPastes, 'copy-paste'),
+        'across',
+        countNoun(reviewRebuttalRounds, 'round'),
+        'of reviews/rebuttals.',
+    ].join(' ');
 }
 function stateCountLabel(stateId, entry) {
     if (stateId === entry.idleStateId || stateId === entry.finalStateId) {
@@ -63,6 +81,9 @@ function summaryProgressPhrase(stateCounts) {
     return [...stateCounts.entries()]
         .map(([label, count]) => pluralizeStateCount(label, count))
         .join(', ');
+}
+function summaryProgressRoundCount(stateCounts) {
+    return [...stateCounts.values()].reduce((total, count) => total + count, 0);
 }
 function guardFromJudgeReply(finalText) {
     return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
@@ -271,6 +292,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
                 submittedText: text,
                 counts: summaryCounts,
                 progressPhrase: summaryProgressPhrase(summaryStateCounts),
+                reviewRebuttalRounds: summaryProgressRoundCount(summaryStateCounts),
             });
         }
     };
