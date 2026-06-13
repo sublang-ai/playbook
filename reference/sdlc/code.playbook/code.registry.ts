@@ -39,6 +39,25 @@ export const codeCopyPasteGuardNames = [
   'noOpenItems',
 ] as const;
 
+export const codeStateCountLabels = {
+  awaitBossReply: 'Boss reply wait',
+  failed: 'failure',
+  respondToReview: 'review response',
+  adjudicateChallenges: 'rebuttal',
+  reviewBossCommitSpecs: 'review round',
+  reviewBossCommitCode: 'review round',
+  reviewBossCommitMixed: 'review round',
+  reviewIrTaskCommitSpecs: 'review round',
+  reviewIrTaskCommitCode: 'review round',
+  reviewIrTaskCommitMixed: 'review round',
+  reviewChangesSpecs: 'review round',
+  reviewChangesCode: 'review round',
+  reviewChangesMixed: 'review round',
+  reviewChangesAndChallengesSpecs: 'review round',
+  reviewChangesAndChallengesCode: 'review round',
+  reviewChangesAndChallengesMixed: 'review round',
+} as const;
+
 // The validated CODE options set. `committer`, when present, is the
 // resolved Committer-alias player id (PBRT-8 / PBRT-30); a future CODE
 // option widens both this type and `CODE_OPTION_KEYS`.
@@ -64,6 +83,7 @@ export interface CodePlaybookRegistryEntry {
   idleStateId: 'ready';
   finalStateId: 'done';
   copyPasteGuardNames: readonly string[];
+  stateCountLabels: typeof codeStateCountLabels;
   validateOptions(captainOptions: unknown): CodeOptions;
   createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;
 }
@@ -134,6 +154,7 @@ export const codePlaybookRegistryEntry: CodePlaybookRegistryEntry = {
   idleStateId: 'ready',
   finalStateId: 'done',
   copyPasteGuardNames: codeCopyPasteGuardNames,
+  stateCountLabels: codeStateCountLabels,
   validateOptions: validateCodeOptions,
   createRuntime(options) {
     return createPlaybookRuntime(createCodeRuntimeOptions(options));

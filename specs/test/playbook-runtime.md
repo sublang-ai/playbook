@@ -89,7 +89,11 @@ player identity strings substituted into the Committer prompt's
 `<coder-llm>` / `<reviewer-llm>` placeholders come from
 `session.players[].model` when each entry pins a model and fall
 back to `session.players[].adapter` when no model is pinned (both
-branches exercised).
+branches exercised), and the CODE registry entry exposed through
+the compatibility shim carries the state-count label map specified
+by [PBRT-15](../dev/playbook-runtime.md#pbrt-15), including
+`awaitBossReply` as `Boss reply wait`, every CODE review state id
+as `review round`, and `adjudicateChallenges` as `rebuttal`.
 
 ### PBRT-32
 Verifies: [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
@@ -259,5 +263,5 @@ derived `coderPlayer` / `reviewerPlayer` identity strings still
 come from `session.players` regardless of `captain.options.code`.
 The test suite shall also fail unless the
 `@sublang/playbook/code/tmux-play` compatibility module exposes the
-CODE registry entry, runtime-options derivation helper, and options
-validator used by these assertions.
+CODE registry entry, state-count label map, runtime-options
+derivation helper, and options validator used by these assertions.

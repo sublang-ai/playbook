@@ -265,6 +265,23 @@ entry shall construct the runtime from the validated CODE options
 merged with those derived identity strings.
 Any `coderPlayer` / `reviewerPlayer` keys in the forwarded CODE
 options shall be overridden by the derived values.
+The CODE registry entry shall provide state-count labels for the
+Playbook Captain shell's turn-summary aggregation
+([CAPTAIN-20](playbook-captain.md#captain-20)): `awaitBossReply`
+as `Boss reply wait`, `failed` as `failure`, `respondToReview` as
+`review response`, `adjudicateChallenges` as `rebuttal`, and every
+CODE review state id as `review round`.
+The CODE review state ids are `reviewBossCommitSpecs`,
+`reviewBossCommitCode`, `reviewBossCommitMixed`,
+`reviewIrTaskCommitSpecs`, `reviewIrTaskCommitCode`,
+`reviewIrTaskCommitMixed`, `reviewChangesSpecs`,
+`reviewChangesCode`, `reviewChangesMixed`,
+`reviewChangesAndChallengesSpecs`,
+`reviewChangesAndChallengesCode`, and
+`reviewChangesAndChallengesMixed`.
+These labels refer to CODE FSM state ids transition-covered under
+[PLAYBOOK-4](playbook.md#playbook-4) and emitted as telemetry
+under [PBRT-14](#pbrt-14).
 CODE port wiring under tmux-play is owned by the Playbook Captain
 shell and specified in [CAPTAIN-10](playbook-captain.md#captain-10).
 
@@ -283,8 +300,8 @@ The public `@sublang/playbook/code/tmux-play` export shall remain
 resolvable as a compatibility shim whose default export delegates
 to the same shell with CODE registered.
 That compatibility module shall keep exposing the CODE registry
-entry, CODE runtime-options derivation helper, CODE options
-validator, and their public types.
+entry, CODE state-count label map, CODE runtime-options derivation
+helper, CODE options validator, and their public types.
 
 ### PBRT-30
 

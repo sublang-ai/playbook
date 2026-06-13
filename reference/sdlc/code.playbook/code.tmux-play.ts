@@ -6,6 +6,7 @@ import createPlaybookCaptainShell from './playbook-captain.js';
 
 export {
   codeCopyPasteGuardNames,
+  codeStateCountLabels,
   codePlaybookRegistryEntry,
   createCodeRuntimeOptions,
   validateCodeOptions,

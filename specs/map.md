@@ -86,8 +86,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through `@sublang/playbook/playbook-captain` with host-owned fields such as notifications plus `captain.options.code` and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring, `@sublang/playbook/code/tmux-play` compatibility, and registry-owned `options.code` validation |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry and compatibility-shim wiring, and `options.code` validation with fake ports/stubbed cligent primitives |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring including CODE state-count labels, `@sublang/playbook/code/tmux-play` compatibility, and registry-owned `options.code` validation |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry and compatibility-shim wiring including state-count labels, and `options.code` validation with fake ports/stubbed cligent primitives |
 
 ### PLAYBOOK
 

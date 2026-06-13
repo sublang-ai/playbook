@@ -33,6 +33,24 @@ export const codeCopyPasteGuardNames = [
     'noFindings',
     'noOpenItems',
 ];
+export const codeStateCountLabels = {
+    awaitBossReply: 'Boss reply wait',
+    failed: 'failure',
+    respondToReview: 'review response',
+    adjudicateChallenges: 'rebuttal',
+    reviewBossCommitSpecs: 'review round',
+    reviewBossCommitCode: 'review round',
+    reviewBossCommitMixed: 'review round',
+    reviewIrTaskCommitSpecs: 'review round',
+    reviewIrTaskCommitCode: 'review round',
+    reviewIrTaskCommitMixed: 'review round',
+    reviewChangesSpecs: 'review round',
+    reviewChangesCode: 'review round',
+    reviewChangesMixed: 'review round',
+    reviewChangesAndChallengesSpecs: 'review round',
+    reviewChangesAndChallengesCode: 'review round',
+    reviewChangesAndChallengesMixed: 'review round',
+};
 export function validateCodeOptions(captainOptions) {
     const code = readCodeNamespace(captainOptions);
     if (code === undefined)
@@ -86,6 +104,7 @@ export const codePlaybookRegistryEntry = {
     idleStateId: 'ready',
     finalStateId: 'done',
     copyPasteGuardNames: codeCopyPasteGuardNames,
+    stateCountLabels: codeStateCountLabels,
     validateOptions: validateCodeOptions,
     createRuntime(options) {
         return createPlaybookRuntime(createCodeRuntimeOptions(options));

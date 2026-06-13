@@ -21,6 +21,7 @@ import type {
 import createCodeTmuxPlayCaptain, {
   codeCopyPasteGuardNames,
   codePlaybookRegistryEntry,
+  codeStateCountLabels,
   createCodeRuntimeOptions,
   validateCodeOptions,
 } from './code.tmux-play.js';
@@ -206,6 +207,7 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
         idleStateId: 'ready',
         finalStateId: 'done',
         copyPasteGuardNames: codeCopyPasteGuardNames,
+        stateCountLabels: codeStateCountLabels,
         validateOptions: validateCodeOptions,
       }),
     );
@@ -226,6 +228,24 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
       'noFindings',
       'noOpenItems',
     ]);
+    expect(codeStateCountLabels).toEqual({
+      awaitBossReply: 'Boss reply wait',
+      failed: 'failure',
+      respondToReview: 'review response',
+      adjudicateChallenges: 'rebuttal',
+      reviewBossCommitSpecs: 'review round',
+      reviewBossCommitCode: 'review round',
+      reviewBossCommitMixed: 'review round',
+      reviewIrTaskCommitSpecs: 'review round',
+      reviewIrTaskCommitCode: 'review round',
+      reviewIrTaskCommitMixed: 'review round',
+      reviewChangesSpecs: 'review round',
+      reviewChangesCode: 'review round',
+      reviewChangesMixed: 'review round',
+      reviewChangesAndChallengesSpecs: 'review round',
+      reviewChangesAndChallengesCode: 'review round',
+      reviewChangesAndChallengesMixed: 'review round',
+    });
     expect(validateCodeOptions({ code: { committer: 'reviewer' } })).toEqual({
       committer: 'reviewer',
     });

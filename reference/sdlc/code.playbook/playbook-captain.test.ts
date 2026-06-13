@@ -181,6 +181,11 @@ function fakeCodeEntry(handleHook?: HandleHook, disposeHook?: DisposeHook): {
         'changesMadeSpecs',
         'accepted',
       ],
+      stateCountLabels: {
+        reviewBossCommitCode: 'review round',
+        reviewChangesAndChallengesSpecs: 'review round',
+        adjudicateChallenges: 'rebuttal',
+      },
       validateOptions,
       createRuntime,
     },
@@ -866,6 +871,10 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
         topic: 'playbook.fsm.state',
         payload: { to: 'adjudicateChallenges' },
       });
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'customState' },
+      });
       await runtime.ports.callPlayer('coder', 'first player', runtimeTurn.signal);
       await runtime.ports.callPlayer('reviewer', 'second player', runtimeTurn.signal);
       await runtime.ports.callJudge('classifier event', runtimeTurn.signal);
@@ -893,7 +902,9 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summary?.prompt).toContain(
       'Saved you: 2 interruptions and 3 copy-pastes',
     );
-    expect(summary?.prompt).toContain('State counts:\n2 review rounds, 1 rebuttal');
+    expect(summary?.prompt).toContain(
+      'State counts:\n2 review rounds, 1 rebuttal, 1 custom state',
+    );
     expect(summary?.prompt).toContain('State only what was done or what changed');
     expect(summary?.prompt).toContain('do not explain how it was done');
     expect(summary?.prompt).toContain('Do not list raw state names');

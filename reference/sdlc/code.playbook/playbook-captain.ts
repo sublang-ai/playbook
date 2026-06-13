@@ -28,6 +28,7 @@ export interface PlaybookCaptainRegistryEntry {
   idleStateId: string;
   finalStateId: string;
   copyPasteGuardNames: readonly string[];
+  stateCountLabels?: Readonly<Record<string, string>>;
   validateOptions(captainOptions: unknown): unknown;
   createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
 }
@@ -134,27 +135,17 @@ function stateCountLabel(
   if (stateId === entry.idleStateId || stateId === entry.finalStateId) {
     return undefined;
   }
-  if (stateId === 'awaitBossReply') return 'Boss reply wait';
-  if (stateId === 'failed') return 'failure';
-  if (stateId === 'respondToReview') return 'review response';
-  if (stateId === 'adjudicateChallenges') return 'rebuttal';
+  const registryLabel = entry.stateCountLabels?.[stateId]?.trim();
+  if (registryLabel) return registryLabel;
 
   const words = splitStateWords(stateId);
-  if (words.includes('review')) return 'review round';
-  if (
-    words.includes('rebuttal') ||
-    words.includes('challenge') ||
-    words.includes('challenges')
-  ) {
-    return 'rebuttal';
-  }
   if (words.length === 0) return `${stateId} state`;
-  return `${words.join(' ')} state`;
+  const fallback = words.join(' ');
+  return fallback.endsWith(' state') ? fallback : `${fallback} state`;
 }
 
 function pluralizeStateCount(label: string, count: number): string {
   if (count === 1) return `1 ${label}`;
-  if (label === 'Boss reply wait') return `${count} Boss reply waits`;
   if (label.endsWith('y')) return `${count} ${label.slice(0, -1)}ies`;
   if (label.endsWith('s')) return `${count} ${label}es`;
   return `${count} ${label}s`;

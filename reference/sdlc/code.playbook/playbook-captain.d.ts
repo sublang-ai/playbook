@@ -12,6 +12,7 @@ export interface PlaybookCaptainRegistryEntry {
     idleStateId: string;
     finalStateId: string;
     copyPasteGuardNames: readonly string[];
+    stateCountLabels?: Readonly<Record<string, string>>;
     validateOptions(captainOptions: unknown): unknown;
     createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
 }
