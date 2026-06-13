@@ -93,9 +93,8 @@ branches exercised), and the CODE registry entry exposed through
 the compatibility shim carries the state-count label map specified
 by [PBRT-15](../dev/playbook-runtime.md#pbrt-15), including
 every CODE review state id as `review round` and
-`adjudicateChallenges` as `rebuttal`, without labels for
-`awaitBossReply`, `failed`, `respondToReview`, `planAndImplement`,
-tests-green states, or other internal CODE states.
+`adjudicateChallenges` as `rebuttal`, with no labels for any other
+state id, including `planAndImplement` or any tests-green state id.
 
 ### PBRT-32
 Verifies: [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)

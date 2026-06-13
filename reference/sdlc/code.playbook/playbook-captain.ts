@@ -70,11 +70,6 @@ interface ActiveTurnSummary {
   stateCounts: Map<string, number>;
 }
 
-const SUMMARY_VISIBLE_STATE_COUNT_LABELS = new Set([
-  'review round',
-  'rebuttal',
-]);
-
 export const playbookCaptainRegistry: readonly PlaybookCaptainRegistryEntry[] = [
   codePlaybookRegistryEntry,
 ];
@@ -105,7 +100,7 @@ function visibleTurnSummaryEnvelope(input: {
   playbookId: string;
   submittedText: string;
   counts: TurnSummaryCounts;
-  reviewProgressPhrase: string;
+  progressPhrase: string;
 }): string {
   const savedLine = `Saved you: ${input.counts.interruptions} interruptions and ${input.counts.copyPastes} copy-pastes`;
   return [
@@ -115,13 +110,13 @@ function visibleTurnSummaryEnvelope(input: {
     'Use a natural, chat-like tone and no more than two short sentences before the saved-count paragraph.',
     'State only what was done or what changed; do not explain how it was done.',
     'Do not list raw state names, transitions, guard names, prompts, tools, hidden calls, or reasoning.',
-    'If progress detail is useful, use only the aggregate review/rebuttal rounds phrase supplied below.',
+    'If progress detail is useful, use only the aggregate progress phrase supplied below.',
     'Do not mention counts for plan or implementation steps, tests green, or any other internal state.',
     `Then write one short paragraph beginning exactly: ${savedLine}`,
     'Use the exact counts supplied; do not change them.',
     `Playbook: ${input.playbookId}`,
     `Submitted Boss text:\n${input.submittedText}`,
-    `Review/rebuttal rounds:\n${input.reviewProgressPhrase}`,
+    `Progress counts:\n${input.progressPhrase}`,
     `Counts:\n${JSON.stringify(input.counts)}`,
   ].join('\n\n');
 }
@@ -134,10 +129,7 @@ function stateCountLabel(
     return undefined;
   }
   const registryLabel = entry.stateCountLabels?.[stateId]?.trim();
-  if (!registryLabel) return undefined;
-  return SUMMARY_VISIBLE_STATE_COUNT_LABELS.has(registryLabel)
-    ? registryLabel
-    : undefined;
+  return registryLabel || undefined;
 }
 
 function pluralizeStateCount(label: string, count: number): string {
@@ -147,7 +139,7 @@ function pluralizeStateCount(label: string, count: number): string {
   return `${count} ${label}s`;
 }
 
-function reviewProgressPhrase(stateCounts: ReadonlyMap<string, number>): string {
+function summaryProgressPhrase(stateCounts: ReadonlyMap<string, number>): string {
   if (stateCounts.size === 0) return 'none';
   return [...stateCounts.entries()]
     .map(([label, count]) => pluralizeStateCount(label, count))
@@ -413,7 +405,7 @@ export function createPlaybookCaptainShell(
         playbookId: engagement.entry.id,
         submittedText: text,
         counts: summaryCounts,
-        reviewProgressPhrase: reviewProgressPhrase(summaryStateCounts),
+        progressPhrase: summaryProgressPhrase(summaryStateCounts),
       });
     }
   };
@@ -465,7 +457,7 @@ export function createPlaybookCaptainShell(
       playbookId: string;
       submittedText: string;
       counts: TurnSummaryCounts;
-      reviewProgressPhrase: string;
+      progressPhrase: string;
     },
   ): Promise<void> => {
     const result = await context.callCaptain(visibleTurnSummaryEnvelope(input));

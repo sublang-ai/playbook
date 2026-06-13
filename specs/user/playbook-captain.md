@@ -104,10 +104,13 @@ formatting while remaining brief.
 The summary block shall first state only what was done or what
 changed during the completed sub-runtime turn, not how it was done.
 When the summary block mentions progress detail, it shall use only
-aggregate review/rebuttal round counts, for example:
+aggregate counts whose labels the active playbook registry entry
+declares summary-visible.
+For CODE, those counts are review/rebuttal round counts, for
+example:
 `2 review rounds, 1 rebuttal`.
 The summary block shall not include counts for plan or
-implementation steps, tests-green states, other internal states,
+implementation steps, tests-green state ids, other internal states,
 raw state names, transitions, guard names, prompts, tools, hidden
 calls, or reasoning.
 The summary block shall then include one short paragraph beginning

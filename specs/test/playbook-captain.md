@@ -113,12 +113,12 @@ per handoff; guards absent from that registry list,
 classifier/event JSON, hidden router calls, visible chat, and
 malformed adjudication replies do not increment the copy-paste
 count; sub-runtime state telemetry during the turn contributes only
-an aggregate review/rebuttal progress phrase, counting active
-registry entry labels only when the label is exactly `review round`
-or `rebuttal`; labels for plan or implementation steps,
-tests-green states, other internal states, and unlabeled states do
-not contribute to that phrase; and the prompt instructs Captain to
-render a brief what-was-done summary, without raw state /
+an aggregate summary-visible progress phrase, counting active
+registry entry labels exactly as supplied and deriving no fallback
+label from state ids; unlabeled plan or implementation steps,
+tests-green state ids, and other internal states do not contribute to
+that phrase; and the prompt instructs Captain to render a brief
+what-was-done summary, without raw state /
 transition / guard names, internal state counts, or how-it-was-done
 narration, and without shell ledger JSON, followed by the
 saved-count paragraph in a natural chat-like tone with clear

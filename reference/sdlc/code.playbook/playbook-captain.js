@@ -3,10 +3,6 @@
 import { codePlaybookRegistryEntry, } from './code.registry.js';
 const SUB_RUNTIME_FSM_TOPIC = 'playbook.fsm.state';
 const SHELL_FSM_TOPIC = 'playbook.captain.fsm.state';
-const SUMMARY_VISIBLE_STATE_COUNT_LABELS = new Set([
-    'review round',
-    'rebuttal',
-]);
 export const playbookCaptainRegistry = [
     codePlaybookRegistryEntry,
 ];
@@ -35,13 +31,13 @@ function visibleTurnSummaryEnvelope(input) {
         'Use a natural, chat-like tone and no more than two short sentences before the saved-count paragraph.',
         'State only what was done or what changed; do not explain how it was done.',
         'Do not list raw state names, transitions, guard names, prompts, tools, hidden calls, or reasoning.',
-        'If progress detail is useful, use only the aggregate review/rebuttal rounds phrase supplied below.',
+        'If progress detail is useful, use only the aggregate progress phrase supplied below.',
         'Do not mention counts for plan or implementation steps, tests green, or any other internal state.',
         `Then write one short paragraph beginning exactly: ${savedLine}`,
         'Use the exact counts supplied; do not change them.',
         `Playbook: ${input.playbookId}`,
         `Submitted Boss text:\n${input.submittedText}`,
-        `Review/rebuttal rounds:\n${input.reviewProgressPhrase}`,
+        `Progress counts:\n${input.progressPhrase}`,
         `Counts:\n${JSON.stringify(input.counts)}`,
     ].join('\n\n');
 }
@@ -50,11 +46,7 @@ function stateCountLabel(stateId, entry) {
         return undefined;
     }
     const registryLabel = entry.stateCountLabels?.[stateId]?.trim();
-    if (!registryLabel)
-        return undefined;
-    return SUMMARY_VISIBLE_STATE_COUNT_LABELS.has(registryLabel)
-        ? registryLabel
-        : undefined;
+    return registryLabel || undefined;
 }
 function pluralizeStateCount(label, count) {
     if (count === 1)
@@ -65,7 +57,7 @@ function pluralizeStateCount(label, count) {
         return `${count} ${label}es`;
     return `${count} ${label}s`;
 }
-function reviewProgressPhrase(stateCounts) {
+function summaryProgressPhrase(stateCounts) {
     if (stateCounts.size === 0)
         return 'none';
     return [...stateCounts.entries()]
@@ -278,7 +270,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
                 playbookId: engagement.entry.id,
                 submittedText: text,
                 counts: summaryCounts,
-                reviewProgressPhrase: reviewProgressPhrase(summaryStateCounts),
+                progressPhrase: summaryProgressPhrase(summaryStateCounts),
             });
         }
     };

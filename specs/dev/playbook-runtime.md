@@ -269,10 +269,9 @@ The CODE registry entry shall provide state-count labels for the
 Playbook Captain shell's turn-summary aggregation
 ([CAPTAIN-20](playbook-captain.md#captain-20)): `adjudicateChallenges`
 as `rebuttal`, and every CODE review state id as `review round`.
-The CODE registry entry shall not provide summary-visible labels
-for `awaitBossReply`, `failed`, `respondToReview`,
-`planAndImplement`, tests-green states, or other internal CODE
-states.
+The CODE registry entry shall provide no summary-visible label for
+any other state id, including `planAndImplement` or any tests-green
+state id.
 The CODE review state ids are `reviewBossCommitSpecs`,
 `reviewBossCommitCode`, `reviewBossCommitMixed`,
 `reviewIrTaskCommitSpecs`, `reviewIrTaskCommitCode`,

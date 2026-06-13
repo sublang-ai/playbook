@@ -182,8 +182,6 @@ function fakeCodeEntry(handleHook?: HandleHook, disposeHook?: DisposeHook): {
         'accepted',
       ],
       stateCountLabels: {
-        planAndImplement: 'plan and implement',
-        testsGreen: 'tests green',
         reviewBossCommitCode: 'review round',
         reviewChangesAndChallengesSpecs: 'review round',
         adjudicateChallenges: 'rebuttal',
@@ -846,7 +844,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     ]);
     expect(summaries[0]?.prompt).toContain('Submitted Boss text:\ncommand task');
     expect(summaries[0]?.prompt).toContain(
-      'Review/rebuttal rounds:\nnone',
+      'Progress counts:\nnone',
     );
     expect(summaries[0]?.prompt).not.toContain('Ledger:');
     expect(summaries[1]?.prompt).toContain('Submitted Boss text:\nrouted task');
@@ -921,7 +919,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       'Saved you: 2 interruptions and 3 copy-pastes',
     );
     expect(summary?.prompt).toContain(
-      'Review/rebuttal rounds:\n2 review rounds, 1 rebuttal',
+      'Progress counts:\n2 review rounds, 1 rebuttal',
     );
     expect(summary?.prompt).not.toContain('custom state');
     expect(summary?.prompt).not.toContain('Ledger:');

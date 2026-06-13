@@ -131,18 +131,18 @@ Where the Playbook Captain shell submits text to an engaged
 playbook runtime, the shell shall collect turn-summary counts only
 for the duration of that sub-runtime `handleBossInput` call.
 For that same duration, the shell shall aggregate sub-runtime
-`playbook.fsm.state` telemetry into a review/rebuttal progress
+`playbook.fsm.state` telemetry into a summary-visible progress
 phrase for the turn-summary prompt, excluding the active registry
 entry's idle and final state ids.
-The review/rebuttal progress phrase shall be `none` when no
-counted review/rebuttal state occurred.
+The summary-visible progress phrase shall be `none` when no
+summary-visible state occurred.
 When the active registry entry provides a state-count label for a
-state id and that label is exactly `review round` or `rebuttal`,
-the shell shall count that state under the provided label.
+state id, the shell shall count that state under the provided
+label.
 When the active registry entry does not provide a state-count label
-for a state id, or provides any label other than `review round` or
-`rebuttal`, the shell shall not count that state in the
-turn-summary prompt.
+for a state id, the shell shall not count that state in the
+turn-summary prompt and shall not derive a fallback label from the
+state id.
 When a wrapped sub-runtime `callPlayer` call returns a player
 reply, the shell shall count one saved interruption for that reply.
 When a wrapped hidden sub-runtime adjudication call returns a guard
@@ -165,17 +165,17 @@ shall make one visible Captain call with a turn-summary prompt
 envelope.
 The turn-summary prompt envelope shall provide the exact saved
 interruption and copy-paste counts, shall provide the aggregate
-review/rebuttal progress phrase, and shall instruct Captain to
+summary-visible progress phrase, and shall instruct Captain to
 write the Boss-visible block required by
 [CAPTAIN-19](../user/playbook-captain.md#captain-19), including the
 paragraph prefix `Saved you: X interruptions and Y copy-pastes`
 with the supplied counts.
 The turn-summary prompt envelope shall instruct Captain not to
 include counts for plan or implementation steps, tests-green
-states, or other internal states.
+state ids, or other internal states.
 The turn-summary prompt envelope shall not include shell ledger JSON
 or raw state ids for states that are not counted in the
-review/rebuttal progress phrase.
+summary-visible progress phrase.
 
 ## Lifecycle
 
