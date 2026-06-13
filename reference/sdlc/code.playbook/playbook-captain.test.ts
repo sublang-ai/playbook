@@ -930,6 +930,31 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summary?.prompt).toContain('natural, chat-like tone');
   });
 
+  it('uses singular saved-count forms for one copy-paste and one round', async () => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'adjudicateChallenges' },
+      });
+      await runtime.ports.callJudge('review pass', runtimeTurn.signal);
+    });
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ guard: 'accepted' }),
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code singular forms'), context.context);
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain(
+      'Saved you 0 interruptions and 1 copy-paste across 1 round of reviews/rebuttals.',
+    );
+    expect(summary?.prompt).toContain('Progress counts:\n1 rebuttal');
+  });
+
   it('does not append a turn summary after plain Captain chat or bare selection', async () => {
     const registry = fakeCodeEntry();
     const shell = createPlaybookCaptainShell({}, [registry.entry]);

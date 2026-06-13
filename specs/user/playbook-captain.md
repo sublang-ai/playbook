@@ -124,7 +124,7 @@ Interruptions are player replies that Boss did not have to relay,
 copy-pastes are inter-player handoffs — including reviews,
 rebuttals, revisions, approvals, and passes — that Boss did not
 have to transfer manually, and review/rebuttal rounds are the
-summary-visible progress states counted for that turn.
+counted review-round and rebuttal occurrences for that turn.
 Where the Playbook Captain shell handles a Boss turn as Captain chat,
 clarification, bare playbook selection without sub-runtime
 submission, or routing failure recovery, the shell shall not append
