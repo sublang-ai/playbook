@@ -57,6 +57,28 @@ type ShellMode = 'chat' | 'engaged.driving' | 'engaged.parked';
 
 const SUB_RUNTIME_FSM_TOPIC = 'playbook.fsm.state';
 const SHELL_FSM_TOPIC = 'playbook.captain.fsm.state';
+const COPY_PASTE_GUARDS: ReadonlySet<string> = new Set([
+  'accepted',
+  'approved',
+  'challengeAccepted',
+  'challengeRejected',
+  'challengesRaised',
+  'changesMadeCode',
+  'changesMadeCodeAndChallenged',
+  'changesMadeMixed',
+  'changesMadeMixedAndChallenged',
+  'changesMadeSpecs',
+  'changesMadeSpecsAndChallenged',
+  'hasFindings',
+  'needsRevision',
+  'noFindings',
+  'noOpenItems',
+]);
+
+interface TurnSummaryCounts {
+  interruptions: number;
+  copyPastes: number;
+}
 
 export const playbookCaptainRegistry: readonly PlaybookCaptainRegistryEntry[] = [
   codePlaybookRegistryEntry,
@@ -78,6 +100,32 @@ function visibleChatEnvelope(message: string): string {
     'This is visible Boss chat. Do not reveal hidden control JSON, hidden router decisions, or hidden judge replies.',
     message,
   ].join('\n\n');
+}
+
+function visibleTurnSummaryEnvelope(input: {
+  playbookId: string;
+  submittedText: string;
+  counts: TurnSummaryCounts;
+  ledger: ControlLedger;
+}): string {
+  const savedLine = `Saved you: ${input.counts.interruptions} interruptions and ${input.counts.copyPastes} copy-pastes`;
+  return [
+    'You are the Playbook Captain shell.',
+    'This is visible Boss chat after a sub-playbook command completed. Do not reveal hidden control JSON, hidden router decisions, or hidden judge replies.',
+    'Write a clearly formatted turn-summary block for Boss.',
+    'Use a natural, chat-like tone.',
+    'First recap the completed sub-runtime turn in a few sentences.',
+    `Then write one short paragraph beginning exactly: ${savedLine}`,
+    'Use the exact counts supplied; do not change them.',
+    `Playbook: ${input.playbookId}`,
+    `Submitted Boss text:\n${input.submittedText}`,
+    `Counts:\n${JSON.stringify(input.counts)}`,
+    `Ledger:\n${JSON.stringify(input.ledger)}`,
+  ].join('\n\n');
+}
+
+function guardFromJudgeReply(finalText: string): string | undefined {
+  return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
 }
 
 function normalizeRegistry(
@@ -111,6 +159,7 @@ export function createPlaybookCaptainShell(
   let lastError: { name: string; message: string } | undefined;
   let lastRouteDecision: RouterDecision['decision'] | undefined;
   let finalDisposalRequested: ActiveEngagement | undefined;
+  let activeTurnSummaryCounts: TurnSummaryCounts | undefined;
 
   const requireSession = (): CaptainSession => {
     if (!session) {
@@ -221,6 +270,9 @@ export function createPlaybookCaptainShell(
         throw new Error('callPlayer invoked outside a Boss turn');
       }
       const result = await activeContext.callPlayer(playerId, prompt);
+      if (activeTurnSummaryCounts) {
+        activeTurnSummaryCounts.interruptions++;
+      }
       return {
         status: result.status,
         finalText: result.finalText,
@@ -241,6 +293,10 @@ export function createPlaybookCaptainShell(
       }
       if (result.finalText === undefined) {
         throw new Error('callCaptain returned status=ok with no finalText');
+      }
+      const guard = guardFromJudgeReply(result.finalText);
+      if (guard && COPY_PASTE_GUARDS.has(guard) && activeTurnSummaryCounts) {
+        activeTurnSummaryCounts.copyPastes++;
       }
       return result.finalText;
     },
@@ -280,18 +336,39 @@ export function createPlaybookCaptainShell(
   const submitToActive = async (
     engagement: ActiveEngagement,
     text: string,
-    signal: AbortSignal,
+    context: CaptainContext,
   ): Promise<void> => {
+    const summaryCounts: TurnSummaryCounts = {
+      interruptions: 0,
+      copyPastes: 0,
+    };
+    let summaryLedger: ControlLedger | undefined;
+    let shouldSummarize = false;
+    activeTurnSummaryCounts = summaryCounts;
     await setMode('engaged.driving', 'submit');
     try {
-      await engagement.runtime.handleBossInput({ text, signal });
+      await engagement.runtime.handleBossInput({
+        text,
+        signal: context.signal,
+      });
+      shouldSummarize = true;
     } finally {
+      summaryLedger = ledgerSnapshot(engagement.entry.id);
+      activeTurnSummaryCounts = undefined;
       if (active === engagement && finalDisposalRequested === engagement) {
         finalDisposalRequested = undefined;
         await disposeActive('final');
       } else if (active === engagement && mode === 'engaged.driving') {
         await setMode('engaged.parked', 'turn.settled');
       }
+    }
+    if (shouldSummarize && summaryLedger) {
+      await callVisibleTurnSummary(context, {
+        playbookId: engagement.entry.id,
+        submittedText: text,
+        counts: summaryCounts,
+        ledger: summaryLedger,
+      });
     }
   };
 
@@ -328,6 +405,23 @@ export function createPlaybookCaptainShell(
     message: string,
   ): Promise<void> => {
     const result = await context.callCaptain(visibleChatEnvelope(message));
+    if (result.status !== 'ok') {
+      throw new Error(
+        result.error ?? `callCaptain status "${result.status}"`,
+      );
+    }
+  };
+
+  const callVisibleTurnSummary = async (
+    context: CaptainContext,
+    input: {
+      playbookId: string;
+      submittedText: string;
+      counts: TurnSummaryCounts;
+      ledger: ControlLedger;
+    },
+  ): Promise<void> => {
+    const result = await context.callCaptain(visibleTurnSummaryEnvelope(input));
     if (result.status !== 'ok') {
       throw new Error(
         result.error ?? `callCaptain status "${result.status}"`,
@@ -445,7 +539,7 @@ export function createPlaybookCaptainShell(
         return;
       }
       const engagement = await engage(entry);
-      await submitToActive(engagement, decision.text, context.signal);
+      await submitToActive(engagement, decision.text, context);
       return;
     }
 
@@ -454,7 +548,7 @@ export function createPlaybookCaptainShell(
         await routerClarification(context);
         return;
       }
-      await submitToActive(active, decision.text, context.signal);
+      await submitToActive(active, decision.text, context);
       return;
     }
 
@@ -492,7 +586,7 @@ export function createPlaybookCaptainShell(
       return;
     }
 
-    await submitToActive(engagement, text, context.signal);
+    await submitToActive(engagement, text, context);
   };
 
   return {

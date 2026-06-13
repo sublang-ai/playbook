@@ -122,6 +122,13 @@ function stubContext(captainReplies: CaptainReply[] = []): StubContext {
         options,
       ): Promise<CaptainRunResult> => {
         captainCalls.push({ prompt, options });
+        if (isTurnSummaryPrompt(prompt)) {
+          return {
+            status: 'ok',
+            turnId: 1,
+            finalText: 'summary done',
+          };
+        }
         const scripted = captainReplies[captainIndex++];
         if (typeof scripted === 'function') {
           return scripted(prompt, options);
@@ -187,6 +194,23 @@ function captainJson(value: unknown): CaptainRunResult {
     turnId: 1,
     finalText: JSON.stringify(value),
   };
+}
+
+function isTurnSummaryPrompt(prompt: string): boolean {
+  return prompt.includes('turn-summary block') &&
+    prompt.includes('Saved you:');
+}
+
+function turnSummaryCalls(context: StubContext): StubContext['captainCalls'] {
+  return context.captainCalls.filter((call) =>
+    isTurnSummaryPrompt(call.prompt),
+  );
+}
+
+function hiddenCaptainCalls(context: StubContext): StubContext['captainCalls'] {
+  return context.captainCalls.filter((call) =>
+    call.options?.visibility === 'hidden',
+  );
 }
 
 function telemetryWithTopic(
@@ -429,7 +453,7 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
     await shell.handleBossTurn(turn('continue from here', 2), context.context);
 
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
-    expect(context.captainCalls[0]?.options).toEqual({
+    expect(hiddenCaptainCalls(context)[0]?.options).toEqual({
       visibility: 'hidden',
     });
     expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
@@ -455,13 +479,13 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
     await shell.handleBossTurn(turn('dismiss this', 2), context.context);
 
     expect(registry.runtimes[0]?.disposeCount).toBe(1);
-    expect(context.captainCalls[0]?.options).toEqual({
+    expect(hiddenCaptainCalls(context)[0]?.options).toEqual({
       visibility: 'hidden',
     });
-    expect(context.captainCalls[1]?.options).toBeUndefined();
-    expect(context.captainCalls[1]?.prompt).toContain(
-      'CODE has been dismissed.',
+    const visibleDismissal = context.captainCalls.find((call) =>
+      call.prompt.includes('CODE has been dismissed.'),
     );
+    expect(visibleDismissal?.options).toBeUndefined();
   });
 });
 
@@ -637,8 +661,11 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
 
     expect(code.createRuntime).toHaveBeenCalledTimes(1);
     expect(docs.createRuntime).not.toHaveBeenCalled();
-    expect(context.captainCalls[0]?.options).toBeUndefined();
-    expect(context.captainCalls[0]?.prompt).toContain(
+    const visibleRejection = context.captainCalls.find((call) =>
+      call.prompt.includes('code is already engaged'),
+    );
+    expect(visibleRejection?.options).toBeUndefined();
+    expect(visibleRejection?.prompt).toContain(
       'code is already engaged',
     );
   });
@@ -709,7 +736,9 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     expect(context.playerCalls).toEqual([
       { playerId: 'coder', prompt: 'player prompt' },
     ]);
-    expect(context.captainCalls).toEqual([
+    expect(
+      context.captainCalls.filter((call) => !isTurnSummaryPrompt(call.prompt)),
+    ).toEqual([
       {
         prompt: 'judge prompt',
         options: { visibility: 'hidden' },
@@ -736,6 +765,104 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     expect(
       telemetryWithTopic(session, 'playbook.captain.fsm.state').length,
     ).toBeGreaterThan(0);
+  });
+});
+
+describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
+  it('appends visible turn summaries after registered, dispatch, and sub submissions', async () => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.callPlayer(
+        'coder',
+        `player prompt for ${runtimeTurn.text}`,
+        runtimeTurn.signal,
+      );
+    });
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({
+        decision: 'dispatch',
+        playbookId: 'code',
+        text: 'routed task',
+      }),
+      captainJson({ decision: 'sub', text: 'routed continuation' }),
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code command task'), context.context);
+    await shell.handleBossTurn(turn('please route a task', 2), context.context);
+    await shell.handleBossTurn(turn('continue it', 3), context.context);
+
+    const summaries = turnSummaryCalls(context);
+    expect(summaries).toHaveLength(3);
+    expect(summaries.every((call) => call.options === undefined)).toBe(true);
+    expect(summaries.map((call) => call.prompt)).toEqual([
+      expect.stringContaining(
+        'Saved you: 1 interruptions and 0 copy-pastes',
+      ),
+      expect.stringContaining(
+        'Saved you: 1 interruptions and 0 copy-pastes',
+      ),
+      expect.stringContaining(
+        'Saved you: 1 interruptions and 0 copy-pastes',
+      ),
+    ]);
+    expect(summaries[0]?.prompt).toContain('Submitted Boss text:\ncommand task');
+    expect(summaries[1]?.prompt).toContain('Submitted Boss text:\nrouted task');
+    expect(summaries[2]?.prompt).toContain(
+      'Submitted Boss text:\nrouted continuation',
+    );
+  });
+
+  it('counts player replies as interruptions and review/rebuttal/pass guards as copy-pastes', async () => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.callPlayer('coder', 'first player', runtimeTurn.signal);
+      await runtime.ports.callPlayer('reviewer', 'second player', runtimeTurn.signal);
+      await runtime.ports.callJudge('classifier event', runtimeTurn.signal);
+      await runtime.ports.callJudge('malformed adjudication', runtimeTurn.signal);
+      await runtime.ports.callJudge('review findings', runtimeTurn.signal);
+      await runtime.ports.callJudge('review revision', runtimeTurn.signal);
+      await runtime.ports.callJudge('review pass', runtimeTurn.signal);
+    });
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ event: 'START_CODING', payload: { intent: 'x' } }),
+      { status: 'ok', turnId: 1, finalText: 'not json' },
+      captainJson({ guard: 'hasFindings' }),
+      captainJson({ guard: 'changesMadeSpecs' }),
+      captainJson({ guard: 'accepted' }),
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code count this'), context.context);
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain(
+      'Saved you: 2 interruptions and 3 copy-pastes',
+    );
+    expect(summary?.prompt).toContain('First recap');
+    expect(summary?.prompt).toContain('natural, chat-like tone');
+  });
+
+  it('does not append a turn summary after plain shell chat or bare selection', async () => {
+    const registry = fakeCodeEntry();
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ decision: 'chat', text: 'visible shell chat' }),
+      { status: 'ok', turnId: 1, finalText: 'visible chat reply' },
+      { status: 'ok', turnId: 1, finalText: 'bare code reply' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('just chat with me'), context.context);
+    await shell.handleBossTurn(turn('/code', 2), context.context);
+
+    expect(registry.runtimes[0]?.inputs).toEqual([]);
+    expect(turnSummaryCalls(context)).toHaveLength(0);
   });
 });
 

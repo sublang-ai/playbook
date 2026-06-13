@@ -89,3 +89,26 @@ package exports, the test suite shall fail unless
 `@sublang/playbook/playbook-captain` resolves and default-exports
 a tmux-play Captain factory for the Playbook Captain shell with
 CODE registered.
+
+## Turn summary
+
+### CAPTAIN-21
+Verifies: [CAPTAIN-19](../user/playbook-captain.md#captain-19), [CAPTAIN-20](../dev/playbook-captain.md#captain-20)
+
+Where the test suite drives the Playbook Captain shell with a
+registered playbook runtime, the test suite shall fail unless a
+visible Captain turn-summary call is made after registered-command,
+hidden-router `dispatch`, and hidden-router `sub` submissions
+settle; no turn-summary call is made after shell chat,
+clarification, bare playbook selection, or routing failure recovery
+turns that do not submit to a sub-runtime; the turn-summary prompt
+contains the exact supplied count phrase
+`Saved you: X interruptions and Y copy-pastes`; completed
+sub-runtime player replies increment the interruption count by one
+per reply; adjudicated review, rebuttal, challenge, pass, approval,
+or revision guards increment the copy-paste count by one per
+handoff; classifier/event JSON, hidden router calls, visible chat,
+and malformed adjudication replies do not increment the copy-paste
+count; and the prompt instructs Captain to render a few-sentence
+recap followed by the saved-count paragraph in a natural chat-like
+tone with clear formatting.

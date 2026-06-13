@@ -113,6 +113,33 @@ Before passing through `playbook.fsm.state` telemetry, the wrapper
 shall mirror the active sub-runtime state and any pending Boss
 question or normalized error fields needed for the shell ledger.
 
+### CAPTAIN-20
+
+Where the Playbook Captain shell submits text to an engaged
+playbook runtime, the shell shall collect turn-summary counts only
+for the duration of that sub-runtime `handleBossInput` call.
+When a wrapped sub-runtime `callPlayer` call returns a player
+reply, the shell shall count one saved interruption for that reply.
+When a wrapped hidden sub-runtime adjudication call returns a
+selected review, rebuttal, challenge, pass, approval, or revision
+guard, the shell shall count one saved copy-paste for that
+inter-player handoff.
+The shell shall count one saved copy-paste per adjudicated
+handoff, regardless of how many individual review findings or
+rebuttal items the handoff text contains.
+The shell shall not count hidden router calls, visible chat calls,
+sub-runtime classifier/event JSON, or malformed adjudication
+replies as saved copy-pastes.
+After the sub-runtime `handleBossInput` call settles, the shell
+shall make one visible Captain call with a turn-summary prompt
+envelope.
+The turn-summary prompt envelope shall provide the exact saved
+interruption and copy-paste counts and shall instruct Captain to
+write the Boss-visible block required by
+[CAPTAIN-19](../user/playbook-captain.md#captain-19), including the
+paragraph prefix `Saved you: X interruptions and Y copy-pastes`
+with the supplied counts.
+
 ## Lifecycle
 
 ### CAPTAIN-11
