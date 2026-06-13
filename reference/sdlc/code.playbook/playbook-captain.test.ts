@@ -297,7 +297,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
       },
     ]);
     expect(session.statuses[0]).toEqual({
-      message: '◇ shell engaged code',
+      message: '◇ /code started',
       data: undefined,
     });
   });
@@ -317,7 +317,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     expect(context.captainCalls[0]?.options).toBeUndefined();
     expect(context.captainCalls[0]?.prompt).toContain('visible Boss chat');
     expect(context.captainCalls[0]?.prompt).toContain(
-      'Boss selected /code without a task',
+      'Ask what task to run with /code.',
     );
   });
 
@@ -421,7 +421,7 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
     });
     expect(context.captainCalls[1]?.options).toBeUndefined();
     expect(context.captainCalls[1]?.prompt).toContain(
-      'I could not route that safely',
+      "I'm not sure whether this should be Captain chat or a /code task.",
     );
   });
 
@@ -454,7 +454,7 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
       });
       expect(context.captainCalls[1]?.options).toBeUndefined();
       expect(context.captainCalls[1]?.prompt).toContain(
-        'I could not route that safely',
+        "I'm not sure whether this should be Captain chat or a /code task.",
       );
     },
   );
@@ -629,7 +629,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       'second task',
     ]);
     expect(session.statuses).toContainEqual({
-      message: '◇ shell disposed code',
+      message: '◇ /code finished',
       data: undefined,
     });
     expect(
@@ -662,7 +662,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       'second task',
     ]);
     expect(session.statuses).toContainEqual({
-      message: '◇ shell dismissed code',
+      message: '◇ /code stopped',
       data: undefined,
     });
   });
@@ -681,11 +681,11 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     expect(code.createRuntime).toHaveBeenCalledTimes(1);
     expect(docs.createRuntime).not.toHaveBeenCalled();
     const visibleRejection = context.captainCalls.find((call) =>
-      call.prompt.includes('code is already engaged'),
+      call.prompt.includes('/code is already running'),
     );
     expect(visibleRejection?.options).toBeUndefined();
     expect(visibleRejection?.prompt).toContain(
-      'code is already engaged',
+      '/code is already running',
     );
   });
 
@@ -699,8 +699,13 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code first task'), context.context);
+    const shellStatusMessages = new Set([
+      '◇ /code started',
+      '◇ /code stopped',
+      '◇ /code finished',
+    ]);
     const shellStatusCount = session.statuses.filter((status) =>
-      status.message.startsWith('◇ shell'),
+      shellStatusMessages.has(status.message),
     ).length;
     const shellTelemetryCount = telemetryWithTopic(
       session,
@@ -715,7 +720,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     });
     expect(
       session.statuses.filter((status) =>
-        status.message.startsWith('◇ shell'),
+        shellStatusMessages.has(status.message),
       ),
     ).toHaveLength(shellStatusCount);
     expect(
@@ -911,12 +916,12 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summary?.prompt).toContain('natural, chat-like tone');
   });
 
-  it('does not append a turn summary after plain shell chat or bare selection', async () => {
+  it('does not append a turn summary after plain Captain chat or bare selection', async () => {
     const registry = fakeCodeEntry();
     const shell = createPlaybookCaptainShell({}, [registry.entry]);
     const session = stubSession();
     const context = stubContext([
-      captainJson({ decision: 'chat', text: 'visible shell chat' }),
+      captainJson({ decision: 'chat', text: 'visible Captain chat' }),
       { status: 'ok', turnId: 1, finalText: 'visible chat reply' },
       { status: 'ok', turnId: 1, finalText: 'bare code reply' },
     ]);
@@ -941,7 +946,7 @@ describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
     await shell.handleBossTurn(turn('/code'), context.context);
 
     expect(context.captainCalls[0]?.prompt).toContain(
-      'Boss selected /code without a task',
+      'Ask what task to run with /code.',
     );
   });
 });

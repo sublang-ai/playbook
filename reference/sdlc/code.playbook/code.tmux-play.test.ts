@@ -303,7 +303,7 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
     await captain.handleBossTurn(turn('/code /start fix the bug'), c.context);
 
     expect(s.statuses).toContainEqual({
-      message: '◇ shell engaged code',
+      message: '◇ /code started',
       data: undefined,
     });
     expect(s.statuses.map((st) => st.message)).toContain('START_CODING');

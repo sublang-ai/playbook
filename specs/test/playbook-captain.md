@@ -57,10 +57,11 @@ the engagement only after the active turn settles, and router
 `dismiss` disposes the engagement and returns the shell to chat;
 a later dispatch after final disposal or dismissal constructs a
 replacement runtime; engagement, dismissal, and final-disposal
-status lines use the `◇ shell <event> <playbookId>` vocabulary and
-carry no structured status data; and shell `dispose()` disposes any
-active runtime without emitting shell status or shell FSM telemetry
-for adapter teardown.
+status lines use the registered slash command in the
+`◇ /<command> started`, `◇ /<command> stopped`, and
+`◇ /<command> finished` vocabulary and carry no structured status
+data; and shell `dispose()` disposes any active runtime without
+emitting shell status or shell FSM telemetry for adapter teardown.
 
 ## Registry and options
 
@@ -76,7 +77,7 @@ CODE registry entry during shell `init`; invalid CODE options cause
 until engagement; `handleBossTurn` before `init` rejects; CODE
 player calls reach `context.callPlayer`;
 CODE judge calls reach `context.callCaptain` with
-`{ visibility: 'hidden' }`; and all shell chat, routing, and
+`{ visibility: 'hidden' }`; and all Captain chat, routing, and
 sub-runtime judge calls use the same Captain session primitives.
 
 ## Public module surface

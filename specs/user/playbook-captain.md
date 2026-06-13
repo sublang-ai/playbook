@@ -54,7 +54,7 @@ CODE registered, while CODE is engaged, when the Boss submits
 ordinary text, the shell shall route the turn by hidden Captain
 routing and shall either continue the existing CODE runtime,
 respond in visible Captain chat, or dispose the CODE engagement and
-return to shell chat.
+return to Captain chat.
 
 ## Engagement progress
 
@@ -67,9 +67,11 @@ in order.
 Where the Playbook Captain shell is running under tmux-play, when
 the shell engages, dismisses, or disposes a playbook engagement,
 the shell shall emit Boss-visible Captain status lines
-`◇ shell engaged <playbookId>`, `◇ shell dismissed <playbookId>`,
-and `◇ shell disposed <playbookId>` for those shell events without
-changing or reusing the engaged runtime's glyph vocabulary.
+`◇ /<command> started`, `◇ /<command> stopped`, and
+`◇ /<command> finished` for those shell events, using the
+registered slash command such as `/code` rather than the internal
+playbook id, without changing or reusing the engaged runtime's
+glyph vocabulary.
 Those shell-owned status lines shall be complete human-readable
 messages and shall not attach structured status data that the host
 could render as raw JSON.
@@ -86,7 +88,7 @@ available for the next Boss turn.
 Where the Playbook Captain shell is running under tmux-play, while
 CODE is engaged, when CODE reaches its final state or the Boss
 explicitly dismisses the engagement, the shell shall dispose that
-CODE engagement and return to shell chat.
+CODE engagement and return to Captain chat.
 
 ### CAPTAIN-19
 
@@ -111,7 +113,7 @@ In that paragraph, interruptions are player replies that Boss did
 not have to relay, and copy-pastes are inter-player handoffs —
 including reviews, rebuttals, revisions, approvals, and passes —
 that Boss did not have to transfer manually.
-Where the Playbook Captain shell handles a Boss turn as shell chat,
+Where the Playbook Captain shell handles a Boss turn as Captain chat,
 clarification, bare playbook selection without sub-runtime
 submission, or routing failure recovery, the shell shall not append
 a turn-summary block for that Boss turn.

@@ -12,6 +12,9 @@ function parseRegisteredCommand(prompt) {
         return undefined;
     return { command: match[1], text: (match[2] ?? '').trim() };
 }
+function playbookCommandLabel(entry) {
+    return `/${entry.command}`;
+}
 function visibleChatEnvelope(message) {
     return [
         'You are the Playbook Captain shell.',
@@ -245,7 +248,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         finalDisposalRequested = undefined;
         await setMode('engaged.parked', 'engage', entry.id);
         await runtime.init(createPorts());
-        await requireSession().emitStatus(`◇ shell engaged ${entry.id}`);
+        await requireSession().emitStatus(`◇ ${playbookCommandLabel(entry)} started`);
         return active;
     };
     const submitToActive = async (engagement, text, context) => {
@@ -294,6 +297,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         if (!engagement)
             return;
         const playbookId = engagement.entry.id;
+        const commandLabel = playbookCommandLabel(engagement.entry);
         active = undefined;
         finalDisposalRequested = undefined;
         if (reason === 'dispose') {
@@ -307,10 +311,10 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         await setMode('chat', reason, playbookId);
         await engagement.runtime.dispose();
         if (reason === 'dismiss') {
-            await requireSession().emitStatus(`◇ shell dismissed ${playbookId}`);
+            await requireSession().emitStatus(`◇ ${commandLabel} stopped`);
         }
         else if (reason === 'final') {
-            await requireSession().emitStatus(`◇ shell disposed ${playbookId}`);
+            await requireSession().emitStatus(`◇ ${commandLabel} finished`);
         }
         latestSubRuntimeStateId = undefined;
         pendingBossQuestion = undefined;
@@ -347,7 +351,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         `Boss message:\n${prompt}`,
     ].join('\n\n');
     const routerClarification = async (context) => {
-        await callVisibleChat(context, 'I could not route that safely. Ask Boss to clarify whether they want shell chat or /code.');
+        await callVisibleChat(context, "I'm not sure whether this should be Captain chat or a /code task. Please clarify.");
     };
     const parseRouterDecision = (finalText) => {
         let parsed;
@@ -431,17 +435,18 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
             await routerClarification(context);
             return;
         }
+        const dismissedCommandLabel = playbookCommandLabel(active.entry);
         await disposeActive('dismiss');
-        await callVisibleChat(context, decision.text ?? 'The active playbook engagement has been dismissed.');
+        await callVisibleChat(context, decision.text ?? `${dismissedCommandLabel} stopped.`);
     };
     const handleRegisteredCommand = async (entry, text, context) => {
         if (active && active.entry.id !== entry.id) {
-            await callVisibleChat(context, `Boss requested /${entry.command}, but ${active.entry.command} is already engaged. Ask Boss to finish, dismiss, or resolve the current engagement first.`);
+            await callVisibleChat(context, `/${active.entry.command} is already running. Finish or stop it before starting /${entry.command}.`);
             return;
         }
         const engagement = await engage(entry);
         if (text.length === 0) {
-            await callVisibleChat(context, `Boss selected /${entry.command} without a task. Ask for the task to run in ${entry.id}.`);
+            await callVisibleChat(context, `Ask what task to run with /${entry.command}.`);
             return;
         }
         await submitToActive(engagement, text, context);

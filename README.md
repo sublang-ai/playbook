@@ -211,8 +211,8 @@ the FSM parks at `awaitBossReply` and the pane shows the question; your
 next turn is normally classified as the reply, or a fresh directive
 abandons it ([PBRT-2](specs/user/playbook-runtime.md#pbrt-2)).
 
-The Captain pane shows shell engagement with `◇` lines and streams the
-CODE state machine with the four-glyph vocabulary `◆ ▸ ⮕ ⤷` per
+The Captain pane shows `/code` start/stop/finished status with `◇` lines
+and streams the CODE state machine with the four-glyph vocabulary `◆ ▸ ⮕ ⤷` per
 [PBRT-3](specs/user/playbook-runtime.md#pbrt-3), while player prompts
 ride their own panes.
 
