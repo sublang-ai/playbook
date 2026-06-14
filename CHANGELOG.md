@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Bump pinned `@sublang/cligent` 0.11 → 0.12.** The repo `pnpm-lock.yaml` pin is refreshed to the release tagged `latest` ([RELEASE-14](specs/dev/release.md#release-14)); the published `package.json` keeps the `latest` specifier. cligent 0.12 adds the top-level `notifications` block to its `tmux-play` loader, so the inheritance above resolves through `loadTmuxPlayConfig` end to end. Its raised `@openai/codex-sdk` peer floor (`>=0.138.0`) bumps that wired-adapter dependency ([RELEASE-12](specs/dev/release.md#release-12)) to `^0.139.0`.
 - Retired the inert raw-YAML recovery path for base `layout` fields now that the pinned cligent loader returns normalized host fields directly; `playbook-code` inherits base `layout` and `notifications` from cligent's loaded config.
 - Playbook Captain shell-owned status lines no longer attach structured status data that tmux-play renders as raw JSON; the shell state remains available through `playbook.captain.fsm.state` telemetry.
 
