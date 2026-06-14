@@ -65,7 +65,7 @@ TypeScript projection of it.
       and the four `PlaybookPorts` members against `slc/link.md`; CODE
       type-identity; all three `slc/*.md` resolve; `npm pack --dry-run`
       includes the `/runtime` artifacts and `slc/**`.
-- [ ] Close-out re-verifies `map.md` and records any divergence.
+- [x] Close-out re-verifies `map.md` and records any divergence.
 
 ## Tasks
 
@@ -160,9 +160,24 @@ before refactoring CODE onto it, and publishes the slc specs last so
    (resolve all three via Node's resolver through `./slc/*`) and
    RELEASE-18 (`npm pack --dry-run --json` lists the `/runtime`
    artifacts and the three `slc/*.md`). Full suite green (719 tests).
-6. **Close-out.**
+6. **Close-out.** _[done]_
    Run the relevant test suite, re-verify `specs/map.md`, and record any
    substantive divergence from this IR.
+   Close-out note: full suite green (719 tests, 11 files); the `tsc`
+   build, the CI drift check (`code.*` + `src/runtime.*`), and SPDX
+   (105 files) are clean; `specs/map.md` reflects IR-015, DR-004
+   Addendum A4, and the PBRT / RELEASE surface rows.
+   Close-out note: no substantive divergence from the goal or
+   acceptance. Out-of-scope guardrails held — `exports` adds only
+   `./runtime` and `./slc/*` (no linker/engine export), and the runtime
+   engine stays emitted in `code.playbook.js`.
+   Close-out note (mechanisms worth recording): the `tsc` self-import
+   needs a build-only `paths` redirect to `src/runtime.ts` to avoid
+   TS5055; RELEASE-17 runs `import.meta.resolve` in a Node subprocess
+   because vitest does not provide it; `files` lists the three
+   `slc/*.md` explicitly per the repo's no-glob convention; and PBRT-36
+   was tightened in review from a structural assignability check to
+   declaration evidence.
 
 ## Acceptance criteria
 
