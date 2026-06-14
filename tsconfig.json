@@ -3,6 +3,15 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    // Build-only redirect: when this package's own sources self-import
+    // `@sublang/playbook/runtime`, resolve it to the `src/runtime.ts`
+    // source already in the program rather than to the emitted
+    // `src/runtime.d.ts` (which would be an emit target — TS5055). This
+    // is compile-time only; emitted specifiers and the published
+    // `exports` map downstream consumers resolve are unchanged.
+    "paths": {
+      "@sublang/playbook/runtime": ["./src/runtime.ts"]
+    },
     "lib": ["ES2022"],
     "declaration": true,
     "esModuleInterop": true,

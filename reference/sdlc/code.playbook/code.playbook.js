@@ -11,6 +11,9 @@
 //                alias's first alternative)
 // Boss event:    free-text judge classification
 // Adjudication:  LLM-judge per state
+// Contract:      PlayerResult / PlaybookPorts / PlaybookRuntime imported
+//                and re-exported from @sublang/playbook/runtime
+//                (slc/link.md §Output, DR-004 Addendum A4)
 import { createActor, fromPromise } from 'xstate';
 import { codingMachine, } from './code.fsm.js';
 import { enumerateAwaitBossReply, enumerateCaptainStates, enumerateRootEvents, } from './code.fsm.introspect.js';

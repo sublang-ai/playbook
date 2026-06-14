@@ -52,7 +52,7 @@ TypeScript projection of it.
       cover them.
 - [x] `package.json` adds `exports['./runtime']` (`types` + `default`)
       and the `/runtime` artifacts to `files`.
-- [ ] Committed CODE artifacts (`code.playbook.ts` / `.js` / `.d.ts`)
+- [x] Committed CODE artifacts (`code.playbook.ts` / `.js` / `.d.ts`)
       import and re-export the shared runtime types instead of local
       redefinitions, with the generation header/contract updated and
       test resolution wired for the self-referencing specifier.
@@ -120,7 +120,7 @@ before refactoring CODE onto it, and publishes the slc specs last so
    loadability (PBRT-35). PBRT-36 (CODE type-identity) is deferred to
    Task 4 because CODE still declares the types locally. Full suite
    green (714 tests).
-4. **Refactor CODE onto the shared types + type-identity test.**
+4. **Refactor CODE onto the shared types + type-identity test.** _[done]_
    Change `code.playbook.ts` to import `PlayerResult`, `PlaybookPorts`,
    and `PlaybookRuntime` from `@sublang/playbook/runtime` and re-export
    them, drop the local redefinitions, rebuild the `.js` / `.d.ts`
@@ -129,6 +129,19 @@ before refactoring CODE onto it, and publishes the slc specs last so
    specifier.
    Add a type-identity test pinning the CODE-exported types to the shared
    ones, and keep every CODE runtime/conformance test green.
+   Implementation note: `code.playbook.ts` now `import type`s the three
+   contract types from `@sublang/playbook/runtime` and re-exports them
+   (local interfaces dropped; header gains a Contract line). The `tsc`
+   self-import is resolved by a build-only `paths` redirect to
+   `src/runtime.ts`, avoiding TS5055 (the import otherwise resolved to
+   `src/runtime.d.ts`, an emit target); the emitted `.d.ts` keeps the
+   `@sublang/playbook/runtime` specifier and the published `exports` map
+   is unchanged. No vitest alias is needed — the type-only import/export
+   is erased by esbuild, so nothing resolves the specifier at test
+   runtime. `code.playbook.contract.test.ts` implements PBRT-36 via
+   declaration evidence (imports the three from the shared module, no
+   local declaration, one re-export statement). Build is idempotent and
+   the drift globs stay satisfied; full suite green (717 tests).
 5. **Publish slc specs + resolution doc.**
    Add `slc/**` to `files` and `exports['./slc/*'] = './slc/*'`.
    Document in the README how to import the runtime contracts from

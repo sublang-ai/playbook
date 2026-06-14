@@ -11,6 +11,9 @@
 //                alias's first alternative)
 // Boss event:    free-text judge classification
 // Adjudication:  LLM-judge per state
+// Contract:      PlayerResult / PlaybookPorts / PlaybookRuntime imported
+//                and re-exported from @sublang/playbook/runtime
+//                (slc/link.md §Output, DR-004 Addendum A4)
 
 import { createActor, fromPromise } from 'xstate';
 import {
@@ -25,33 +28,20 @@ import {
   enumerateCaptainStates,
   enumerateRootEvents,
 } from './code.fsm.introspect.js';
+import type {
+  PlaybookPorts,
+  PlaybookRuntime,
+  PlayerResult,
+} from '@sublang/playbook/runtime';
 
-// Public contract — `PlayerResult`, `PlaybookPorts`, `PlaybookRuntime`,
-// `CodePlaybookOptions`, and the default `createPlaybookRuntime` factory
-// per slc/link.md and DR-004 §10.
-
-export interface PlayerResult {
-  status: 'ok' | 'aborted' | 'error';
-  finalText?: string;
-  error?: string;
-}
-
-export interface PlaybookPorts {
-  callPlayer(
-    playerId: string,
-    prompt: string,
-    signal: AbortSignal,
-  ): Promise<PlayerResult>;
-  callJudge(prompt: string, signal: AbortSignal): Promise<string>;
-  emitStatus(message: string, data?: unknown): Promise<void>;
-  emitTelemetry(event: { topic: string; payload: unknown }): Promise<void>;
-}
-
-export interface PlaybookRuntime {
-  init(ports: PlaybookPorts): Promise<void>;
-  handleBossInput(turn: { text: string; signal: AbortSignal }): Promise<void>;
-  dispose(): Promise<void>;
-}
+// Public contract. `PlayerResult`, `PlaybookPorts`, and `PlaybookRuntime`
+// are re-exported from the shared `@sublang/playbook/runtime` module
+// (slc/link.md §Output, DR-004 Addendum A4) so this playbook and any
+// future one resolve one contract definition rather than redefining it.
+// `CodePlaybookOptions` and the default `createPlaybookRuntime` factory
+// (typed `PlaybookRuntimeFactory<CodePlaybookOptions>`) stay
+// CODE-specific.
+export type { PlayerResult, PlaybookPorts, PlaybookRuntime };
 
 export type CodePlaybookOptions = CodingInput;
 
