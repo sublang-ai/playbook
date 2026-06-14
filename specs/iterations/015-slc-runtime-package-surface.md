@@ -56,11 +56,11 @@ TypeScript projection of it.
       import and re-export the shared runtime types instead of local
       redefinitions, with the generation header/contract updated and
       test resolution wired for the self-referencing specifier.
-- [ ] `package.json` adds `slc/**` to `files` and
+- [x] `package.json` adds `slc/**` to `files` and
       `exports['./slc/*'] = './slc/*'`; README documents
       `@sublang/playbook/runtime` and reading `slc/*.md` via
       `import.meta.resolve` + fs.
-- [ ] Tests: downstream type import; `/runtime` imports no CODE/FSM
+- [x] Tests: downstream type import; `/runtime` imports no CODE/FSM
       types transitively; consistency check of `PlayerResult.status`
       and the four `PlaybookPorts` members against `slc/link.md`; CODE
       type-identity; all three `slc/*.md` resolve; `npm pack --dry-run`
@@ -142,7 +142,7 @@ before refactoring CODE onto it, and publishes the slc specs last so
    declaration evidence (imports the three from the shared module, no
    local declaration, one re-export statement). Build is idempotent and
    the drift globs stay satisfied; full suite green (717 tests).
-5. **Publish slc specs + resolution doc.**
+5. **Publish slc specs + resolution doc.** _[done]_
    Add `slc/**` to `files` and `exports['./slc/*'] = './slc/*'`.
    Document in the README how to import the runtime contracts from
    `@sublang/playbook/runtime` and how to read `slc/link.md`,
@@ -151,6 +151,15 @@ before refactoring CODE onto it, and publishes the slc specs last so
    Add tests that all three `slc/*.md` resolve through the export and
    that `npm pack --dry-run` includes the `/runtime` artifacts and every
    `slc/**` file.
+   Implementation note: `files` lists the three `slc/*.md` explicitly
+   (the repo's no-glob convention) and `exports['./slc/*'] = './slc/*'`
+   serves them. README's embedding example now imports the contract from
+   `@sublang/playbook/runtime`, and a new section shows
+   `import.meta.resolve('@sublang/playbook/slc/<name>.md')` + `fs`
+   reading. `src/package-surface.test.ts` implements RELEASE-17
+   (resolve all three via Node's resolver through `./slc/*`) and
+   RELEASE-18 (`npm pack --dry-run --json` lists the `/runtime`
+   artifacts and the three `slc/*.md`). Full suite green (719 tests).
 6. **Close-out.**
    Run the relevant test suite, re-verify `specs/map.md`, and record any
    substantive divergence from this IR.

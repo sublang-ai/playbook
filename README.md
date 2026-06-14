@@ -225,12 +225,17 @@ registered.
 ### Embedding the runtime in your own host
 
 The runtime is host-agnostic; the `tmux-play` adapter is one host.
+The port and runtime contracts live in the type-only module
+[`@sublang/playbook/runtime`](src/runtime.ts) — a public, semver-stable
+surface (`PlayerResult`, `PlaybookPorts`, `PlaybookRuntime`,
+`PlaybookRuntimeFactory`) that imports no CODE or FSM types, so a host
+satisfies it once and inherits every playbook. The CODE runtime
+re-exports the same types from `@sublang/playbook/code/playbook`.
 Construct the runtime against your own ports:
 
 ```ts
-import createPlaybookRuntime, {
-  type PlaybookPorts,
-} from '@sublang/playbook/code/playbook';
+import createPlaybookRuntime from '@sublang/playbook/code/playbook';
+import type { PlaybookPorts } from '@sublang/playbook/runtime';
 
 const ports: PlaybookPorts = {
   callPlayer: async (playerId, prompt, signal) => { /* … */ },
@@ -256,6 +261,25 @@ See
 [`code.playbook.test.ts`](reference/sdlc/code.playbook/code.playbook.test.ts)
 for the full range of port shapes (classifier, judge, abort, interrupt,
 status/telemetry) the runtime is contract-tested against.
+
+### Reading the published spec contracts
+
+The authored compiler-phase specs ship in the package and are exposed
+as a public, semver-stable surface under `@sublang/playbook/slc/*`.
+Resolve and read one with `import.meta.resolve` plus `fs`:
+
+```ts
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
+
+const url = import.meta.resolve('@sublang/playbook/slc/link.md');
+const link = await readFile(fileURLToPath(url), 'utf8');
+```
+
+The three specs are [`slc/text2gears.md`](slc/text2gears.md),
+[`slc/gears2fsm.md`](slc/gears2fsm.md), and [`slc/link.md`](slc/link.md)
+— the FSM-to-runtime contract that `@sublang/playbook/runtime` projects
+into TypeScript.
 
 ## Workflow
 

@@ -28,6 +28,9 @@
     "src/runtime.ts",
     "src/runtime.js",
     "src/runtime.d.ts",
+    "slc/link.md",
+    "slc/gears2fsm.md",
+    "slc/text2gears.md",
     "reference/sdlc/code.playbook/code.fsm.ts",
     "reference/sdlc/code.playbook/code.fsm.js",
     "reference/sdlc/code.playbook/code.fsm.d.ts",
@@ -71,7 +74,8 @@
     "./code/tmux-play": {
       "types": "./reference/sdlc/code.playbook/code.tmux-play.d.ts",
       "default": "./reference/sdlc/code.playbook/code.tmux-play.js"
-    }
+    },
+    "./slc/*": "./slc/*"
   },
   "scripts": {
     "build": "tsc",
