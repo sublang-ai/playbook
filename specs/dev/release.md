@@ -7,9 +7,12 @@
 
 This spec defines the release workflow for publishing the
 `@sublang/playbook` package — the reference CODE playbook
-runtime, Playbook Captain shell, and tmux-play compatibility shim
-at the repo root —
+runtime, Playbook Captain shell, tmux-play compatibility shim,
+the host-agnostic `@sublang/playbook/runtime` type contract, and the
+authored `slc/*` specs, all at the repo root —
 to npm and tagging the corresponding GitHub release.
+It also covers the public, semver-stable package surfaces
+([RELEASE-15](#release-15), [RELEASE-16](#release-16)).
 
 ## Versioning
 
