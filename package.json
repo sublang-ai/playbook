@@ -25,6 +25,9 @@
     "node": ">=20.6.0"
   },
   "files": [
+    "src/runtime.ts",
+    "src/runtime.js",
+    "src/runtime.d.ts",
     "reference/sdlc/code.playbook/code.fsm.ts",
     "reference/sdlc/code.playbook/code.fsm.js",
     "reference/sdlc/code.playbook/code.fsm.d.ts",
@@ -53,6 +56,10 @@
     "playbook-code": "reference/sdlc/code.playbook/bin/playbook-code.js"
   },
   "exports": {
+    "./runtime": {
+      "types": "./src/runtime.d.ts",
+      "default": "./src/runtime.js"
+    },
     "./code/playbook": {
       "types": "./reference/sdlc/code.playbook/code.playbook.d.ts",
       "default": "./reference/sdlc/code.playbook/code.playbook.js"

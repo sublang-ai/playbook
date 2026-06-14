@@ -46,11 +46,11 @@ TypeScript projection of it.
       `import.meta.resolve` + fs consumer pattern; new PBRT consistency
       and CODE type-identity dev/test items; new RELEASE test items for
       slc resolution and `npm pack` inclusion.
-- [ ] `src/runtime.ts` authored as the type-only contract source, with
+- [x] `src/runtime.ts` authored as the type-only contract source, with
       committed compiled `.js` (minimal, valid) and `.d.ts`, the `tsc`
       build extended to emit them, and the CI drift check extended to
       cover them.
-- [ ] `package.json` adds `exports['./runtime']` (`types` + `default`)
+- [x] `package.json` adds `exports['./runtime']` (`types` + `default`)
       and the `/runtime` artifacts to `files`.
 - [ ] Committed CODE artifacts (`code.playbook.ts` / `.js` / `.d.ts`)
       import and re-export the shared runtime types instead of local
@@ -101,7 +101,7 @@ before refactoring CODE onto it, and publishes the slc specs last so
    PBRT-36 (CODE type-identity) added; RELEASE-15/16 (public `/runtime`
    and `slc/*` surfaces) and RELEASE-17/18 (slc resolution + `npm pack`
    inclusion) added; `map.md` decision/package summaries updated.
-3. **Add `@sublang/playbook/runtime` (additive).**
+3. **Add `@sublang/playbook/runtime` (additive).** _[done]_
    Author `src/runtime.ts` with the four type-only contracts, commit its
    minimal valid `.js` and `.d.ts`, extend the `tsc` build to emit them,
    and extend the CI drift check to pin them.
@@ -109,6 +109,17 @@ before refactoring CODE onto it, and publishes the slc specs last so
    Add tests for the downstream type import, the no-CODE/FSM transitive
    import guarantee, and the `slc/link.md` consistency check.
    CODE still uses its local definitions, so the suite stays green.
+   Implementation note: `tsc` `include` extended to `src/*.ts`, emitting
+   committed `src/runtime.js` (`export {}` + preserved SPDX header) and
+   `src/runtime.d.ts`; CI drift glob, `package.json` `files`, and
+   `exports['./runtime']` ({types, default}) wired; `vitest` `include`
+   extended to `src/*.test.ts`. `src/runtime.test.ts` covers the
+   `slc/link.md` consistency (PlayerResult.status + the four
+   PlaybookPorts members), the four exported types, the standalone
+   no-import guarantee, the `./runtime` export wiring, and ESM
+   loadability (PBRT-35). PBRT-36 (CODE type-identity) is deferred to
+   Task 4 because CODE still declares the types locally. Full suite
+   green (714 tests).
 4. **Refactor CODE onto the shared types + type-identity test.**
    Change `code.playbook.ts` to import `PlayerResult`, `PlaybookPorts`,
    and `PlaybookRuntime` from `@sublang/playbook/runtime` and re-export

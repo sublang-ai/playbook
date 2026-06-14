@@ -43,6 +43,6 @@ export default defineConfig({
     // their own vitest config and dependencies (jsdom, etc.);
     // running them from here would pull deps that aren't in this
     // package's lockfile.
-    include: ['reference/sdlc/code.playbook/*.test.ts'],
+    include: ['src/*.test.ts', 'reference/sdlc/code.playbook/*.test.ts'],
   },
 });
