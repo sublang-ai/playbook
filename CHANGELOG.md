@@ -10,8 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-14
+
 ### Added
 
+- **Playbook Captain shell (DR-008).** A built-in Captain shell is now the tmux-play Captain: it owns Boss chat, engages a registered playbook by explicit command (`/code`) or inferred intent, drives the engaged sub-runtime, and returns to chat when that runtime parks, finishes, or fails. CODE is the first registered playbook. A single Captain LLM session backs visible Boss chat, hidden routing, and the sub-runtime's judge calls, keeping control-plane JSON off the Boss pane ([DR-007](specs/decisions/007-hidden-judge-captain-pane.md)). The shell emits Boss-visible engagement status lines (`◇ /code started`, `stopped`, `finished`), and the public `./code/tmux-play` export remains a compatibility shim that delegates to the shell. Specs: [CAPTAIN](specs/user/playbook-captain.md), [DR-008](specs/decisions/008-playbook-captain-shell.md), [IR-014](specs/iterations/014-playbook-captain-shell.md).
+- **Visible turn-summary blocks (CAPTAIN-19).** After an engaged playbook finishes a Boss turn, the shell appends a brief, chat-like summary of what changed (not how), using only the aggregate counts the playbook registry marks summary-visible — for CODE, review/rebuttal rounds (e.g. `2 review rounds, 1 rebuttal`). It closes with a saved-counts line, `Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.` (natural singular forms when a count is one). Captain chat, clarification, and bare-selection turns get no summary block.
 - `playbook-code` CODE overlays and bundled tmux-play configs now support cligent's top-level `notifications` block. Fresh seeds include cligent's generated-home defaults (`player_finished: bell`, `turn_finished: desktop`), existing user overlays missing `notifications` are migrated on the next default launch, and composition carries `notifications` from the overlay or inherits it from a discovered base config with the same precedence as `theme` and `layout`.
 
 ### Changed
@@ -19,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Bump pinned `@sublang/cligent` 0.11 → 0.12.** The repo `pnpm-lock.yaml` pin is refreshed to the release tagged `latest` ([RELEASE-14](specs/dev/release.md#release-14)); the published `package.json` keeps the `latest` specifier. cligent 0.12 adds the top-level `notifications` block to its `tmux-play` loader, so the inheritance above resolves through `loadTmuxPlayConfig` end to end. Its raised `@openai/codex-sdk` peer floor (`>=0.138.0`) bumps that wired-adapter dependency ([RELEASE-12](specs/dev/release.md#release-12)) to `^0.139.0`.
 - Retired the inert raw-YAML recovery path for base `layout` fields now that the pinned cligent loader returns normalized host fields directly; `playbook-code` inherits base `layout` and `notifications` from cligent's loaded config.
 - Playbook Captain shell-owned status lines no longer attach structured status data that tmux-play renders as raw JSON; the shell state remains available through `playbook.captain.fsm.state` telemetry.
+- The CODE Reviewer's spec-review checklist gains a **Well organized** item (spec packages finely scoped — high cohesion, low coupling) and tightens its *Right level* wording to *system behavior*, retiring the legacy phrasing; pinned by [PLAYBOOK-18](specs/dev/playbook.md#playbook-18) and the conformance suite ([PLAYBOOK-19](specs/test/playbook.md#playbook-19)).
 
 ## [0.5.0] - 2026-06-09
 
@@ -129,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/sublang-ai/playbook/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/sublang-ai/playbook/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/sublang-ai/playbook/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/sublang-ai/playbook/compare/v0.4.0...v0.4.1
