@@ -230,7 +230,9 @@ The port and runtime contracts live in the type-only module
 surface (`PlayerResult`, `PlaybookPorts`, `PlaybookRuntime`,
 `PlaybookRuntimeFactory`) that imports no CODE or FSM types, so a host
 satisfies it once and inherits every playbook. The CODE runtime
-re-exports the same types from `@sublang/playbook/code/playbook`.
+re-exports `PlayerResult`, `PlaybookPorts`, and `PlaybookRuntime` from
+`@sublang/playbook/code/playbook`; `PlaybookRuntimeFactory` is available
+from `@sublang/playbook/runtime`.
 Construct the runtime against your own ports:
 
 ```ts
