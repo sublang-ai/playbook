@@ -42,10 +42,16 @@ interface PlaybookRuntime {
   dispose(): Promise<void>;
 }
 
+type PlaybookRuntimeFactory<Options = unknown> = (
+  options: Options,
+) => PlaybookRuntime;
+
 export default function createPlaybookRuntime(
   options: PlaybookRuntimeOptions,
 ): PlaybookRuntime;
 ```
+
+The default export conforms to `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`, the generic factory type the shared contract module exposes (§Output).
 
 `init` receives the host's ports, constructs the XState actor with FSM `input` derived from `options`, and starts the actor.
 The runtime owns the actor for its lifetime; `handleBossInput` runs one turn, and `dispose` stops the actor and drains pending port emissions.
@@ -280,6 +286,13 @@ The link compiler emits **one** TypeScript module that:
 - Records the linker inputs (FSM path, player binding, strategies) in a
   top-of-file header comment so the file is reproducible from the same
   inputs.
+- Sources the contract types (`PlayerResult`, `PlaybookPorts`,
+  `PlaybookRuntime`, `PlaybookRuntimeFactory`) from a single shared
+  type-only module instead of redefining them, and re-exports the names
+  its consumers import, so every linked playbook shares one contract
+  definition. The shared module imports no FSM or host types, so the
+  dependency runs one way — from each linked module to the shared
+  contract, never the reverse.
 
 ## Host adaptation (informative, not normative)
 

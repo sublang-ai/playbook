@@ -36,8 +36,8 @@ TypeScript projection of it.
 
 ## Deliverables
 
-- [ ] IR-015 doc and its `map.md` row.
-- [ ] Spec amendments: `slc/link.md` §Output and DR-004 §10 record the
+- [x] IR-015 doc and its `map.md` row.
+- [x] Spec amendments: `slc/link.md` §Output and DR-004 §10 record the
       shared `@sublang/playbook/runtime` source and the
       `PlaybookRuntimeFactory<Options = unknown>` contract; PBRT-5
       relaxed so the runtime module may also import the shared runtime
@@ -74,10 +74,11 @@ Order lands specs before behavior, adds the new surface additively
 before refactoring CODE onto it, and publishes the slc specs last so
 `main` builds and the test suite passes after every task.
 
-1. **Land IR-015 + map.md row.**
+1. **Land IR-015 + map.md row.** _[done]_
    Add this doc and its `map.md` row.
    No code or behavior change.
-2. **Spec amendments (prose only).**
+   Implementation note: committed as `2a773cd`.
+2. **Spec amendments (prose only).** _[done]_
    Amend `slc/link.md` §Output and DR-004 §10 to record the shared
    `@sublang/playbook/runtime` source, the
    `PlaybookRuntimeFactory<Options = unknown>` contract, and that the
@@ -92,6 +93,14 @@ before refactoring CODE onto it, and publishes the slc specs last so
    Add PBRT dev/test items for the `slc/link.md` consistency check and
    the CODE type-identity check, and RELEASE test items for slc
    resolution and `npm pack` inclusion.
+   Implementation note: `slc/link.md` adds `PlaybookRuntimeFactory<Options = unknown>`
+   to the contract and a shared-source §Output bullet; DR-004 gains
+   Addendum A4 with a §10 pointer and Status note; PBRT-5 relaxed and
+   PBRT-34 added for the shared `@sublang/playbook/runtime` module;
+   PBRT-35 (consistency vs `slc/link.md` + no CODE/FSM import) and
+   PBRT-36 (CODE type-identity) added; RELEASE-15/16 (public `/runtime`
+   and `slc/*` surfaces) and RELEASE-17/18 (slc resolution + `npm pack`
+   inclusion) added; `map.md` decision/package summaries updated.
 3. **Add `@sublang/playbook/runtime` (additive).**
    Author `src/runtime.ts` with the four type-only contracts, commit its
    minimal valid `.js` and `.d.ts`, extend the `tsc` build to emit them,

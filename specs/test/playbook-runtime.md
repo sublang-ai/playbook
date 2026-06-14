@@ -267,3 +267,28 @@ The test suite shall also fail unless the
 CODE registry entry, summary-visible state-count label map,
 runtime-options derivation helper, and options validator used by
 these assertions.
+
+## Runtime contract module
+
+### PBRT-35
+Verifies: [PBRT-34](../dev/playbook-runtime.md#pbrt-34)
+
+The test suite shall fail unless the `@sublang/playbook/runtime`
+contract agrees with
+[slc/link.md](../../slc/link.md#playbookruntime-contract):
+`PlayerResult.status` admits exactly the members `ok`, `aborted`, and
+`error`, and `PlaybookPorts` declares exactly the members `callPlayer`,
+`callJudge`, `emitStatus`, and `emitTelemetry`.
+The test suite shall additionally fail unless the module exports
+`PlaybookRuntime` and `PlaybookRuntimeFactory` and its import graph
+includes no CODE or FSM module.
+
+### PBRT-36
+Verifies: [PBRT-5](../dev/playbook-runtime.md#pbrt-5)
+
+The test suite shall fail unless the `PlayerResult`, `PlaybookPorts`,
+and `PlaybookRuntime` types exported from
+`@sublang/playbook/code/playbook` are type-identical to those exported
+from `@sublang/playbook/runtime` — mutually assignable with no
+structural divergence — confirming the CODE runtime re-exports the
+shared contract types rather than redefining them.

@@ -24,15 +24,38 @@ prompt composition is specified by
 
 ### PBRT-5
 
-The runtime module shall import only the FSM artifact and XState,
-hold no host-specific types, and interact with its host
-exclusively through the `PlaybookPorts` interface (`callPlayer`,
-`callJudge`, `emitStatus`, `emitTelemetry`). It shall
-default-export a `createPlaybookRuntime(options)` factory
-returning a `PlaybookRuntime` (`init`, `handleBossInput`,
-`dispose`). The options shall carry only per-run identity strings;
-the mapping from FSM players to player-id strings shall be fixed
-in the runtime, not supplied at run time.
+The runtime module shall import the FSM artifact, XState, and the
+shared runtime contract types from `@sublang/playbook/runtime`
+([PBRT-34](#pbrt-34)), hold no host-specific types, and interact
+with its host exclusively through the `PlaybookPorts` interface
+(`callPlayer`, `callJudge`, `emitStatus`, `emitTelemetry`). It shall
+re-export `PlayerResult`, `PlaybookPorts`, and `PlaybookRuntime` from
+that shared module rather than redefining them, so consumers of
+`@sublang/playbook/code/playbook` resolve the same contract types. It
+shall default-export a `createPlaybookRuntime(options)` factory
+returning a `PlaybookRuntime` (`init`, `handleBossInput`, `dispose`),
+typed `PlaybookRuntimeFactory<CodePlaybookOptions>`. The options shall
+carry only per-run identity strings; the mapping from FSM players to
+player-id strings shall be fixed in the runtime, not supplied at run
+time.
+
+### PBRT-34
+
+The package shall provide a type-only module resolvable as
+`@sublang/playbook/runtime` that is the single authored source of the
+runtime contract types `PlayerResult`, `PlaybookPorts`,
+`PlaybookRuntime`, and `PlaybookRuntimeFactory<Options = unknown>`, as
+the TypeScript projection of
+[slc/link.md](../../slc/link.md#playbookruntime-contract).
+`PlayerResult.status` shall be the union `'ok' | 'aborted' | 'error'`,
+and `PlaybookPorts` shall declare exactly the members `callPlayer`,
+`callJudge`, `emitStatus`, and `emitTelemetry`.
+The module shall import no CODE or FSM types, directly or
+transitively, so it carries no dependency on any specific playbook;
+the dependency runs one way, from `code.playbook` to this module
+([PBRT-5](#pbrt-5)).
+The module shall carry only type declarations and shall add no runtime
+engine, linker, or host primitives.
 
 ## Session lifecycle
 

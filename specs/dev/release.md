@@ -130,6 +130,31 @@ resolved cligent version, so the CI install in
 --frozen-lockfile` runs stay reproducible until a developer
 deliberately refreshes the pin.
 
+## Public surfaces
+
+### RELEASE-15
+
+The published package shall expose `@sublang/playbook/runtime` as a
+public, semver-stable subpath export backed by committed `.d.ts` and
+`.js` artifacts listed in `files` and mapped under
+`exports['./runtime']` (`types` and `default`).
+That module shall carry only the runtime contract types
+([PBRT-34](playbook-runtime.md#pbrt-34)) — no runtime engine and no
+linker. A breaking change to its exported type names or shapes shall
+be released under [RELEASE-1](#release-1) SemVer.
+
+### RELEASE-16
+
+The published package shall ship the authored compiler-phase specs
+`slc/link.md`, `slc/gears2fsm.md`, and `slc/text2gears.md` as package
+files and expose them through a public, semver-stable `exports['./slc/*']`
+mapping (`'./slc/*': './slc/*'`).
+A consumer shall be able to locate a spec by resolving
+`@sublang/playbook/slc/<name>.md` via `import.meta.resolve` and reading
+the resolved file from disk.
+Removing or renaming a published `slc/*` path shall be released under
+[RELEASE-1](#release-1) SemVer.
+
 ## Pre-release Checklist
 
 ### RELEASE-10

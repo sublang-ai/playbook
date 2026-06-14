@@ -9,6 +9,7 @@ Accepted.
 Pins the CODE-specific bindings that [slc/link.md](../../slc/link.md) leaves open.
 [DR-007](007-hidden-judge-captain-pane.md) amends §11's `callJudge` port wiring to run the judge call hidden (`{ visibility: 'hidden' }`); the original row below is retained as the historical decision and carries an inline pointer.
 [Addendum A2](#a2-committer-composite-binding-made-configurable) amends §2's baked Committer binding to be config-driven (a `captain.options.code.committer` alias resolved in the `playbook-code` composer and the CODE runtime, with no cligent change).
+[Addendum A4](#a4-runtime-contract-types-sourced-from-a-shared-module) amends §10 so the emitted runtime imports and re-exports the contract types `PlayerResult` / `PlaybookPorts` / `PlaybookRuntime` from the shared `@sublang/playbook/runtime` module instead of redefining them.
 
 ## Context
 
@@ -227,6 +228,8 @@ Player prompts and adjudicator JSON ride the host's record channels (cligent's `
 
 ### 10. Emitted module — `code.playbook.ts`
 
+> Amended by [Addendum A4](#a4-runtime-contract-types-sourced-from-a-shared-module): the contract types `PlayerResult` / `PlaybookPorts` / `PlaybookRuntime` are imported and re-exported from the shared `@sublang/playbook/runtime` module ([slc/link.md §Output](../../slc/link.md#output)) rather than redefined in `code.playbook.ts`.
+
 The link compiler emits exactly one file at `code.playbook.ts` with a top-of-file header recording the linker invocation:
 
 ```text
@@ -391,6 +394,29 @@ for this one composite.
   `reviewerPlayer` identity strings, so `<coder-llm>` /
   `<reviewer-llm>` substitutions are unchanged, and `input.player`
   stays `Committer` ([PLAYBOOK-3](../dev/playbook.md#playbook-3)).
+
+### A4. Runtime contract types sourced from a shared module
+
+This addendum amends §10 so the emitted `code.playbook.ts` imports the
+runtime contract types from a single shared, published type-only module
+instead of redefining them.
+
+- **Shared source.** `PlayerResult`, `PlaybookPorts`, and
+  `PlaybookRuntime` are authored once in `@sublang/playbook/runtime` —
+  the TypeScript projection of
+  [slc/link.md §Output](../../slc/link.md#output) — and imported by
+  `code.playbook.ts`, which re-exports them so existing
+  `@sublang/playbook/code/playbook` consumers keep resolving the same
+  type names.
+- **Factory type.** The default export's type is
+  `PlaybookRuntimeFactory<CodePlaybookOptions>`, the generic factory
+  type the shared module exposes; `CodePlaybookOptions` is unchanged.
+- **One-way dependency.** The shared module imports no CODE or FSM
+  types, so `@sublang/playbook/runtime` stays free of the CODE playbook;
+  only `code.playbook.ts` depends on it, never the reverse.
+- **No behavior change.** Player binding (§1/§2), prompts, guards, and
+  the runtime engine are unchanged, and the engine stays emitted per
+  artifact; this is a type-sourcing change only.
 
 ## References
 

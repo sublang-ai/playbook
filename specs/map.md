@@ -27,7 +27,7 @@ meta.md     The spec of specs
 | DR-001 | [001-state-machine-tooling.md](decisions/001-state-machine-tooling.md) | XState + Stately Sketch for state machine modeling, visualization, and simulation |
 | DR-002 | [002-in-page-xstate-visualizer.md](decisions/002-in-page-xstate-visualizer.md) | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) — superseded by DR-003 |
 | DR-003 | [003-sketch-controlled-shell.md](decisions/003-sketch-controlled-shell.md) | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
-| DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: player binding (Committer alias config-driven per Addendum A2), free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and direct CODE adapter wiring superseded by DR-008 shell target per Addendum A3 |
+| DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: player binding (Committer alias config-driven per Addendum A2), free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and direct CODE adapter wiring superseded by DR-008 shell target per Addendum A3; runtime contract types sourced from the shared `@sublang/playbook/runtime` module per Addendum A4 |
 | DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + universal `needsBossReply` guard for captain-invoking states, so player questions suspend and resume the same state with the answer in context |
 | DR-006 | [006-code-config-composition.md](decisions/006-code-config-composition.md) | CODE config via `captain.options.code` (namespaced, registry-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config and targets the DR-008 shell adapter; base-inheritable host fields are `theme`, `layout`, `notifications`, and the captain-judge fields (§2.4); object-launcher deferred |
 | DR-007 | [007-hidden-judge-captain-pane.md](decisions/007-hidden-judge-captain-pane.md) | No raw judge JSON on the Captain pane: route every CODE judge call through cligent's hidden `callCaptain({ visibility: 'hidden' })`, surface a suspended player's full question as captain speech then a rider-less marker (transitional augmentation + gated PBRT-32 test retired at the cligent 0.11.0 pin refresh) |
@@ -87,8 +87,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through `@sublang/playbook/playbook-captain` with host-owned fields such as notifications plus `captain.options.code` and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring including CODE review/rebuttal summary labels, `@sublang/playbook/code/tmux-play` compatibility, and registry-owned `options.code` validation |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry and compatibility-shim wiring including review/rebuttal summary labels, and `options.code` validation with fake ports/stubbed cligent primitives |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, free-text classifier/no slash fast path, tolerant judge-JSON parsing, session lifecycle, player binding (configurable Committer alias), captain bridge, adjudication, abort, telemetry, shell registry wiring including CODE review/rebuttal summary labels, `@sublang/playbook/code/tmux-play` compatibility, registry-owned `options.code` validation, and the shared `@sublang/playbook/runtime` type-only contract module the CODE runtime re-exports |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for free-text classification, tolerant judge-JSON parsing, `awaitBossReply`, status/telemetry, lifecycle, player binding, shell/CODE registry and compatibility-shim wiring including review/rebuttal summary labels, `options.code` validation with fake ports/stubbed cligent primitives, and runtime-contract consistency (`@sublang/playbook/runtime` vs slc/link.md) plus CODE type-identity |
 
 ### PLAYBOOK
 
@@ -101,8 +101,8 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` runtime, Playbook Captain shell, and tmux-play compatibility shim (semver, changelog, tag-driven CI, OIDC trusted publishing, `latest`-tracking cligent dep) |
-| test | [release.md](test/release.md) | Integration test for the published install closure: `@sublang/cligent` nested under playbook, adapter SDKs resolvable |
+| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` runtime, Playbook Captain shell, and tmux-play compatibility shim (semver, changelog, tag-driven CI, OIDC trusted publishing, `latest`-tracking cligent dep), plus public semver-stable `/runtime` and `slc/*` package surfaces |
+| test | [release.md](test/release.md) | Integration tests for the published install closure (`@sublang/cligent` nested under playbook, adapter SDKs resolvable) and public surfaces (`slc/*` resolution via `import.meta.resolve`, `npm pack` inclusion of `/runtime` artifacts and `slc/**`) |
 
 ### SKETCH
 
