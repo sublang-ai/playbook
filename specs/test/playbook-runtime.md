@@ -286,9 +286,16 @@ includes no CODE or FSM module.
 ### PBRT-36
 Verifies: [PBRT-5](../dev/playbook-runtime.md#pbrt-5)
 
-The test suite shall fail unless the `PlayerResult`, `PlaybookPorts`,
-and `PlaybookRuntime` types exported from
-`@sublang/playbook/code/playbook` are type-identical to those exported
-from `@sublang/playbook/runtime` — mutually assignable with no
-structural divergence — confirming the CODE runtime re-exports the
-shared contract types rather than redefining them.
+The test suite shall fail unless `@sublang/playbook/code/playbook`
+obtains `PlayerResult`, `PlaybookPorts`, and `PlaybookRuntime` from
+`@sublang/playbook/runtime` and re-exports them rather than declaring
+its own. The check shall rest on observable declaration evidence: the
+shipped `code.playbook.d.ts` shall import those names from
+`@sublang/playbook/runtime` and shall carry no local `PlayerResult`,
+`PlaybookPorts`, or `PlaybookRuntime` declaration of its own. A
+mutual-assignability check alone shall not satisfy this item, because
+TypeScript's structural typing makes a same-shaped local redefinition
+assignable to the shared types and would therefore pass while CODE
+still violated the re-export requirement of
+[PBRT-5](../dev/playbook-runtime.md#pbrt-5) and
+[DR-004 Addendum A4](../decisions/004-link-code-fsm-to-playbook-runtime.md#a4-runtime-contract-types-sourced-from-a-shared-module).
