@@ -122,13 +122,14 @@ from `@sublang/cligent`'s installed location.
 
 Where the published `@sublang/playbook` `package.json` declares
 `@sublang/cligent` per [RELEASE-12](#release-12), the declared
-version specifier shall be the SemVer range `^0.12.0`.
+version specifier shall be a caret SemVer range, not a moving
+registry dist-tag such as `latest`.
 
-The repo-local `pnpm-lock.yaml` shall use the same specifier and
-continue to pin a specific resolved cligent version, so the CI
-install in [RELEASE-7](#release-7) and contributor `pnpm install
---frozen-lockfile` runs stay reproducible until a developer
-deliberately refreshes the pin within the declared range.
+The repo-local `pnpm-lock.yaml` root importer shall use the same
+specifier and continue to pin a specific resolved cligent version,
+so the CI install in [RELEASE-7](#release-7) and contributor
+`pnpm install --frozen-lockfile` runs stay reproducible until a
+developer deliberately refreshes the pin within the declared range.
 
 ## Public surfaces
 

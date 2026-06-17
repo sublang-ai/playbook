@@ -101,8 +101,8 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` runtime, Playbook Captain shell, and tmux-play compatibility shim (semver, changelog, tag-driven CI, OIDC trusted publishing, `^0.12.0` cligent dependency range), plus public semver-stable `/runtime` and `slc/*` package surfaces |
-| test | [release.md](test/release.md) | Integration tests for the published install closure (`@sublang/cligent` nested under playbook, adapter SDKs resolvable), `^0.12.0` cligent dependency specifier, and public surfaces (`slc/*` resolution via `import.meta.resolve`, `npm pack` inclusion of `/runtime` artifacts and `slc/**`) |
+| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` runtime, Playbook Captain shell, and tmux-play compatibility shim (semver, changelog, tag-driven CI, OIDC trusted publishing, bounded cligent dependency range), plus public semver-stable `/runtime` and `slc/*` package surfaces |
+| test | [release.md](test/release.md) | Integration tests for the published install closure (`@sublang/cligent` nested under playbook, adapter SDKs resolvable), cligent dependency specifier/lockfile agreement, and public surfaces (`slc/*` resolution via `import.meta.resolve`, `npm pack` inclusion of `/runtime` artifacts and `slc/**`) |
 
 ### SKETCH
 

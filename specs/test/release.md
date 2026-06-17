@@ -23,8 +23,11 @@ adapter SDK reports available when probed from
 Verifies: [RELEASE-14](../dev/release.md#release-14)
 
 The test suite shall fail unless `package.json` declares
-`@sublang/cligent` as `^0.12.0` and the root importer in
-`pnpm-lock.yaml` records the same specifier.
+`@sublang/cligent` with a caret SemVer range, the root importer in
+`pnpm-lock.yaml` records the same specifier, and, unless the
+[RELEASE-11](../dev/release.md#release-11) local-development
+override is active, the lockfile records a concrete resolved
+cligent version.
 
 ## Public surfaces
 

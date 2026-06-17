@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +11,8 @@ import { parse as parseYaml } from 'yaml';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md'];
+const CLIGENT_DEP = '@sublang/cligent';
+const LOCAL_OVERRIDE = new URL('../pnpm-workspace.yaml', import.meta.url);
 
 const pkg = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -23,17 +25,28 @@ const lockfile = parseYaml(
 ) as {
   importers: {
     '.': {
-      dependencies: Record<string, { specifier: string }>;
+      dependencies: Record<string, { specifier: string; version: string }>;
     };
   };
 };
 
 describe('runtime dependency specifiers (RELEASE-19)', () => {
-  it('pins @sublang/cligent to the release-approved caret range', () => {
-    expect(pkg.dependencies['@sublang/cligent']).toBe('^0.12.0');
+  it('keeps @sublang/cligent on a caret range with lockfile agreement', () => {
+    const packageSpecifier = pkg.dependencies[CLIGENT_DEP];
+    const lockEntry = lockfile.importers['.'].dependencies[CLIGENT_DEP];
+    const hasLocalOverride = existsSync(LOCAL_OVERRIDE);
+    const recordsConcreteVersion = /^\d+\.\d+\.\d+(?:\(|$)/.test(
+      lockEntry.version,
+    );
+    const recordsLocalLink = lockEntry.version.startsWith('link:');
+
+    expect(packageSpecifier).toMatch(/^\^\d+\.\d+\.\d+$/);
+    expect(lockEntry.specifier).toBe(packageSpecifier);
     expect(
-      lockfile.importers['.'].dependencies['@sublang/cligent'].specifier,
-    ).toBe('^0.12.0');
+      hasLocalOverride
+        ? recordsConcreteVersion || recordsLocalLink
+        : recordsConcreteVersion,
+    ).toBe(true);
   });
 });
 
