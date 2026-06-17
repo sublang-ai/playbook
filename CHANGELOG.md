@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-17
+
+### Fixed
+
+- Pin the published `@sublang/cligent` dependency specifier to `^0.12.0` instead of the moving `latest` dist-tag, and align the release spec, lockfile, README, and release tests with that policy.
+
 ## [0.6.0] - 2026-06-14
 
 ### Added
@@ -134,7 +140,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/sublang-ai/playbook/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/sublang-ai/playbook/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/sublang-ai/playbook/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/sublang-ai/playbook/compare/v0.4.1...v0.4.2

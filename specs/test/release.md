@@ -19,6 +19,13 @@ inside the installed `@sublang/playbook` module tree and each
 adapter SDK reports available when probed from
 `@sublang/cligent`'s installed location.
 
+### RELEASE-19
+Verifies: [RELEASE-14](../dev/release.md#release-14)
+
+The test suite shall fail unless `package.json` declares
+`@sublang/cligent` as `^0.12.0` and the root importer in
+`pnpm-lock.yaml` records the same specifier.
+
 ## Public surfaces
 
 ### RELEASE-17

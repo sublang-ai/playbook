@@ -2,11 +2,40 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md'];
+
+const pkg = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as {
+  dependencies: Record<string, string>;
+};
+
+const lockfile = parseYaml(
+  readFileSync(new URL('../pnpm-lock.yaml', import.meta.url), 'utf8'),
+) as {
+  importers: {
+    '.': {
+      dependencies: Record<string, { specifier: string }>;
+    };
+  };
+};
+
+describe('runtime dependency specifiers (RELEASE-19)', () => {
+  it('pins @sublang/cligent to the release-approved caret range', () => {
+    expect(pkg.dependencies['@sublang/cligent']).toBe('^0.12.0');
+    expect(
+      lockfile.importers['.'].dependencies['@sublang/cligent'].specifier,
+    ).toBe('^0.12.0');
+  });
+});
 
 describe('public slc/* surface (RELEASE-17)', () => {
   // RELEASE-17 and the README name `import.meta.resolve` specifically.
@@ -37,11 +66,18 @@ describe('public slc/* surface (RELEASE-17)', () => {
 
 describe('packed tarball contents (RELEASE-18)', () => {
   it('includes the /runtime artifacts and every slc/*.md', () => {
-    const out = execFileSync('npm', ['pack', '--dry-run', '--json'], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
+    let out: string;
+    try {
+      out = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: { ...process.env, npm_config_cache: npmCache },
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } finally {
+      rmSync(npmCache, { recursive: true, force: true });
+    }
     const packed: string[] = JSON.parse(out)[0].files.map(
       (f: { path: string }) => f.path,
     );

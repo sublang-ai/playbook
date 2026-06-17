@@ -170,15 +170,13 @@ pnpm test
 in the checked-in `pnpm-lock.yaml` — the same version CI installs
 via `--frozen-lockfile`, so contributor checkouts and CI agree.
 The published `package.json` declares `@sublang/cligent` as
-`latest`, so an end-user install with no lockfile (e.g., `npm
-install -g @sublang/playbook`) instead resolves whichever cligent
-release currently carries the `latest` dist-tag at install time
-(see [RELEASE-14](specs/dev/release.md#release-14)). To bump the
-contributor pin to today's `latest`, run
+`^0.12.0`, so an end-user install with no lockfile (e.g., `npm
+install -g @sublang/playbook`) resolves a compatible cligent 0.12.x
+release (see [RELEASE-14](specs/dev/release.md#release-14)). To
+refresh the contributor pin within that range, run
 `pnpm update @sublang/cligent` and commit the resulting
-`pnpm-lock.yaml` change — a plain `pnpm install` won't refresh the
-pin, since pnpm sees `specifier: latest` in the lockfile as
-already matching `package.json` and skips re-resolving the tag.
+`pnpm-lock.yaml` change. To adopt a later cligent minor, update the
+`package.json` specifier and lockfile together.
 No local link required for any of this. To point pnpm at a local
 `cligent` checkout
 instead, copy
