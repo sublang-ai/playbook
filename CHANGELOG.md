@@ -10,7 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.1] - 2026-06-17
+## [0.7.0] - 2026-06-22
+
+### Added
+
+- Expose the host-agnostic runtime contract at `@sublang/playbook/runtime` (`PlayerResult`, `PlaybookPorts`, `PlaybookRuntime`, `PlaybookRuntimeFactory`) and publish the authored compiler-phase specs at `@sublang/playbook/slc/*` so downstream consumers can resolve and read `slc/link.md`, `slc/gears2fsm.md`, and `slc/text2gears.md` directly.
 
 ### Fixed
 
@@ -140,8 +144,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.6.1...HEAD
-[0.6.1]: https://github.com/sublang-ai/playbook/compare/v0.6.0...v0.6.1
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/sublang-ai/playbook/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/sublang-ai/playbook/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/sublang-ai/playbook/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/sublang-ai/playbook/compare/v0.4.1...v0.4.2
