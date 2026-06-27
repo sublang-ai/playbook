@@ -56,11 +56,57 @@ The loader shall reject unknown ids without `from`, failed imports, modules with
 tmux-play custom Captain configuration already uses user-supplied module specifiers for `captain.from` [[1]].
 Registry `from` modules reuse that executable local-configuration trust boundary.
 
-### 3. Enablement and options live under `captain.options.playbooks`
+### 3. Enablement normalizes into `captain.options.playbooks`
 
 The generic launcher shall compile its top-level config into a tmux-play config whose Captain is `@sublang/playbook/playbook-captain`.
 
-The shell shall receive enabled playbook configuration under:
+Users shall configure reusable agent settings with a top-level `profiles` map and enabled playbooks with a top-level `playbooks` map.
+The launcher shall normalize those user-facing maps into the shell's internal `captain.options.playbooks` map.
+
+An example generic config is:
+
+```yaml
+profiles:
+  claude-opus:
+    adapter: claude
+    model: claude-opus-4-8
+    reasoningEffort: xhigh
+  codex-high:
+    adapter: codex
+    model: gpt-5.5
+    reasoningEffort: xhigh
+
+captain: claude-opus
+
+playbooks:
+  code:
+    players:
+      coder: codex-high
+      reviewer: claude-opus
+    committer: reviewer
+
+  triage:
+    from: "@example/triage-playbook/registry"
+    players:
+      analyst:
+        profile: claude-opus
+        permissions:
+          mode: read-only
+```
+
+Scalar `captain` and player values shall resolve as profile ids or adapter shorthands.
+Profile ids shall not collide with known adapter shorthand ids such as `claude` or `codex`; the launcher shall reject a colliding profile id rather than let a profile silently shadow an adapter shorthand.
+`captain: claude-opus` expands to the `profiles.claude-opus` block.
+`players.coder: codex-high` inside a playbook expands to a playbook-scoped player block from `profiles.codex-high`.
+`players.reviewer: claude` expands to a playbook-scoped player block whose adapter is `claude`.
+A full captain or player block may set `profile: <profile-id>` and override selected fields such as `model`, `reasoningEffort`, or `permissions`.
+A full block may also set `adapter`, `model`, `reasoningEffort`, and `permissions` directly without a profile.
+
+Within a playbook block, `from`, `command`, and `players` are launcher-owned keys.
+Every other key belongs to that playbook's option slice.
+This keeps common options such as CODE's `committer` at the level users expect, while the launcher still passes a clean option slice to the registry entry.
+
+The normalized internal shell configuration shall have this shape, excluding the generated top-level tmux-play player roster:
 
 ```yaml
 captain:
@@ -71,12 +117,9 @@ captain:
         command: code                           # optional; defaults from entry
         options:
           committer: reviewer
-        roles:
-          coder: code.coder
-          reviewer: code.reviewer
 ```
 
-The `options` object inside each enabled playbook block is that playbook's option slice.
+The `options` object inside each normalized enabled playbook block is that playbook's option slice.
 The shell shall pass only that slice to the entry's `validateOptions`.
 For every registry entry, `validateOptions` shall validate the option slice handed to it by the shell.
 Registry entries shall not extract their own namespace from the full Captain options bag.
@@ -84,31 +127,33 @@ Registry entries shall not extract their own namespace from the full Captain opt
 CODE compatibility requires a legacy bridge.
 When `captain.options.playbooks` is absent, the shell shall keep the DR-008 behavior: it shall enable only built-in CODE and pass the legacy `captain.options.code` slice to CODE validation and runtime creation.
 The `playbook-code` preset shall continue to support the legacy CODE overlay and the legacy `captain.options.code` composed namespace until a later DR removes that compatibility path.
-The generic `playbook` command shall use `captain.options.playbooks.code.options` for CODE options.
+The generic `playbook` command shall compile user-facing CODE options into `captain.options.playbooks.code.options`.
 
-### 4. Player bindings are namespaced by convention and overridable
+### 4. Player instances and layout are generated per playbook
 
-The generic launcher shall treat the top-level tmux-play player roster as shared host capacity.
-Each enabled playbook shall map its local role ids to host player ids.
+The generic launcher shall treat each playbook's `players` map as the source of host players for that playbook.
+It shall compile those playbook-local player declarations into the top-level tmux-play player roster.
 
-By default, the binding for local role `<role>` in playbook `<id>` shall be `<id>.<role>`.
-An enabled playbook may override any role binding to share a host player intentionally.
+The binding for local role `<role>` in playbook `<id>` shall be `<id>.<role>`.
+The generic user-facing config shall not support binding a role to a player from another playbook or to a shared top-level host player.
 
-Examples:
+Profiles reuse configuration, not player instances.
+When two playbooks reference the same profile, the launcher shall still create separate host players, for example `code.reviewer` and `triage.analyst`.
 
 ```yaml
-players:
-  code.coder:
-    adapter: codex
-  code.reviewer:
+profiles:
+  claude-opus:
     adapter: claude
-  shared.reviewer:
-    adapter: claude
+    model: claude-opus-4-8
 
 playbooks:
   code:
-    roles:
-      reviewer: shared.reviewer
+    players:
+      reviewer: claude-opus
+  triage:
+    from: "@example/triage-playbook/registry"
+    players:
+      analyst: claude-opus
 ```
 
 The shell shall apply the binding at two boundaries:
@@ -116,7 +161,16 @@ The shell shall apply the binding at two boundaries:
 - It shall translate `callPlayer(localRoleId, ...)` from the sub-runtime into `callPlayer(hostPlayerId, ...)` for tmux-play.
 - It shall pass binding-aware player metadata to `createRuntime` so playbooks such as CODE can derive prompt identity strings from the host player actually bound to each local role.
 
-The generic launcher shall validate that every enabled playbook's required local roles resolve to host player ids present in the composed tmux-play roster.
+The generic launcher shall validate that every enabled playbook's required local roles resolve to generated host player ids present in the composed tmux-play roster.
+
+The first generic design shall materialize every enabled playbook's generated host players at launch.
+It shall not dynamically create, hide, or dispose tmux panes when the active engagement changes.
+
+Because `layout.columnWeights` is positional to the Boss/Captain pane plus the generated player roster, the launcher shall resolve layout after roster generation.
+When the generic config omits `layout.columnWeights`, the launcher shall derive a column-weight list with one Boss/Captain weight and one equal player weight per generated host player.
+When the generic config explicitly sets `layout.columnWeights`, the launcher shall validate that its length equals `1 + generatedPlayerCount` and fail composition on mismatch.
+The generic launcher shall not inherit or reuse a base or preset `layout.columnWeights` whose length was authored for a different generated roster.
+Dynamic active-engagement-scoped pane visibility is deferred.
 
 ### 5. Summary policy is registry-owned and opt-in
 
@@ -136,7 +190,9 @@ Without `--config`, it shall read a top-level config at `${XDG_CONFIG_HOME:-$HOM
 With `--config`, it shall preserve the current pass-through behavior by launching that config directly.
 
 The generic config shall keep host fields top-level.
-It shall not introduce a `config:` wrapper around `layout`, `notifications`, `captain`, `players`, or `playbooks`.
+It shall not introduce a `config:` wrapper around `layout`, `notifications`, `captain`, `profiles`, or `playbooks`.
+The generic user-facing config shall not expose a top-level `players` roster because such a roster invites cross-playbook player sharing.
+Top-level `players` remains available only in raw tmux-play configs launched through `--config` pass-through.
 
 The generic `playbook --list` command shall print available built-in playbooks and any enabled external playbooks with their ids, effective commands, and intents.
 Pre-engagement forms such as `playbook code "task"` are deferred until tmux-play exposes or documents a clean initial Boss-turn injection surface.
@@ -168,15 +224,15 @@ The implementing specs shall reconcile this DR with released CODE runtime and la
 - [CAPTAIN-19](../user/playbook-captain.md#captain-19) and [CAPTAIN-20](../dev/playbook-captain.md#captain-20) shall be amended so summary policy and saved-count wording are registry-owned and optional rather than CODE-specific shell behavior.
 - [CAPTAIN-16](../dev/playbook-captain.md#captain-16) shall be amended so shell initialization loads enabled registry entries from `captain.options.playbooks` while preserving the CODE-only default when that map is absent.
 - [PBCODE-16](../user/playbook-code.md#pbcode-16) and [PBCODE-17](../dev/playbook-code.md#pbcode-17) shall be amended so `playbook-code` is specified as a compatibility preset over the generic shell machinery while retaining the legacy CODE overlay and `captain.options.code` composition.
-- New user/dev/test items shall specify the generic `playbook` executable, top-level config shape, registry `from` loading, role-binding validation, `--list`, adapter readiness ownership, and duplicate command rejection.
+- New user/dev/test items shall specify the generic `playbook` executable, top-level config shape, `profiles` expansion, registry `from` loading, playbook-scoped player generation, at-launch player materialization, role-binding validation, layout and `columnWeights` generation, `columnWeights` length validation, `--list`, adapter readiness ownership, and duplicate command rejection.
 
 ## Consequences
 
 - DR-008's deferral of a generic `playbook` binary and multi-playbook discovery is superseded by this design.
 - Existing `playbook-code` users and `@sublang/playbook/code/tmux-play` importers keep CODE-only behavior.
 - Third-party playbooks can be added by configuration without forking `@sublang/playbook`.
-- Role names no longer collide across playbooks because local runtime roles bind to namespaced host player ids by default.
-- Playbooks can intentionally share host players through explicit role-binding overrides.
+- Role names no longer collide across playbooks because local runtime roles always bind to namespaced host player ids.
+- Profiles let users reuse adapter, model, reasoning, and permission settings without sharing player instances or crossing playbook boundaries.
 - CODE-specific shell assumptions move into CODE's registry entry.
 - The generic launcher needs new user/dev/test specs before implementation, and CAPTAIN/PBCODE/PBRT specs need amendments for enablement, binding, options migration, summary policy, and compatibility behavior.
 
