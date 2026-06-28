@@ -67,40 +67,23 @@ An example generic config is:
 
 ```yaml
 profiles:
-  claude-opus:
+  claude-code:
     adapter: claude
-    model: claude-opus-4-8
-    reasoningEffort: xhigh
-  codex-high:
-    adapter: codex
-    model: gpt-5.5
-    reasoningEffort: xhigh
+    reasoningEffort: high
 
-captain: claude-opus
+captain: claude-code
 
 playbooks:
   code:
     players:
-      coder: codex-high
-      reviewer: claude-opus
+      coder: codex
+      reviewer: claude-code
     committer: reviewer
-
-  triage:
-    from: "@example/triage-playbook/registry"
-    players:
-      analyst:
-        profile: claude-opus
-        permissions:
-          mode: read-only
 ```
 
 Scalar `captain` and player values shall resolve as profile ids or adapter shorthands.
 Profile ids shall not collide with known adapter shorthand ids such as `claude` or `codex`; the launcher shall reject a colliding profile id rather than let a profile silently shadow an adapter shorthand.
-`captain: claude-opus` expands to the `profiles.claude-opus` block.
-`players.coder: codex-high` inside a playbook expands to a playbook-scoped player block from `profiles.codex-high`.
-`players.reviewer: claude` expands to a playbook-scoped player block whose adapter is `claude`.
-A full captain or player block may set `profile: <profile-id>` and override selected fields such as `model`, `reasoningEffort`, or `permissions`.
-A full block may also set `adapter`, `model`, `reasoningEffort`, and `permissions` directly without a profile.
+Full captain and player blocks shall follow the host tmux-play agent-block schema ([DR-006 §2](006-code-config-composition.md#2-playbook-code-is-a-composer-not-a-config-the-user-authors)) and may reference a profile.
 
 Within a playbook block, `from`, `command`, and `players` are launcher-owned keys.
 Every other key belongs to that playbook's option slice.
@@ -119,10 +102,7 @@ captain:
           committer: reviewer
 ```
 
-The `options` object inside each normalized enabled playbook block is that playbook's option slice.
-The shell shall pass only that slice to the entry's `validateOptions`.
-For every registry entry, `validateOptions` shall validate the option slice handed to it by the shell.
-Registry entries shall not extract their own namespace from the full Captain options bag.
+The shell shall pass each registry entry only its normalized option slice; entries shall validate that slice and shall not extract their own namespace from the full Captain options bag.
 
 CODE compatibility requires a legacy bridge.
 When `captain.options.playbooks` is absent, the shell shall keep the DR-008 behavior: it shall enable only built-in CODE and pass the legacy `captain.options.code` slice to CODE validation and runtime creation.
@@ -138,37 +118,20 @@ The binding for local role `<role>` in playbook `<id>` shall be `<id>.<role>`.
 The generic user-facing config shall not support binding a role to a player from another playbook or to a shared top-level host player.
 
 Profiles reuse configuration, not player instances.
-When two playbooks reference the same profile, the launcher shall still create separate host players, for example `code.reviewer` and `triage.analyst`.
-
-```yaml
-profiles:
-  claude-opus:
-    adapter: claude
-    model: claude-opus-4-8
-
-playbooks:
-  code:
-    players:
-      reviewer: claude-opus
-  triage:
-    from: "@example/triage-playbook/registry"
-    players:
-      analyst: claude-opus
-```
+When two playbooks reference the same profile, the launcher shall still create separate playbook-scoped host players.
 
 The shell shall apply the binding at two boundaries:
 
-- It shall translate `callPlayer(localRoleId, ...)` from the sub-runtime into `callPlayer(hostPlayerId, ...)` for tmux-play.
-- It shall pass binding-aware player metadata to `createRuntime` so playbooks such as CODE can derive prompt identity strings from the host player actually bound to each local role.
+- At the shell port boundary between sub-runtime local roles and tmux-play host players.
+- In the metadata passed to `createRuntime`, so playbooks such as CODE can derive prompt identity strings from the host player actually bound to each local role.
 
 The generic launcher shall validate that every enabled playbook's required local roles resolve to generated host player ids present in the composed tmux-play roster.
 
 The first generic design shall materialize every enabled playbook's generated host players at launch.
 It shall not dynamically create, hide, or dispose tmux panes when the active engagement changes.
 
-Because `layout.columnWeights` is positional to the Boss/Captain pane plus the generated player roster, the launcher shall resolve layout after roster generation.
-When the generic config omits `layout.columnWeights`, the launcher shall derive a column-weight list with one Boss/Captain weight and one equal player weight per generated host player.
-When the generic config explicitly sets `layout.columnWeights`, the launcher shall validate that its length equals `1 + generatedPlayerCount` and fail composition on mismatch.
+Because `layout.columnWeights` is positional to the Boss/Captain pane plus the generated player roster, the generic launcher shall derive a valid column-weight list when `layout.columnWeights` is omitted.
+When the generic config explicitly sets `layout.columnWeights`, the launcher shall fail composition if the list length does not match the Boss/Captain pane plus the generated player roster.
 The generic launcher shall not inherit or reuse a base or preset `layout.columnWeights` whose length was authored for a different generated roster.
 Dynamic active-engagement-scoped pane visibility is deferred.
 
@@ -224,7 +187,7 @@ The implementing specs shall reconcile this DR with released CODE runtime and la
 - [CAPTAIN-19](../user/playbook-captain.md#captain-19) and [CAPTAIN-20](../dev/playbook-captain.md#captain-20) shall be amended so summary policy and saved-count wording are registry-owned and optional rather than CODE-specific shell behavior.
 - [CAPTAIN-16](../dev/playbook-captain.md#captain-16) shall be amended so shell initialization loads enabled registry entries from `captain.options.playbooks` while preserving the CODE-only default when that map is absent.
 - [PBCODE-16](../user/playbook-code.md#pbcode-16) and [PBCODE-17](../dev/playbook-code.md#pbcode-17) shall be amended so `playbook-code` is specified as a compatibility preset over the generic shell machinery while retaining the legacy CODE overlay and `captain.options.code` composition.
-- New user/dev/test items shall specify the generic `playbook` executable, top-level config shape, `profiles` expansion, registry `from` loading, playbook-scoped player generation, at-launch player materialization, role-binding validation, layout and `columnWeights` generation, `columnWeights` length validation, `--list`, adapter readiness ownership, and duplicate command rejection.
+- A follow-up IR shall add generic `playbook` user/dev/test items covering launcher behavior.
 
 ## Consequences
 
