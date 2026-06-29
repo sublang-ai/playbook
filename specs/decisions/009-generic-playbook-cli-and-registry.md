@@ -117,7 +117,8 @@ The generic launcher shall treat each playbook's `players` map as the source of 
 It shall compile those playbook-local player declarations into the top-level tmux-play player roster.
 That roster is a launch-time union of every enabled playbook's generated players, because tmux-play visibility can change panes but cannot create, delete, or reconfigure runtime player identities after startup [[2]].
 
-The binding for local role `<role>` in playbook `<id>` shall be `<id>.<role>`.
+The binding for local role `<role>` in playbook `<id>` shall be `<id>-<role>`.
+A hyphen joins the two because cligent tmux-play player ids must match `^[a-z][a-z0-9_-]*$`, which excludes a `.` separator.
 The generic user-facing config shall not support binding a role to a player from another playbook or to a shared top-level host player.
 
 Profiles reuse configuration, not player instances.

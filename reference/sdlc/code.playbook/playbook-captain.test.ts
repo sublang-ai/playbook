@@ -1018,8 +1018,8 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
 
   function namespacedSession() {
     return stubSession([
-      { id: 'code.coder', adapter: 'codex', model: 'gpt-5.5' },
-      { id: 'code.reviewer', adapter: 'claude', model: 'claude-opus-4-8' },
+      { id: 'code-coder', adapter: 'codex', model: 'gpt-5.5' },
+      { id: 'code-reviewer', adapter: 'claude', model: 'claude-opus-4-8' },
     ]);
   }
 
@@ -1031,7 +1031,7 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     await shell.init!(namespacedSession().session);
   }
 
-  it('loads from captain.options.playbooks, binds <id>.<role>, validates the slice, and switches visibility', async () => {
+  it('loads from captain.options.playbooks, binds <id>-<role>, validates the slice, and switches visibility', async () => {
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await runtime.ports.callPlayer(
@@ -1071,9 +1071,9 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
       'do the task',
     ]);
     // Local role 'coder' is remapped to the namespaced host player.
-    expect(context.playerCalls.map((c) => c.playerId)).toEqual(['code.coder']);
+    expect(context.playerCalls.map((c) => c.playerId)).toEqual(['code-coder']);
     // Visibility requested for the generated set before dispatch.
-    expect(context.visiblePlayers).toContainEqual(['code.coder', 'code.reviewer']);
+    expect(context.visiblePlayers).toContainEqual(['code-coder', 'code-reviewer']);
   });
 
   it('rejects init for enablement faults', async () => {

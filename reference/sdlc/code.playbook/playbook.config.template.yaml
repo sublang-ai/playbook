@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+# Generic `playbook` launcher config.
+# Top-level host fields only — no `config:` wrapper, no top-level `players`.
+# The launcher injects captain.from and the namespaced <id>-<role> host
+# players, then launches cligent's tmux-play under the Playbook Captain shell.
+
+# Reusable agent settings. A profile id must not be an adapter shorthand
+# (claude, codex). Reference a profile by id from captain / players below.
+profiles:
+  judge:
+    adapter: claude
+    model: claude-opus-4-8
+    reasoningEffort: high
+  coder:
+    adapter: claude
+    model: claude-opus-4-8[1m]
+    reasoningEffort: xhigh
+  reviewer:
+    adapter: codex
+    model: gpt-5.5
+    reasoningEffort: xhigh
+    permissions:
+      mode: auto
+      writablePaths: ['.git']
+
+# The Captain/Judge agent: a profile id, an adapter shorthand, or a full
+# tmux-play agent block (which may carry a `profile:` key).
+captain: judge
+
+# Host notifications. Omitting turn_aborted resolves it to off.
+notifications:
+  player_finished: bell
+  turn_finished: desktop
+
+# Enabled playbooks. Each is loaded from its explicit `from` module; the
+# `<id>` key must equal that module's manifest id. `from`, `command`, and
+# `players` are launcher-owned; every other key (e.g. CODE's `committer`)
+# is that playbook's option slice.
+playbooks:
+  code:
+    from: "@sublang/playbook/code/registry"
+    players:
+      coder: coder
+      reviewer: reviewer
+    committer: coder

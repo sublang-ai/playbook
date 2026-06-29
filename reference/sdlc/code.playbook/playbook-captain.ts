@@ -42,7 +42,7 @@ export interface PlaybookCaptainRegistryEntry {
 // Per-enabled-playbook binding the shell resolves at init. The legacy
 // `captain.options.code` path uses identity binding and no visibility
 // switching; the `captain.options.playbooks` path binds local roles to
-// `<id>.<role>` host players and carries the generated visible set.
+// `<id>-<role>` host players and carries the generated visible set.
 interface Enablement {
   entry: PlaybookCaptainRegistryEntry;
   command: string;
@@ -215,7 +215,7 @@ interface BuiltRegistry {
 // the shell stays on the legacy single-registry path (CAPTAIN amendments
 // land the required-enablement rule once the legacy path is removed); with
 // it, each enabled playbook is loaded from its explicit `from` module and
-// bound to namespaced `<id>.<role>` host players (CAPTAIN-16).
+// bound to namespaced `<id>-<role>` host players (CAPTAIN-16).
 async function buildEnablements(
   options: unknown,
   fallbackRegistry: readonly PlaybookCaptainRegistryEntry[],
@@ -298,7 +298,7 @@ async function buildEnablements(
       );
     }
     const boundPlayers = entry.requiredRoleIds.map((role) => {
-      const host = players.find((p) => p.id === `${entry.id}.${role}`);
+      const host = players.find((p) => p.id === `${entry.id}-${role}`);
       return { id: role, adapter: host?.adapter, model: host?.model };
     });
     entries.push(entry);
@@ -309,9 +309,9 @@ async function buildEnablements(
       command,
       optionInput: { [entry.id]: record.options },
       boundPlayers,
-      hostPlayerId: (localRole) => `${entry.id}.${localRole}`,
+      hostPlayerId: (localRole) => `${entry.id}-${localRole}`,
       visiblePlayerIds: entry.requiredRoleIds.map(
-        (role) => `${entry.id}.${role}`,
+        (role) => `${entry.id}-${role}`,
       ),
     });
   }

@@ -97,7 +97,7 @@ function readPlaybooksConfig(options) {
 // the shell stays on the legacy single-registry path (CAPTAIN amendments
 // land the required-enablement rule once the legacy path is removed); with
 // it, each enabled playbook is loaded from its explicit `from` module and
-// bound to namespaced `<id>.<role>` host players (CAPTAIN-16).
+// bound to namespaced `<id>-<role>` host players (CAPTAIN-16).
 async function buildEnablements(options, fallbackRegistry, players, loadModule) {
     const entries = [];
     const byCommand = new Map();
@@ -157,7 +157,7 @@ async function buildEnablements(options, fallbackRegistry, players, loadModule) 
             throw new Error(`captain.options.playbooks has a duplicate effective command "${command}"`);
         }
         const boundPlayers = entry.requiredRoleIds.map((role) => {
-            const host = players.find((p) => p.id === `${entry.id}.${role}`);
+            const host = players.find((p) => p.id === `${entry.id}-${role}`);
             return { id: role, adapter: host?.adapter, model: host?.model };
         });
         entries.push(entry);
@@ -168,8 +168,8 @@ async function buildEnablements(options, fallbackRegistry, players, loadModule) 
             command,
             optionInput: { [entry.id]: record.options },
             boundPlayers,
-            hostPlayerId: (localRole) => `${entry.id}.${localRole}`,
-            visiblePlayerIds: entry.requiredRoleIds.map((role) => `${entry.id}.${role}`),
+            hostPlayerId: (localRole) => `${entry.id}-${localRole}`,
+            visiblePlayerIds: entry.requiredRoleIds.map((role) => `${entry.id}-${role}`),
         });
     }
     return { entries, byCommand, byId, enablementById };

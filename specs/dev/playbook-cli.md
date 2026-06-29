@@ -63,7 +63,7 @@ Where `playbook` composes the runtime config, the command shall
 generate the top-level tmux-play `players` roster as the launch-time
 union of every enabled playbook's players, binding local role
 `<role>` of playbook `<id>` to a host player whose `id` is
-`<id>.<role>`, where `<id>` is the `playbooks.<id>` config key.
+`<id>-<role>`, where `<id>` is the `playbooks.<id>` config key.
 When two playbooks reference the same profile, the command shall still
 emit separate playbook-scoped host players.
 The generated config shall not bind a playbook's role to a player from

@@ -79,8 +79,8 @@ unless the loaded CODE registry entry carries id `code`, command
 during shell `init`; invalid CODE options cause `init` to reject;
 valid CODE options do not construct a runtime until engagement;
 `handleBossTurn` before `init` rejects; CODE player calls reach
-`context.callPlayer` with the bound host player ids `code.coder` /
-`code.reviewer`; CODE judge calls reach `context.callCaptain` with
+`context.callPlayer` with the bound host player ids `code-coder` /
+`code-reviewer`; CODE judge calls reach `context.callCaptain` with
 `{ visibility: 'hidden' }`; and all Captain chat, routing, and
 sub-runtime judge calls use the same Captain session primitives.
 
@@ -97,8 +97,8 @@ module exposing no valid registry entry, a map key differing from its
 module's manifest `id`, two enabled playbooks sharing an `id`, and two
 enabled playbooks resolving to the same effective command each reject
 `init`; each enabled playbook's local
-roles bind to host players `<id>.<role>` so a sub-runtime
-`callPlayer(<role>, …)` reaches `context.callPlayer(<id>.<role>, …)`;
+roles bind to host players `<id>-<role>` so a sub-runtime
+`callPlayer(<role>, …)` reaches `context.callPlayer(<id>-<role>, …)`;
 on engaging, resuming, or routing to a playbook the shell calls
 `setVisiblePlayers` with that playbook's generated host player ids,
 never an empty set, before dispatching Boss text; a

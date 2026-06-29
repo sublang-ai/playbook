@@ -79,8 +79,8 @@ resolves the `@sublang/playbook/code/registry` module, over stubbed
 cligent `CaptainContext` / `CaptainSession` primitives, the test
 suite shall fail unless the shell loads the CODE registry entry from
 that module, player calls reach `context.callPlayer` with the bound
-host player ids `code.coder` (via the free-text coding happy path)
-and `code.reviewer` (via a multi-stage flow that drives the FSM
+host player ids `code-coder` (via the free-text coding happy path)
+and `code-reviewer` (via a multi-stage flow that drives the FSM
 through a Reviewer state), adjudication reaches
 `context.callCaptain`, every CODE `callCaptain` invocation —
 classification and adjudication alike — passes
