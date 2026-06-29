@@ -32,6 +32,7 @@ interface StubContext {
   controller: AbortController;
   playerCalls: { playerId: string; prompt: string }[];
   captainCalls: { prompt: string; options?: CaptainCallOptions }[];
+  visiblePlayers: string[][];
 }
 
 type CaptainReply =
@@ -83,16 +84,18 @@ class FakeRuntime implements PlaybookRuntime {
   }
 }
 
-function stubSession(): StubSession {
+function stubSession(
+  players: { id: string; adapter?: string; model?: string }[] = [
+    { id: 'coder', adapter: 'claude' },
+    { id: 'reviewer', adapter: 'codex' },
+  ],
+): StubSession {
   const statuses: StubSession['statuses'] = [];
   const telemetry: StubSession['telemetry'] = [];
   return {
     session: {
       signal: new AbortController().signal,
-      players: [
-        { id: 'coder', adapter: 'claude' },
-        { id: 'reviewer', adapter: 'codex' },
-      ],
+      players,
       emitStatus: async (message, data) => {
         statuses.push({ message, data });
       },
@@ -112,6 +115,7 @@ function stubContext(
   const controller = new AbortController();
   const playerCalls: StubContext['playerCalls'] = [];
   const captainCalls: StubContext['captainCalls'] = [];
+  const visiblePlayers: StubContext['visiblePlayers'] = [];
   let captainIndex = 0;
   return {
     context: {
@@ -125,6 +129,9 @@ function stubContext(
           turnId: 1,
           finalText: `player ${playerId} done`,
         };
+      },
+      setVisiblePlayers: async (ids): Promise<void> => {
+        visiblePlayers.push([...ids]);
       },
       callCaptain: async (
         prompt,
@@ -154,6 +161,7 @@ function stubContext(
     controller,
     playerCalls,
     captainCalls,
+    visiblePlayers,
   };
 }
 
@@ -1002,6 +1010,137 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       'do the task',
     ]);
     expect(turnSummaryCalls(context)).toHaveLength(0);
+  });
+});
+
+describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () => {
+  const CODE_FROM = '@sublang/playbook/code/registry';
+
+  function namespacedSession() {
+    return stubSession([
+      { id: 'code.coder', adapter: 'codex', model: 'gpt-5.5' },
+      { id: 'code.reviewer', adapter: 'claude', model: 'claude-opus-4-8' },
+    ]);
+  }
+
+  async function initWith(
+    options: unknown,
+    loadModule: (specifier: string) => Promise<unknown>,
+  ): Promise<void> {
+    const shell = createPlaybookCaptainShell(options, undefined, { loadModule });
+    await shell.init!(namespacedSession().session);
+  }
+
+  it('loads from captain.options.playbooks, binds <id>.<role>, validates the slice, and switches visibility', async () => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.callPlayer(
+        'coder',
+        `player prompt for ${runtimeTurn.text}`,
+        runtimeTurn.signal,
+      );
+    });
+    const options = {
+      playbooks: { code: { from: CODE_FROM, options: { committer: 'reviewer' } } },
+    };
+    const shell = createPlaybookCaptainShell(options, undefined, {
+      loadModule: async (specifier) => {
+        if (specifier === CODE_FROM) return { default: registry.entry };
+        throw new Error(`no module ${specifier}`);
+      },
+    });
+    const session = namespacedSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code do the task'), context.context);
+
+    // Entry validates its own option slice, re-keyed under the entry id.
+    expect(registry.validateOptions).toHaveBeenCalledWith({
+      code: { committer: 'reviewer' },
+    });
+    // createRuntime receives the slice plus host players bound to local roles.
+    expect(registry.createRuntime).toHaveBeenCalledWith({
+      captainOptions: { code: { committer: 'reviewer' } },
+      players: [
+        { id: 'coder', adapter: 'codex', model: 'gpt-5.5' },
+        { id: 'reviewer', adapter: 'claude', model: 'claude-opus-4-8' },
+      ],
+    });
+    expect(registry.runtimes[0]?.inputs.map((i) => i.text)).toEqual([
+      'do the task',
+    ]);
+    // Local role 'coder' is remapped to the namespaced host player.
+    expect(context.playerCalls.map((c) => c.playerId)).toEqual(['code.coder']);
+    // Visibility requested for the generated set before dispatch.
+    expect(context.visiblePlayers).toContainEqual(['code.coder', 'code.reviewer']);
+  });
+
+  it('rejects init for enablement faults', async () => {
+    const code = fakeCodeEntry();
+    const code2 = fakePlaybookEntry('code2', 'code');
+    const loader = async (specifier: string): Promise<unknown> => {
+      if (specifier === 'mod://code') return { default: code.entry };
+      if (specifier === 'mod://code2') return { default: code2.entry };
+      if (specifier === 'mod://invalid') return { default: { id: 'code' } };
+      throw new Error(`no module ${specifier}`);
+    };
+
+    await expect(initWith({ playbooks: {} }, loader)).rejects.toThrow(
+      /at least one playbook/,
+    );
+    await expect(
+      initWith({ playbooks: { code: {} } }, loader),
+    ).rejects.toThrow(/from/);
+    await expect(
+      initWith({ playbooks: { code: { from: 'mod://missing' } } }, loader),
+    ).rejects.toThrow(/failed to import/);
+    await expect(
+      initWith({ playbooks: { code: { from: 'mod://invalid' } } }, loader),
+    ).rejects.toThrow(/no valid registry entry/);
+    await expect(
+      initWith({ playbooks: { foo: { from: 'mod://code' } } }, loader),
+    ).rejects.toThrow(/manifest id/);
+    await expect(
+      initWith(
+        {
+          playbooks: {
+            code: { from: 'mod://code' },
+            code2: { from: 'mod://code2' },
+          },
+        },
+        loader,
+      ),
+    ).rejects.toThrow(/duplicate effective command/);
+  });
+
+  it('treats a setVisiblePlayers rejection as an internal error rather than swallowing it', async () => {
+    const registry = fakeCodeEntry();
+    const shell = createPlaybookCaptainShell(
+      { playbooks: { code: { from: CODE_FROM } } },
+      undefined,
+      {
+        loadModule: async () => ({ default: registry.entry }),
+      },
+    );
+    const session = namespacedSession();
+    const context = stubContext();
+    context.context.setVisiblePlayers = async () => {
+      throw new Error('invalid visible set');
+    };
+
+    await shell.init!(session.session);
+    await expect(
+      shell.handleBossTurn(turn('/code do the task'), context.context),
+    ).rejects.toThrow(/invalid visible set/);
+  });
+
+  it('default-exports the CODE registry entry from @sublang/playbook/code/registry', async () => {
+    const mod = await import('@sublang/playbook/code/registry');
+    expect(mod.default).toBe(mod.codePlaybookRegistryEntry);
+    expect(mod.default.id).toBe('code');
+    expect(mod.default.command).toBe('code');
+    expect(typeof mod.default.createRuntime).toBe('function');
   });
 });
 

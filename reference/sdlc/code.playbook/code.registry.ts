@@ -200,3 +200,8 @@ export const codePlaybookRegistryEntry: CodePlaybookRegistryEntry = {
     return createPlaybookRuntime(createCodeRuntimeOptions(options));
   },
 };
+
+// CAPTAIN-16 / PBRT-16: the published `@sublang/playbook/code/registry`
+// module's default export is the CODE registry entry the Playbook Captain
+// shell loads when a playbook block's `from` names this module.
+export default codePlaybookRegistryEntry;

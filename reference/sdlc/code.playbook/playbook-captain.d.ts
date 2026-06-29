@@ -5,6 +5,9 @@ export interface CreatePlaybookRuntimeOptions {
     captainOptions: unknown;
     players: readonly RegistryPlayer[];
 }
+export interface PlaybookCaptainDeps {
+    loadModule?: (specifier: string) => Promise<unknown>;
+}
 export interface PlaybookCaptainRegistryEntry {
     id: string;
     command: string;
@@ -18,5 +21,5 @@ export interface PlaybookCaptainRegistryEntry {
     createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
 }
 export declare const playbookCaptainRegistry: readonly PlaybookCaptainRegistryEntry[];
-export declare function createPlaybookCaptainShell(options: unknown, registry?: readonly PlaybookCaptainRegistryEntry[]): Captain;
+export declare function createPlaybookCaptainShell(options: unknown, registry?: readonly PlaybookCaptainRegistryEntry[], deps?: PlaybookCaptainDeps): Captain;
 export default createPlaybookCaptainShell;

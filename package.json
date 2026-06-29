@@ -67,6 +67,10 @@
       "types": "./reference/sdlc/code.playbook/code.playbook.d.ts",
       "default": "./reference/sdlc/code.playbook/code.playbook.js"
     },
+    "./code/registry": {
+      "types": "./reference/sdlc/code.playbook/code.registry.d.ts",
+      "default": "./reference/sdlc/code.playbook/code.registry.js"
+    },
     "./playbook-captain": {
       "types": "./reference/sdlc/code.playbook/playbook-captain.d.ts",
       "default": "./reference/sdlc/code.playbook/playbook-captain.js"

@@ -12,9 +12,6 @@ function parseRegisteredCommand(prompt) {
         return undefined;
     return { command: match[1], text: (match[2] ?? '').trim() };
 }
-function playbookCommandLabel(entry) {
-    return `/${entry.command}`;
-}
 function visibleChatEnvelope(message) {
     return [
         'You are the Playbook Captain shell.',
@@ -73,17 +70,116 @@ function summaryProgressRoundCount(stateCounts) {
 function guardFromJudgeReply(finalText) {
     return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
 }
-function normalizeRegistry(registry) {
+function isValidRegistryEntry(value) {
+    if (typeof value !== 'object' || value === null)
+        return false;
+    const e = value;
+    return (typeof e.id === 'string' &&
+        typeof e.command === 'string' &&
+        typeof e.intent === 'string' &&
+        Array.isArray(e.requiredRoleIds) &&
+        typeof e.idleStateId === 'string' &&
+        typeof e.finalStateId === 'string' &&
+        Array.isArray(e.parkStateIds) &&
+        typeof e.validateOptions === 'function' &&
+        typeof e.createRuntime === 'function');
+}
+function readPlaybooksConfig(options) {
+    if (typeof options !== 'object' || options === null)
+        return undefined;
+    const pb = options.playbooks;
+    if (typeof pb !== 'object' || pb === null || Array.isArray(pb)) {
+        return undefined;
+    }
+    return pb;
+}
+// Resolve the active registry at init. With no `captain.options.playbooks`
+// the shell stays on the legacy single-registry path (CAPTAIN amendments
+// land the required-enablement rule once the legacy path is removed); with
+// it, each enabled playbook is loaded from its explicit `from` module and
+// bound to namespaced `<id>.<role>` host players (CAPTAIN-16).
+async function buildEnablements(options, fallbackRegistry, players, loadModule) {
+    const entries = [];
     const byCommand = new Map();
     const byId = new Map();
-    for (const entry of registry) {
-        byCommand.set(entry.command, entry);
-        byId.set(entry.id, entry);
+    const enablementById = new Map();
+    const config = readPlaybooksConfig(options);
+    if (config === undefined) {
+        for (const entry of fallbackRegistry) {
+            entries.push(entry);
+            byId.set(entry.id, entry);
+            byCommand.set(entry.command, entry);
+            enablementById.set(entry.id, {
+                entry,
+                command: entry.command,
+                optionInput: options,
+                boundPlayers: players,
+                hostPlayerId: (localRole) => localRole,
+            });
+        }
+        return { entries, byCommand, byId, enablementById };
     }
-    return { entries: registry, byCommand, byId };
+    const ids = Object.keys(config);
+    if (ids.length === 0) {
+        throw new Error('captain.options.playbooks must enable at least one playbook');
+    }
+    for (const id of ids) {
+        const block = config[id];
+        if (typeof block !== 'object' || block === null || Array.isArray(block)) {
+            throw new Error(`captain.options.playbooks.${id} must be an object`);
+        }
+        const record = block;
+        const from = record.from;
+        if (typeof from !== 'string' || from.length === 0) {
+            throw new Error(`captain.options.playbooks.${id}.from must be a module specifier`);
+        }
+        let mod;
+        try {
+            mod = await loadModule(from);
+        }
+        catch (cause) {
+            throw new Error(`captain.options.playbooks.${id}.from "${from}" failed to import: ${String(cause?.message ?? cause)}`);
+        }
+        const entry = mod?.default;
+        if (!isValidRegistryEntry(entry)) {
+            throw new Error(`captain.options.playbooks.${id}.from "${from}" exposes no valid registry entry`);
+        }
+        if (entry.id !== id) {
+            throw new Error(`captain.options.playbooks.${id} key must equal the module manifest id "${entry.id}"`);
+        }
+        if (byId.has(entry.id)) {
+            throw new Error(`captain.options.playbooks has a duplicate playbook id "${entry.id}"`);
+        }
+        const command = typeof record.command === 'string' && record.command.length > 0
+            ? record.command
+            : entry.command;
+        if (byCommand.has(command)) {
+            throw new Error(`captain.options.playbooks has a duplicate effective command "${command}"`);
+        }
+        const boundPlayers = entry.requiredRoleIds.map((role) => {
+            const host = players.find((p) => p.id === `${entry.id}.${role}`);
+            return { id: role, adapter: host?.adapter, model: host?.model };
+        });
+        entries.push(entry);
+        byId.set(entry.id, entry);
+        byCommand.set(command, entry);
+        enablementById.set(entry.id, {
+            entry,
+            command,
+            optionInput: { [entry.id]: record.options },
+            boundPlayers,
+            hostPlayerId: (localRole) => `${entry.id}.${localRole}`,
+            visiblePlayerIds: entry.requiredRoleIds.map((role) => `${entry.id}.${role}`),
+        });
+    }
+    return { entries, byCommand, byId, enablementById };
 }
-export function createPlaybookCaptainShell(options, registry = playbookCaptainRegistry) {
-    const { entries, byCommand, byId } = normalizeRegistry(registry);
+export function createPlaybookCaptainShell(options, registry = playbookCaptainRegistry, deps = {}) {
+    const loadModule = deps.loadModule ?? ((specifier) => import(specifier));
+    let entries = [];
+    let byCommand = new Map();
+    let byId = new Map();
+    let enablementById = new Map();
     let session;
     let players = [];
     let activeContext;
@@ -183,7 +279,10 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
             if (!activeContext) {
                 throw new Error('callPlayer invoked outside a Boss turn');
             }
-            const result = await activeContext.callPlayer(playerId, prompt);
+            const hostPlayerId = active
+                ? active.enablement.hostPlayerId(playerId)
+                : playerId;
+            const result = await activeContext.callPlayer(hostPlayerId, prompt);
             if (activeTurnSummary) {
                 activeTurnSummary.counts.interruptions++;
             }
@@ -224,24 +323,36 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
             await requireSession().emitTelemetry(event);
         },
     });
+    // CAPTAIN-22: before dispatching to a playbook, request tmux-play
+    // visibility for that playbook's generated host players. A pane
+    // reconciliation failure is display-only in tmux-play and does not
+    // reject; the legacy path carries no generated set and skips this.
+    const requestVisibility = async (enablement) => {
+        const ids = enablement.visiblePlayerIds;
+        if (!ids || ids.length === 0 || !activeContext)
+            return;
+        await activeContext.setVisiblePlayers(ids);
+    };
     const engage = async (entry) => {
         if (active?.entry.id === entry.id)
             return active;
+        const enablement = enablementById.get(entry.id);
         const runtime = entry.createRuntime({
-            captainOptions: options,
-            players,
+            captainOptions: enablement.optionInput,
+            players: enablement.boundPlayers,
         });
-        active = { entry, runtime };
+        active = { entry, enablement, runtime };
         latestSubRuntimeStateId = undefined;
         pendingBossQuestion = undefined;
         lastError = undefined;
         finalDisposalRequested = undefined;
         await setMode('engaged.parked', 'engage', entry.id);
         await runtime.init(createPorts());
-        await requireSession().emitStatus(`◇ ${playbookCommandLabel(entry)} started`);
+        await requireSession().emitStatus(`◇ /${enablement.command} started`);
         return active;
     };
     const submitToActive = async (engagement, text, context) => {
+        await requestVisibility(engagement.enablement);
         const policy = engagement.entry.summaryPolicy;
         const summaryCounts = {
             interruptions: 0,
@@ -287,7 +398,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         if (!engagement)
             return;
         const playbookId = engagement.entry.id;
-        const commandLabel = playbookCommandLabel(engagement.entry);
+        const commandLabel = `/${engagement.enablement.command}`;
         active = undefined;
         finalDisposalRequested = undefined;
         if (reason === 'dispose') {
@@ -335,7 +446,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         `Ledger:\n${JSON.stringify(ledgerSnapshot())}`,
         `Registry:\n${JSON.stringify(entries.map((entry) => ({
             id: entry.id,
-            command: entry.command,
+            command: enablementById.get(entry.id)?.command ?? entry.command,
             intent: entry.intent,
         })))}`,
         `Boss message:\n${prompt}`,
@@ -425,18 +536,20 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
             await routerClarification(context);
             return;
         }
-        const dismissedCommandLabel = playbookCommandLabel(active.entry);
+        const dismissedCommandLabel = `/${active.enablement.command}`;
         await disposeActive('dismiss');
         await callVisibleChat(context, decision.text ?? `${dismissedCommandLabel} stopped.`);
     };
     const handleRegisteredCommand = async (entry, text, context) => {
+        const enablement = enablementById.get(entry.id);
         if (active && active.entry.id !== entry.id) {
-            await callVisibleChat(context, `/${active.entry.command} is already running. Finish or stop it before starting /${entry.command}.`);
+            await callVisibleChat(context, `/${active.enablement.command} is already running. Finish or stop it before starting /${enablement.command}.`);
             return;
         }
         const engagement = await engage(entry);
         if (text.length === 0) {
-            await callVisibleChat(context, `Ask what task to run with /${entry.command}.`);
+            await requestVisibility(engagement.enablement);
+            await callVisibleChat(context, `Ask what task to run with /${enablement.command}.`);
             return;
         }
         await submitToActive(engagement, text, context);
@@ -445,8 +558,13 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         async init(initSession) {
             session = initSession;
             players = initSession.players;
-            for (const entry of entries) {
-                entry.validateOptions(options);
+            const built = await buildEnablements(options, registry, players, loadModule);
+            entries = built.entries;
+            byCommand = built.byCommand;
+            byId = built.byId;
+            enablementById = built.enablementById;
+            for (const enablement of enablementById.values()) {
+                enablement.entry.validateOptions(enablement.optionInput);
             }
             await setMode('chat', 'init');
         },
