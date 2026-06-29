@@ -50,9 +50,15 @@ The bundled template shall include
 `notifications: { player_finished: bell, turn_finished: desktop }`;
 omitting `turn_aborted` shall leave cligent to resolve that event to
 `off`.
-This item fixes the template's *shape*, not its model picks; the
-concrete `adapter` / `model` / `reasoningEffort` values stay
-user-tunable per [PBCODE-6](../user/playbook-code.md#pbcode-6).
+The bundled template shall seed Captain with `adapter: claude`,
+`model: claude-codex-4-8`, and `reasoningEffort: high`; Coder with
+`adapter: claude`, `model: claude-codex-4-8-1m`, and
+`reasoningEffort: xhigh`; Reviewer with `adapter: codex`,
+`model: gpt-5.5`, and `reasoningEffort: xhigh`; and the Committer
+alias as `players.committer: coder`.
+These concrete `adapter` / `model` / `reasoningEffort` values are
+defaults and remain user-tunable per
+[PBCODE-6](../user/playbook-code.md#pbcode-6).
 The copy shall preserve the template comments, which shall
 describe the tunable overlay fields rather than name `captain.from`
 or `players[].id` as user-maintained invariants; the comments

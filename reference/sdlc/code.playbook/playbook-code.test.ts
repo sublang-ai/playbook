@@ -87,10 +87,27 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
       'coder',
       'reviewer',
     ]);
-    expect(
-      composed.players.find((p: { id: string }) => p.id === 'coder')
-        ?.permissions,
-    ).toEqual({ mode: 'auto', writablePaths: ['.git'] });
+    expect(composed.captain.adapter).toBe('claude');
+    expect(composed.captain.model).toBe('claude-codex-4-8');
+    expect(composed.captain.reasoningEffort).toBe('high');
+    const coder = composed.players.find(
+      (p: { id: string }) => p.id === 'coder',
+    );
+    expect(coder).toMatchObject({
+      adapter: 'claude',
+      model: 'claude-codex-4-8-1m',
+      reasoningEffort: 'xhigh',
+      permissions: { mode: 'auto' },
+    });
+    const reviewer = composed.players.find(
+      (p: { id: string }) => p.id === 'reviewer',
+    );
+    expect(reviewer).toMatchObject({
+      adapter: 'codex',
+      model: 'gpt-5.5',
+      reasoningEffort: 'xhigh',
+      permissions: { mode: 'auto', writablePaths: ['.git'] },
+    });
     // PBCODE-16/17: the seeded template carries a layout block, carried
     // through to the composed config (174×49 window, 4:6:6 columns).
     expect(composed.layout).toEqual({
@@ -106,8 +123,8 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
     });
     // PBCODE-16/17 + PBRT-8: the seeded Committer alias resolves into
     // captain.options.code.committer without adding a players[] entry,
-    // so commit turns route to the reviewer pane.
-    expect(composed.captain.options.code.committer).toBe('reviewer');
+    // so commit turns route to the coder pane.
+    expect(composed.captain.options.code.committer).toBe('coder');
 
     // Temp config removed before the shim exits.
     expect(spawn.configs[0].existedAtSpawn).toBe(true);
@@ -457,7 +474,7 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
       {
         id: 'coder',
         adapter: 'claude',
-        model: 'claude-opus-4-7',
+        model: 'claude-codex-4-8-1m',
         reasoningEffort: 'xhigh',
         permissions: { mode: 'auto' },
       },
@@ -466,7 +483,7 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
         adapter: 'codex',
         model: 'gpt-5.5',
         reasoningEffort: 'xhigh',
-        permissions: { mode: 'auto' },
+        permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
     ]);
   });
@@ -1165,7 +1182,7 @@ function fullOverlay() {
   return {
     captain: {
       adapter: 'claude',
-      model: 'claude-sonnet-4-6',
+      model: 'claude-codex-4-8',
       reasoningEffort: 'high',
       permissions: { mode: 'auto' },
       options: { code: {} },
@@ -1173,7 +1190,7 @@ function fullOverlay() {
     players: {
       coder: {
         adapter: 'claude',
-        model: 'claude-opus-4-7',
+        model: 'claude-codex-4-8-1m',
         reasoningEffort: 'xhigh',
         permissions: { mode: 'auto' },
       },
@@ -1181,7 +1198,7 @@ function fullOverlay() {
         adapter: 'codex',
         model: 'gpt-5.5',
         reasoningEffort: 'xhigh',
-        permissions: { mode: 'auto' },
+        permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
     },
   };

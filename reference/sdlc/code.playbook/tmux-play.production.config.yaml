@@ -13,15 +13,18 @@ notifications:
 captain:
   from: "@sublang/playbook/playbook-captain"
   adapter: claude
-  model: claude-sonnet-4-6
+  model: claude-codex-4-8
   reasoningEffort: high
   permissions:
     mode: auto
+  options:
+    code:
+      committer: coder
 
 players:
   - id: coder
     adapter: claude
-    model: claude-opus-4-7
+    model: claude-codex-4-8-1m
     reasoningEffort: xhigh
     permissions:
       mode: auto
@@ -31,3 +34,5 @@ players:
     reasoningEffort: xhigh
     permissions:
       mode: auto
+      writablePaths:
+        - .git

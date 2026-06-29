@@ -19,12 +19,15 @@ captain:
   # shim that delegates to the same shell with CODE registered.
   from: ./playbook-captain.js
   adapter: claude
-  model: claude-sonnet-4-6
+  model: claude-codex-4-8
   reasoningEffort: high
   # Agents run in cligent's classifier/reviewer-protected auto mode
   # (cligent DR-005): claude → permissionMode auto, codex → auto_review.
   permissions:
     mode: auto
+  options:
+    code:
+      committer: coder
 
 # `players[].id` shall match the baked playerId strings the adapter
 # routes to. The CODE playbook bakes Coder→'coder' and
@@ -38,7 +41,7 @@ captain:
 players:
   - id: coder
     adapter: claude
-    model: claude-opus-4-7
+    model: claude-codex-4-8-1m
     reasoningEffort: xhigh
     permissions:
       mode: auto
@@ -48,3 +51,5 @@ players:
     reasoningEffort: xhigh
     permissions:
       mode: auto
+      writablePaths:
+        - .git

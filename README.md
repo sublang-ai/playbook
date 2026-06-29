@@ -108,26 +108,33 @@ the runtime binds to those host-configuration invariants per
 `<coder-llm>` / `<reviewer-llm>` substitution strings from each role's
 `model` when pinned and `adapter` otherwise — so the Committer's
 commit-message trailers can name the concrete model
-(e.g. `claude-opus-4-8`) rather than the adapter family (`claude`).
+(e.g. `claude-codex-4-8-1m`) rather than the adapter family
+(`claude`).
 
 `players.committer` is an optional alias naming which role — `coder`
 or `reviewer` — runs the commit turn; the seeded overlay points it at
-the Reviewer. Absent the alias the Committer falls back to the Coder
+the Coder. Absent the alias the Committer falls back to the Coder
 ([PBRT-8](specs/user/playbook-runtime.md#pbrt-8)).
 
-For example, the seeded overlay runs the Coder on Codex and the
-Reviewer on Claude, with the Committer aliased to the Reviewer:
+For example, the seeded overlay runs the Coder on Claude Codex 4.8 1m
+and the Reviewer on GPT-5.5, with the Committer aliased to the Coder:
 
 ```yaml
 captain:
   adapter: claude
-  model: claude-sonnet-4-6
+  model: claude-codex-4-8
   reasoningEffort: high
   permissions:
     mode: auto
 
 players:
   coder:              # role key must stay `coder` — see PBRT-4
+    adapter: claude
+    model: claude-codex-4-8-1m
+    reasoningEffort: xhigh
+    permissions:
+      mode: auto
+  reviewer:           # role key must stay `reviewer` — see PBRT-4
     adapter: codex
     model: gpt-5.5
     reasoningEffort: xhigh
@@ -135,13 +142,7 @@ players:
       mode: auto
       writablePaths:
         - .git          # allow git metadata writes under Codex auto mode
-  reviewer:           # role key must stay `reviewer` — see PBRT-4
-    adapter: claude
-    model: claude-opus-4-8
-    reasoningEffort: xhigh
-    permissions:
-      mode: auto
-  committer: reviewer   # which role commits — `coder` or `reviewer`
+  committer: coder      # which role commits — `coder` or `reviewer`
 ```
 
 Normal `playbook-code` runs use the seeded path above. If you need a

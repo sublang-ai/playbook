@@ -27,7 +27,7 @@
 #   instead of requiring bypass permissions.
 # - players.committer optionally aliases the Committer to a role
 #   (coder or reviewer); that role's pane runs the commit turn. The
-#   seeded value is reviewer; omit it to fall back to the coder.
+#   seeded value is coder; omit it to fall back to the coder.
 # - layout sizes the tmux window (layout.window: columns × rows) and
 #   sets the relative column widths (layout.columnWeights) for the
 #   Boss/Captain, Coder, and Reviewer columns.
@@ -49,13 +49,19 @@ notifications:
 
 captain:
   adapter: claude
-  model: claude-sonnet-4-6
+  model: claude-codex-4-8
   reasoningEffort: high
   permissions:
     mode: auto
 
 players:
   coder:
+    adapter: claude
+    model: claude-codex-4-8-1m
+    reasoningEffort: xhigh
+    permissions:
+      mode: auto
+  reviewer:
     adapter: codex
     model: gpt-5.5
     reasoningEffort: xhigh
@@ -63,10 +69,4 @@ players:
       mode: auto
       writablePaths:
         - .git
-  reviewer:
-    adapter: claude
-    model: claude-opus-4-8
-    reasoningEffort: xhigh
-    permissions:
-      mode: auto
-  committer: reviewer
+  committer: coder

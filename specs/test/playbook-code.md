@@ -26,6 +26,10 @@ preserves the seeded Codex role's
 preserves the seeded
 `notifications: { player_finished: bell, turn_finished: desktop }`
 block,
+preserves the seeded role defaults — Captain claude
+`claude-codex-4-8` at `high`, Coder claude
+`claude-codex-4-8-1m` at `xhigh`, Reviewer codex `gpt-5.5` at
+`xhigh`, and the Committer alias to `coder`,
 prints one stderr line naming the path, composes the launched
 config from that file, and launches `tmux-play` against the
 composed temp config — not the user config path — when readiness

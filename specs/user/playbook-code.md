@@ -44,6 +44,9 @@ Where `playbook-code` is invoked without `--config`, `--help`, or
 shim shall create it from the bundled template, creating parent
 directories as needed, and shall print one stderr line naming the
 resolved path.
+The seeded template shall carry the default Captain, Coder, Reviewer,
+and Committer-alias settings defined by
+[PBCODE-7](../dev/playbook-code.md#pbcode-7).
 Where `playbook-code` is invoked without `--config`, `--help`, or
 `-h`, when the file at the resolved user config path is already
 present and already has a top-level `notifications` block, the shim
