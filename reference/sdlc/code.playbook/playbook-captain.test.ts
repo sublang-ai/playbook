@@ -980,6 +980,29 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(registry.runtimes[0]?.inputs).toEqual([]);
     expect(turnSummaryCalls(context)).toHaveLength(0);
   });
+
+  it('does not append a turn summary for a submitted turn when the entry declares no summary policy', async () => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await runtime.ports.callPlayer(
+        'coder',
+        `player prompt for ${runtimeTurn.text}`,
+        runtimeTurn.signal,
+      );
+    });
+    delete (registry.entry as { summaryPolicy?: unknown }).summaryPolicy;
+    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code do the task'), context.context);
+
+    expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
+      'do the task',
+    ]);
+    expect(turnSummaryCalls(context)).toHaveLength(0);
+  });
 });
 
 describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
