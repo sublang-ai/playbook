@@ -118,9 +118,10 @@ When resolving the player id for an FSM captain invocation, the
 runtime shall map `Coder` to `coder` and `Reviewer` to
 `reviewer`. For the composite `Committer`, when a configured
 committer alias is present — the validated
-`captain.options.code.committer` ([PBRT-30](#pbrt-30)) threaded
-into the runtime as `CaptainInput.committerPlayer` — it shall
-resolve to that player id (`coder` or `reviewer`). Absent a
+`captain.options.playbooks.code.options.committer`
+([PBRT-30](#pbrt-30)) threaded into the runtime as
+`CaptainInput.committerPlayer` — it shall resolve to that player id
+(`coder` or `reviewer`). Absent a
 configured alias it shall fall back to the
 [DR-004 §2](../decisions/004-link-code-fsm-to-playbook-runtime.md)
 baked binding: `coder` when `CaptainInput.coderPlayer` is
@@ -280,19 +281,22 @@ the next, and never dropped.
 
 Where CODE runs under tmux-play through the Playbook Captain shell,
 the CODE registry entry shall derive `coderPlayer` and
-`reviewerPlayer` from `session.players`: for each entry whose `id`
-is `coder` / `reviewer`, the registry entry shall use that entry's
+`reviewerPlayer` from the host players bound to its local roles
+`coder` and `reviewer` per the active binding
+([CAPTAIN-10](playbook-captain.md#captain-10)): for the host player
+bound to each role, the registry entry shall use that player's
 `model` when set and shall fall back to its `adapter` otherwise.
 When the shell constructs a CODE engagement, the CODE registry
 entry shall construct the runtime from the validated CODE options
 merged with those derived identity strings.
 Any `coderPlayer` / `reviewerPlayer` keys in the forwarded CODE
 options shall be overridden by the derived values.
-The CODE registry entry shall provide state-count labels for the
-Playbook Captain shell's turn-summary aggregation
-([CAPTAIN-20](playbook-captain.md#captain-20)): `adjudicateChallenges`
-as `rebuttal`, and every CODE review state id as `review round`.
-The CODE registry entry shall provide no summary-visible label for
+The CODE registry entry shall declare a `summaryPolicy`
+([CAPTAIN-20](playbook-captain.md#captain-20)) providing the
+Playbook Captain shell's turn-summary aggregation labels:
+`adjudicateChallenges` as `rebuttal`, and every CODE review state id
+as `review round`.
+The CODE `summaryPolicy` shall provide no summary-visible label for
 any other state id, including `planAndImplement` or any tests-green
 state id.
 The CODE review state ids are `reviewBossCommitSpecs`,
@@ -303,9 +307,21 @@ The CODE review state ids are `reviewBossCommitSpecs`,
 `reviewChangesAndChallengesSpecs`,
 `reviewChangesAndChallengesCode`, and
 `reviewChangesAndChallengesMixed`.
-These labels refer to CODE FSM state ids transition-covered under
-[PLAYBOOK-4](playbook.md#playbook-4) and emitted as telemetry
-under [PBRT-14](#pbrt-14).
+The CODE `summaryPolicy` copy-paste guard names shall be exactly
+`accepted`, `approved`, `challengeAccepted`, `challengeRejected`,
+`challengesRaised`, `changesMadeCode`,
+`changesMadeCodeAndChallenged`, `changesMadeMixed`,
+`changesMadeMixedAndChallenged`, `changesMadeSpecs`,
+`changesMadeSpecsAndChallenged`, `hasFindings`, `needsRevision`,
+`noFindings`, and `noOpenItems`.
+The CODE `summaryPolicy` shall supply the saved-counts line template
+`Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.`
+([CAPTAIN-19](../user/playbook-captain.md#captain-19)).
+These labels and guard names refer to CODE FSM state ids and state
+`result`-map guard keys transition-covered under
+[PLAYBOOK-4](playbook.md#playbook-4), adjudicated under
+[PBRT-10](#pbrt-10), and emitted as telemetry under
+[PBRT-14](#pbrt-14).
 CODE port wiring under tmux-play is owned by the Playbook Captain
 shell and specified in [CAPTAIN-10](playbook-captain.md#captain-10).
 
@@ -317,44 +333,49 @@ published Playbook Captain shell adapter specifier
 `@sublang/playbook/playbook-captain`, whose behavior is specified
 by [CAPTAIN-16](playbook-captain.md#captain-16) and
 [CAPTAIN-17](playbook-captain.md#captain-17).
+CODE shall be enabled like any other playbook through a
+`captain.options.playbooks.code` entry whose `from` module specifier
+is the published `@sublang/playbook/code/registry` export, from which
+the shell loads the CODE registry entry.
 When that shell dispatches a Boss turn to CODE, the CODE registry
 entry shall map the dispatch to
 `runtime.handleBossInput({ text, signal: context.signal })`.
-The public `@sublang/playbook/code/tmux-play` export shall remain
-resolvable as a compatibility shim whose default export delegates
-to the same shell with CODE registered.
-That compatibility module shall keep exposing the CODE registry
-entry, CODE summary-visible state-count label map, CODE
-runtime-options derivation helper, CODE options validator, and
-their public types.
+The package shall provide no `@sublang/playbook/code/tmux-play`
+compatibility shim and no legacy direct CODE adapter; the retired
+shim and its exported CODE registry entry, label map, options
+derivation helper, and validator are superseded by the
+`@sublang/playbook/code/registry` module ([PBRT-30](#pbrt-30)).
 
 ### PBRT-30
 
 During Playbook Captain shell `init`, the CODE registry entry shall
-read CODE options from `captain.options.code`, validate them
-against the CODE options schema, reject unknown keys with an error
-that names the offending path, and store the validated options for
-later CODE engagements.
+validate the normalized option slice the shell passes it — the
+entry's `captain.options.playbooks.code.options` — against the CODE
+options schema, reject unknown keys with an error that names the
+offending path, and store the validated options for later CODE
+engagements.
+The CODE registry entry shall not extract its own namespace from the
+full Captain options bag; the shell passes it only its own option
+slice ([DR-009 §3](../decisions/009-generic-playbook-cli-and-registry.md)).
 When constructing the CODE runtime for an engagement, the CODE
 registry entry shall pass those validated options into
 `createPlaybookRuntime`.
 The CODE options schema defines one key, `committer`: an optional
 string whose value is the resolved Committer-alias player id and
-shall be one of the baked player ids `coder` or `reviewer`.
+shall be one of the baked local role ids `coder` or `reviewer`.
 The registry entry shall reject any other value, and any unknown
 key, with an error that names the offending path (e.g.
-`captain.options.code.committer`). A valid `captain.options.code`
-is absent, an empty object, or `{ committer: 'coder' | 'reviewer' }`;
-the registry entry threads the validated `committer` into
-`createPlaybookRuntime` as the runtime's Committer player id
-([PBRT-8](#pbrt-8)).
+`captain.options.playbooks.code.options.committer`). A valid option
+slice is absent, an empty object, or
+`{ committer: 'coder' | 'reviewer' }`; the registry entry threads the
+validated `committer` into `createPlaybookRuntime` as the runtime's
+Committer player id ([PBRT-8](#pbrt-8)).
 A further CODE option shall be introduced as its own
 higher-numbered item that extends this schema; the validator still
 fails closed on stray keys.
-The external `@sublang/cligent` package shall not validate
-`captain.options.code`; the CODE registry entry is the sole
-validator.
+The external `@sublang/cligent` package shall not validate the CODE
+option slice; the CODE registry entry is the sole validator.
 The derived `coderPlayer` / `reviewerPlayer` identity strings
-([PBRT-15](#pbrt-15)) shall continue to come from
-`session.players` and override any same-named keys, independent
-of `captain.options.code`.
+([PBRT-15](#pbrt-15)) shall continue to come from the host players
+bound to the CODE local roles and override any same-named keys,
+independent of the CODE option slice.

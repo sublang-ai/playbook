@@ -98,7 +98,10 @@ a playbook is engaged, when the shell submits a Boss turn to the
 engaged playbook and that playbook finishes processing the
 submitted turn, the shell shall append a visible Captain
 turn-summary block after the sub-runtime's ordered status and
-telemetry emissions for that turn.
+telemetry emissions for that turn, but only when the engaged
+playbook's registry entry declares a summary policy.
+When the engaged playbook's registry entry declares no summary
+policy, the shell shall append no turn-summary block for that turn.
 The summary block shall use a natural chat-like tone and clear
 formatting while remaining brief.
 The summary block shall first state only what was done or what
@@ -113,8 +116,9 @@ The summary block shall not include counts for plan or
 implementation steps, tests-green state ids, other internal states,
 raw state names, transitions, guard names, prompts, tools, hidden
 calls, or reasoning.
-The summary block shall then include one saved-counts line with this
-format:
+The summary block shall then include one saved-counts line whose
+wording the engaged playbook's registry entry supplies through its
+summary policy; for CODE that line has the format:
 `Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.`
 The saved-counts line shall use natural singular forms when a count
 is one.

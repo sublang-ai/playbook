@@ -73,24 +73,24 @@ in enqueue order.
 ### PBRT-21
 Verifies: [PBRT-4](../user/playbook-runtime.md#pbrt-4), [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [PBRT-16](../dev/playbook-runtime.md#pbrt-16), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
 
-When CODE is driven through the
-`@sublang/playbook/code/tmux-play` compatibility shim with stubbed
+When CODE is driven through the Playbook Captain shell with CODE
+enabled via a `captain.options.playbooks.code` entry whose `from`
+resolves the `@sublang/playbook/code/registry` module, over stubbed
 cligent `CaptainContext` / `CaptainSession` primitives, the test
-suite shall fail unless the shim delegates to the Playbook Captain
-shell, player calls reach `context.callPlayer` with player ids
-matching the runtime's baked player ids (both `coder` via the
-free-text coding happy path and `reviewer` via a multi-stage flow
-that drives the FSM through a Reviewer state), adjudication reaches
+suite shall fail unless the shell loads the CODE registry entry from
+that module, player calls reach `context.callPlayer` with the bound
+host player ids `code.coder` (via the free-text coding happy path)
+and `code.reviewer` (via a multi-stage flow that drives the FSM
+through a Reviewer state), adjudication reaches
 `context.callCaptain`, every CODE `callCaptain` invocation —
 classification and adjudication alike — passes
 `{ visibility: 'hidden' }`, status and telemetry reach the
 session, the per-turn `signal` flows into the runtime, the per-run
 player identity strings substituted into the Committer prompt's
-`<coder-llm>` / `<reviewer-llm>` placeholders come from
-`session.players[].model` when each entry pins a model and fall
-back to `session.players[].adapter` when no model is pinned (both
-branches exercised), and the CODE registry entry exposed through
-the compatibility shim carries the state-count label map specified
+`<coder-llm>` / `<reviewer-llm>` placeholders come from the bound
+host player's `model` when it pins a model and fall back to its
+`adapter` when no model is pinned (both branches exercised), and the
+CODE registry entry's `summaryPolicy` carries the labels specified
 by [PBRT-15](../dev/playbook-runtime.md#pbrt-15), including
 every CODE review state id as `review round` and
 `adjudicateChallenges` as `rebuttal`, with no labels for any other
@@ -249,23 +249,24 @@ unmoved, and empty text makes no port calls.
 Verifies: [PBRT-29](../user/playbook-runtime.md#pbrt-29), [PBRT-30](../dev/playbook-runtime.md#pbrt-30)
 
 When the Playbook Captain shell initializes the CODE registry entry
-with `captain.options.code` set to the empty object `{}`, set to
-`{ committer: 'coder' }` and `{ committer: 'reviewer' }`, set to a
-`committer` value that is neither `coder` nor `reviewer`, set to an
-object carrying an unknown key, and absent, the test suite shall
-fail unless the `{}` and absent cases initialize and record an empty
-validated options set for the next CODE engagement; the
-valid-`committer` cases record that role id to pass into
-`createPlaybookRuntime` as the Committer player id when CODE is
-engaged; the invalid-`committer` case and the unknown-key case each
-cause `init` to reject with an error naming the offending path
-(`captain.options.code.committer` for the invalid value); and the
-derived `coderPlayer` / `reviewerPlayer` identity strings still
-come from `session.players` regardless of `captain.options.code`.
+with the option slice `captain.options.playbooks.code.options` set to
+the empty object `{}`, set to `{ committer: 'coder' }` and
+`{ committer: 'reviewer' }`, set to a `committer` value that is
+neither `coder` nor `reviewer`, set to an object carrying an unknown
+key, and absent, the test suite shall fail unless the `{}` and
+absent cases initialize and record an empty validated options set
+for the next CODE engagement; the valid-`committer` cases record
+that role id to pass into `createPlaybookRuntime` as the Committer
+player id when CODE is engaged; the invalid-`committer` case and the
+unknown-key case each cause `init` to reject with an error naming
+the offending path
+(`captain.options.playbooks.code.options.committer` for the invalid
+value); and the derived `coderPlayer` / `reviewerPlayer` identity
+strings still come from the host players bound to the CODE local
+roles regardless of the option slice.
 The test suite shall also fail unless the
-`@sublang/playbook/code/tmux-play` compatibility module exposes the
-CODE registry entry, summary-visible state-count label map,
-runtime-options derivation helper, and options validator used by
+`@sublang/playbook/code/registry` module exposes the CODE registry
+entry — with its `summaryPolicy` and `validateOptions` — used by
 these assertions.
 
 ## Runtime contract module

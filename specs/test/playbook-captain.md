@@ -50,8 +50,8 @@ the test suite shall fail unless sub-runtime status and telemetry
 are passed through in order, `playbook.fsm.state` telemetry is
 mirrored into the shell ledger before pass-through, shell FSM
 telemetry uses `playbook.captain.fsm.state` with `from`, `to`,
-`event`, and ledger fields, CODE idle / failed /
-`awaitBossReply` states park the engagement, a later same-playbook
+`event`, and ledger fields, the active registry entry's idle and
+`parkStateIds` states park the engagement, a later same-playbook
 turn resumes the same runtime instance, CODE final state disposes
 the engagement only after the active turn settles, and router
 `dismiss` disposes the engagement and returns the shell to chat;
@@ -69,16 +69,42 @@ emitting shell status or shell FSM telemetry for adapter teardown.
 Verifies: [CAPTAIN-5](../dev/playbook-captain.md#captain-5), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), [CAPTAIN-16](../dev/playbook-captain.md#captain-16)
 
 Where the test suite initializes the Playbook Captain shell with
-CODE registered, the test suite shall fail unless the CODE registry
-entry is present with id `code`, command `code`, idle state `ready`,
-and final state `done`; CODE option validation is delegated to the
-CODE registry entry during shell `init`; invalid CODE options cause
-`init` to reject; valid CODE options do not construct a runtime
-until engagement; `handleBossTurn` before `init` rejects; CODE
-player calls reach `context.callPlayer`;
-CODE judge calls reach `context.callCaptain` with
+CODE enabled through a `captain.options.playbooks.code` entry whose
+`from` resolves the CODE registry module, the test suite shall fail
+unless the loaded CODE registry entry carries id `code`, command
+`code`, `requiredRoleIds` `coder` and `reviewer`, idle state
+`ready`, final state `done`, and park states `failed` and
+`awaitBossReply`; the entry's option slice
+(`captain.options.playbooks.code.options`) is validated by the entry
+during shell `init`; invalid CODE options cause `init` to reject;
+valid CODE options do not construct a runtime until engagement;
+`handleBossTurn` before `init` rejects; CODE player calls reach
+`context.callPlayer` with the bound host player ids `code.coder` /
+`code.reviewer`; CODE judge calls reach `context.callCaptain` with
 `{ visibility: 'hidden' }`; and all Captain chat, routing, and
 sub-runtime judge calls use the same Captain session primitives.
+
+## Registry loading and visibility
+
+### CAPTAIN-23
+Verifies: [CAPTAIN-16](../dev/playbook-captain.md#captain-16), [CAPTAIN-22](../dev/playbook-captain.md#captain-22), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
+
+Where the test suite initializes the Playbook Captain shell with
+`captain.options.playbooks` enabling one or more playbooks by `from`
+module specifier, the test suite shall fail unless: a missing
+`captain.options.playbooks`, a missing `from`, a failed import, a
+module exposing no valid registry entry, two enabled playbooks
+sharing an `id`, and two enabled playbooks resolving to the same
+effective command each reject `init`; each enabled playbook's local
+roles bind to host players `<id>.<role>` so a sub-runtime
+`callPlayer(<role>, …)` reaches `context.callPlayer(<id>.<role>, …)`;
+on engaging, resuming, or routing to a playbook the shell calls
+`setVisiblePlayers` with that playbook's generated host player ids,
+never an empty set, before dispatching Boss text; a
+`setVisiblePlayers` validation rejection surfaces as an internal
+shell error rather than a Boss input error; and a tmux pane
+reconciliation failure does not block dispatch to the playbook
+runtime.
 
 ## Public module surface
 
@@ -98,25 +124,27 @@ Verifies: [CAPTAIN-19](../user/playbook-captain.md#captain-19), [CAPTAIN-20](../
 
 Where the test suite drives the Playbook Captain shell with a
 registered playbook runtime, the test suite shall fail unless a
-visible Captain turn-summary call is made after registered-command,
+visible Captain turn-summary call is made — when the active registry
+entry declares a summary policy — after registered-command,
 hidden-router `dispatch`, and hidden-router `sub` submissions
 settle and after the sub-runtime's ordered status and telemetry
 emissions for the turn; no turn-summary call is made after Captain
 chat, clarification, bare playbook selection, or routing failure
-recovery turns that do not submit to a sub-runtime; the
+recovery turns that do not submit to a sub-runtime, or when the
+active registry entry declares no summary policy; the
 turn-summary prompt contains the exact supplied saved-counts line
 `Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.`
 with natural singular forms when a count is one; completed
 sub-runtime player replies increment the interruption count by one
-per reply; adjudicated guards named by the active playbook registry
-entry's copy-paste guard list increment the copy-paste count by one
-per handoff; guards absent from that registry list,
+per reply; adjudicated guards named by the active registry entry's
+`summaryPolicy` copy-paste guard list increment the copy-paste count
+by one per handoff; guards absent from that list,
 classifier/event JSON, hidden router calls, visible chat, and
 malformed adjudication replies do not increment the copy-paste
 count; sub-runtime state telemetry during the turn contributes only
 an aggregate summary-visible progress phrase and round total,
-counting active registry entry labels exactly as supplied and
-deriving no fallback label from state ids; unlabeled plan or
+counting active registry entry `summaryPolicy` labels exactly as
+supplied and deriving no fallback label from state ids; unlabeled plan or
 implementation steps, tests-green state ids, and other internal
 states do not contribute to that phrase or total; and the prompt
 instructs Captain to render a brief what-was-done summary, without

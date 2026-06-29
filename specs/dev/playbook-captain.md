@@ -19,23 +19,30 @@ package specifier.
 ### CAPTAIN-5
 
 Where the package exposes the Playbook Captain shell as a tmux-play
-Captain, the shell shall own a registry of playbook entries whose
-CODE entry has id `code`, command `code`, intent text for software
-development / SDLC coding workflow, idle state id `ready`, final
-state id `done`, a `createRuntime` function for the CODE runtime,
-copy-paste guard names for CODE inter-player handoffs, optional
-summary-visible state-count labels, and a `validateOptions` function for
-`captain.options.code`.
-The CODE entry's copy-paste guard names shall be exactly
-`accepted`, `approved`, `challengeAccepted`, `challengeRejected`,
-`challengesRaised`, `changesMadeCode`,
-`changesMadeCodeAndChallenged`, `changesMadeMixed`,
-`changesMadeMixedAndChallenged`, `changesMadeSpecs`,
-`changesMadeSpecsAndChallenged`, `hasFindings`, `needsRevision`,
-`noFindings`, and `noOpenItems`.
-These names are CODE FSM guard keys from the state `result` maps
-adjudicated under [PBRT-10](playbook-runtime.md#pbrt-10) and
-transition-covered under [PLAYBOOK-4](playbook.md#playbook-4).
+Captain, the shell shall own a registry of playbook entries.
+Each entry shall be a manifest carrying `id` (stable playbook id and
+default options-namespace key), `command` (default slash command
+without `/`, overridable by config), `intent` (routing description
+for hidden Captain selection), `requiredRoleIds` (local role ids the
+runtime may pass to `callPlayer`), `idleStateId` (the idle
+return-to-Boss state id), `finalStateId` (the final-completion state
+id), `parkStateIds` (additional state ids that park the engagement
+and wait for another Boss turn), an optional `summaryPolicy`
+([CAPTAIN-20](#captain-20)), a `validateOptions` function for that
+entry's own option slice, and a `createRuntime` factory for the
+linked runtime.
+The CODE entry shall declare `id` `code`, `command` `code`, intent
+text for a software-development / SDLC coding workflow,
+`requiredRoleIds` `coder` and `reviewer`, `idleStateId` `ready`,
+`finalStateId` `done`, and `parkStateIds` `failed` and
+`awaitBossReply`.
+CODE's Committer alias shall remain a CODE-owned option validated by
+the CODE entry ([PBRT-30](playbook-runtime.md#pbrt-30)), not a
+shell-level concept.
+The shell shall read each entry's option slice, idle / final / park
+state ids, role binding, and summary policy from the entry, and
+shall not hardcode CODE state ids such as `failed` or
+`awaitBossReply` or CODE-specific summary labels.
 The shell shall support one active engagement and shall keep only
 a bounded control ledger: active playbook id, shell mode, latest
 sub-runtime state id, pending Boss question when mirrored from
@@ -113,11 +120,19 @@ the call as control work and asks for control JSON only.
 ### CAPTAIN-10
 
 Where the Playbook Captain shell constructs a sub-runtime, the
-shell shall wrap that runtime's `PlaybookPorts`.
-The wrapper shall route `callPlayer` to `context.callPlayer`, route
-sub-runtime `callJudge` to hidden `context.callCaptain`, and pass
-sub-runtime `emitStatus` and `emitTelemetry` calls through to the
-host in order.
+shell shall wrap that runtime's `PlaybookPorts` and shall apply the
+active entry's local-role-to-host-player binding.
+The binding for local role `<role>` in playbook `<id>` shall be the
+host player id `<id>.<role>`, so CODE's `coder` and `reviewer` bind
+to host players `code.coder` and `code.reviewer`.
+The wrapper shall route a sub-runtime `callPlayer(localRole, …)` to
+`context.callPlayer(<id>.<localRole>, …)`, route sub-runtime
+`callJudge` to hidden `context.callCaptain`, and pass sub-runtime
+`emitStatus` and `emitTelemetry` calls through to the host in order.
+The shell shall also pass the resolved binding in the metadata given
+to the entry's `createRuntime`, so a playbook such as CODE can derive
+prompt identity strings from the host player actually bound to each
+local role ([PBRT-15](playbook-runtime.md#pbrt-15)).
 When hidden `context.callCaptain` returns a non-`ok` status or an
 `ok` status without `finalText`, the wrapper shall throw for that
 sub-runtime `callJudge`; otherwise it shall return `finalText`.
@@ -129,7 +144,15 @@ question or normalized error fields needed for the shell ledger.
 
 Where the Playbook Captain shell submits text to an engaged
 playbook runtime, the shell shall collect turn-summary counts only
-for the duration of that sub-runtime `handleBossInput` call.
+for the duration of that sub-runtime `handleBossInput` call, and
+only when the active registry entry declares a `summaryPolicy`.
+When the active registry entry declares no `summaryPolicy`, the
+shell shall skip turn-summary counting and shall not make the
+visible turn-summary Captain call for that turn
+([CAPTAIN-19](../user/playbook-captain.md#captain-19)).
+The `summaryPolicy` maps counted state ids and adjudication guard
+names to Boss-visible labels and supplies the saved-counts line
+template or equivalent wording policy.
 For that same duration, the shell shall aggregate sub-runtime
 `playbook.fsm.state` telemetry into a summary-visible progress
 phrase for the turn-summary prompt, excluding the active registry
@@ -139,27 +162,24 @@ summary-visible state occurred.
 The summary-visible progress round total shall be the sum of all
 summary-visible state counts collected for the completed
 sub-runtime turn.
-When the active registry entry provides a state-count label for a
-state id, the shell shall count that state under the provided
-label.
-When the active registry entry does not provide a state-count label
-for a state id, the shell shall not count that state in the
-turn-summary prompt and shall not derive a fallback label from the
-state id.
+When the active registry entry's `summaryPolicy` provides a
+state-count label for a state id, the shell shall count that state
+under the provided label.
+When the `summaryPolicy` does not provide a state-count label for a
+state id, the shell shall not count that state in the turn-summary
+prompt and shall not derive a fallback label from the state id.
 When a wrapped sub-runtime `callPlayer` call returns a player
 reply, the shell shall count one saved interruption for that reply.
 When a wrapped hidden sub-runtime adjudication call returns a guard
-whose name appears in the active playbook registry entry's
+whose name appears in the active registry entry's `summaryPolicy`
 copy-paste guard names, the shell shall count one saved copy-paste
 for that inter-player handoff.
 The shell shall count one saved copy-paste per adjudicated
 handoff, regardless of how many individual review findings or
 rebuttal items the handoff text contains.
-Each playbook registry entry shall own its exact copy-paste guard
-names.
-The shell shall derive copy-paste eligibility from the active
-playbook registry entry's copy-paste guard names, so an adjudicated
-guard removed from that registry list is not counted.
+Each registry entry's `summaryPolicy` shall own its exact copy-paste
+guard names, so an adjudicated guard removed from that list is not
+counted.
 The shell shall not count hidden router calls, visible chat calls,
 sub-runtime classifier/event JSON, or malformed adjudication
 replies as saved copy-pastes.
@@ -170,16 +190,14 @@ The turn-summary prompt envelope shall provide the exact saved
 interruption and copy-paste counts, shall provide the aggregate
 summary-visible progress phrase and round total, and shall instruct
 Captain to write the Boss-visible block required by
-[CAPTAIN-19](../user/playbook-captain.md#captain-19), including the
-saved-counts line
-`Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.`
-with the supplied counts and natural singular forms when a count is
-one.
+[CAPTAIN-19](../user/playbook-captain.md#captain-19) using the
+active entry's `summaryPolicy` wording, including its saved-counts
+line template with the supplied counts and natural singular forms
+when a count is one.
 The turn-summary prompt envelope shall instruct Captain not to
-include counts for plan or implementation steps, tests-green
-state ids, or other internal states.
+include counts for state ids the `summaryPolicy` does not label.
 The turn-summary prompt envelope shall instruct Captain not to
-repeat the exact review/rebuttal round count outside the
+repeat the exact summary-visible progress round count outside the
 saved-counts line.
 The turn-summary prompt envelope shall not include shell ledger JSON
 or raw state ids for states that are not counted in the
@@ -190,9 +208,8 @@ summary-visible progress phrase.
 ### CAPTAIN-11
 
 Where the Playbook Captain shell has an active sub-runtime, when
-the mirrored sub-runtime state is the registry entry's idle state,
-the linker-level literal state id `failed`, or the linker-level
-literal state id `awaitBossReply`, the shell shall park the
+the mirrored sub-runtime state is the registry entry's `idleStateId`
+or any of the entry's `parkStateIds`, the shell shall park the
 engagement in `engaged.parked`.
 Where the Playbook Captain shell has an active sub-runtime, when
 the mirrored sub-runtime state is the registry entry's final state
@@ -220,10 +237,24 @@ the shell shall construct a replacement sub-runtime.
 ### CAPTAIN-16
 
 Where tmux-play calls the Playbook Captain shell adapter's
-`init(session)`, the shell shall store the session, derive any
-session-scoped registry bindings from `session.players`, validate
-registered options, enter `chat`, and not construct a sub-runtime.
-When registered option validation fails during `init(session)`, the
+`init(session)`, the shell shall store the session, load the enabled
+playbook registry entries from `captain.options.playbooks`, derive
+each entry's local-role-to-host-player binding
+([CAPTAIN-10](#captain-10)) from its generated host player ids,
+validate each entry's own option slice through that entry's
+`validateOptions`, enter `chat`, and not construct a sub-runtime.
+The shell shall require `captain.options.playbooks` and shall reject
+`init` when it is missing or empty; it shall not infer a CODE-only
+default from `captain.options.code`.
+For each enabled playbook the shell shall import the registry entry
+from its explicit `from` module specifier and shall reject `init`
+when `from` is missing, the import fails, the module exposes no valid
+registry entry, two enabled playbooks share an `id`, or two enabled
+playbooks resolve to the same effective command.
+The shell shall pass each entry only its normalized option slice and
+shall not extract an entry's namespace from the full Captain options
+bag.
+When any entry's option validation fails during `init(session)`, the
 shell shall reject `init`.
 Where tmux-play calls `handleBossTurn(turn, context)` after `init`,
 the shell shall route `turn.prompt` with `context.signal` and use
@@ -236,6 +267,29 @@ active sub-runtime, clear the active turn context, emit no shell
 status or shell FSM telemetry for the adapter teardown itself, and
 resolve only after the active sub-runtime's `dispose()` call
 returns.
+
+## Active-playbook visibility
+
+### CAPTAIN-22
+
+Where the Playbook Captain shell runs under tmux-play with one or
+more playbooks enabled, when the shell selects, resumes, or routes a
+Boss turn to a playbook, the shell shall request tmux-play
+visibility for that playbook's generated host player ids through
+`setVisiblePlayers` before dispatching Boss text to the playbook
+runtime.
+The requested visible set shall be the active playbook's generated
+host player ids and shall never be empty.
+Because the launcher has already validated those generated player
+ids against the composed tmux-play roster, a `setVisiblePlayers`
+validation rejection shall be treated as an internal shell or
+composition error rather than a Boss input error.
+A tmux pane reconciliation failure reported by tmux-play shall be
+treated as display-only and shall not block dispatch to the playbook
+runtime.
+After a playbook reaches final completion or is dismissed, the
+visible panes may remain on the last selected playbook until the
+next selection.
 
 ## Public module surface
 
