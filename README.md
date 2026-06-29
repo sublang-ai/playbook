@@ -84,7 +84,7 @@ playbook-code --help
 
 The seed template runs each agent in cligent's protected auto mode
 (`permissions.mode: auto`), suppressing routine approval prompts. Its
-Codex Coder also grants `permissions.writablePaths: [.git]` so git
+Codex Reviewer also grants `permissions.writablePaths: [.git]` so git
 metadata writes stay available under auto mode without switching to
 bypass permissions.
 
@@ -108,7 +108,7 @@ the runtime binds to those host-configuration invariants per
 `<coder-llm>` / `<reviewer-llm>` substitution strings from each role's
 `model` when pinned and `adapter` otherwise — so the Committer's
 commit-message trailers can name the concrete model
-(e.g. `claude-codex-4-8-1m`) rather than the adapter family
+(e.g. `claude-opus-4-8[1m]`) rather than the adapter family
 (`claude`).
 
 `players.committer` is an optional alias naming which role — `coder`
@@ -116,13 +116,13 @@ or `reviewer` — runs the commit turn; the seeded overlay points it at
 the Coder. Absent the alias the Committer falls back to the Coder
 ([PBRT-8](specs/user/playbook-runtime.md#pbrt-8)).
 
-For example, the seeded overlay runs the Coder on Claude Codex 4.8 1m
+For example, the seeded overlay runs the Coder on Claude Opus 4.8 1m
 and the Reviewer on GPT-5.5, with the Committer aliased to the Coder:
 
 ```yaml
 captain:
   adapter: claude
-  model: claude-codex-4-8
+  model: claude-opus-4-8
   reasoningEffort: high
   permissions:
     mode: auto
@@ -130,7 +130,7 @@ captain:
 players:
   coder:              # role key must stay `coder` — see PBRT-4
     adapter: claude
-    model: claude-codex-4-8-1m
+    model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
     permissions:
       mode: auto

@@ -51,8 +51,8 @@ The bundled template shall include
 omitting `turn_aborted` shall leave cligent to resolve that event to
 `off`.
 The bundled template shall seed Captain with `adapter: claude`,
-`model: claude-codex-4-8`, and `reasoningEffort: high`; Coder with
-`adapter: claude`, `model: claude-codex-4-8-1m`, and
+`model: claude-opus-4-8`, and `reasoningEffort: high`; Coder with
+`adapter: claude`, `model: claude-opus-4-8[1m]`, and
 `reasoningEffort: xhigh`; Reviewer with `adapter: codex`,
 `model: gpt-5.5`, and `reasoningEffort: xhigh`; and the Committer
 alias as `players.committer: coder`.

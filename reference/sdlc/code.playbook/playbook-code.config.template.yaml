@@ -49,7 +49,7 @@ notifications:
 
 captain:
   adapter: claude
-  model: claude-codex-4-8
+  model: claude-opus-4-8
   reasoningEffort: high
   permissions:
     mode: auto
@@ -57,7 +57,7 @@ captain:
 players:
   coder:
     adapter: claude
-    model: claude-codex-4-8-1m
+    model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
     permissions:
       mode: auto

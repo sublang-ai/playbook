@@ -88,14 +88,14 @@ describe('playbook-code shim — config seeding (PBCODE-5/9)', () => {
       'reviewer',
     ]);
     expect(composed.captain.adapter).toBe('claude');
-    expect(composed.captain.model).toBe('claude-codex-4-8');
+    expect(composed.captain.model).toBe('claude-opus-4-8');
     expect(composed.captain.reasoningEffort).toBe('high');
     const coder = composed.players.find(
       (p: { id: string }) => p.id === 'coder',
     );
     expect(coder).toMatchObject({
       adapter: 'claude',
-      model: 'claude-codex-4-8-1m',
+      model: 'claude-opus-4-8[1m]',
       reasoningEffort: 'xhigh',
       permissions: { mode: 'auto' },
     });
@@ -474,7 +474,7 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
       {
         id: 'coder',
         adapter: 'claude',
-        model: 'claude-codex-4-8-1m',
+        model: 'claude-opus-4-8[1m]',
         reasoningEffort: 'xhigh',
         permissions: { mode: 'auto' },
       },
@@ -1182,7 +1182,7 @@ function fullOverlay() {
   return {
     captain: {
       adapter: 'claude',
-      model: 'claude-codex-4-8',
+      model: 'claude-opus-4-8',
       reasoningEffort: 'high',
       permissions: { mode: 'auto' },
       options: { code: {} },
@@ -1190,7 +1190,7 @@ function fullOverlay() {
     players: {
       coder: {
         adapter: 'claude',
-        model: 'claude-codex-4-8-1m',
+        model: 'claude-opus-4-8[1m]',
         reasoningEffort: 'xhigh',
         permissions: { mode: 'auto' },
       },

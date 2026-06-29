@@ -19,7 +19,7 @@ captain:
   # shim that delegates to the same shell with CODE registered.
   from: ./playbook-captain.js
   adapter: claude
-  model: claude-codex-4-8
+  model: claude-opus-4-8
   reasoningEffort: high
   # Agents run in cligent's classifier/reviewer-protected auto mode
   # (cligent DR-005): claude → permissionMode auto, codex → auto_review.
@@ -41,7 +41,7 @@ captain:
 players:
   - id: coder
     adapter: claude
-    model: claude-codex-4-8-1m
+    model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
     permissions:
       mode: auto
