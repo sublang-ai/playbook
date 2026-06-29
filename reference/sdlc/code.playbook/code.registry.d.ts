@@ -15,6 +15,19 @@ export declare const codeStateCountLabels: {
     readonly reviewChangesAndChallengesCode: "review round";
     readonly reviewChangesAndChallengesMixed: "review round";
 };
+export declare function codeSavedCountsLine(counts: {
+    interruptions: number;
+    copyPastes: number;
+}, rounds: number): string;
+export interface PlaybookSummaryPolicy {
+    stateCountLabels: Readonly<Record<string, string>>;
+    copyPasteGuardNames: readonly string[];
+    savedCountsLine(counts: {
+        interruptions: number;
+        copyPastes: number;
+    }, rounds: number): string;
+}
+export declare const codeSummaryPolicy: PlaybookSummaryPolicy;
 export interface CodeOptions {
     committer?: 'coder' | 'reviewer';
 }
@@ -31,10 +44,11 @@ export interface CodePlaybookRegistryEntry {
     id: 'code';
     command: 'code';
     intent: string;
+    requiredRoleIds: readonly string[];
     idleStateId: 'ready';
     finalStateId: 'done';
-    copyPasteGuardNames: readonly string[];
-    stateCountLabels: typeof codeStateCountLabels;
+    parkStateIds: readonly string[];
+    summaryPolicy: PlaybookSummaryPolicy;
     validateOptions(captainOptions: unknown): CodeOptions;
     createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;
 }

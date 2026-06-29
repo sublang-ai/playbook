@@ -17,6 +17,7 @@ import {
   createPlaybookCaptainShell,
   type PlaybookCaptainRegistryEntry,
 } from './playbook-captain.js';
+import { codeSavedCountsLine } from './code.registry.js';
 
 type CaptainCallOptions = Parameters<CaptainContext['callCaptain']>[1];
 
@@ -174,17 +175,22 @@ function fakeCodeEntry(handleHook?: HandleHook, disposeHook?: DisposeHook): {
       id: 'code',
       command: 'code',
       intent: 'software development / SDLC coding workflow',
+      requiredRoleIds: ['coder', 'reviewer'],
       idleStateId: 'ready',
       finalStateId: 'done',
-      copyPasteGuardNames: [
-        'hasFindings',
-        'changesMadeSpecs',
-        'accepted',
-      ],
-      stateCountLabels: {
-        reviewBossCommitCode: 'review round',
-        reviewChangesAndChallengesSpecs: 'review round',
-        adjudicateChallenges: 'rebuttal',
+      parkStateIds: ['failed', 'awaitBossReply'],
+      summaryPolicy: {
+        copyPasteGuardNames: [
+          'hasFindings',
+          'changesMadeSpecs',
+          'accepted',
+        ],
+        stateCountLabels: {
+          reviewBossCommitCode: 'review round',
+          reviewChangesAndChallengesSpecs: 'review round',
+          adjudicateChallenges: 'rebuttal',
+        },
+        savedCountsLine: codeSavedCountsLine,
       },
       validateOptions,
       createRuntime,
@@ -926,7 +932,9 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summary?.prompt).toContain('State only what was done or what changed');
     expect(summary?.prompt).toContain('do not explain how it was done');
     expect(summary?.prompt).toContain('Do not list raw state names');
-    expect(summary?.prompt).toContain('Do not mention counts for plan');
+    expect(summary?.prompt).toContain(
+      "Do not mention counts for states the active playbook's summary policy does not label",
+    );
     expect(summary?.prompt).toContain('natural, chat-like tone');
   });
 

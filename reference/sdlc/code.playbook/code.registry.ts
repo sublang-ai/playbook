@@ -55,6 +55,47 @@ export const codeStateCountLabels = {
   reviewChangesAndChallengesMixed: 'review round',
 } as const;
 
+function countNoun(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+// PBRT-15 / CAPTAIN-19: the CODE saved-counts line wording is
+// registry-owned. The shell renders this exact line through the active
+// entry's summary policy rather than hardcoding CODE phrasing.
+export function codeSavedCountsLine(
+  counts: { interruptions: number; copyPastes: number },
+  rounds: number,
+): string {
+  return [
+    'Saved you',
+    countNoun(counts.interruptions, 'interruption'),
+    'and',
+    countNoun(counts.copyPastes, 'copy-paste'),
+    'across',
+    countNoun(rounds, 'round'),
+    'of reviews/rebuttals.',
+  ].join(' ');
+}
+
+// CAPTAIN-20 summary policy: the counted state-id labels, the
+// copy-paste guard names, and the saved-counts line wording an entry
+// owns for the shell's turn-summary aggregation. An entry without a
+// summary policy opts out of visible turn summaries.
+export interface PlaybookSummaryPolicy {
+  stateCountLabels: Readonly<Record<string, string>>;
+  copyPasteGuardNames: readonly string[];
+  savedCountsLine(
+    counts: { interruptions: number; copyPastes: number },
+    rounds: number,
+  ): string;
+}
+
+export const codeSummaryPolicy: PlaybookSummaryPolicy = {
+  stateCountLabels: codeStateCountLabels,
+  copyPasteGuardNames: codeCopyPasteGuardNames,
+  savedCountsLine: codeSavedCountsLine,
+};
+
 // The validated CODE options set. `committer`, when present, is the
 // resolved Committer-alias player id (PBRT-8 / PBRT-30); a future CODE
 // option widens both this type and `CODE_OPTION_KEYS`.
@@ -77,10 +118,11 @@ export interface CodePlaybookRegistryEntry {
   id: 'code';
   command: 'code';
   intent: string;
+  requiredRoleIds: readonly string[];
   idleStateId: 'ready';
   finalStateId: 'done';
-  copyPasteGuardNames: readonly string[];
-  stateCountLabels: typeof codeStateCountLabels;
+  parkStateIds: readonly string[];
+  summaryPolicy: PlaybookSummaryPolicy;
   validateOptions(captainOptions: unknown): CodeOptions;
   createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;
 }
@@ -148,10 +190,11 @@ export const codePlaybookRegistryEntry: CodePlaybookRegistryEntry = {
   id: 'code',
   command: 'code',
   intent: 'software development / SDLC coding workflow',
+  requiredRoleIds: ['coder', 'reviewer'],
   idleStateId: 'ready',
   finalStateId: 'done',
-  copyPasteGuardNames: codeCopyPasteGuardNames,
-  stateCountLabels: codeStateCountLabels,
+  parkStateIds: ['failed', 'awaitBossReply'],
+  summaryPolicy: codeSummaryPolicy,
   validateOptions: validateCodeOptions,
   createRuntime(options) {
     return createPlaybookRuntime(createCodeRuntimeOptions(options));

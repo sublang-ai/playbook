@@ -23,7 +23,6 @@ function visibleChatEnvelope(message) {
     ].join('\n\n');
 }
 function visibleTurnSummaryEnvelope(input) {
-    const savedLine = savedCountsLine(input.counts, input.reviewRebuttalRounds);
     return [
         'You are the Playbook Captain shell.',
         'This is visible Boss chat after a sub-playbook command completed. Do not reveal hidden control JSON, hidden router decisions, or hidden judge replies.',
@@ -32,38 +31,24 @@ function visibleTurnSummaryEnvelope(input) {
         'State only what was done or what changed; do not explain how it was done.',
         'Do not list raw state names, transitions, guard names, prompts, tools, hidden calls, or reasoning.',
         'If progress detail is useful, use only the aggregate progress phrase supplied below.',
-        'Do not mention counts for plan or implementation steps, tests green, or any other internal state.',
-        `Then write the saved-counts line exactly: ${savedLine}`,
+        "Do not mention counts for states the active playbook's summary policy does not label.",
+        `Then write the saved-counts line exactly: ${input.savedLine}`,
         'Use the exact counts supplied; do not change them.',
-        'Do not repeat the exact review/rebuttal round count outside the saved-counts line.',
+        'Do not repeat the exact progress round count outside the saved-counts line.',
         `Playbook: ${input.playbookId}`,
         `Submitted Boss text:\n${input.submittedText}`,
         `Progress counts:\n${input.progressPhrase}`,
         `Counts:\n${JSON.stringify({
             ...input.counts,
-            reviewRebuttalRounds: input.reviewRebuttalRounds,
+            progressRounds: input.progressRounds,
         })}`,
     ].join('\n\n');
-}
-function countNoun(count, singular, plural = `${singular}s`) {
-    return `${count} ${count === 1 ? singular : plural}`;
-}
-function savedCountsLine(counts, reviewRebuttalRounds) {
-    return [
-        'Saved you',
-        countNoun(counts.interruptions, 'interruption'),
-        'and',
-        countNoun(counts.copyPastes, 'copy-paste'),
-        'across',
-        countNoun(reviewRebuttalRounds, 'round'),
-        'of reviews/rebuttals.',
-    ].join(' ');
 }
 function stateCountLabel(stateId, entry) {
     if (stateId === entry.idleStateId || stateId === entry.finalStateId) {
         return undefined;
     }
-    const registryLabel = entry.stateCountLabels?.[stateId]?.trim();
+    const registryLabel = entry.summaryPolicy?.stateCountLabels?.[stateId]?.trim();
     return registryLabel || undefined;
 }
 function pluralizeStateCount(label, count) {
@@ -189,8 +174,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
             return;
         }
         if (stateId === active.entry.idleStateId ||
-            stateId === 'failed' ||
-            stateId === 'awaitBossReply') {
+            active.entry.parkStateIds.includes(stateId)) {
             await setMode('engaged.parked', `sub-runtime:${stateId}`);
         }
     };
@@ -224,7 +208,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
             }
             const guard = guardFromJudgeReply(result.finalText);
             if (guard &&
-                active?.entry.copyPasteGuardNames.includes(guard) &&
+                active?.entry.summaryPolicy?.copyPasteGuardNames.includes(guard) &&
                 activeTurnSummary) {
                 activeTurnSummary.counts.copyPastes++;
             }
@@ -258,23 +242,23 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         return active;
     };
     const submitToActive = async (engagement, text, context) => {
+        const policy = engagement.entry.summaryPolicy;
         const summaryCounts = {
             interruptions: 0,
             copyPastes: 0,
         };
         const summaryStateCounts = new Map();
         let shouldSummarize = false;
-        activeTurnSummary = {
-            counts: summaryCounts,
-            stateCounts: summaryStateCounts,
-        };
+        activeTurnSummary = policy
+            ? { counts: summaryCounts, stateCounts: summaryStateCounts }
+            : undefined;
         await setMode('engaged.driving', 'submit');
         try {
             await engagement.runtime.handleBossInput({
                 text,
                 signal: context.signal,
             });
-            shouldSummarize = true;
+            shouldSummarize = policy !== undefined;
         }
         finally {
             activeTurnSummary = undefined;
@@ -286,13 +270,15 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
                 await setMode('engaged.parked', 'turn.settled');
             }
         }
-        if (shouldSummarize) {
+        if (shouldSummarize && policy) {
+            const progressRounds = summaryProgressRoundCount(summaryStateCounts);
             await callVisibleTurnSummary(context, {
                 playbookId: engagement.entry.id,
                 submittedText: text,
                 counts: summaryCounts,
                 progressPhrase: summaryProgressPhrase(summaryStateCounts),
-                reviewRebuttalRounds: summaryProgressRoundCount(summaryStateCounts),
+                progressRounds,
+                savedLine: policy.savedCountsLine(summaryCounts, progressRounds),
             });
         }
     };

@@ -204,10 +204,14 @@ describe('code/tmux-play compatibility shim (PBRT-16/31)', () => {
         id: 'code',
         command: 'code',
         intent: 'software development / SDLC coding workflow',
+        requiredRoleIds: ['coder', 'reviewer'],
         idleStateId: 'ready',
         finalStateId: 'done',
-        copyPasteGuardNames: codeCopyPasteGuardNames,
-        stateCountLabels: codeStateCountLabels,
+        parkStateIds: ['failed', 'awaitBossReply'],
+        summaryPolicy: expect.objectContaining({
+          copyPasteGuardNames: codeCopyPasteGuardNames,
+          stateCountLabels: codeStateCountLabels,
+        }),
         validateOptions: validateCodeOptions,
       }),
     );

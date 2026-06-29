@@ -48,6 +48,28 @@ export const codeStateCountLabels = {
     reviewChangesAndChallengesCode: 'review round',
     reviewChangesAndChallengesMixed: 'review round',
 };
+function countNoun(count, singular, plural = `${singular}s`) {
+    return `${count} ${count === 1 ? singular : plural}`;
+}
+// PBRT-15 / CAPTAIN-19: the CODE saved-counts line wording is
+// registry-owned. The shell renders this exact line through the active
+// entry's summary policy rather than hardcoding CODE phrasing.
+export function codeSavedCountsLine(counts, rounds) {
+    return [
+        'Saved you',
+        countNoun(counts.interruptions, 'interruption'),
+        'and',
+        countNoun(counts.copyPastes, 'copy-paste'),
+        'across',
+        countNoun(rounds, 'round'),
+        'of reviews/rebuttals.',
+    ].join(' ');
+}
+export const codeSummaryPolicy = {
+    stateCountLabels: codeStateCountLabels,
+    copyPasteGuardNames: codeCopyPasteGuardNames,
+    savedCountsLine: codeSavedCountsLine,
+};
 export function validateCodeOptions(captainOptions) {
     const code = readCodeNamespace(captainOptions);
     if (code === undefined)
@@ -98,10 +120,11 @@ export const codePlaybookRegistryEntry = {
     id: 'code',
     command: 'code',
     intent: 'software development / SDLC coding workflow',
+    requiredRoleIds: ['coder', 'reviewer'],
     idleStateId: 'ready',
     finalStateId: 'done',
-    copyPasteGuardNames: codeCopyPasteGuardNames,
-    stateCountLabels: codeStateCountLabels,
+    parkStateIds: ['failed', 'awaitBossReply'],
+    summaryPolicy: codeSummaryPolicy,
     validateOptions: validateCodeOptions,
     createRuntime(options) {
         return createPlaybookRuntime(createCodeRuntimeOptions(options));
