@@ -102,3 +102,49 @@ describe('packed tarball contents (RELEASE-18)', () => {
     }
   });
 });
+
+describe('public CLI and registry surface (RELEASE-21)', () => {
+  const manifest = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  ) as { bin: Record<string, string>; exports: Record<string, unknown> };
+  const CODE_BASE = 'reference/sdlc/code.playbook/';
+
+  it('declares the playbook bin and code/registry export, not the retired surfaces', () => {
+    expect(manifest.bin).toHaveProperty('playbook');
+    expect(manifest.bin).not.toHaveProperty('playbook-code');
+    expect(manifest.exports).toHaveProperty('./code/registry');
+    expect(manifest.exports).not.toHaveProperty('./code/tmux-play');
+  });
+
+  it('packs the launcher and code.registry artifacts and not the retired files', () => {
+    const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
+    let out: string;
+    try {
+      out = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: { ...process.env, npm_config_cache: npmCache },
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } finally {
+      rmSync(npmCache, { recursive: true, force: true });
+    }
+    const packed: string[] = JSON.parse(out)[0].files.map(
+      (f: { path: string }) => f.path,
+    );
+    for (const artifact of [
+      `${CODE_BASE}bin/playbook.js`,
+      `${CODE_BASE}code.registry.js`,
+      `${CODE_BASE}code.registry.d.ts`,
+    ]) {
+      expect(packed, `tarball missing ${artifact}`).toContain(artifact);
+    }
+    for (const removed of [
+      `${CODE_BASE}bin/playbook-code.js`,
+      `${CODE_BASE}code.tmux-play.js`,
+      `${CODE_BASE}code.tmux-play.d.ts`,
+    ]) {
+      expect(packed, `tarball still ships ${removed}`).not.toContain(removed);
+    }
+  });
+});

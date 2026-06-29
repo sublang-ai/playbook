@@ -58,11 +58,11 @@ Then launch the reference playbook in a `tmux-play` session:
 playbook
 ```
 
-For a one-shot run without a global install, use the same command
-through npx:
+For a one-shot run without a global install, invoke the scoped
+package through npx (it runs the package's `playbook` bin):
 
 ```sh
-npx playbook
+npx @sublang/playbook
 ```
 
 On first run, `playbook` creates a commented user config at
@@ -191,17 +191,19 @@ instead, copy
 into place; the override is gitignored so it never leaks into a
 production install.
 
-Drive a Boss turn against the source tree (uses the developer
-[`tmux-play.config.yaml`](reference/sdlc/code.playbook/tmux-play.config.yaml)
-that imports the compiled Playbook Captain shell via relative path):
+Drive a Boss turn against the source tree with the launcher, which
+resolves `tmux-play`, the Playbook Captain shell, and the CODE registry
+from the local package:
 
 ```sh
-pnpm exec tmux-play --config reference/sdlc/code.playbook/tmux-play.config.yaml
+pnpm playbook
 ```
 
-`pnpm exec` resolves `tmux-play` from the package's local
-`node_modules/.bin/`, so this works whether or not `@sublang/cligent` is
-installed globally.
+On first run this seeds the generic config at
+`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`
+(see [Configure agents](#configure-agents)) and launches the composed
+session, so this works whether or not `@sublang/cligent` is installed
+globally.
 
 ### Running a Boss turn
 
