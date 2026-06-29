@@ -78,8 +78,17 @@ manifest's `id`, two playbooks sharing an `id`, two playbooks
 resolving to the same effective command, a manifest `requiredRoleIds`
 entry that does not resolve to a generated roster id, or an enabled
 playbook that resolves no visible local role.
-The Playbook Captain shell re-validates the same enablement at runtime
-`init` ([CAPTAIN-16](playbook-captain.md#captain-16)).
+At runtime `init` the Playbook Captain shell re-validates only the
+loading checks it shares with
+[CAPTAIN-16](playbook-captain.md#captain-16) — missing `from`, failed
+import, invalid entry, key / manifest-`id` mismatch, duplicate id, and
+duplicate effective command.
+The roster-resolution and visible-role checks above are launcher-owned
+([DR-009 §4](../decisions/009-generic-playbook-cli-and-registry.md));
+the shell relies on that validation and treats any residual
+`setVisiblePlayers` rejection as an internal or composition error
+([CAPTAIN-22](playbook-captain.md#captain-22)) rather than
+re-validating the roster itself.
 
 ### PBCLI-10
 
