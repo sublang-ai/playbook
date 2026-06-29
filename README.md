@@ -55,86 +55,84 @@ npm install -g @sublang/playbook
 Then launch the reference playbook in a `tmux-play` session:
 
 ```sh
-playbook-code
+playbook
 ```
 
 For a one-shot run without a global install, use the same command
 through npx:
 
 ```sh
-npx playbook-code
+npx playbook
 ```
 
-On first run, `playbook-code` creates a commented user config at
-`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml`
-from the bundled template, prints that path to stderr, then checks the
-declared adapters before launching. Later runs reuse that file and do
-not overwrite it.
+On first run, `playbook` creates a commented user config at
+`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`
+from the bundled starter, prints that path to stderr, then composes a
+`tmux-play` config and checks the declared adapters before launching.
+Later runs reuse that file and do not overwrite it.
 
 Known adapter readiness is intentionally light: `claude` is ready when
 local Claude Code auth exists or `ANTHROPIC_API_KEY` is set; `codex` is
 ready when local Codex CLI auth exists or `OPENAI_API_KEY` is set. If a
-known adapter is not ready, `playbook-code` prints its own help text
-with the config path, auth pointers, and agent-swap recipe, then exits
-without launching. You can view the same recovery text at any time:
+known adapter is not ready, `playbook` prints its own help text with the
+config path, auth pointers, and agent-swap recipe, then exits without
+launching. You can view the same recovery text at any time:
 
 ```sh
-playbook-code --help
+playbook --help
 ```
 
-The seed template runs each agent in cligent's protected auto mode
-(`permissions.mode: auto`), suppressing routine approval prompts. Its
-Codex Reviewer also grants `permissions.writablePaths: [.git]` so git
-metadata writes stay available under auto mode without switching to
-bypass permissions.
+`playbook --list` prints the configured playbooks with their slash
+commands and intents. The seeded Codex Reviewer runs in cligent's
+protected auto mode (`permissions.mode: auto`) and grants
+`permissions.writablePaths: [.git]` so git metadata writes stay
+available without switching to bypass permissions.
 
 ### Configure agents
 
 Edit the seeded user config when you want different coding agents:
 
 ```sh
-$EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml"
+$EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml"
 ```
 
-Both CODE players can use `claude` or `codex`; other adapter ids are
-passed through to `tmux-play` with a warning because `playbook-code`
-does not know how to preflight their auth. The safe tuning points are
-`captain.adapter`, `captain.model`, and each role's `adapter` and
-`model` under `players.coder` / `players.reviewer`. The composer owns
-`captain.from` and points it at the Playbook Captain shell adapter, and
-it owns the `coder` / `reviewer` role keys, so leave those keys as-is;
-the runtime binds to those host-configuration invariants per
-[PBRT-4](specs/user/playbook-runtime.md#pbrt-4) and derives the
-`<coder-llm>` / `<reviewer-llm>` substitution strings from each role's
-`model` when pinned and `adapter` otherwise — so the Committer's
-commit-message trailers can name the concrete model
-(e.g. `claude-opus-4-8[1m]`) rather than the adapter family
-(`claude`).
+The config is top-level (no `config:` wrapper): a `profiles` map of
+reusable agent settings, a `captain` Judge agent, optional `layout` /
+`notifications`, and a `playbooks` map of enabled playbooks. Each
+`captain` or `players.<role>` value is a profile id or an adapter
+shorthand (`claude`, `codex`); other adapter ids are passed through to
+`tmux-play` with a warning because `playbook` cannot preflight their
+auth. Within a `playbooks.<id>` block, `from` (the registry module),
+`command` (an optional slash-command override), and `players` are
+launcher-owned; every other key (e.g. CODE's `committer`) is that
+playbook's option slice. The launcher injects `captain.from` and the
+namespaced `<id>-<role>` host players, so you do not write those by
+hand.
 
-`players.committer` is an optional alias naming which role — `coder`
-or `reviewer` — runs the commit turn; the seeded overlay points it at
-the Coder. Absent the alias the Committer falls back to the Coder
+CODE's per-run `<coder-llm>` / `<reviewer-llm>` prompt strings come from
+each role's pinned `model`, else its `adapter`
+([PBRT-4](specs/user/playbook-runtime.md#pbrt-4)) — so the Committer's
+commit-message trailers can name the concrete model
+(e.g. `claude-opus-4-8[1m]`) rather than the adapter family (`claude`).
+`committer` is an optional CODE alias naming which role — `coder` or
+`reviewer` — runs the commit turn; the seeded config points it at the
+Coder, and absent the alias the Committer falls back to the Coder
 ([PBRT-8](specs/user/playbook-runtime.md#pbrt-8)).
 
-For example, the seeded overlay runs the Coder on Claude Opus 4.8 1m
-and the Reviewer on GPT-5.5, with the Committer aliased to the Coder:
+For example, the seeded config runs the Coder on Claude Opus 4.8 1m and
+the Reviewer on GPT-5.5, with the Committer aliased to the Coder:
 
 ```yaml
-captain:
-  adapter: claude
-  model: claude-opus-4-8
-  reasoningEffort: high
-  permissions:
-    mode: auto
-
-players:
-  coder:              # role key must stay `coder` — see PBRT-4
+profiles:
+  judge:
+    adapter: claude
+    model: claude-opus-4-8
+    reasoningEffort: high
+  coder:
     adapter: claude
     model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
-    permissions:
-      mode: auto
-  reviewer:           # role key must stay `reviewer` — see PBRT-4
+  reviewer:
     adapter: codex
     model: gpt-5.5
     reasoningEffort: xhigh
@@ -142,17 +140,25 @@ players:
       mode: auto
       writablePaths:
         - .git          # allow git metadata writes under Codex auto mode
-  committer: coder      # which role commits — `coder` or `reviewer`
+
+captain: judge
+
+playbooks:
+  code:
+    from: "@sublang/playbook/code/registry"
+    players:
+      coder: coder
+      reviewer: reviewer
+    committer: coder      # which role commits — `coder` or `reviewer`
 ```
 
-Normal `playbook-code` runs use the seeded path above. If you need a
-separate config file for a one-off run, pass it explicitly; this bypasses
-the seed and readiness gate and forwards the arguments to `tmux-play`
-verbatim, as pinned in
-[PBCODE-1](specs/user/playbook-code.md#pbcode-1):
+If you need a separate config file for a one-off run, pass a raw
+`tmux-play` config explicitly; this bypasses the seed, composition, and
+readiness gate and forwards the arguments to `tmux-play` verbatim
+([PBCLI-1](specs/user/playbook-cli.md#pbcli-1)):
 
 ```sh
-playbook-code --config ./playbook-code.config.yaml
+playbook --config ./tmux-play.config.yaml
 ```
 
 ### Install (contributors / from source)
@@ -215,11 +221,12 @@ and streams the CODE state machine with the four-glyph vocabulary `◆ ▸ ⮕ �
 [PBRT-3](specs/user/playbook-runtime.md#pbrt-3), while player prompts
 ride their own panes.
 
-Published configs should import the shell adapter from
-`@sublang/playbook/playbook-captain`. Existing explicit configs that
-still import `@sublang/playbook/code/tmux-play` keep resolving through
-a compatibility shim that delegates to the same shell with CODE
-registered.
+Published configs import the shell adapter from
+`@sublang/playbook/playbook-captain` and enable CODE through a
+`captain.options.playbooks.code` block whose `from` is
+`@sublang/playbook/code/registry`. The generic `playbook` launcher
+composes this for you from the top-level `profiles` / `playbooks`
+config above.
 
 ### Embedding the runtime in your own host
 
@@ -308,7 +315,7 @@ package.
 
 ## Requirements
 
-- Node.js ≥ 20.6.0 (the `playbook-code` shim uses
+- Node.js ≥ 20.6.0 (the `playbook` launcher uses
   `import.meta.resolve`, unflagged since this release)
 - pnpm 9 (for the reference package)
 - A configured `tmux-play` host (for live Boss turns) — requires

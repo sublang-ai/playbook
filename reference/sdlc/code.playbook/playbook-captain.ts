@@ -11,10 +11,9 @@ import type {
   PlaybookPorts,
   PlaybookRuntime,
 } from './code.playbook.js';
-import {
-  codePlaybookRegistryEntry,
-  type PlaybookSummaryPolicy,
-  type RegistryPlayer,
+import type {
+  PlaybookSummaryPolicy,
+  RegistryPlayer,
 } from './code.registry.js';
 
 export interface CreatePlaybookRuntimeOptions {
@@ -39,9 +38,8 @@ export interface PlaybookCaptainRegistryEntry {
   createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
 }
 
-// Per-enabled-playbook binding the shell resolves at init. The legacy
-// `captain.options.code` path uses identity binding and no visibility
-// switching; the `captain.options.playbooks` path binds local roles to
+// Per-enabled-playbook binding the shell resolves at init from
+// `captain.options.playbooks`: each playbook binds its local roles to
 // `<id>-<role>` host players and carries the generated visible set.
 interface Enablement {
   entry: PlaybookCaptainRegistryEntry;
@@ -89,10 +87,6 @@ interface ActiveTurnSummary {
   counts: TurnSummaryCounts;
   stateCounts: Map<string, number>;
 }
-
-export const playbookCaptainRegistry: readonly PlaybookCaptainRegistryEntry[] = [
-  codePlaybookRegistryEntry,
-];
 
 function parseRegisteredCommand(
   prompt: string,
@@ -211,14 +205,11 @@ interface BuiltRegistry {
   enablementById: Map<string, Enablement>;
 }
 
-// Resolve the active registry at init. With no `captain.options.playbooks`
-// the shell stays on the legacy single-registry path (CAPTAIN amendments
-// land the required-enablement rule once the legacy path is removed); with
-// it, each enabled playbook is loaded from its explicit `from` module and
-// bound to namespaced `<id>-<role>` host players (CAPTAIN-16).
+// Resolve the active registry at init from `captain.options.playbooks`
+// (CAPTAIN-16): each enabled playbook is loaded from its explicit `from`
+// module and bound to namespaced `<id>-<role>` host players.
 async function buildEnablements(
   options: unknown,
-  fallbackRegistry: readonly PlaybookCaptainRegistryEntry[],
   players: readonly RegistryPlayer[],
   loadModule: (specifier: string) => Promise<unknown>,
 ): Promise<BuiltRegistry> {
@@ -229,19 +220,7 @@ async function buildEnablements(
 
   const config = readPlaybooksConfig(options);
   if (config === undefined) {
-    for (const entry of fallbackRegistry) {
-      entries.push(entry);
-      byId.set(entry.id, entry);
-      byCommand.set(entry.command, entry);
-      enablementById.set(entry.id, {
-        entry,
-        command: entry.command,
-        optionInput: options,
-        boundPlayers: players,
-        hostPlayerId: (localRole) => localRole,
-      });
-    }
-    return { entries, byCommand, byId, enablementById };
+    throw new Error('captain.options.playbooks is required');
   }
 
   const ids = Object.keys(config);
@@ -307,7 +286,7 @@ async function buildEnablements(
     enablementById.set(entry.id, {
       entry,
       command,
-      optionInput: { [entry.id]: record.options },
+      optionInput: record.options,
       boundPlayers,
       hostPlayerId: (localRole) => `${entry.id}-${localRole}`,
       visiblePlayerIds: entry.requiredRoleIds.map(
@@ -320,7 +299,6 @@ async function buildEnablements(
 
 export function createPlaybookCaptainShell(
   options: unknown,
-  registry: readonly PlaybookCaptainRegistryEntry[] = playbookCaptainRegistry,
   deps: PlaybookCaptainDeps = {},
 ): Captain {
   const loadModule =
@@ -810,12 +788,7 @@ export function createPlaybookCaptainShell(
     async init(initSession: CaptainSession): Promise<void> {
       session = initSession;
       players = initSession.players;
-      const built = await buildEnablements(
-        options,
-        registry,
-        players,
-        loadModule,
-      );
+      const built = await buildEnablements(options, players, loadModule);
       entries = built.entries;
       byCommand = built.byCommand;
       byId = built.byId;

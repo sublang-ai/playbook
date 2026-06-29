@@ -6,19 +6,15 @@ import createPlaybookRuntime, {
   type PlaybookRuntime,
 } from './code.playbook.js';
 
-// PBRT-29/30: CODE runtime options are carried under
-// `captain.options.code`, a namespaced object the host forwards
-// verbatim through `captain.options`. cligent neither reads nor
-// validates `options.code`; the CODE registry entry is the sole
-// validator. The CODE options schema defines one key, `committer`: an
-// optional Committer-alias player id, one of the baked player ids
-// `coder` / `reviewer`. A valid `options.code` is absent, `{}`, or
-// `{ committer: 'coder' | 'reviewer' }`; every other key is unknown
-// and rejected with a path-named error, and an out-of-range
-// `committer` value is rejected naming `captain.options.code.committer`.
-// A further CODE option shall be introduced as its own higher-numbered
-// item that widens `CODE_OPTION_KEYS`; the validator still fails closed
-// on stray keys.
+// PBRT-30: the CODE registry entry validates the option slice the shell
+// passes it (`captain.options.playbooks.code.options`), not a namespace
+// it extracts from the full Captain options bag. The schema defines one
+// key, `committer`: an optional Committer-alias player id, one of the
+// baked role ids `coder` / `reviewer`. A valid slice is absent, `{}`, or
+// `{ committer: 'coder' | 'reviewer' }`; every other key is unknown and
+// rejected with a path-named error. A further CODE option shall be
+// introduced as its own higher-numbered item that widens
+// `CODE_OPTION_KEYS`; the validator still fails closed on stray keys.
 const CODE_OPTION_KEYS = new Set<string>(['committer']);
 const COMMITTER_PLAYER_IDS = new Set<string>(['coder', 'reviewer']);
 export const codeCopyPasteGuardNames = [
@@ -127,39 +123,35 @@ export interface CodePlaybookRegistryEntry {
   createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;
 }
 
-export function validateCodeOptions(captainOptions: unknown): CodeOptions {
-  const code = readCodeNamespace(captainOptions);
-  if (code === undefined) return {};
-  if (typeof code !== 'object' || code === null || Array.isArray(code)) {
-    throw new Error('captain.options.code must be an object');
+export function validateCodeOptions(optionSlice: unknown): CodeOptions {
+  if (optionSlice === undefined) return {};
+  if (
+    typeof optionSlice !== 'object' ||
+    optionSlice === null ||
+    Array.isArray(optionSlice)
+  ) {
+    throw new Error('captain.options.playbooks.code.options must be an object');
   }
-  for (const key of Object.keys(code)) {
+  const slice = optionSlice as Record<string, unknown>;
+  for (const key of Object.keys(slice)) {
     if (!CODE_OPTION_KEYS.has(key)) {
-      throw new Error(`Unknown config field captain.options.code.${key}`);
+      throw new Error(
+        `Unknown config field captain.options.playbooks.code.options.${key}`,
+      );
     }
   }
   const options: CodeOptions = {};
-  const committer = (code as Record<string, unknown>).committer;
+  const committer = slice.committer;
   if (committer !== undefined) {
     if (typeof committer !== 'string' || !COMMITTER_PLAYER_IDS.has(committer)) {
       throw new Error(
-        "captain.options.code.committer must be 'coder' or 'reviewer'",
+        "captain.options.playbooks.code.options.committer must be " +
+          "'coder' or 'reviewer'",
       );
     }
     options.committer = committer as 'coder' | 'reviewer';
   }
   return options;
-}
-
-function readCodeNamespace(captainOptions: unknown): unknown {
-  if (
-    typeof captainOptions !== 'object' ||
-    captainOptions === null ||
-    Array.isArray(captainOptions)
-  ) {
-    return undefined;
-  }
-  return (captainOptions as Record<string, unknown>).code;
 }
 
 function playerIdentity(

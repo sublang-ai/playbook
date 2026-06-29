@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
-import { codePlaybookRegistryEntry, } from './code.registry.js';
 const SUB_RUNTIME_FSM_TOPIC = 'playbook.fsm.state';
 const SHELL_FSM_TOPIC = 'playbook.captain.fsm.state';
-export const playbookCaptainRegistry = [
-    codePlaybookRegistryEntry,
-];
 function parseRegisteredCommand(prompt) {
     const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
     if (!match)
@@ -93,31 +89,17 @@ function readPlaybooksConfig(options) {
     }
     return pb;
 }
-// Resolve the active registry at init. With no `captain.options.playbooks`
-// the shell stays on the legacy single-registry path (CAPTAIN amendments
-// land the required-enablement rule once the legacy path is removed); with
-// it, each enabled playbook is loaded from its explicit `from` module and
-// bound to namespaced `<id>-<role>` host players (CAPTAIN-16).
-async function buildEnablements(options, fallbackRegistry, players, loadModule) {
+// Resolve the active registry at init from `captain.options.playbooks`
+// (CAPTAIN-16): each enabled playbook is loaded from its explicit `from`
+// module and bound to namespaced `<id>-<role>` host players.
+async function buildEnablements(options, players, loadModule) {
     const entries = [];
     const byCommand = new Map();
     const byId = new Map();
     const enablementById = new Map();
     const config = readPlaybooksConfig(options);
     if (config === undefined) {
-        for (const entry of fallbackRegistry) {
-            entries.push(entry);
-            byId.set(entry.id, entry);
-            byCommand.set(entry.command, entry);
-            enablementById.set(entry.id, {
-                entry,
-                command: entry.command,
-                optionInput: options,
-                boundPlayers: players,
-                hostPlayerId: (localRole) => localRole,
-            });
-        }
-        return { entries, byCommand, byId, enablementById };
+        throw new Error('captain.options.playbooks is required');
     }
     const ids = Object.keys(config);
     if (ids.length === 0) {
@@ -166,7 +148,7 @@ async function buildEnablements(options, fallbackRegistry, players, loadModule) 
         enablementById.set(entry.id, {
             entry,
             command,
-            optionInput: { [entry.id]: record.options },
+            optionInput: record.options,
             boundPlayers,
             hostPlayerId: (localRole) => `${entry.id}-${localRole}`,
             visiblePlayerIds: entry.requiredRoleIds.map((role) => `${entry.id}-${role}`),
@@ -174,7 +156,7 @@ async function buildEnablements(options, fallbackRegistry, players, loadModule) 
     }
     return { entries, byCommand, byId, enablementById };
 }
-export function createPlaybookCaptainShell(options, registry = playbookCaptainRegistry, deps = {}) {
+export function createPlaybookCaptainShell(options, deps = {}) {
     const loadModule = deps.loadModule ?? ((specifier) => import(specifier));
     let entries = [];
     let byCommand = new Map();
@@ -558,7 +540,7 @@ export function createPlaybookCaptainShell(options, registry = playbookCaptainRe
         async init(initSession) {
             session = initSession;
             players = initSession.players;
-            const built = await buildEnablements(options, registry, players, loadModule);
+            const built = await buildEnablements(options, players, loadModule);
             entries = built.entries;
             byCommand = built.byCommand;
             byId = built.byId;

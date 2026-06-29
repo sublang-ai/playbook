@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Generic `playbook` CLI and multi-playbook registry** ([DR-009](specs/decisions/009-generic-playbook-cli-and-registry.md), [IR-016](specs/iterations/016-generic-playbook-cli-and-registry.md)). A new `playbook` executable seeds and composes a top-level `profiles` / `playbooks` config into a `tmux-play` config under the Playbook Captain shell: each enabled playbook is loaded from an explicit `from` module, bound to namespaced `<id>-<role>` host players, and made visible per active playbook through cligent 0.13.0 `setVisiblePlayers`. `playbook --list` prints the configured playbooks, and the CODE registry entry is published at `@sublang/playbook/code/registry`.
+
+### Changed
+
+- **CODE options move to `captain.options.playbooks.code.options`** (from `captain.options.code`), and CODE players are namespaced `code-coder` / `code-reviewer` in the composed `tmux-play` roster ([PBRT-4](specs/user/playbook-runtime.md#pbrt-4), [PBRT-29](specs/user/playbook-runtime.md#pbrt-29), [PBRT-30](specs/dev/playbook-runtime.md#pbrt-30)). The Playbook Captain shell now requires `captain.options.playbooks` and no longer infers a CODE-only default from `captain.options.code`.
+
+### Removed
+
+- **Breaking: removed the `playbook-code` bin, the `@sublang/playbook/code/tmux-play` export and compatibility shim, and the bundled legacy CODE `tmux-play` configs and overlay template** in favor of the generic `playbook` CLI and `@sublang/playbook/code/registry` ([RELEASE-20](specs/dev/release.md#release-20)). Launch with `playbook` and the top-level `profiles` / `playbooks` config; pass a raw `tmux-play` config with `playbook --config <path>`.
+
 ## [0.8.0] - 2026-06-29
 
 ### Changed

@@ -46,20 +46,12 @@
     "reference/sdlc/code.playbook/playbook-captain.ts",
     "reference/sdlc/code.playbook/playbook-captain.js",
     "reference/sdlc/code.playbook/playbook-captain.d.ts",
-    "reference/sdlc/code.playbook/code.tmux-play.ts",
-    "reference/sdlc/code.playbook/code.tmux-play.js",
-    "reference/sdlc/code.playbook/code.tmux-play.d.ts",
     "reference/sdlc/code.playbook/code.gears.md",
-    "reference/sdlc/code.playbook/tmux-play.config.yaml",
-    "reference/sdlc/code.playbook/tmux-play.production.config.yaml",
-    "reference/sdlc/code.playbook/playbook-code.config.template.yaml",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
-    "reference/sdlc/code.playbook/bin/playbook-code.js",
     "reference/sdlc/code.playbook/bin/playbook.js"
   ],
   "bin": {
-    "playbook": "reference/sdlc/code.playbook/bin/playbook.js",
-    "playbook-code": "reference/sdlc/code.playbook/bin/playbook-code.js"
+    "playbook": "reference/sdlc/code.playbook/bin/playbook.js"
   },
   "exports": {
     "./runtime": {
@@ -78,16 +70,12 @@
       "types": "./reference/sdlc/code.playbook/playbook-captain.d.ts",
       "default": "./reference/sdlc/code.playbook/playbook-captain.js"
     },
-    "./code/tmux-play": {
-      "types": "./reference/sdlc/code.playbook/code.tmux-play.d.ts",
-      "default": "./reference/sdlc/code.playbook/code.tmux-play.js"
-    },
     "./slc/*": "./slc/*"
   },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
-    "playbook-code": "node reference/sdlc/code.playbook/bin/playbook-code.js"
+    "playbook": "node reference/sdlc/code.playbook/bin/playbook.js"
   },
   "publishConfig": {
     "access": "public",

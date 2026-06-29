@@ -52,7 +52,7 @@ export interface CodePlaybookRegistryEntry {
     validateOptions(captainOptions: unknown): CodeOptions;
     createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;
 }
-export declare function validateCodeOptions(captainOptions: unknown): CodeOptions;
+export declare function validateCodeOptions(optionSlice: unknown): CodeOptions;
 export declare function createCodeRuntimeOptions({ captainOptions, players, }: CreateCodeRuntimeOptions): CodePlaybookOptions;
 export declare const codePlaybookRegistryEntry: CodePlaybookRegistryEntry;
 export default codePlaybookRegistryEntry;

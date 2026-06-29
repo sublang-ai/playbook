@@ -1,6 +1,6 @@
 import type { Captain } from '@sublang/cligent/tmux-play';
 import type { PlaybookRuntime } from './code.playbook.js';
-import { type PlaybookSummaryPolicy, type RegistryPlayer } from './code.registry.js';
+import type { PlaybookSummaryPolicy, RegistryPlayer } from './code.registry.js';
 export interface CreatePlaybookRuntimeOptions {
     captainOptions: unknown;
     players: readonly RegistryPlayer[];
@@ -20,6 +20,5 @@ export interface PlaybookCaptainRegistryEntry {
     validateOptions(captainOptions: unknown): unknown;
     createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
 }
-export declare const playbookCaptainRegistry: readonly PlaybookCaptainRegistryEntry[];
-export declare function createPlaybookCaptainShell(options: unknown, registry?: readonly PlaybookCaptainRegistryEntry[], deps?: PlaybookCaptainDeps): Captain;
+export declare function createPlaybookCaptainShell(options: unknown, deps?: PlaybookCaptainDeps): Captain;
 export default createPlaybookCaptainShell;

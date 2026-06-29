@@ -67,8 +67,9 @@ export type CaptainInput = {
   coderPlayer?: string;
   reviewerPlayer?: string;
   // Routing-only: the configured Committer-alias player id (`coder` /
-  // `reviewer`) threaded from `captain.options.code.committer`
-  // (PBRT-8 / PBRT-30). It selects which host pane runs a `Committer`
+  // `reviewer`) threaded from
+  // `captain.options.playbooks.code.options.committer` (PBRT-8 / PBRT-30).
+  // It selects which host pane runs a `Committer`
   // commit; it is not a prompt-placeholder source, so it never affects
   // <coder-llm> / <reviewer-llm> substitution or any labelled block,
   // and `input.player` stays `Committer` (PLAYBOOK-3).

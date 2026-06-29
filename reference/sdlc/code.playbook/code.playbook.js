@@ -131,8 +131,9 @@ function composePlayerPrompt(input) {
 // Non-composite: Coder→'coder', Reviewer→'reviewer'. The composite
 // Committer (= Coder | Reviewer per code.gears.md) resolves to the
 // configured alias when present: `input.committerPlayer`, the
-// validated `captain.options.code.committer` (PBRT-8 / PBRT-30),
-// already a baked player id ('coder' / 'reviewer'). Absent a
+// validated `captain.options.playbooks.code.options.committer`
+// (PBRT-8 / PBRT-30), already a baked player id ('coder' / 'reviewer').
+// Absent a
 // configured alias it falls back to the DR-004 §2 baked binding by
 // populated <playerName>Player field: prefer `coderPlayer` (CODE-18
 // wires only coderPlayer; CODE-19 wires both so coderPlayer still wins

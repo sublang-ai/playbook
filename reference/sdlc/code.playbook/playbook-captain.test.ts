@@ -217,6 +217,33 @@ function fakePlaybookEntry(id: string, command: string): ReturnType<typeof fakeC
   return registry;
 }
 
+// Construct the shell through the `captain.options.playbooks` enablement
+// path with an injected loader returning the fake entry/entries.
+function makeShell(
+  entries:
+    | ReturnType<typeof fakeCodeEntry>
+    | ReturnType<typeof fakeCodeEntry>[],
+  opts: { options?: unknown } = {},
+) {
+  const list = Array.isArray(entries) ? entries : [entries];
+  const modules: Record<string, unknown> = {};
+  const playbooks: Record<string, unknown> = {};
+  for (const r of list) {
+    const from = `test://${r.entry.id}`;
+    modules[from] = { default: r.entry };
+    playbooks[r.entry.id] = { from, options: opts.options ?? {} };
+  }
+  return createPlaybookCaptainShell(
+    { playbooks },
+    {
+      loadModule: async (specifier: string) => {
+        if (specifier in modules) return modules[specifier];
+        throw new Error(`no module ${specifier}`);
+      },
+    },
+  );
+}
+
 function turn(prompt: string, id = 1): BossTurn {
   return { id, prompt, timestamp: 0 };
 }
@@ -256,10 +283,7 @@ function telemetryWithTopic(
 describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () => {
   it('validates registered options during init and rejects turns before init', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell(
-      { code: { committer: 'reviewer' } },
-      [registry.entry],
-    );
+    const shell = makeShell(registry, { options: { committer: 'reviewer' } });
     const context = stubContext();
 
     await expect(
@@ -270,7 +294,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     await shell.init!(session.session);
 
     expect(registry.validateOptions).toHaveBeenCalledWith({
-      code: { committer: 'reviewer' },
+      committer: 'reviewer',
     });
     expect(registry.createRuntime).not.toHaveBeenCalled();
   });
@@ -280,7 +304,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     registry.validateOptions.mockImplementation(() => {
       throw new Error('bad CODE option');
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
 
     await expect(shell.init!(stubSession().session)).rejects.toThrow(
       /bad CODE option/,
@@ -291,17 +315,24 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
 
   it('dispatches /code text to a lazily constructed CODE runtime', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
-    const session = stubSession();
+    const shell = makeShell(registry);
+    const session = stubSession([
+      { id: 'code-coder', adapter: 'claude' },
+      { id: 'code-reviewer', adapter: 'codex' },
+    ]);
     const context = stubContext();
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code fix the failing test'), context.context);
 
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
+    // Host players bound to local roles: ids re-keyed, host adapter carried.
     expect(registry.createRuntime).toHaveBeenCalledWith({
       captainOptions: {},
-      players: session.session.players,
+      players: [
+        { id: 'coder', adapter: 'claude', model: undefined },
+        { id: 'reviewer', adapter: 'codex', model: undefined },
+      ],
     });
     expect(registry.runtimes[0]?.initCount).toBe(1);
     expect(registry.runtimes[0]?.inputs).toEqual([
@@ -318,7 +349,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
 
   it('bare /code engages CODE and uses visible Captain chat without dispatch', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
 
@@ -337,7 +368,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
 
   it('continues the existing CODE runtime for same-playbook /code text', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
 
@@ -356,7 +387,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
 describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', () => {
   it('routes ordinary text through hidden dispatch without pre-classifying it', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({
@@ -388,7 +419,7 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
 
   it('routes near-miss command-like input through hidden chat clarification', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({
@@ -419,7 +450,7 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
 
   it('degrades invalid router JSON to visible clarification without dispatch', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       { status: 'ok', turnId: 1, finalText: 'not json' },
@@ -452,7 +483,7 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
     'degrades $label to visible clarification without dispatch',
     async ({ result }) => {
       const registry = fakeCodeEntry();
-      const shell = createPlaybookCaptainShell({}, [registry.entry]);
+      const shell = makeShell(registry);
       const session = stubSession();
       const context = stubContext([
         result,
@@ -475,7 +506,7 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
 
   it('continues the active runtime for router sub decisions', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({ decision: 'sub', text: 'continue same CODE run' }),
@@ -497,7 +528,7 @@ describe('createPlaybookCaptainShell hidden router decisions (CAPTAIN-12/13)', (
 
   it('parses router dismiss decisions and returns to visible chat', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({
@@ -531,7 +562,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
         payload: { to: 'ready', event: { type: 'xstate.done' } },
       });
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       (prompt) => {
@@ -597,7 +628,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
               },
       });
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       (prompt) => {
@@ -629,7 +660,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
         payload: { to: 'done', event: { type: 'COMPLETE' } },
       });
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
 
@@ -655,7 +686,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
 
   it('dismiss emits shell status and later dispatch constructs a replacement', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({
@@ -684,7 +715,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
   it('rejects a different registered command while CODE is engaged', async () => {
     const code = fakeCodeEntry();
     const docs = fakePlaybookEntry('docs', 'docs');
-    const shell = createPlaybookCaptainShell({}, [code.entry, docs.entry]);
+    const shell = makeShell([code, docs]);
     const session = stubSession();
     const context = stubContext();
 
@@ -707,7 +738,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     const registry = fakeCodeEntry(undefined, async (runtime) => {
       await runtime.ports?.emitStatus('dispose emission', { drained: true });
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
 
@@ -764,7 +795,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
         await runtime.ports.callJudge('judge prompt', runtimeTurn.signal),
       );
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
 
@@ -772,7 +803,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     await shell.handleBossTurn(turn('/code wire ports'), context.context);
 
     expect(context.playerCalls).toEqual([
-      { playerId: 'coder', prompt: 'player prompt' },
+      { playerId: 'code-coder', prompt: 'player prompt' },
     ]);
     expect(
       context.captainCalls.filter((call) => !isTurnSummaryPrompt(call.prompt)),
@@ -785,7 +816,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     expect(observed).toEqual([
       {
         status: 'ok',
-        finalText: 'player coder done',
+        finalText: 'player code-coder done',
         error: undefined,
       },
       'captain done',
@@ -824,7 +855,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
         runtimeTurn.signal,
       );
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({
@@ -914,7 +945,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       await runtime.ports.callJudge('review revision', runtimeTurn.signal);
       await runtime.ports.callJudge('review pass', runtimeTurn.signal);
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({ event: 'START_CODING', payload: { intent: 'x' } }),
@@ -955,7 +986,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       });
       await runtime.ports.callJudge('review pass', runtimeTurn.signal);
     });
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({ guard: 'accepted' }),
@@ -973,7 +1004,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
 
   it('does not append a turn summary after plain Captain chat or bare selection', async () => {
     const registry = fakeCodeEntry();
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
       captainJson({ decision: 'chat', text: 'visible Captain chat' }),
@@ -999,7 +1030,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       );
     });
     delete (registry.entry as { summaryPolicy?: unknown }).summaryPolicy;
-    const shell = createPlaybookCaptainShell({}, [registry.entry]);
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
 
@@ -1027,7 +1058,7 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     options: unknown,
     loadModule: (specifier: string) => Promise<unknown>,
   ): Promise<void> {
-    const shell = createPlaybookCaptainShell(options, undefined, { loadModule });
+    const shell = createPlaybookCaptainShell(options, { loadModule });
     await shell.init!(namespacedSession().session);
   }
 
@@ -1043,7 +1074,7 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     const options = {
       playbooks: { code: { from: CODE_FROM, options: { committer: 'reviewer' } } },
     };
-    const shell = createPlaybookCaptainShell(options, undefined, {
+    const shell = createPlaybookCaptainShell(options, {
       loadModule: async (specifier) => {
         if (specifier === CODE_FROM) return { default: registry.entry };
         throw new Error(`no module ${specifier}`);
@@ -1055,13 +1086,13 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code do the task'), context.context);
 
-    // Entry validates its own option slice, re-keyed under the entry id.
+    // Entry validates its own option slice directly.
     expect(registry.validateOptions).toHaveBeenCalledWith({
-      code: { committer: 'reviewer' },
+      committer: 'reviewer',
     });
     // createRuntime receives the slice plus host players bound to local roles.
     expect(registry.createRuntime).toHaveBeenCalledWith({
-      captainOptions: { code: { committer: 'reviewer' } },
+      captainOptions: { committer: 'reviewer' },
       players: [
         { id: 'coder', adapter: 'codex', model: 'gpt-5.5' },
         { id: 'reviewer', adapter: 'claude', model: 'claude-opus-4-8' },
@@ -1118,7 +1149,6 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     const registry = fakeCodeEntry();
     const shell = createPlaybookCaptainShell(
       { playbooks: { code: { from: CODE_FROM } } },
-      undefined,
       {
         loadModule: async () => ({ default: registry.entry }),
       },
@@ -1147,8 +1177,15 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
 describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
   it('resolves the package shell export as a CODE-registered Captain factory', async () => {
     const mod = await import('@sublang/playbook/playbook-captain');
-    const shell = mod.default({});
-    const session = stubSession();
+    const shell = mod.default({
+      playbooks: {
+        code: { from: '@sublang/playbook/code/registry', options: {} },
+      },
+    });
+    const session = stubSession([
+      { id: 'code-coder', adapter: 'claude' },
+      { id: 'code-reviewer', adapter: 'codex' },
+    ]);
     const context = stubContext();
 
     await shell.init!(session.session);
