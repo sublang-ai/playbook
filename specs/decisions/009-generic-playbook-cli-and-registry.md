@@ -18,6 +18,9 @@ The shell registry shape is therefore the right integration point for additional
 The current `playbook-code` launcher remains CODE-specific.
 It seeds a CODE overlay, maps fixed CODE roles to tmux-play players, writes CODE options under `captain.options.code`, and launches the Playbook Captain shell with CODE registered.
 
+cligent 0.13.0 adds tmux-play dynamic player visibility: the configured player roster remains fixed for a session, while `layout.initialVisible` and Captain-side `setVisiblePlayers` calls control which configured players have visible panes [[2]].
+This lets the generic `playbook` command target tmux-play without showing every enabled playbook's players at once.
+
 The desired next surface is a generic `playbook` command that can enable multiple playbooks, expose deterministic commands such as `/code`, route ordinary intent through the Captain shell, and still keep each selected playbook responsible for classifying its own Boss turns.
 
 ## Decision
@@ -109,10 +112,11 @@ When `captain.options.playbooks` is absent, the shell shall keep the DR-008 beha
 The `playbook-code` preset shall continue to support the legacy CODE overlay and the legacy `captain.options.code` composed namespace until a later DR removes that compatibility path.
 The generic `playbook` command shall compile user-facing CODE options into `captain.options.playbooks.code.options`.
 
-### 4. Player instances and layout are generated per playbook
+### 4. Player instances are static; visible panes follow the active playbook
 
 The generic launcher shall treat each playbook's `players` map as the source of host players for that playbook.
 It shall compile those playbook-local player declarations into the top-level tmux-play player roster.
+That roster is a launch-time union of every enabled playbook's generated players, because tmux-play visibility can change panes but cannot create, delete, or reconfigure runtime player identities after startup [[2]].
 
 The binding for local role `<role>` in playbook `<id>` shall be `<id>.<role>`.
 The generic user-facing config shall not support binding a role to a player from another playbook or to a shared top-level host player.
@@ -127,13 +131,19 @@ The shell shall apply the binding at two boundaries:
 
 The generic launcher shall validate that every enabled playbook's required local roles resolve to generated host player ids present in the composed tmux-play roster.
 
-The first generic design shall materialize every enabled playbook's generated host players at launch.
-It shall not dynamically create, hide, or dispose tmux panes when the active engagement changes.
+For the tmux-play host, the first generic design requires each enabled playbook to resolve at least one visible local role.
+Pure Captain-only playbooks are deferred until a host supports a zero-player visible state or a later design defines a fallback visible set.
 
-Because `layout.columnWeights` is positional to the Boss/Captain pane plus the generated player roster, the generic launcher shall derive a valid column-weight list when `layout.columnWeights` is omitted.
-When the generic config explicitly sets `layout.columnWeights`, the launcher shall fail composition if the list length does not match the Boss/Captain pane plus the generated player roster.
-The generic launcher shall not inherit or reuse a base or preset `layout.columnWeights` whose length was authored for a different generated roster.
-Dynamic active-engagement-scoped pane visibility is deferred.
+The generic launcher shall set the composed tmux-play `layout.initialVisible` to the generated players for the first enabled playbook in config order.
+The generic config may use tmux-play layout window and column-weight fields, including the cligent 0.13.0 shape-specific `singlePlayerColumnWeights` and `multiPlayerColumnWeights` fields, but the generic launcher owns `layout.initialVisible`.
+Column-weight fields are session-level per visible-column shape, not per playbook.
+Raw tmux-play configs launched through `--config` pass-through retain direct access to `layout.initialVisible`.
+
+When the shell selects, resumes, or routes to a playbook, it shall request tmux-play visibility for that playbook's generated host player ids before dispatching Boss text to the playbook runtime.
+The shell shall not request an empty visible set.
+Because the launcher has already validated generated player ids, a `setVisiblePlayers` validation rejection is an internal shell or composition error.
+tmux pane reconciliation failures are display-only in tmux-play, so they shall not block dispatch to the playbook runtime.
+After a playbook reaches final completion or is dismissed, the visible panes may remain on the last selected playbook until the next selection.
 
 ### 5. Summary policy is registry-owned and opt-in
 
@@ -183,11 +193,12 @@ The implementing specs shall reconcile this DR with released CODE runtime and la
 
 - [PBRT-15](../dev/playbook-runtime.md#pbrt-15) shall be amended so CODE identity derivation uses the active role binding rather than raw `session.players` ids `coder` and `reviewer`.
 - [PBRT-30](../dev/playbook-runtime.md#pbrt-30) shall be amended so CODE validates a shell-selected option slice; the legacy CODE-only path supplies `captain.options.code`, and the generic path supplies `captain.options.playbooks.code.options`.
-- [CAPTAIN-5](../dev/playbook-captain.md#captain-5), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), and [CAPTAIN-11](../dev/playbook-captain.md#captain-11) shall be amended for registry-loaded entries, local-role-to-host-player binding, entry-owned `parkStateIds`, and CODE-only legacy defaults.
+- [CAPTAIN-5](../dev/playbook-captain.md#captain-5), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), and [CAPTAIN-11](../dev/playbook-captain.md#captain-11) shall be amended for registry-loaded entries, local-role-to-host-player binding, active-playbook visibility changes through tmux-play, entry-owned `parkStateIds`, and CODE-only legacy defaults.
 - [CAPTAIN-19](../user/playbook-captain.md#captain-19) and [CAPTAIN-20](../dev/playbook-captain.md#captain-20) shall be amended so summary policy and saved-count wording are registry-owned and optional rather than CODE-specific shell behavior.
 - [CAPTAIN-16](../dev/playbook-captain.md#captain-16) shall be amended so shell initialization loads enabled registry entries from `captain.options.playbooks` while preserving the CODE-only default when that map is absent.
 - [PBCODE-16](../user/playbook-code.md#pbcode-16) and [PBCODE-17](../dev/playbook-code.md#pbcode-17) shall be amended so `playbook-code` is specified as a compatibility preset over the generic shell machinery while retaining the legacy CODE overlay and `captain.options.code` composition.
-- A follow-up IR shall add generic `playbook` user/dev/test items covering launcher behavior.
+- [RELEASE-14](../dev/release.md#release-14) shall be satisfied with a cligent dependency range that includes the tmux-play dynamic visibility surface, first expected in `@sublang/cligent` 0.13.0.
+- A follow-up IR shall add generic `playbook` user/dev/test items covering launcher behavior, generated roster composition, `layout.initialVisible`, active-playbook visibility switching, validation-rejection handling, and display-only pane reconciliation failures.
 
 ## Consequences
 
@@ -197,8 +208,11 @@ The implementing specs shall reconcile this DR with released CODE runtime and la
 - Role names no longer collide across playbooks because local runtime roles always bind to namespaced host player ids.
 - Profiles let users reuse adapter, model, reasoning, and permission settings without sharing player instances or crossing playbook boundaries.
 - CODE-specific shell assumptions move into CODE's registry entry.
+- Existing seeded `layout.columnWeights` overlays keep working under cligent 0.13.0 via its backward-compatible alias.
+- tmux-play sessions still allocate every enabled playbook player at startup, but only the active playbook's players need to occupy visible panes.
 - The generic launcher needs new user/dev/test specs before implementation, and CAPTAIN/PBCODE/PBRT specs need amendments for enablement, binding, options migration, summary policy, and compatibility behavior.
 
 ## References
 
 [1]: https://github.com/sublang-ai/cligent/blob/main/docs/tmux-play.md#custom-captains "cligent tmux-play custom Captains"
+[2]: https://github.com/sublang-ai/cligent/blob/main/docs/tmux-play.md#layout "cligent tmux-play dynamic visible player panes"
