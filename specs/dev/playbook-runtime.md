@@ -335,8 +335,9 @@ by [CAPTAIN-16](playbook-captain.md#captain-16) and
 [CAPTAIN-17](playbook-captain.md#captain-17).
 CODE shall be enabled like any other playbook through a
 `captain.options.playbooks.code` entry whose `from` module specifier
-is the published `@sublang/playbook/code/registry` export, from which
-the shell loads the CODE registry entry.
+is the published `@sublang/playbook/code/registry` export, whose
+default export is the CODE registry entry the shell loads
+([CAPTAIN-16](playbook-captain.md#captain-16)).
 When that shell dispatches a Boss turn to CODE, the CODE registry
 entry shall map the dispatch to
 `runtime.handleBossInput({ text, signal: context.signal })`.

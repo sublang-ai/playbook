@@ -16,44 +16,47 @@ by [PBRT](playbook-runtime.md).
 
 ### CAPTAIN-1
 
-Where the Playbook Captain shell is running under tmux-play with
-CODE registered, while no playbook is engaged, when the Boss
-submits `/code <text>`, the shell shall engage CODE and submit
-`<text>` to the CODE runtime as ordinary Boss text.
-Where the Playbook Captain shell is running under tmux-play with
-CODE registered, while no playbook is engaged, when the Boss
-submits bare `/code`, the shell shall engage CODE and respond in
+Where the Playbook Captain shell is running under tmux-play with one
+or more playbooks enabled, while no playbook is engaged, when the
+Boss submits `/<command> <text>` for an enabled playbook's command
+(such as `/code`), the shell shall engage that playbook and submit
+`<text>` to its runtime as ordinary Boss text.
+Where the Playbook Captain shell is running under tmux-play with one
+or more playbooks enabled, while no playbook is engaged, when the
+Boss submits a bare `/<command>` for an enabled playbook (such as
+`/code`), the shell shall engage that playbook and respond in
 visible Captain chat asking for the task to run.
-Where the Playbook Captain shell is running under tmux-play with
-CODE registered, while no playbook is engaged, when the Boss
-submits ordinary text, an unregistered slash-prefixed command, or
-a near-miss command-like input, the shell shall route the turn by
+Where the Playbook Captain shell is running under tmux-play with one
+or more playbooks enabled, while no playbook is engaged, when the
+Boss submits ordinary text, an unregistered slash-prefixed command,
+or a near-miss command-like input, the shell shall route the turn by
 hidden Captain routing; a low-confidence or near-miss selection
 shall produce visible clarification rather than dispatching to a
 playbook.
 
 ### CAPTAIN-2
 
-Where the Playbook Captain shell is running under tmux-play with
-CODE registered, while CODE is engaged, when the Boss submits
-`/code <text>`, the shell shall submit `<text>` to the existing
-CODE runtime and shall not reset, dispose, or reconstruct that
+Where the Playbook Captain shell is running under tmux-play with one
+or more playbooks enabled, while a playbook is engaged, when the Boss
+submits `/<command> <text>` for the engaged playbook's command (such
+as `/code` while CODE is engaged), the shell shall submit `<text>` to
+the existing runtime and shall not reset, dispose, or reconstruct it.
+Where the Playbook Captain shell is running under tmux-play with one
+or more playbooks enabled, while a playbook is engaged, when the Boss
+submits the engaged playbook's bare `/<command>`, the shell shall
+respond in visible Captain chat with clarification or current
+engagement status and shall not reset, dispose, or reconstruct the
 runtime.
-Where the Playbook Captain shell is running under tmux-play with
-CODE registered, while CODE is engaged, when the Boss submits bare
-`/code`, the shell shall respond in visible Captain chat with
-clarification or current engagement status and shall not reset,
-dispose, or reconstruct the CODE runtime.
-Where the Playbook Captain shell is running under tmux-play with
-CODE registered, while CODE is engaged, when the Boss submits a
-different registered playbook command, the shell shall not dispatch
-that command and shall ask the Boss to finish, dismiss, or resolve
-the current engagement first.
-Where the Playbook Captain shell is running under tmux-play with
-CODE registered, while CODE is engaged, when the Boss submits
-ordinary text, the shell shall route the turn by hidden Captain
-routing and shall either continue the existing CODE runtime,
-respond in visible Captain chat, or dispose the CODE engagement and
+Where the Playbook Captain shell is running under tmux-play with one
+or more playbooks enabled, while a playbook is engaged, when the Boss
+submits a different enabled playbook's command, the shell shall not
+dispatch that command and shall ask the Boss to finish, dismiss, or
+resolve the current engagement first.
+Where the Playbook Captain shell is running under tmux-play with one
+or more playbooks enabled, while a playbook is engaged, when the Boss
+submits ordinary text, the shell shall route the turn by hidden
+Captain routing and shall either continue the existing runtime,
+respond in visible Captain chat, or dispose the engagement and
 return to Captain chat.
 
 ## Engagement progress
@@ -82,14 +85,15 @@ Boss-visible status line.
 
 ### CAPTAIN-4
 
-Where the Playbook Captain shell is running under tmux-play, while
-CODE is engaged, when CODE parks at its idle state, failed state,
-or `awaitBossReply` state, the shell shall keep the CODE engagement
-available for the next Boss turn.
-Where the Playbook Captain shell is running under tmux-play, while
-CODE is engaged, when CODE reaches its final state or the Boss
-explicitly dismisses the engagement, the shell shall dispose that
-CODE engagement and return to Captain chat.
+Where the Playbook Captain shell is running under tmux-play, while a
+playbook is engaged, when the engaged playbook parks at its registry
+entry's idle state or one of its park states (for CODE, its idle,
+failed, or `awaitBossReply` state), the shell shall keep that
+engagement available for the next Boss turn.
+Where the Playbook Captain shell is running under tmux-play, while a
+playbook is engaged, when the engaged playbook reaches its registry
+entry's final state or the Boss explicitly dismisses the engagement,
+the shell shall dispose that engagement and return to Captain chat.
 
 ### CAPTAIN-19
 

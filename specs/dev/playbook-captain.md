@@ -39,9 +39,15 @@ text for a software-development / SDLC coding workflow,
 CODE's Committer alias shall remain a CODE-owned option validated by
 the CODE entry ([PBRT-30](playbook-runtime.md#pbrt-30)), not a
 shell-level concept.
-The shell shall read each entry's option slice, idle / final / park
-state ids, role binding, and summary policy from the entry, and
-shall not hardcode CODE state ids such as `failed` or
+The shell shall take each playbook's idle / final / park state ids,
+required roles, summary policy, option validator, and runtime factory
+from its manifest entry.
+The shell shall take each enabled playbook's option slice from its
+normalized `captain.options.playbooks.<id>` config
+([CAPTAIN-16](#captain-16)) validated against that entry, and shall
+derive the role binding from the entry's `id` and roles
+([CAPTAIN-10](#captain-10)).
+The shell shall not hardcode CODE state ids such as `failed` or
 `awaitBossReply` or CODE-specific summary labels.
 The shell shall support one active engagement and shall keep only
 a bounded control ledger: active playbook id, shell mode, latest
@@ -246,11 +252,26 @@ validate each entry's own option slice through that entry's
 The shell shall require `captain.options.playbooks` and shall reject
 `init` when it is missing or empty; it shall not infer a CODE-only
 default from `captain.options.code`.
-For each enabled playbook the shell shall import the registry entry
-from its explicit `from` module specifier and shall reject `init`
-when `from` is missing, the import fails, the module exposes no valid
-registry entry, two enabled playbooks share an `id`, or two enabled
-playbooks resolve to the same effective command.
+Each `captain.options.playbooks.<id>` entry in the normalized shell
+config shall carry a `from` module specifier, an optional `command`
+override, and an `options` slice (the entry's namespaced option
+object).
+The generic `playbook` launcher produces this normalized shape from
+its user-facing playbook block, hoisting that block's `players` into
+the top-level tmux-play roster and folding non-launcher keys into
+`options`; the shell consumes only the normalized shape and does not
+re-derive it.
+For each enabled playbook the shell shall import the module named by
+`from` and read its default export as the registry entry, treating a
+module whose default export is not a manifest entry carrying the
+[CAPTAIN-5](#captain-5) fields as exposing no valid registry entry.
+The shell shall compute each playbook's effective command as the
+entry's config `command` when present and the manifest's default
+`command` otherwise.
+The shell shall reject `init` when `from` is missing, the import
+fails, the module exposes no valid registry entry, two enabled
+playbooks share an `id`, or two enabled playbooks resolve to the same
+effective command.
 The shell shall pass each entry only its normalized option slice and
 shall not extract an entry's namespace from the full Captain options
 bag.
@@ -299,4 +320,6 @@ Where `@sublang/playbook` exposes the Playbook Captain shell for
 tmux-play, the package shall expose the public module specifier
 `@sublang/playbook/playbook-captain`.
 That module's default export shall be a tmux-play Captain factory
-for the Playbook Captain shell with CODE registered.
+for the Playbook Captain shell, which loads its enabled playbooks
+from `captain.options.playbooks` at `init`
+([CAPTAIN-16](#captain-16)) rather than hardcoding any playbook.

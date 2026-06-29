@@ -106,6 +106,23 @@ shell error rather than a Boss input error; and a tmux pane
 reconciliation failure does not block dispatch to the playbook
 runtime.
 
+## Generic command dispatch
+
+### CAPTAIN-24
+Verifies: [CAPTAIN-1](../user/playbook-captain.md#captain-1), [CAPTAIN-2](../user/playbook-captain.md#captain-2), [CAPTAIN-16](../dev/playbook-captain.md#captain-16)
+
+Where the test suite initializes the Playbook Captain shell with CODE
+and a second, test-only playbook both enabled by `from` module
+specifier, and with the second playbook's `command` overridden in its
+`captain.options.playbooks.<id>` config, the test suite shall fail
+unless: the Boss's `/<command>` for the second playbook engages that
+playbook and submits the text to its runtime rather than to CODE; the
+overriding `command` is the effective command that engages the
+playbook while the playbook's manifest default `command` is treated
+as an unregistered command and does not dispatch; and a later
+same-playbook `/<command>` reuses the existing runtime rather than
+reconstructing it.
+
 ## Public module surface
 
 ### CAPTAIN-18
@@ -114,8 +131,9 @@ Verifies: [CAPTAIN-17](../dev/playbook-captain.md#captain-17)
 Where the test suite resolves `@sublang/playbook` through its
 package exports, the test suite shall fail unless
 `@sublang/playbook/playbook-captain` resolves and default-exports
-a tmux-play Captain factory for the Playbook Captain shell with
-CODE registered.
+a tmux-play Captain factory for the Playbook Captain shell that
+loads its enabled playbooks from `captain.options.playbooks` rather
+than hardcoding any playbook.
 
 ## Turn summary
 
