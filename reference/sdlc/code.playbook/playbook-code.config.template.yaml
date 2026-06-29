@@ -27,7 +27,7 @@
 #   instead of requiring bypass permissions.
 # - players.committer optionally aliases the Committer to a role
 #   (coder or reviewer); that role's pane runs the commit turn. The
-#   seeded value is coder; omit it to fall back to the coder.
+#   seeded value is coder; omitting it uses the same Coder fallback.
 # - layout sizes the tmux window (layout.window: columns × rows) and
 #   sets the relative column widths (layout.columnWeights) for the
 #   Boss/Captain, Coder, and Reviewer columns.
