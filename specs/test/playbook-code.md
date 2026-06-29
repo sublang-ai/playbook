@@ -138,6 +138,13 @@ base when the overlay omits them (the same precedence as `theme`);
 unless overlay `layout` and `notifications` blocks replace base
 blocks whole rather than deep-merging nested layout fields or
 notification event keys;
+unless a base-inherited composed top-level `layout` reloads through
+cligent's tmux-play loader against the composed `coder` + `reviewer`
+roster — carrying no `layout.initialVisible` and not both the
+`layout.columnWeights` alias and the canonical
+`singlePlayerColumnWeights` / `multiPlayerColumnWeights` field for
+its shape — while an overlay-set `layout` is carried through
+verbatim;
 unless a
 `players.committer` aliasing `coder` or `reviewer` is resolved into
 `captain.options.code.committer` with no extra `players[]` entry,

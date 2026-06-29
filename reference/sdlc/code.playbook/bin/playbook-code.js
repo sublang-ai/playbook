@@ -264,13 +264,47 @@ export function composeRuntimeConfig(
   const composed = {};
   const theme = overlayConfig.theme ?? base?.theme;
   if (theme !== undefined) composed.theme = theme;
-  const layout = overlayConfig.layout ?? base?.layout;
-  if (layout !== undefined) composed.layout = layout;
+  // PBCODE-16/17: an overlay `layout` is the user's own tmux-play layout
+  // and is carried through verbatim; a base-inherited `layout` is
+  // reconciled so it round-trips onto the composed coder + reviewer roster
+  // (cligent normalizes the base layout to the base config's own roster).
+  if (overlayConfig.layout !== undefined) {
+    composed.layout = overlayConfig.layout;
+  } else if (base?.layout !== undefined) {
+    composed.layout = composeInheritedLayout(base.layout);
+  }
   const notifications = overlayConfig.notifications ?? base?.notifications;
   if (notifications !== undefined) composed.notifications = notifications;
   composed.captain = captain;
   composed.players = players;
   return composed;
+}
+
+// PBCODE-17: reconcile a base-inherited `layout` so it round-trips onto
+// the composed `coder` + `reviewer` roster. cligent's loaded base `layout`
+// is normalized to the base config's own roster and shape: `initialVisible`
+// names the base config's players (cligent rejects ids outside the composed
+// roster) and the normalized output carries both the `columnWeights` alias
+// and the canonical `singlePlayerColumnWeights` / `multiPlayerColumnWeights`
+// (cligent emits the pair on load but rejects it on reload). Drop
+// `initialVisible` — CODE shows its full composed roster, which cligent
+// restores when the field is omitted — and drop the `columnWeights` alias
+// whenever the canonical field for the alias's shape is present, carrying
+// window and weights through otherwise. An overlay `layout` is the user's
+// own and is not reconciled.
+function composeInheritedLayout(layout) {
+  if (!isObject(layout)) return layout;
+  const result = { ...layout };
+  delete result.initialVisible;
+  const alias = result.columnWeights;
+  if (Array.isArray(alias)) {
+    const conflictsSingle =
+      alias.length === 2 && result.singlePlayerColumnWeights !== undefined;
+    const conflictsMulti =
+      alias.length === 3 && result.multiPlayerColumnWeights !== undefined;
+    if (conflictsSingle || conflictsMulti) delete result.columnWeights;
+  }
+  return result;
 }
 
 export function adaptersFromComposedConfig(config) {

@@ -144,8 +144,8 @@ only; the `committer` alias is resolved, not rostered); carry the
 overlay's `captain.options.code` through, resolving any
 `players.committer` alias into `captain.options.code.committer`
 (the named role id) without emitting a `players[]` entry for it;
-carry any top-level `layout` or `notifications` block through
-unchanged; materialize the composed config to
+carry the overlay's top-level `layout` or `notifications` block
+through unchanged; materialize the composed config to
 a temporary file; launch `tmux-play --config <temp>`; and remove
 the temporary file before the shim exits — on normal exit, on
 non-zero child exit, and before re-raising a forwarded signal per
@@ -156,6 +156,12 @@ inherit from it only the `theme`, the top-level `layout` and
 `reasoningEffort`, and `permissions` the overlay leaves unset, and
 shall not map the base `players[]` roster onto `coder` /
 `reviewer`.
+An inherited `layout` is adapted to CODE's `coder` + `reviewer`
+panes rather than copied verbatim, since a base config's `layout` is
+recorded against that config's own players: the base's
+initial-visible-pane selection is dropped so CODE starts with its
+full set of panes, while the window size and column weights are
+preserved. An inherited `notifications` block is carried whole.
 For `layout` and `notifications`, precedence shall be whole-block:
 when the overlay sets either block, that block replaces the base
 block rather than merging nested layout fields or notification event

@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Bump `@sublang/cligent` `^0.12.0` → `^0.13.0`.** The published `package.json` specifier and the checked-in `pnpm-lock.yaml` pin are raised together to cligent 0.13.0 ([RELEASE-14](specs/dev/release.md#release-14)). cligent 0.13.0's `tmux-play` loader adds dynamic player visibility (`layout.initialVisible`) and the shape-specific `layout.singlePlayerColumnWeights` / `layout.multiPlayerColumnWeights` fields alongside the `layout.columnWeights` compatibility alias. Under the prior `^0.12.0` floor, a base `tmux-play` config authored by cligent 0.13.0 (whose loader emits `multiPlayerColumnWeights`) was rejected on load with `Unknown config field layout.multiPlayerColumnWeights`; the raised floor accepts it. The seeded CODE overlay keeps `columnWeights: [4, 6, 6]`, still accepted as the multi-player alias ([PBCODE-16/17](specs/dev/playbook-code.md), [IR-013](specs/iterations/013-player-alias-default-lineup.md)).
+
+### Fixed
+
+- **`playbook-code` base-`layout` inheritance now round-trips on cligent 0.13.0.** When a default launch inherited the `layout` block from a discovered base `tmux-play` config, the composer carried cligent's normalized layout through wholesale — including a `layout.initialVisible` keyed to the base config's players and both the `columnWeights` alias and the canonical `multiPlayerColumnWeights`. cligent 0.13.0 rejected the composed config at launch (`layout.initialVisible[…] "…" is not a configured player id`, or `layout.columnWeights conflicts with layout.multiPlayerColumnWeights`). The composer now owns `layout.initialVisible` (omitting it so cligent shows the full composed `coder` + `reviewer` roster) and drops the redundant `columnWeights` alias when the canonical shape field is present ([PBCODE-17](specs/dev/playbook-code.md#pbcode-17), [PBCODE-18](specs/test/playbook-code.md#pbcode-18)). Seeded-overlay launches, whose `layout` block carries only `columnWeights`, are unaffected.
+
 ## [0.7.0] - 2026-06-22
 
 ### Added

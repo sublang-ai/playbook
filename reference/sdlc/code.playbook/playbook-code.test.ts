@@ -13,6 +13,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadTmuxPlayConfig } from '@sublang/cligent/tmux-play';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
@@ -541,6 +542,29 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
     });
   });
 
+  it('carries an overlay layout through verbatim, including initialVisible', () => {
+    // PBCODE-16/17: only a base-inherited layout is reconciled. An overlay
+    // layout is the user's own tmux-play layout — its initialVisible (a
+    // valid CODE-roster selection) and weight fields are not stripped.
+    const composed = composeRuntimeConfig({
+      captain: { adapter: 'claude' },
+      layout: {
+        window: { columns: 174, rows: 49 },
+        initialVisible: ['coder'],
+        columnWeights: [4, 6, 6],
+      },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'codex' },
+      },
+    });
+    expect(composed.layout).toEqual({
+      window: { columns: 174, rows: 49 },
+      initialVisible: ['coder'],
+      columnWeights: [4, 6, 6],
+    });
+  });
+
   it('inherits layout from the base when the overlay omits it, like theme', () => {
     const overlay = {
       captain: { adapter: 'claude' },
@@ -945,13 +969,24 @@ describe('playbook-code shim — config composition (PBCODE-16/17/18)', () => {
     expect(result).toEqual({ code: 0 });
     const composed = parseYaml(spawn.configs[0].content);
     // The overlay omits layout, so the composed config inherits the
-    // base's layout end to end. The base declares two players, so its
-    // 3-entry columnWeights satisfies cligent's pane-count validation on
-    // load (1 Boss/Captain column + 2 player columns).
+    // base's layout. cligent's loaded base layout is normalized to the
+    // base's own roster and shape; the composer drops `initialVisible`
+    // (the base's players) and the redundant `columnWeights` alias so the
+    // result round-trips onto the coder + reviewer roster (PBCODE-17/18).
     expect(composed.layout).toEqual({
       window: { columns: 200, rows: 60 },
-      columnWeights: [1, 1, 1],
+      singlePlayerColumnWeights: [1, 1],
+      multiPlayerColumnWeights: [1, 1, 1],
     });
+    // Regression (PBCODE-18): the composed config the shim launches must
+    // reload through cligent's tmux-play loader. The prior wholesale
+    // inheritance produced an `initialVisible`/`columnWeights` layout that
+    // cligent rejects against the composed roster.
+    const reloaded = await loadComposedConfig(spawn.configs[0].content);
+    expect(reloaded.config.layout.initialVisible).toEqual([
+      'coder',
+      'reviewer',
+    ]);
   });
 
   it('rejects a malformed overlay at launch with a path-named error and no spawn', async () => {
@@ -1039,6 +1074,17 @@ async function writeBaseConfig(home: string, contents: string): Promise<void> {
   const dir = join(home, '.config', 'tmux-play');
   await mkdir(dir, { recursive: true });
   await writeFile(join(dir, 'config.yaml'), contents, 'utf8');
+}
+
+// Reload the composed config the shim launched through cligent's own
+// tmux-play loader, exactly as the launched child does, to prove the
+// composed config is valid input to cligent (PBCODE-18).
+async function loadComposedConfig(content: string) {
+  const dir = await mkdtemp(join(tmpdir(), 'playbook-code-rt-'));
+  tempDirs.push(dir);
+  const path = join(dir, 'tmux-play.config.yaml');
+  await writeFile(path, content, 'utf8');
+  return loadTmuxPlayConfig({ configPath: path });
 }
 
 function fakeSpawn(opts: { exitCode?: number; signal?: string } = {}) {

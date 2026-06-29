@@ -138,8 +138,9 @@ role `adapter`s are required in the overlay and are not inherited.
 It shall carry optional top-level `layout` and `notifications`
 blocks into the composed config from the overlay, or inherit them
 from the base config when the overlay omits them — the same
-precedence as `theme` — without interpreting their contents, since
-they are host-observable tmux-play fields, not CODE options.
+precedence as `theme`. `notifications` is host-observable tmux-play
+state, not a CODE option, and is carried whole without interpreting
+its contents.
 For both blocks, overlay precedence is whole-block: an overlay
 `layout` shall replace the base `layout` rather than merging nested
 `window` or `columnWeights` fields, and an overlay `notifications`
@@ -148,6 +149,22 @@ keys.
 The shim shall inherit those base fields from cligent's loaded
 config, since cligent owns tmux-play config normalization and
 validation.
+An overlay `layout` is the user's own tmux-play layout and shall be
+carried through verbatim. A `layout` inherited from the base
+config, however, shall be reconciled, because cligent's loaded base
+`layout` is normalized to the base config's own roster and shape and
+does not round-trip onto the composed `coder` + `reviewer` roster:
+the composer shall not emit the base's `layout.initialVisible` (which
+names the base config's players, so cligent rejects ids outside the
+composed roster, whereas CODE shows its full composed roster, which
+cligent restores when `initialVisible` is omitted), and it shall
+drop the inherited `layout.columnWeights` alias whenever the
+canonical `singlePlayerColumnWeights` (alias length 2) or
+`multiPlayerColumnWeights` (alias length 3) field for the alias's
+shape is also present, since cligent's loader emits the alias and
+the canonical field together but rejects the pair on reload. It
+shall otherwise carry the inherited `layout` window and weight
+fields through unchanged.
 The shim shall type the composed config with cligent's exported
 config types but shall serialize it to the temporary `.yaml` with
 its own serializer, since `@sublang/cligent/tmux-play` exports no

@@ -170,8 +170,8 @@ pnpm test
 in the checked-in `pnpm-lock.yaml` — the same version CI installs
 via `--frozen-lockfile`, so contributor checkouts and CI agree.
 The published `package.json` declares `@sublang/cligent` as
-`^0.12.0`, so an end-user install with no lockfile (e.g., `npm
-install -g @sublang/playbook`) resolves a compatible cligent 0.12.x
+`^0.13.0`, so an end-user install with no lockfile (e.g., `npm
+install -g @sublang/playbook`) resolves a compatible cligent 0.13.x
 release (see [RELEASE-14](specs/dev/release.md#release-14)). To
 refresh the contributor pin within that range, run
 `pnpm update @sublang/cligent` and commit the resulting
