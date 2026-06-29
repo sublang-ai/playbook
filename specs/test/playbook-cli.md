@@ -42,7 +42,9 @@ that block's `from`, optional `command`, and an `options` slice built
 from the block's non-launcher keys (CODE's `committer` among them and
 no `from` / `command` / `players` in the slice); resolves scalar
 `captain` and `players.<role>` values as profile ids or adapter
-shorthands with the referenced profile merged in; generates the
+shorthands and a full block's `profile` key as a `profiles` entry
+only, applying the profile beneath the block's own explicit fields and
+emitting no `profile` key in the composed config; generates the
 top-level roster as the union of each playbook's `<id>.<role>` host
 players with separate instances when two playbooks share a profile;
 and sets `layout.initialVisible` to the first enabled playbook's
@@ -56,11 +58,13 @@ Verifies: [PBCLI-8](../dev/playbook-cli.md#pbcli-8), [PBCLI-9](../dev/playbook-c
 
 When the test suite composes top-level configs that each carry one
 fault — a missing `from`, a `from` whose import fails, a module
-exposing no valid registry entry, two playbooks sharing an `id`, two
+exposing no valid registry entry, a `playbooks.<id>` key not equal to
+the imported manifest's `id`, two playbooks sharing an `id`, two
 playbooks resolving to the same effective command, a `profiles` id
-colliding with the `claude` or `codex` adapter shorthand, a manifest
-required role with no generated roster id, and an enabled playbook
-with no visible local role — the test suite shall fail unless the
+colliding with the `claude` or `codex` adapter shorthand, a full block
+`profile` key naming no known profile, a manifest required role with no
+generated roster id, and an enabled playbook with no visible local
+role — the test suite shall fail unless the
 command rejects each before launching tmux-play with a diagnostic
 naming the fault.
 

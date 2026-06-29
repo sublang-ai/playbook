@@ -265,13 +265,16 @@ For each enabled playbook the shell shall import the module named by
 `from` and read its default export as the registry entry, treating a
 module whose default export is not a manifest entry carrying the
 [CAPTAIN-5](#captain-5) fields as exposing no valid registry entry.
+The `captain.options.playbooks` map key is the playbook `<id>` the
+shell binds with ([CAPTAIN-10](#captain-10)) and shall equal that
+module's manifest `id`.
 The shell shall compute each playbook's effective command as the
 entry's config `command` when present and the manifest's default
 `command` otherwise.
 The shell shall reject `init` when `from` is missing, the import
-fails, the module exposes no valid registry entry, two enabled
-playbooks share an `id`, or two enabled playbooks resolve to the same
-effective command.
+fails, the module exposes no valid registry entry, a map key differs
+from its module's manifest `id`, two enabled playbooks share an `id`,
+or two enabled playbooks resolve to the same effective command.
 The shell shall pass each entry only its normalized option slice and
 shall not extract an entry's namespace from the full Captain options
 bag.

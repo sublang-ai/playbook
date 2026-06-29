@@ -73,13 +73,15 @@ roster.
 Within a `playbooks.<id>` block, `from`, `command`, and `players` are
 launcher-owned keys and every other key (such as CODE's `committer`)
 is that playbook's option slice; `from` is the explicit registry
-module specifier and `command` optionally overrides the playbook's
-default slash command.
+module specifier, `command` optionally overrides the playbook's
+default slash command, and the `<id>` key shall be the enabled
+playbook's own id, matching the registry module's manifest `id`.
 A scalar `captain` value or a scalar `players.<role>` value shall name
 either a profile id from `profiles` or an adapter shorthand such as
 `claude` or `codex`; a full `captain` or `players.<role>` block shall
-follow the host tmux-play agent-block schema and may reference a
-profile.
+follow the host tmux-play agent-block schema and may carry an optional
+`profile` key naming a `profiles` entry, whose settings the launcher
+applies beneath the block's own explicit fields.
 
 ### PBCLI-5
 

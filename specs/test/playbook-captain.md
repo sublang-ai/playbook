@@ -93,9 +93,10 @@ Where the test suite initializes the Playbook Captain shell with
 `captain.options.playbooks` enabling one or more playbooks by `from`
 module specifier, the test suite shall fail unless: a missing
 `captain.options.playbooks`, a missing `from`, a failed import, a
-module exposing no valid registry entry, two enabled playbooks
-sharing an `id`, and two enabled playbooks resolving to the same
-effective command each reject `init`; each enabled playbook's local
+module exposing no valid registry entry, a map key differing from its
+module's manifest `id`, two enabled playbooks sharing an `id`, and two
+enabled playbooks resolving to the same effective command each reject
+`init`; each enabled playbook's local
 roles bind to host players `<id>.<role>` so a sub-runtime
 `callPlayer(<role>, …)` reaches `context.callPlayer(<id>.<role>, …)`;
 on engaging, resuming, or routing to a playbook the shell calls

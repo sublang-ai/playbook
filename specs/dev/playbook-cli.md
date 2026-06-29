@@ -42,8 +42,17 @@ Each normalized `captain.options.playbooks.<id>` entry shall carry the
 as CODE's `committer`); `from`, `command`, and `players` shall not
 appear in the option slice.
 The command shall resolve a scalar `captain` or `players.<role>` value
-as a profile id from `profiles` or as an adapter shorthand, and shall
-merge a referenced profile's settings into the resulting agent block.
+as a profile id from `profiles` or as an adapter shorthand.
+A full `captain` or `players.<role>` block's optional `profile` key
+shall name a `profiles` entry only — not an adapter shorthand — and the
+block shall set any adapter through the agent block's own `adapter`
+field; the command shall reject a `profile` value that names no known
+profile with a path-named error.
+When an agent block references a profile, the command shall compose the
+resolved tmux-play agent block from the profile's settings as the base
+and the block's own explicit fields as overrides, and shall emit no
+`profile` key in the composed config, since the tmux-play agent-block
+schema does not define one.
 The command shall reject a `profiles` id that collides with a known
 adapter shorthand id such as `claude` or `codex` with a path-named
 error, rather than let a profile silently shadow an adapter shorthand.
@@ -54,7 +63,7 @@ Where `playbook` composes the runtime config, the command shall
 generate the top-level tmux-play `players` roster as the launch-time
 union of every enabled playbook's players, binding local role
 `<role>` of playbook `<id>` to a host player whose `id` is
-`<id>.<role>`.
+`<id>.<role>`, where `<id>` is the `playbooks.<id>` config key.
 When two playbooks reference the same profile, the command shall still
 emit separate playbook-scoped host players.
 The generated config shall not bind a playbook's role to a player from
@@ -64,10 +73,11 @@ its registry entry manifest
 ([CAPTAIN-5](playbook-captain.md#captain-5)) and, before launching
 tmux-play, shall reject — with a diagnostic and without launching — a
 missing `from`, a failed import, a module exposing no valid registry
-entry, two playbooks sharing an `id`, two playbooks resolving to the
-same effective command, a manifest `requiredRoleIds` entry that does
-not resolve to a generated roster id, or an enabled playbook that
-resolves no visible local role.
+entry, a `playbooks.<id>` config key that does not equal the imported
+manifest's `id`, two playbooks sharing an `id`, two playbooks
+resolving to the same effective command, a manifest `requiredRoleIds`
+entry that does not resolve to a generated roster id, or an enabled
+playbook that resolves no visible local role.
 The Playbook Captain shell re-validates the same enablement at runtime
 `init` ([CAPTAIN-16](playbook-captain.md#captain-16)).
 
