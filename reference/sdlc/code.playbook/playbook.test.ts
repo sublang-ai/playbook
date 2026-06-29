@@ -57,6 +57,8 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
       },
       captain: 'judge',
       layout: { window: { width: 100, height: 40 } },
+      notifications: { player_finished: 'bell', turn_finished: 'desktop' },
+      theme: { accent: 'cyan' },
       playbooks: {
         code: {
           from: 'mod://code',
@@ -88,6 +90,12 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
       window: { width: 100, height: 40 },
       initialVisible: ['code-coder', 'code-reviewer'],
     });
+    // Top-level host fields (notifications, theme) carried through unchanged.
+    expect(config.notifications).toEqual({
+      player_finished: 'bell',
+      turn_finished: 'desktop',
+    });
+    expect(config.theme).toEqual({ accent: 'cyan' });
     expect(playbooks).toEqual([
       { id: 'code', command: 'code', intent: fakeEntry.intent },
     ]);

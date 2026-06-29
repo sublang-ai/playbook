@@ -64,8 +64,8 @@ shall use it unchanged and shall not reseed or overwrite it.
 
 Where the user authors the top-level generic config, the config shall
 keep tmux-play host fields at the top level and shall not wrap
-`profiles`, `playbooks`, `captain`, `layout`, or `notifications` in a
-`config:` key.
+`profiles`, `playbooks`, `captain`, `layout`, `notifications`, or
+`theme` in a `config:` key.
 The config shall declare enabled playbooks under a top-level
 `playbooks` map and reusable agent settings under an optional
 top-level `profiles` map, and shall not declare a top-level `players`

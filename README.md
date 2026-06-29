@@ -98,7 +98,7 @@ $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml"
 
 The config is top-level (no `config:` wrapper): a `profiles` map of
 reusable agent settings, a `captain` Judge agent, optional `layout` /
-`notifications`, and a `playbooks` map of enabled playbooks. Each
+`notifications` / `theme`, and a `playbooks` map of enabled playbooks. Each
 `captain` or `players.<role>` value is a profile id or an adapter
 shorthand (`claude`, `codex`); other adapter ids are passed through to
 `tmux-play` with a warning because `playbook` cannot preflight their
