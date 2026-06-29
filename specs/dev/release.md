@@ -7,7 +7,7 @@
 
 This spec defines the release workflow for publishing the
 `@sublang/playbook` package — the reference CODE playbook
-runtime, Playbook Captain shell, tmux-play compatibility shim,
+runtime, Playbook Captain shell, the generic `playbook` CLI,
 the host-agnostic `@sublang/playbook/runtime` type contract, and the
 authored `slc/*` specs, all at the repo root —
 to npm and tagging the corresponding GitHub release.
@@ -124,6 +124,9 @@ Where the published `@sublang/playbook` `package.json` declares
 `@sublang/cligent` per [RELEASE-12](#release-12), the declared
 version specifier shall be a caret SemVer range, not a moving
 registry dist-tag such as `latest`.
+The declared range shall admit cligent's tmux-play dynamic
+visible-player surface used by the Playbook Captain shell, first
+available in `@sublang/cligent` 0.13.0.
 
 The repo-local `pnpm-lock.yaml` root importer shall use the same
 specifier and continue to pin a specific resolved cligent version,
@@ -155,6 +158,22 @@ A consumer shall be able to locate a spec by resolving
 the resolved file from disk.
 Removing or renaming a published `slc/*` path shall be released under
 [RELEASE-1](#release-1) SemVer.
+
+### RELEASE-20
+
+The published package shall expose the generic `playbook` executable
+through `package.json` `bin` and the CODE registry module through a
+public `exports['./code/registry']` subpath, both backed by files
+listed in `files`, as public, semver-stable surfaces.
+Removing or renaming the `playbook` bin or the
+`@sublang/playbook/code/registry` export shall be released under
+[RELEASE-1](#release-1) SemVer.
+The removal of the `playbook-code` bin, the
+`@sublang/playbook/code/tmux-play` export, and the bundled legacy CODE
+tmux-play configs are breaking public-surface changes under
+[RELEASE-1](#release-1) and shall be recorded in the `Removed` section
+of `CHANGELOG.md` per [RELEASE-4](#release-4) and
+[RELEASE-5](#release-5).
 
 ## Pre-release Checklist
 

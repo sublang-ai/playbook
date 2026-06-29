@@ -5,7 +5,18 @@
 
 ## Status
 
-Accepted.
+Superseded by [DR-009](009-generic-playbook-cli-and-registry.md).
+
+DR-009 replaces the `playbook-code` composer and the user-authored CODE
+overlay with the generic `playbook` launcher and a top-level
+`profiles` / `playbooks` config, and moves CODE options from
+`captain.options.code` to the registry-scoped
+`captain.options.playbooks.code.options` slice
+([PBRT-29](../user/playbook-runtime.md#pbrt-29),
+[PBRT-30](../dev/playbook-runtime.md#pbrt-30)).
+This DR's `captain.options` extension-point reasoning survives in DR-009's
+per-playbook option slices; its `playbook-code` composer mechanics and the
+retired PBCODE specs it cites below are historical.
 
 ## Context
 

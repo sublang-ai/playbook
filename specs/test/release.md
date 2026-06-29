@@ -45,3 +45,13 @@ Verifies: [RELEASE-15](../dev/release.md#release-15), [RELEASE-16](../dev/releas
 The test suite shall fail unless `npm pack --dry-run` lists the
 `@sublang/playbook/runtime` `.js` and `.d.ts` artifacts and all three
 `slc/*.md` files among the packed contents.
+
+### RELEASE-21
+Verifies: [RELEASE-20](../dev/release.md#release-20)
+
+The test suite shall fail unless `package.json` declares a `playbook`
+bin and no `playbook-code` bin, declares an
+`exports['./code/registry']` subpath and no
+`exports['./code/tmux-play']` subpath, and `npm pack --dry-run` lists
+the `playbook` launcher entry and the `code.registry` `.js` and
+`.d.ts` artifacts among the packed contents.
