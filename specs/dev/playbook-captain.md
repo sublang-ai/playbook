@@ -132,7 +132,7 @@ The binding for local role `<role>` in playbook `<id>` shall be the
 host player id `<id>-<role>`, so CODE's `coder` and `reviewer` bind
 to host players `code-coder` and `code-reviewer`.
 The wrapper shall route a sub-runtime `callPlayer(localRole, …)` to
-`context.callPlayer(<id>.<localRole>, …)`, route sub-runtime
+`context.callPlayer(<id>-<localRole>, …)`, route sub-runtime
 `callJudge` to hidden `context.callCaptain`, and pass sub-runtime
 `emitStatus` and `emitTelemetry` calls through to the host in order.
 The shell shall also pass the resolved binding in the metadata given
