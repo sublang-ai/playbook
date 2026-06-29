@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-29
+
 ### Changed
 
 - **Bump `@sublang/cligent` `^0.12.0` → `^0.13.0`.** The published `package.json` specifier and the checked-in `pnpm-lock.yaml` pin are raised together to cligent 0.13.0 ([RELEASE-14](specs/dev/release.md#release-14)). cligent 0.13.0's `tmux-play` loader adds dynamic player visibility (`layout.initialVisible`) and the shape-specific `layout.singlePlayerColumnWeights` / `layout.multiPlayerColumnWeights` fields alongside the `layout.columnWeights` compatibility alias. Under the prior `^0.12.0` floor, a base `tmux-play` config authored by cligent 0.13.0 (whose loader emits `multiPlayerColumnWeights`) was rejected on load with `Unknown config field layout.multiPlayerColumnWeights`; the raised floor accepts it. The seeded CODE overlay keeps `columnWeights: [4, 6, 6]`, still accepted as the multi-player alias ([PBCODE-16/17](specs/dev/playbook-code.md), [IR-013](specs/iterations/013-player-alias-default-lineup.md)).
@@ -153,7 +155,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/sublang-ai/playbook/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/sublang-ai/playbook/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/sublang-ai/playbook/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/sublang-ai/playbook/compare/v0.4.2...v0.5.0
