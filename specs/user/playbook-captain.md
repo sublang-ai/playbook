@@ -137,3 +137,16 @@ Where the Playbook Captain shell handles a Boss turn as Captain chat,
 clarification, bare playbook selection without sub-runtime
 submission, or routing failure recovery, the shell shall not append
 a turn-summary block for that Boss turn.
+
+## Active-playbook visibility
+
+### CAPTAIN-25
+
+Where the Playbook Captain shell is running under tmux-play with two
+or more playbooks enabled, when the shell engages, resumes, or routes
+a Boss turn to a playbook, the shell shall make that playbook's panes
+the visible ones in the main tmux window and not the panes of the
+other enabled playbooks.
+After the engaged playbook reaches its final state or the Boss
+dismisses it, the shell may leave the visible panes on the last
+selected playbook until the next selection.

@@ -100,6 +100,10 @@ The command shall carry through the user config's tmux-play `layout`
 window size and column-weight fields, including cligent's
 `singlePlayerColumnWeights` and `multiPlayerColumnWeights`, which are
 session-level per visible-column shape rather than per playbook.
+The command shall likewise carry the user config's top-level tmux-play
+`notifications` and `theme` fields, when present, into the composed
+config unchanged, so the seeded notification defaults
+([PBCLI-11](#pbcli-11)) reach the host.
 A raw tmux-play config launched through `--config` retains direct
 access to `layout.initialVisible`
 ([PBCLI-1](../user/playbook-cli.md#pbcli-1)).

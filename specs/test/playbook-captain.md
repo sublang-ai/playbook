@@ -87,7 +87,7 @@ sub-runtime judge calls use the same Captain session primitives.
 ## Registry loading and visibility
 
 ### CAPTAIN-23
-Verifies: [CAPTAIN-16](../dev/playbook-captain.md#captain-16), [CAPTAIN-22](../dev/playbook-captain.md#captain-22), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
+Verifies: [CAPTAIN-16](../dev/playbook-captain.md#captain-16), [CAPTAIN-22](../dev/playbook-captain.md#captain-22), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), [CAPTAIN-25](../user/playbook-captain.md#captain-25)
 
 Where the test suite initializes the Playbook Captain shell with
 `captain.options.playbooks` enabling one or more playbooks by `from`

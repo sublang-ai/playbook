@@ -47,9 +47,10 @@ only, applying the profile beneath the block's own explicit fields and
 emitting no `profile` key in the composed config; generates the
 top-level roster as the union of each playbook's `<id>-<role>` host
 players with separate instances when two playbooks share a profile;
-and sets `layout.initialVisible` to the first enabled playbook's
+sets `layout.initialVisible` to the first enabled playbook's
 generated player ids while carrying through the window and
-column-weight fields.
+column-weight fields; and carries the user config's top-level
+`notifications` and `theme` fields into the composed config unchanged.
 
 ## Validation
 
