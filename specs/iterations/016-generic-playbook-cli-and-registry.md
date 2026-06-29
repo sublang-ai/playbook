@@ -27,7 +27,7 @@ The single-active-engagement constraint, the free-text `handleBossInput` dispatc
 
 ## Deliverables
 
-- [ ] IR-016 doc and its `map.md` row.
+- [x] IR-016 doc and its `map.md` row.
 - [x] CAPTAIN and PBRT spec amendments for registry-manifest entries, `from`-module enablement loaded from `captain.options.playbooks`, local-role-to-host-player binding, active-playbook visibility through tmux-play `setVisiblePlayers`, entry-owned `parkStateIds`, registry-owned optional summary policy, CODE identity derived from the active binding, CODE option validation against `captain.options.playbooks.code.options`, and removal of the `code/tmux-play` shim and `captain.options.code` contracts — with matching test-spec updates.
 - [x] New PBCLI user/dev/test spec package for the generic `playbook` launcher: config model, starter-config seeding, `from`-module loading and rejection rules, profile normalization, generated roster composition and binding, `layout.initialVisible`, active-playbook visibility switching, validation-rejection handling, display-only pane reconciliation, `--list`, `--config` pass-through, and adapter readiness.
 - [x] PBCODE user/dev/test specs retired; RELEASE and package-metadata specs amended for the breaking public-surface changes and the new `@sublang/playbook/code/registry` export; `map.md` package rows updated.
@@ -36,16 +36,17 @@ The single-active-engagement constraint, the free-text `handleBossInput` dispatc
 - [x] Generic `playbook` executable: profiles/playbooks normalization into `captain.options.playbooks`, generated namespaced roster and `layout.initialVisible`, starter-config seeding that enables CODE through `from`, adapter readiness, `--list`, and `--config` pass-through.
 - [x] Legacy surfaces removed: `playbook-code` bin and composer, `./code/tmux-play` shim/export, `captain.options.code` shell path, and legacy CODE tmux-play configs; `package.json` `bin`/`exports`/`files`, generated `.js`/`.d.ts` siblings, README, and CHANGELOG updated.
 - [x] Tests cover registry loading and rejection rules, namespaced binding, visibility switching including display-only reconciliation failures, entry-owned park states, registry-owned summary policy, CODE option validation under the new namespace, the generic launcher and starter seeding, and `--list`.
-- [ ] Close-out re-verifies `map.md` and records any DR-009 divergence.
+- [x] Close-out re-verifies `map.md` and records any DR-009 divergence.
 
 ## Tasks
 
 Each task is one commit.
 Order lands specs before behavior, generalizes the shell and reshapes the CODE entry before introducing the new config contract, adds the generic launcher and the registry-loading path additively beside the legacy path so `main` builds and the suite passes after every task, and isolates the breaking removal of `playbook-code` / `code/tmux-play` / `captain.options.code` into a single late commit.
 
-1. **Land IR-016 + map.md row.**
+1. **Land IR-016 + map.md row.** _[done]_
    Add this doc and its `map.md` Iterations row.
    No code or behavior change.
+   Implementation note: committed as `5638d75` (the decomposition stop-point); marked done at close-out now that the full IR has landed.
 
 2. **Spec amendments: CAPTAIN + PBRT.** _[done]_
    Amend [CAPTAIN-5](../dev/playbook-captain.md#captain-5) so registry entries carry the DR-009 §1 manifest fields (`id`, `command`, `intent`, `requiredRoleIds`, `idleStateId`, `finalStateId`, `parkStateIds`, optional `summaryPolicy`, `validateOptions`, `createRuntime`) and the CODE entry declares `requiredRoleIds` `coder` / `reviewer`, `idleStateId: ready`, `finalStateId: done`, and `parkStateIds: [failed, awaitBossReply]`.
@@ -94,8 +95,11 @@ Order lands specs before behavior, generalizes the shell and reshapes the CODE e
    Update `package.json` `bin` (add `playbook`, drop `playbook-code`), `exports` (add `./code/registry`, drop `./code/tmux-play`), and `files`; regenerate the `.js` / `.d.ts` siblings; and update README and `CHANGELOG.md` `[Unreleased]` with the Added / Removed / Changed breaking entries.
    Implementation note: the shell now requires `captain.options.playbooks` (no legacy fallback, no `registry` param, no built-in CODE registry) and passes each entry its raw option slice; the CODE entry's `validateOptions` validates `captain.options.playbooks.code.options` directly (PBRT-30 — the Task-5 re-wrap is dropped). Removed `bin/playbook-code.js` + `bin/playbook-code-dev.mjs`, `code.tmux-play.*` + its test, `playbook-code.config.template.yaml`, the legacy `tmux-play.config.yaml` / `tmux-play.production.config.yaml`, and `playbook-code.test.ts`. `package.json` drops the `playbook-code` bin/script and the `./code/tmux-play` export, prunes `files`, and keeps `playbook` + `./code/registry`. The shell tests migrated to the `captain.options.playbooks` + injected-`loadModule` path through a `makeShell` helper (namespaced `code-coder` / `code-reviewer` players, and bound-player / `code-coder` callPlayer assertions where checked). README rewritten for the generic `playbook` command and the `profiles` / `playbooks` config; CHANGELOG `[Unreleased]` gains the Added / Changed / Removed breaking entries; stale `captain.options.code.committer` comments in the emitted CODE artifacts repointed. Suite 684 (53 retired `playbook-code` / `code.tmux-play` tests removed); build idempotent.
 
-8. **Close-out.**
+8. **Close-out.** _[done]_
    Run the relevant test suite, re-verify `specs/map.md`, and record any substantive divergence from DR-009 in this IR.
+   Close-out note: full suite green (686 tests, 10 files); the `tsc` build is idempotent (no `.js` / `.d.ts` drift), and the CI drift check was extended to cover the `playbook-captain.js` / `.d.ts` siblings this IR reworked heavily (a pre-existing gap — the globs covered `code.*` and `src/runtime.*` only). SPDX headers present on the new `bin/playbook.js`, `playbook.config.template.yaml`, PBCLI specs, and `playbook.test.ts`.
+   Close-out note: `specs/map.md` re-verified — the PBCLI package rows replace PBCODE, the CAPTAIN / PBRT / RELEASE rows carry the registry / `code/registry` / breaking-removal surfaces, the DR-009 and IR-016 rows are present, DR-006 is marked superseded, and no stale `code.coder` / `<id>.<role>` / `### PBCODE` / `code/tmux-play` references remain.
+   Close-out note (DR-009 divergence): the binding separator `<id>.<role>` from [DR-009 §4](../decisions/009-generic-playbook-cli-and-registry.md) is realized as `<id>-<role>` (hyphen) because cligent tmux-play player ids must match `^[a-z][a-z0-9_-]*$`, which excludes a `.`; DR-009 §4 was amended with that rationale and the change applied across the launcher, shell, specs, and tests (Task 6). No other substantive divergence: PBCLI-9's launcher/shell validation split is the DR §4 "launcher validates, shell trusts" contract made explicit; the Task-5 transitional option re-wrap was removed in Task 7 so the end state matches PBRT-30; and the DR's deferrals (pre-engagement `playbook code "task"` forms, `getSnapshot`, pure-Captain playbooks, multiple parked engagements) are preserved.
 
 ## Acceptance criteria
 

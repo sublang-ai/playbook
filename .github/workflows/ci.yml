@@ -58,6 +58,8 @@ jobs:
           git diff --exit-code -- \
             'reference/sdlc/code.playbook/code.*.js' \
             'reference/sdlc/code.playbook/code.*.d.ts' \
+            'reference/sdlc/code.playbook/playbook-captain.js' \
+            'reference/sdlc/code.playbook/playbook-captain.d.ts' \
             'src/runtime.js' \
             'src/runtime.d.ts'
 
