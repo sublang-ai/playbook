@@ -24,8 +24,10 @@ file enables CODE through `playbooks.code.from`
 `@sublang/playbook/code/registry` with the
 [PBCLI-11](../dev/playbook-cli.md#pbcli-11) lineup (Captain
 `claude` / `claude-opus-4-8`, Coder `claude` / `claude-opus-4-8[1m]`,
-Reviewer `codex` / `gpt-5.5`, `committer: coder`, the Codex `.git`
-writable path, and the notification defaults).
+Reviewer `codex` / `gpt-5.5`, `committer: coder`,
+`permissions.mode: auto` on every seeded agent with the Codex
+Reviewer's additional `.git` writable path, and the notification
+defaults).
 When the file is already present, the test suite shall fail unless the
 command leaves it unchanged and does not reseed.
 
