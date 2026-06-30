@@ -8,24 +8,27 @@
 
 # Reusable agent settings. A profile id must not be an adapter shorthand
 # (claude, codex). Reference a profile by id from captain / players below.
+# Profile ids name the underlying agent/model (e.g. claude-opus,
+# codex-gpt) so they read distinctly from the captain / coder / reviewer
+# player roles that reference them.
 # Every seeded agent runs in cligent's protected auto mode
 # (permissions.mode: auto): claude maps it to permissionMode auto, codex to
 # on-request + auto_review. Codex roles also grant writablePaths: ['.git']
 # so commit turns can write git metadata under the codex sandbox.
 profiles:
-  judge:
+  claude-opus:
     adapter: claude
     model: claude-opus-4-8
     reasoningEffort: high
     permissions:
       mode: auto
-  coder:
+  claude-opus-1m:
     adapter: claude
     model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
     permissions:
       mode: auto
-  reviewer:
+  codex-gpt:
     adapter: codex
     model: gpt-5.5
     reasoningEffort: xhigh
@@ -35,7 +38,7 @@ profiles:
 
 # The Captain/Judge agent: a profile id, an adapter shorthand, or a full
 # tmux-play agent block (which may carry a `profile:` key).
-captain: judge
+captain: claude-opus
 
 # Host notifications. Omitting turn_aborted resolves it to off.
 notifications:
@@ -50,6 +53,6 @@ playbooks:
   code:
     from: "@sublang/playbook/code/registry"
     players:
-      coder: coder
-      reviewer: reviewer
+      coder: claude-opus-1m
+      reviewer: codex-gpt
     committer: coder

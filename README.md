@@ -105,7 +105,9 @@ reusable agent settings, a `captain` Judge agent, optional `layout` /
 `captain` or `players.<role>` value is a profile id or an adapter
 shorthand (`claude`, `codex`); other adapter ids are passed through to
 `tmux-play` with a warning because `playbook` cannot preflight their
-auth. Within a `playbooks.<id>` block, `from` (the registry module),
+auth. Name profiles by their underlying agent/model (e.g. `claude-opus`,
+`codex-gpt`) so the profile ids read distinctly from the `coder` /
+`reviewer` player roles that reference them. Within a `playbooks.<id>` block, `from` (the registry module),
 `command` (an optional slash-command override), and `players` are
 launcher-owned; every other key (e.g. CODE's `committer`) is that
 playbook's option slice. The launcher injects `captain.from` and the
@@ -127,19 +129,19 @@ the Reviewer on GPT-5.5, with the Committer aliased to the Coder:
 
 ```yaml
 profiles:
-  judge:
+  claude-opus:
     adapter: claude
     model: claude-opus-4-8
     reasoningEffort: high
     permissions:
       mode: auto        # protected auto mode for the Claude Captain
-  coder:
+  claude-opus-1m:
     adapter: claude
     model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
     permissions:
       mode: auto        # protected auto mode for the Claude Coder
-  reviewer:
+  codex-gpt:
     adapter: codex
     model: gpt-5.5
     reasoningEffort: xhigh
@@ -148,14 +150,14 @@ profiles:
       writablePaths:
         - .git          # allow git metadata writes under Codex auto mode
 
-captain: judge
+captain: claude-opus
 
 playbooks:
   code:
     from: "@sublang/playbook/code/registry"
     players:
-      coder: coder
-      reviewer: reviewer
+      coder: claude-opus-1m
+      reviewer: codex-gpt
     committer: coder      # which role commits — `coder` or `reviewer`
 ```
 

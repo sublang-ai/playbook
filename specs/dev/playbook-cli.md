@@ -122,6 +122,10 @@ The seeded lineup shall configure Captain with adapter `claude`, model
 `claude`, model `claude-opus-4-8[1m]`, and reasoning effort `xhigh`;
 and Reviewer with adapter `codex`, model `gpt-5.5`, and reasoning
 effort `xhigh`.
+The seeded `profiles` ids shall name the underlying agent/model — such
+as `claude-opus`, `claude-opus-1m`, and `codex-gpt` — rather than a
+player role, so the profile ids stay distinct from the
+`captain` / `coder` / `reviewer` roles that reference them.
 Every seeded agent — the Captain and both roles — shall set
 `permissions.mode: auto`, so each runs in cligent's profile-scoped
 protected auto mode (claude maps `auto` to `permissionMode: auto`,

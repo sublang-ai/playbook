@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **CODE options move to `captain.options.playbooks.code.options`** (from `captain.options.code`), and CODE players are namespaced `code-coder` / `code-reviewer` in the composed `tmux-play` roster ([PBRT-4](specs/user/playbook-runtime.md#pbrt-4), [PBRT-29](specs/user/playbook-runtime.md#pbrt-29), [PBRT-30](specs/dev/playbook-runtime.md#pbrt-30)). The Playbook Captain shell now requires `captain.options.playbooks` and no longer infers a CODE-only default from `captain.options.code`.
+- **Seeded `profiles` ids now name the agent/model instead of the player role.** The starter config renamed `judge` / `coder` / `reviewer` to `claude-opus` / `claude-opus-1m` / `codex-gpt`, so a profile id reads distinctly from the `captain` / `coder` / `reviewer` roles that reference it (e.g. `players.coder: claude-opus-1m`). Existing user configs are untouched; this only changes freshly seeded configs ([PBCLI-11](specs/dev/playbook-cli.md#pbcli-11)).
 
 ### Removed
 
