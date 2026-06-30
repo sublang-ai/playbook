@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-30
+
 ### Added
 
 - **Generic `playbook` CLI and multi-playbook registry** ([DR-009](specs/decisions/009-generic-playbook-cli-and-registry.md), [IR-016](specs/iterations/016-generic-playbook-cli-and-registry.md)). A new `playbook` executable seeds and composes a top-level `profiles` / `playbooks` config into a `tmux-play` config under the Playbook Captain shell: each enabled playbook is loaded from an explicit `from` module, bound to namespaced `<id>-<role>` host players, and made visible per active playbook through cligent 0.13.0 `setVisiblePlayers`. `playbook --list` prints the configured playbooks, and the CODE registry entry is published at `@sublang/playbook/code/registry`.
@@ -172,7 +174,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/sublang-ai/playbook/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/sublang-ai/playbook/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/sublang-ai/playbook/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/sublang-ai/playbook/compare/v0.5.0...v0.6.0
