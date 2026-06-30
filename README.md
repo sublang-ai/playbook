@@ -83,10 +83,13 @@ playbook --help
 ```
 
 `playbook --list` prints the configured playbooks with their slash
-commands and intents. The seeded Codex Reviewer runs in cligent's
-protected auto mode (`permissions.mode: auto`) and grants
+commands and intents. Every seeded agent — the Captain and both roles —
+runs in cligent's protected auto mode (`permissions.mode: auto`), so
+routine in-session approval prompts are suppressed without switching to
+bypass permissions. The seeded Codex Reviewer additionally grants
 `permissions.writablePaths: [.git]` so git metadata writes stay
-available without switching to bypass permissions.
+available under the Codex sandbox; the Claude agents need no such grant
+under their auto mode.
 
 ### Configure agents
 
@@ -128,10 +131,14 @@ profiles:
     adapter: claude
     model: claude-opus-4-8
     reasoningEffort: high
+    permissions:
+      mode: auto        # protected auto mode for the Claude Captain
   coder:
     adapter: claude
     model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
+    permissions:
+      mode: auto        # protected auto mode for the Claude Coder
   reviewer:
     adapter: codex
     model: gpt-5.5

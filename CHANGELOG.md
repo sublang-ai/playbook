@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Breaking: removed the `playbook-code` bin, the `@sublang/playbook/code/tmux-play` export and compatibility shim, and the bundled legacy CODE `tmux-play` configs and overlay template** in favor of the generic `playbook` CLI and `@sublang/playbook/code/registry` ([RELEASE-20](specs/dev/release.md#release-20)). Launch with `playbook` and the top-level `profiles` / `playbooks` config; pass a raw `tmux-play` config with `playbook --config <path>`.
 
+### Fixed
+
+- **Seeded Claude agents now run in protected auto mode.** When the generic `playbook` starter config replaced the `playbook-code` overlay template, the `permissions.mode: auto` grant previously carried by the Claude Captain and Coder was dropped, leaving only the Codex Reviewer in auto mode; the Claude agents fell back to cligent's default approval-prompting posture. The starter config now sets `permissions.mode: auto` on every seeded agent — the Captain and both roles — while keeping the Codex Reviewer's `writablePaths: ['.git']` grant for git metadata writes ([PBCLI-11](specs/dev/playbook-cli.md#pbcli-11)).
+
 ## [0.8.0] - 2026-06-29
 
 ### Changed

@@ -228,6 +228,9 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       adapter: 'claude',
       model: 'claude-opus-4-8',
       reasoningEffort: 'high',
+      // PBCLI-11: every seeded agent, including the claude Captain, runs in
+      // cligent's protected auto mode.
+      permissions: { mode: 'auto' },
     });
     expect(composed.players).toEqual([
       {
@@ -235,6 +238,8 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         adapter: 'claude',
         model: 'claude-opus-4-8[1m]',
         reasoningEffort: 'xhigh',
+        // PBCLI-11: seeded claude roles get auto mode, no writablePaths.
+        permissions: { mode: 'auto' },
       },
       {
         id: 'code-reviewer',

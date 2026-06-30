@@ -122,10 +122,15 @@ The seeded lineup shall configure Captain with adapter `claude`, model
 `claude`, model `claude-opus-4-8[1m]`, and reasoning effort `xhigh`;
 and Reviewer with adapter `codex`, model `gpt-5.5`, and reasoning
 effort `xhigh`.
-For every seeded role on adapter `codex`, the starter config shall set
-`permissions.mode: auto` and `permissions.writablePaths: ['.git']`, so
-the default Codex player can write git metadata under cligent's
-profile-scoped auto mode.
+Every seeded agent — the Captain and both roles — shall set
+`permissions.mode: auto`, so each runs in cligent's profile-scoped
+protected auto mode (claude maps `auto` to `permissionMode: auto`,
+codex to on-request + auto_review) without routine in-session approval
+prompts.
+For every seeded agent on adapter `codex`, the starter config shall
+additionally set `permissions.writablePaths: ['.git']`, so the default
+Codex player can write git metadata under the codex sandbox; seeded
+`claude` agents need no writablePaths grant under their auto mode.
 The starter config shall set top-level
 `notifications: { player_finished: bell, turn_finished: desktop }`;
 these `adapter` / `model` / `reasoningEffort` values are defaults and

@@ -8,15 +8,23 @@
 
 # Reusable agent settings. A profile id must not be an adapter shorthand
 # (claude, codex). Reference a profile by id from captain / players below.
+# Every seeded agent runs in cligent's protected auto mode
+# (permissions.mode: auto): claude maps it to permissionMode auto, codex to
+# on-request + auto_review. Codex roles also grant writablePaths: ['.git']
+# so commit turns can write git metadata under the codex sandbox.
 profiles:
   judge:
     adapter: claude
     model: claude-opus-4-8
     reasoningEffort: high
+    permissions:
+      mode: auto
   coder:
     adapter: claude
     model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
+    permissions:
+      mode: auto
   reviewer:
     adapter: codex
     model: gpt-5.5
