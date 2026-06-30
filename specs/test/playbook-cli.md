@@ -24,7 +24,9 @@ file enables CODE through `playbooks.code.from`
 `@sublang/playbook/code/registry` with the
 [PBCLI-11](../dev/playbook-cli.md#pbcli-11) lineup (Captain
 `claude` / `claude-opus-4-8`, Coder `claude` / `claude-opus-4-8[1m]`,
-Reviewer `codex` / `gpt-5.5`, `committer: coder`,
+Reviewer `codex` / `gpt-5.5`, the agent/model-named profile ids
+`claude-opus` / `claude-opus-1m` / `codex-gpt` referenced by the
+`captain` and `coder` / `reviewer` roles, `committer: coder`,
 `permissions.mode: auto` on every seeded agent with the Codex
 Reviewer's additional `.git` writable path, and the notification
 defaults).

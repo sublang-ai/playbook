@@ -122,9 +122,12 @@ The seeded lineup shall configure Captain with adapter `claude`, model
 `claude`, model `claude-opus-4-8[1m]`, and reasoning effort `xhigh`;
 and Reviewer with adapter `codex`, model `gpt-5.5`, and reasoning
 effort `xhigh`.
-The seeded `profiles` ids shall name the underlying agent/model — such
-as `claude-opus`, `claude-opus-1m`, and `codex-gpt` — rather than a
-player role, so the profile ids stay distinct from the
+The seeded `profiles` shall be `claude-opus` (Captain),
+`claude-opus-1m` (Coder), and `codex-gpt` (Reviewer): profile ids that
+name the underlying agent/model rather than a player role.
+The seeded `captain` shall reference `claude-opus`, `players.coder`
+shall reference `claude-opus-1m`, and `players.reviewer` shall
+reference `codex-gpt`, so the profile ids stay distinct from the
 `captain` / `coder` / `reviewer` roles that reference them.
 Every seeded agent — the Captain and both roles — shall set
 `permissions.mode: auto`, so each runs in cligent's profile-scoped
@@ -137,8 +140,9 @@ Codex player can write git metadata under the codex sandbox; seeded
 `claude` agents need no writablePaths grant under their auto mode.
 The starter config shall set top-level
 `notifications: { player_finished: bell, turn_finished: desktop }`;
-these `adapter` / `model` / `reasoningEffort` values are defaults and
-remain user-tunable per [PBCLI-6](../user/playbook-cli.md#pbcli-6).
+these profile ids and their `adapter` / `model` / `reasoningEffort`
+values are defaults and remain user-tunable per
+[PBCLI-6](../user/playbook-cli.md#pbcli-6).
 
 ### PBCLI-12
 

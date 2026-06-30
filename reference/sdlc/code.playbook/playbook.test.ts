@@ -221,6 +221,21 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('.git');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
+    // PBCLI-11/13: the seed names profiles by agent/model and wires the
+    // captain / roles to those ids, not to role-named profiles. A revert to
+    // judge / coder / reviewer profile ids would fail here.
+    const seededParsed = parseYaml(seeded);
+    expect(seededParsed.profiles).toMatchObject({
+      'claude-opus': { adapter: 'claude' },
+      'claude-opus-1m': { adapter: 'claude' },
+      'codex-gpt': { adapter: 'codex' },
+    });
+    expect(seededParsed.captain).toBe('claude-opus');
+    expect(seededParsed.playbooks.code.players).toEqual({
+      coder: 'claude-opus-1m',
+      reviewer: 'codex-gpt',
+    });
+
     expect(spawn.calls).toHaveLength(1);
     const composed = parseYaml(spawn.configs[0].content);
     expect(composed.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
