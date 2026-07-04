@@ -276,11 +276,18 @@ The runtime shall not duplicate them into `emitTelemetry`.
 
 The link compiler emits **one** TypeScript module that:
 
-- Imports the FSM artifact by relative path.
+- Imports the FSM artifact by relative path, with an extension-bearing
+  specifier that resolves to a file sitting beside the module (e.g.
+  `./code.fsm.ts`, or `./code.fsm.js` where a compiled module ships), so
+  the emitted module loads without a build step.
 - Imports XState's actor primitives (`createActor`, `fromPromise`,
   `setup`'s `.provide`).
 - Exports `createPlaybookRuntime` and the typed `PlaybookRuntimeOptions`
   interface for that playbook.
+- Exposes, under an `_internal` export, the pure helpers verification
+  needs — at least the player-prompt composer (`composePlayerPrompt`) —
+  so compilation-correctness tests can exercise composition without a
+  host.
 - Holds no host-specific types and no host primitive calls. The runtime
   speaks only `PlaybookPorts`.
 - Records the linker inputs (FSM path, player binding, strategies) in a
