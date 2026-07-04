@@ -49,6 +49,9 @@ Each state shall declare:
 The source item ID shall live in `invoke.input.sourceItem`, not in a comment — this keeps the GEARS-to-state mapping machine-readable.
 A state's `invoke.input.player` shall match its source item's player.
 
+The machine's initial state shall be a quiescent idle hub (no `invoke`) — typically `ready` — that accepts the Boss entry events.
+Captain-invoking work begins only on a Boss-originated event, so constructing and starting the machine performs no player call.
+
 Captain returns a discriminated result with `guard` set to one of `input.result`'s keys [[4]].
 Guards [[5]] on `onDone` transitions inspect `event.output.guard` to route.
 
