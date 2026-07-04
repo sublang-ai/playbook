@@ -78,6 +78,8 @@ Test: a human shall be able to simulate a run by copying any single item's promp
 Use `<placeholder>` for dynamic values in blockquoted prompts.
 Everything else inside a blockquote is static text, not an example; examples belong in surrounding prose.
 
+Markdown escaping is Source syntax, not content: extraction shall resolve escapes (e.g. `\<placeholder\>` becomes `<placeholder>`), so compiled artifacts carry plain text.
+
 ### Split by content discriminator
 
 Partition items by every variable that determines prompt content — including accumulated state when the trigger alone doesn't.

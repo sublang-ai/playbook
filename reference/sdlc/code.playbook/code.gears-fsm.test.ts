@@ -51,7 +51,9 @@ function parseSource(text: string): SourceBehavior[] {
   for (const line of text.split('\n')) {
     if (line.startsWith('> ')) {
       buf = buf ?? [];
-      buf.push(line.slice(2));
+      // Markdown escaping is source syntax, not content (text2gears.md
+      // "Placeholders vs literals"): compiled artifacts carry plain text.
+      buf.push(line.slice(2).replace(/\\([<>])/g, '$1'));
       continue;
     }
     if (line === '>') {
