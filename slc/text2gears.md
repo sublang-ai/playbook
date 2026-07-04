@@ -56,6 +56,13 @@ When Reviewer is about to review any change, Captain shall prompt Reviewer:
 
 Target should be written in the same language as Source.
 
+## Transformation-spec sources
+
+A Source may itself be the normative specification of a transformation — e.g., a compiler phase definition, as when a meta pipeline compiles this file.
+Such a Source declares no players and prompts none; its implied procedure is that Captain performs the specified transformation on request.
+Compose Captain-acting spec items for it: when a transformation request names the specification's source and target, Captain shall carry out the transformation as specified.
+Prompts shall carry the specification's normative requirements as instructions to Captain — deduplicated, one point per line — without inventing players, triggers, or requirements the specification does not state.
+
 ## Composition
 
 Source snippets may overlap or duplicate.
