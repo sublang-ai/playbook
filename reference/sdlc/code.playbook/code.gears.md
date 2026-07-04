@@ -51,6 +51,7 @@ When an IR is done, Captain shall prompt Coder:
 > Avoid implementation specifics.
 > Avoid redundant spec items.
 > Ensure @specs/map.md reflects the changes.
+
 ## Reviewer
 
 For each finding in a review round, Coder either addresses it with changes or challenges it with a rebuttal.
@@ -92,6 +93,8 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 When Committer commits Initial Changes from a Boss coding intent involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
+> Flag any issues or improvements (numbered; no duplication).
+> Think thoroughly — don't just approve or reject.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
@@ -100,8 +103,6 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Flag any issues or improvements (numbered; no duplication).
-> Think thoroughly — don't just approve or reject.
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
@@ -142,6 +143,8 @@ When Committer commits Initial Changes from an IR task involving changes only ou
 When Committer commits Initial Changes from an IR task involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
+> Flag any issues or improvements (numbered; no duplication).
+> Think thoroughly — don't just approve or reject.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
@@ -150,8 +153,6 @@ When Committer commits Initial Changes from an IR task involving changes both in
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Flag any issues or improvements (numbered; no duplication).
-> Think thoroughly — don't just approve or reject.
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
@@ -192,6 +193,8 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/ without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
 > Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
+> Flag any issues or improvements (numbered; no duplication).
+> Think thoroughly — don't just approve or reject.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
@@ -200,8 +203,6 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Flag any issues or improvements (numbered; no duplication).
-> Think thoroughly — don't just approve or reject.
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
@@ -250,6 +251,8 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/ and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
 > Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
+> Flag any issues or improvements (numbered; no duplication).
+> Think thoroughly — don't just approve or reject.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
@@ -258,8 +261,6 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
 > Flag anything missing, redundant, over-specified, or under-specified.
-> Flag any issues or improvements (numbered; no duplication).
-> Think thoroughly — don't just approve or reject.
 > For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.
 > Verify @specs/map.md reflects the changes.
 > If the change is ready to commit or push, don't raise nitpicks.
@@ -273,7 +274,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 When Coder makes any Initial Changes and Reviewer has not played since the last commit, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Write concisely.
-> Coder is <coder-llm>.
+> Coder is \<coder-llm\>.
 > Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
 
 Result guard: `needsBossInput` — Committing requires additional Boss input or rescoping rather than a specific answer to resume this same state.
@@ -282,8 +283,8 @@ Result guard: `needsBossInput` — Committing requires additional Boss input or 
 
 When Coder makes any Initial Changes and Reviewer has played since the last commit, or Reviewer raises no findings on uncommitted changes and Coder has played since the last commit, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
-> Write concisely.
-> Coder is <coder-llm>; Reviewer is <reviewer-llm>.
+> Write the commit message concisely.
+> Coder is \<coder-llm\>; Reviewer is \<reviewer-llm\>.
 > Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
 
 Result guard: `needsBossInput` — Committing requires additional Boss input or rescoping rather than a specific answer to resume this same state.
