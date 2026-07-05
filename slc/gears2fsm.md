@@ -21,6 +21,7 @@ Target is an object artifact only: it defines the machine, actor contracts, and 
 ## Setup
 
 The artifact shall use XState v5's `setup(...)` then `.createMachine(...)` [[10]].
+The artifact shall restrict itself to erasable TypeScript syntax — type annotations that strip cleanly, no constructor parameter properties, `enum`s, or namespaces — so a host running under type stripping loads it directly.
 The `types` block shall declare `context`, `events`, machine `input`, and a typed `Captain` actor contract [[11]].
 The artifact shall not import a runner or bake in a concrete Captain implementation; any actor placeholder shall fail explicitly (e.g., throw `'captain actor must be provided by the runner'`).
 

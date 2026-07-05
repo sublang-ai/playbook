@@ -283,6 +283,10 @@ The link compiler emits **one** TypeScript module that:
   specifier that resolves to a file sitting beside the module (e.g.
   `./code.fsm.ts`, or `./code.fsm.js` where a compiled module ships), so
   the emitted module loads without a build step.
+- Restricts itself to erasable TypeScript syntax — type annotations
+  that strip cleanly, no constructor parameter properties, `enum`s, or
+  namespaces — so a host running under type stripping loads it
+  directly.
 - Imports XState's actor primitives (`createActor`, `fromPromise`,
   `setup`'s `.provide`).
 - Exports `createPlaybookRuntime` and the typed `PlaybookRuntimeOptions`
