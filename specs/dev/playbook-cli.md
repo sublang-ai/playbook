@@ -75,7 +75,10 @@ tmux-play, shall reject — with a diagnostic and without launching — a
 missing `from`, a failed import, a module exposing no valid registry
 entry, a `playbooks.<id>` config key that does not equal the imported
 manifest's `id`, two playbooks sharing an `id`, two playbooks
-resolving to the same effective command, a manifest `requiredRoleIds`
+resolving to the same effective command, a local role id `captain` in
+a manifest's `requiredRoleIds` or a `playbooks.<id>.players` map —
+`captain` is reserved for the tmux-play host Captain, and the
+diagnostic shall name the reserved role — a manifest `requiredRoleIds`
 entry that does not resolve to a generated roster id, or an enabled
 playbook that resolves no visible local role.
 At runtime `init` the Playbook Captain shell re-validates only the
@@ -83,7 +86,8 @@ loading checks it shares with
 [CAPTAIN-16](playbook-captain.md#captain-16) — missing `from`, failed
 import, invalid entry, key / manifest-`id` mismatch, duplicate id, and
 duplicate effective command.
-The roster-resolution and visible-role checks above are launcher-owned
+The roster-resolution, reserved-role, and visible-role checks above
+are launcher-owned
 ([DR-009 §4](../decisions/009-generic-playbook-cli-and-registry.md));
 the shell relies on that validation and treats any residual
 `setVisiblePlayers` rejection as an internal or composition error

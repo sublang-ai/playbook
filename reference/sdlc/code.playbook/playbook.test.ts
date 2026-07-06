@@ -130,9 +130,19 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
 });
 
 describe('playbook launcher — validation (PBCLI-15)', () => {
+  // A compiler-phase playbook whose linked runtime binds its sole player as
+  // `captain` — the reserved-role fault of PBCLI-9.
+  const captainRoleEntry = {
+    ...fakeEntry,
+    id: 't2g',
+    command: 't2g',
+    intent: 'compile text into GEARS items',
+    requiredRoleIds: ['captain'],
+  };
   const ld = loader({
     'mod://code': { default: fakeEntry },
     'mod://invalid': { default: { id: 'code' } },
+    'mod://t2g': { default: captainRoleEntry },
   });
   const players = { coder: 'claude', reviewer: 'codex' };
 
@@ -192,6 +202,42 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
         ld,
       ),
     ).rejects.toThrow(/collides with the "claude" adapter shorthand/);
+  });
+
+  it('rejects the reserved captain role with a diagnostic naming it', async () => {
+    // Manifest fault: the entry itself requires the reserved role, so the
+    // diagnostic names it even though the players map satisfies coverage.
+    await expect(
+      composeGenericConfig(
+        {
+          captain: 'claude',
+          playbooks: {
+            t2g: { from: 'mod://t2g', players: { captain: 'claude' } },
+          },
+        },
+        ld,
+      ),
+    ).rejects.toThrow(
+      /playbooks\.t2g requires local role "captain", which is reserved for the tmux-play Captain/,
+    );
+    // Config fault: a players map may not bind `captain` even when the
+    // manifest does not require it.
+    await expect(
+      composeGenericConfig(
+        {
+          captain: 'claude',
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              players: { ...players, captain: 'claude' },
+            },
+          },
+        },
+        ld,
+      ),
+    ).rejects.toThrow(
+      /playbooks\.code\.players\.captain binds local role "captain", which is reserved for the tmux-play Captain/,
+    );
   });
 });
 
