@@ -84,14 +84,64 @@ export function createDiscussRuntimeOptions({
 }: CreateDiscussRuntimeOptions): PlaybookRuntimeOptions {
   const discussOptions = validateDiscussOptions(captainOptions);
   const options: PlaybookRuntimeOptions = {
-    hostLlm: playerIdentity(players, 'host'),
-    participantLlm: playerIdentity(players, 'participant'),
+    host: playerIdentity(players, 'host'),
+    participant: playerIdentity(players, 'participant'),
   };
   if (discussOptions.committer !== undefined) {
-    options.players = { Committer: discussOptions.committer };
+    options.committer = discussOptions.committer;
   }
   return options;
 }
+
+// CAPTAIN-19/20: the DISCUSS turn-summary policy — counted round states,
+// the payload-carrying guards whose content Boss would otherwise relay
+// between the players by hand, and the saved-counts wording — so the shell
+// reports how many interruptions a run saved.
+const discussStateCountLabels = {
+  askHostInitial: 'proposal round',
+  askParticipantInitial: 'proposal round',
+  hostInitialRound: 'proposal round',
+  participantInitialRound: 'proposal round',
+  reviewSpecInitialCommit: 'review round',
+  reviewSpecHostChanges: 'review round',
+  reviewDrInitialCommit: 'review round',
+  reviewDrHostChanges: 'review round',
+  reviewMixedInitialCommit: 'review round',
+  reviewMixedHostChanges: 'review round',
+} as const;
+
+const discussCopyPasteGuardNames = [
+  'proposalMade',
+  'findingsRaised',
+  'rebuttalsRaised',
+  'rebuttalsAddressed',
+  'changesMade',
+] as const;
+
+function countNoun(count: number, singular: string, plural = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+export function discussSavedCountsLine(
+  counts: { interruptions: number; copyPastes: number },
+  rounds: number,
+): string {
+  return [
+    'Saved you',
+    countNoun(counts.interruptions, 'interruption'),
+    'and',
+    countNoun(counts.copyPastes, 'copy-paste'),
+    'across',
+    countNoun(rounds, 'round'),
+    'of proposals/reviews.',
+  ].join(' ');
+}
+
+export const discussSummaryPolicy = {
+  stateCountLabels: discussStateCountLabels,
+  copyPasteGuardNames: discussCopyPasteGuardNames,
+  savedCountsLine: discussSavedCountsLine,
+};
 
 export const discussPlaybookRegistryEntry = {
   id: 'discuss',
@@ -102,6 +152,7 @@ export const discussPlaybookRegistryEntry = {
   idleStateId: 'ready',
   finalStateId: 'done',
   parkStateIds: ['failed', 'awaitBossReply'],
+  summaryPolicy: discussSummaryPolicy,
   validateOptions: validateDiscussOptions,
   createRuntime(options: CreateDiscussRuntimeOptions): PlaybookRuntime {
     return createPlaybookRuntime(createDiscussRuntimeOptions(options));

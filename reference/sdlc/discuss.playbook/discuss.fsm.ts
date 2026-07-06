@@ -1,90 +1,109 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+// FSM object artifact compiled from discuss.gears.md.
+// This module defines the machine, actor contracts, and typed inputs only.
+// It binds no runner and supplies no concrete Captain implementation; the runner
+// provides the `captain` actor via `.provide(...)`.
+
 import { assign, fromPromise, setup } from 'xstate';
 
-export type Player = 'Host' | 'Participant' | 'Committer';
+type Player = 'Host' | 'Participant' | 'Committer';
 
-export type ReviewScope = 'specItems' | 'drs' | 'specItemsAndDrs';
+type ReviewScope = 'specItems' | 'decisionRecords' | 'mixed';
 
-export type SourceItemId =
-  | 'DISCUSS-1'
-  | 'DISCUSS-2'
-  | 'DISCUSS-3'
-  | 'DISCUSS-4'
-  | 'DISCUSS-5'
-  | 'DISCUSS-6'
-  | 'DISCUSS-7'
-  | 'DISCUSS-8'
-  | 'DISCUSS-9'
-  | 'DISCUSS-10'
-  | 'DISCUSS-11'
-  | 'DISCUSS-12'
-  | 'DISCUSS-13'
-  | 'DISCUSS-14';
+type JumpableStateId =
+  | 'ready'
+  | 'askHostInitial'
+  | 'askParticipantInitial'
+  | 'hostInitialRound'
+  | 'participantInitialRound'
+  | 'hostWritesAgreement'
+  | 'commitInitialChanges'
+  | 'reviewSpecInitialCommit'
+  | 'reviewSpecHostChanges'
+  | 'reviewDrInitialCommit'
+  | 'reviewDrHostChanges'
+  | 'reviewMixedInitialCommit'
+  | 'reviewMixedHostChanges'
+  | 'hostAddressesFindings'
+  | 'participantAddressesRebuttals'
+  | 'commitReviewedChanges'
+  | 'awaitBossReply'
+  | 'failed';
+
+type ResumableStateId = Exclude<
+  JumpableStateId,
+  'ready' | 'awaitBossReply' | 'failed'
+>;
 
 export interface PendingBossQuestion {
-  resumeStateId: string;
-  sourceItem: SourceItemId;
+  resumeStateId: ResumableStateId;
+  sourceItem: string;
   player: Player;
   question: string;
 }
 
-export interface DiscussionContext {
-  players: Partial<Record<Player, string>>;
+export interface DiscussContext {
+  hostPlayer?: string;
+  participantPlayer?: string;
+  committerPlayer?: string;
+  topic?: string;
   hostLlm?: string;
   participantLlm?: string;
-  topic?: string;
   hostProposal?: string;
   participantProposal?: string;
-  hostInitialDiscussionEnded?: boolean;
-  participantInitialDiscussionEnded?: boolean;
+  agreement?: string;
+  latestChanges?: string;
   reviewScope?: ReviewScope;
-  reviewSubject?: string;
   reviewItems?: string;
   rebuttals?: string;
-  pendingBossQuestion?: PendingBossQuestion;
-  bossReply?: string;
   lastResult?: CaptainOutput;
   lastError?: unknown;
+  pendingBossQuestion?: PendingBossQuestion;
+  bossReply?: string;
 }
 
-export interface DiscussionMachineInput {
-  players?: Partial<Record<Player, string>>;
-  hostLlm?: string;
-  participantLlm?: string;
-}
-
-export type DiscussionEvent =
-  | { type: 'START_DISCUSSION'; topic: string; hostLlm?: string; participantLlm?: string }
+export type DiscussEvent =
   | {
-      type: 'BEGIN_INITIAL_ROUND';
-      nextPlayer: 'Host' | 'Participant';
-      topic?: string;
-      hostProposal?: string;
-      participantProposal?: string;
-      hostInitialDiscussionEnded?: boolean;
-      participantInitialDiscussionEnded?: boolean;
+      type: 'START_DISCUSSION';
+      topic: string;
+      hostLlm: string;
+      participantLlm: string;
     }
-  | { type: 'START_REVIEW'; scope: ReviewScope; reviewSubject?: string }
-  | { type: 'BOSS_INTERRUPT'; targetId: string }
+  | {
+      type: 'START_REVIEW';
+      latestChanges: string;
+      reviewScope: ReviewScope;
+      rebuttals?: string;
+    }
+  | { type: 'BOSS_INTERRUPT'; targetId: JumpableStateId }
   | { type: 'BOSS_REPLY'; answer: string };
+
+export interface DiscussInput {
+  host?: string;
+  participant?: string;
+  committer?: string;
+}
 
 export interface CaptainInput {
   player: Player;
-  sourceItem: SourceItemId;
+  sourceItem: string;
   prompt: string;
   result: Record<string, string>;
   topic?: string;
-  otherProposal?: string;
-  hostProposal?: string;
-  participantProposal?: string;
-  reviewScope?: ReviewScope;
-  reviewSubject?: string;
-  reviewItems?: string;
-  rebuttals?: string;
   hostLlm?: string;
   participantLlm?: string;
+  hostProposal?: string;
+  participantProposal?: string;
+  agreement?: string;
+  latestChanges?: string;
+  reviewScope?: ReviewScope;
+  reviewItems?: string;
+  rebuttals?: string;
+  hostPlayer?: string;
+  participantPlayer?: string;
+  committerPlayer?: string;
   pendingBossQuestion?: PendingBossQuestion;
   bossReply?: string;
 }
@@ -92,169 +111,135 @@ export interface CaptainInput {
 export interface CaptainOutput {
   guard: string;
   proposal?: string;
+  agreement?: string;
+  latestChanges?: string;
+  reviewScope?: ReviewScope;
   reviewItems?: string;
   rebuttals?: string;
   question?: string;
-  [field: string]: unknown;
+  [key: string]: unknown;
 }
+
+type CaptainDoneEvent = { type: string; output: CaptainOutput };
+type CaptainErrorEvent = { type: string; error: unknown };
 
 const NEEDS_BOSS_REPLY_DESCRIPTION =
   "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.";
 
 const DISCUSS_1_PROMPT = [
+  "Boss's topic: <topic>",
   "Assess whether Boss's topic above is better expressed as a few spec items (per @specs/meta.md) or requires one or more DRs added to @specs/decisions/.",
   'Consult @specs/map.md, if necessary, to find relevant context.',
   'Each DR should be coherent and focused.',
   'Propose your design in reply.',
-  'DRs, if any, need not include full detail here — describe the key points at a high level.',
+  'DRs, if any, need not include full detail here - describe the key points at a high level.',
   "Don't change any code.",
 ].join('\n');
 
 const DISCUSS_2_PROMPT = [
-  "Consider the other agent's proposal below.",
-  '(1) If there are essentially different points (including creation or division of DRs), list them, accept any reasonable ones, and challenge the rest with strong reasoning, solid evidence, and comprehensive thinking — make your argument.',
-  "(2) Only if your proposal of the previous round is equivalent to the other's, with nothing to reconcile, state the end of initial discussion.",
-  "Don't change any code.",
-].join('\n');
-
-const DISCUSS_3_PROMPT = [
-  'Update @specs/map.md to reflect your changes (if any) when done.',
-].join('\n');
-
-const DISCUSS_4_PROMPT = [
-  'For each review item below for the above changes, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
-  'Stage all current changes that belong in the repo before making any edits, and leave your edits unstaged/untracked.',
-].join('\n');
-
-const DISCUSS_5_PROMPT = [
+  "Boss's topic: <topic>",
   "Assess whether Boss's topic above is better expressed as a few spec items (per @specs/meta.md) or requires one or more DRs added to @specs/decisions/.",
   'Consult @specs/map.md, if necessary, to find relevant context.',
   'Each DR should be coherent and focused.',
   'Propose your design in reply.',
-  'DRs, if any, need not include full detail here — describe the key points at a high level.',
+  'DRs, if any, need not include full detail here - describe the key points at a high level.',
   "Don't change any code.",
 ].join('\n');
 
-const DISCUSS_6_PROMPT = [
+const DISCUSS_3_PROMPT = [
+  "Other agent's proposal: <participant-proposal>",
+  'Your previous proposal: <host-previous-proposal>',
   "Consider the other agent's proposal below.",
-  '(1) If there are essentially different points (including creation or division of DRs), list them, accept any reasonable ones, and challenge the rest with strong reasoning, solid evidence, and comprehensive thinking — make your argument.',
+  '(1) If there are essentially different points (including creation or division of DRs), list them, accept any reasonable ones, and challenge the rest with strong reasoning, solid evidence, and comprehensive thinking - make your argument.',
   "(2) Only if your proposal of the previous round is equivalent to the other's, with nothing to reconcile, state the end of initial discussion.",
   "Don't change any code.",
 ].join('\n');
 
-const DISCUSS_7_PROMPT = [
+const DISCUSS_4_PROMPT = [
+  "Other agent's proposal: <host-proposal>",
+  'Your previous proposal: <participant-previous-proposal>',
+  "Consider the other agent's proposal below.",
+  '(1) If there are essentially different points (including creation or division of DRs), list them, accept any reasonable ones, and challenge the rest with strong reasoning, solid evidence, and comprehensive thinking - make your argument.',
+  "(2) Only if your proposal of the previous round is equivalent to the other's, with nothing to reconcile, state the end of initial discussion.",
+  "Don't change any code.",
+].join('\n');
+
+const DISCUSS_5_PROMPT = [
+  'Agreement: <agreement>',
+  'Write spec items or DRs according to the agreement.',
+  'Update @specs/map.md to reflect your changes (if any) when done.',
+].join('\n');
+
+const DISCUSS_6_PROMPT = [
+  'Latest changes: <changes>',
+  'Rebuttals to address, if any: <rebuttals>',
+  'Review the latest spec changes, address any rebuttals, and raise any findings.',
   'Verify any new or updated spec items are:',
-  '',
-  '- Complete & coherent: sufficient for you to reimplement code.',
-  '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
-  '- Minimal: essential and concise; every item earns its place; also check with other items.',
-  '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
-  '',
+  'Complete & coherent: sufficient for you to reimplement code.',
+  'Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+  'Minimal: essential and concise; every item earns its place; also check with other items.',
+  'Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
   'Flag anything missing, redundant, over-specified, or under-specified.',
-  "Think thoroughly — don't just approve or reject.",
+  "Think thoroughly - don't just approve or reject.",
   'For context discovery, consult @specs/map.md; @specs/meta.md describes the spec format.',
   'Verify @specs/map.md reflects the changes.',
   "If the change is ready to commit or push, don't raise nitpicks.",
   'Do not edit files or commit; report findings only.',
 ].join('\n');
+
+const DISCUSS_7_PROMPT = DISCUSS_6_PROMPT;
 
 const DISCUSS_8_PROMPT = [
+  'Latest changes: <changes>',
+  'Rebuttals to address, if any: <rebuttals>',
+  'Review the latest spec changes, address any rebuttals, and raise any findings.',
   'Review any new/updated decision following @specs/meta.md (reread if necessary).',
   'Flag any issues or propose any design suggestions (numbered; no duplication), with strong reasoning and evidence.',
   'Key statements must be backed by references unless they are common sense or widely acknowledged best practices.',
-  '',
   "If the decision is well-thought-out and well-written, don't raise nitpicks.",
   'Remember to keep the DR simple and minimal.',
-  "Think thoroughly — don't just approve or reject.",
+  "Think thoroughly - don't just approve or reject.",
   'For context discovery, consult @specs/map.md; @specs/meta.md describes the spec format.',
   'Verify @specs/map.md reflects the changes.',
   "If the change is ready to commit or push, don't raise nitpicks.",
   'Do not edit files or commit; report findings only.',
 ].join('\n');
 
-const DISCUSS_9_PROMPT = [
-  'Verify any new or updated spec items are:',
-  '',
-  '- Complete & coherent: sufficient for you to reimplement code.',
-  '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
-  '- Minimal: essential and concise; every item earns its place; also check with other items.',
-  '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
-  '',
-  'Flag anything missing, redundant, over-specified, or under-specified.',
-  'Review any new/updated decision following @specs/meta.md (reread if necessary).',
-  'Flag any issues or propose any design suggestions (numbered; no duplication), with strong reasoning and evidence.',
-  'Key statements must be backed by references unless they are common sense or widely acknowledged best practices.',
-  '',
-  "If the decision is well-thought-out and well-written, don't raise nitpicks.",
-  'Remember to keep the DR simple and minimal.',
-  "Think thoroughly — don't just approve or reject.",
-  'For context discovery, consult @specs/map.md; @specs/meta.md describes the spec format.',
-  'Verify @specs/map.md reflects the changes.',
-  "If the change is ready to commit or push, don't raise nitpicks.",
-  'Do not edit files or commit; report findings only.',
-].join('\n');
+const DISCUSS_9_PROMPT = DISCUSS_8_PROMPT;
 
 const DISCUSS_10_PROMPT = [
-  'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
+  'Latest changes: <changes>',
+  'Rebuttals to address, if any: <rebuttals>',
+  'Review the latest spec changes, address any rebuttals, and raise any findings.',
   'Verify any new or updated spec items are:',
-  '',
-  '- Complete & coherent: sufficient for you to reimplement code.',
-  '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
-  '- Minimal: essential and concise; every item earns its place; also check with other items.',
-  '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
-  '',
+  'Complete & coherent: sufficient for you to reimplement code.',
+  'Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+  'Minimal: essential and concise; every item earns its place; also check with other items.',
+  'Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
   'Flag anything missing, redundant, over-specified, or under-specified.',
-  "Think thoroughly — don't just approve or reject.",
+  'Review any new/updated decision following @specs/meta.md (reread if necessary).',
+  'Flag any issues or propose any design suggestions (numbered; no duplication), with strong reasoning and evidence.',
+  'Key statements must be backed by references unless they are common sense or widely acknowledged best practices.',
+  "If the decision is well-thought-out and well-written, don't raise nitpicks.",
+  'Remember to keep the DR simple and minimal.',
+  "Think thoroughly - don't just approve or reject.",
   'For context discovery, consult @specs/map.md; @specs/meta.md describes the spec format.',
   'Verify @specs/map.md reflects the changes.',
   "If the change is ready to commit or push, don't raise nitpicks.",
   'Do not edit files or commit; report findings only.',
 ].join('\n');
 
-const DISCUSS_11_PROMPT = [
-  'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
-  'Review any new/updated decision following @specs/meta.md (reread if necessary).',
-  'Flag any issues or propose any design suggestions (numbered; no duplication), with strong reasoning and evidence.',
-  'Key statements must be backed by references unless they are common sense or widely acknowledged best practices.',
-  '',
-  "If the decision is well-thought-out and well-written, don't raise nitpicks.",
-  'Remember to keep the DR simple and minimal.',
-  "Think thoroughly — don't just approve or reject.",
-  'For context discovery, consult @specs/map.md; @specs/meta.md describes the spec format.',
-  'Verify @specs/map.md reflects the changes.',
-  "If the change is ready to commit or push, don't raise nitpicks.",
-  'Do not edit files or commit; report findings only.',
-].join('\n');
+const DISCUSS_11_PROMPT = DISCUSS_10_PROMPT;
 
 const DISCUSS_12_PROMPT = [
-  'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
-  'Verify any new or updated spec items are:',
-  '',
-  '- Complete & coherent: sufficient for you to reimplement code.',
-  '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
-  '- Minimal: essential and concise; every item earns its place; also check with other items.',
-  '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
-  '',
-  'Flag anything missing, redundant, over-specified, or under-specified.',
-  'Review any new/updated decision following @specs/meta.md (reread if necessary).',
-  'Flag any issues or propose any design suggestions (numbered; no duplication), with strong reasoning and evidence.',
-  'Key statements must be backed by references unless they are common sense or widely acknowledged best practices.',
-  '',
-  "If the decision is well-thought-out and well-written, don't raise nitpicks.",
-  'Remember to keep the DR simple and minimal.',
-  "Think thoroughly — don't just approve or reject.",
-  'For context discovery, consult @specs/map.md; @specs/meta.md describes the spec format.',
-  'Verify @specs/map.md reflects the changes.',
-  "If the change is ready to commit or push, don't raise nitpicks.",
-  'Do not edit files or commit; report findings only.',
+  'Review items: <review-items>',
+  'For each review item below for the above changes, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
+  'Stage all current changes that belong in the repo before making any edits, and leave your edits unstaged/untracked.',
 ].join('\n');
 
 const DISCUSS_13_PROMPT = [
-  'Then make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
-  'Write the commit message concisely.',
-  'Host is <host-llm>.',
-  'Participant is <participant-llm>.',
-  '`<*-llm>` shall be the conventional human form of the substituted ID (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
+  'Rebuttals: <rebuttals>',
+  'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
 ].join('\n');
 
 const DISCUSS_14_PROMPT = [
@@ -262,325 +247,316 @@ const DISCUSS_14_PROMPT = [
   'Write the commit message concisely.',
   'Host is <host-llm>.',
   'Participant is <participant-llm>.',
-  '`<*-llm>` shall be the conventional human form of the substituted ID (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
+  'Format the Host and Participant model IDs as conventional human forms.',
 ].join('\n');
 
-const proposalResult = {
-  proposed: 'The player made or revised a proposal. Output may include `proposal: <proposal text>`.',
-  needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
-} satisfies Record<string, string>;
+const DISCUSS_15_PROMPT = DISCUSS_14_PROMPT;
 
-const initialRoundResult = {
-  proposed:
-    'The player identified differences or unresolved points and made a continuing proposal. Output may include `proposal: <proposal text>`.',
-  endedInitialDiscussion:
-    'The player stated the end of initial discussion because the proposals are equivalent with nothing to reconcile.',
-  needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
-} satisfies Record<string, string>;
+const jumpableStateIds = [
+  'ready',
+  'askHostInitial',
+  'askParticipantInitial',
+  'hostInitialRound',
+  'participantInitialRound',
+  'hostWritesAgreement',
+  'commitInitialChanges',
+  'reviewSpecInitialCommit',
+  'reviewSpecHostChanges',
+  'reviewDrInitialCommit',
+  'reviewDrHostChanges',
+  'reviewMixedInitialCommit',
+  'reviewMixedHostChanges',
+  'hostAddressesFindings',
+  'participantAddressesRebuttals',
+  'commitReviewedChanges',
+  'awaitBossReply',
+  'failed',
+] as const satisfies readonly JumpableStateId[];
 
-const mapUpdateResult = {
-  updated: 'The player updated specs/map.md to reflect the changes.',
-  noChangesNeeded: 'The player determined specs/map.md needed no change.',
-  needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
-} satisfies Record<string, string>;
+const resumableStateIds = [
+  'askHostInitial',
+  'askParticipantInitial',
+  'hostInitialRound',
+  'participantInitialRound',
+  'hostWritesAgreement',
+  'commitInitialChanges',
+  'reviewSpecInitialCommit',
+  'reviewSpecHostChanges',
+  'reviewDrInitialCommit',
+  'reviewDrHostChanges',
+  'reviewMixedInitialCommit',
+  'reviewMixedHostChanges',
+  'hostAddressesFindings',
+  'participantAddressesRebuttals',
+  'commitReviewedChanges',
+] as const satisfies readonly ResumableStateId[];
 
-const hostReviewResponseResult = {
-  rebuttalsRaised:
-    'Host raised rebuttals to be relayed back to Participant. Output shall include `rebuttals: <rebuttal text>`.',
-  acceptedOrEdited:
-    'Host accepted the review items or made edits without raising rebuttals that require Participant response.',
-  needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
-} satisfies Record<string, string>;
+const outputOf = (event: unknown): CaptainOutput =>
+  (event as CaptainDoneEvent).output;
 
-const participantReviewResult = {
-  noFindings: 'Participant raised no findings on the reviewed changes.',
-  findingsRaised:
-    'Participant raised review findings. Output shall include `reviewItems: <findings text>`.',
-  needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
-} satisfies Record<string, string>;
+const guardIs =
+  (guard: string) =>
+  ({ event }: { event: unknown }) =>
+    outputOf(event).guard === guard;
 
-const commitResult = {
-  committed: 'Committer made the requested commit.',
-  noCommitNeeded: 'Committer determined there were no repository changes to commit.',
-  needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
-} satisfies Record<string, string>;
+const needsBossReplyWithQuestion = ({ event }: { event: unknown }) => {
+  const output = outputOf(event);
+  return (
+    output.guard === 'needsBossReply' &&
+    typeof output.question === 'string' &&
+    output.question.trim().length > 0
+  );
+};
 
-type DiscussionStateId =
-  | 'ready'
-  | 'askHostForInitialProposal'
-  | 'askParticipantForInitialProposal'
-  | 'hostInitialRound'
-  | 'participantInitialRound'
-  | 'updateSpecMap'
-  | 'commitInitialChanges'
-  | 'participantReviewSpecItems'
-  | 'participantReviewDrs'
-  | 'participantReviewSpecItemsAndDrs'
-  | 'hostRespondToReviewFindings'
-  | 'participantRespondToSpecItemRebuttals'
-  | 'participantRespondToDrRebuttals'
-  | 'participantRespondToMixedRebuttals'
-  | 'commitReviewedChanges'
-  | 'awaitBossReply'
-  | 'failed';
+const needsBossReplyWithoutQuestion = ({ event }: { event: unknown }) => {
+  const output = outputOf(event);
+  return (
+    output.guard === 'needsBossReply' &&
+    (typeof output.question !== 'string' || output.question.trim().length === 0)
+  );
+};
 
-type DiscussionActionName =
-  | 'startDiscussion'
-  | 'startInitialRound'
-  | 'startReview'
+const emptyBossReply = ({ event }: { event: DiscussEvent }) =>
+  event.type === 'BOSS_REPLY' && event.answer.trim().length === 0;
+
+const hasReviewScope =
+  (scope: ReviewScope) =>
+  ({ context, event }: { context: DiscussContext; event: DiscussEvent }) =>
+    event.type === 'START_REVIEW'
+      ? event.reviewScope === scope
+      : context.reviewScope === scope;
+
+type DiscussActionName =
+  | 'copyStartDiscussion'
+  | 'copyStartReview'
   | 'rememberHostProposal'
   | 'rememberParticipantProposal'
-  | 'markHostInitialDiscussionEnded'
-  | 'markParticipantInitialDiscussionEnded'
+  | 'rememberAgreement'
+  | 'rememberWrittenChanges'
+  | 'rememberCommittedChanges'
   | 'rememberReviewFindings'
-  | 'rememberRebuttals'
-  | 'rememberResult'
+  | 'rememberHostReviewResponse'
+  | 'rememberParticipantRebuttalResponse'
+  | 'rememberCaptainResult'
   | 'rememberCaptainError'
+  | 'rememberMalformedCaptainOutput'
   | 'rememberMalformedBossReply'
   | 'setPendingBossQuestion'
   | 'rememberBossReply'
   | 'clearBossReplyContext';
 
-type BossInterruptActionName = 'clearBossReplyContext';
-
-const INTERRUPT_TARGET_IDS = [
-  'ready',
-  'askHostForInitialProposal',
-  'askParticipantForInitialProposal',
-  'hostInitialRound',
-  'participantInitialRound',
-  'updateSpecMap',
-  'commitInitialChanges',
-  'participantReviewSpecItems',
-  'participantReviewDrs',
-  'participantReviewSpecItemsAndDrs',
-  'hostRespondToReviewFindings',
-  'participantRespondToSpecItemRebuttals',
-  'participantRespondToDrRebuttals',
-  'participantRespondToMixedRebuttals',
-  'commitReviewedChanges',
-  'awaitBossReply',
-  'failed',
-] as const satisfies readonly DiscussionStateId[];
-
-const RESUMABLE_STATE_IDS = [
-  'askHostForInitialProposal',
-  'askParticipantForInitialProposal',
-  'hostInitialRound',
-  'participantInitialRound',
-  'updateSpecMap',
-  'commitInitialChanges',
-  'participantReviewSpecItems',
-  'participantReviewDrs',
-  'participantReviewSpecItemsAndDrs',
-  'hostRespondToReviewFindings',
-  'participantRespondToSpecItemRebuttals',
-  'participantRespondToDrRebuttals',
-  'participantRespondToMixedRebuttals',
-  'commitReviewedChanges',
-] as const;
-
-const STATE_META = {
-  askHostForInitialProposal: { sourceItem: 'DISCUSS-1', player: 'Host' },
-  askParticipantForInitialProposal: { sourceItem: 'DISCUSS-5', player: 'Participant' },
-  hostInitialRound: { sourceItem: 'DISCUSS-2', player: 'Host' },
-  participantInitialRound: { sourceItem: 'DISCUSS-6', player: 'Participant' },
-  updateSpecMap: { sourceItem: 'DISCUSS-3', player: 'Host' },
-  commitInitialChanges: { sourceItem: 'DISCUSS-13', player: 'Committer' },
-  participantReviewSpecItems: { sourceItem: 'DISCUSS-7', player: 'Participant' },
-  participantReviewDrs: { sourceItem: 'DISCUSS-8', player: 'Participant' },
-  participantReviewSpecItemsAndDrs: { sourceItem: 'DISCUSS-9', player: 'Participant' },
-  hostRespondToReviewFindings: { sourceItem: 'DISCUSS-4', player: 'Host' },
-  participantRespondToSpecItemRebuttals: { sourceItem: 'DISCUSS-10', player: 'Participant' },
-  participantRespondToDrRebuttals: { sourceItem: 'DISCUSS-11', player: 'Participant' },
-  participantRespondToMixedRebuttals: { sourceItem: 'DISCUSS-12', player: 'Participant' },
-  commitReviewedChanges: { sourceItem: 'DISCUSS-14', player: 'Committer' },
-} as const satisfies Record<
-  (typeof RESUMABLE_STATE_IDS)[number],
-  { sourceItem: SourceItemId; player: Player }
->;
-
-function outputOf(event: unknown): CaptainOutput {
-  return (event as { output: CaptainOutput }).output;
-}
-
-function errorOf(event: unknown): unknown {
-  return (event as { error?: unknown }).error;
-}
-
-function hasText(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function continuationFields(context: DiscussionContext) {
-  return {
-    ...(context.pendingBossQuestion ? { pendingBossQuestion: context.pendingBossQuestion } : {}),
-    ...(context.bossReply !== undefined ? { bossReply: context.bossReply } : {}),
-  };
-}
-
 function bossInterrupts(
   ids: readonly string[],
-  actions?: BossInterruptActionName | readonly BossInterruptActionName[],
-) {
+  actions?: DiscussActionName | DiscussActionName[],
+): any[] {
   return ids.map((id) => ({
-    guard: ({ event }: { event: DiscussionEvent }) =>
+    guard: ({ event }: { event: DiscussEvent }) =>
       event.type === 'BOSS_INTERRUPT' && event.targetId === id,
     target: `#${id}`,
-    reenter: true as const,
+    reenter: true,
     ...(actions ? { actions } : {}),
   }));
 }
 
-function resumableStates(ids: readonly string[]) {
+function resumableStates(ids: readonly string[]): any[] {
   return ids.map((id) => ({
-    guard: ({ context }: { context: DiscussionContext }) =>
+    guard: ({
+      context,
+      event,
+    }: {
+      context: DiscussContext;
+      event: DiscussEvent;
+    }) =>
+      event.type === 'BOSS_REPLY' &&
+      event.answer.trim().length > 0 &&
       context.pendingBossQuestion?.resumeStateId === id,
     target: `#${id}`,
-    reenter: true as const,
-    actions: 'rememberBossReply' as const,
+    reenter: true,
+    actions: 'rememberBossReply',
   }));
 }
 
-const captainPlaceholder = fromPromise<CaptainOutput, CaptainInput>(async () => {
-  throw new Error('captain actor must be provided by the runner');
+const bossReplyFields = (context: DiscussContext) => ({
+  ...(context.pendingBossQuestion
+    ? { pendingBossQuestion: context.pendingBossQuestion }
+    : {}),
+  ...(context.bossReply ? { bossReply: context.bossReply } : {}),
 });
 
-const machineSetup = setup({
-  types: {} as {
-    context: DiscussionContext;
-    events: DiscussionEvent;
-    input: DiscussionMachineInput;
-    actors: {
-      captain: typeof captainPlaceholder;
-    };
+const withNeedsBossReply = <T extends Record<string, string>>(result: T) => ({
+  ...result,
+  needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
+});
+
+const captainStateMetadata: Record<
+  ResumableStateId,
+  { sourceItem: string; player: Player }
+> = {
+  askHostInitial: { sourceItem: 'DISCUSS-1', player: 'Host' },
+  askParticipantInitial: { sourceItem: 'DISCUSS-2', player: 'Participant' },
+  hostInitialRound: { sourceItem: 'DISCUSS-3', player: 'Host' },
+  participantInitialRound: { sourceItem: 'DISCUSS-4', player: 'Participant' },
+  hostWritesAgreement: { sourceItem: 'DISCUSS-5', player: 'Host' },
+  commitInitialChanges: { sourceItem: 'DISCUSS-14', player: 'Committer' },
+  reviewSpecInitialCommit: { sourceItem: 'DISCUSS-6', player: 'Participant' },
+  reviewSpecHostChanges: { sourceItem: 'DISCUSS-7', player: 'Participant' },
+  reviewDrInitialCommit: { sourceItem: 'DISCUSS-8', player: 'Participant' },
+  reviewDrHostChanges: { sourceItem: 'DISCUSS-9', player: 'Participant' },
+  reviewMixedInitialCommit: { sourceItem: 'DISCUSS-10', player: 'Participant' },
+  reviewMixedHostChanges: { sourceItem: 'DISCUSS-11', player: 'Participant' },
+  hostAddressesFindings: { sourceItem: 'DISCUSS-12', player: 'Host' },
+  participantAddressesRebuttals: {
+    sourceItem: 'DISCUSS-13',
+    player: 'Participant',
+  },
+  commitReviewedChanges: { sourceItem: 'DISCUSS-15', player: 'Committer' },
+};
+
+const reviewTargets = {
+  specItems: {
+    initial: 'reviewSpecInitialCommit',
+    afterChanges: 'reviewSpecHostChanges',
+  },
+  decisionRecords: {
+    initial: 'reviewDrInitialCommit',
+    afterChanges: 'reviewDrHostChanges',
+  },
+  mixed: {
+    initial: 'reviewMixedInitialCommit',
+    afterChanges: 'reviewMixedHostChanges',
+  },
+} satisfies Record<ReviewScope, { initial: string; afterChanges: string }>;
+
+export const discussMachine = setup({
+  types: {
+    context: {} as DiscussContext,
+    events: {} as DiscussEvent,
+    input: {} as DiscussInput,
   },
   actors: {
-    captain: captainPlaceholder,
+    captain: fromPromise<CaptainOutput, CaptainInput>(async () => {
+      throw new Error('captain actor must be provided by the runner');
+    }),
   },
   actions: {
-    startDiscussion: assign({
-      topic: ({ event }) => (event.type === 'START_DISCUSSION' ? event.topic : undefined),
+    copyStartDiscussion: assign({
+      topic: ({ event }) =>
+        event.type === 'START_DISCUSSION' ? event.topic : undefined,
+      // Optional per-run identities: an event that omits them must not clear
+      // the input-seeded context values (gears2fsm.md, Boss entry events).
       hostLlm: ({ context, event }) =>
-        event.type === 'START_DISCUSSION' ? (event.hostLlm ?? context.hostLlm) : context.hostLlm,
+        event.type === 'START_DISCUSSION'
+          ? (event.hostLlm ?? context.hostLlm)
+          : context.hostLlm,
       participantLlm: ({ context, event }) =>
         event.type === 'START_DISCUSSION'
           ? (event.participantLlm ?? context.participantLlm)
           : context.participantLlm,
       hostProposal: undefined,
       participantProposal: undefined,
-      hostInitialDiscussionEnded: false,
-      participantInitialDiscussionEnded: false,
+      agreement: undefined,
+      latestChanges: undefined,
       reviewScope: undefined,
-      reviewSubject: undefined,
       reviewItems: undefined,
       rebuttals: undefined,
-      pendingBossQuestion: undefined,
-      bossReply: undefined,
       lastResult: undefined,
       lastError: undefined,
-    }),
-    startInitialRound: assign({
-      topic: ({ context, event }) =>
-        event.type === 'BEGIN_INITIAL_ROUND' ? (event.topic ?? context.topic) : context.topic,
-      hostProposal: ({ context, event }) =>
-        event.type === 'BEGIN_INITIAL_ROUND'
-          ? (event.hostProposal ?? context.hostProposal)
-          : context.hostProposal,
-      participantProposal: ({ context, event }) =>
-        event.type === 'BEGIN_INITIAL_ROUND'
-          ? (event.participantProposal ?? context.participantProposal)
-          : context.participantProposal,
-      hostInitialDiscussionEnded: ({ context, event }) =>
-        event.type === 'BEGIN_INITIAL_ROUND'
-          ? (event.hostInitialDiscussionEnded ?? context.hostInitialDiscussionEnded ?? false)
-          : context.hostInitialDiscussionEnded,
-      participantInitialDiscussionEnded: ({ context, event }) =>
-        event.type === 'BEGIN_INITIAL_ROUND'
-          ? (event.participantInitialDiscussionEnded ??
-              context.participantInitialDiscussionEnded ??
-              false)
-          : context.participantInitialDiscussionEnded,
       pendingBossQuestion: undefined,
       bossReply: undefined,
-      lastResult: undefined,
-      lastError: undefined,
     }),
-    startReview: assign({
-      reviewScope: ({ event }) => (event.type === 'START_REVIEW' ? event.scope : undefined),
-      reviewSubject: ({ event }) =>
-        event.type === 'START_REVIEW' ? event.reviewSubject : undefined,
+    copyStartReview: assign({
+      latestChanges: ({ event }) =>
+        event.type === 'START_REVIEW' ? event.latestChanges : undefined,
+      reviewScope: ({ event }) =>
+        event.type === 'START_REVIEW' ? event.reviewScope : undefined,
+      rebuttals: ({ event }) =>
+        event.type === 'START_REVIEW' ? event.rebuttals : undefined,
       reviewItems: undefined,
-      rebuttals: undefined,
-      pendingBossQuestion: undefined,
-      bossReply: undefined,
       lastResult: undefined,
       lastError: undefined,
+      pendingBossQuestion: undefined,
+      bossReply: undefined,
     }),
     rememberHostProposal: assign({
-      hostProposal: ({ event }) =>
-        hasText(outputOf(event).proposal) ? outputOf(event).proposal : undefined,
-      hostInitialDiscussionEnded: false,
+      hostProposal: ({ event }) => outputOf(event).proposal,
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
     rememberParticipantProposal: assign({
-      participantProposal: ({ event }) =>
-        hasText(outputOf(event).proposal) ? outputOf(event).proposal : undefined,
-      participantInitialDiscussionEnded: false,
+      participantProposal: ({ event }) => outputOf(event).proposal,
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
-    markHostInitialDiscussionEnded: assign({
-      hostInitialDiscussionEnded: true,
+    rememberAgreement: assign({
+      agreement: ({ context, event }) =>
+        outputOf(event).agreement ??
+        context.agreement ??
+        outputOf(event).proposal ??
+        context.hostProposal,
+      hostProposal: ({ context, event }) =>
+        outputOf(event).proposal ?? context.hostProposal,
+      participantProposal: ({ context }) => context.participantProposal,
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
-    markParticipantInitialDiscussionEnded: assign({
-      participantInitialDiscussionEnded: true,
+    rememberWrittenChanges: assign({
+      latestChanges: ({ event }) => outputOf(event).latestChanges,
+      reviewScope: ({ event }) => outputOf(event).reviewScope,
+      agreement: ({ context, event }) => outputOf(event).agreement ?? context.agreement,
+      lastResult: ({ event }) => outputOf(event),
+      lastError: undefined,
+    }),
+    rememberCommittedChanges: assign({
+      latestChanges: ({ context, event }) =>
+        outputOf(event).latestChanges ?? context.latestChanges,
+      reviewScope: ({ context, event }) =>
+        outputOf(event).reviewScope ?? context.reviewScope,
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
     rememberReviewFindings: assign({
-      reviewItems: ({ event }) =>
-        hasText(outputOf(event).reviewItems) ? outputOf(event).reviewItems : undefined,
+      reviewItems: ({ event }) => outputOf(event).reviewItems,
+      rebuttals: ({ context, event }) => outputOf(event).rebuttals ?? context.rebuttals,
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
-    rememberRebuttals: assign({
-      rebuttals: ({ event }) =>
-        hasText(outputOf(event).rebuttals) ? outputOf(event).rebuttals : undefined,
+    rememberHostReviewResponse: assign({
+      latestChanges: ({ context, event }) =>
+        outputOf(event).latestChanges ?? context.latestChanges,
+      rebuttals: ({ event }) => outputOf(event).rebuttals,
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
-    rememberResult: assign({
+    rememberParticipantRebuttalResponse: assign({
+      rebuttals: ({ event }) => outputOf(event).rebuttals,
+      lastResult: ({ event }) => outputOf(event),
+      lastError: undefined,
+    }),
+    rememberCaptainResult: assign({
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
     rememberCaptainError: assign({
-      lastError: ({ event }) => errorOf(event),
+      lastError: ({ event }) => (event as unknown as CaptainErrorEvent).error,
+    }),
+    rememberMalformedCaptainOutput: assign({
+      lastError: ({ event }) => outputOf(event),
     }),
     rememberMalformedBossReply: assign({
       lastError: ({ event }) => event,
     }),
-    setPendingBossQuestion: assign(
-      ({ event }, params: { resumeStateId: keyof typeof STATE_META }) => {
-        const meta = STATE_META[params.resumeStateId];
-        return {
-          pendingBossQuestion: {
-            resumeStateId: params.resumeStateId,
-            sourceItem: meta.sourceItem,
-            player: meta.player,
-            question: String(outputOf(event).question ?? ''),
-          },
-          bossReply: undefined,
-          lastResult: outputOf(event),
-          lastError: undefined,
-        };
-      },
-    ),
+    setPendingBossQuestion: assign({
+      pendingBossQuestion: ({ event }, params: PendingBossQuestion) => ({
+        ...params,
+        question: outputOf(event).question ?? '',
+      }),
+      bossReply: undefined,
+      lastResult: ({ event }) => outputOf(event),
+      lastError: undefined,
+    }),
     rememberBossReply: assign({
-      bossReply: ({ event }) => (event.type === 'BOSS_REPLY' ? event.answer : undefined),
+      bossReply: ({ event }) =>
+        event.type === 'BOSS_REPLY' ? event.answer : undefined,
       lastError: undefined,
     }),
     clearBossReplyContext: assign({
@@ -589,733 +565,951 @@ const machineSetup = setup({
     }),
   },
   guards: {
-    beginHostInitialRound: ({ event }) =>
-      event.type === 'BEGIN_INITIAL_ROUND' && event.nextPlayer === 'Host',
-    beginParticipantInitialRound: ({ event }) =>
-      event.type === 'BEGIN_INITIAL_ROUND' && event.nextPlayer === 'Participant',
-    reviewSpecItems: ({ event }) =>
-      event.type === 'START_REVIEW' && event.scope === 'specItems',
-    reviewDrs: ({ event }) => event.type === 'START_REVIEW' && event.scope === 'drs',
-    reviewSpecItemsAndDrs: ({ event }) =>
-      event.type === 'START_REVIEW' && event.scope === 'specItemsAndDrs',
-    needsBossReplyWithQuestion: ({ event }) =>
-      outputOf(event).guard === 'needsBossReply' && hasText(outputOf(event).question),
-    needsBossReplyWithoutQuestion: ({ event }) => outputOf(event).guard === 'needsBossReply',
-    hostProposed: ({ event }) => outputOf(event).guard === 'proposed',
-    participantProposed: ({ event }) => outputOf(event).guard === 'proposed',
-    hostEndedAndParticipantAlreadyEnded: ({ context, event }) =>
-      outputOf(event).guard === 'endedInitialDiscussion' &&
-      context.participantInitialDiscussionEnded === true,
-    participantEndedAndHostAlreadyEnded: ({ context, event }) =>
-      outputOf(event).guard === 'endedInitialDiscussion' &&
-      context.hostInitialDiscussionEnded === true,
-    hostEnded: ({ event }) => outputOf(event).guard === 'endedInitialDiscussion',
-    participantEnded: ({ event }) => outputOf(event).guard === 'endedInitialDiscussion',
-    mapUpdated: ({ event }) => outputOf(event).guard === 'updated',
-    noMapChangesNeeded: ({ event }) => outputOf(event).guard === 'noChangesNeeded',
-    findingsRaisedWithItems: ({ event }) =>
-      outputOf(event).guard === 'findingsRaised' && hasText(outputOf(event).reviewItems),
-    noFindings: ({ event }) => outputOf(event).guard === 'noFindings',
-    rebuttalsRaisedWithText: ({ event }) =>
-      outputOf(event).guard === 'rebuttalsRaised' && hasText(outputOf(event).rebuttals),
-    specItemRebuttalsRaisedWithText: ({ context, event }) =>
-      context.reviewScope === 'specItems' &&
-      outputOf(event).guard === 'rebuttalsRaised' &&
-      hasText(outputOf(event).rebuttals),
-    drRebuttalsRaisedWithText: ({ context, event }) =>
-      context.reviewScope === 'drs' &&
-      outputOf(event).guard === 'rebuttalsRaised' &&
-      hasText(outputOf(event).rebuttals),
-    mixedRebuttalsRaisedWithText: ({ context, event }) =>
-      context.reviewScope === 'specItemsAndDrs' &&
-      outputOf(event).guard === 'rebuttalsRaised' &&
-      hasText(outputOf(event).rebuttals),
-    acceptedOrEdited: ({ event }) => outputOf(event).guard === 'acceptedOrEdited',
-    committed: ({ event }) =>
-      outputOf(event).guard === 'committed' || outputOf(event).guard === 'noCommitNeeded',
-    emptyBossReply: ({ event }) =>
-      event.type === 'BOSS_REPLY' && event.answer.trim().length === 0,
+    needsBossReplyWithQuestion,
+    needsBossReplyWithoutQuestion,
+    emptyBossReply,
+    proposalMade: guardIs('proposalMade'),
+    endedInitialDiscussion: guardIs('endedInitialDiscussion'),
+    wroteChanges: guardIs('wroteChanges'),
+    committed: guardIs('committed'),
+    noFindings: guardIs('noFindings'),
+    findingsRaised: guardIs('findingsRaised'),
+    changesMade: guardIs('changesMade'),
+    rebuttalsRaised: guardIs('rebuttalsRaised'),
+    rebuttalsAddressed: guardIs('rebuttalsAddressed'),
+    specReview: hasReviewScope('specItems'),
+    drReview: hasReviewScope('decisionRecords'),
+    mixedReview: hasReviewScope('mixed'),
   },
 }).createMachine({
   id: 'discuss',
   initial: 'ready',
-  context: ({ input }) => ({
-    players: input.players ?? {},
-    hostLlm: input.hostLlm,
-    participantLlm: input.participantLlm,
-    hostInitialDiscussionEnded: false,
-    participantInitialDiscussionEnded: false,
+  context: ({ input }): DiscussContext => ({
+    hostPlayer: input.host,
+    participantPlayer: input.participant,
+    committerPlayer: input.committer,
+    // Per-run identities seed the <host-llm>/<participant-llm> substitutions;
+    // a START_DISCUSSION that names identities overrides them (gears2fsm.md:
+    // per-run parameters flow in via the machine's input).
+    hostLlm: input.host,
+    participantLlm: input.participant,
   }),
   on: {
-    BOSS_INTERRUPT: bossInterrupts(INTERRUPT_TARGET_IDS),
+    BOSS_INTERRUPT: bossInterrupts(jumpableStateIds),
   },
   states: {
     ready: {
       id: 'ready',
-      description: 'Quiescent idle hub awaiting a Boss entry event.',
+      description: 'Idle hub awaiting a Boss discussion or review directive.',
       on: {
         START_DISCUSSION: {
-          target: 'askHostForInitialProposal',
-          actions: 'startDiscussion',
+          target: 'askHostInitial',
+          actions: 'copyStartDiscussion',
         },
-        BEGIN_INITIAL_ROUND: [
-          {
-            guard: 'beginHostInitialRound',
-            target: 'hostInitialRound',
-            actions: 'startInitialRound',
-          },
-          {
-            guard: 'beginParticipantInitialRound',
-            target: 'participantInitialRound',
-            actions: 'startInitialRound',
-          },
-        ],
         START_REVIEW: [
           {
-            guard: 'reviewSpecItems',
-            target: 'participantReviewSpecItems',
-            actions: 'startReview',
+            guard: 'specReview',
+            target: reviewTargets.specItems.initial,
+            actions: 'copyStartReview',
           },
           {
-            guard: 'reviewDrs',
-            target: 'participantReviewDrs',
-            actions: 'startReview',
+            guard: 'drReview',
+            target: reviewTargets.decisionRecords.initial,
+            actions: 'copyStartReview',
           },
           {
-            guard: 'reviewSpecItemsAndDrs',
-            target: 'participantReviewSpecItemsAndDrs',
-            actions: 'startReview',
+            guard: 'mixedReview',
+            target: reviewTargets.mixed.initial,
+            actions: 'copyStartReview',
           },
         ],
       },
     },
-
-    askHostForInitialProposal: {
-      id: 'askHostForInitialProposal',
-      description: 'Host proposes how to express Boss topic as specs or DRs.',
+    askHostInitial: {
+      id: 'askHostInitial',
+      description: 'Host proposes whether the Boss topic should become spec items or DRs.',
       invoke: {
+        id: 'askHostInitialCaptain',
         src: 'captain',
         input: ({ context }): CaptainInput => ({
           player: 'Host',
           sourceItem: 'DISCUSS-1',
           prompt: DISCUSS_1_PROMPT,
-          result: proposalResult,
+          result: withNeedsBossReply({
+            proposalMade:
+              'Host proposed a design. Output shall include `proposal: <host proposal>`.',
+          }),
           topic: context.topic,
-          ...continuationFields(context),
+          hostPlayer: context.hostPlayer,
+          ...bossReplyFields(context),
         }),
         onDone: [
           {
             guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
+            target: 'awaitBossReply',
             actions: {
               type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'askHostForInitialProposal' },
+              params: {
+                ...captainStateMetadata.askHostInitial,
+                resumeStateId: 'askHostInitial',
+                question: '',
+              },
             },
           },
           {
             guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
           },
           {
-            guard: 'hostProposed',
-            target: '#askParticipantForInitialProposal',
+            guard: 'proposalMade',
+            target: 'askParticipantInitial',
             actions: ['rememberHostProposal', 'clearBossReplyContext'],
           },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
         ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
       },
     },
-
-    askParticipantForInitialProposal: {
-      id: 'askParticipantForInitialProposal',
-      description: 'Participant proposes how to express Boss topic as specs or DRs.',
+    askParticipantInitial: {
+      id: 'askParticipantInitial',
+      description: 'Participant independently proposes whether the Boss topic should become spec items or DRs.',
       invoke: {
+        id: 'askParticipantInitialCaptain',
         src: 'captain',
         input: ({ context }): CaptainInput => ({
           player: 'Participant',
-          sourceItem: 'DISCUSS-5',
-          prompt: DISCUSS_5_PROMPT,
-          result: proposalResult,
-          topic: context.topic,
-          ...continuationFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'askParticipantForInitialProposal' },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'participantProposed',
-            target: '#hostInitialRound',
-            actions: ['rememberParticipantProposal', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
-        ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
-      },
-    },
-
-    hostInitialRound: {
-      id: 'hostInitialRound',
-      description: 'Host reconciles against Participant proposal in an initial-discussion round.',
-      invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Host',
           sourceItem: 'DISCUSS-2',
           prompt: DISCUSS_2_PROMPT,
-          result: initialRoundResult,
+          result: withNeedsBossReply({
+            proposalMade:
+              'Participant proposed a design. Output shall include `proposal: <participant proposal>`.',
+          }),
           topic: context.topic,
-          otherProposal: context.participantProposal,
-          hostProposal: context.hostProposal,
-          participantProposal: context.participantProposal,
-          ...continuationFields(context),
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
         }),
         onDone: [
           {
             guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
+            target: 'awaitBossReply',
             actions: {
               type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'hostInitialRound' },
+              params: {
+                ...captainStateMetadata.askParticipantInitial,
+                resumeStateId: 'askParticipantInitial',
+                question: '',
+              },
             },
           },
           {
             guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
           },
           {
-            guard: 'hostEndedAndParticipantAlreadyEnded',
-            target: '#updateSpecMap',
-            actions: ['markHostInitialDiscussionEnded', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'hostEnded',
-            target: '#participantInitialRound',
-            actions: ['markHostInitialDiscussionEnded', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'hostProposed',
-            target: '#participantInitialRound',
-            actions: ['rememberHostProposal', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
-        ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
-      },
-    },
-
-    participantInitialRound: {
-      id: 'participantInitialRound',
-      description: 'Participant reconciles against Host proposal in an initial-discussion round.',
-      invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Participant',
-          sourceItem: 'DISCUSS-6',
-          prompt: DISCUSS_6_PROMPT,
-          result: initialRoundResult,
-          topic: context.topic,
-          otherProposal: context.hostProposal,
-          hostProposal: context.hostProposal,
-          participantProposal: context.participantProposal,
-          ...continuationFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'participantInitialRound' },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'participantEndedAndHostAlreadyEnded',
-            target: '#updateSpecMap',
-            actions: ['markParticipantInitialDiscussionEnded', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'participantEnded',
-            target: '#hostInitialRound',
-            actions: ['markParticipantInitialDiscussionEnded', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'participantProposed',
-            target: '#hostInitialRound',
+            guard: 'proposalMade',
+            target: 'hostInitialRound',
             actions: ['rememberParticipantProposal', 'clearBossReplyContext'],
           },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
         ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
       },
     },
-
-    updateSpecMap: {
-      id: 'updateSpecMap',
-      description: 'Host updates specs/map.md after initial discussion ends.',
+    hostInitialRound: {
+      id: 'hostInitialRound',
+      description: 'Host reconciles the Participant proposal during initial discussion.',
       invoke: {
+        id: 'hostInitialRoundCaptain',
         src: 'captain',
         input: ({ context }): CaptainInput => ({
           player: 'Host',
           sourceItem: 'DISCUSS-3',
           prompt: DISCUSS_3_PROMPT,
-          result: mapUpdateResult,
-          topic: context.topic,
+          result: withNeedsBossReply({
+            proposalMade:
+              'Host continued the discussion with a revised or challenged proposal. Output shall include `proposal: <host proposal>`.',
+            endedInitialDiscussion:
+              'Host stated the end of initial discussion. Output may include `agreement: <agreement>`.',
+          }),
           hostProposal: context.hostProposal,
           participantProposal: context.participantProposal,
-          ...continuationFields(context),
+          hostPlayer: context.hostPlayer,
+          ...bossReplyFields(context),
         }),
         onDone: [
           {
             guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
+            target: 'awaitBossReply',
             actions: {
               type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'updateSpecMap' },
+              params: {
+                ...captainStateMetadata.hostInitialRound,
+                resumeStateId: 'hostInitialRound',
+                question: '',
+              },
             },
           },
           {
             guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
           },
           {
-            guard: 'mapUpdated',
-            target: '#commitInitialChanges',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            guard: 'proposalMade',
+            target: 'participantInitialRound',
+            actions: ['rememberHostProposal', 'clearBossReplyContext'],
           },
           {
-            guard: 'noMapChangesNeeded',
-            target: '#done',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            guard: 'endedInitialDiscussion',
+            target: 'participantInitialRound',
+            actions: ['rememberAgreement', 'clearBossReplyContext'],
           },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
         ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
       },
     },
-
-    commitInitialChanges: {
-      id: 'commitInitialChanges',
-      description: 'Committer commits changes written at the end of initial discussion.',
+    participantInitialRound: {
+      id: 'participantInitialRound',
+      description: 'Participant reconciles the Host proposal during initial discussion.',
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Committer',
-          sourceItem: 'DISCUSS-13',
-          prompt: DISCUSS_13_PROMPT,
-          result: commitResult,
-          hostLlm: context.hostLlm,
-          participantLlm: context.participantLlm,
-          ...continuationFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'commitInitialChanges' },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'committed',
-            target: '#done',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
-        ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
-      },
-    },
-
-    participantReviewSpecItems: {
-      id: 'participantReviewSpecItems',
-      description: 'Participant reviews new or updated spec items.',
-      invoke: {
+        id: 'participantInitialRoundCaptain',
         src: 'captain',
         input: ({ context }): CaptainInput => ({
           player: 'Participant',
-          sourceItem: 'DISCUSS-7',
-          prompt: DISCUSS_7_PROMPT,
-          result: participantReviewResult,
-          reviewScope: context.reviewScope,
-          reviewSubject: context.reviewSubject,
-          ...continuationFields(context),
+          sourceItem: 'DISCUSS-4',
+          prompt: DISCUSS_4_PROMPT,
+          result: withNeedsBossReply({
+            proposalMade:
+              'Participant continued the discussion with a revised or challenged proposal. Output shall include `proposal: <participant proposal>`.',
+            endedInitialDiscussion:
+              'Participant stated the end of initial discussion. Output may include `agreement: <agreement>`.',
+          }),
+          hostProposal: context.hostProposal,
+          participantProposal: context.participantProposal,
+          agreement: context.agreement,
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
         }),
         onDone: [
           {
             guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
+            target: 'awaitBossReply',
             actions: {
               type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'participantReviewSpecItems' },
+              params: {
+                ...captainStateMetadata.participantInitialRound,
+                resumeStateId: 'participantInitialRound',
+                question: '',
+              },
             },
           },
           {
             guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
           },
           {
-            guard: 'findingsRaisedWithItems',
-            target: '#hostRespondToReviewFindings',
-            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
+            guard: 'proposalMade',
+            target: 'hostInitialRound',
+            actions: ['rememberParticipantProposal', 'clearBossReplyContext'],
           },
           {
-            guard: 'noFindings',
-            target: '#commitReviewedChanges',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            guard: 'endedInitialDiscussion',
+            target: 'hostWritesAgreement',
+            actions: ['rememberAgreement', 'clearBossReplyContext'],
           },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
         ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
       },
     },
-
-    participantReviewDrs: {
-      id: 'participantReviewDrs',
-      description: 'Participant reviews new or updated DRs.',
+    hostWritesAgreement: {
+      id: 'hostWritesAgreement',
+      description: 'Host writes the agreed spec items or DRs and updates the spec map.',
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Participant',
-          sourceItem: 'DISCUSS-8',
-          prompt: DISCUSS_8_PROMPT,
-          result: participantReviewResult,
-          reviewScope: context.reviewScope,
-          reviewSubject: context.reviewSubject,
-          ...continuationFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'participantReviewDrs' },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'findingsRaisedWithItems',
-            target: '#hostRespondToReviewFindings',
-            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'noFindings',
-            target: '#commitReviewedChanges',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
-        ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
-      },
-    },
-
-    participantReviewSpecItemsAndDrs: {
-      id: 'participantReviewSpecItemsAndDrs',
-      description: 'Participant reviews both spec items and DRs.',
-      invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Participant',
-          sourceItem: 'DISCUSS-9',
-          prompt: DISCUSS_9_PROMPT,
-          result: participantReviewResult,
-          reviewScope: context.reviewScope,
-          reviewSubject: context.reviewSubject,
-          ...continuationFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'participantReviewSpecItemsAndDrs' },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'findingsRaisedWithItems',
-            target: '#hostRespondToReviewFindings',
-            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'noFindings',
-            target: '#commitReviewedChanges',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
-        ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
-      },
-    },
-
-    hostRespondToReviewFindings: {
-      id: 'hostRespondToReviewFindings',
-      description: 'Host challenges or accepts Participant review findings.',
-      invoke: {
+        id: 'hostWritesAgreementCaptain',
         src: 'captain',
         input: ({ context }): CaptainInput => ({
           player: 'Host',
-          sourceItem: 'DISCUSS-4',
-          prompt: DISCUSS_4_PROMPT,
-          result: hostReviewResponseResult,
-          reviewScope: context.reviewScope,
-          reviewSubject: context.reviewSubject,
-          reviewItems: context.reviewItems,
-          ...continuationFields(context),
+          sourceItem: 'DISCUSS-5',
+          prompt: DISCUSS_5_PROMPT,
+          result: withNeedsBossReply({
+            wroteChanges:
+              'Host wrote the agreed changes. Output shall include `latestChanges: <summary>` and `reviewScope: "specItems" | "decisionRecords" | "mixed"`.',
+          }),
+          agreement: context.agreement,
+          hostPlayer: context.hostPlayer,
+          ...bossReplyFields(context),
         }),
         onDone: [
           {
             guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
+            target: 'awaitBossReply',
             actions: {
               type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'hostRespondToReviewFindings' },
+              params: {
+                ...captainStateMetadata.hostWritesAgreement,
+                resumeStateId: 'hostWritesAgreement',
+                question: '',
+              },
             },
           },
           {
             guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
           },
           {
-            guard: 'specItemRebuttalsRaisedWithText',
-            target: '#participantRespondToSpecItemRebuttals',
-            actions: ['rememberRebuttals', 'clearBossReplyContext'],
+            guard: 'wroteChanges',
+            target: 'commitInitialChanges',
+            actions: ['rememberWrittenChanges', 'clearBossReplyContext'],
           },
           {
-            guard: 'drRebuttalsRaisedWithText',
-            target: '#participantRespondToDrRebuttals',
-            actions: ['rememberRebuttals', 'clearBossReplyContext'],
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
           },
-          {
-            guard: 'mixedRebuttalsRaisedWithText',
-            target: '#participantRespondToMixedRebuttals',
-            actions: ['rememberRebuttals', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'acceptedOrEdited',
-            target: '#ready',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
         ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
       },
     },
-
-    participantRespondToSpecItemRebuttals: {
-      id: 'participantRespondToSpecItemRebuttals',
-      description: 'Participant responds to Host rebuttals on spec item review.',
+    commitInitialChanges: {
+      id: 'commitInitialChanges',
+      description: 'Committer commits the changes produced at the end of initial discussion.',
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Participant',
-          sourceItem: 'DISCUSS-10',
-          prompt: DISCUSS_10_PROMPT,
-          result: participantReviewResult,
-          reviewScope: context.reviewScope,
-          reviewSubject: context.reviewSubject,
-          reviewItems: context.reviewItems,
-          rebuttals: context.rebuttals,
-          ...continuationFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'participantRespondToSpecItemRebuttals' },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'findingsRaisedWithItems',
-            target: '#hostRespondToReviewFindings',
-            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'noFindings',
-            target: '#commitReviewedChanges',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
-        ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
-      },
-    },
-
-    participantRespondToDrRebuttals: {
-      id: 'participantRespondToDrRebuttals',
-      description: 'Participant responds to Host rebuttals on DR review.',
-      invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Participant',
-          sourceItem: 'DISCUSS-11',
-          prompt: DISCUSS_11_PROMPT,
-          result: participantReviewResult,
-          reviewScope: context.reviewScope,
-          reviewSubject: context.reviewSubject,
-          reviewItems: context.reviewItems,
-          rebuttals: context.rebuttals,
-          ...continuationFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'participantRespondToDrRebuttals' },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'findingsRaisedWithItems',
-            target: '#hostRespondToReviewFindings',
-            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'noFindings',
-            target: '#commitReviewedChanges',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
-        ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
-      },
-    },
-
-    participantRespondToMixedRebuttals: {
-      id: 'participantRespondToMixedRebuttals',
-      description: 'Participant responds to Host rebuttals on mixed spec and DR review.',
-      invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Participant',
-          sourceItem: 'DISCUSS-12',
-          prompt: DISCUSS_12_PROMPT,
-          result: participantReviewResult,
-          reviewScope: context.reviewScope,
-          reviewSubject: context.reviewSubject,
-          reviewItems: context.reviewItems,
-          rebuttals: context.rebuttals,
-          ...continuationFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'participantRespondToMixedRebuttals' },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'findingsRaisedWithItems',
-            target: '#hostRespondToReviewFindings',
-            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'noFindings',
-            target: '#commitReviewedChanges',
-            actions: ['rememberResult', 'clearBossReplyContext'],
-          },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
-        ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
-      },
-    },
-
-    commitReviewedChanges: {
-      id: 'commitReviewedChanges',
-      description: 'Committer commits reviewed changes when Participant raises no findings.',
-      invoke: {
+        id: 'commitInitialChangesCaptain',
         src: 'captain',
         input: ({ context }): CaptainInput => ({
           player: 'Committer',
           sourceItem: 'DISCUSS-14',
           prompt: DISCUSS_14_PROMPT,
-          result: commitResult,
+          result: withNeedsBossReply({
+            committed:
+              'Committer made the initial-discussion commit. Output may include `latestChanges` and `reviewScope`.',
+          }),
+          latestChanges: context.latestChanges,
+          reviewScope: context.reviewScope,
           hostLlm: context.hostLlm,
           participantLlm: context.participantLlm,
-          ...continuationFields(context),
+          committerPlayer: context.committerPlayer,
+          ...bossReplyFields(context),
         }),
         onDone: [
           {
             guard: 'needsBossReplyWithQuestion',
-            target: '#awaitBossReply',
+            target: 'awaitBossReply',
             actions: {
               type: 'setPendingBossQuestion',
-              params: { resumeStateId: 'commitReviewedChanges' },
+              params: {
+                ...captainStateMetadata.commitInitialChanges,
+                resumeStateId: 'commitInitialChanges',
+                question: '',
+              },
             },
           },
           {
             guard: 'needsBossReplyWithoutQuestion',
-            target: '#failed',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: ({ context, event }) =>
+              outputOf(event).guard === 'committed' &&
+              (outputOf(event).reviewScope ?? context.reviewScope) === 'specItems',
+            target: reviewTargets.specItems.initial,
+            actions: ['rememberCommittedChanges', 'clearBossReplyContext'],
+          },
+          {
+            guard: ({ context, event }) =>
+              outputOf(event).guard === 'committed' &&
+              (outputOf(event).reviewScope ?? context.reviewScope) ===
+                'decisionRecords',
+            target: reviewTargets.decisionRecords.initial,
+            actions: ['rememberCommittedChanges', 'clearBossReplyContext'],
+          },
+          {
+            guard: ({ context, event }) =>
+              outputOf(event).guard === 'committed' &&
+              (outputOf(event).reviewScope ?? context.reviewScope) === 'mixed',
+            target: reviewTargets.mixed.initial,
+            actions: ['rememberCommittedChanges', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    reviewSpecInitialCommit: {
+      id: 'reviewSpecInitialCommit',
+      description: 'Participant reviews newly committed spec-item changes.',
+      invoke: {
+        id: 'reviewSpecInitialCommitCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Participant',
+          sourceItem: 'DISCUSS-6',
+          prompt: DISCUSS_6_PROMPT,
+          result: withNeedsBossReply({
+            noFindings: 'Participant raised no findings.',
+            findingsRaised:
+              'Participant raised findings. Output shall include `reviewItems: <findings>`.',
+          }),
+          latestChanges: context.latestChanges,
+          rebuttals: context.rebuttals,
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.reviewSpecInitialCommit,
+                resumeStateId: 'reviewSpecInitialCommit',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'noFindings',
+            target: 'commitReviewedChanges',
+            actions: ['rememberCaptainResult', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'findingsRaised',
+            target: 'hostAddressesFindings',
+            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    reviewSpecHostChanges: {
+      id: 'reviewSpecHostChanges',
+      description: 'Participant reviews Host changes to spec items after findings.',
+      invoke: {
+        id: 'reviewSpecHostChangesCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Participant',
+          sourceItem: 'DISCUSS-7',
+          prompt: DISCUSS_7_PROMPT,
+          result: withNeedsBossReply({
+            noFindings: 'Participant raised no findings.',
+            findingsRaised:
+              'Participant raised findings. Output shall include `reviewItems: <findings>`.',
+          }),
+          latestChanges: context.latestChanges,
+          rebuttals: context.rebuttals,
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.reviewSpecHostChanges,
+                resumeStateId: 'reviewSpecHostChanges',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'noFindings',
+            target: 'commitReviewedChanges',
+            actions: ['rememberCaptainResult', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'findingsRaised',
+            target: 'hostAddressesFindings',
+            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    reviewDrInitialCommit: {
+      id: 'reviewDrInitialCommit',
+      description: 'Participant reviews newly committed decision-record changes.',
+      invoke: {
+        id: 'reviewDrInitialCommitCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Participant',
+          sourceItem: 'DISCUSS-8',
+          prompt: DISCUSS_8_PROMPT,
+          result: withNeedsBossReply({
+            noFindings: 'Participant raised no findings.',
+            findingsRaised:
+              'Participant raised findings. Output shall include `reviewItems: <findings>`.',
+          }),
+          latestChanges: context.latestChanges,
+          rebuttals: context.rebuttals,
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.reviewDrInitialCommit,
+                resumeStateId: 'reviewDrInitialCommit',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'noFindings',
+            target: 'commitReviewedChanges',
+            actions: ['rememberCaptainResult', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'findingsRaised',
+            target: 'hostAddressesFindings',
+            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    reviewDrHostChanges: {
+      id: 'reviewDrHostChanges',
+      description: 'Participant reviews Host changes to decision records after findings.',
+      invoke: {
+        id: 'reviewDrHostChangesCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Participant',
+          sourceItem: 'DISCUSS-9',
+          prompt: DISCUSS_9_PROMPT,
+          result: withNeedsBossReply({
+            noFindings: 'Participant raised no findings.',
+            findingsRaised:
+              'Participant raised findings. Output shall include `reviewItems: <findings>`.',
+          }),
+          latestChanges: context.latestChanges,
+          rebuttals: context.rebuttals,
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.reviewDrHostChanges,
+                resumeStateId: 'reviewDrHostChanges',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'noFindings',
+            target: 'commitReviewedChanges',
+            actions: ['rememberCaptainResult', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'findingsRaised',
+            target: 'hostAddressesFindings',
+            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    reviewMixedInitialCommit: {
+      id: 'reviewMixedInitialCommit',
+      description: 'Participant reviews newly committed mixed spec-item and DR changes.',
+      invoke: {
+        id: 'reviewMixedInitialCommitCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Participant',
+          sourceItem: 'DISCUSS-10',
+          prompt: DISCUSS_10_PROMPT,
+          result: withNeedsBossReply({
+            noFindings: 'Participant raised no findings.',
+            findingsRaised:
+              'Participant raised findings. Output shall include `reviewItems: <findings>`.',
+          }),
+          latestChanges: context.latestChanges,
+          rebuttals: context.rebuttals,
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.reviewMixedInitialCommit,
+                resumeStateId: 'reviewMixedInitialCommit',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'noFindings',
+            target: 'commitReviewedChanges',
+            actions: ['rememberCaptainResult', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'findingsRaised',
+            target: 'hostAddressesFindings',
+            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    reviewMixedHostChanges: {
+      id: 'reviewMixedHostChanges',
+      description: 'Participant reviews Host changes to mixed spec items and DRs after findings.',
+      invoke: {
+        id: 'reviewMixedHostChangesCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Participant',
+          sourceItem: 'DISCUSS-11',
+          prompt: DISCUSS_11_PROMPT,
+          result: withNeedsBossReply({
+            noFindings: 'Participant raised no findings.',
+            findingsRaised:
+              'Participant raised findings. Output shall include `reviewItems: <findings>`.',
+          }),
+          latestChanges: context.latestChanges,
+          rebuttals: context.rebuttals,
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.reviewMixedHostChanges,
+                resumeStateId: 'reviewMixedHostChanges',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'noFindings',
+            target: 'commitReviewedChanges',
+            actions: ['rememberCaptainResult', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'findingsRaised',
+            target: 'hostAddressesFindings',
+            actions: ['rememberReviewFindings', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    hostAddressesFindings: {
+      id: 'hostAddressesFindings',
+      description: 'Host accepts or challenges review findings and stages repo changes.',
+      invoke: {
+        id: 'hostAddressesFindingsCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Host',
+          sourceItem: 'DISCUSS-12',
+          prompt: DISCUSS_12_PROMPT,
+          result: withNeedsBossReply({
+            changesMade:
+              'Host accepted findings and made changes. Output may include `latestChanges: <summary>`.',
+            rebuttalsRaised:
+              'Host raised rebuttals. Output shall include `rebuttals: <rebuttals>`.',
+          }),
+          reviewItems: context.reviewItems,
+          latestChanges: context.latestChanges,
+          hostPlayer: context.hostPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.hostAddressesFindings,
+                resumeStateId: 'hostAddressesFindings',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: ({ context, event }) =>
+              outputOf(event).guard === 'changesMade' &&
+              (outputOf(event).reviewScope ?? context.reviewScope) === 'specItems',
+            target: reviewTargets.specItems.afterChanges,
+            actions: ['rememberHostReviewResponse', 'clearBossReplyContext'],
+          },
+          {
+            guard: ({ context, event }) =>
+              outputOf(event).guard === 'changesMade' &&
+              (outputOf(event).reviewScope ?? context.reviewScope) ===
+                'decisionRecords',
+            target: reviewTargets.decisionRecords.afterChanges,
+            actions: ['rememberHostReviewResponse', 'clearBossReplyContext'],
+          },
+          {
+            guard: ({ context, event }) =>
+              outputOf(event).guard === 'changesMade' &&
+              (outputOf(event).reviewScope ?? context.reviewScope) === 'mixed',
+            target: reviewTargets.mixed.afterChanges,
+            actions: ['rememberHostReviewResponse', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'rebuttalsRaised',
+            target: 'participantAddressesRebuttals',
+            actions: ['rememberHostReviewResponse', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    participantAddressesRebuttals: {
+      id: 'participantAddressesRebuttals',
+      description: 'Participant accepts or challenges Host rebuttals.',
+      invoke: {
+        id: 'participantAddressesRebuttalsCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Participant',
+          sourceItem: 'DISCUSS-13',
+          prompt: DISCUSS_13_PROMPT,
+          result: withNeedsBossReply({
+            rebuttalsAddressed:
+              'Participant addressed Host rebuttals. Output may include `rebuttals: <remaining rebuttal context>`.',
+          }),
+          rebuttals: context.rebuttals,
+          participantPlayer: context.participantPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.participantAddressesRebuttals,
+                resumeStateId: 'participantAddressesRebuttals',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+          {
+            guard: 'rebuttalsAddressed',
+            target: 'hostAddressesFindings',
+            actions: ['rememberParticipantRebuttalResponse', 'clearBossReplyContext'],
+          },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
+        ],
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
+      },
+    },
+    commitReviewedChanges: {
+      id: 'commitReviewedChanges',
+      description: 'Committer commits reviewed changes once Participant raises no findings.',
+      invoke: {
+        id: 'commitReviewedChangesCaptain',
+        src: 'captain',
+        input: ({ context }): CaptainInput => ({
+          player: 'Committer',
+          sourceItem: 'DISCUSS-15',
+          prompt: DISCUSS_15_PROMPT,
+          result: withNeedsBossReply({
+            committed: 'Committer made the reviewed-changes commit.',
+          }),
+          latestChanges: context.latestChanges,
+          hostLlm: context.hostLlm,
+          participantLlm: context.participantLlm,
+          committerPlayer: context.committerPlayer,
+          ...bossReplyFields(context),
+        }),
+        onDone: [
+          {
+            guard: 'needsBossReplyWithQuestion',
+            target: 'awaitBossReply',
+            actions: {
+              type: 'setPendingBossQuestion',
+              params: {
+                ...captainStateMetadata.commitReviewedChanges,
+                resumeStateId: 'commitReviewedChanges',
+                question: '',
+              },
+            },
+          },
+          {
+            guard: 'needsBossReplyWithoutQuestion',
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
           },
           {
             guard: 'committed',
-            target: '#done',
-            actions: ['rememberResult', 'clearBossReplyContext'],
+            target: 'done',
+            actions: ['rememberCaptainResult', 'clearBossReplyContext'],
           },
-          { target: '#failed', actions: ['rememberResult', 'clearBossReplyContext'] },
+          {
+            target: 'failed',
+            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+          },
         ],
-        onError: { target: '#failed', actions: ['rememberCaptainError', 'clearBossReplyContext'] },
+        onError: {
+          target: 'failed',
+          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+        },
       },
     },
-
     awaitBossReply: {
       id: 'awaitBossReply',
       description: 'Waiting for Boss to answer a player question.',
@@ -1323,100 +1517,74 @@ const machineSetup = setup({
         BOSS_REPLY: [
           {
             guard: 'emptyBossReply',
-            target: '#failed',
+            target: 'failed',
             actions: ['rememberMalformedBossReply', 'clearBossReplyContext'],
           },
-          ...resumableStates(RESUMABLE_STATE_IDS),
+          ...resumableStates(resumableStateIds),
           {
-            target: '#failed',
+            target: 'failed',
             actions: ['rememberMalformedBossReply', 'clearBossReplyContext'],
           },
         ],
+        BOSS_INTERRUPT: bossInterrupts(jumpableStateIds, 'clearBossReplyContext'),
         START_DISCUSSION: {
-          target: '#askHostForInitialProposal',
-          actions: ['clearBossReplyContext', 'startDiscussion'],
+          target: 'askHostInitial',
+          actions: ['clearBossReplyContext', 'copyStartDiscussion'],
         },
-        BEGIN_INITIAL_ROUND: [
-          {
-            guard: 'beginHostInitialRound',
-            target: '#hostInitialRound',
-            actions: ['clearBossReplyContext', 'startInitialRound'],
-          },
-          {
-            guard: 'beginParticipantInitialRound',
-            target: '#participantInitialRound',
-            actions: ['clearBossReplyContext', 'startInitialRound'],
-          },
-        ],
         START_REVIEW: [
           {
-            guard: 'reviewSpecItems',
-            target: '#participantReviewSpecItems',
-            actions: ['clearBossReplyContext', 'startReview'],
+            guard: 'specReview',
+            target: reviewTargets.specItems.initial,
+            actions: ['clearBossReplyContext', 'copyStartReview'],
           },
           {
-            guard: 'reviewDrs',
-            target: '#participantReviewDrs',
-            actions: ['clearBossReplyContext', 'startReview'],
+            guard: 'drReview',
+            target: reviewTargets.decisionRecords.initial,
+            actions: ['clearBossReplyContext', 'copyStartReview'],
           },
           {
-            guard: 'reviewSpecItemsAndDrs',
-            target: '#participantReviewSpecItemsAndDrs',
-            actions: ['clearBossReplyContext', 'startReview'],
+            guard: 'mixedReview',
+            target: reviewTargets.mixed.initial,
+            actions: ['clearBossReplyContext', 'copyStartReview'],
           },
         ],
-        BOSS_INTERRUPT: bossInterrupts(INTERRUPT_TARGET_IDS, 'clearBossReplyContext'),
       },
     },
-
     failed: {
       id: 'failed',
-      description: 'Recoverable failure hub awaiting Boss recovery.',
+      description: 'The discussion workflow failed and is waiting for Boss recovery.',
       on: {
         START_DISCUSSION: {
-          target: '#askHostForInitialProposal',
-          actions: 'startDiscussion',
+          target: 'askHostInitial',
+          actions: 'copyStartDiscussion',
         },
-        BEGIN_INITIAL_ROUND: [
-          {
-            guard: 'beginHostInitialRound',
-            target: '#hostInitialRound',
-            actions: 'startInitialRound',
-          },
-          {
-            guard: 'beginParticipantInitialRound',
-            target: '#participantInitialRound',
-            actions: 'startInitialRound',
-          },
-        ],
         START_REVIEW: [
           {
-            guard: 'reviewSpecItems',
-            target: '#participantReviewSpecItems',
-            actions: 'startReview',
+            guard: 'specReview',
+            target: reviewTargets.specItems.initial,
+            actions: 'copyStartReview',
           },
           {
-            guard: 'reviewDrs',
-            target: '#participantReviewDrs',
-            actions: 'startReview',
+            guard: 'drReview',
+            target: reviewTargets.decisionRecords.initial,
+            actions: 'copyStartReview',
           },
           {
-            guard: 'reviewSpecItemsAndDrs',
-            target: '#participantReviewSpecItemsAndDrs',
-            actions: 'startReview',
+            guard: 'mixedReview',
+            target: reviewTargets.mixed.initial,
+            actions: 'copyStartReview',
           },
         ],
       },
     },
-
     done: {
       id: 'done',
-      description: 'The discussion workflow completed.',
       type: 'final',
+      description: 'The discussion workflow completed with a reviewed commit.',
     },
   },
 });
 
 export { bossInterrupts, resumableStates };
-export const discussMachine = machineSetup;
+
 export default discussMachine;

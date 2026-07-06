@@ -160,6 +160,7 @@ The runtime receives Boss input as a free-form string (`handleBossInput.text`) a
 Empty or whitespace-only text produces no event and no port call.
 
 The classifier prompt shall demand JSON against the FSM's typed event union and any state-specific Boss input contract, including the payload fields required for each event.
+Fields the FSM's event union declares optional shall stay optional in the classifier contract and the reply parser; the classifier shall not promote them to required.
 When the FSM supports a Boss-reply suspension state, the prompt shall include the current state and the pending Boss question so the judge can distinguish a reply from a fresh directive.
 
 A playbook runtime shall not define slash-prefix commands for states or features inside that playbook.

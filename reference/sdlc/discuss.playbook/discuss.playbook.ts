@@ -1,234 +1,237 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 //
-// Linked playbook runtime.
-// Link inputs:
-// - FSM artifact: ./discuss.fsm.ts
-// - Link target: ../../../node_modules/@sublang/playbook/src/runtime.ts
-// - Player binding: Host -> host, Participant -> participant, Committer -> host
-// - Composite alias resolution: Committer = Host | Participant; DISCUSS-13 and
-//   DISCUSS-14 carry no <playerName>Player selector fields, so both fall back to
-//   the first alias alternative, Host, and therefore use playerId "host".
-// - Boss-event mapping strategy: free-text LLM judge JSON classification.
-// - Adjudication strategy: LLM-judge for every state; marker-parse available by
-//   PlaybookRuntimeOptions.adjudicationStrategies.
-// - Abort strategy: natural rejection through the FSM's per-invoke onError arms.
+// PlaybookRuntime for the discuss playbook, linked from the FSM artifact by
+// the slc FSM-to-runtime link phase.
+//
+// Linker inputs:
+//   FSM artifact:       ./discuss.fsm.ts
+//   Link target:        @sublang/playbook/src/runtime.ts
+//   Player binding:     Host -> host, Participant -> participant,
+//                       Committer -> committer
+//                       (default binding: lowercased player name)
+//   Composite players:  Committer = Host | Participant. DISCUSS-14 and
+//                       DISCUSS-15 keep CaptainInput.player = 'Committer';
+//                       callPlayer resolution uses options.committer when
+//                       supplied, otherwise falls back to Host, the first
+//                       listed alias alternative.
+//   Adjudication:       LLM-judge per state (default)
+//   Boss-event mapping: free-text judge classification (default)
+//   Abort strategy:     natural rejection; every Captain-invoking state's
+//                       onError routes to the quiescent failed state.
 
 import { createActor, fromPromise } from 'xstate';
+import type { InspectionEvent, SnapshotFrom } from 'xstate';
+
 import discussMachine, {
   type CaptainInput,
   type CaptainOutput,
-  type DiscussionEvent,
-  type DiscussionMachineInput,
-  type Player,
-  type ReviewScope,
-  type SourceItemId,
+  type DiscussEvent,
+  type DiscussInput,
 } from './discuss.fsm.ts';
+
 import type {
   PlayerResult,
   PlaybookPorts,
   PlaybookRuntime,
   PlaybookRuntimeFactory,
-} from '../../../node_modules/@sublang/playbook/src/runtime.ts';
+} from '@sublang/playbook/runtime';
 
 export type {
   PlayerResult,
   PlaybookPorts,
   PlaybookRuntime,
   PlaybookRuntimeFactory,
-} from '../../../node_modules/@sublang/playbook/src/runtime.ts';
+};
 
-type AdjudicationStrategy = 'llm-judge' | 'marker-parse';
+type PlayerName = 'Host' | 'Participant' | 'Committer';
+type ReviewScope = 'specItems' | 'decisionRecords' | 'mixed';
 
-type CaptainStateId =
-  | 'askHostForInitialProposal'
-  | 'askParticipantForInitialProposal'
-  | 'hostInitialRound'
-  | 'participantInitialRound'
-  | 'updateSpecMap'
-  | 'commitInitialChanges'
-  | 'participantReviewSpecItems'
-  | 'participantReviewDrs'
-  | 'participantReviewSpecItemsAndDrs'
-  | 'hostRespondToReviewFindings'
-  | 'participantRespondToSpecItemRebuttals'
-  | 'participantRespondToDrRebuttals'
-  | 'participantRespondToMixedRebuttals'
-  | 'commitReviewedChanges';
-
-export interface PlaybookRuntimeOptions extends DiscussionMachineInput {
-  players?: Partial<Record<Player, string>>;
-  adjudicationStrategies?: Partial<Record<SourceItemId | CaptainStateId, AdjudicationStrategy>>;
+export interface PlaybookRuntimeOptions extends DiscussInput {
+  playerBinding?: Partial<Record<PlayerName, string>>;
 }
 
-const DEFAULT_PLAYER_BINDING = {
+const DEFAULT_PLAYER_BINDING: Readonly<Record<PlayerName, string>> = {
   Host: 'host',
   Participant: 'participant',
-  Committer: 'host',
-} as const satisfies Record<Player, string>;
+  Committer: 'committer',
+};
 
-const COMMITTER_ALIAS_RESOLUTION = {
-  alias: 'Committer',
-  alternatives: ['Host', 'Participant'],
-  states: {
-    commitInitialChanges: {
-      sourceItem: 'DISCUSS-13',
-      selectorFieldsPresent: [],
-      resolvedPlayer: 'Host',
-      playerId: 'host',
-    },
-    commitReviewedChanges: {
-      sourceItem: 'DISCUSS-14',
-      selectorFieldsPresent: [],
-      resolvedPlayer: 'Host',
-      playerId: 'host',
-    },
+const ALIAS_RESOLUTION: Readonly<Record<string, string>> = {
+  'DISCUSS-14':
+    'Committer = Host | Participant; uses input.committerPlayer when supplied, otherwise Host.',
+  'DISCUSS-15':
+    'Committer = Host | Participant; uses input.committerPlayer when supplied, otherwise Host.',
+};
+
+const STATE_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  ready: 'Idle hub awaiting a Boss discussion or review directive.',
+  askHostInitial:
+    'Host proposes whether the Boss topic should become spec items or DRs.',
+  askParticipantInitial:
+    'Participant independently proposes whether the Boss topic should become spec items or DRs.',
+  hostInitialRound:
+    'Host reconciles the Participant proposal during initial discussion.',
+  participantInitialRound:
+    'Participant reconciles the Host proposal during initial discussion.',
+  hostWritesAgreement:
+    'Host writes the agreed spec items or DRs and updates the spec map.',
+  commitInitialChanges:
+    'Committer commits the changes produced at the end of initial discussion.',
+  reviewSpecInitialCommit: 'Participant reviews newly committed spec-item changes.',
+  reviewSpecHostChanges:
+    'Participant reviews Host changes to spec items after findings.',
+  reviewDrInitialCommit:
+    'Participant reviews newly committed decision-record changes.',
+  reviewDrHostChanges:
+    'Participant reviews Host changes to decision records after findings.',
+  reviewMixedInitialCommit:
+    'Participant reviews newly committed mixed spec-item and DR changes.',
+  reviewMixedHostChanges:
+    'Participant reviews Host changes to mixed spec items and DRs after findings.',
+  hostAddressesFindings:
+    'Host accepts or challenges review findings and stages repo changes.',
+  participantAddressesRebuttals:
+    'Participant accepts or challenges Host rebuttals.',
+  commitReviewedChanges:
+    'Committer commits reviewed changes once Participant raises no findings.',
+  awaitBossReply: 'Waiting for Boss to answer a player question.',
+  failed: 'The discussion workflow failed and is waiting for Boss recovery.',
+  done: 'The discussion workflow completed with a reviewed commit.',
+};
+
+const CAPTAIN_STATES = [
+  { stateId: 'askHostInitial', player: 'Host', sourceItem: 'DISCUSS-1' },
+  {
+    stateId: 'askParticipantInitial',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-2',
   },
-} as const;
+  { stateId: 'hostInitialRound', player: 'Host', sourceItem: 'DISCUSS-3' },
+  {
+    stateId: 'participantInitialRound',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-4',
+  },
+  { stateId: 'hostWritesAgreement', player: 'Host', sourceItem: 'DISCUSS-5' },
+  {
+    stateId: 'commitInitialChanges',
+    player: 'Committer',
+    sourceItem: 'DISCUSS-14',
+  },
+  {
+    stateId: 'reviewSpecInitialCommit',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-6',
+  },
+  {
+    stateId: 'reviewSpecHostChanges',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-7',
+  },
+  {
+    stateId: 'reviewDrInitialCommit',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-8',
+  },
+  {
+    stateId: 'reviewDrHostChanges',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-9',
+  },
+  {
+    stateId: 'reviewMixedInitialCommit',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-10',
+  },
+  {
+    stateId: 'reviewMixedHostChanges',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-11',
+  },
+  {
+    stateId: 'hostAddressesFindings',
+    player: 'Host',
+    sourceItem: 'DISCUSS-12',
+  },
+  {
+    stateId: 'participantAddressesRebuttals',
+    player: 'Participant',
+    sourceItem: 'DISCUSS-13',
+  },
+  {
+    stateId: 'commitReviewedChanges',
+    player: 'Committer',
+    sourceItem: 'DISCUSS-15',
+  },
+] as const;
 
-const CAPTAIN_STATES = new Set<string>([
-  'askHostForInitialProposal',
-  'askParticipantForInitialProposal',
-  'hostInitialRound',
-  'participantInitialRound',
-  'updateSpecMap',
-  'commitInitialChanges',
-  'participantReviewSpecItems',
-  'participantReviewDrs',
-  'participantReviewSpecItemsAndDrs',
-  'hostRespondToReviewFindings',
-  'participantRespondToSpecItemRebuttals',
-  'participantRespondToDrRebuttals',
-  'participantRespondToMixedRebuttals',
-  'commitReviewedChanges',
+const CAPTAIN_STATE_IDS: ReadonlySet<string> = new Set(
+  CAPTAIN_STATES.map((state) => state.stateId),
+);
+
+const QUIESCENT_STATES: ReadonlySet<string> = new Set([
+  'ready',
+  'awaitBossReply',
+  'failed',
+  'done',
 ]);
 
-const QUIESCENT_STATES = new Set<string>(['ready', 'awaitBossReply', 'failed', 'done']);
-
-const INTERRUPT_TARGET_IDS = [
+const BOSS_INTERRUPT_TARGETS = [
   'ready',
-  'askHostForInitialProposal',
-  'askParticipantForInitialProposal',
+  'askHostInitial',
+  'askParticipantInitial',
   'hostInitialRound',
   'participantInitialRound',
-  'updateSpecMap',
+  'hostWritesAgreement',
   'commitInitialChanges',
-  'participantReviewSpecItems',
-  'participantReviewDrs',
-  'participantReviewSpecItemsAndDrs',
-  'hostRespondToReviewFindings',
-  'participantRespondToSpecItemRebuttals',
-  'participantRespondToDrRebuttals',
-  'participantRespondToMixedRebuttals',
+  'reviewSpecInitialCommit',
+  'reviewSpecHostChanges',
+  'reviewDrInitialCommit',
+  'reviewDrHostChanges',
+  'reviewMixedInitialCommit',
+  'reviewMixedHostChanges',
+  'hostAddressesFindings',
+  'participantAddressesRebuttals',
   'commitReviewedChanges',
   'awaitBossReply',
   'failed',
 ] as const;
 
-const REVIEW_SCOPES = ['specItems', 'drs', 'specItemsAndDrs'] as const;
+const BOSS_INTERRUPT_TARGET_IDS: ReadonlySet<string> = new Set(
+  BOSS_INTERRUPT_TARGETS,
+);
+
+const REVIEW_SCOPES: ReadonlySet<string> = new Set([
+  'specItems',
+  'decisionRecords',
+  'mixed',
+]);
+
+const TELEMETRY_TOPIC = 'playbook.fsm.state';
 
 const CONTINUATION_PREAMBLE =
   'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
 
-function stringify(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
+const PLACEHOLDER_FIELDS: ReadonlyArray<readonly [string, keyof CaptainInput]> = [
+  ['<topic>', 'topic'],
+  ['<participant-proposal>', 'participantProposal'],
+  ['<host-previous-proposal>', 'hostProposal'],
+  ['<host-proposal>', 'hostProposal'],
+  ['<participant-previous-proposal>', 'participantProposal'],
+  ['<agreement>', 'agreement'],
+  ['<changes>', 'latestChanges'],
+  ['<review-items>', 'reviewItems'],
+  ['<rebuttals>', 'rebuttals'],
+  ['<host-llm>', 'hostLlm'],
+  ['<participant-llm>', 'participantLlm'],
+];
 
-function hasText(value: unknown): value is string {
-  return typeof value === 'string' && value.trim().length > 0;
-}
+function composePlayerPrompt(input: CaptainInput): string {
+  const blocks: string[] = [];
 
-function stateValueOf(snapshot: unknown): string {
-  const value = (snapshot as { value?: unknown }).value;
-  return typeof value === 'string' ? value : stringify(value);
-}
-
-function isFinalSnapshot(snapshot: unknown): boolean {
-  return (snapshot as { status?: string }).status === 'done' || stateValueOf(snapshot) === 'done';
-}
-
-function assertNotAborted(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw new DOMException('Playbook turn aborted', 'AbortError');
-  }
-}
-
-function parseJsonObject(text: string, label: string): Record<string, unknown> {
-  const trimmed = text.trim();
-  if (!trimmed) throw new Error(`${label} returned an empty response`);
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
-  const candidate = fenced?.[1] ?? trimmed;
-  const firstBrace = candidate.indexOf('{');
-  const lastBrace = candidate.lastIndexOf('}');
-  const json = firstBrace >= 0 && lastBrace >= firstBrace ? candidate.slice(firstBrace, lastBrace + 1) : candidate;
-  try {
-    const parsed = JSON.parse(json);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch (error) {
-    throw new Error(`${label} returned malformed JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  throw new Error(`${label} JSON must be an object`);
-}
-
-function requiredFields(result: Record<string, string>, guard: string): string[] {
-  const description = result[guard] ?? '';
-  const fields: string[] = [];
-  const includePattern = /Output shall include `([A-Za-z_][A-Za-z0-9_]*):/g;
-  let match: RegExpExecArray | null;
-  while ((match = includePattern.exec(description))) {
-    fields.push(match[1]);
-  }
-  return fields;
-}
-
-function optionalFields(result: Record<string, string>, guard: string): string[] {
-  const description = result[guard] ?? '';
-  const fields: string[] = [];
-  const includePattern = /Output may include `([A-Za-z_][A-Za-z0-9_]*):/g;
-  let match: RegExpExecArray | null;
-  while ((match = includePattern.exec(description))) {
-    fields.push(match[1]);
-  }
-  return fields;
-}
-
-function conventionalModelName(value: string): string {
-  return value
-    .split('-')
-    .filter(Boolean)
-    .map((part) => {
-      if (/^gpt$/i.test(part)) return 'GPT';
-      if (/^\d/.test(part)) return part;
-      return part.charAt(0).toUpperCase() + part.slice(1);
-    })
-    .join('-');
-}
-
-function substitutePromptPlaceholders(prompt: string, input: CaptainInput): string {
-  return prompt
-    .replaceAll('<host-llm>', input.hostLlm ? conventionalModelName(input.hostLlm) : '<host-llm>')
-    .replaceAll(
-      '<participant-llm>',
-      input.participantLlm ? conventionalModelName(input.participantLlm) : '<participant-llm>',
-    );
-}
-
-function labelledBlock(label: string, value: unknown): string | undefined {
-  if (!hasText(value)) return undefined;
-  return `${label}:\n${value.trim()}`;
-}
-
-export function composePlayerPrompt(input: CaptainInput): string {
-  const sections: string[] = [];
-  if (input.pendingBossQuestion && hasText(input.bossReply)) {
-    sections.push(
+  if (input.pendingBossQuestion && input.bossReply !== undefined) {
+    blocks.push(
       [
         CONTINUATION_PREAMBLE,
         '',
@@ -241,378 +244,567 @@ export function composePlayerPrompt(input: CaptainInput): string {
     );
   }
 
-  const structured = [
-    labelledBlock('Boss intent', input.topic),
-    labelledBlock('Other proposal', input.otherProposal),
-    labelledBlock('Host proposal', input.hostProposal),
-    labelledBlock('Participant proposal', input.participantProposal),
-    labelledBlock('Review scope', input.reviewScope),
-    labelledBlock('Review subject', input.reviewSubject),
-    labelledBlock('Review items', input.reviewItems),
-    labelledBlock('Rebuttals', input.rebuttals),
-  ].filter((block): block is string => Boolean(block));
-
-  sections.push(...structured);
-  sections.push(substitutePromptPlaceholders(input.prompt, input));
-  return sections.join('\n\n');
-}
-
-function resolvePlayerId(input: CaptainInput, binding: Record<Player, string>): string {
-  if (input.player !== 'Committer') return binding[input.player];
-  return binding[COMMITTER_ALIAS_RESOLUTION.states.commitInitialChanges.resolvedPlayer];
-}
-
-function adjudicatorPrompt(input: CaptainInput, playerOutput: string): string {
-  const guards = Object.entries(input.result)
-    .map(([guard, description]) => `- ${guard}: ${description}`)
-    .join('\n');
-  const fields = Array.from(
-    new Set(
-      Object.keys(input.result).flatMap((guard) => [
-        ...requiredFields(input.result, guard),
-        ...optionalFields(input.result, guard),
-      ]),
-    ),
-  );
-  const payloadText =
-    fields.length > 0
-      ? `When the selected guard description requires or permits payload fields, include them as top-level JSON keys. Known payload fields: ${fields.join(', ')}.`
-      : 'No payload fields are declared for these guards.';
-  return [
-    'Classify the player output into exactly one FSM guard.',
-    `Source item: ${input.sourceItem}`,
-    `Player: ${input.player}`,
-    '',
-    'Declared guard result keys and verbatim descriptions:',
-    guards,
-    '',
-    payloadText,
-    'Return only JSON of the form {"guard":"<one declared guard>", ...payloadFields}.',
-    '',
-    'Player output, verbatim:',
-    playerOutput,
-  ].join('\n');
-}
-
-function markerParse(playerOutput: string): Record<string, unknown> {
-  const lines = playerOutput.trimEnd().split(/\r?\n/);
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i].trim();
-    if (line.startsWith('FSM-RESULT:')) {
-      return parseJsonObject(line.slice('FSM-RESULT:'.length), 'marker parser');
+  let body = input.prompt;
+  for (const [placeholder, field] of PLACEHOLDER_FIELDS) {
+    const value = input[field];
+    if (typeof value === 'string') {
+      body = body.replaceAll(placeholder, value);
     }
   }
-  throw new Error('marker parser found no terminal FSM-RESULT control line');
+
+  blocks.push(body);
+  return blocks.join('\n\n');
 }
 
-async function adjudicate(
-  ports: PlaybookPorts,
+function resolvePlayerId(
   input: CaptainInput,
-  playerOutput: string,
-  strategy: AdjudicationStrategy,
-  signal: AbortSignal,
-): Promise<CaptainOutput> {
-  assertNotAborted(signal);
-  const parsed =
-    strategy === 'marker-parse'
-      ? markerParse(playerOutput)
-      : parseJsonObject(
-          await ports.callJudge(adjudicatorPrompt(input, playerOutput), signal),
-          'adjudicator',
-        );
-  const guard = parsed.guard;
-  if (typeof guard !== 'string' || !(guard in input.result)) {
-    throw new Error(`adjudicator selected undeclared guard ${stringify(guard)} for ${input.sourceItem}`);
-  }
-  for (const field of requiredFields(input.result, guard)) {
-    if (!hasText(parsed[field])) {
-      throw new Error(`adjudicator omitted required field ${field} for guard ${guard}`);
+  binding: Record<PlayerName, string>,
+): string {
+  switch (input.player) {
+    case 'Host':
+      return binding.Host;
+    case 'Participant':
+      return binding.Participant;
+    case 'Committer':
+      return input.committerPlayer ?? binding.Host;
+    default: {
+      const exhaustive: never = input.player;
+      throw new Error(`unknown player ${String(exhaustive)}`);
     }
   }
-  return { ...parsed, guard } as CaptainOutput;
 }
 
-function classifierPrompt(text: string, snapshot: unknown): string {
-  const context = (snapshot as { context?: Record<string, unknown> }).context ?? {};
-  const pending = context.pendingBossQuestion as { question?: string } | undefined;
-  const currentState = stateValueOf(snapshot);
-  return [
-    'Classify Boss input for the discuss FSM.',
-    'Return only JSON. Use {"type":"NO_ACTION"} if the text should not send an FSM event.',
-    'Do not treat slash-prefixed text specially; classify it as ordinary Boss text.',
-    '',
-    `Current state: ${currentState}`,
-    pending?.question ? `Pending Boss question: ${pending.question}` : 'Pending Boss question: none',
-    '',
-    'Allowed event JSON shapes:',
-    '- {"type":"START_DISCUSSION","topic":"string","hostLlm":"optional string","participantLlm":"optional string"}',
-    '- {"type":"BEGIN_INITIAL_ROUND","nextPlayer":"Host|Participant","topic":"optional string","hostProposal":"optional string","participantProposal":"optional string","hostInitialDiscussionEnded":"optional boolean","participantInitialDiscussionEnded":"optional boolean"}',
-    '- {"type":"START_REVIEW","scope":"specItems|drs|specItemsAndDrs","reviewSubject":"optional string"}',
-    '- {"type":"BOSS_REPLY","answer":"string"}',
-    `- {"type":"BOSS_INTERRUPT","targetId":"${INTERRUPT_TARGET_IDS.join('|')}"}`,
-    '',
-    'Boss input:',
-    text,
-  ].join('\n');
+function requiredFieldsFor(description: string): string[] {
+  const fields: string[] = [];
+  const re = /Output shall include `([A-Za-z_][A-Za-z0-9_]*)\s*:/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(description)) !== null) {
+    fields.push(match[1]);
+  }
+  return fields;
 }
 
-function asOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
+function extractJson(raw: string): Record<string, unknown> | null {
+  const trimmed = raw.trim();
+  const tryParse = (value: string): Record<string, unknown> | null => {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed !== null &&
+        typeof parsed === 'object' &&
+        !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const direct = tryParse(trimmed);
+  if (direct) return direct;
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) {
+    const parsed = tryParse(fenced[1].trim());
+    if (parsed) return parsed;
+  }
+
+  const first = trimmed.indexOf('{');
+  const last = trimmed.lastIndexOf('}');
+  if (first >= 0 && last > first) {
+    return tryParse(trimmed.slice(first, last + 1));
+  }
+
+  return null;
 }
 
-function asOptionalBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
+function buildClassifierPrompt(
+  text: string,
+  ctx: { state: string; pendingQuestion?: string },
+): string {
+  const lines: string[] = [];
+  lines.push('You are the Boss-input classifier for the discuss playbook.');
+  lines.push(
+    'Classify the Boss message into exactly one FSM event, or into no event.',
+  );
+  lines.push('');
+  lines.push(`Current FSM state: ${ctx.state}`);
+  if (ctx.pendingQuestion) {
+    lines.push('Pending Boss question:');
+    lines.push(ctx.pendingQuestion);
+    lines.push(
+      'If the Boss message answers that question, classify it as BOSS_REPLY; if it is a fresh directive, classify it accordingly.',
+    );
+  }
+  lines.push('');
+  lines.push('Events and payload contracts:');
+  lines.push(
+    '- START_DISCUSSION: required topic string; optional hostLlm, participantLlm strings (identities normally come from run options).',
+  );
+  lines.push(
+    '- START_REVIEW: required latestChanges string, required reviewScope string ("specItems" | "decisionRecords" | "mixed"), optional rebuttals string.',
+  );
+  lines.push(
+    `- BOSS_INTERRUPT: required targetId string, one of ${BOSS_INTERRUPT_TARGETS.join(', ')}.`,
+  );
+  lines.push(
+    '- BOSS_REPLY: required answer string; valid when the FSM waits in awaitBossReply.',
+  );
+  lines.push('');
+  lines.push('Boss message:');
+  lines.push(text);
+  lines.push('');
+  lines.push(
+    'Reply with a single JSON object: { "event": "<EVENT_TYPE or null>", ...payload fields }.',
+  );
+  lines.push('Use null when no FSM action applies.');
+  return lines.join('\n');
 }
 
-function parseBossEvent(raw: Record<string, unknown>): DiscussionEvent | undefined {
-  switch (raw.type) {
-    case 'NO_ACTION':
-      return undefined;
-    case 'START_DISCUSSION': {
-      if (!hasText(raw.topic)) throw new Error('START_DISCUSSION requires topic');
+function parseClassification(raw: string): DiscussEvent | null {
+  const obj = extractJson(raw);
+  if (!obj) return null;
+  const eventType = obj.event ?? obj.type;
+
+  if (eventType === 'START_DISCUSSION') {
+    // hostLlm/participantLlm are optional on the FSM event: the identities
+    // normally flow in via the machine input (run options).
+    if (typeof obj.topic === 'string') {
       return {
         type: 'START_DISCUSSION',
-        topic: raw.topic,
-        hostLlm: asOptionalString(raw.hostLlm),
-        participantLlm: asOptionalString(raw.participantLlm),
+        topic: obj.topic,
+        ...(typeof obj.hostLlm === 'string' ? { hostLlm: obj.hostLlm } : {}),
+        ...(typeof obj.participantLlm === 'string'
+          ? { participantLlm: obj.participantLlm }
+          : {}),
       };
     }
-    case 'BEGIN_INITIAL_ROUND': {
-      if (raw.nextPlayer !== 'Host' && raw.nextPlayer !== 'Participant') {
-        throw new Error('BEGIN_INITIAL_ROUND requires nextPlayer Host or Participant');
-      }
-      return {
-        type: 'BEGIN_INITIAL_ROUND',
-        nextPlayer: raw.nextPlayer,
-        topic: asOptionalString(raw.topic),
-        hostProposal: asOptionalString(raw.hostProposal),
-        participantProposal: asOptionalString(raw.participantProposal),
-        hostInitialDiscussionEnded: asOptionalBoolean(raw.hostInitialDiscussionEnded),
-        participantInitialDiscussionEnded: asOptionalBoolean(raw.participantInitialDiscussionEnded),
-      };
-    }
-    case 'START_REVIEW': {
-      if (!REVIEW_SCOPES.includes(raw.scope as ReviewScope)) {
-        throw new Error('START_REVIEW requires scope specItems, drs, or specItemsAndDrs');
-      }
+    return null;
+  }
+
+  if (eventType === 'START_REVIEW') {
+    if (
+      typeof obj.latestChanges === 'string' &&
+      typeof obj.reviewScope === 'string' &&
+      REVIEW_SCOPES.has(obj.reviewScope)
+    ) {
       return {
         type: 'START_REVIEW',
-        scope: raw.scope as ReviewScope,
-        reviewSubject: asOptionalString(raw.reviewSubject),
+        latestChanges: obj.latestChanges,
+        reviewScope: obj.reviewScope as ReviewScope,
+        ...(typeof obj.rebuttals === 'string' ? { rebuttals: obj.rebuttals } : {}),
       };
     }
-    case 'BOSS_REPLY': {
-      if (typeof raw.answer !== 'string') throw new Error('BOSS_REPLY requires answer');
-      return { type: 'BOSS_REPLY', answer: raw.answer };
+    return null;
+  }
+
+  if (eventType === 'BOSS_INTERRUPT') {
+    if (
+      typeof obj.targetId === 'string' &&
+      BOSS_INTERRUPT_TARGET_IDS.has(obj.targetId)
+    ) {
+      return { type: 'BOSS_INTERRUPT', targetId: obj.targetId as never };
     }
-    case 'BOSS_INTERRUPT': {
-      if (!INTERRUPT_TARGET_IDS.includes(raw.targetId as (typeof INTERRUPT_TARGET_IDS)[number])) {
-        throw new Error('BOSS_INTERRUPT requires a valid targetId');
-      }
-      return { type: 'BOSS_INTERRUPT', targetId: raw.targetId as string };
-    }
-    default:
-      throw new Error(`classifier selected unknown event ${stringify(raw.type)}`);
-  }
-}
-
-async function classifyBossInput(
-  ports: PlaybookPorts,
-  text: string,
-  snapshot: unknown,
-  signal: AbortSignal,
-): Promise<DiscussionEvent | undefined> {
-  if (text.trim().length === 0) return undefined;
-  assertNotAborted(signal);
-  const response = await ports.callJudge(classifierPrompt(text, snapshot), signal);
-  assertNotAborted(signal);
-  return parseBossEvent(parseJsonObject(response, 'classifier'));
-}
-
-function inputFromOptions(options: PlaybookRuntimeOptions): DiscussionMachineInput {
-  return {
-    players: { ...DEFAULT_PLAYER_BINDING, ...(options.players ?? {}) },
-    hostLlm: options.hostLlm,
-    participantLlm: options.participantLlm,
-  };
-}
-
-export function createPlaybookRuntime(options: PlaybookRuntimeOptions): PlaybookRuntime {
-  const runtimeOptions = options;
-  let ports: PlaybookPorts | undefined;
-  let actor: ReturnType<typeof createActor> | undefined;
-  let emissions: Promise<void> = Promise.resolve();
-  let lastState: string | undefined;
-  let lastEvent: string | undefined;
-  let pendingCaptains = 0;
-  let wakeQuiescence: (() => void) | undefined;
-  let disposed = false;
-  let activeTurnSignal: AbortSignal | undefined;
-
-  function enqueueEmission(work: () => Promise<void>): void {
-    emissions = emissions.then(work, work);
+    return null;
   }
 
-  function wake(): void {
-    const fn = wakeQuiescence;
-    wakeQuiescence = undefined;
-    if (fn) fn();
+  if (eventType === 'BOSS_REPLY') {
+    return typeof obj.answer === 'string'
+      ? { type: 'BOSS_REPLY', answer: obj.answer }
+      : null;
   }
 
-  function strategyFor(input: CaptainInput): AdjudicationStrategy {
-    return (
-      runtimeOptions.adjudicationStrategies?.[input.sourceItem] ??
-      runtimeOptions.adjudicationStrategies?.[stateValueOf(actor?.getSnapshot()) as CaptainStateId] ??
-      'llm-judge'
+  return null;
+}
+
+function buildAdjudicatorPrompt(input: CaptainInput, playerOutput: string): string {
+  const lines: string[] = [];
+  lines.push('You are the guard adjudicator for a playbook state machine.');
+  lines.push(
+    `The player "${input.player}" produced the output below for source item ${input.sourceItem}.`,
+  );
+  lines.push('Choose exactly one guard whose description matches that output.');
+  lines.push('');
+  lines.push('Player output (verbatim):');
+  lines.push('"""');
+  lines.push(playerOutput);
+  lines.push('"""');
+  lines.push('');
+  lines.push(
+    'Guards (choose exactly one; the descriptions are authoritative and must be applied as written):',
+  );
+  for (const [guard, description] of Object.entries(input.result)) {
+    lines.push(`- ${guard}: ${description}`);
+  }
+  lines.push('');
+  lines.push(
+    'Reply with a single JSON object: { "guard": "<one of the guard names above>", ...any payload fields the chosen guard description requires }.',
+  );
+  return lines.join('\n');
+}
+
+function parseAdjudication(raw: string, input: CaptainInput): CaptainOutput {
+  const obj = extractJson(raw);
+  if (!obj || typeof obj.guard !== 'string' || obj.guard.trim() === '') {
+    throw new Error('adjudicator returned empty or malformed JSON');
+  }
+
+  const guard = obj.guard;
+  if (!Object.prototype.hasOwnProperty.call(input.result, guard)) {
+    throw new Error(
+      `adjudicator returned undeclared guard "${guard}" for ${input.sourceItem}`,
     );
   }
 
-  function buildActor(): void {
-    if (!ports) throw new Error('Playbook runtime init requires ports');
-    const boundPorts = ports;
-    const machine = discussMachine.provide({
-      actors: {
-        captain: fromPromise<CaptainOutput, CaptainInput>(async ({ input, signal }) => {
-          pendingCaptains += 1;
-          const turnSignal = activeTurnSignal ?? signal;
-          try {
-            assertNotAborted(turnSignal);
-            const playerId = resolvePlayerId(input, {
-              ...DEFAULT_PLAYER_BINDING,
-              ...(runtimeOptions.players ?? {}),
-            });
-            const result: PlayerResult = await boundPorts.callPlayer(
-              playerId,
-              composePlayerPrompt(input),
-              turnSignal,
-            );
-            assertNotAborted(turnSignal);
-            if (result.status !== 'ok') {
-              throw new Error(result.error ?? `player ${playerId} returned ${result.status}`);
-            }
-            const finalText = result.finalText ?? '';
-            return await adjudicate(boundPorts, input, finalText, strategyFor(input), turnSignal);
-          } finally {
-            pendingCaptains -= 1;
-            wake();
-          }
-        }),
-      },
-    });
-    actor = createActor(machine, { input: inputFromOptions(runtimeOptions) });
-    lastState = undefined;
-    actor.subscribe((snapshot) => {
-      const to = stateValueOf(snapshot);
-      const from = lastState;
-      if (from === undefined) {
-        lastState = to;
-        return;
-      }
-      if (to === from) return;
-      const event = lastEvent;
-      lastState = to;
-      enqueueEmission(async () => {
-        await boundPorts.emitStatus(`discuss entered ${to}`, {
-          from,
-          to,
-          event,
-          ...(to === 'failed' ? { lastError: snapshot.context.lastError } : {}),
-        });
-        if (to === 'failed' && snapshot.context.lastError !== undefined) {
-          await boundPorts.emitStatus('discuss failed', { lastError: snapshot.context.lastError });
-        }
-        await boundPorts.emitTelemetry({
-          topic: 'playbook.fsm.state',
-          payload: { from, to, event },
-        });
-      });
-      wake();
-    });
-    actor.start();
+  const output: CaptainOutput = { guard };
+  for (const field of requiredFieldsFor(input.result[guard])) {
+    const value = obj[field];
+    if (
+      value === undefined ||
+      value === null ||
+      (typeof value === 'string' && value.trim() === '')
+    ) {
+      throw new Error(
+        `adjudicator response for guard "${guard}" missing required field "${field}"`,
+      );
+    }
+    output[field] = value;
   }
 
-  async function drain(): Promise<void> {
-    await emissions;
+  if (
+    'reviewScope' in output &&
+    typeof output.reviewScope === 'string' &&
+    !REVIEW_SCOPES.has(output.reviewScope)
+  ) {
+    throw new Error(`adjudicator returned invalid reviewScope "${output.reviewScope}"`);
   }
 
-  async function waitForQuiescence(signal: AbortSignal, tolerateAbort: boolean): Promise<void> {
-    for (;;) {
-      if (!tolerateAbort) assertNotAborted(signal);
-      const snapshot = actor?.getSnapshot();
-      if (!snapshot) return;
-      const value = stateValueOf(snapshot);
-      if ((QUIESCENT_STATES.has(value) || !CAPTAIN_STATES.has(value) || isFinalSnapshot(snapshot)) && pendingCaptains === 0) {
-        await drain();
-        return;
-      }
-      await new Promise<void>((resolve) => {
-        wakeQuiescence = resolve;
-        setTimeout(resolve, 0);
-      });
+  return output;
+}
+
+function combineSignals(
+  a: AbortSignal | undefined,
+  b: AbortSignal | undefined,
+): AbortSignal {
+  const signals = [a, b].filter((signal): signal is AbortSignal =>
+    signal instanceof AbortSignal,
+  );
+  if (signals.length === 0) return new AbortController().signal;
+  if (signals.length === 1) return signals[0];
+  return AbortSignal.any(signals);
+}
+
+function normalizeErrorCompact(
+  err: unknown,
+): { name: string; message: string } | undefined {
+  if (err === undefined || err === null) return undefined;
+  if (err instanceof Error) return { name: err.name, message: err.message };
+  if (typeof err === 'object') {
+    const obj = err as Record<string, unknown>;
+    if (typeof obj.message === 'string') {
+      return {
+        name: typeof obj.name === 'string' ? obj.name : 'Error',
+        message: obj.message,
+      };
     }
   }
+  return { name: 'Error', message: String(err) };
+}
 
-  return {
-    async init(nextPorts: PlaybookPorts): Promise<void> {
-      ports = nextPorts;
-      disposed = false;
-      buildActor();
-      await drain();
-    },
+function normalizeErrorFull(
+  err: unknown,
+): { name: string; message: string; stack?: string } | undefined {
+  const compact = normalizeErrorCompact(err);
+  if (!compact) return undefined;
+  if (err instanceof Error && err.stack !== undefined) {
+    return { ...compact, stack: err.stack };
+  }
+  if (typeof err === 'object' && err !== null) {
+    const stack = (err as Record<string, unknown>).stack;
+    if (typeof stack === 'string') return { ...compact, stack };
+  }
+  return compact;
+}
 
-    async handleBossInput(turn: { text: string; signal: AbortSignal }): Promise<void> {
-      if (disposed) throw new Error('Playbook runtime has been disposed');
-      if (!ports || !actor) throw new Error('Playbook runtime has not been initialized');
-      if (turn.text.trim().length === 0) return;
-      let event: DiscussionEvent | undefined;
+function pendingQuestionFromContext(
+  context: Record<string, unknown>,
+): { player: string; question: string; resumeStateId: string } | undefined {
+  const pending = context.pendingBossQuestion;
+  if (pending === undefined || pending === null || typeof pending !== 'object') {
+    return undefined;
+  }
+  const obj = pending as Record<string, unknown>;
+  if (
+    typeof obj.player === 'string' &&
+    typeof obj.question === 'string' &&
+    typeof obj.resumeStateId === 'string'
+  ) {
+    return {
+      player: obj.player,
+      question: obj.question,
+      resumeStateId: obj.resumeStateId,
+    };
+  }
+  return undefined;
+}
+
+function formatStateStatus(to: string, context: Record<string, unknown>): string {
+  if (to === 'awaitBossReply') {
+    const pending = pendingQuestionFromContext(context);
+    return `${pending?.player ?? 'Player'} asks: ${pending?.question ?? ''}`;
+  }
+  return STATE_DESCRIPTIONS[to] ?? to;
+}
+
+function telemetryPayload(
+  from: string | undefined,
+  to: string,
+  event: unknown,
+  context: Record<string, unknown>,
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    from: from ?? null,
+    to,
+    event:
+      event !== null &&
+      typeof event === 'object' &&
+      !Array.isArray(event) &&
+      'type' in event
+        ? (event as { type: unknown }).type
+        : event,
+  };
+  const pending = pendingQuestionFromContext(context);
+  if (pending) payload.pendingBossQuestion = pending;
+  if (to === 'failed') payload.lastError = normalizeErrorFull(context.lastError);
+  return payload;
+}
+
+function isQuiescent(snapshot: { value: unknown; status?: string }): boolean {
+  return (
+    snapshot.status === 'done' ||
+    (typeof snapshot.value === 'string' && QUIESCENT_STATES.has(snapshot.value))
+  );
+}
+
+export const createPlaybookRuntime: PlaybookRuntimeFactory<
+  PlaybookRuntimeOptions
+> = (options) => {
+  const binding: Record<PlayerName, string> = {
+    ...DEFAULT_PLAYER_BINDING,
+    ...(options.playerBinding ?? {}),
+  };
+  const fsmInput: DiscussInput = {
+    host: options.host,
+    participant: options.participant,
+    committer: options.committer,
+  };
+
+  let ports: PlaybookPorts | undefined;
+  let actor: ReturnType<typeof createActor> | undefined;
+  let currentSignal: AbortSignal | undefined;
+  let adjudicatorError: unknown;
+  let previousValue: string | undefined;
+  let emissionChain: Promise<void> = Promise.resolve();
+
+  const enqueue = (fn: () => Promise<void>): void => {
+    emissionChain = emissionChain.then(() => fn());
+  };
+  const flush = (): Promise<void> => emissionChain;
+  const requirePorts = (): PlaybookPorts => {
+    if (!ports) throw new Error('discuss runtime: init(ports) must be called first');
+    return ports;
+  };
+
+  const captain = fromPromise<CaptainOutput, CaptainInput>(
+    async ({ input, signal }) => {
+      const runtimePorts = requirePorts();
+      const combined = combineSignals(signal, currentSignal);
+      combined.throwIfAborted();
+
+      const playerId = resolvePlayerId(input, binding);
+      const prompt = composePlayerPrompt(input);
+      const result = await runtimePorts.callPlayer(playerId, prompt, combined);
+      if (result.status !== 'ok') {
+        throw new Error(
+          `player "${playerId}" returned status "${result.status}"${
+            result.error ? `: ${result.error}` : ''
+          }`,
+        );
+      }
+      combined.throwIfAborted();
+
       try {
-        event = await classifyBossInput(ports, turn.text, actor.getSnapshot(), turn.signal);
+        return parseAdjudication(
+          await runtimePorts.callJudge(
+            buildAdjudicatorPrompt(input, result.finalText ?? ''),
+            combined,
+          ),
+          input,
+        );
       } catch (error) {
-        await drain();
-        if (turn.signal.aborted) return;
+        if (!combined.aborted) adjudicatorError = error;
         throw error;
       }
-      if (!event) {
-        await drain();
+    },
+  );
+
+  const providedMachine = discussMachine.provide({ actors: { captain } });
+
+  const inspect = (event: InspectionEvent): void => {
+    if (event.type !== '@xstate.snapshot') return;
+    if (actor === undefined || event.actorRef !== actor) return;
+    const snapshot = event.snapshot as SnapshotFrom<typeof discussMachine>;
+    if (typeof snapshot.value !== 'string') return;
+    const to = snapshot.value;
+    const from = previousValue;
+    if (from === to) return;
+    previousValue = to;
+
+    const runtimePorts = ports;
+    if (!runtimePorts) return;
+    const context = snapshot.context as Record<string, unknown>;
+
+    enqueue(() =>
+      runtimePorts.emitTelemetry({
+        topic: TELEMETRY_TOPIC,
+        payload: telemetryPayload(from, to, event.event, context),
+      }),
+    );
+    enqueue(() =>
+      runtimePorts.emitStatus(
+        formatStateStatus(to, context),
+        to === 'failed'
+          ? { lastError: normalizeErrorCompact(context.lastError) }
+          : undefined,
+      ),
+    );
+  };
+
+  const startActor = (): void => {
+    previousValue = undefined;
+    actor = createActor(providedMachine, { input: fsmInput, inspect });
+    actor.start();
+  };
+
+  const driveToQuiescence = (): Promise<void> =>
+    new Promise((resolve) => {
+      const live = actor;
+      if (!live) {
+        resolve();
         return;
       }
-      if (isFinalSnapshot(actor.getSnapshot())) {
-        actor.stop();
-        buildActor();
+
+      let settled = false;
+      let subscription: { unsubscribe(): void } | undefined;
+      const finish = (): void => {
+        if (settled) return;
+        settled = true;
+        subscription?.unsubscribe();
+        resolve();
+      };
+      const check = (snapshot: { value: unknown; status?: string }): void => {
+        if (isQuiescent(snapshot)) finish();
+      };
+
+      subscription = live.subscribe(check);
+      check(live.getSnapshot());
+    });
+
+  const classify = async (
+    text: string,
+    signal: AbortSignal,
+  ): Promise<DiscussEvent | null> => {
+    const live = actor;
+    if (!live) throw new Error('discuss runtime: actor is not initialized');
+    const snapshot = live.getSnapshot() as SnapshotFrom<typeof discussMachine>;
+    const context = snapshot.context as Record<string, unknown>;
+    const prompt = buildClassifierPrompt(text, {
+      state: String(snapshot.value),
+      pendingQuestion: pendingQuestionFromContext(context)?.question,
+    });
+    const raw = await requirePorts().callJudge(prompt, signal);
+    return parseClassification(raw);
+  };
+
+  return {
+    async init(hostPorts: PlaybookPorts): Promise<void> {
+      ports = hostPorts;
+      startActor();
+      await flush();
+    },
+
+    async handleBossInput(turn: {
+      text: string;
+      signal: AbortSignal;
+    }): Promise<void> {
+      requirePorts();
+      if (!actor) {
+        throw new Error(
+          'discuss runtime: init(ports) must be called before handleBossInput',
+        );
       }
-      lastEvent = event.type;
-      activeTurnSignal = turn.signal;
-      actor.send(event);
+      if (turn.text.trim().length === 0) {
+        await flush();
+        return;
+      }
+
+      currentSignal = turn.signal;
+      adjudicatorError = undefined;
       try {
-        await waitForQuiescence(turn.signal, true);
-      } catch (error) {
-        await drain();
-        if (turn.signal.aborted) return;
-        throw error;
+        const event = await classify(turn.text, turn.signal);
+        if (!event) {
+          await flush();
+          return;
+        }
+
+        if (actor.getSnapshot().status === 'done') {
+          actor.stop();
+          startActor();
+        }
+
+        actor.send(event);
+        await driveToQuiescence();
+        await flush();
+
+        if (adjudicatorError !== undefined) {
+          const error = adjudicatorError;
+          adjudicatorError = undefined;
+          throw error;
+        }
       } finally {
-        activeTurnSignal = undefined;
+        currentSignal = undefined;
       }
-      await drain();
     },
 
     async dispose(): Promise<void> {
-      disposed = true;
-      actor?.stop();
-      actor = undefined;
-      wake();
-      await drain();
+      if (actor) {
+        actor.stop();
+        actor = undefined;
+      }
+      await flush();
+      ports = undefined;
     },
   };
-}
-
-const defaultFactory: PlaybookRuntimeFactory<PlaybookRuntimeOptions> = createPlaybookRuntime;
+};
 
 export const _internal = {
   composePlayerPrompt,
-  defaultPlayerBinding: DEFAULT_PLAYER_BINDING,
-  committerAliasResolution: COMMITTER_ALIAS_RESOLUTION,
-  classifyBossInput,
-  adjudicate,
+  resolvePlayerId,
+  requiredFieldsFor,
+  extractJson,
+  buildClassifierPrompt,
+  parseClassification,
+  buildAdjudicatorPrompt,
+  parseAdjudication,
+  combineSignals,
+  DEFAULT_PLAYER_BINDING,
+  ALIAS_RESOLUTION,
+  STATE_DESCRIPTIONS,
+  CAPTAIN_STATES,
+  CAPTAIN_STATE_IDS,
+  QUIESCENT_STATES,
+  BOSS_INTERRUPT_TARGETS,
+  CONTINUATION_PREAMBLE,
+  TELEMETRY_TOPIC,
 };
 
-export default defaultFactory;
+export default createPlaybookRuntime;
