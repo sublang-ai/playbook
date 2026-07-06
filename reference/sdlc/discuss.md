@@ -27,9 +27,10 @@ In each round, both players each shall make a new proposal, considering the othe
 When both players state the end of initial discussion, Captain shall ask Host to write spec items or DRs according to the agreement, along with the following prompt:
 > Update @specs/map.md to reflect your changes (if any) when done.
 
-Captain shall ask Participant to review spec changes in rounds.
+When Committer commits at the end of the initial discussion, or when Host addresses findings with changes, Captain shall ask Participant to review the spec changes in a round, without waiting for Boss.
 In the first step of each round, Participant shall review the latest changes, address any rebuttals, and raise any findings.
 In the second step of each round, Host shall address any findings.
+Rounds continue until Participant raises no findings.
 
 While any new or updated spec item (under @specs/user, @specs/dev or @specs/test) is under review, Captain shall include the following prompt for Participant:
 > Verify any new or updated spec items are:
