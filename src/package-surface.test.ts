@@ -109,10 +109,11 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   ) as { bin: Record<string, string>; exports: Record<string, unknown> };
   const CODE_BASE = 'reference/sdlc/code.playbook/';
 
-  it('declares the playbook bin and code/registry export, not the retired surfaces', () => {
+  it('declares the playbook bin and registry exports, not the retired surfaces', () => {
     expect(manifest.bin).toHaveProperty('playbook');
     expect(manifest.bin).not.toHaveProperty('playbook-code');
     expect(manifest.exports).toHaveProperty('./code/registry');
+    expect(manifest.exports).toHaveProperty('./discuss/registry');
     expect(manifest.exports).not.toHaveProperty('./code/tmux-play');
   });
 
@@ -136,6 +137,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       `${CODE_BASE}bin/playbook.js`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
+      'reference/sdlc/discuss.playbook/discuss.registry.js',
+      'reference/sdlc/discuss.playbook/discuss.registry.d.ts',
     ]) {
       expect(packed, `tarball missing ${artifact}`).toContain(artifact);
     }

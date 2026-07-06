@@ -28,7 +28,7 @@ import discussMachine, {
   type CaptainOutput,
   type DiscussEvent,
   type DiscussInput,
-} from './discuss.fsm.ts';
+} from './discuss.fsm.js';
 
 import type {
   PlayerResult,

@@ -162,11 +162,13 @@ Removing or renaming a published `slc/*` path shall be released under
 ### RELEASE-20
 
 The published package shall expose the generic `playbook` executable
-through `package.json` `bin` and the CODE registry module through a
-public `exports['./code/registry']` subpath, both backed by files
-listed in `files`, as public, semver-stable surfaces.
-Removing or renaming the `playbook` bin or the
-`@sublang/playbook/code/registry` export shall be released under
+through `package.json` `bin` and each bundled playbook's registry
+module — CODE and DISCUSS — through public
+`exports['./code/registry']` and `exports['./discuss/registry']`
+subpaths, all backed by files listed in `files`, as public,
+semver-stable surfaces.
+Removing or renaming the `playbook` bin or a
+`@sublang/playbook/<id>/registry` export shall be released under
 [RELEASE-1](#release-1) SemVer.
 The removal of the `playbook-code` bin, the
 `@sublang/playbook/code/tmux-play` export, and the bundled legacy CODE

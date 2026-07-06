@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The DISCUSS playbook ships in the package.** `reference/sdlc/discuss.playbook/` carries the slc-compiled artifacts (`discuss.gears.md`, `discuss.fsm.ts`, `discuss.playbook.ts`) compiled from `reference/sdlc/discuss.md` by `slc playbook` through slc's pinned compiled meta-phase playbooks, plus the hand-written registry entry with a turn-summary policy. The registry module is a public export — configure `playbooks.discuss.from: "@sublang/playbook/discuss/registry"` — and the config template documents the block ([RELEASE-20](specs/dev/release.md#release-20), [RELEASE-21](specs/test/release.md#release-21)).
+
 ### Fixed
 
 - **The generic `playbook` launcher now rejects the reserved `captain` role before launching.** A registry entry declaring `requiredRoleIds` containing `captain` (e.g. a compiler-phase playbook whose linked runtime binds its sole player as `captain`) previously composed a tmux-play session that could silently lose the Captain console pane — the session came up with only the other playbooks' player panes and no boss prompt, with no diagnostic. The launcher now rejects a manifest `requiredRoleIds` or a `playbooks.<id>.players` map that names `captain` — reserved for the tmux-play host Captain — with a pre-launch diagnostic naming the reserved role ([PBCLI-9](specs/dev/playbook-cli.md#pbcli-9), [PBCLI-15](specs/test/playbook-cli.md#pbcli-15)).

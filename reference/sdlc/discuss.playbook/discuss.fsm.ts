@@ -68,8 +68,8 @@ export type DiscussEvent =
   | {
       type: 'START_DISCUSSION';
       topic: string;
-      hostLlm: string;
-      participantLlm: string;
+      hostLlm?: string;
+      participantLlm?: string;
     }
   | {
       type: 'START_REVIEW';
