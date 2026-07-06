@@ -31,6 +31,9 @@ const ADAPTER_SHORTHANDS = ['claude', 'codex'];
 // PBCLI-8: launcher-owned keys inside a `playbooks.<id>` block; every other
 // key belongs to that playbook's option slice.
 const PLAYBOOK_LAUNCHER_KEYS = ['from', 'command', 'players'];
+// PBCLI-9: the bare `captain` id names the tmux-play host Captain, so no
+// playbook-local role may take it.
+const RESERVED_CAPTAIN_ROLE_ID = 'captain';
 const READINESS_FAILURE_EXIT_CODE = 2;
 const COMPOSITION_FAILURE_EXIT_CODE = 1;
 
@@ -234,8 +237,25 @@ export async function composeGenericConfig(top, loadModule) {
     }
     seenCommands.set(command, id);
 
+    // PBCLI-9: reject the reserved role before the coverage checks below, so
+    // an entry requiring `captain` names the real fault rather than a missing
+    // players entry.
+    if (entry.requiredRoleIds.includes(RESERVED_CAPTAIN_ROLE_ID)) {
+      throw new Error(
+        `playbooks.${id} requires local role "${RESERVED_CAPTAIN_ROLE_ID}", ` +
+          'which is reserved for the tmux-play Captain',
+      );
+    }
+
     const playersMap = requireObject(block.players, `playbooks.${id}.players`);
     const roles = Object.keys(playersMap);
+    if (roles.includes(RESERVED_CAPTAIN_ROLE_ID)) {
+      throw new Error(
+        `playbooks.${id}.players.${RESERVED_CAPTAIN_ROLE_ID} binds local ` +
+          `role "${RESERVED_CAPTAIN_ROLE_ID}", which is reserved for the ` +
+          'tmux-play Captain',
+      );
+    }
     if (roles.length === 0) {
       throw new Error(`playbooks.${id} resolves no visible local role`);
     }

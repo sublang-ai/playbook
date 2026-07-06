@@ -67,7 +67,9 @@ exposing no valid registry entry, a `playbooks.<id>` key not equal to
 the imported manifest's `id`, two playbooks sharing an `id`, two
 playbooks resolving to the same effective command, a `profiles` id
 colliding with the `claude` or `codex` adapter shorthand, a full block
-`profile` key naming no known profile, a manifest required role with no
+`profile` key naming no known profile, a manifest `requiredRoleIds`
+naming the reserved `captain` role, a `playbooks.<id>.players` map
+binding the reserved `captain` role, a manifest required role with no
 generated roster id, and an enabled playbook with no visible local
 role — the test suite shall fail unless the
 command rejects each before launching tmux-play with a diagnostic

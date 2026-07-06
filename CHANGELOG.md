@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The generic `playbook` launcher now rejects the reserved `captain` role before launching.** A registry entry declaring `requiredRoleIds` containing `captain` (e.g. a compiler-phase playbook whose linked runtime binds its sole player as `captain`) previously composed a tmux-play session that could silently lose the Captain console pane — the session came up with only the other playbooks' player panes and no boss prompt, with no diagnostic. The launcher now rejects a manifest `requiredRoleIds` or a `playbooks.<id>.players` map that names `captain` — reserved for the tmux-play host Captain — with a pre-launch diagnostic naming the reserved role ([PBCLI-9](specs/dev/playbook-cli.md#pbcli-9), [PBCLI-15](specs/test/playbook-cli.md#pbcli-15)).
+
 ## [0.9.0] - 2026-06-30
 
 ### Added
