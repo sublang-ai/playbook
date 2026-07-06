@@ -274,12 +274,19 @@ function resolvePlayerId(
   }
 }
 
+// A `result` description names required payload fields in an
+// "Output shall include ..." sentence. One sentence can name several
+// fields — DISCUSS-5's wroteChanges names both `latestChanges` and
+// `reviewScope` — so every backticked `field:` token in the sentence
+// span is required, not just the one adjacent to the phrase.
 function requiredFieldsFor(description: string): string[] {
   const fields: string[] = [];
-  const re = /Output shall include `([A-Za-z_][A-Za-z0-9_]*)\s*:/g;
-  let match: RegExpExecArray | null;
-  while ((match = re.exec(description)) !== null) {
-    fields.push(match[1]);
+  const sentence = /Output shall include([^.]*)/g;
+  let span: RegExpExecArray | null;
+  while ((span = sentence.exec(description)) !== null) {
+    for (const field of span[1].matchAll(/`([A-Za-z_][A-Za-z0-9_]*)\s*:/g)) {
+      fields.push(field[1]);
+    }
   }
   return fields;
 }
@@ -455,9 +462,15 @@ function parseAdjudication(raw: string, input: CaptainInput): CaptainOutput {
     );
   }
 
-  const output: CaptainOutput = { guard };
+  // Per slc/link.md §Captain adjudication the judge answers
+  // `{ guard, …payloadFields }` and the runtime validates the required
+  // fields. Every payload field is carried through — dropping the
+  // non-required ones would blind FSM fallbacks such as
+  // `outputOf(event).reviewScope ?? context.reviewScope` on guards whose
+  // description says "may include".
+  const output: CaptainOutput = { ...obj, guard };
   for (const field of requiredFieldsFor(input.result[guard])) {
-    const value = obj[field];
+    const value = output[field];
     if (
       value === undefined ||
       value === null ||
@@ -467,7 +480,6 @@ function parseAdjudication(raw: string, input: CaptainInput): CaptainOutput {
         `adjudicator response for guard "${guard}" missing required field "${field}"`,
       );
     }
-    output[field] = value;
   }
 
   if (
@@ -506,8 +518,20 @@ function normalizeErrorCompact(
         message: obj.message,
       };
     }
+    // A message-less object (e.g. a malformed CaptainOutput remembered by
+    // the FSM's failure actions) would String() to "[object Object]",
+    // hiding the very payload that explains the failure. Serialize it.
+    return { name: 'Error', message: stringifyCompact(err) };
   }
   return { name: 'Error', message: String(err) };
+}
+
+function stringifyCompact(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function normalizeErrorFull(
@@ -796,6 +820,8 @@ export const _internal = {
   buildAdjudicatorPrompt,
   parseAdjudication,
   combineSignals,
+  normalizeErrorCompact,
+  normalizeErrorFull,
   DEFAULT_PLAYER_BINDING,
   ALIAS_RESOLUTION,
   STATE_DESCRIPTIONS,
