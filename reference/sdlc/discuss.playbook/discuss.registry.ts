@@ -8,15 +8,11 @@
 // through slc's pinned compiled meta-phase playbooks and verified by slc's
 // generated compilation-correctness tests; this entry is hand-written host
 // infrastructure, out of slc's compile scope (slc DR-009).
-//
-// This module is loaded directly by Node's type stripping (it is not part of
-// the package build), so it uses extension-bearing .ts imports and erasable
-// syntax only.
 
 import type { PlaybookRuntime } from '@sublang/playbook/runtime';
 
-import createPlaybookRuntime from './discuss.playbook.ts';
-import type { PlaybookRuntimeOptions } from './discuss.playbook.ts';
+import createPlaybookRuntime from './discuss.playbook.js';
+import type { PlaybookRuntimeOptions } from './discuss.playbook.js';
 
 export interface RegistryPlayer {
   id: string;

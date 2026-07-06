@@ -50,8 +50,9 @@ The test suite shall fail unless `npm pack --dry-run` lists the
 Verifies: [RELEASE-20](../dev/release.md#release-20)
 
 The test suite shall fail unless `package.json` declares a `playbook`
-bin and no `playbook-code` bin, declares an
-`exports['./code/registry']` subpath and no
-`exports['./code/tmux-play']` subpath, and `npm pack --dry-run` lists
-the `playbook` launcher entry and the `code.registry` `.js` and
-`.d.ts` artifacts among the packed contents.
+bin and no `playbook-code` bin, declares
+`exports['./code/registry']` and `exports['./discuss/registry']`
+subpaths and no `exports['./code/tmux-play']` subpath, and
+`npm pack --dry-run` lists the `playbook` launcher entry and the
+`code.registry` and `discuss.registry` `.js` and `.d.ts` artifacts
+among the packed contents.

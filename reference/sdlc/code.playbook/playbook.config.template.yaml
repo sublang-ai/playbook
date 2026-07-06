@@ -56,3 +56,13 @@ playbooks:
       coder: claude-opus-1m
       reviewer: codex-gpt
     committer: coder
+
+# The DISCUSS playbook: two agents converge on spec items or decision
+# records. `committer` picks which player runs Committer commits
+# (default: host).
+#  discuss:
+#    from: "@sublang/playbook/discuss/registry"
+#    players:
+#      host: claude-opus
+#      participant: codex-gpt
+#    committer: host
