@@ -48,10 +48,11 @@ Verifies: [CAPTAIN-3](../user/playbook-captain.md#captain-3), [CAPTAIN-4](../use
 Where the test suite drives CODE under the Playbook Captain shell,
 the test suite shall fail unless sub-runtime status and telemetry
 are passed through in order, `playbook.fsm.state` telemetry is
-mirrored into the shell ledger before pass-through, shell FSM
+mirrored through its normalized state descriptor into the shell ledger
+before pass-through, shell FSM
 telemetry uses `playbook.captain.fsm.state` with `from`, `to`,
-`event`, and ledger fields, the active registry entry's idle and
-`parkStateIds` states park the engagement, a later same-playbook
+`event`, and ledger fields, the active registry entry's quiescent
+parked states park the engagement, a later same-playbook
 turn resumes the same runtime instance, CODE final state disposes
 the engagement only after the active turn settles, and router
 `dismiss` disposes the engagement and returns the shell to chat;
@@ -72,9 +73,9 @@ Where the test suite initializes the Playbook Captain shell with
 CODE enabled through a `captain.options.playbooks.code` entry whose
 `from` resolves the CODE registry module, the test suite shall fail
 unless the loaded CODE registry entry carries id `code`, command
-`code`, `requiredRoleIds` `coder` and `reviewer`, idle state
-`ready`, final state `done`, and park states `failed` and
-`awaitBossReply`; the entry's option slice
+`code`, `requiredRoleIds` `coder` and `reviewer`, and no manifest
+lifecycle state-id fields; lifecycle behavior shall follow runtime
+results and descriptors; the entry's option slice
 (`captain.options.playbooks.code.options`) is validated by the entry
 during shell `init`; invalid CODE options cause `init` to reject;
 valid CODE options do not construct a runtime until engagement;
@@ -184,8 +185,9 @@ suite shall fail unless engagement creates a new UUID, parking and
 same-runtime resume retain it, final completion or dismissal followed
 by re-engagement creates a different UUID, and an injected collision
 rejects.
-The runtime init argument, bounded ledger, shell FSM telemetry, and
-passed-through `playbook.trace` shall carry the active id.
+The root runtime init argument, bounded ledger, shell FSM telemetry,
+and passed-through `playbook.trace` shall carry the active id as both
+session and root-session id with depth zero.
 The shell bridge shall forward `resume: false` and explicit tokens to
 the bound host player and preserve the host's returned `resumeToken`;
 a real tmux-play integration shall prove an old host-player token is
@@ -199,3 +201,25 @@ contain neither session ids, resume tokens, nor trace payloads.
 When runtime initialization rejects, the test shall fail unless the
 shell disposes the partial runtime, clears it, and a later command
 constructs a different engagement instead of reusing the failed one.
+
+## Nested playbook stack
+
+### CAPTAIN-30
+Verifies: [CAPTAIN-28](../user/playbook-captain.md#captain-28), [CAPTAIN-29](../dev/playbook-captain.md#captain-29)
+
+Where the integration suite drives test parent and child runtimes
+through the real Playbook Captain shell, the test suite shall fail
+unless an immediate child completion resumes its parent in the same
+Boss turn, a parked child settles that turn and receives the next Boss
+turn, and child completion then pops, restores parent visibility, and
+continues the parent without reconstructing it.
+Every frame shall fail unless it receives a distinct UUID and the
+correct root, parent, call, and depth fields; trace pass-through shall
+preserve those fields and order child disposal before the parent's call
+finish.
+The test suite shall fail unless disabled targets, active-path cycles,
+a second child from one frame, initialization failure, and stale return
+ids reject without corrupting the caller; child dismissal
+resumes the parent with an aborted result; root dismissal and teardown
+dispose leaf to root; only the leaf receives Boss text and visibility;
+and no visible chat, status, or summary exposes stack or session ids.

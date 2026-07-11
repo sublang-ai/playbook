@@ -24,37 +24,33 @@ Each entry shall be a manifest carrying `id` (stable playbook id and
 default options-namespace key), `command` (default slash command
 without `/`, overridable by config), `intent` (routing description
 for hidden Captain selection), `requiredRoleIds` (local role ids the
-runtime may pass to `callPlayer`), `idleStateId` (the idle
-return-to-Boss state id), `finalStateId` (the final-completion state
-id), `parkStateIds` (additional state ids that park the engagement
-and wait for another Boss turn), an optional `summaryPolicy`
+runtime may pass to `callPlayer`), an optional `summaryPolicy`
 ([CAPTAIN-20](#captain-20)), a `validateOptions` function for that
 entry's own option slice, and a `createRuntime` factory for the
 linked runtime.
 The CODE entry shall declare `id` `code`, `command` `code`, intent
 text for a software-development / SDLC coding workflow,
-`requiredRoleIds` `coder` and `reviewer`, `idleStateId` `ready`,
-`finalStateId` `done`, and `parkStateIds` `failed` and
-`awaitBossReply`.
+and `requiredRoleIds` `coder` and `reviewer`.
 CODE's Committer alias shall remain a CODE-owned option validated by
 the CODE entry ([PBRT-30](playbook-runtime.md#pbrt-30)), not a
 shell-level concept.
-The shell shall take each playbook's idle / final / park state ids,
-required roles, summary policy, option validator, and runtime factory
+The shell shall take each playbook's required roles, summary policy,
+option validator, and runtime factory
 from its manifest entry.
 The shell shall take each enabled playbook's option slice from its
 normalized `captain.options.playbooks.<id>` config
 ([CAPTAIN-16](#captain-16)) validated against that entry, and shall
 derive the role binding from the entry's `id` and roles
 ([CAPTAIN-10](#captain-10)).
-The shell shall not hardcode CODE state ids such as `failed` or
-`awaitBossReply` or CODE-specific summary labels.
-The shell shall support one active engagement and shall keep only
-a bounded control ledger: active playbook id, active playbook session
-id, shell mode, latest
-sub-runtime state id, pending Boss question when mirrored from
-telemetry, normalized last error when mirrored from telemetry, and
-last route decision.
+The shell shall use run-result outcomes and normalized descriptor tags
+for lifecycle and shall not hardcode CODE state ids or CODE-specific
+summary labels.
+The shell shall support one active root engagement with the nested LIFO
+frames permitted by [CAPTAIN-29](#captain-29) and shall keep only a
+bounded control ledger: root and leaf playbook/session ids, bounded
+frame path and depth, shell mode, latest leaf runtime state descriptor,
+pending Boss questions when mirrored from telemetry, normalized last
+error when mirrored from telemetry, and last route decision.
 The normalized last error shall carry only `{ name, message }`.
 The shell shall not duplicate the full Boss conversation in its
 ledger.
@@ -88,7 +84,7 @@ closed decision: `chat`, `dispatch`, `sub`, or `dismiss`.
 When the router chooses `dispatch`, the decision shall carry the
 target playbook id and text to submit to that playbook.
 When the router chooses `sub`, the decision shall carry text for
-the active sub-runtime.
+the active leaf runtime.
 The shell shall treat unregistered slash-prefixed text as router
 input rather than as a failed command namespace.
 The shell shall handle near-miss command-like text as visible chat
@@ -104,8 +100,9 @@ clarification and shall not dispatch to a sub-runtime.
 ### CAPTAIN-8
 
 Where the Playbook Captain shell submits text to an engaged
-playbook runtime, the shell shall call that runtime's
-`handleBossInput` with text and the Boss-turn signal.
+playbook runtime, the shell shall call the active leaf runtime's
+`handleBossInput` with text and the Boss-turn signal and consume its
+`PlaybookRunResult`.
 The shell shall not pre-classify playbook events, choose
 `BOSS_INTERRUPT` targets, expose jumpable state lists through the
 registry, or otherwise decide in-playbook FSM events.
@@ -135,7 +132,9 @@ to host players `code-coder` and `code-reviewer`.
 The wrapper shall route a sub-runtime `callPlayer(localRole, …,
 { resume })` to `context.callPlayer(<id>-<localRole>, …,
 { resume })`, return the host result's `resumeToken`, route sub-runtime
-`callJudge` to hidden `context.callCaptain`, and pass sub-runtime
+`callJudge` through one abort-aware concurrency-one FIFO to hidden
+`context.callCaptain`, route `callPlaybook` through the stack protocol
+in [CAPTAIN-29](#captain-29), and pass sub-runtime
 `emitStatus` and `emitTelemetry` calls through to the host in order.
 The shell shall also pass the resolved binding in the metadata given
 to the entry's `createRuntime`, so a playbook such as CODE can derive
@@ -145,8 +144,9 @@ When hidden `context.callCaptain` returns a non-`ok` status or an
 `ok` status without `finalText`, the wrapper shall throw for that
 sub-runtime `callJudge`; otherwise it shall return `finalText`.
 Before passing through `playbook.fsm.state` telemetry, the wrapper
-shall mirror the active sub-runtime state and any pending Boss
-question or normalized error fields needed for the shell ledger.
+shall mirror the active leaf's normalized state descriptor and any
+pending Boss questions or normalized error fields needed for the shell
+ledger.
 
 ### CAPTAIN-20
 
@@ -215,21 +215,18 @@ summary-visible progress phrase.
 
 ### CAPTAIN-11
 
-Where the Playbook Captain shell has an active sub-runtime, when
-the mirrored sub-runtime state is the registry entry's `idleStateId`
-or any of the entry's `parkStateIds`, the shell shall park the
-engagement in `engaged.parked`.
-Where the Playbook Captain shell has an active sub-runtime, when
-the mirrored sub-runtime state is the registry entry's final state
-or the router chooses `dismiss`, the shell shall dispose the active
-sub-runtime and return to `chat`.
-When the mirrored sub-runtime state is the registry entry's final
-state during a dispatched Boss turn, the shell shall defer disposal
-until that sub-runtime `handleBossInput` call settles.
-Where the Playbook Captain shell has an active sub-runtime, when
-the Boss submits text for the same playbook while it is parked, the
-shell shall reuse the existing sub-runtime rather than constructing
-a replacement.
+Where the Playbook Captain shell has an active leaf runtime, when its
+normalized state is quiescent and tagged `playbook.parked` or its run
+result is suspended, the shell shall park the root engagement in
+`engaged.parked`.
+Where the active root runtime returns terminal or the router dismisses
+the root, the shell shall dispose the complete stack and return to
+`chat`; where a child returns terminal or is dismissed, the shell shall
+return it to its parent per [CAPTAIN-29](#captain-29).
+The shell shall defer terminal disposal until the active runtime call
+settles.
+Where the Boss submits text while a leaf is parked, the shell shall
+reuse that exact leaf runtime rather than constructing a replacement.
 Where the Playbook Captain shell has no active sub-runtime, when a
 registered command or router decision engages a playbook id, the
 shell shall construct a new sub-runtime from that registry entry's
@@ -237,7 +234,7 @@ shell shall construct a new sub-runtime from that registry entry's
 `init`, generate a previously unissued UUID playbook session id, and
 initialize the runtime with that id, the registry entry id, and the
 wrapped ports.
-Where the Playbook Captain shell has disposed an active sub-runtime
+Where the Playbook Captain shell has disposed an active root stack
 because it reached its final state or was dismissed, when a later
 registered command or router decision engages the same playbook id,
 the shell shall construct a replacement sub-runtime.
@@ -291,10 +288,10 @@ calls until that turn settles.
 When tmux-play calls `handleBossTurn(turn, context)` before
 `init(session)`, the shell shall reject the call.
 Where tmux-play calls `prepareDispose()` while session emissions remain
-live, the shell shall dispose any active sub-runtime so its final trace
-can drain, clear the active turn context, emit no shell status or shell
-FSM telemetry for the adapter teardown itself, and resolve only after
-the active sub-runtime's `dispose()` call returns. The shell's later
+live, the shell shall dispose every active frame from leaf to root so
+each final trace can drain, clear the active turn context, emit no shell
+status or shell FSM telemetry for the adapter teardown itself, and
+resolve only after every runtime's `dispose()` call returns. The shell's later
 `dispose()` hook shall retain the same operation as an idempotent
 fallback for older or non-tmux hosts.
 
@@ -302,17 +299,18 @@ fallback for older or non-tmux hosts.
 
 ### CAPTAIN-26
 
-Where the Playbook Captain shell constructs a new engagement, when it
-initializes the linked runtime, the shell shall generate a non-empty,
-previously unissued UUID, store it as the active playbook session id,
-and call `runtime.init({ sessionId, playbookId, ports })`.
+Where the Playbook Captain shell constructs a new root engagement, when
+it initializes the linked runtime, the shell shall generate a
+non-empty, previously unissued UUID, store it as both active and root
+playbook session id, and call `runtime.init` with that id,
+`rootSessionId` equal to it, depth zero, the playbook id, and ports.
 The same parked runtime shall retain that id; a replacement engagement
 after final completion or dismissal shall receive a new one; and a
 collision from an injected id generator shall reject rather than reuse
 an earlier id.
-The shell shall include the active session id in its bounded ledger and
-shell FSM telemetry, pass sub-runtime `playbook.trace` telemetry through
-unchanged, forward every explicit player `resume` selection to
+The shell shall include root and leaf session ids in its bounded ledger
+and shell FSM telemetry, pass sub-runtime `playbook.trace` telemetry
+through unchanged, forward every explicit player `resume` selection to
 cligent's `context.callPlayer`, and return the authoritative host
 `resumeToken` unchanged.
 The shell shall put neither resume tokens nor trace payloads in its
@@ -322,14 +320,57 @@ engagement, best-effort dispose its partially initialized runtime while
 preserving the original failure, and let a later command construct a
 new engagement with a new session id.
 
+## Nested playbook stack
+
+### CAPTAIN-29
+
+Where the active runtime calls `PlaybookPorts.callPlaybook`, when the
+target id names an enabled registry entry and does not form an
+active-path cycle, the shell shall construct and initialize a distinct child
+runtime, push it above its caller, switch visibility to the child's
+players, and submit the call input as the child's initial Boss text.
+The child `PlaybookSession` shall receive a fresh UUID plus
+`rootSessionId`, `parentSessionId`, `parentCallId`, and depth; the root
+shall use its own UUID as root id and depth zero.
+The shell shall permit one outstanding child per frame, reject a target
+already present anywhere on the active frame path (including the
+caller), and reject a target absent from
+the enabled registry without leaving a partial frame.
+The active-path cycle rule shall bound depth by the finite enabled
+registry without imposing a separate numeric limit.
+When the initial child turn parks or suspends, `callPlaybook` shall
+return its suspended child session id so the parent runtime can settle
+its Boss turn; only the top frame shall receive later Boss turns.
+When a child returns terminal output, rejects at the runtime boundary,
+is aborted, or is dismissed, the
+shell shall dispose and pop it, restore parent visibility, and call the
+parent's `resumePlaybookCall` with the same call id and current turn
+signal, continuing until the top frame parks, suspends, or waits for
+Boss, or the root finishes.
+Where a child returns workflow outcome `failed` in a recoverable parked
+state, the shell shall retain it as the active leaf for later Boss recovery
+rather than return an error to its parent.
+Child initialization failure shall dispose and remove the partial child
+and return an error result to the parent without replacing the parent
+frame.
+Root dismissal and adapter teardown shall dispose frames from leaf to
+root; teardown shall not resume callers after disposal begins.
+The shell's bounded ledger and shell telemetry shall identify the root
+and top session and contain only bounded causal frame metadata; hidden
+routing, visible chat, status, and summaries shall contain neither the
+stack ledger nor session/call ids.
+The shell shall pass each frame's `playbook.trace` through unchanged,
+including the causal fields on child `session.started` and parent
+`playbook.call.*` events.
+
 ## Active-playbook visibility
 
 ### CAPTAIN-22
 
-Where the Playbook Captain shell runs under tmux-play with one or
-more playbooks enabled, when the shell selects, resumes, or routes a
-Boss turn to a playbook, the shell shall request tmux-play
-visibility for that playbook's generated host player ids through
+Where the Playbook Captain shell runs under tmux-play with one or more
+playbooks enabled, when the shell selects, resumes, routes a Boss turn,
+pushes a child, or returns to a parent, the shell shall request tmux-play
+visibility for the active leaf playbook's generated host player ids through
 `setVisiblePlayers` before dispatching Boss text to the playbook
 runtime.
 The requested visible set shall be the active playbook's generated

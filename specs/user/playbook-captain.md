@@ -86,14 +86,15 @@ Boss-visible status line.
 ### CAPTAIN-4
 
 Where the Playbook Captain shell is running under tmux-play, while a
-playbook is engaged, when the engaged playbook parks at its registry
-entry's idle state or one of its park states (for CODE, its idle,
-failed, or `awaitBossReply` state), the shell shall keep that
-engagement available for the next Boss turn.
+playbook is engaged, when the active leaf's descriptor is quiescent and
+tagged `playbook.parked` or its run result is suspended, the shell shall
+keep that engagement available for the next Boss turn.
 Where the Playbook Captain shell is running under tmux-play, while a
-playbook is engaged, when the engaged playbook reaches its registry
-entry's final state or the Boss explicitly dismisses the engagement,
-the shell shall dispose that engagement and return to Captain chat.
+root playbook is engaged, when the root run result is terminal or the
+Boss explicitly dismisses the root engagement, the
+shell shall dispose that engagement and return to Captain chat.
+Nested child completion and dismissal shall instead follow
+[CAPTAIN-28](#captain-28).
 
 ### CAPTAIN-19
 
@@ -150,3 +151,23 @@ other enabled playbooks.
 After the engaged playbook reaches its final state or the Boss
 dismisses it, the shell may leave the visible panes on the last
 selected playbook until the next selection.
+
+## Nested playbooks
+
+### CAPTAIN-28
+
+Where an engaged playbook calls another enabled playbook, when the
+child begins, the Playbook Captain shell shall make the child the active
+playbook for Boss input and player-pane visibility while preserving the
+parent for automatic return.
+The shell shall emit `◇ /<child> called by /<parent>` when it enters the
+child and `◇ /<child> returned to /<parent>` when the child finishes and
+its result resumes the parent.
+Where a child is parked for Boss input, the next Boss turn shall reach
+that same child session; where the Boss dismisses a child, the shell
+shall emit `◇ /<child> stopped; returning to /<parent>`, abort the child
+call, and resume the parent rather than discard the root engagement.
+Where the Boss dismisses the root engagement, the shell shall stop the
+complete nested stack.
+The shell shall not expose playbook session ids, call ids, child output,
+or stack ledger data in those status lines.

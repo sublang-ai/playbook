@@ -54,6 +54,43 @@ When Reviewer is about to review any change, Captain shall prompt Reviewer:
 > Do not edit files or commit; report findings only.
 ```
 
+### Parallel behaviors
+
+Where two or more items share one trigger and Source requires them to run
+independently before later work uses all results, text2gears shall place
+`Parallel group: <stable-kebab-case-id>` immediately below each item heading.
+Every item in one parallel group shall receive the same completed-prior-group
+inputs; no item prompt may depend on another member's result from the current
+group.
+
+Example:
+
+```markdown
+### DISCUSS-1
+Parallel group: initial-proposals
+
+When Boss gives a topic, Captain shall prompt Host:
+> Propose your design independently.
+```
+
+### Nested playbook calls
+
+Where Source requires one playbook to call another, text2gears shall emit an
+item whose behavior uses `Captain shall call playbook <playbook-id>:` and whose
+blockquote is the complete JSON-safe input-text template for that call.
+The target id shall be a stable configured playbook id, not a slash command or
+module specifier.
+
+Example:
+
+```markdown
+### RELEASE-8
+
+When implementation is ready for review, Captain shall call playbook `code-review`:
+> Review these changes:
+> <changes>
+```
+
 Target should be written in the same language as Source.
 
 ## Transformation-spec sources

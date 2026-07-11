@@ -9,7 +9,7 @@ Players:
 - Participant
 - Committer = Host | Participant
 
-When Boss gives a topic, Captain shall relay it to both players independently, along with the following prompt:
+When Boss gives a topic, Captain shall relay it to both players concurrently and independently, without waiting for either proposal before asking the other, along with the following prompt:
 > Assess whether Boss's topic above is better expressed as a few spec items (per @specs/meta.md) or requires one or more DRs added to @specs/decisions/.
 > Consult @specs/map.md, if necessary, to find relevant context.
 > Each DR should be coherent and focused.
@@ -18,7 +18,9 @@ When Boss gives a topic, Captain shall relay it to both players independently, a
 > Don't change any code.
 
 The initial discussion shall go round by round.
-In each round, both players each shall make a new proposal, considering the other's proposal from the previous round, using the following prompt:
+In each round, Captain shall prompt both players concurrently.
+Both players each shall make a new proposal using only the completed proposals from the previous round; neither shall see the other's current-round result before replying.
+Captain shall join both results before beginning the next round, using the following prompt:
 > Consider the other agent's proposal below.
 > (1) If there are essentially different points (including creation or division of DRs), list them, accept any reasonable ones, and challenge the rest with strong reasoning, solid evidence, and comprehensive thinking — make your argument.
 > (2) Only if your proposal of the previous round is equivalent to the other's, with nothing to reconcile, state the end of initial discussion.

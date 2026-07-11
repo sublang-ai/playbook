@@ -1,15 +1,15 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
 
-# PBRT: CODE playbook runtime — integration tests
+# PBRT: Linked playbook runtime — integration tests
 
 ## Intent
 
-This spec defines the integration tests that verify the CODE
-playbook runtime and its tmux-play shell registry behaviors in
-[dev/playbook-runtime.md](../dev/playbook-runtime.md). Each test
-drives the real FSM through the runtime — or CODE through the
-Playbook Captain shell with CODE registered — against fake
+This spec defines integration tests for the shared linked-runtime
+contract, CODE, DISCUSS composition, and tmux-play shell registry
+behavior in [dev/playbook-runtime.md](../dev/playbook-runtime.md).
+Each test drives a real or test-only FSM through a linked runtime — or
+CODE through the Playbook Captain shell — against fake
 `PlaybookPorts` or stubbed cligent primitives. The package targets
 the repo root; the in-repo path is essential to the package's
 intent per
@@ -52,19 +52,20 @@ captain-invoking state entry as `⤷ <Player>: <label>` with no
 source-item tag and no FSM-context rider field, every transition
 guard that drove an entry as `→ <guard>` with `· <field>=<count>`
 tallies when applicable and no leading whitespace, the
-failure-state marker, and the `awaitBossReply` entry's two lines;
+failure-state marker, and each scalar or branch-local Boss-reply wait's
+two lines;
 entry to the idle state or the terminal state emits no status
 line; the failure-state status carries `lastError` normalized to
 the compact `{ name, message }` shape (never a raw Error
 instance); the failure-state telemetry payload carries both a
 full `{ name, message, stack }` form of `lastError` and a
-normalized `event.error` with the same full shape; entry to
-`awaitBossReply` emits two status lines — the full pending
+normalized `event.error` with the same full shape; entry to a
+Boss-reply wait emits two status lines — the full pending
 question as captain speech `<player> asks: <question>` (verbatim
 and untruncated) followed by the rider-less marker `◆ awaiting
 Boss reply · <resumeStateId> · <player> · <sourceItem>` with no
 `q=` excerpt — and the corresponding `playbook.fsm.state`
-telemetry carries `pendingBossQuestion.question` verbatim
+telemetry carries the selected pending question verbatim
 alongside the other transition fields; and emissions are observed
 in enqueue order.
 
@@ -231,16 +232,18 @@ runtime test.
 ### PBRT-28
 Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
 
-When the runtime is driven through `handleBossInput` while the
-actor is in `awaitBossReply`, with text that the classifier names
+When the runtime is driven through `handleBossInput` while the actor
+has one scalar or one or more branch-local pending Boss questions, with
+text that the classifier names
 as `BOSS_REPLY`, with text that the classifier names as a fresh
 directive event, with a classifier reply that is invalid for the
 current state, with text beginning with `/`, and with empty or
 whitespace-only text, the test suite shall fail unless every
 non-empty text routes through `callJudge`, `BOSS_REPLY` carries the
-verbatim answer and resumes the pending state, a fresh directive
-event transitions out of `awaitBossReply` and clears the pending
-reply context, text beginning with `/` receives no special parsing,
+verbatim answer and resumes only the identified pending task, a sole
+pending question permits an omitted id, multiple questions require a
+known id, a fresh directive exits the wait and clears its relevant
+pending reply context, text beginning with `/` receives no special parsing,
 invalid replies surface one `emitStatus` call and leave the FSM
 unmoved, and empty text makes no judge call, player call, status
 emission, or FSM transition while still emitting the received/settled
@@ -282,27 +285,27 @@ contract agrees with
 [slc/link.md](../../slc/link.md#playbookruntime-contract):
 `PlayerResult.status` admits exactly the members `ok`, `aborted`, and
 `error`, and `PlaybookPorts` declares exactly the members `callPlayer`,
-`callJudge`, `emitStatus`, and `emitTelemetry`.
+`callJudge`, `callPlaybook`, `emitStatus`, and `emitTelemetry`.
 The test suite shall additionally fail unless the module exports
-`PlayerCallOptions`, `PlaybookSession`, `PlaybookTraceEvent`,
-`PlaybookRuntime`, and `PlaybookRuntimeFactory`, unless `PlayerResult`
+the player-call, nested-call, JSON value/error, structured-state,
+session, trace, run-result, runtime, and runtime-factory contract types,
+unless `PlayerResult`
 exposes optional `resumeToken`, unless `callPlayer` requires explicit
-resume options, and unless `PlaybookRuntime.init` accepts a
-`PlaybookSession`; its import graph
+resume options, unless `PlaybookRuntime.init` accepts a causal
+`PlaybookSession`, and unless `handleBossInput` and
+`resumePlaybookCall` return `PlaybookRunResult`; its import graph
 includes no CODE or FSM module.
 
 ### PBRT-36
 Verifies: [PBRT-5](../dev/playbook-runtime.md#pbrt-5)
 
 The test suite shall fail unless `@sublang/playbook/code/playbook`
-obtains `PlayerResult`, `PlaybookPorts`, and `PlaybookRuntime` from
-`@sublang/playbook/runtime`, obtains `PlaybookSession` there as well,
-and re-exports all four rather than declaring
-its own. The check shall rest on observable declaration evidence: the
-shipped `code.playbook.d.ts` shall import those names from
-`@sublang/playbook/runtime` and shall carry no local `PlayerResult`,
-`PlaybookPorts`, `PlaybookSession`, or `PlaybookRuntime` declaration of
-its own. A
+obtains and re-exports its shared player, nested-call, state, session,
+trace, result, and runtime contract types from
+`@sublang/playbook/runtime` rather than declaring its own.
+The check shall rest on observable declaration evidence: the shipped
+`code.playbook.d.ts` shall import those names from the shared module and
+shall carry no local declaration for them. A
 mutual-assignability check alone shall not satisfy this item, because
 TypeScript's structural typing makes a same-shaped local redefinition
 assignable to the shared types and would therefore pass while CODE
@@ -332,3 +335,40 @@ clears it, an aborted or error result can preserve a returned token,
 separate players retain independent tokens, a Committer alias shares
 the selected player's token, and a new runtime session starts fresh
 rather than inheriting a prior token.
+
+## Structured and composed execution
+
+### PBRT-43
+Verifies: [PBRT-40](../dev/playbook-runtime.md#pbrt-40), [PBRT-41](../dev/playbook-runtime.md#pbrt-41)
+
+Where the integration suite drives DISCUSS through its real linked
+runtime with gated Host and Participant ports, the test suite shall
+fail unless both players enter each initial and reconciliation round
+before either result is required, both completion orders yield the same
+joined next-round inputs, and no next round begins before both prior
+branches finish.
+The test suite shall fail unless one or two branch-local Boss questions
+park and resume independently without restarting a completed or still
+waiting sibling, a branch failure stops its sibling and reaches
+`failed`, distinct players overlap, same-player overlap rejects, and
+hidden judge calls never overlap.
+Structured state telemetry and trace shall remain JSON-safe, identify
+all active leaves and tags, contain no `[object Object]` classifier
+state, use contiguous trace sequence numbers, and settle only after all
+in-flight calls and emissions from the turn drain.
+
+### PBRT-44
+Verifies: [PBRT-42](../dev/playbook-runtime.md#pbrt-42)
+
+Where the integration suite drives a test linked parent and child
+through the real Playbook Captain shell and the parent's XState machine
+invokes the `playbook` actor, the test suite shall fail unless
+an immediately completed child reaches parent `onDone`, a parked child
+returns parent outcome `suspended` without holding the Boss turn open,
+and a later matching resume drives the parent from the child output.
+The test suite shall fail unless child aborted/error results reach
+parent `onError`, unknown or duplicate call ids reject, parent disposal
+aborts a pending call, the parent's player token map survives
+suspension, and `playbook.call.started` / `playbook.call.finished` form
+one causally ordered trace pair around the child session, with the finish
+event preceding the parent transition caused by that return.

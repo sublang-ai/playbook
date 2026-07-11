@@ -27,6 +27,7 @@ The artifact shall not import a runner or bake in a concrete Captain implementat
 
 `CaptainInput` shall be a typed object with at least:
 
+- `stateId`: the stable id of the invoking working leaf;
 - `player`: the [player](text2gears.md#players) Captain is to invoke;
 - `sourceItem`: the GEARS item ID this state realizes;
 - `prompt`: the source item's full final prompt, verbatim;
@@ -45,6 +46,9 @@ Each state shall declare:
 - a stable `id` (for `#id` targeting and Boss interrupts);
 - an intuitive state key (the property name under `states: { ... }`);
 - a one-line `description` (for inspector tools and documentation);
+- JSON-safe `meta: { playbook: { stateId, description } }` repeating its
+  stable id and description so linked runtimes can discover active public
+  identities through `snapshot.getMeta()` without private XState nodes;
 - if it invokes Captain: `invoke.input` carrying `player`, `sourceItem`, `prompt`, `result` (per [Setup](#setup)).
 
 The source item ID shall live in `invoke.input.sourceItem`, not in a comment — this keeps the GEARS-to-state mapping machine-readable.
@@ -62,6 +66,7 @@ Example:
 invoke: {
     src: 'captain',
     input: ({ context }): CaptainInput => ({
+        stateId: '<stable-state-id>',
         player: 'Reviewer',
         sourceItem: '<ITEM-A>',
         prompt: [
@@ -86,6 +91,51 @@ A state's `invoke.input.sourceItem` shall be that item's ID, and `invoke.input.p
 Per text2gears [composition](text2gears.md#composition), each spec item already carries the full final prompt for one state behavior, with no duplicate lines.
 The FSM compiler shall not concatenate prompts across items, re-compose them, or silently dedupe.
 A spec item that still contains duplicate prompt lines is malformed; the compiler shall reject or flag it rather than silently propagate the duplication into `invoke.input.prompt`.
+
+## Parallel groups
+
+Items carrying the same `Parallel group: <id>` metadata shall compile into one
+compound state with `type: 'parallel'` and one region per item [[12]].
+Each region shall contain a Captain-invoking working leaf and a local final
+state; the working leaf retains the item's stable state id, `sourceItem`,
+player, prompt, and result contract.
+The parallel parent shall use `onDone` as the join, which XState takes only
+after every region reaches final.
+
+Each branch shall assign only its own staged result.
+The join shall promote all staged results atomically before later work begins,
+so branch completion order cannot change downstream inputs.
+Transitions between sibling regions are forbidden.
+
+Working leaves shall carry tag `playbook.busy`.
+A branch that supports Boss-reply suspension shall use a local waiting leaf
+tagged `playbook.parked` rather than exit the parallel parent; `BOSS_REPLY`
+shall identify and reenter only the waiting branch.
+If several branch questions are pending, the event shall carry a stable
+question id and the classifier shall not guess among them.
+A fresh entry event or root interrupt may exit the complete parallel parent and
+shall clear its staged results and branch questions.
+An invoke error shall exit to the root failure state, allowing XState to stop
+the sibling invocations automatically.
+
+## Nested playbook calls
+
+An item whose behavior is `Captain shall call playbook <playbook-id>:` shall
+compile to a state that invokes a typed `playbook` actor, not the `captain`
+actor.
+The setup types shall declare `PlaybookInput` with stable `stateId`, target
+`playbookId`, and composed `text`, plus a JSON-safe `PlaybookOutput` received
+from the child.
+The artifact shall supply a failing placeholder for `playbook`, just as it does
+for `captain`; the linked runtime provides the actor implementation.
+
+The call state shall carry tag `playbook.suspended` and shall route
+`invoke.onDone` from child output and `invoke.onError` from child failure.
+The child call shall remain state-scoped: leaving the call state stops the
+invoked actor and aborts the host call through XState's invocation signal
+[[2]].
+The FSM shall not allocate runtime call ids, construct child sessions, retain
+runtime promises, or route Boss text to the child.
 
 ## Context and prompts
 
@@ -143,7 +193,7 @@ Entry events shall not be root-level transitions from every active state unless 
 
 ### Boss-reply suspension
 
-When a captain-invoking state needs a Boss decision the player cannot supply alone, the machine shall suspend in a dedicated quiescent state and resume the same state with the Q+A in the next prompt.
+When a captain-invoking state needs a Boss decision the player cannot supply alone, the machine shall suspend that task in a quiescent wait state and resume the same task with the Q+A in the next prompt.
 This is a third Boss surface alongside `BOSS_INTERRUPT` and Boss entry events.
 
 Every captain-invoking state supports this path.
@@ -160,36 +210,61 @@ The player's prose surfaces a clarifying question for Boss that the player canno
 It shall include the load-bearing substring ``Output shall include `question:`` so the runtime's adjudicator requires `question` in the JSON reply.
 The linked runtime composes player prompts per [link.md "Player prompt composition"](link.md#player-prompt-composition), without adding a player-visible Boss-question instruction.
 
-The machine shall declare:
+The question record shall be
+`{ questionId, resumeStateId, sourceItem, player, question }`.
+`questionId` and `resumeStateId` shall both equal the stable working-leaf
+`stateId`.
+`questionId`, `resumeStateId`, `sourceItem`, and `player` shall come from
+the suspended working leaf's stable invocation metadata; only `question` shall
+come from adjudicated player output.
 
-- An `awaitBossReply` state with stable `id: 'awaitBossReply'` and `description: 'Waiting for Boss to answer a player question.'`.
-- A `BOSS_REPLY` event carrying `{ answer: string }`.
-- Context fields `pendingBossQuestion?: { resumeStateId, sourceItem, player, question }` and `bossReply?: string`.
-  Field provenance is normative: `resumeStateId`, `sourceItem`, and `player` shall come from the suspended state's invocation metadata; only `question` shall come from adjudicated player output.
+A machine with at most one active Captain task may use the scalar form:
 
-The compiler shall emit three helpers:
+- An `awaitBossReply` state with stable `id: 'awaitBossReply'`, tag
+  `playbook.parked`, and description
+  `Waiting for Boss to answer a player question.`.
+- A `BOSS_REPLY` event carrying `{ answer: string; questionId?: string }`.
+- Context fields `pendingBossQuestion?: PendingBossQuestion` and
+  `bossReply?: string`.
+- `resumableStates(ids)`, `setPendingBossQuestion`, and
+  `clearBossReplyContext` helpers with the existing single-question behavior.
 
-- `resumableStates(ids)` — emits one `BOSS_REPLY` arm per registered state on `awaitBossReply.on.BOSS_REPLY`, each guarded on `context.pendingBossQuestion?.resumeStateId === '<id>'` and targeting `'#<id>'` with `reenter: true`.
-  The compiler shall register every captain-invoking state id with this helper.
-  The helper is analogous to `bossInterrupts(ids)`.
-- `setPendingBossQuestion` — `assign({ pendingBossQuestion: <new>, bossReply: undefined })`.
-  Used on every `needsBossReply` arm; clearing `bossReply` here prevents a follow-up question from inheriting the prior answer.
-- `clearBossReplyContext` — `assign({ pendingBossQuestion: undefined, bossReply: undefined })`.
-  Used on every transition out of `awaitBossReply` other than the resume arm, and on every non-`needsBossReply` outcome of a captain-invoking state.
+A machine with parallel Captain tasks shall use the keyed form:
 
-`awaitBossReply` is a quiescent state for the runtime's drive loop.
-It shall declare the standard `bossInterrupts(ids)` handler with `actions: clearBossReplyContext`, so a Boss interrupt event abandons a pending question.
-The machine's root-level Boss entry events shall be re-declared on `awaitBossReply` with `actions: clearBossReplyContext`, so a fresh Boss directive while waiting starts a fresh turn and clears stale context.
+- One local waiting leaf per branch, tagged `playbook.parked`.
+- A `BOSS_REPLY` event carrying `{ questionId: string; answer: string }`.
+- Context fields
+  `pendingBossQuestions: Partial<Record<ResumableStateId, PendingBossQuestion>>`
+  and `bossReplies: Partial<Record<ResumableStateId, string>>`.
+- Helpers that set, answer, and clear only the named branch record; exiting the
+  complete parallel group for a fresh directive or interrupt clears every
+  record owned by that group.
 
-A captain-invoking state's `invoke.input` function shall carry `pendingBossQuestion` and `bossReply` fields when present so the linked runtime can compose the continuation prompt.
+Where exactly one question is pending, a linked runtime may accept a classifier
+reply that omits `questionId` and fill that sole id.
+Where several questions are pending, the classifier prompt and event shall
+require `questionId` and shall reject an omitted or unknown id without moving
+the FSM.
+
+The scalar `awaitBossReply` state and every local branch wait are quiescent for
+the runtime drive boundary.
+They shall allow a fresh root entry event or interrupt to abandon the relevant
+pending question data before starting new work.
+
+A captain-invoking state's `invoke.input` function shall carry the pending
+question and reply selected for that working leaf as singular
+`pendingBossQuestion` and `bossReply` fields, regardless of the scalar or keyed
+context representation, so prompt composition has one stable contract.
 When both fields are present, the linked runtime shall compose the continuation preamble and labelled Q&A blocks per [link.md "Player prompt composition"](link.md#player-prompt-composition).
 The FSM artifact shall not bake the continuation preamble into the GEARS-derived `prompt` body.
 
 The following malformed states shall route to `failed` per [Errors and termination](#errors-and-termination):
 
 - Captain output has `guard: 'needsBossReply'` but no `question` field.
-- Captain output declares `needsBossReply` from a state not registered with `resumableStates(ids)`.
+- Captain output declares `needsBossReply` from a state without a registered
+  scalar or branch-local resume route.
 - `BOSS_REPLY` fired with empty or whitespace-only `answer`.
+- A keyed `BOSS_REPLY` names no pending question.
 
 ## Errors and termination
 
@@ -212,3 +287,4 @@ A never-terminating machine is a defect: the runner has no completion signal.
 [9]: https://stately.ai/docs/finite-states "Finite states — state IDs"
 [10]: https://stately.ai/docs/setup "Setup — typed machine setup"
 [11]: https://stately.ai/docs/actors "Actors — typed actor contracts"
+[12]: https://stately.ai/docs/parallel-states "Parallel states — concurrent regions and onDone joins"
