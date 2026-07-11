@@ -190,6 +190,12 @@ The shell bridge shall forward `resume: false` and explicit tokens to
 the bound host player and preserve the host's returned `resumeToken`;
 a real tmux-play integration shall prove an old host-player token is
 not inherited by a new playbook session and that the next call in that
-session resumes its own returned token.
+session resumes its own returned token. The real host shall also prove
+that final completion and active host teardown each deliver exactly one
+`session.disposed` trace before session emissions close, without a
+second disposal from the post-close Captain hook.
 Visible status and turn summaries shall remain unchanged and shall
 contain neither session ids, resume tokens, nor trace payloads.
+When runtime initialization rejects, the test shall fail unless the
+shell disposes the partial runtime, clears it, and a later command
+constructs a different engagement instead of reusing the failed one.

@@ -1,6 +1,6 @@
 import { type CaptainInput, type CaptainOutput, type CodingEvent, type CodingInput } from './code.fsm.js';
-import type { PlaybookPorts, PlaybookRuntime, PlayerResult } from '@sublang/playbook/runtime';
-export type { PlayerResult, PlaybookPorts, PlaybookRuntime };
+import type { PlaybookSession, PlaybookPorts, PlaybookRuntime, PlayerResult } from '@sublang/playbook/runtime';
+export type { PlayerResult, PlaybookPorts, PlaybookSession, PlaybookRuntime, };
 export type CodePlaybookOptions = CodingInput;
 declare function normalizeErrorCompact(err: unknown): {
     name: string;
@@ -14,9 +14,14 @@ declare function normalizeErrorFull(err: unknown): {
 declare function normalizeEventForTelemetry(event: unknown): unknown;
 declare function composePlayerPrompt(input: CaptainInput): string;
 declare function resolvePlayerId(input: CaptainInput): string;
-declare function adjudicate(input: CaptainInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal): Promise<CaptainOutput>;
-declare function classifyBossText(text: string, ports: PlaybookPorts, signal: AbortSignal, snapshotOrState?: unknown): Promise<CodingEvent | undefined>;
-declare function captainBridge(ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined): import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
+type JudgePurpose = 'boss-input-classification' | 'player-output-adjudication';
+interface RuntimeBoundaryCalls {
+    callPlayer(input: CaptainInput, playerId: string, prompt: string, signal: AbortSignal): Promise<PlayerResult>;
+    callJudge(purpose: JudgePurpose, stateId: string | undefined, prompt: string, signal: AbortSignal): Promise<string>;
+}
+declare function adjudicate(input: CaptainInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal, boundary?: RuntimeBoundaryCalls): Promise<CaptainOutput>;
+declare function classifyBossText(text: string, ports: PlaybookPorts, signal: AbortSignal, snapshotOrState?: unknown, boundary?: RuntimeBoundaryCalls): Promise<CodingEvent | undefined>;
+declare function captainBridge(ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined, boundary?: RuntimeBoundaryCalls): import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
 interface StateMetadata {
     player: CaptainInput['player'];
     sourceItem: string;

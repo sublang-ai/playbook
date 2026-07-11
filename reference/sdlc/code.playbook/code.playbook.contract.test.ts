@@ -13,10 +13,15 @@ const dts = readFileSync(
   'utf8',
 );
 
-const SHARED_TYPES = ['PlayerResult', 'PlaybookPorts', 'PlaybookRuntime'];
+const SHARED_TYPES = [
+  'PlayerResult',
+  'PlaybookPorts',
+  'PlaybookSession',
+  'PlaybookRuntime',
+];
 
 describe('CODE re-exports the shared runtime contract types (PBRT-36)', () => {
-  it('imports the three contract types from @sublang/playbook/runtime', () => {
+  it('imports the four contract types from @sublang/playbook/runtime', () => {
     const importLine = dts
       .split('\n')
       .find((l) => l.includes('@sublang/playbook/runtime'));
@@ -32,7 +37,7 @@ describe('CODE re-exports the shared runtime contract types (PBRT-36)', () => {
     }
   });
 
-  it('re-exports all three via one export statement', () => {
+  it('re-exports all four via one export statement', () => {
     const reexport = dts
       .split('\n')
       .find(
@@ -40,6 +45,6 @@ describe('CODE re-exports the shared runtime contract types (PBRT-36)', () => {
           /^\s*export\s+(?:type\s+)?\{/.test(l) &&
           SHARED_TYPES.every((n) => l.includes(n)),
       );
-    expect(reexport, 'no export {…} re-exporting all three').toBeDefined();
+    expect(reexport, 'no export {…} re-exporting all four').toBeDefined();
   });
 });

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { randomUUID } from 'node:crypto';
+
 import type {
   BossTurn,
   Captain,
@@ -23,6 +25,7 @@ export interface CreatePlaybookRuntimeOptions {
 
 export interface PlaybookCaptainDeps {
   loadModule?: (specifier: string) => Promise<unknown>;
+  createSessionId?: () => string;
 }
 
 export interface PlaybookCaptainRegistryEntry {
@@ -54,6 +57,7 @@ interface ActiveEngagement {
   entry: PlaybookCaptainRegistryEntry;
   enablement: Enablement;
   runtime: PlaybookRuntime;
+  sessionId: string;
 }
 
 type RouterDecision =
@@ -66,6 +70,7 @@ type DisposalReason = 'dismiss' | 'final' | 'dispose';
 
 interface ControlLedger {
   activePlaybookId?: string;
+  activeSessionId?: string;
   mode: ShellMode;
   latestSubRuntimeStateId?: string;
   pendingBossQuestion?: unknown;
@@ -77,6 +82,8 @@ type ShellMode = 'chat' | 'engaged.driving' | 'engaged.parked';
 
 const SUB_RUNTIME_FSM_TOPIC = 'playbook.fsm.state';
 const SHELL_FSM_TOPIC = 'playbook.captain.fsm.state';
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface TurnSummaryCounts {
   interruptions: number;
@@ -303,6 +310,7 @@ export function createPlaybookCaptainShell(
 ): Captain {
   const loadModule =
     deps.loadModule ?? ((specifier: string) => import(specifier));
+  const createSessionId = deps.createSessionId ?? randomUUID;
   let entries: readonly PlaybookCaptainRegistryEntry[] = [];
   let byCommand = new Map<string, PlaybookCaptainRegistryEntry>();
   let byId = new Map<string, PlaybookCaptainRegistryEntry>();
@@ -318,6 +326,7 @@ export function createPlaybookCaptainShell(
   let lastRouteDecision: RouterDecision['decision'] | undefined;
   let finalDisposalRequested: ActiveEngagement | undefined;
   let activeTurnSummary: ActiveTurnSummary | undefined;
+  const issuedSessionIds = new Set<string>();
 
   const requireSession = (): CaptainSession => {
     if (!session) {
@@ -328,8 +337,10 @@ export function createPlaybookCaptainShell(
 
   const ledgerSnapshot = (
     playbookId: string | undefined = active?.entry.id,
+    activeSessionId: string | undefined = active?.sessionId,
   ): ControlLedger => ({
     ...(playbookId ? { activePlaybookId: playbookId } : {}),
+    ...(activeSessionId ? { activeSessionId } : {}),
     mode,
     ...(latestSubRuntimeStateId ? { latestSubRuntimeStateId } : {}),
     ...(pendingBossQuestion !== undefined ? { pendingBossQuestion } : {}),
@@ -342,6 +353,7 @@ export function createPlaybookCaptainShell(
     to: ShellMode,
     event: string,
     playbookId: string | undefined = active?.entry.id,
+    activeSessionId: string | undefined = active?.sessionId,
   ): Promise<void> => {
     await requireSession().emitTelemetry({
       topic: SHELL_FSM_TOPIC,
@@ -349,7 +361,7 @@ export function createPlaybookCaptainShell(
         from,
         to,
         event,
-        ledger: ledgerSnapshot(playbookId),
+        ledger: ledgerSnapshot(playbookId, activeSessionId),
       },
     });
   };
@@ -358,11 +370,18 @@ export function createPlaybookCaptainShell(
     nextMode: ShellMode,
     event: string,
     playbookId: string | undefined = active?.entry.id,
+    activeSessionId: string | undefined = active?.sessionId,
   ): Promise<void> => {
     if (mode === nextMode) return;
     const from = mode;
     mode = nextMode;
-    await emitShellTelemetry(from, nextMode, event, playbookId);
+    await emitShellTelemetry(
+      from,
+      nextMode,
+      event,
+      playbookId,
+      activeSessionId,
+    );
   };
 
   const normalizeErrorCompact = (
@@ -398,13 +417,16 @@ export function createPlaybookCaptainShell(
     return typeof record.state === 'string' ? record.state : undefined;
   };
 
-  const mirrorSubRuntimeTelemetry = async (payload: unknown): Promise<void> => {
-    if (!active) return;
+  const mirrorSubRuntimeTelemetry = async (
+    engagement: ActiveEngagement,
+    payload: unknown,
+  ): Promise<void> => {
+    if (active !== engagement) return;
     const record = payloadRecord(payload);
     const stateId = mirroredStateId(payload);
     if (stateId === undefined) return;
 
-    const countLabel = stateCountLabel(stateId, active.entry);
+    const countLabel = stateCountLabel(stateId, engagement.entry);
     if (activeTurnSummary && countLabel) {
       activeTurnSummary.stateCounts.set(
         countLabel,
@@ -416,33 +438,34 @@ export function createPlaybookCaptainShell(
     pendingBossQuestion = record?.pendingBossQuestion;
     lastError = normalizeErrorCompact(record?.lastError);
 
-    if (stateId === active.entry.finalStateId) {
-      finalDisposalRequested = active;
+    if (stateId === engagement.entry.finalStateId) {
+      finalDisposalRequested = engagement;
       return;
     }
 
     if (
-      stateId === active.entry.idleStateId ||
-      active.entry.parkStateIds.includes(stateId)
+      stateId === engagement.entry.idleStateId ||
+      engagement.entry.parkStateIds.includes(stateId)
     ) {
       await setMode('engaged.parked', `sub-runtime:${stateId}`);
     }
   };
 
-  const createPorts = (): PlaybookPorts => ({
-    callPlayer: async (playerId, prompt, _signal) => {
+  const createPorts = (engagement: ActiveEngagement): PlaybookPorts => ({
+    callPlayer: async (playerId, prompt, _signal, options) => {
       if (!activeContext) {
         throw new Error('callPlayer invoked outside a Boss turn');
       }
-      const hostPlayerId = active
-        ? active.enablement.hostPlayerId(playerId)
-        : playerId;
-      const result = await activeContext.callPlayer(hostPlayerId, prompt);
+      const hostPlayerId = engagement.enablement.hostPlayerId(playerId);
+      const result = await activeContext.callPlayer(hostPlayerId, prompt, {
+        resume: options.resume,
+      });
       if (activeTurnSummary) {
         activeTurnSummary.counts.interruptions++;
       }
       return {
         status: result.status,
+        resumeToken: result.resumeToken,
         finalText: result.finalText,
         error: result.error,
       };
@@ -465,7 +488,7 @@ export function createPlaybookCaptainShell(
       const guard = guardFromJudgeReply(result.finalText);
       if (
         guard &&
-        active?.entry.summaryPolicy?.copyPasteGuardNames.includes(guard) &&
+        engagement.entry.summaryPolicy?.copyPasteGuardNames.includes(guard) &&
         activeTurnSummary
       ) {
         activeTurnSummary.counts.copyPastes++;
@@ -480,7 +503,7 @@ export function createPlaybookCaptainShell(
     },
     emitTelemetry: async (event) => {
       if (event.topic === SUB_RUNTIME_FSM_TOPIC) {
-        await mirrorSubRuntimeTelemetry(event.payload);
+        await mirrorSubRuntimeTelemetry(engagement, event.payload);
       }
       await requireSession().emitTelemetry(event);
     },
@@ -501,19 +524,52 @@ export function createPlaybookCaptainShell(
   ): Promise<ActiveEngagement> => {
     if (active?.entry.id === entry.id) return active;
     const enablement = enablementById.get(entry.id)!;
+    const sessionId = createSessionId();
+    if (!UUID_PATTERN.test(sessionId)) {
+      throw new Error(
+        `playbook session id generator returned a non-UUID value: ${JSON.stringify(
+          sessionId,
+        )}`,
+      );
+    }
+    if (issuedSessionIds.has(sessionId)) {
+      throw new Error(`playbook session id collision: ${sessionId}`);
+    }
+    issuedSessionIds.add(sessionId);
     const runtime = entry.createRuntime({
       captainOptions: enablement.optionInput,
       players: enablement.boundPlayers,
     });
-    active = { entry, enablement, runtime };
+    const engagement = { entry, enablement, runtime, sessionId };
+    active = engagement;
     latestSubRuntimeStateId = undefined;
     pendingBossQuestion = undefined;
     lastError = undefined;
     finalDisposalRequested = undefined;
-    await setMode('engaged.parked', 'engage', entry.id);
-    await runtime.init(createPorts());
-    await requireSession().emitStatus(`◇ /${enablement.command} started`);
-    return active;
+    try {
+      await setMode('engaged.parked', 'engage', entry.id);
+      await runtime.init({
+        sessionId,
+        playbookId: entry.id,
+        ports: createPorts(engagement),
+      });
+      await requireSession().emitStatus(`◇ /${enablement.command} started`);
+      return engagement;
+    } catch (error) {
+      if (active === engagement) active = undefined;
+      mode = 'chat';
+      finalDisposalRequested = undefined;
+      latestSubRuntimeStateId = undefined;
+      pendingBossQuestion = undefined;
+      lastError = undefined;
+      try {
+        await runtime.dispose();
+      } catch {
+        // Preserve the initialization failure while still making a
+        // best-effort attempt to release partially acquired resources.
+      }
+      throw error;
+    }
   };
 
   const submitToActive = async (
@@ -567,6 +623,7 @@ export function createPlaybookCaptainShell(
     const engagement = active;
     if (!engagement) return;
     const playbookId = engagement.entry.id;
+    const sessionId = engagement.sessionId;
     const commandLabel = `/${engagement.enablement.command}`;
     active = undefined;
     finalDisposalRequested = undefined;
@@ -578,7 +635,7 @@ export function createPlaybookCaptainShell(
       lastError = undefined;
       return;
     }
-    await setMode('chat', reason, playbookId);
+    await setMode('chat', reason, playbookId, sessionId);
     await engagement.runtime.dispose();
     if (reason === 'dismiss') {
       await requireSession().emitStatus(`◇ ${commandLabel} stopped`);
@@ -819,6 +876,11 @@ export function createPlaybookCaptainShell(
       } finally {
         activeContext = undefined;
       }
+    },
+
+    async prepareDispose(): Promise<void> {
+      activeContext = undefined;
+      await disposeActive('dispose');
     },
 
     async dispose(): Promise<void> {

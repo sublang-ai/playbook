@@ -54,12 +54,27 @@ Every trace payload shall carry:
 
 The trace types shall be `session.started`, `boss.input.received`, `judge.call.started`, `judge.call.finished`, `player.call.started`, `player.call.finished`, `fsm.transition`, `status.emitted`, `boss.input.settled`, and `session.disposed`.
 
-Player and judge trace pairs shall contain their exact prompts and final replies, normalized errors, purposes and state ids where known, resolved player ids, explicit resume selection, result status, and returned resume token.
-FSM trace events shall preserve the runtime's existing transition, pending-question, and normalized-error data.
-Boss-input trace pairs shall include the exact input and its quiescent, no-action, failed, terminal, or aborted outcome.
+Their payloads shall use the following common vocabulary; fields marked optional are omitted when unavailable rather than synthesized:
+
+| Trace type | Payload |
+| --- | --- |
+| `session.started` / `session.disposed` | `{ stateId?: string }` for the initial or last known runtime state. |
+| `boss.input.received` | `{ text: string }`, preserving the exact input. |
+| `boss.input.settled` | `{ outcome, stateId?, error? }`, where `outcome` is `quiescent`, `no-action`, `failed`, `terminal`, or `aborted`. |
+| `judge.call.started` | `{ purpose, stateId?, prompt }`. |
+| `judge.call.finished` | `{ purpose, stateId?, status, reply?, error? }`. |
+| `player.call.started` | `{ purpose, stateId?, sourceItem, playerId, prompt, resume }`. |
+| `player.call.finished` | `{ purpose, stateId?, sourceItem, playerId, resume, status, resumeToken?, finalText?, error? }`. |
+| `fsm.transition` | The runtime's existing JSON-safe transition payload, including its `from`, `to`, event, pending-question, and error data where applicable. |
+| `status.emitted` | `{ message, data?, stateId? }`, preserving the exact host status arguments; `stateId` is optional context. |
+
+Every `status` is `ok`, `aborted`, or `error`. Every `error` is normalized to the JSON-safe shape `{ name: string, message: string, stack?: string }`; a string error becomes `{ name: "Error", message: <the string> }`.
+Judge `purpose` uses the shared values `boss-input-classification` and `player-output-adjudication` so trace consumers do not need playbook-specific labels.
+Player and judge pairs shall therefore contain their exact prompts and final replies, normalized errors, purposes and state ids where known, resolved player ids, explicit resume selection, result status, and returned resume token.
 
 Trace emissions shall be awaited, never dropped, and sequenced before the boundary operation or human status/state telemetry they describe.
 Trace data shall not be copied into Boss-visible status, summaries, or hidden-router prompts.
+Resume tokens are opaque credentials for backend conversations; observers that persist `playbook.trace` shall protect them as sensitive data.
 
 ### 3. Player-session continuation
 
@@ -84,6 +99,8 @@ Omission preserves cligent's legacy player-level auto-resume for other Captains;
 
 The shell shall return the host's `PlayerRunResult.resumeToken` through `PlaybookPorts` without rewriting it.
 It shall never use a nested `AgentEvent.sessionId` for continuation.
+
+The shell shall use cligent's live-session `Captain.prepareDispose()` hook to dispose an active linked runtime before tmux-play aborts `CaptainSession.signal` and closes emissions. Its ordinary `Captain.dispose()` remains an idempotent fallback. This ordering makes the terminal `session.disposed` trace observable during active host teardown without weakening cligent's post-close disposal semantics.
 
 ### 5. Boss-question continuation
 

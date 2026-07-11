@@ -245,9 +245,11 @@ The runtime is host-agnostic; the `tmux-play` adapter is one host.
 The port and runtime contracts live in the type-only module
 [`@sublang/playbook/runtime`](src/runtime.ts) — a public, semver-stable
 surface (`PlayerResult`, `PlaybookPorts`, `PlaybookRuntime`,
+`PlaybookSession`, `PlayerCallOptions`, `PlaybookTraceEvent`, and
 `PlaybookRuntimeFactory`) that imports no CODE or FSM types, so a host
 satisfies it once and inherits every playbook. The CODE runtime
-re-exports `PlayerResult`, `PlaybookPorts`, and `PlaybookRuntime` from
+re-exports `PlayerResult`, `PlaybookPorts`, `PlaybookSession`, and
+`PlaybookRuntime` from
 `@sublang/playbook/code/playbook`; `PlaybookRuntimeFactory` is available
 from `@sublang/playbook/runtime`.
 Construct the runtime against your own ports:
@@ -255,9 +257,14 @@ Construct the runtime against your own ports:
 ```ts
 import createPlaybookRuntime from '@sublang/playbook/code/playbook';
 import type { PlaybookPorts } from '@sublang/playbook/runtime';
+import { randomUUID } from 'node:crypto';
 
 const ports: PlaybookPorts = {
-  callPlayer: async (playerId, prompt, signal) => { /* … */ },
+  callPlayer: async (playerId, prompt, signal, { resume }) => {
+    // `resume === false` starts fresh; a string selects that player's
+    // prior backend conversation. Return the adapter's next token.
+    return { status: 'ok', finalText: 'done', resumeToken: 'next-token' };
+  },
   callJudge: async (prompt, signal) => { /* … */ },
   emitStatus: async (message, data) => { /* … */ },
   emitTelemetry: async ({ topic, payload }) => { /* … */ },
@@ -268,13 +275,26 @@ const runtime = createPlaybookRuntime({
   reviewerPlayer: 'codex',
 });
 
-await runtime.init(ports);
+await runtime.init({
+  sessionId: randomUUID(),
+  playbookId: 'code',
+  ports,
+});
 await runtime.handleBossInput({
   text: 'Start fixing the bug',
   signal: new AbortController().signal,
 });
 await runtime.dispose();
 ```
+
+Every init-to-dispose lifecycle is one playbook session. Its
+`playbook.trace` telemetry carries that immutable ID plus a contiguous
+sequence across exact Boss input, judge/player calls, FSM transitions,
+status, settlement, and disposal. Each resolved player starts fresh in
+a new playbook session and then resumes only from the latest opaque
+`resumeToken` its adapter returned; trace data and tokens never enter
+Boss-visible status text. Because trace observers do receive opaque
+resume tokens, persisted traces should be protected as sensitive data.
 
 See
 [`code.playbook.test.ts`](reference/sdlc/code.playbook/code.playbook.test.ts)

@@ -135,6 +135,10 @@ specifier and continue to pin a specific resolved cligent version,
 so the CI install in [RELEASE-7](#release-7) and contributor
 `pnpm install --frozen-lockfile` runs stay reproducible until a
 developer deliberately refreshes the pin within the declared range.
+That pinned version shall itself expose both explicit player resume and
+the pre-close Captain lifecycle used by [CAPTAIN-26](playbook-captain.md#captain-26);
+merely using a range that could admit a later compatible version shall
+not satisfy this requirement.
 
 ## Public surfaces
 

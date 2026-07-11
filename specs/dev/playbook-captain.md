@@ -290,11 +290,13 @@ the shell shall route `turn.prompt` with `context.signal` and use
 calls until that turn settles.
 When tmux-play calls `handleBossTurn(turn, context)` before
 `init(session)`, the shell shall reject the call.
-Where tmux-play calls `dispose()`, the shell shall dispose any
-active sub-runtime, clear the active turn context, emit no shell
-status or shell FSM telemetry for the adapter teardown itself, and
-resolve only after the active sub-runtime's `dispose()` call
-returns.
+Where tmux-play calls `prepareDispose()` while session emissions remain
+live, the shell shall dispose any active sub-runtime so its final trace
+can drain, clear the active turn context, emit no shell status or shell
+FSM telemetry for the adapter teardown itself, and resolve only after
+the active sub-runtime's `dispose()` call returns. The shell's later
+`dispose()` hook shall retain the same operation as an idempotent
+fallback for older or non-tmux hosts.
 
 ## Playbook session bridge
 
@@ -315,6 +317,10 @@ cligent's `context.callPlayer`, and return the authoritative host
 `resumeToken` unchanged.
 The shell shall put neither resume tokens nor trace payloads in its
 hidden-router prompt, visible status messages, or turn summaries.
+If engagement initialization rejects, the shell shall clear the broken
+engagement, best-effort dispose its partially initialized runtime while
+preserving the original failure, and let a later command construct a
+new engagement with a new session id.
 
 ## Active-playbook visibility
 

@@ -12,7 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every playbook runtime session now has an immutable UUID and a complete ordered boundary trace.** The new `PlaybookSession` init contract supplies the session/playbook identity, while `playbook.trace` records exact Boss input, player and judge calls, FSM transitions, status emissions, settlement, normalized failures, and disposal with contiguous sequence and paired call IDs. The Captain closes an active runtime in tmux-play's live pre-close hook so the terminal trace reaches observers during host shutdown ([DR-010](specs/decisions/010-playbook-session-tracing-and-resume.md), [PBRT-37](specs/dev/playbook-runtime.md#pbrt-37)).
+- **Players resume explicitly within a playbook session.** Linked runtimes force each resolved player fresh on first contact, retain only that adapter's returned `resumeToken`, and select it on later calls; replacement engagements cannot inherit an earlier host-player conversation. CODE and DISCUSS share the contract, and the Playbook Captain correlates the same UUID across its bounded ledger and telemetry ([PBRT-38](specs/dev/playbook-runtime.md#pbrt-38), [CAPTAIN-26](specs/dev/playbook-captain.md#captain-26)).
 - **The DISCUSS playbook ships in the package.** `reference/sdlc/discuss.playbook/` carries the slc-compiled artifacts (`discuss.gears.md`, `discuss.fsm.ts`, `discuss.playbook.ts`) compiled from `reference/sdlc/discuss.md` by `slc playbook` through slc's pinned compiled meta-phase playbooks, plus the hand-written registry entry with a turn-summary policy. The registry module is a public export — configure `playbooks.discuss.from: "@sublang/playbook/discuss/registry"` — and the config template documents the block ([RELEASE-20](specs/dev/release.md#release-20), [RELEASE-21](specs/test/release.md#release-21)).
+
+### Changed
+
+- **Breaking: the public `@sublang/playbook/runtime` contract now initializes with `PlaybookSession`, requires `PlayerCallOptions` on player calls, and returns optional player resume tokens.** Hosts must generate a unique session ID and forward explicit fresh/resume selection; the four-port boundary remains unchanged ([PBRT-34](specs/dev/playbook-runtime.md#pbrt-34), [RELEASE-15](specs/dev/release.md#release-15)).
 
 ### Fixed
 

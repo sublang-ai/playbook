@@ -7,6 +7,7 @@ export interface CreatePlaybookRuntimeOptions {
 }
 export interface PlaybookCaptainDeps {
     loadModule?: (specifier: string) => Promise<unknown>;
+    createSessionId?: () => string;
 }
 export interface PlaybookCaptainRegistryEntry {
     id: string;

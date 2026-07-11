@@ -405,10 +405,12 @@ instead of redefining them.
   `PlaybookPorts`, `PlaybookSession`, `PlaybookTraceEvent`, and
   `PlaybookRuntime` are authored once in `@sublang/playbook/runtime` —
   the TypeScript projection of
-  [slc/link.md §Output](../../slc/link.md#output) — and imported by
-  `code.playbook.ts`, which re-exports them so existing
-  `@sublang/playbook/code/playbook` consumers keep resolving the same
-  type names.
+  [slc/link.md §Output](../../slc/link.md#output). `code.playbook.ts`
+  imports the shared types it references directly (with call options
+  still flowing through the shared `PlaybookPorts` signature) and
+  re-exports `PlayerResult`, `PlaybookPorts`, `PlaybookSession`, and
+  `PlaybookRuntime` so existing `@sublang/playbook/code/playbook`
+  consumers keep resolving those contract names.
 - **Factory type.** The default export's type is
   `PlaybookRuntimeFactory<CodePlaybookOptions>`, the generic factory
   type the shared module exposes; `CodePlaybookOptions` is unchanged.

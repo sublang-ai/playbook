@@ -31,17 +31,25 @@ import discussMachine, {
 } from './discuss.fsm.js';
 
 import type {
+  PlayerCallOptions,
   PlayerResult,
   PlaybookPorts,
   PlaybookRuntime,
   PlaybookRuntimeFactory,
+  PlaybookSession,
+  PlaybookTraceEvent,
+  PlaybookTraceType,
 } from '@sublang/playbook/runtime';
 
 export type {
+  PlayerCallOptions,
   PlayerResult,
   PlaybookPorts,
   PlaybookRuntime,
   PlaybookRuntimeFactory,
+  PlaybookSession,
+  PlaybookTraceEvent,
+  PlaybookTraceType,
 };
 
 type PlayerName = 'Host' | 'Participant' | 'Committer';
@@ -209,6 +217,7 @@ const REVIEW_SCOPES: ReadonlySet<string> = new Set([
 ]);
 
 const TELEMETRY_TOPIC = 'playbook.fsm.state';
+const TRACE_TOPIC = 'playbook.trace';
 
 const CONTINUATION_PREAMBLE =
   'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
@@ -594,11 +603,13 @@ function telemetryPayload(
       !Array.isArray(event) &&
       'type' in event
         ? (event as { type: unknown }).type
-        : event,
+        : (event ?? null),
   };
   const pending = pendingQuestionFromContext(context);
   if (pending) payload.pendingBossQuestion = pending;
-  if (to === 'failed') payload.lastError = normalizeErrorFull(context.lastError);
+  if (to === 'failed') {
+    payload.lastError = normalizeErrorFull(context.lastError) ?? null;
+  }
   return payload;
 }
 
@@ -623,30 +634,224 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   };
 
   let ports: PlaybookPorts | undefined;
+  let sessionIdentity:
+    | Readonly<{ sessionId: string; playbookId: string }>
+    | undefined;
   let actor: ReturnType<typeof createActor> | undefined;
   let currentSignal: AbortSignal | undefined;
+  let currentTurnId: number | undefined;
   let adjudicatorError: unknown;
   let previousValue: string | undefined;
   let emissionChain: Promise<void> = Promise.resolve();
+  let emissionFailures: unknown[] = [];
+  let traceSequence = 0;
+  let turnSequence = 0;
+  let judgeCallSequence = 0;
+  let playerCallSequence = 0;
+  let lifecycleStarted = false;
+  let disposed = false;
+  const playerResumeTokens = new Map<string, string>();
 
-  const enqueue = (fn: () => Promise<void>): void => {
-    emissionChain = emissionChain.then(() => fn());
+  const collectFailure = (failures: unknown[], error: unknown): void => {
+    if (error instanceof AggregateError) {
+      for (const nested of error.errors) collectFailure(failures, nested);
+      return;
+    }
+    if (!failures.some((failure) => Object.is(failure, error))) {
+      failures.push(error);
+    }
   };
-  const flush = (): Promise<void> => emissionChain;
+  const enqueue = (fn: () => Promise<void>): Promise<void> => {
+    const queued = emissionChain.then(() => fn());
+    emissionChain = queued.catch((error: unknown) => {
+      collectFailure(emissionFailures, error);
+    });
+    return queued;
+  };
+  const flush = async (): Promise<void> => {
+    await emissionChain;
+    if (emissionFailures.length === 0) return;
+    const failures = emissionFailures;
+    emissionFailures = [];
+    if (failures.length === 1) throw failures[0];
+    throw new AggregateError(failures, 'discuss runtime emissions failed');
+  };
   const requirePorts = (): PlaybookPorts => {
-    if (!ports) throw new Error('discuss runtime: init(ports) must be called first');
+    if (!ports) {
+      throw new Error('discuss runtime: init(session) must be called first');
+    }
     return ports;
+  };
+  const requireSessionIdentity = (): Readonly<{
+    sessionId: string;
+    playbookId: string;
+  }> => {
+    if (!sessionIdentity) {
+      throw new Error('discuss runtime: init(session) must be called first');
+    }
+    return sessionIdentity;
+  };
+  const stateId = (): string | undefined => {
+    const snapshot = actor?.getSnapshot();
+    return typeof snapshot?.value === 'string' ? snapshot.value : previousValue;
+  };
+  const stateIdentity = (): { stateId?: string } => {
+    const current = stateId();
+    return current === undefined ? {} : { stateId: current };
+  };
+  const emitTrace = (
+    type: PlaybookTraceType,
+    payload: unknown,
+    meta: { turnId?: number; callId?: string } = {},
+  ): Promise<void> => {
+    const runtimePorts = requirePorts();
+    const identity = requireSessionIdentity();
+    const trace: PlaybookTraceEvent = {
+      schemaVersion: 1,
+      sessionId: identity.sessionId,
+      playbookId: identity.playbookId,
+      sequence: ++traceSequence,
+      timestamp: Date.now(),
+      type,
+      ...(meta.turnId !== undefined ? { turnId: meta.turnId } : {}),
+      ...(meta.callId !== undefined ? { callId: meta.callId } : {}),
+      payload,
+    };
+    return enqueue(() =>
+      runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace }),
+    );
+  };
+
+  const callJudge = async (
+    prompt: string,
+    signal: AbortSignal,
+    purpose: 'boss-input-classification' | 'player-output-adjudication',
+    callStateId: string | undefined,
+  ): Promise<string> => {
+    const callId = `judge-${++judgeCallSequence}`;
+    const identity = {
+      purpose,
+      ...(callStateId !== undefined ? { stateId: callStateId } : {}),
+    };
+    await emitTrace(
+      'judge.call.started',
+      { ...identity, prompt },
+      { turnId: currentTurnId, callId },
+    );
+
+    let finalText: string;
+    try {
+      finalText = await requirePorts().callJudge(prompt, signal);
+    } catch (error) {
+      await emitTrace(
+        'judge.call.finished',
+        {
+          ...identity,
+          status: signal.aborted ? 'aborted' : 'error',
+          error: normalizeErrorFull(error) ?? {
+            name: 'Error',
+            message: String(error),
+          },
+        },
+        { turnId: currentTurnId, callId },
+      );
+      throw error;
+    }
+
+    await emitTrace(
+      'judge.call.finished',
+      { ...identity, status: 'ok', reply: finalText },
+      { turnId: currentTurnId, callId },
+    );
+    return finalText;
+  };
+
+  const callPlayer = async (
+    input: CaptainInput,
+    signal: AbortSignal,
+  ): Promise<{ playerId: string; result: PlayerResult }> => {
+    const playerId = resolvePlayerId(input, binding);
+    const prompt = composePlayerPrompt(input);
+    const resume: PlayerCallOptions['resume'] =
+      playerResumeTokens.get(playerId) ?? false;
+    const callId = `player-${++playerCallSequence}`;
+    const callStateId =
+      stateId() ??
+      CAPTAIN_STATES.find((state) => state.sourceItem === input.sourceItem)
+        ?.stateId;
+    const identity = {
+      purpose: 'captain',
+      ...(callStateId !== undefined ? { stateId: callStateId } : {}),
+      sourceItem: input.sourceItem,
+      playerId,
+      resume,
+    };
+    await emitTrace(
+      'player.call.started',
+      { ...identity, prompt },
+      { turnId: currentTurnId, callId },
+    );
+
+    let result: PlayerResult;
+    try {
+      result = await requirePorts().callPlayer(playerId, prompt, signal, {
+        resume,
+      });
+    } catch (error) {
+      // A rejected call produced no authoritative result, so the previous
+      // token remains untouched.
+      await emitTrace(
+        'player.call.finished',
+        {
+          ...identity,
+          status: signal.aborted ? 'aborted' : 'error',
+          error: normalizeErrorFull(error) ?? {
+            name: 'Error',
+            message: String(error),
+          },
+        },
+        { turnId: currentTurnId, callId },
+      );
+      throw error;
+    }
+
+    // The resolved result is authoritative even on aborted/error status.
+    // Update continuation state before interpreting that status.
+    if (
+      typeof result.resumeToken === 'string' &&
+      result.resumeToken.trim().length > 0
+    ) {
+      playerResumeTokens.set(playerId, result.resumeToken);
+    } else {
+      playerResumeTokens.delete(playerId);
+    }
+
+    await emitTrace(
+      'player.call.finished',
+      {
+        ...identity,
+        status: result.status,
+        ...(result.resumeToken !== undefined
+          ? { resumeToken: result.resumeToken }
+          : {}),
+        ...(result.finalText !== undefined
+          ? { finalText: result.finalText }
+          : {}),
+        ...(result.error !== undefined
+          ? { error: normalizeErrorFull(result.error) }
+          : {}),
+      },
+      { turnId: currentTurnId, callId },
+    );
+    return { playerId, result };
   };
 
   const captain = fromPromise<CaptainOutput, CaptainInput>(
     async ({ input, signal }) => {
-      const runtimePorts = requirePorts();
       const combined = combineSignals(signal, currentSignal);
       combined.throwIfAborted();
 
-      const playerId = resolvePlayerId(input, binding);
-      const prompt = composePlayerPrompt(input);
-      const result = await runtimePorts.callPlayer(playerId, prompt, combined);
+      const { playerId, result } = await callPlayer(input, combined);
       if (result.status !== 'ok') {
         throw new Error(
           `player "${playerId}" returned status "${result.status}"${
@@ -657,10 +862,13 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       combined.throwIfAborted();
 
       try {
+        const prompt = buildAdjudicatorPrompt(input, result.finalText ?? '');
         return parseAdjudication(
-          await runtimePorts.callJudge(
-            buildAdjudicatorPrompt(input, result.finalText ?? ''),
+          await callJudge(
+            prompt,
             combined,
+            'player-output-adjudication',
+            stateId(),
           ),
           input,
         );
@@ -680,27 +888,42 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     if (typeof snapshot.value !== 'string') return;
     const to = snapshot.value;
     const from = previousValue;
-    if (from === to) return;
     previousValue = to;
 
     const runtimePorts = ports;
     if (!runtimePorts) return;
     const context = snapshot.context as Record<string, unknown>;
+    const fsmPayload = telemetryPayload(from, to, event.event, context);
+    const statusMessage = formatStateStatus(to, context);
+    const lastError =
+      to === 'failed' ? normalizeErrorCompact(context.lastError) : undefined;
+    const statusData =
+      lastError === undefined ? undefined : { lastError };
 
-    enqueue(() =>
+    void emitTrace('fsm.transition', fsmPayload, {
+      turnId: currentTurnId,
+    });
+    // A reentering transition can keep the same state id while still being
+    // a real FSM transition (for example BOSS_INTERRUPT targeting `ready`).
+    // Trace it, but retain DISCUSS's established host telemetry/status rule
+    // of announcing only state-id changes.
+    if (from === to) return;
+    void enqueue(() =>
       runtimePorts.emitTelemetry({
         topic: TELEMETRY_TOPIC,
-        payload: telemetryPayload(from, to, event.event, context),
+        payload: fsmPayload,
       }),
     );
-    enqueue(() =>
-      runtimePorts.emitStatus(
-        formatStateStatus(to, context),
-        to === 'failed'
-          ? { lastError: normalizeErrorCompact(context.lastError) }
-          : undefined,
-      ),
+    void emitTrace(
+      'status.emitted',
+      {
+        stateId: to,
+        message: statusMessage,
+        ...(statusData !== undefined ? { data: statusData } : {}),
+      },
+      { turnId: currentTurnId },
     );
+    void enqueue(() => runtimePorts.emitStatus(statusMessage, statusData));
   };
 
   const startActor = (): void => {
@@ -745,13 +968,44 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       state: String(snapshot.value),
       pendingQuestion: pendingQuestionFromContext(context)?.question,
     });
-    const raw = await requirePorts().callJudge(prompt, signal);
+    const raw = await callJudge(
+      prompt,
+      signal,
+      'boss-input-classification',
+      String(snapshot.value),
+    );
     return parseClassification(raw);
   };
 
   return {
-    async init(hostPorts: PlaybookPorts): Promise<void> {
-      ports = hostPorts;
+    async init(session: PlaybookSession): Promise<void> {
+      if (lifecycleStarted) {
+        throw new Error('discuss runtime: init(session) may only be called once');
+      }
+      if (
+        !session ||
+        typeof session.sessionId !== 'string' ||
+        session.sessionId.trim().length === 0
+      ) {
+        throw new Error('discuss runtime: sessionId must be a non-empty string');
+      }
+      if (
+        typeof session.playbookId !== 'string' ||
+        session.playbookId.trim().length === 0
+      ) {
+        throw new Error('discuss runtime: playbookId must be a non-empty string');
+      }
+      if (!session.ports) {
+        throw new Error('discuss runtime: session.ports is required');
+      }
+
+      lifecycleStarted = true;
+      ports = session.ports;
+      sessionIdentity = Object.freeze({
+        sessionId: session.sessionId,
+        playbookId: session.playbookId,
+      });
+      await emitTrace('session.started', { stateId: 'ready' });
       startActor();
       await flush();
     },
@@ -763,49 +1017,146 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       requirePorts();
       if (!actor) {
         throw new Error(
-          'discuss runtime: init(ports) must be called before handleBossInput',
+          'discuss runtime: init(session) must be called before handleBossInput',
         );
       }
-      if (turn.text.trim().length === 0) {
-        await flush();
-        return;
-      }
 
+      const turnId = ++turnSequence;
+      currentTurnId = turnId;
       currentSignal = turn.signal;
       adjudicatorError = undefined;
+      let settlement: Record<string, unknown> = {
+        outcome: 'failed',
+        ...stateIdentity(),
+      };
+      const failures: unknown[] = [];
       try {
-        const event = await classify(turn.text, turn.signal);
-        if (!event) {
-          await flush();
-          return;
-        }
+        await emitTrace(
+          'boss.input.received',
+          { text: turn.text },
+          { turnId },
+        );
+        if (turn.text.trim().length === 0) {
+          settlement = { outcome: 'no-action', ...stateIdentity() };
+        } else {
+          const event = await classify(turn.text, turn.signal);
+          if (!event) {
+            settlement = { outcome: 'no-action', ...stateIdentity() };
+          } else {
+            if (actor.getSnapshot().status === 'done') {
+              actor.stop();
+              startActor();
+            }
 
-        if (actor.getSnapshot().status === 'done') {
-          actor.stop();
-          startActor();
-        }
+            actor.send(event);
+            await driveToQuiescence();
+            await flush();
 
-        actor.send(event);
-        await driveToQuiescence();
+            if (adjudicatorError !== undefined) {
+              const error = adjudicatorError;
+              adjudicatorError = undefined;
+              throw error;
+            }
+            const settledStateId = stateId();
+            settlement = {
+              outcome: turn.signal.aborted
+                ? 'aborted'
+                : actor.getSnapshot().status === 'done' ||
+                    settledStateId === 'done'
+                  ? 'terminal'
+                  : settledStateId === 'failed'
+                    ? 'failed'
+                    : 'quiescent',
+              ...(settledStateId !== undefined
+                ? { stateId: settledStateId }
+                : {}),
+            };
+          }
+        }
+      } catch (error) {
+        collectFailure(failures, error);
+        settlement = {
+          outcome: turn.signal.aborted ? 'aborted' : 'failed',
+          ...stateIdentity(),
+          error: normalizeErrorFull(error) ?? {
+            name: 'Error',
+            message: String(error),
+          },
+        };
+      }
+
+      currentSignal = undefined;
+      try {
         await flush();
-
-        if (adjudicatorError !== undefined) {
-          const error = adjudicatorError;
-          adjudicatorError = undefined;
-          throw error;
+      } catch (error) {
+        collectFailure(failures, error);
+        if (!('error' in settlement)) {
+          settlement = {
+            outcome: turn.signal.aborted ? 'aborted' : 'failed',
+            ...stateIdentity(),
+            error: normalizeErrorFull(error) ?? {
+              name: 'Error',
+              message: String(error),
+            },
+          };
         }
+      }
+      try {
+        await emitTrace('boss.input.settled', settlement, { turnId });
+      } catch (error) {
+        collectFailure(failures, error);
+      }
+      try {
+        await flush();
+      } catch (error) {
+        collectFailure(failures, error);
       } finally {
-        currentSignal = undefined;
+        currentTurnId = undefined;
+        adjudicatorError = undefined;
+      }
+
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, 'discuss runtime turn failed');
       }
     },
 
     async dispose(): Promise<void> {
+      if (!sessionIdentity || disposed) return;
+      const finalStateId = stateId();
+      const failures: unknown[] = [];
       if (actor) {
         actor.stop();
-        actor = undefined;
       }
-      await flush();
-      ports = undefined;
+      try {
+        await flush();
+      } catch (error) {
+        collectFailure(failures, error);
+      }
+      try {
+        await emitTrace('session.disposed', {
+          ...(finalStateId !== undefined ? { stateId: finalStateId } : {}),
+        });
+      } catch (error) {
+        collectFailure(failures, error);
+      }
+      try {
+        await flush();
+      } catch (error) {
+        collectFailure(failures, error);
+      } finally {
+        playerResumeTokens.clear();
+        actor = undefined;
+        currentSignal = undefined;
+        currentTurnId = undefined;
+        ports = undefined;
+        sessionIdentity = undefined;
+        disposed = true;
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(failures, 'discuss runtime disposal failed');
+      }
     },
   };
 };
