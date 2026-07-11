@@ -172,3 +172,24 @@ transition / guard names, internal state counts, or how-it-was-done
 narration, and without shell ledger JSON, followed by the
 saved-counts line in a natural chat-like tone with clear
 formatting.
+
+## Playbook session bridge
+
+### CAPTAIN-27
+Verifies: [CAPTAIN-26](../dev/playbook-captain.md#captain-26)
+
+Where the test suite drives the Playbook Captain shell with an injected
+session-id generator and resumable fake or real host players, the test
+suite shall fail unless engagement creates a new UUID, parking and
+same-runtime resume retain it, final completion or dismissal followed
+by re-engagement creates a different UUID, and an injected collision
+rejects.
+The runtime init argument, bounded ledger, shell FSM telemetry, and
+passed-through `playbook.trace` shall carry the active id.
+The shell bridge shall forward `resume: false` and explicit tokens to
+the bound host player and preserve the host's returned `resumeToken`;
+a real tmux-play integration shall prove an old host-player token is
+not inherited by a new playbook session and that the next call in that
+session resumes its own returned token.
+Visible status and turn summaries shall remain unchanged and shall
+contain neither session ids, resume tokens, nor trace payloads.

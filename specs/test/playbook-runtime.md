@@ -194,7 +194,8 @@ suite shall fail unless every non-empty text routes through
 `callJudge` and lands on the classifier-named FSM event, text
 beginning with `/` receives no special parsing, each invalid reply
 surfaces one `emitStatus` call and leaves the FSM unmoved, and
-empty text makes no port calls.
+empty text makes no judge call, player call, status emission, or FSM
+transition while still emitting the received/settled session trace.
 
 ### PBRT-26
 Verifies: [PBRT-8](../dev/playbook-runtime.md#pbrt-8)
@@ -241,7 +242,9 @@ verbatim answer and resumes the pending state, a fresh directive
 event transitions out of `awaitBossReply` and clears the pending
 reply context, text beginning with `/` receives no special parsing,
 invalid replies surface one `emitStatus` call and leave the FSM
-unmoved, and empty text makes no port calls.
+unmoved, and empty text makes no judge call, player call, status
+emission, or FSM transition while still emitting the received/settled
+session trace.
 
 ## Options validation
 
@@ -281,7 +284,11 @@ contract agrees with
 `error`, and `PlaybookPorts` declares exactly the members `callPlayer`,
 `callJudge`, `emitStatus`, and `emitTelemetry`.
 The test suite shall additionally fail unless the module exports
-`PlaybookRuntime` and `PlaybookRuntimeFactory` and its import graph
+`PlayerCallOptions`, `PlaybookSession`, `PlaybookTraceEvent`,
+`PlaybookRuntime`, and `PlaybookRuntimeFactory`, unless `PlayerResult`
+exposes optional `resumeToken`, unless `callPlayer` requires explicit
+resume options, and unless `PlaybookRuntime.init` accepts a
+`PlaybookSession`; its import graph
 includes no CODE or FSM module.
 
 ### PBRT-36
@@ -300,3 +307,26 @@ assignable to the shared types and would therefore pass while CODE
 still violated the re-export requirement of
 [PBRT-5](../dev/playbook-runtime.md#pbrt-5) and
 [DR-004 Addendum A4](../decisions/004-link-code-fsm-to-playbook-runtime.md#a4-runtime-contract-types-sourced-from-a-shared-module).
+
+## Session trace and player continuation
+
+### PBRT-39
+Verifies: [PBRT-37](../dev/playbook-runtime.md#pbrt-37), [PBRT-38](../dev/playbook-runtime.md#pbrt-38)
+
+Where the integration suite drives CODE and DISCUSS through real linked
+runtimes with fake ports, the test suite shall fail unless each
+init-to-dispose session keeps its supplied id immutable, two sessions
+use distinct ids, and every trace event carries the session/playbook
+ids, schema version, contiguous sequence, timestamp, and the required
+turn/call ids.
+The trace shall fail unless session, exact Boss input, judge/player
+call pairs, FSM transitions, status emissions, settlement, normalized
+failures, and disposal are present in boundary order; empty input shall
+produce only its Boss received/settled trace around no runtime action.
+The player calls shall fail unless the first call for each resolved
+player passes `resume: false`, the next same-player call passes the
+last returned token, a rotated token replaces it, an omitted token
+clears it, an aborted or error result can preserve a returned token,
+separate players retain independent tokens, a Committer alias shares
+the selected player's token, and a new runtime session starts fresh
+rather than inheriting a prior token.

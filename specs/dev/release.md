@@ -126,7 +126,9 @@ version specifier shall be a caret SemVer range, not a moving
 registry dist-tag such as `latest`.
 The declared range shall admit cligent's tmux-play dynamic
 visible-player surface used by the Playbook Captain shell, first
-available in `@sublang/cligent` 0.13.0.
+available in `@sublang/cligent` 0.13.0, and shall admit the explicit
+`CallPlayerOptions.resume` surface required by
+[CAPTAIN-26](playbook-captain.md#captain-26).
 
 The repo-local `pnpm-lock.yaml` root importer shall use the same
 specifier and continue to pin a specific resolved cligent version,
@@ -146,6 +148,9 @@ That module shall carry only the runtime contract types
 ([PBRT-34](playbook-runtime.md#pbrt-34)) — no runtime engine and no
 linker. A breaking change to its exported type names or shapes shall
 be released under [RELEASE-1](#release-1) SemVer.
+The `PlaybookSession`, player-resume, and trace shapes introduced by
+[DR-010](../decisions/010-playbook-session-tracing-and-resume.md) are
+such a breaking public-contract change.
 
 ### RELEASE-16
 
