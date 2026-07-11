@@ -50,7 +50,8 @@ derive the role binding from the entry's `id` and roles
 The shell shall not hardcode CODE state ids such as `failed` or
 `awaitBossReply` or CODE-specific summary labels.
 The shell shall support one active engagement and shall keep only
-a bounded control ledger: active playbook id, shell mode, latest
+a bounded control ledger: active playbook id, active playbook session
+id, shell mode, latest
 sub-runtime state id, pending Boss question when mirrored from
 telemetry, normalized last error when mirrored from telemetry, and
 last route decision.
@@ -131,8 +132,9 @@ active entry's local-role-to-host-player binding.
 The binding for local role `<role>` in playbook `<id>` shall be the
 host player id `<id>-<role>`, so CODE's `coder` and `reviewer` bind
 to host players `code-coder` and `code-reviewer`.
-The wrapper shall route a sub-runtime `callPlayer(localRole, …)` to
-`context.callPlayer(<id>-<localRole>, …)`, route sub-runtime
+The wrapper shall route a sub-runtime `callPlayer(localRole, …,
+{ resume })` to `context.callPlayer(<id>-<localRole>, …,
+{ resume })`, return the host result's `resumeToken`, route sub-runtime
 `callJudge` to hidden `context.callCaptain`, and pass sub-runtime
 `emitStatus` and `emitTelemetry` calls through to the host in order.
 The shell shall also pass the resolved binding in the metadata given
@@ -232,7 +234,9 @@ Where the Playbook Captain shell has no active sub-runtime, when a
 registered command or router decision engages a playbook id, the
 shell shall construct a new sub-runtime from that registry entry's
 `createRuntime` function and the validated options captured during
-`init`.
+`init`, generate a previously unissued UUID playbook session id, and
+initialize the runtime with that id, the registry entry id, and the
+wrapped ports.
 Where the Playbook Captain shell has disposed an active sub-runtime
 because it reached its final state or was dismissed, when a later
 registered command or router decision engages the same playbook id,
@@ -291,6 +295,26 @@ active sub-runtime, clear the active turn context, emit no shell
 status or shell FSM telemetry for the adapter teardown itself, and
 resolve only after the active sub-runtime's `dispose()` call
 returns.
+
+## Playbook session bridge
+
+### CAPTAIN-26
+
+Where the Playbook Captain shell constructs a new engagement, when it
+initializes the linked runtime, the shell shall generate a non-empty,
+previously unissued UUID, store it as the active playbook session id,
+and call `runtime.init({ sessionId, playbookId, ports })`.
+The same parked runtime shall retain that id; a replacement engagement
+after final completion or dismissal shall receive a new one; and a
+collision from an injected id generator shall reject rather than reuse
+an earlier id.
+The shell shall include the active session id in its bounded ledger and
+shell FSM telemetry, pass sub-runtime `playbook.trace` telemetry through
+unchanged, forward every explicit player `resume` selection to
+cligent's `context.callPlayer`, and return the authoritative host
+`resumeToken` unchanged.
+The shell shall put neither resume tokens nor trace payloads in its
+hidden-router prompt, visible status messages, or turn summaries.
 
 ## Active-playbook visibility
 

@@ -401,7 +401,8 @@ This addendum amends §10 so the emitted `code.playbook.ts` imports the
 runtime contract types from a single shared, published type-only module
 instead of redefining them.
 
-- **Shared source.** `PlayerResult`, `PlaybookPorts`, and
+- **Shared source.** `PlayerResult`, `PlayerCallOptions`,
+  `PlaybookPorts`, `PlaybookSession`, `PlaybookTraceEvent`, and
   `PlaybookRuntime` are authored once in `@sublang/playbook/runtime` —
   the TypeScript projection of
   [slc/link.md §Output](../../slc/link.md#output) — and imported by
@@ -414,9 +415,27 @@ instead of redefining them.
 - **One-way dependency.** The shared module imports no CODE or FSM
   types, so `@sublang/playbook/runtime` stays free of the CODE playbook;
   only `code.playbook.ts` depends on it, never the reverse.
-- **No behavior change.** Player binding (§1/§2), prompts, guards, and
-  the runtime engine are unchanged, and the engine stays emitted per
-  artifact; this is a type-sourcing change only.
+- **Original behavior.** At the time of this addendum, player binding
+  (§1/§2), prompts, guards, and the runtime engine were unchanged.
+  [A5](#a5-playbook-session-tracing-and-player-resume) later extends
+  the shared shapes and emitted engine behavior.
+
+### A5. Playbook session tracing and player resume
+
+[DR-010](010-playbook-session-tracing-and-resume.md) amends the linked
+runtime contract and engine for explicit session identity, ordered
+runtime-boundary tracing, and player continuation.
+
+- `PlaybookRuntime.init` receives a `PlaybookSession` carrying the host's
+  unique playbook-session id, playbook id, and ports.
+- `PlaybookPorts.callPlayer` receives required
+  `PlayerCallOptions.resume`, and `PlayerResult` may return the
+  authoritative opaque `resumeToken`.
+- The emitted runtime explicitly starts each resolved player fresh,
+  retains tokens only within that runtime session, and emits the
+  `playbook.trace` stream specified by [slc/link.md](../../slc/link.md#playbook-trace).
+- Persisted FSM snapshots and cross-process runtime rehydration remain
+  out of scope.
 
 ## References
 

@@ -29,8 +29,9 @@ shared runtime contract types from `@sublang/playbook/runtime`
 ([PBRT-34](#pbrt-34)), hold no host-specific types, and interact
 with its host exclusively through the `PlaybookPorts` interface
 (`callPlayer`, `callJudge`, `emitStatus`, `emitTelemetry`). It shall
-re-export `PlayerResult`, `PlaybookPorts`, and `PlaybookRuntime` from
-that shared module rather than redefining them, so consumers of
+re-export `PlayerResult`, `PlaybookPorts`, `PlaybookSession`, and
+`PlaybookRuntime` from that shared module rather than redefining them,
+so consumers of
 `@sublang/playbook/code/playbook` resolve the same contract types. It
 shall default-export a `createPlaybookRuntime(options)` factory
 returning a `PlaybookRuntime` (`init`, `handleBossInput`, `dispose`),
@@ -43,12 +44,16 @@ time.
 
 The package shall provide a type-only module resolvable as
 `@sublang/playbook/runtime` that is the single authored source of the
-runtime contract types `PlayerResult`, `PlaybookPorts`,
+runtime contract types `PlayerResult`, `PlayerCallOptions`,
+`PlaybookPorts`, `PlaybookSession`, `PlaybookTraceEvent`,
 `PlaybookRuntime`, and `PlaybookRuntimeFactory<Options = unknown>`, as
 the TypeScript projection of
 [slc/link.md](../../slc/link.md#playbookruntime-contract).
 `PlayerResult.status` shall be the union `'ok' | 'aborted' | 'error'`,
-and `PlaybookPorts` shall declare exactly the members `callPlayer`,
+`PlayerResult` shall expose optional `resumeToken`, `PlayerCallOptions`
+shall require `resume: string | false`, `PlaybookRuntime.init` shall
+accept a `PlaybookSession`, and `PlaybookPorts` shall declare exactly
+the members `callPlayer`,
 `callJudge`, `emitStatus`, and `emitTelemetry`.
 The module shall import no CODE or FSM types, directly or
 transitively, so it carries no dependency on any specific playbook;
@@ -61,8 +66,10 @@ engine, linker, or host primitives.
 
 ### PBRT-6
 
-When `init(ports)` is called, the runtime shall construct the FSM
-actor from the options and start it, leaving the FSM in its idle
+When `init({ sessionId, playbookId, ports })` is called with non-empty
+identity fields, the runtime shall bind that identity immutably for its
+lifetime, construct the FSM actor from the options, and start it,
+leaving the FSM in its idle
 state. When `dispose()` is called, the runtime shall stop the
 actor and drain any pending port emissions. When `handleBossInput`
 is called before `init`, the runtime shall throw.
@@ -72,7 +79,9 @@ is called before `init`, the runtime shall throw.
 ### PBRT-7
 
 When the runtime classifies a Boss turn, empty or whitespace-only
-text shall produce no event and no port call.
+text shall produce no event, judge call, player call, status emission,
+or FSM transition; session trace telemetry under [PBRT-37](#pbrt-37)
+shall still record and settle that Boss input.
 For every non-empty Boss turn, the runtime shall call `callJudge` with a fixed prompt that
 names the current FSM state, the valid Boss-event types for that
 state, and every required payload field.
@@ -142,7 +151,8 @@ While driving a Boss turn, for each FSM captain invocation the
 runtime shall resolve the player id ([PBRT-8](#pbrt-8)), compose
 the player prompt ([PLAYBOOK-5](playbook.md#playbook-5),
 [PLAYBOOK-6](playbook.md#playbook-6)), and call
-`callPlayer(playerId, prompt, signal)`. When the result status is
+`callPlayer(playerId, prompt, signal, options)` with the explicit
+resume selection required by [PBRT-38](#pbrt-38). When the result status is
 `ok` with a `finalText`, the runtime shall adjudicate that text
 ([PBRT-10](#pbrt-10)) and return the adjudicated `CaptainOutput`
 so the FSM advances. When the result status is not `ok`, or
@@ -225,6 +235,8 @@ runtime surfaces per [PBRT-14](#pbrt-14).
 
 On every FSM transition the runtime shall call `emitTelemetry`
 with topic `playbook.fsm.state` and payload `{ from, to, event }`.
+Before that state telemetry, the runtime shall emit the corresponding
+`playbook.trace` `fsm.transition` event per [PBRT-37](#pbrt-37).
 Where the transition is a failed-transition event carrying an
 `error` field (e.g., `xstate.error.actor.*`), the runtime shall
 normalize that `event.error` to a full `{ name, message, stack }`
@@ -380,3 +392,41 @@ The derived `coderPlayer` / `reviewerPlayer` identity strings
 ([PBRT-15](#pbrt-15)) shall continue to come from the host players
 bound to the CODE local roles and override any same-named keys,
 independent of the CODE option slice.
+
+## Session trace and player continuation
+
+### PBRT-37
+
+Where a host initializes a linked playbook runtime with a
+`PlaybookSession`, the runtime shall emit telemetry topic
+`playbook.trace` carrying the immutable session and playbook ids and
+the schema defined by
+[DR-010 §2](../decisions/010-playbook-session-tracing-and-resume.md#2-boundary-complete-trace).
+The trace sequence shall be contiguous and one-based for that session;
+Boss turns and player/judge calls shall receive one-based ids, and a
+call's started and finished events shall share its call id.
+The runtime shall trace session start/disposal, exact Boss input and
+settlement, exact player and judge prompts and results, normalized
+errors, every FSM transition, and every status emission.
+Trace emissions shall be awaited and shall precede the boundary call,
+status, or state telemetry they describe; trace payloads shall never be
+copied into Boss-visible status text.
+Empty Boss input shall still produce its received and settled trace
+events while producing no judge call, player call, status emission, or
+FSM action.
+
+### PBRT-38
+
+Where a linked runtime invokes a resolved player within one playbook
+session, when no resume token is recorded for that player, the runtime
+shall call `PlaybookPorts.callPlayer` with `{ resume: false }`; when a
+token is recorded, it shall pass that exact token.
+After every resolved call, before interpreting its status, the runtime
+shall replace the player's token with a non-empty
+`PlayerResult.resumeToken` or clear it when the result omits one.
+An aborted or error result carrying a token shall therefore remain
+resumable; a rejected call carrying no result shall preserve the prior
+token and shall not trigger a silent fresh retry.
+The runtime shall key tokens by the resolved player id, keep separate
+players independent, preserve the map across parked turns and actor
+reconstruction within the runtime session, and discard it on dispose.

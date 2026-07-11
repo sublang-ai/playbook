@@ -167,29 +167,28 @@ When the actor is in `'awaitBossReply'`, the prompt shall include the pending qu
 | Judge returns `BOSS_REPLY` with a non-empty `answer` while actor is in `awaitBossReply` | `{ type: 'BOSS_REPLY', answer }` | Boss answered the pending question |
 | Judge returns a root-level Boss entry event or `BOSS_INTERRUPT` while actor is in `awaitBossReply` | Emit that event (transitions out of `awaitBossReply` per §1; `clearBossReplyContext` runs) | Boss explicitly abandons the pending question with a fresh directive |
 | Judge returns no action or an invalid event/payload | One `emitStatus` call, no event (per PBRT-7) | A malformed classifier response must not silently move the FSM |
-| Empty or whitespace-only text | No event, no port call (per PBRT-7) | Preserves PBRT-7; an empty BOSS_REPLY is malformed per §8 |
+| Empty or whitespace-only text | No event, judge/player call, status, or FSM action; trace telemetry only (per PBRT-7) | Preserves PBRT-7; an empty BOSS_REPLY is malformed per §8 |
 
 Outside `awaitBossReply`, `BOSS_REPLY` is not a valid classification result.
 The in-state context lets the judge decide whether `"SQLite"` is a fresh directive or a reply.
 
-### 7. Transcript embedding over SDK session resume
+### 7. Transcript embedding with player-session resume
 
 The runtime shall **embed** the question and reply as labelled blocks in the next prompt (§5).
-It shall **not** use the adapter SDK's session-resume (e.g. cligent's `options.resume`) to continue the prior conversation in place.
+Per [DR-010](010-playbook-session-tracing-and-resume.md), it shall also use the player session's latest authoritative resume token when the adapter supplies one.
 
 Trade-off matrix:
 
-|                                | Embedded transcript (chosen) | SDK session resume |
+|                                | Embedded transcript | SDK session resume |
 |--------------------------------|------------------------------|--------------------|
-| Captain bridge change          | None                         | Adapter API extension |
-| Token cost per resume          | Re-sends Q+A as text         | Server-side cache preserved |
-| Tool state continuity          | Lost between successive player turns | Preserved across the wait |
-| Prompt-cache effectiveness     | New transcript invalidates   | Preserved |
-| Determinism across adapters    | Same shape for claude/codex/etc. | Per-adapter quirks |
+| Captain bridge change          | Explicit prompt blocks | Explicit resume selection |
+| Token cost per resume          | Re-sends Q+A as text | Server-side cache may be preserved |
+| Tool state continuity          | Explicit context survives without backend support | Preserved when the adapter returns a token |
+| Prompt-cache effectiveness     | Q+A is new input | Prior conversation remains available |
+| Determinism across adapters    | Same shape for every adapter | Best effort per adapter |
 
-The transcript approach trades cache efficiency for adapter uniformity.
-Coding turns are composed from explicit structured blocks anyway, so losing tool-state continuity is not a practical regression.
-A future DR may revisit this if re-prompting cost grows.
+The two mechanisms are complementary.
+The transcript is mandatory deterministic input and an adapter-independent fallback; SDK resume preserves the player's conversation and tool context where supported.
 
 ### 8. Failure modes
 
