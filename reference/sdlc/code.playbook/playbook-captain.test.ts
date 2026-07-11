@@ -2,16 +2,26 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { describe, expect, it, vi } from 'vitest';
+import { createEvent } from '@sublang/cligent';
+import type {
+  AgentAdapter,
+  AgentEvent,
+  AgentOptions,
+} from '@sublang/cligent';
 import type {
   BossTurn,
+  Captain,
   CaptainContext,
   CaptainRunResult,
   CaptainSession,
   PlayerRunResult,
+  TmuxPlayRecord,
 } from '@sublang/cligent/tmux-play';
+import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
 import type {
   PlaybookPorts,
   PlaybookRuntime,
+  PlaybookSession,
 } from './code.playbook.js';
 import {
   createPlaybookCaptainShell,
@@ -30,7 +40,11 @@ interface StubSession {
 interface StubContext {
   context: CaptainContext;
   controller: AbortController;
-  playerCalls: { playerId: string; prompt: string }[];
+  playerCalls: {
+    playerId: string;
+    prompt: string;
+    options: { resume?: string | false } | undefined;
+  }[];
   captainCalls: { prompt: string; options?: CaptainCallOptions }[];
   visiblePlayers: string[][];
 }
@@ -53,9 +67,14 @@ type HandleHook = (
 ) => Promise<void>;
 
 type DisposeHook = (runtime: FakeRuntime) => Promise<void>;
+type InitHook = (
+  runtime: FakeRuntime,
+  session: PlaybookSession,
+) => Promise<void>;
 
 class FakeRuntime implements PlaybookRuntime {
   ports: PlaybookPorts | undefined;
+  session: PlaybookSession | undefined;
   readonly inputs: { text: string; signal: AbortSignal }[] = [];
   initCount = 0;
   disposeCount = 0;
@@ -63,11 +82,14 @@ class FakeRuntime implements PlaybookRuntime {
   constructor(
     private readonly handleHook?: HandleHook,
     private readonly disposeHook?: DisposeHook,
+    private readonly initHook?: InitHook,
   ) {}
 
-  async init(ports: PlaybookPorts): Promise<void> {
-    this.ports = ports;
+  async init(session: PlaybookSession): Promise<void> {
+    this.session = session;
+    this.ports = session.ports;
     this.initCount += 1;
+    await this.initHook?.(this, session);
   }
 
   async handleBossInput(turn: {
@@ -121,8 +143,12 @@ function stubContext(
     context: {
       signal: controller.signal,
       players: [],
-      callPlayer: async (playerId, prompt): Promise<PlayerRunResult> => {
-        playerCalls.push({ playerId, prompt });
+      callPlayer: async (
+        playerId,
+        prompt,
+        options,
+      ): Promise<PlayerRunResult> => {
+        playerCalls.push({ playerId, prompt, options });
         return {
           status: 'ok',
           playerId,
@@ -165,7 +191,11 @@ function stubContext(
   };
 }
 
-function fakeCodeEntry(handleHook?: HandleHook, disposeHook?: DisposeHook): {
+function fakeCodeEntry(
+  handleHook?: HandleHook,
+  disposeHook?: DisposeHook,
+  initHook?: InitHook,
+): {
   entry: PlaybookCaptainRegistryEntry;
   validateOptions: ReturnType<typeof vi.fn>;
   createRuntime: ReturnType<typeof vi.fn>;
@@ -174,7 +204,7 @@ function fakeCodeEntry(handleHook?: HandleHook, disposeHook?: DisposeHook): {
   const runtimes: FakeRuntime[] = [];
   const validateOptions = vi.fn();
   const createRuntime = vi.fn(() => {
-    const runtime = new FakeRuntime(handleHook, disposeHook);
+    const runtime = new FakeRuntime(handleHook, disposeHook, initHook);
     runtimes.push(runtime);
     return runtime;
   });
@@ -223,7 +253,7 @@ function makeShell(
   entries:
     | ReturnType<typeof fakeCodeEntry>
     | ReturnType<typeof fakeCodeEntry>[],
-  opts: { options?: unknown } = {},
+  opts: { options?: unknown; sessionIds?: string[] } = {},
 ) {
   const list = Array.isArray(entries) ? entries : [entries];
   const modules: Record<string, unknown> = {};
@@ -233,6 +263,8 @@ function makeShell(
     modules[from] = { default: r.entry };
     playbooks[r.entry.id] = { from, options: opts.options ?? {} };
   }
+  let sessionSequence = 0;
+  const sessionIds = opts.sessionIds;
   return createPlaybookCaptainShell(
     { playbooks },
     {
@@ -240,6 +272,9 @@ function makeShell(
         if (specifier in modules) return modules[specifier];
         throw new Error(`no module ${specifier}`);
       },
+      createSessionId: () =>
+        sessionIds?.shift() ??
+        `00000000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`,
     },
   );
 }
@@ -734,7 +769,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     );
   });
 
-  it('shell dispose tears down the active runtime without shell teardown emissions', async () => {
+  it('pre-close teardown drains the active runtime exactly once without shell emissions', async () => {
     const registry = fakeCodeEntry(undefined, async (runtime) => {
       await runtime.ports?.emitStatus('dispose emission', { drained: true });
     });
@@ -756,6 +791,7 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       session,
       'playbook.captain.fsm.state',
     ).length;
+    await shell.prepareDispose!();
     await shell.dispose!();
 
     expect(registry.runtimes[0]?.disposeCount).toBe(1);
@@ -789,6 +825,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
           'coder',
           'player prompt',
           runtimeTurn.signal,
+          { resume: false },
         ),
       );
       observed.push(
@@ -803,7 +840,11 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     await shell.handleBossTurn(turn('/code wire ports'), context.context);
 
     expect(context.playerCalls).toEqual([
-      { playerId: 'code-coder', prompt: 'player prompt' },
+      {
+        playerId: 'code-coder',
+        prompt: 'player prompt',
+        options: { resume: false },
+      },
     ]);
     expect(
       context.captainCalls.filter((call) => !isTurnSummaryPrompt(call.prompt)),
@@ -816,6 +857,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     expect(observed).toEqual([
       {
         status: 'ok',
+        resumeToken: undefined,
         finalText: 'player code-coder done',
         error: undefined,
       },
@@ -853,6 +895,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
         'coder',
         `player prompt for ${runtimeTurn.text}`,
         runtimeTurn.signal,
+        { resume: false },
       );
     });
     const shell = makeShell(registry);
@@ -936,8 +979,18 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
         topic: 'playbook.fsm.state',
         payload: { to: 'customState' },
       });
-      await runtime.ports.callPlayer('coder', 'first player', runtimeTurn.signal);
-      await runtime.ports.callPlayer('reviewer', 'second player', runtimeTurn.signal);
+      await runtime.ports.callPlayer(
+        'coder',
+        'first player',
+        runtimeTurn.signal,
+        { resume: false },
+      );
+      await runtime.ports.callPlayer(
+        'reviewer',
+        'second player',
+        runtimeTurn.signal,
+        { resume: false },
+      );
       await runtime.ports.callJudge('classifier event', runtimeTurn.signal);
       await runtime.ports.callJudge('malformed adjudication', runtimeTurn.signal);
       await runtime.ports.callJudge('guard absent from registry', runtimeTurn.signal);
@@ -1027,6 +1080,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
         'coder',
         `player prompt for ${runtimeTurn.text}`,
         runtimeTurn.signal,
+        { resume: false },
       );
     });
     delete (registry.entry as { summaryPolicy?: unknown }).summaryPolicy;
@@ -1069,6 +1123,7 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
         'coder',
         `player prompt for ${runtimeTurn.text}`,
         runtimeTurn.signal,
+        { resume: false },
       );
     });
     const options = {
@@ -1171,6 +1226,373 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     expect(mod.default.id).toBe('code');
     expect(mod.default.command).toBe('code');
     expect(typeof mod.default.createRuntime).toBe('function');
+  });
+});
+
+describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
+  const FIRST_ID = '10000000-0000-4000-8000-000000000001';
+  const SECOND_ID = '10000000-0000-4000-8000-000000000002';
+
+  it('keeps one UUID while parked and replaces it after dismissal', async () => {
+    const registry = fakeCodeEntry(async (runtime) => {
+      if (!runtime.ports || !runtime.session) {
+        throw new Error('runtime session missing');
+      }
+      await runtime.ports.emitTelemetry({
+        topic: 'playbook.trace',
+        payload: {
+          schemaVersion: 1,
+          sessionId: runtime.session.sessionId,
+          playbookId: runtime.session.playbookId,
+          sequence: 1,
+          timestamp: 1,
+          type: 'boss.input.settled',
+          payload: { outcome: 'quiescent' },
+        },
+      });
+    });
+    const shell = makeShell(registry, {
+      sessionIds: [FIRST_ID, SECOND_ID],
+    });
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ decision: 'dismiss', text: 'Stopped.' }),
+      { status: 'ok', turnId: 2, finalText: 'Stopped.' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first'), context.context);
+    await shell.handleBossTurn(turn('/code second', 2), context.context);
+
+    expect(registry.runtimes).toHaveLength(1);
+    expect(registry.runtimes[0]?.session).toMatchObject({
+      sessionId: FIRST_ID,
+      playbookId: 'code',
+    });
+    expect(
+      telemetryWithTopic(session, 'playbook.captain.fsm.state').some((event) =>
+        JSON.stringify(event.payload).includes(
+          `"activeSessionId":"${FIRST_ID}"`,
+        ),
+      ),
+    ).toBe(true);
+    expect(telemetryWithTopic(session, 'playbook.trace')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          payload: expect.objectContaining({ sessionId: FIRST_ID }),
+        }),
+      ]),
+    );
+
+    await shell.handleBossTurn(turn('dismiss it', 3), context.context);
+    await shell.handleBossTurn(turn('/code third', 4), context.context);
+
+    expect(
+      hiddenCaptainCalls(context).some((call) =>
+        call.prompt.includes(`"activeSessionId":"${FIRST_ID}"`),
+      ),
+    ).toBe(true);
+    expect(
+      turnSummaryCalls(context).every(
+        (call) =>
+          !call.prompt.includes(FIRST_ID) &&
+          !call.prompt.includes(SECOND_ID) &&
+          !call.prompt.includes('playbook.trace'),
+      ),
+    ).toBe(true);
+    expect(registry.runtimes).toHaveLength(2);
+    expect(registry.runtimes[1]?.session?.sessionId).toBe(SECOND_ID);
+    expect(session.statuses.map((status) => status.message)).toContain(
+      '◇ /code stopped',
+    );
+    expect(session.statuses.some((status) =>
+      status.message.includes(FIRST_ID) || status.message.includes(SECOND_ID),
+    )).toBe(false);
+  });
+
+  it('rejects a reused generated UUID before constructing a replacement', async () => {
+    const registry = fakeCodeEntry();
+    const shell = makeShell(registry, {
+      sessionIds: [FIRST_ID, FIRST_ID],
+    });
+    const session = stubSession();
+    const context = stubContext([
+      captainJson({ decision: 'dismiss', text: 'Stopped.' }),
+      { status: 'ok', turnId: 2, finalText: 'Stopped.' },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code first'), context.context);
+    await shell.handleBossTurn(turn('dismiss it', 2), context.context);
+    await expect(
+      shell.handleBossTurn(turn('/code second', 3), context.context),
+    ).rejects.toThrow(`playbook session id collision: ${FIRST_ID}`);
+    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('disposes a failed initialization and retries with a new engagement', async () => {
+    const registry = fakeCodeEntry(
+      undefined,
+      undefined,
+      async () => {
+        throw new Error('runtime init failed');
+      },
+    );
+    const shell = makeShell(registry, {
+      sessionIds: [FIRST_ID, SECOND_ID],
+    });
+    const session = stubSession();
+    const context = stubContext();
+    await shell.init!(session.session);
+
+    await expect(
+      shell.handleBossTurn(turn('/code first'), context.context),
+    ).rejects.toThrow('runtime init failed');
+    await expect(
+      shell.handleBossTurn(turn('/code retry', 2), context.context),
+    ).rejects.toThrow('runtime init failed');
+
+    expect(registry.runtimes).toHaveLength(2);
+    expect(registry.runtimes.map((runtime) => runtime.initCount)).toEqual([
+      1,
+      1,
+    ]);
+    expect(registry.runtimes.map((runtime) => runtime.disposeCount)).toEqual([
+      1,
+      1,
+    ]);
+    expect(registry.runtimes.map((runtime) => runtime.session?.sessionId)).toEqual([
+      FIRST_ID,
+      SECOND_ID,
+    ]);
+  });
+
+  it('forwards explicit resume selections and returned tokens unchanged', async () => {
+    const observed: unknown[] = [];
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      const first = await runtime.ports.callPlayer(
+        'coder',
+        'fresh call',
+        runtimeTurn.signal,
+        { resume: false },
+      );
+      observed.push(first);
+      const second = await runtime.ports.callPlayer(
+        'coder',
+        'continued call',
+        runtimeTurn.signal,
+        { resume: first.resumeToken ?? false },
+      );
+      observed.push(second);
+    });
+    const shell = makeShell(registry, { sessionIds: [FIRST_ID] });
+    const session = stubSession();
+    const context = stubContext();
+    let call = 0;
+    context.context.callPlayer = async (
+      playerId,
+      prompt,
+      options,
+    ): Promise<PlayerRunResult> => {
+      context.playerCalls.push({ playerId, prompt, options });
+      call += 1;
+      return {
+        status: 'ok',
+        playerId,
+        turnId: 1,
+        resumeToken: `player-token-${call}`,
+        finalText: `result ${call}`,
+      };
+    };
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code resume'), context.context);
+
+    expect(context.playerCalls).toEqual([
+      {
+        playerId: 'code-coder',
+        prompt: 'fresh call',
+        options: { resume: false },
+      },
+      {
+        playerId: 'code-coder',
+        prompt: 'continued call',
+        options: { resume: 'player-token-1' },
+      },
+    ]);
+    expect(observed).toEqual([
+      expect.objectContaining({ resumeToken: 'player-token-1' }),
+      expect.objectContaining({ resumeToken: 'player-token-2' }),
+    ]);
+    expect(
+      turnSummaryCalls(context).every(
+        (summary) => !summary.prompt.includes('player-token-'),
+      ),
+    ).toBe(true);
+  });
+
+  it('isolates replacement sessions through a real tmux-play host', async () => {
+    const adapterResumes: Array<string | undefined> = [];
+    let adapterRun = 0;
+
+    class PlayerAdapter implements AgentAdapter {
+      readonly agent = 'codex';
+
+      async *run(
+        _prompt: string,
+        options?: AgentOptions,
+      ): AsyncGenerator<AgentEvent, void, void> {
+        adapterRun += 1;
+        adapterResumes.push(options?.resume);
+        yield createEvent(
+          'done',
+          this.agent,
+          {
+            status: 'success',
+            result: `result-${adapterRun}`,
+            resumeToken: `token-${adapterRun}`,
+            usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+            durationMs: 1,
+          },
+          `transport-${adapterRun}`,
+        );
+      }
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+    }
+
+    class UnusedCaptainAdapter implements AgentAdapter {
+      readonly agent = 'claude-code';
+
+      async *run(): AsyncGenerator<AgentEvent, void, void> {
+        yield createEvent(
+          'done',
+          this.agent,
+          {
+            status: 'success',
+            result: 'unused',
+            usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+            durationMs: 1,
+          },
+          'captain-transport',
+        );
+      }
+
+      async isAvailable(): Promise<boolean> {
+        return true;
+      }
+    }
+
+    const tokens = new WeakMap<FakeRuntime, string>();
+    const calls = new WeakMap<FakeRuntime, number>();
+    const disposedSessionIds: string[] = [];
+    const registry = fakeCodeEntry(
+      async (runtime, runtimeTurn) => {
+        if (!runtime.ports) throw new Error('runtime ports missing');
+        const result = await runtime.ports.callPlayer(
+          'coder',
+          runtimeTurn.text,
+          runtimeTurn.signal,
+          { resume: tokens.get(runtime) ?? false },
+        );
+        if (result.resumeToken) tokens.set(runtime, result.resumeToken);
+        const callCount = (calls.get(runtime) ?? 0) + 1;
+        calls.set(runtime, callCount);
+        await runtime.ports.emitTelemetry({
+          topic: 'playbook.fsm.state',
+          payload: { to: callCount === 2 ? 'done' : 'ready' },
+        });
+      },
+      async (runtime) => {
+        if (!runtime.ports || !runtime.session) {
+          throw new Error('runtime session missing during disposal');
+        }
+        await runtime.ports.emitTelemetry({
+          topic: 'playbook.trace',
+          payload: {
+            schemaVersion: 1,
+            sessionId: runtime.session.sessionId,
+            playbookId: runtime.session.playbookId,
+            sequence: 1,
+            timestamp: 1,
+            type: 'session.disposed',
+            payload: { stateId: 'ready' },
+          },
+        });
+      },
+    );
+    registry.entry.requiredRoleIds = ['coder'];
+    delete registry.entry.summaryPolicy;
+    const shell = makeShell(registry, {
+      sessionIds: [FIRST_ID, SECOND_ID],
+    });
+    const captain: Captain = {
+      init: (session) => shell.init!(session),
+      async handleBossTurn(bossTurn, context) {
+        if (bossTurn.prompt === 'seed old host context') {
+          await context.callPlayer('code-coder', bossTurn.prompt);
+          return;
+        }
+        await shell.handleBossTurn(bossTurn, context);
+      },
+      prepareDispose: () => shell.prepareDispose!(),
+      dispose: () => shell.dispose!(),
+    };
+    const adapterImports = {
+      claude: async () => UnusedCaptainAdapter,
+      codex: async () => PlayerAdapter,
+      gemini: async () => UnusedCaptainAdapter,
+      opencode: async () => UnusedCaptainAdapter,
+    };
+    const host = await createTmuxPlayRuntime({
+      captain,
+      captainConfig: { adapter: 'claude' },
+      players: [{ id: 'code-coder', adapter: 'codex' }],
+      adapterImports,
+      observers: [
+        {
+          onRecord(record: TmuxPlayRecord) {
+            if (
+              record.type !== 'captain_telemetry' ||
+              record.topic !== 'playbook.trace'
+            ) {
+              return;
+            }
+            const payload = record.payload as {
+              type?: unknown;
+              sessionId?: unknown;
+            };
+            if (
+              payload.type === 'session.disposed' &&
+              typeof payload.sessionId === 'string'
+            ) {
+              disposedSessionIds.push(payload.sessionId);
+            }
+          },
+        },
+      ],
+    });
+
+    await host.runBossTurn('seed old host context');
+    await host.runBossTurn('/code first');
+    await host.runBossTurn('/code second');
+    await host.runBossTurn('/code third');
+    await host.dispose();
+
+    expect(adapterResumes).toEqual([
+      undefined,
+      undefined,
+      'token-2',
+      undefined,
+    ]);
+    expect(registry.runtimes.map((runtime) => runtime.session?.sessionId)).toEqual([
+      FIRST_ID,
+      SECOND_ID,
+    ]);
+    expect(disposedSessionIds).toEqual([FIRST_ID, SECOND_ID]);
   });
 });
 

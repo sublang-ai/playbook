@@ -296,11 +296,13 @@ Verifies: [PBRT-5](../dev/playbook-runtime.md#pbrt-5)
 
 The test suite shall fail unless `@sublang/playbook/code/playbook`
 obtains `PlayerResult`, `PlaybookPorts`, and `PlaybookRuntime` from
-`@sublang/playbook/runtime` and re-exports them rather than declaring
+`@sublang/playbook/runtime`, obtains `PlaybookSession` there as well,
+and re-exports all four rather than declaring
 its own. The check shall rest on observable declaration evidence: the
 shipped `code.playbook.d.ts` shall import those names from
 `@sublang/playbook/runtime` and shall carry no local `PlayerResult`,
-`PlaybookPorts`, or `PlaybookRuntime` declaration of its own. A
+`PlaybookPorts`, `PlaybookSession`, or `PlaybookRuntime` declaration of
+its own. A
 mutual-assignability check alone shall not satisfy this item, because
 TypeScript's structural typing makes a same-shaped local redefinition
 assignable to the shared types and would therefore pass while CODE

@@ -1,6 +1,6 @@
 import { type CaptainInput, type CaptainOutput, type DiscussEvent, type DiscussInput } from './discuss.fsm.js';
-import type { PlayerResult, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory } from '@sublang/playbook/runtime';
-export type { PlayerResult, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, };
+import type { PlayerCallOptions, PlayerResult, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookSession, PlaybookTraceEvent, PlaybookTraceType } from '@sublang/playbook/runtime';
+export type { PlayerCallOptions, PlayerResult, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookSession, PlaybookTraceEvent, PlaybookTraceType, };
 type PlayerName = 'Host' | 'Participant' | 'Committer';
 export interface PlaybookRuntimeOptions extends DiscussInput {
     playerBinding?: Partial<Record<PlayerName, string>>;

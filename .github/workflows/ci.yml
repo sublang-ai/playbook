@@ -60,6 +60,8 @@ jobs:
             'reference/sdlc/code.playbook/code.*.d.ts' \
             'reference/sdlc/code.playbook/playbook-captain.js' \
             'reference/sdlc/code.playbook/playbook-captain.d.ts' \
+            'reference/sdlc/discuss.playbook/discuss.*.js' \
+            'reference/sdlc/discuss.playbook/discuss.*.d.ts' \
             'src/runtime.js' \
             'src/runtime.d.ts'
 

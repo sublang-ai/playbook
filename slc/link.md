@@ -148,6 +148,7 @@ interface PlaybookTraceEvent {
 
 The trace types are `session.started`, `boss.input.received`, `judge.call.started`, `judge.call.finished`, `player.call.started`, `player.call.finished`, `fsm.transition`, `status.emitted`, `boss.input.settled`, and `session.disposed`.
 Call pairs carry exact prompts and replies, normalized failures, player and state identity, explicit resume selection, and returned resume tokens.
+Judge results use `reply`; player start and finish payloads both carry the selected `resume`; judge `purpose` is `boss-input-classification` or `player-output-adjudication`; and every error uses `{ name, message, stack? }` rather than a raw string or `Error` instance.
 FSM trace events carry the same transition, pending-question, and normalized-error fields as state telemetry.
 Trace emissions are awaited and sequenced before the boundary operation or human status/state telemetry they describe.
 
