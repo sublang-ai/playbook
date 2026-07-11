@@ -52,6 +52,15 @@ Every trace payload shall carry:
 | `callId` | Stable id shared by matching call-started and call-finished events. |
 | `payload` | JSON-safe event data. |
 
+[DR-011 §5](011-composable-playbook-execution.md#5-trace-causality)
+supersedes the version-1 schema, closed type set, and state-id-only
+payload vocabulary for every linked runtime with trace schema version
+2, structured state, suspended settlement, causal session fields, and
+nested-call pairs.
+The remaining boundary-order, exact prompt/reply, error-normalization,
+sensitivity, and player-continuation rules in this section continue to
+apply.
+
 The trace types shall be `session.started`, `boss.input.received`, `judge.call.started`, `judge.call.finished`, `player.call.started`, `player.call.finished`, `fsm.transition`, `status.emitted`, `boss.input.settled`, and `session.disposed`.
 
 Their payloads shall use the following common vocabulary; fields marked optional are omitted when unavailable rather than synthesized:
@@ -109,7 +118,9 @@ The explicit Q+A remains deterministic input and an adapter-independent fallback
 
 ### 6. Preserved scope
 
-This decision does not add persisted XState checkpoints, rehydrate a disposed runtime, expose resume tokens in the Boss UI, add multiple active engagements, or persist the trace itself.
+This decision does not add persisted XState checkpoints, rehydrate a disposed runtime, expose resume tokens in the Boss UI, add multiple Boss-selected root engagements, or persist the trace itself.
+A nested live-session stack is added separately by
+[DR-011](011-composable-playbook-execution.md).
 A host observer may persist `playbook.trace`; durable storage and cross-process runtime restoration require a separate decision.
 
 ## Consequences

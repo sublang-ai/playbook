@@ -37,18 +37,20 @@ Each registered playbook shall be represented by a registry entry with these des
 | `command` | Default slash command without `/`; may be overridden by config. |
 | `intent` | Routing description for hidden Captain selection. |
 | `requiredRoleIds` | Local role ids the runtime may pass to `callPlayer`. |
-| `idleStateId` | State id that represents idle return-to-Boss behavior. |
-| `finalStateId` | State id that represents final completion. |
-| `parkStateIds` | Additional state ids that park the engagement and wait for another Boss turn. |
 | `summaryPolicy` | Optional declaration for visible turn summaries and wording. |
 | `validateOptions` | Validator for that playbook's own option slice. |
 | `createRuntime` | Factory for the linked `PlaybookRuntime`. |
 
-The CODE registry module shall declare `id: "code"`, `command: "code"`, required roles `coder` and `reviewer`, `idleStateId: "ready"`, `finalStateId: "done"`, and `parkStateIds: ["failed", "awaitBossReply"]`.
+The CODE registry module shall declare `id: "code"`, command `code`, and
+required roles `coder` and `reviewer`.
 CODE's Committer alias shall remain a CODE-owned option, not a global shell concept.
 
-The shell shall read parked states from the active entry's `idleStateId` and `parkStateIds`.
-It shall not hardcode CODE state ids such as `failed` or `awaitBossReply`.
+[DR-011](011-composable-playbook-execution.md) supersedes registry-owned
+lifecycle state ids with `PlaybookRunResult` outcomes and normalized XState
+descriptor tags.
+Registry entries shall no longer declare `idleStateId`, `finalStateId`, or
+`parkStateIds`; the shell shall not hardcode CODE state ids such as `failed`,
+`awaitBossReply`, or `done`.
 
 ### 2. Registry loading uses explicit `from` modules
 
@@ -173,8 +175,11 @@ Pre-engagement forms such as `playbook code "task"` are deferred until tmux-play
 
 ### 7. Preserved DR-008 constraints
 
-The shell shall still support only one active engagement for the first generic design.
-When one playbook is engaged, a different registered command shall ask Boss to finish, dismiss, or resolve the current engagement before dispatching to another playbook.
+The shell shall still support only one Boss-selected root engagement.
+[DR-011](011-composable-playbook-execution.md) supersedes the one-runtime
+limit by allowing that root to own a LIFO stack of nested child
+sessions.
+When one root engagement is active, a different registered command shall ask Boss to finish, dismiss, or resolve the current call stack before dispatching another root.
 
 The shell shall continue to call a selected runtime's `handleBossInput` with text.
 It shall not pre-classify in-playbook events, choose interrupt targets, expose jumpable state lists, or add a `handleBossEvent` API.
@@ -192,7 +197,7 @@ The implementing specs shall reconcile this DR with released CODE runtime and la
 - [PBRT-15](../dev/playbook-runtime.md#pbrt-15) shall be amended so CODE identity derivation uses the active role binding rather than raw `session.players` ids `coder` and `reviewer`.
 - [PBRT-30](../dev/playbook-runtime.md#pbrt-30) shall be amended so CODE validates the shell-selected `captain.options.playbooks.code.options` slice.
 - [PBRT-16](../dev/playbook-runtime.md#pbrt-16) and [PBRT-29](../user/playbook-runtime.md#pbrt-29) shall be amended to remove the `@sublang/playbook/code/tmux-play` compatibility-shim and legacy `captain.options.code` host-config contracts.
-- [CAPTAIN-5](../dev/playbook-captain.md#captain-5), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), and [CAPTAIN-11](../dev/playbook-captain.md#captain-11) shall be amended for registry-loaded entries, local-role-to-host-player binding, active-playbook visibility changes through tmux-play, and entry-owned `parkStateIds`.
+- [CAPTAIN-5](../dev/playbook-captain.md#captain-5), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), and [CAPTAIN-11](../dev/playbook-captain.md#captain-11) were amended for registry-loaded entries, local-role-to-host-player binding, active-playbook visibility, and entry-owned lifecycle ids; DR-011 later retires those lifecycle ids in favor of run outcomes and descriptor tags.
 - [CAPTAIN-19](../user/playbook-captain.md#captain-19) and [CAPTAIN-20](../dev/playbook-captain.md#captain-20) shall be amended so summary policy and saved-count wording are registry-owned and optional rather than CODE-specific shell behavior.
 - [CAPTAIN-16](../dev/playbook-captain.md#captain-16) shall be amended so shell initialization loads enabled registry entries from `captain.options.playbooks` and rejects missing enablement.
 - PBCODE user/dev/test specs shall be retired.

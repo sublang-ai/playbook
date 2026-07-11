@@ -43,6 +43,9 @@ The first registry entry is CODE:
 | `createRuntime` | `createCodePlaybookRuntime` |
 | `validateOptions` | CODE `captain.options.code` validator |
 
+DR-011 later retires the lifecycle state-id fields in favor of
+structured run outcomes and XState descriptor tags.
+
 The CODE source, GEARS, FSM, and linked runtime behavior stay unchanged for the first implementation.
 The shell treats CODE as a sub-runtime session, not as an XState child state.
 
@@ -73,6 +76,9 @@ It shall not duplicate the full Boss conversation; the Captain LLM session carri
 The shell parks the active sub-runtime when it returns at its idle state, `failed`, or `awaitBossReply`.
 The shell disposes the active sub-runtime when it reaches its final state or Boss explicitly dismisses the engagement.
 Only one engagement is supported in the first design.
+[DR-011](011-composable-playbook-execution.md) preserves one
+Boss-selected root engagement but supersedes the one-runtime limit with
+a LIFO stack of nested child sessions.
 
 ### 3. Turn routing
 
@@ -164,7 +170,8 @@ The implementing specs shall reconcile this DR with released CODE runtime and la
 
 ### 9. Out of scope
 
-- Multiple parked sub-runtime engagements.
+- Multiple independently Boss-selected parked root engagements.
+  Nested child sessions within one root are added by DR-011.
 - A generic `playbook` binary.
 - A new `PlaybookRuntime.getSnapshot()` API.
 - A shell API that injects pre-classified sub-runtime events such as `handleBossEvent`.

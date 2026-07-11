@@ -1,14 +1,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
 
-# PBRT: CODE playbook runtime — system behavior
+# PBRT: Linked playbook runtime — system behavior
 
 ## Intent
 
-This spec defines the system behavior of the CODE playbook
-runtime — the host-agnostic module that drives the CODE FSM
-(`code.fsm.ts`) as a runnable playbook — and of the CODE registry
-entry used by the Playbook Captain shell under tmux-play.
+This spec defines shared linked-runtime behavior, the CODE runtime that
+drives `code.fsm.ts`, DISCUSS composition behavior, and the registry
+integration used by the Playbook Captain shell under tmux-play.
 
 Both live at the repo root; the in-repo path is
 essential to the package's intent per
@@ -28,13 +27,15 @@ The runtime module shall import the FSM artifact, XState, and the
 shared runtime contract types from `@sublang/playbook/runtime`
 ([PBRT-34](#pbrt-34)), hold no host-specific types, and interact
 with its host exclusively through the `PlaybookPorts` interface
-(`callPlayer`, `callJudge`, `emitStatus`, `emitTelemetry`). It shall
-re-export `PlayerResult`, `PlaybookPorts`, `PlaybookSession`, and
-`PlaybookRuntime` from that shared module rather than redefining them,
+(`callPlayer`, `callJudge`, `callPlaybook`, `emitStatus`,
+`emitTelemetry`). It shall
+re-export the shared player, playbook-call, session, state, trace, and
+runtime contract types from that module rather than redefining them,
 so consumers of
 `@sublang/playbook/code/playbook` resolve the same contract types. It
 shall default-export a `createPlaybookRuntime(options)` factory
-returning a `PlaybookRuntime` (`init`, `handleBossInput`, `dispose`),
+returning a `PlaybookRuntime` (`init`, `handleBossInput`,
+`resumePlaybookCall`, `dispose`),
 typed `PlaybookRuntimeFactory<CodePlaybookOptions>`. The options shall
 carry only per-run identity strings; the mapping from FSM players to
 player-id strings shall be fixed in the runtime, not supplied at run
@@ -45,7 +46,11 @@ time.
 The package shall provide a type-only module resolvable as
 `@sublang/playbook/runtime` that is the single authored source of the
 runtime contract types `PlayerResult`, `PlayerCallOptions`,
-`PlaybookPorts`, `PlaybookSession`, `PlaybookTraceEvent`,
+`JsonValue`, `NormalizedError`,
+`PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
+`PlaybookStateValue`, `PlaybookState`, `PlaybookPendingCall`,
+`PlaybookRunResult`, `PlaybookPorts`, `PlaybookSession`,
+`PlaybookTraceType`, `PlaybookTraceEvent`,
 `PlaybookRuntime`, and `PlaybookRuntimeFactory<Options = unknown>`, as
 the TypeScript projection of
 [slc/link.md](../../slc/link.md#playbookruntime-contract).
@@ -54,7 +59,7 @@ the TypeScript projection of
 shall require `resume: string | false`, `PlaybookRuntime.init` shall
 accept a `PlaybookSession`, and `PlaybookPorts` shall declare exactly
 the members `callPlayer`,
-`callJudge`, `emitStatus`, and `emitTelemetry`.
+`callJudge`, `callPlaybook`, `emitStatus`, and `emitTelemetry`.
 The module shall import no CODE or FSM types, directly or
 transitively, so it carries no dependency on any specific playbook;
 the dependency runs one way, from `code.playbook` to this module
@@ -66,13 +71,17 @@ engine, linker, or host primitives.
 
 ### PBRT-6
 
-When `init({ sessionId, playbookId, ports })` is called with non-empty
-identity fields, the runtime shall bind that identity immutably for its
+When `init({ sessionId, playbookId, rootSessionId, parentSessionId,
+parentCallId, depth, ports })` is called with valid identity fields, the
+runtime shall bind that identity immutably for its
 lifetime, construct the FSM actor from the options, and start it,
 leaving the FSM in its idle
 state. When `dispose()` is called, the runtime shall stop the
-actor and drain any pending port emissions. When `handleBossInput`
-is called before `init`, the runtime shall throw.
+actor, abort a pending nested call, and drain any pending port
+emissions. Root sessions shall require `rootSessionId === sessionId`,
+no parent fields, and depth zero; child sessions shall require matching
+parent session/call fields and positive depth. When `handleBossInput`
+or `resumePlaybookCall` is called before `init`, the runtime shall throw.
 
 ## Boss-event classification
 
@@ -88,18 +97,23 @@ state, and every required payload field.
 The prompt shall require a JSON reply that either names a valid event with its payload or
 names no FSM action.
 
-Outside `awaitBossReply` (per [PBRT-11](#pbrt-11)), the valid
+Outside any scalar or branch-local Boss-reply wait (per
+[PBRT-11](#pbrt-11)), the valid
 Boss-event types are `START_CODING`, `CONTINUE_IR`,
 `SUMMARIZE_IR`, and `BOSS_INTERRUPT`.
 For `BOSS_INTERRUPT`, the prompt shall list the FSM's jumpable state ids and descriptions,
 and the reply shall carry a valid `targetId`.
 
-While the actor is in `awaitBossReply`, the prompt shall also
-include the pending Boss question.
-In that state, `BOSS_REPLY` is a valid classification result and shall carry the verbatim answer.
+While the actor has one or more pending Boss questions, the prompt
+shall include each question and its stable question id.
+`BOSS_REPLY` is then a valid classification result and shall carry the
+verbatim answer; it may omit `questionId` only when exactly one question
+is pending, in which case the runtime shall fill that sole id.
+When several questions are pending, an omitted or unknown question id
+shall produce no FSM event.
 The judge may instead return a fresh directive event, including
-`BOSS_INTERRUPT`; the transition out of `awaitBossReply` shall run
-the `clearBossReplyContext` action declared there.
+`BOSS_INTERRUPT`; the fresh transition shall clear the scalar pending
+context or all pending branch context owned by the exited group.
 
 The runtime shall parse the judge reply with the same tolerance
 defined for adjudication ([PBRT-10](#pbrt-10)) — recovering the
@@ -116,8 +130,8 @@ The runtime shall define no slash-prefix fast path:
 text beginning with `/` shall be sent to `callJudge` like any other
 non-empty Boss text.
 
-`BOSS_REPLY` shall be synthesized only while the actor is in
-`awaitBossReply`.
+`BOSS_REPLY` shall be synthesized only while at least one scalar or
+branch-local question is pending.
 
 ## Player binding
 
@@ -201,12 +215,13 @@ throw.
 ### PBRT-11
 
 When `handleBossInput` sends a classified event to the FSM, the
-runtime shall drive the actor until its state is quiescent — the
-idle state, the failure state, the terminal state, or the
+runtime shall use XState `waitFor` to drive the actor until no state
+tagged `playbook.busy` is active — the idle state, the failure state,
+the terminal state, a nested-call suspension, or the
 `awaitBossReply` Boss-reply suspension state (per
 [slc/gears2fsm.md "Boss-reply suspension"](../../slc/gears2fsm.md#boss-reply-suspension))
 — and only then return. Before returning it shall drain pending
-port emissions.
+port emissions and return the matching `PlaybookRunResult`.
 
 ### PBRT-12
 
@@ -228,13 +243,18 @@ no synthetic FSM action: the cancelled player call's failure
 propagates through the captain bridge ([PBRT-9](#pbrt-9)) and the
 FSM's error path to the failure state, whose `lastError` the
 runtime surfaces per [PBRT-14](#pbrt-14).
+The runtime shall forward the XState playbook invocation's lifetime
+signal to `callPlaybook`; after a later child return it shall forward
+`resumePlaybookCall.signal` to any newly resumed player or judge work.
 
 ## Status and telemetry
 
 ### PBRT-14
 
 On every FSM transition the runtime shall call `emitTelemetry`
-with topic `playbook.fsm.state` and payload `{ from, to, event }`.
+with topic `playbook.fsm.state` and a payload carrying structured
+`from`, `to`, `event`, `previousState`, and `state` fields per
+[PBRT-41](#pbrt-41).
 Before that state telemetry, the runtime shall emit the corresponding
 `playbook.trace` `fsm.transition` event per [PBRT-37](#pbrt-37).
 Where the transition is a failed-transition event carrying an
@@ -271,17 +291,17 @@ FSM event type (e.g., `START_CODING`), before the FSM advances,
 so the host can render it as captain speech. The runtime shall not
 echo the verbatim Boss text.
 
-On entry to the `awaitBossReply` state the runtime shall call
-`emitStatus` twice, in order: first with the full pending
-question as a captain-speech act attributed to the asking player,
+On entry to the scalar `awaitBossReply` state or a parallel
+branch-local wait, the runtime shall call `emitStatus` twice, in order:
+first with the full pending question as a captain-speech act attributed to the asking player,
 formatted `<player> asks: <question>` (no glyph, the host renders
-it as captain speech), carrying `pendingBossQuestion.question`
-verbatim and in full; then with the routing marker
+it as captain speech), carrying the selected pending question verbatim
+and in full; then with the routing marker
 `◆ awaiting Boss reply · <resumeStateId> · <player> ·
 <sourceItem>` carrying no `q=` excerpt rider. It shall
 additionally call `emitTelemetry` with topic `playbook.fsm.state`
-carrying `pendingBossQuestion.question` verbatim alongside the
-other transition fields, so non-tmux-play hosts can render their
+carrying the selected pending question verbatim alongside the other
+transition fields, so non-tmux-play hosts can render their
 own prompt.
 
 All port emissions shall be issued in order, each awaited before
@@ -401,6 +421,8 @@ Where a host initializes a linked playbook runtime with a
 `PlaybookSession`, the runtime shall emit telemetry topic
 `playbook.trace` carrying the immutable session and playbook ids and
 the schema defined by
+[DR-011 §5](../decisions/011-composable-playbook-execution.md#5-trace-causality),
+including the session causality and version-2 extensions to
 [DR-010 §2](../decisions/010-playbook-session-tracing-and-resume.md#2-boundary-complete-trace).
 The trace sequence shall be contiguous and one-based for that session;
 Boss turns and player/judge calls shall receive one-based ids, and a
@@ -430,3 +452,75 @@ token and shall not trigger a silent fresh retry.
 The runtime shall key tokens by the resolved player id, keep separate
 players independent, preserve the map across parked turns and actor
 reconstruction within the runtime session, and discard it on dispose.
+
+## Structured and composed execution
+
+### PBRT-40
+
+Where an FSM contains a fixed set of independent player tasks whose
+results join before later work, when the linked runtime drives that
+state, the FSM shall represent the tasks as XState parallel regions
+whose working leaves invoke Captain and whose local final states join
+through the parallel parent's `onDone` transition, per
+[DR-011 §1](../decisions/011-composable-playbook-execution.md#1-structured-parallel-work).
+The runtime shall permit overlap only for distinct resolved player ids,
+shall reject a concurrent call to a player id already in flight, and
+shall serialize all `callJudge` operations through one abort-aware FIFO
+with concurrency one.
+DISCUSS initial proposals and reconciliation rounds shall run Host and
+Participant in parallel, stage each result independently, and promote
+both results at the join so the next round receives one completed prior
+round rather than completion-order-dependent inputs.
+Where one parallel DISCUSS branch needs a Boss reply, that branch shall
+park in its own waiting state while its sibling continues; a reply shall
+resume only the identified branch, and multiple pending branch questions
+shall remain independently addressable.
+
+### PBRT-41
+
+Where a linked runtime observes an XState snapshot, the runtime shall
+normalize it as a JSON-safe descriptor carrying the structured state
+value, active stable state ids, tags, actor status, and quiescence.
+Working states shall carry `playbook.busy`, Boss-waiting states shall
+carry `playbook.parked`, and nested-call states shall carry
+`playbook.suspended`.
+The runtime shall use XState `waitFor` to settle its imperative drive
+boundary only when no busy state remains or the actor is terminal or in
+error; it shall not model workflow waiting with a polling loop, async
+action, or runtime-owned join.
+FSM telemetry and the matching `fsm.transition` trace shall carry
+structured `from` and `to` values plus previous/current descriptors.
+Session, status, and Boss-settlement trace payloads shall include the
+current descriptor and may include `stateId` only when one
+Boss-relevant state id is active.
+`PlaybookRunResult` shall use its discriminated outcome exactly as
+defined in [slc/link.md](../../slc/link.md#playbookruntime-contract):
+only `suspended` shall carry a required pending call, only `terminal`
+may carry output, `failed` shall mean a recoverable FSM failure state,
+and control-plane errors shall reject the runtime method.
+
+### PBRT-42
+
+Where an FSM invokes its provided `playbook` actor with a registered
+child playbook id and JSON-safe input, when the child call starts, the
+linked runtime shall allocate one stable call id, emit
+`playbook.call.started`, and call `PlaybookPorts.callPlaybook` with that
+id, target, input, and the invocation's abort signal.
+When the port returns a settled successful call, the invoked actor shall
+complete through `invoke.onDone`; when it returns or is resumed with an
+aborted or error result, the actor shall reject through `invoke.onError`.
+When the port returns a suspended child session, the runtime shall keep
+the actor pending and return a `PlaybookRunResult` with outcome
+`suspended` and the matching pending-call identity instead of holding
+the Boss turn open.
+Where a host later calls `resumePlaybookCall` with the pending call id,
+the runtime shall validate the pending target and child session, bind the new
+turn signal, emit and drain the paired `playbook.call.finished`, settle that
+invocation, and drive the parent until it
+is quiescent, suspended, failed, aborted, or terminal.
+The runtime shall reject an unknown, stale, or already settled call id,
+a result whose playbook id differs from the pending target, or a result
+whose child session id differs from the suspended child session;
+shall preserve the parent's player resume-token map while suspended;
+and shall finish an outstanding call as aborted before parent session
+disposal.

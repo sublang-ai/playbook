@@ -13,13 +13,13 @@ Compiles the [gears2fsm](gears2fsm.md) artifact into a **`PlaybookRuntime`**: a 
 - Surfaces transitions as status/telemetry.
 
 The runtime is invoked through the stable `PlaybookPorts` contract.
-Presentation layers (tmux-play, web, CLI, tests) implement the four ports once and inherit every playbook.
+Presentation layers (tmux-play, web, CLI, tests) implement the five ports once and inherit every playbook.
 
 - Source: an XState v5 machine artifact (`.fsm.ts`) produced by gears2fsm.
 - Target: a `PlaybookRuntime` factory module — TypeScript, host-agnostic.
 
 Hosts are out of scope for this phase.
-Each host has a small adapter (~30 lines) that loads a `PlaybookRuntime` module and supplies the host's primitives as `PlaybookPorts`.
+Each host has an adapter that loads a `PlaybookRuntime` module and supplies the host's primitives as `PlaybookPorts`.
 The adapter shall speak only `PlaybookPorts` to the runtime and shall not leak host types back into it.
 
 The link compiler shall not modify the FSM artifact and shall not re-derive Captain prompts, result keys, or guard semantics — those are fixed by the FSM.
@@ -38,15 +38,78 @@ The emitted module shall default-export a factory of the following shape:
 ```typescript
 interface PlaybookRuntime {
   init(session: PlaybookSession): Promise<void>;
-  handleBossInput(turn: { text: string; signal: AbortSignal }): Promise<void>;
+  handleBossInput(turn: {
+    text: string;
+    signal: AbortSignal;
+  }): Promise<PlaybookRunResult>;
+  resumePlaybookCall(input: {
+    callId: string;
+    result: PlaybookCallResult;
+    signal: AbortSignal;
+  }): Promise<PlaybookRunResult>;
   dispose(): Promise<void>;
 }
 
 interface PlaybookSession {
   sessionId: string;
   playbookId: string;
+  rootSessionId: string;
+  parentSessionId?: string;
+  parentCallId?: string;
+  depth: number;
   ports: PlaybookPorts;
 }
+
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
+
+interface NormalizedError {
+  name: string;
+  message: string;
+  stack?: string;
+}
+
+type PlaybookStateValue =
+  | string
+  | { readonly [key: string]: PlaybookStateValue };
+
+interface PlaybookState {
+  value: PlaybookStateValue;
+  activeStateIds: readonly string[];
+  tags: readonly string[];
+  status: 'active' | 'done' | 'error' | 'stopped';
+  quiescent: boolean;
+  stateId?: string;
+}
+
+interface PlaybookPendingCall {
+  callId: string;
+  playbookId: string;
+  childSessionId: string;
+}
+
+type PlaybookRunResult =
+  | { outcome: 'quiescent' | 'no-action'; state: PlaybookState }
+  | {
+      outcome: 'failed' | 'aborted';
+      state: PlaybookState;
+      error?: NormalizedError;
+    }
+  | {
+      outcome: 'terminal';
+      state: PlaybookState;
+      output?: JsonValue;
+    }
+  | {
+      outcome: 'suspended';
+      state: PlaybookState;
+      pendingCall: PlaybookPendingCall;
+    };
 
 type PlaybookRuntimeFactory<Options = unknown> = (
   options: Options,
@@ -62,6 +125,14 @@ The default export conforms to `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`,
 `init` receives the host-owned playbook session identity and ports, constructs the XState actor with FSM `input` derived from `options`, and starts the actor.
 The runtime owns the actor for its lifetime; `handleBossInput` runs one turn, and `dispose` stops the actor and drains pending port emissions.
 The host shall generate a non-empty, globally unique `sessionId` for each init-to-dispose lifecycle and shall supply the stable registry or authored playbook id as `playbookId`.
+
+Run outcomes are exact: `no-action` means no FSM event was sent;
+`quiescent` means a non-failure parked/idle state; `failed` means the FSM is in
+a recoverable failure state; `terminal` means top-level final with optional
+JSON output; `aborted` means the turn signal ended work; and `suspended` means
+exactly one `pendingCall` is active.
+Control-plane exceptions reject the runtime method rather than masquerade as a
+recoverable workflow `failed` result.
 
 `PlaybookRuntimeOptions` is host-agnostic and carries only *per-run* knobs such as identity strings (e.g., model names a playbook substitutes into prompt placeholders) and strategy overrides the linker exposes.
 The link compiler emits a typed options interface per playbook based on the FSM's `CodingInput` (or equivalent).
@@ -82,6 +153,10 @@ interface PlaybookPorts {
     Promise<PlayerResult>;
   callJudge(prompt: string, signal: AbortSignal):
     Promise<string>;
+  callPlaybook(
+    request: PlaybookCallRequest,
+    signal: AbortSignal,
+  ): Promise<PlaybookCallStart>;
   emitStatus(message: string, data?: unknown): Promise<void>;
   emitTelemetry(event: { topic: string; payload: unknown }): Promise<void>;
 }
@@ -96,6 +171,39 @@ interface PlayerResult {
   finalText?: string;
   error?: string;
 }
+
+interface PlaybookCallRequest {
+  callId: string;
+  playbookId: string;
+  text: string;
+}
+
+type PlaybookCallResult =
+  | {
+      status: 'ok';
+      playbookId: string;
+      childSessionId: string;
+      state?: PlaybookState;
+      output?: JsonValue;
+    }
+  | {
+      status: 'aborted';
+      playbookId: string;
+      childSessionId?: string;
+      state?: PlaybookState;
+      error?: NormalizedError;
+    }
+  | {
+      status: 'error';
+      playbookId: string;
+      childSessionId?: string;
+      state?: PlaybookState;
+      error: NormalizedError;
+    };
+
+type PlaybookCallStart =
+  | { state: 'settled'; result: PlaybookCallResult }
+  | { state: 'suspended'; childSessionId: string };
 ```
 
 `PlayerResult` mirrors the status, resume token, final text, and error fields of cligent's `PlayerRunResult` ([TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033)).
@@ -109,6 +217,16 @@ The map survives actor reconstruction inside the same runtime and is discarded a
 `callJudge` returns free-form text.
 The runtime parses it per the state's adjudication strategy (§Captain adjudication).
 One port serves both classifier and adjudicator — they vary only in prompt.
+The host shall serialize this port through one abort-aware FIFO because one
+Captain judge session is single-flight even when distinct player ports overlap.
+
+`callPlaybook` starts a function-style child call.
+The caller runtime supplies its stable call id and the XState invocation's
+lifetime signal.
+The host drives the child's initial text before resolving the port with either
+an immediate settled result or a suspended child session.
+Suspension is resumed later through `PlaybookRuntime.resumePlaybookCall`; the
+port promise itself shall not remain pending across Boss turns.
 
 `emitStatus` is human-readable; `emitTelemetry` is structured.
 Both are async and shall be ordered, awaited, and never-dropped; the runtime awaits each emission before issuing the next.
@@ -118,7 +236,10 @@ The runtime never speaks to LLMs directly and never touches host types beyond `P
 ## Playbook trace
 
 Every linked runtime shall emit a boundary-complete, ordered trace through `emitTelemetry` topic `playbook.trace`.
-Each payload shall carry `schemaVersion: 1`, the immutable `sessionId` and `playbookId`, a contiguous one-based `sequence`, a Unix-millisecond `timestamp`, a trace `type`, event `payload`, and the runtime-local `turnId` / paired `callId` where applicable.
+Each payload shall carry `schemaVersion: 2`, the immutable session identity and
+causality, a contiguous one-based `sequence`, a Unix-millisecond `timestamp`, a
+trace `type`, event `payload`, and the runtime-local `turnId` / paired `callId`
+where applicable.
 
 ```typescript
 type PlaybookTraceType =
@@ -128,29 +249,44 @@ type PlaybookTraceType =
   | 'judge.call.finished'
   | 'player.call.started'
   | 'player.call.finished'
+  | 'playbook.call.started'
+  | 'playbook.call.finished'
   | 'fsm.transition'
   | 'status.emitted'
   | 'boss.input.settled'
   | 'session.disposed';
 
 interface PlaybookTraceEvent {
-  schemaVersion: 1;
+  schemaVersion: 2;
   sessionId: string;
   playbookId: string;
+  rootSessionId: string;
+  parentSessionId?: string;
+  parentCallId?: string;
+  depth: number;
   sequence: number;
   timestamp: number;
   type: PlaybookTraceType;
   turnId?: number;
   callId?: string;
-  payload: unknown;
+  payload: JsonValue;
 }
 ```
 
-The trace types are `session.started`, `boss.input.received`, `judge.call.started`, `judge.call.finished`, `player.call.started`, `player.call.finished`, `fsm.transition`, `status.emitted`, `boss.input.settled`, and `session.disposed`.
+The trace types are `session.started`, `boss.input.received`,
+`judge.call.started`, `judge.call.finished`, `player.call.started`,
+`player.call.finished`, `playbook.call.started`,
+`playbook.call.finished`, `fsm.transition`, `status.emitted`,
+`boss.input.settled`, and `session.disposed`.
 Call pairs carry exact prompts and replies, normalized failures, player and state identity, explicit resume selection, and returned resume tokens.
 Judge results use `reply`; player start and finish payloads both carry the selected `resume`; judge `purpose` is `boss-input-classification` or `player-output-adjudication`; and every error uses `{ name, message, stack? }` rather than a raw string or `Error` instance.
 FSM trace events carry the same transition, pending-question, and normalized-error fields as state telemetry.
 Trace emissions are awaited and sequenced before the boundary operation or human status/state telemetry they describe.
+Every event in one session carries the same root/parent/depth identity.
+A parent call start precedes its child `session.started`; the child's
+`session.disposed` precedes the parent call finish.
+Parallel call finishes may occur in either order, so consumers shall use call
+ids for pairing and sequence for the observed total order.
 
 This trace covers everything observable through `PlaybookRuntime`; host-specific adapter streaming remains in the host record stream.
 Trace payloads never become Boss-visible status or prompt text.
@@ -177,6 +313,9 @@ The host's identity does not enter compilation; the linked module runs unchanged
 Each GEARS state names exactly one player (`invoke.input.player`).
 The linker shall map every named player to a `playerId` string used in `PlaybookPorts.callPlayer(playerId, …)`.
 The host adapter routes that opaque string to its concrete primitive.
+Every Captain invocation shall also carry its working leaf's explicit
+`stateId`; a linked runtime shall use that field for call identity and shall
+not infer one leaf from a structured root snapshot.
 
 For composite players declared with aliases (e.g., `Committer = Coder | Reviewer`), the linker shall resolve the alias **per source item**.
 Resolution inspects the `CaptainInput` fields populated at that state:
@@ -271,6 +410,40 @@ The runtime shall propagate them by throwing out of `handleBossInput` after atte
 The host adapter surfaces the throw on its control-plane channel (cligent surfaces such throws as `runtime_error` per [TMUX-025](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-025)).
 The host's player-result channels (`player_finished` and equivalents) are reserved for failures the player itself produced; the host emits them when `callPlayer` resolves with `status !== 'ok'`.
 
+## Nested playbook bridge
+
+Where the FSM declares the typed `playbook` actor from
+[gears2fsm](gears2fsm.md#nested-playbook-calls), the linked runtime shall provide
+it with `fromPromise`.
+On invocation the bridge allocates a runtime-local call id, traces the start,
+and calls `PlaybookPorts.callPlaybook` with the composed target/text and the
+XState invocation-lifetime signal.
+
+If the port returns `state: 'settled'`, the bridge validates the result,
+emits and drains `playbook.call.finished`, then resolves successful output or
+rejects an aborted/error result.
+If the port returns `state: 'suspended'`, the bridge records one pending call
+and awaits a runtime-owned deferred result.
+Only after that pending record exists may the drive boundary treat the call
+state's `playbook.suspended` tag as quiescent.
+One runtime supports at most one pending child call; a second shall reject.
+
+`resumePlaybookCall` shall accept only the matching pending call id, target
+playbook id, and child session id; bind its new turn signal for work resumed in
+the parent; emit and drain the call-finish trace; settle the bridge deferred;
+and use XState `waitFor` to drive the parent to its next
+quiescent, suspended, failed, aborted, or terminal result.
+An `ok` result resolves the actor and reaches `invoke.onDone`; `aborted` and
+`error` results reject it and reach `invoke.onError`.
+Unknown, duplicate, or stale call ids reject without changing actor state.
+The finish trace shall therefore precede any parent FSM transition caused by
+the child return.
+
+Disposal shall settle an outstanding call as aborted and drain its finish
+trace before `session.disposed`.
+Child output and errors must be JSON-safe; a non-JSON-safe result is a
+control-plane error.
+
 ## Session lifecycle
 
 The `PlaybookRuntime` shall:
@@ -289,11 +462,17 @@ The `PlaybookRuntime` shall:
   4. Send the classified event to the actor.
   5. **Drive to quiescence**: each time the actor invokes its `captain`
      actor, await the invoke's input, build a player prompt, call
-     `callPlayer`, adjudicate, and resolve the invoke. Repeat until the
-     actor's snapshot value is a state that takes a Boss event
-     (typically `ready` or `failed`) or a `final` state.
-- In `dispose`, stop the actor, drain pending port emissions, emit
-  `session.disposed` with the final state, and discard player resume tokens.
+     `callPlayer`, adjudicate, and resolve the invoke. Parallel regions may
+     perform this independently for distinct resolved players. Use XState
+     `waitFor` over public tags/status until no `playbook.busy` state is active,
+     a registered child call is suspended, or the actor is terminal/error.
+  6. Return a structured `PlaybookRunResult` after all in-flight calls and
+     ordered emissions caused by the turn drain.
+- Per `resumePlaybookCall`, follow §Nested playbook bridge and return the same
+  structured run-result boundary without classifying new Boss text.
+- In `dispose`, abort a pending nested call, stop the actor, drain pending port
+  emissions, emit `session.disposed` with the final descriptor, and discard
+  player resume tokens.
 
 The actor's `lastError` field shall be surfaced via `emitStatus` when the machine enters its `failed` state.
 
@@ -337,7 +516,10 @@ The runtime shall emit, at minimum:
   default is to emit on every transition and let the host filter; hosts
   may bind a stricter rule.
 - One `emitTelemetry` per state transition under a namespaced topic
-  (recommended `playbook.fsm.state`), with payload `{ from, to, event }`.
+  (recommended `playbook.fsm.state`), with structured `from`, `to`, `event`,
+  `previousState`, and `state` fields. Descriptors carry the JSON-safe XState
+  value, active stable ids from public state metadata, tags, status, and
+  quiescence; they do not inspect private XState nodes.
   Observers consume telemetry; the runtime never interprets the topic.
 
 Player prompts and adjudicator JSON may additionally ride the host's own record channels when the host has them (cligent's `captain_*` / `player_*`).
@@ -370,6 +552,8 @@ The link compiler emits **one** TypeScript module that:
   inputs.
 - Sources the contract types (`PlayerResult`, `PlayerCallOptions`,
   `PlaybookPorts`, `PlaybookSession`, `PlaybookTraceEvent`,
+  `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
+  `PlaybookStateValue`, `PlaybookState`, `PlaybookRunResult`,
   `PlaybookRuntime`, `PlaybookRuntimeFactory`) from a single shared
   type-only module instead of redefining them, and re-exports the names
   its consumers import, so every linked playbook shares one contract
@@ -388,14 +572,14 @@ A host integrates with playbooks via a small adapter that:
    verbatim from the host config.
 3. Implements `PlaybookPorts` by wrapping the host's own primitives —
    for cligent/tmux-play this is `callPlayer ← context.callPlayer`,
-   `callJudge ← context.callCaptain`, `emitStatus`/`emitTelemetry` ←
+   serialized `callJudge ← context.callCaptain`, nested `callPlaybook ←`
+   the Captain session stack, and `emitStatus`/`emitTelemetry` ←
    `session.emitStatus`/`session.emitTelemetry`.
 4. Generates a unique playbook-session id, calls
    `runtime.init({ sessionId, playbookId, ports })` once at session start, forwards each
    Boss turn to `runtime.handleBossInput`, and calls
    `runtime.dispose()` at session end.
 
-The adapter is ~30 lines regardless of which playbook is loaded.
 Its location is a project-organization choice:
 
 - **Playbook repo** — simplest when the playbook author owns the integration; keeps host primitives a lower-layer dependency.
@@ -412,7 +596,8 @@ This spec is silent on the choice; the contract is the same in any location.
   layouts — where these live is a per-project decision (see
   §Host adaptation); this spec only constrains the `PlaybookPorts`
   contract they satisfy.
-- Persisting FSM context or the trace across sessions, multi-Boss
+- Persisting FSM context or the trace across sessions, multiple
+  Boss-selected root engagements, recursive playbook calls, multi-Boss
   orchestration, or visualizer rendering — separate hosts/observers may add
   them without changing this spec. A host may persist the emitted trace, but
   the runtime does not rehydrate a disposed actor from it.

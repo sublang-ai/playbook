@@ -34,6 +34,7 @@ meta.md     The spec of specs
 | DR-008 | [008-playbook-captain-shell.md](decisions/008-playbook-captain-shell.md) | Built-in Playbook Captain shell over registered sub-runtimes: `/code` as top-level selection, hidden routing plus visible chat in one Captain session, telemetry-mirrored sub-state, park/resume semantics, and `./code/tmux-play` compatibility shim; generic binary/discovery deferral superseded by DR-009 |
 | DR-009 | [009-generic-playbook-cli-and-registry.md](decisions/009-generic-playbook-cli-and-registry.md) | Generic `playbook` CLI and multi-playbook registry enablement: explicit `from`-loaded registry modules, profile-based agent settings, playbook-scoped namespaced players, active-playbook tmux-play pane visibility, registry-owned park states and summary policy, and one active engagement preserved |
 | DR-010 | [010-playbook-session-tracing-and-resume.md](decisions/010-playbook-session-tracing-and-resume.md) | Immutable per-runtime playbook session UUIDs, boundary-complete ordered traces, and explicit per-player fresh/resume selection from authoritative adapter tokens |
+| DR-011 | [011-composable-playbook-execution.md](decisions/011-composable-playbook-execution.md) | XState parallel-region joins, structured runtime state, function-style nested playbook calls, a live Captain session stack, and causally linked trace schema v2 |
 
 ## Iterations
 
@@ -54,6 +55,7 @@ meta.md     The spec of specs
 | IR-015 | [015-slc-runtime-package-surface.md](iterations/015-slc-runtime-package-surface.md) | Publish the SLC-facing surface: authored type-only `@sublang/playbook/runtime` (`PlayerResult`, `PlaybookPorts`, `PlaybookRuntime`, `PlaybookRuntimeFactory`) as the single source CODE re-exports, `slc/**` shipped via a `./slc/*` export, and `/runtime` + `slc/*` marked public semver-stable surfaces |
 | IR-016 | [016-generic-playbook-cli-and-registry.md](iterations/016-generic-playbook-cli-and-registry.md) | Decompose DR-009: generic `playbook` CLI, multi-playbook registry loaded via explicit `from` modules, profile-based settings, namespaced `<id>-<role>` players, active-playbook tmux-play visibility, registry-owned park states and summary policy, and retirement of `playbook-code` / `./code/tmux-play` / `captain.options.code` / PBCODE |
 | IR-017 | [017-playbook-session-trace-resume.md](iterations/017-playbook-session-trace-resume.md) | Give every runtime session an immutable UUID and ordered full boundary trace, with explicit player-session isolation and continuation through adapter resume tokens |
+| IR-018 | [018-composable-playbook-execution.md](iterations/018-composable-playbook-execution.md) | Run independent player tasks concurrently and let live playbooks call, suspend for, and resume from nested enabled playbooks |
 
 ## Packages
 
@@ -61,9 +63,9 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: per-playbook slash selection, visible chat, active-engagement routing, active-playbook pane visibility, status pass-through, clear `/<command>` start/stop/finished status without JSON data, parking, dismissal, final disposal, and optional registry-owned turn-summary blocks whose saved-counts line combines interruption, copy-paste, and progress-round counts after sub-runtime turns |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: public module, registry loading, namespaced role binding, active-playbook visibility, bounded ledger, hidden routing, UUID runtime sessions, explicit player resume bridging, trace pass-through, summary policy, telemetry mirroring, and park/resume/dispose lifecycle |
-| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, lifecycle, registry loading, namespaced role binding, visibility, UUID session identity, explicit player fresh/resume forwarding, trace/status/telemetry pass-through, summaries, parking, dismissal, and final disposal |
+| user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: per-playbook slash selection, visible chat, active-engagement routing, nested child call/return, active-leaf pane visibility, status pass-through, parking, dismissal, final disposal, and optional registry-owned turn summaries |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: registry loading, namespaced role binding, hidden routing, causal UUID runtime-session stack, active-leaf visibility, explicit player and nested-call resume bridges, trace pass-through, summaries, telemetry, and LIFO lifecycle |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, lifecycle, registry loading, role binding, visibility, causal nested sessions, player/nested resume, trace/status/telemetry pass-through, summaries, parking, dismissal, and LIFO disposal |
 
 ### GIT
 
@@ -91,8 +93,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through `@sublang/playbook/playbook-captain` with host-owned fields such as notifications, namespaced `code-coder`/`code-reviewer` binding, plus CODE options under `captain.options.playbooks.code.options` and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | CODE runtime system behavior: host-agnostic ports, session identity, boundary-complete ordered trace, per-player explicit continuation, classifier, player binding, captain bridge, adjudication, abort, telemetry, registry/summary wiring, option validation, and the shared public runtime contract |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for session trace and player continuation, free-text classification, tolerant judge parsing, Boss-reply suspension, status/telemetry, lifecycle, binding, registry/summary wiring, option validation, and shared runtime-contract consistency/type identity |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | Linked runtime behavior: host-agnostic ports, causal sessions, trace schema v2, player continuation, XState parallel joins and structured state, nested playbook call/resume, classification, adjudication, abort, telemetry, registry wiring, and the shared public contract |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for trace/session/player continuation, parallel DISCUSS execution and branch waits, structured state, nested call/resume, classification, adjudication, status/telemetry, lifecycle, registry wiring, and public-contract identity |
 
 ### PLAYBOOK
 
