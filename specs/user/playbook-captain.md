@@ -33,8 +33,9 @@ Where the Playbook Captain shell is running under tmux-play with one
 or more playbooks enabled, while no playbook is engaged, when the
 Boss submits ordinary text, an unregistered slash-prefixed command,
 or a near-miss command-like input, the shell shall lazily run the
-default Captain playbook, which may answer directly, ask one material
-question, or select one or more enabled playbooks in sequence.
+default Captain playbook, which shall ask one material routing question or
+select one or more enabled playbooks in sequence without performing the
+specialized work itself.
 
 ### CAPTAIN-2
 
