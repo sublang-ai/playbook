@@ -758,6 +758,7 @@ export function createNestedPlaybookBridge(options) {
         active.phase = 'settling';
         const settlement = (async () => {
             let effectiveResult = result;
+            let cleanupControlError;
             if (result.status === 'aborted' || active.signal.aborted) {
                 if (result.status !== 'aborted' && active.signal.aborted) {
                     effectiveResult = resultFromThrown(active.input.playbookId, active.childSessionId, active.signal.reason ??
@@ -767,6 +768,7 @@ export function createNestedPlaybookBridge(options) {
                     await drainPlaybookAbortCleanups(active.signal);
                 }
                 catch (cleanupError) {
+                    cleanupControlError = cleanupError;
                     reportControlPlaneError(cleanupError);
                     effectiveResult = resultFromThrown(active.input.playbookId, active.childSessionId, cleanupError, false);
                 }
@@ -788,12 +790,17 @@ export function createNestedPlaybookBridge(options) {
             if (controlError !== undefined) {
                 active.deferred.reject(controlError);
             }
+            else if (cleanupControlError !== undefined) {
+                active.deferred.reject(cleanupControlError);
+            }
             else if (effectiveResult.status === 'ok') {
                 active.deferred.resolve(effectiveResult.output);
             }
             else {
                 active.deferred.reject(new NestedPlaybookCallError(effectiveResult));
             }
+            if (cleanupControlError !== undefined)
+                throw cleanupControlError;
         })();
         active.settlement = settlement;
         try {

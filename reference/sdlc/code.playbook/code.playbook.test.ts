@@ -4,7 +4,10 @@
 import { describe, expect, it } from 'vitest';
 import { assign, createActor, setup } from 'xstate';
 import type { PlaybookTraceEvent } from '@sublang/playbook/runtime';
-import type { NestedPlaybookBridge } from '../../../src/xstate-runtime.js';
+import {
+  registerPlaybookAbortCleanup,
+  type NestedPlaybookBridge,
+} from '../../../src/xstate-runtime.js';
 import { codingMachine, type PlayerInput as CaptainInput } from './code.fsm.js';
 import {
   enumerateCaptainStates,
@@ -1870,6 +1873,42 @@ describe('host result validation and snapshots', () => {
     },
   );
 
+  it('preserves a player port rejection when its finish sink also rejects', async () => {
+    const playerError = new TypeError('original player transport rejection');
+    const finishError = new Error('player finish sink mask');
+    let rejectFinish = true;
+    const traces: TraceEvent[] = [];
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        throw playerError;
+      },
+      callJudge: async (prompt) =>
+        isClassifierPrompt(prompt)
+          ? JSON.stringify(classifierReplyForTestPrompt(prompt))
+          : '{}',
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as TraceEvent;
+        traces.push(trace);
+        if (trace.type === 'player.call.finished' && rejectFinish) {
+          rejectFinish = false;
+          throw finishError;
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'player-port-precedence'));
+
+    await expect(
+      runtime.handleBossInput({ text: '/start rejected', signal: sig() }),
+    ).rejects.toBe(playerError);
+    expect(
+      traces.filter((trace) => trace.type === 'player.call.finished'),
+    ).toHaveLength(1);
+    expect(runtime._getActor()?.getSnapshot().value).toBe('failed');
+    await runtime.dispose();
+  });
+
   it('does not adopt a resume token from an invalid player result', async () => {
     const resumeSelections: Array<string | false> = [];
     let invocation = 0;
@@ -2200,6 +2239,60 @@ describe('nested bridge lifecycle bookkeeping', () => {
     await runtime.dispose();
   });
 
+  it('retains the turn id for the finish paired with a rejected nested start trace', async () => {
+    const traces: PlaybookTraceEvent[] = [];
+    const classifierStarted = deferredValue<void>();
+    const classifierReply = deferredValue<string>();
+    const startError = new Error('nested start sink failed after recording');
+    let rejectStart = true;
+    const ports = makeFakePorts({
+      callJudge: async (prompt) => {
+        if (!isClassifierPrompt(prompt)) return '{}';
+        classifierStarted.resolve();
+        return classifierReply.promise;
+      },
+      emitTelemetry: async (event) => {
+        const trace = traceFromNested(event);
+        if (!trace) return;
+        traces.push(trace);
+        if (trace.type === 'playbook.call.started' && rejectStart) {
+          rejectStart = false;
+          throw startError;
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'nested-start-turn'));
+
+    const turn = runtime.handleBossInput({
+      text: 'hold routing',
+      signal: sig(),
+    });
+    await classifierStarted.promise;
+    const childFailure = deferredValue<unknown>();
+    const child = createActor(runtime._getNestedBridge().actorLogic, {
+      input: { stateId: 'ready', playbookId: 'child', text: 'nested work' },
+    });
+    child.subscribe({ error: (error) => childFailure.resolve(error) });
+    child.start();
+    await expect(childFailure.promise).resolves.toBe(startError);
+    classifierReply.resolve(
+      JSON.stringify({ event: 'NO_ACTION', payload: {} }),
+    );
+    await expect(turn).rejects.toBe(startError);
+
+    const nestedTraces = traces.filter(
+      (trace) =>
+        trace.type === 'playbook.call.started' ||
+        trace.type === 'playbook.call.finished',
+    );
+    expect(nestedTraces).toHaveLength(2);
+    expect(nestedTraces.map(({ turnId }) => turnId)).toEqual([1, 1]);
+    expect(nestedTraces[0]?.callId).toBe(nestedTraces[1]?.callId);
+    child.stop();
+    await runtime.dispose();
+  });
+
   it('stops the root before disposal settles a suspended child', async () => {
     const childOpened = deferredValue<void>();
     let rootStatusAtFinish: unknown;
@@ -2228,6 +2321,56 @@ describe('nested bridge lifecycle bookkeeping', () => {
     await runtime.dispose();
 
     expect(rootStatusAtFinish).toBe('stopped');
+    child.stop();
+  });
+
+  it('rejects disposal with suspended-child abort cleanup failure after tracing it', async () => {
+    const traces: PlaybookTraceEvent[] = [];
+    const childOpened = deferredValue<void>();
+    const cleanupError = new Error('nested child cleanup failed');
+    const ports = makeFakePorts({
+      callPlaybook: async (_request, signal) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            registerPlaybookAbortCleanup(
+              signal,
+              Promise.reject(cleanupError),
+            );
+          },
+          { once: true },
+        );
+        childOpened.resolve();
+        return { state: 'suspended', childSessionId: 'cleanup-child' };
+      },
+      emitTelemetry: async (event) => {
+        const trace = traceFromNested(event);
+        if (trace) traces.push(trace);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'nested-cleanup-session'));
+    const child = createActor(runtime._getNestedBridge().actorLogic, {
+      input: { stateId: 'ready', playbookId: 'child', text: 'nested work' },
+    });
+    child.subscribe({ error: () => {} });
+    child.start();
+    await childOpened.promise;
+
+    const disposal = runtime.dispose();
+    await expect(disposal).rejects.toBe(cleanupError);
+    expect(runtime.dispose()).toBe(disposal);
+    expect(
+      traces.find((trace) => trace.type === 'playbook.call.finished'),
+    ).toMatchObject({
+      payload: {
+        result: {
+          status: 'error',
+          error: { message: 'nested child cleanup failed' },
+        },
+      },
+    });
+    expect(traces.at(-1)?.type).toBe('session.disposed');
     child.stop();
   });
 
@@ -4485,7 +4628,9 @@ describe('session trace and player continuation (PBRT-39)', () => {
     await runtime.init(makePlaybookSession(ports, 'resume-session-one'));
 
     await runtime.handleBossInput({ text: '/start first', signal: sig() });
-    await runtime.handleBossInput({ text: '/start rejected', signal: sig() });
+    await expect(
+      runtime.handleBossInput({ text: '/start rejected', signal: sig() }),
+    ).rejects.toThrow('port rejected without a result');
     await runtime.handleBossInput({ text: '/start omitted', signal: sig() });
     await runtime.handleBossInput({ text: '/start whitespace', signal: sig() });
     await runtime.handleBossInput({ text: '/start aborted', signal: sig() });

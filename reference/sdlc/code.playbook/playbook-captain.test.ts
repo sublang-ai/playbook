@@ -580,6 +580,51 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
 });
 
 describe('createPlaybookCaptainShell internal Captain and lifecycle routing', () => {
+  it('ignores idle whitespace without allocating an internal Captain root', async () => {
+    const registry = fakeCodeEntry();
+    const internal = fakeInternalCaptain();
+    const shell = makeShell(registry, {
+      createCaptainRuntime: internal.createCaptainRuntime,
+    });
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('   \n\t'), context.context);
+
+    expect(internal.createCaptainRuntime).not.toHaveBeenCalled();
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+    expect(context.captainCalls).toEqual([]);
+    expect(session.statuses).toEqual([]);
+    expect(session.telemetry).toEqual([]);
+  });
+
+  it('retains the real Captain ready state after malformed initial classification', async () => {
+    const registry = fakeCodeEntry();
+    const shell = makeShell(registry);
+    const session = stubSession();
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'not classification JSON' },
+    ]);
+
+    await shell.init!(session.session);
+    await expect(
+      shell.handleBossTurn(turn('route this intent'), context.context),
+    ).resolves.toBeUndefined();
+
+    expect(context.captainCalls).toHaveLength(1);
+    expect(session.statuses).toEqual([]);
+    expect(
+      telemetryWithTopic(session, 'playbook.captain.fsm.state').at(-1),
+    ).toMatchObject({
+      payload: {
+        to: 'engaged.parked',
+        ledger: { mode: 'engaged.parked', stackDepth: 1 },
+      },
+    });
+    await shell.prepareDispose!();
+  });
+
   it('drives the real default Captain directly without exposing its control state', async () => {
     const registry = fakeCodeEntry();
     const shell = makeShell(registry, {
@@ -2096,6 +2141,27 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     expect(
       registry.runtimes.map((runtime) => runtime.session?.sessionId),
     ).toEqual([FIRST_ID, SECOND_ID]);
+    expect(
+      telemetryWithTopic(session, 'playbook.captain.fsm.state').filter(
+        ({ payload }) =>
+          (payload as { event?: unknown }).event === 'engage.failed',
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          from: 'engaged.parked',
+          to: 'chat',
+          ledger: expect.objectContaining({ mode: 'chat', stackDepth: 0 }),
+        }),
+      }),
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          from: 'engaged.parked',
+          to: 'chat',
+          ledger: expect.objectContaining({ mode: 'chat', stackDepth: 0 }),
+        }),
+      }),
+    ]);
   });
 
   it('forwards explicit resume selections and returned tokens unchanged', async () => {

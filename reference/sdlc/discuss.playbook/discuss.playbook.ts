@@ -278,7 +278,6 @@ const BOSS_INTERRUPT_TARGETS = [
   'hostAddressesFindings',
   'participantAddressesRebuttals',
   'commitReviewedChanges',
-  'awaitBossReply',
   'failed',
 ] as const;
 
@@ -657,7 +656,7 @@ function parseAdjudication(raw: string, input: PlayerInput): PlayerOutput {
   // non-required ones would blind FSM fallbacks such as
   // `outputOf(event).reviewScope ?? context.reviewScope` on guards whose
   // description says "may include".
-  const output: PlayerOutput = { ...obj, guard };
+  const output = { ...obj, guard } as unknown as PlayerOutput;
   for (const field of requiredFieldsFor(input.result[guard])) {
     const value = output[field];
     if (
@@ -857,6 +856,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   let judgeCallSequence = 0;
   let playerCallSequence = 0;
   let lifecycleStarted = false;
+  let initInFlight: Promise<void> | undefined;
   let disposed = false;
   let disposalPromise: Promise<void> | undefined;
   let controlPlaneError: unknown;
@@ -1174,7 +1174,12 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         // A rejected call produced no authoritative result, so the previous
         // token remains untouched. This also covers a host promise that
         // resolves after its invocation signal was cancelled.
-        await emitFailure(error);
+        latchControlPlaneError(error, signal);
+        try {
+          await emitFailure(error);
+        } catch {
+          // The original non-abort port rejection remains authoritative.
+        }
         throw error;
       }
 
@@ -1183,7 +1188,11 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         result = validatePlayerResult(rawResult);
       } catch (error) {
         latchControlPlaneError(error, signal);
-        await emitFailure(error);
+        try {
+          await emitFailure(error);
+        } catch {
+          // The malformed host result remains authoritative.
+        }
         throw error;
       }
 
@@ -1293,6 +1302,10 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     if (!runtimePorts) return;
     const context = snapshot.context as Record<string, unknown>;
     const fsmPayload = telemetryPayload(prior, state, event.event, context);
+    const describedFsmPayload = snapshotJsonValue(
+      fsmPayload,
+      'described FSM telemetry',
+    );
 
     void enqueueTracedEmission(
       'fsm.transition',
@@ -1301,7 +1314,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       (emissionPorts) =>
         emissionPorts.emitTelemetry({
           topic: TELEMETRY_TOPIC,
-          payload: fsmPayload,
+          payload: describedFsmPayload,
         }),
     ).catch(() => undefined);
 
@@ -1450,12 +1463,22 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
 
   return {
     async init(session: PlaybookSession): Promise<void> {
-      if (lifecycleStarted) {
+      if (
+        lifecycleStarted ||
+        initInFlight !== undefined ||
+        disposed ||
+        disposalPromise !== undefined
+      ) {
         throw new Error(
           'discuss runtime: init(session) may only be called once',
         );
       }
       const identity = snapshotPlaybookSession(session);
+      let finishInitialization!: () => void;
+      const initialization = new Promise<void>((resolve) => {
+        finishInitialization = resolve;
+      });
+      initInFlight = initialization;
       lifecycleStarted = true;
       ports = identity.ports;
       sessionIdentity = identity;
@@ -1514,6 +1537,9 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         playerCallSequence = 0;
         lifecycleStarted = false;
         throw error;
+      } finally {
+        finishInitialization();
+        if (initInFlight === initialization) initInFlight = undefined;
       }
     },
 
@@ -1662,7 +1688,6 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
 
     dispose(): Promise<void> {
       if (disposalPromise !== undefined) return disposalPromise;
-      if (!sessionIdentity || disposed) return Promise.resolve();
       if (currentTurnId !== undefined) {
         return Promise.reject(
           new Error(
@@ -1671,6 +1696,12 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         );
       }
       disposalPromise = (async () => {
+        const initialization = initInFlight;
+        if (initialization) await initialization;
+        if (!sessionIdentity || disposed) {
+          disposed = true;
+          return;
+        }
         const finalState = currentState();
         const failures: unknown[] = [];
         if (actor) {

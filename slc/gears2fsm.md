@@ -136,7 +136,7 @@ The source item ID shall live in `invoke.input.sourceItem`, not in a comment —
 A delegated state's `invoke.input.player` shall match its source item's named
 player. A direct Captain state shall not invent a `Captain` player binding.
 
-The machine's initial state shall be a quiescent idle hub (no `invoke`) — typically `ready` — that accepts the Boss entry events.
+The machine's initial state shall be a quiescent idle hub (no `invoke`) — typically `ready` — that accepts the Boss entry events and carries the `playbook.parked` tag because it can return control to Boss.
 Captain- and player-invoking work begins only on a Boss-originated event, so
 constructing and starting the machine performs no agent call.
 

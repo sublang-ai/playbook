@@ -885,7 +885,7 @@ describe('nested XState playbook call bridge', () => {
     await pendingCall(bridge);
 
     actor.stop();
-    await bridge.dispose();
+    await expect(bridge.dispose()).rejects.toThrow('child cleanup failed');
 
     expect(controlErrors).toHaveLength(1);
     expect((controlErrors[0] as Error).message).toBe('child cleanup failed');

@@ -176,7 +176,6 @@ const BOSS_INTERRUPT_TARGETS = [
     'hostAddressesFindings',
     'participantAddressesRebuttals',
     'commitReviewedChanges',
-    'awaitBossReply',
     'failed',
 ];
 const BOSS_INTERRUPT_TARGET_IDS = new Set(BOSS_INTERRUPT_TARGETS);
@@ -636,6 +635,7 @@ export const createPlaybookRuntime = (options) => {
     let judgeCallSequence = 0;
     let playerCallSequence = 0;
     let lifecycleStarted = false;
+    let initInFlight;
     let disposed = false;
     let disposalPromise;
     let controlPlaneError;
@@ -871,7 +871,13 @@ export const createPlaybookRuntime = (options) => {
                 // A rejected call produced no authoritative result, so the previous
                 // token remains untouched. This also covers a host promise that
                 // resolves after its invocation signal was cancelled.
-                await emitFailure(error);
+                latchControlPlaneError(error, signal);
+                try {
+                    await emitFailure(error);
+                }
+                catch {
+                    // The original non-abort port rejection remains authoritative.
+                }
                 throw error;
             }
             let result;
@@ -880,7 +886,12 @@ export const createPlaybookRuntime = (options) => {
             }
             catch (error) {
                 latchControlPlaneError(error, signal);
-                await emitFailure(error);
+                try {
+                    await emitFailure(error);
+                }
+                catch {
+                    // The malformed host result remains authoritative.
+                }
                 throw error;
             }
             // The resolved result is authoritative even on aborted/error status.
@@ -964,9 +975,10 @@ export const createPlaybookRuntime = (options) => {
             return;
         const context = snapshot.context;
         const fsmPayload = telemetryPayload(prior, state, event.event, context);
+        const describedFsmPayload = snapshotJsonValue(fsmPayload, 'described FSM telemetry');
         void enqueueTracedEmission('fsm.transition', fsmPayload, { turnId: currentTurnId }, (emissionPorts) => emissionPorts.emitTelemetry({
             topic: TELEMETRY_TOPIC,
-            payload: fsmPayload,
+            payload: describedFsmPayload,
         })).catch(() => undefined);
         const priorIds = new Set(prior?.activeStateIds ?? []);
         const pendingQuestions = pendingQuestionsFromContext(context);
@@ -1075,10 +1087,18 @@ export const createPlaybookRuntime = (options) => {
     };
     return {
         async init(session) {
-            if (lifecycleStarted) {
+            if (lifecycleStarted ||
+                initInFlight !== undefined ||
+                disposed ||
+                disposalPromise !== undefined) {
                 throw new Error('discuss runtime: init(session) may only be called once');
             }
             const identity = snapshotPlaybookSession(session);
+            let finishInitialization;
+            const initialization = new Promise((resolve) => {
+                finishInitialization = resolve;
+            });
+            initInFlight = initialization;
             lifecycleStarted = true;
             ports = identity.ports;
             sessionIdentity = identity;
@@ -1141,6 +1161,11 @@ export const createPlaybookRuntime = (options) => {
                 playerCallSequence = 0;
                 lifecycleStarted = false;
                 throw error;
+            }
+            finally {
+                finishInitialization();
+                if (initInFlight === initialization)
+                    initInFlight = undefined;
             }
         },
         async handleBossInput(turn) {
@@ -1279,12 +1304,17 @@ export const createPlaybookRuntime = (options) => {
         dispose() {
             if (disposalPromise !== undefined)
                 return disposalPromise;
-            if (!sessionIdentity || disposed)
-                return Promise.resolve();
             if (currentTurnId !== undefined) {
                 return Promise.reject(new Error('discuss runtime: cannot dispose while a runtime turn is active'));
             }
             disposalPromise = (async () => {
+                const initialization = initInFlight;
+                if (initialization)
+                    await initialization;
+                if (!sessionIdentity || disposed) {
+                    disposed = true;
+                    return;
+                }
                 const finalState = currentState();
                 const failures = [];
                 if (actor) {

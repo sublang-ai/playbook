@@ -94,35 +94,113 @@ function startDiscussion(actor: { send(event: DiscussEvent): void }): void {
 }
 
 describe('DISCUSS parallel rounds', () => {
-  it.each([
-    [
-      'initialProposalRound',
-      'askHostInitial',
+  it('restarts both initial-proposal branches only with a retained topic', async () => {
+    const { calls, machine } = controlledMachine();
+    const actor = createActor(machine, {
+      input: { host: 'host', participant: 'participant' },
+    });
+    actor.start();
+    startDiscussion(actor);
+    const [oldHost] = await waitForCalls(calls, 'askHostInitial');
+    const [oldParticipant] = await waitForCalls(
+      calls,
       'askParticipantInitial',
-    ] as const,
-    [
-      'reconciliationRound',
-      'hostInitialRound',
-      'participantInitialRound',
-    ] as const,
-  ])(
-    'treats %s as one intentional Boss-interrupt unit',
-    async (targetId, hostStateId, participantStateId) => {
-      const { calls, machine } = controlledMachine();
-      const actor = createActor(machine, {
-        input: { host: 'host', participant: 'participant' },
-      });
-      actor.start();
-      actor.send({ type: 'BOSS_INTERRUPT', targetId } satisfies DiscussEvent);
+    );
 
-      await waitForCalls(calls, hostStateId);
-      await waitForCalls(calls, participantStateId);
-      expect(activePlaybookStateIds(actor.getSnapshot())).toEqual(
-        expect.arrayContaining([targetId, hostStateId, participantStateId]),
-      );
-      actor.stop();
-    },
-  );
+    actor.send({
+      type: 'BOSS_INTERRUPT',
+      targetId: 'initialProposalRound',
+    } satisfies DiscussEvent);
+
+    const restartedHosts = await waitForCalls(calls, 'askHostInitial', 2);
+    const restartedParticipants = await waitForCalls(
+      calls,
+      'askParticipantInitial',
+      2,
+    );
+    expect(oldHost.signal.aborted).toBe(true);
+    expect(oldParticipant.signal.aborted).toBe(true);
+    expect(restartedHosts[1]?.input.topic).toBe('Compose playbooks.');
+    expect(restartedParticipants[1]?.input.topic).toBe('Compose playbooks.');
+    expect(activePlaybookStateIds(actor.getSnapshot())).toEqual(
+      expect.arrayContaining([
+        'initialProposalRound',
+        'askHostInitial',
+        'askParticipantInitial',
+      ]),
+    );
+    actor.stop();
+  });
+
+  it('restarts both reconciliation branches only with promoted proposals', async () => {
+    const { calls, machine } = controlledMachine();
+    const actor = createActor(machine, {
+      input: { host: 'host', participant: 'participant' },
+    });
+    actor.start();
+    startDiscussion(actor);
+    const [hostInitial] = await waitForCalls(calls, 'askHostInitial');
+    const [participantInitial] = await waitForCalls(
+      calls,
+      'askParticipantInitial',
+    );
+    hostInitial.resolve({ guard: 'proposalMade', proposal: 'host proposal' });
+    participantInitial.resolve({
+      guard: 'proposalMade',
+      proposal: 'participant proposal',
+    });
+    const [oldHost] = await waitForCalls(calls, 'hostInitialRound');
+    const [oldParticipant] = await waitForCalls(
+      calls,
+      'participantInitialRound',
+    );
+
+    actor.send({
+      type: 'BOSS_INTERRUPT',
+      targetId: 'reconciliationRound',
+    } satisfies DiscussEvent);
+
+    const restartedHosts = await waitForCalls(calls, 'hostInitialRound', 2);
+    const restartedParticipants = await waitForCalls(
+      calls,
+      'participantInitialRound',
+      2,
+    );
+    expect(oldHost.signal.aborted).toBe(true);
+    expect(oldParticipant.signal.aborted).toBe(true);
+    for (const restarted of [
+      restartedHosts[1],
+      restartedParticipants[1],
+    ]) {
+      expect(restarted?.input).toMatchObject({
+        hostProposal: 'host proposal',
+        participantProposal: 'participant proposal',
+      });
+    }
+    actor.stop();
+  });
+
+  it('ignores parallel-parent interrupts without their required context', async () => {
+    const { calls, machine } = controlledMachine();
+    const actor = createActor(machine, {
+      input: { host: 'host', participant: 'participant' },
+    });
+    actor.start();
+
+    actor.send({
+      type: 'BOSS_INTERRUPT',
+      targetId: 'initialProposalRound',
+    } satisfies DiscussEvent);
+    actor.send({
+      type: 'BOSS_INTERRUPT',
+      targetId: 'reconciliationRound',
+    } satisfies DiscussEvent);
+    await Promise.resolve();
+
+    expect(calls).toEqual([]);
+    expect(actor.getSnapshot().value).toBe('ready');
+    actor.stop();
+  });
 
   it('uses the first-class player actor for every delegated leaf', () => {
     const root = discussMachine.config as ObservableStateConfig;

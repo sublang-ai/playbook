@@ -532,7 +532,6 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         catch (error) {
             if (leafFrame() === frame)
                 frames.pop();
-            mode = 'chat';
             clearLeafLedger();
             try {
                 await frame.runtime.dispose();
@@ -540,6 +539,14 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             catch {
                 // Preserve the initialization failure while still making a
                 // best-effort attempt to release partially acquired resources.
+            }
+            try {
+                await setMode('chat', 'engage.failed');
+            }
+            catch {
+                // setMode updates the authoritative mode before telemetry; preserve
+                // the initialization failure if that recovery emission also fails.
+                mode = 'chat';
             }
             throw error;
         }
@@ -1217,6 +1224,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     await routeEngaged(turn, context);
                     return;
                 }
+                if (turn.prompt.trim().length === 0)
+                    return;
                 const captain = await engageInternalCaptain();
                 await submitToActive(captain, turn.prompt, context);
             }

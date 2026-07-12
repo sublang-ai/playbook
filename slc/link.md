@@ -711,6 +711,10 @@ registry; linker-time metadata is not authorization to call a target.
 
 Disposal shall settle an outstanding call as aborted and drain its finish
 trace before `session.disposed`.
+If registered child abort cleanup rejects, the bridge shall emit the paired
+finish with an error result and reject `abortPending` or disposal with that
+original cleanup error; it shall not swallow the failure merely because the
+promise actor also observes a `NestedPlaybookCallError`.
 Child output and errors must be JSON-safe; a non-JSON-safe result is a
 control-plane error.
 
@@ -726,6 +730,11 @@ The `PlaybookRuntime` shall:
   share one disposal promise; later calls after disposal shall return that
   settled disposal outcome without emitting another boundary. Once disposal
   begins, no new turn or resume may start.
+  Disposal requested during initialization shall retain one teardown promise,
+  wait for initialization's success or failure cleanup, and emit at most one
+  `session.disposed` boundary. Disposal before initialization is terminal and
+  coalesced: later initialization rejects and every later disposal call
+  returns the first retained promise.
   The generated `dispose` method shall not be declared `async`, because an
   async wrapper returns a distinct promise and breaks identity coalescing; it
   shall return the retained teardown promise directly and use
@@ -887,6 +896,9 @@ The runtime shall emit, at minimum:
   The payload shall additionally carry the exact pending Boss question or
   keyed questions selected from public snapshot context and normalize any
   transition error without retaining a raw `Error` instance.
+  Snapshot and recursively freeze the complete described telemetry payload
+  independently from the state retained as `previousState`, so an observer
+  cannot mutate a later transition's authoritative `from` state.
   Observers consume telemetry; the runtime never interprets the topic.
 
 Player prompts and adjudicator JSON may additionally ride the host's own record channels when the host has them (cligent's `captain_*` / `player_*`).

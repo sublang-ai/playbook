@@ -64,6 +64,9 @@ When the shell emits its own FSM telemetry, it shall use topic
 `playbook.captain.fsm.state`, not `playbook.fsm.state`.
 The shell FSM telemetry payload shall carry `from`, `to`, `event`,
 and a snapshot of the bounded control ledger.
+If engagement initialization fails after entering `engaged.parked`, the shell
+shall pop the broken frame and emit a best-effort recovery transition back to
+`chat` with stack depth zero while preserving the original failure.
 The shell shall put Boss-visible shell state in human-readable
 status message text and shall not attach structured data to
 shell-owned status emissions; structured shell state shall be
@@ -79,7 +82,8 @@ Where the Playbook Captain shell receives a Boss turn, the shell
 shall parse registered commands before runtime routing. While idle, a
 registered command shall select that external playbook directly and
 all other non-empty text shall lazily create the compiled default
-Captain root. While a stack exists, the shell shall select its active
+Captain root. Empty or whitespace-only idle text shall return without
+allocating a session or runtime. While a stack exists, the shell shall select its active
 leaf from host state and shall not let a command replace the root.
 For engaged ordinary text, a hidden lifecycle-only classifier may
 return exactly `deliver` or `dismiss`; it shall choose `dismiss` only when
@@ -322,6 +326,8 @@ engagement, best-effort dispose its partially initialized runtime while
 preserving the original failure, and let a later command construct a
 new external engagement with a new session id or a later ordinary idle turn
 construct a new internal Captain root with a new session id.
+Its recovery shell telemetry shall show `chat` and an empty stack rather than
+leaving observers at the earlier attempted engagement.
 
 ## Nested playbook stack
 

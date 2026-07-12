@@ -12,6 +12,9 @@ The catalog is immutable host input for the session; Boss events and Captain dec
 Captain shall call only ids in that catalog and shall never call this Captain playbook itself.
 Captain shall keep a finite ordered plan and issue at most one child call at a time.
 `remainingPlan` shall contain only calls after the selected next call; every continuation shall strictly reduce its length.
+After Captain consumes an answer to its own routing or reassessment question,
+that question and answer are no longer pending before Captain calls a child or
+completes.
 
 The host guarantees that this Captain receives Boss input only while it is the active leaf and resumes only from a matching child return.
 That guarantee is an execution precondition, not a behavior for Captain to perform and not a source item to compile.

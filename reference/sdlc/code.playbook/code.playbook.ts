@@ -1445,18 +1445,23 @@ export default function createPlaybookRuntime(
           // a late result mutate continuity or publish a successful finish.
           signal.throwIfAborted();
         } catch (error) {
-          await emitTrace(
-            'player.call.finished',
-            {
-              ...identity,
-              status: signal.aborted ? 'aborted' : 'error',
-              error: normalizeError(error),
-            },
-            {
-              ...(turnId !== undefined ? { turnId } : {}),
-              callId,
-            },
-          );
+          if (!signal.aborted) controlPlaneError ??= error;
+          try {
+            await emitTrace(
+              'player.call.finished',
+              {
+                ...identity,
+                status: signal.aborted ? 'aborted' : 'error',
+                error: normalizeError(error),
+              },
+              {
+                ...(turnId !== undefined ? { turnId } : {}),
+                callId,
+              },
+            );
+          } catch {
+            // The original non-abort port rejection remains authoritative.
+          }
           // A thrown port call carries no authoritative result, so the
           // prior token remains available for a later explicit resume.
           throw error;
@@ -1467,14 +1472,18 @@ export default function createPlaybookRuntime(
           result = validatePlayerResult(rawResult);
         } catch (error) {
           if (!signal.aborted) controlPlaneError ??= error;
-          await emitTrace(
-            'player.call.finished',
-            { ...identity, status: 'error', error: normalizeError(error) },
-            {
-              ...(turnId !== undefined ? { turnId } : {}),
-              callId,
-            },
-          );
+          try {
+            await emitTrace(
+              'player.call.finished',
+              { ...identity, status: 'error', error: normalizeError(error) },
+              {
+                ...(turnId !== undefined ? { turnId } : {}),
+                callId,
+              },
+            );
+          } catch {
+            // The malformed host result remains authoritative.
+          }
           throw error;
         }
 
@@ -1591,23 +1600,18 @@ export default function createPlaybookRuntime(
       requireHostPorts().callPlaybook(request, signal),
     emitStarted: async (event) => {
       playbookCallTurnIds.set(event.callId, activeTurnId);
-      try {
-        await emitTrace(
-          'playbook.call.started',
-          {
-            stateId: event.stateId,
-            playbookId: event.playbookId,
-            text: event.text,
-          },
-          {
-            ...(activeTurnId !== undefined ? { turnId: activeTurnId } : {}),
-            callId: event.callId,
-          },
-        );
-      } catch (error) {
-        playbookCallTurnIds.delete(event.callId);
-        throw error;
-      }
+      await emitTrace(
+        'playbook.call.started',
+        {
+          stateId: event.stateId,
+          playbookId: event.playbookId,
+          text: event.text,
+        },
+        {
+          ...(activeTurnId !== undefined ? { turnId: activeTurnId } : {}),
+          callId: event.callId,
+        },
+      );
     },
     emitFinished: async (event) => {
       const turnId = playbookCallTurnIds.get(event.callId);

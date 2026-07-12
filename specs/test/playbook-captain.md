@@ -29,6 +29,8 @@ ordinary text while CODE is engaged, including while parked, routes
 unchanged to the active leaf after lifecycle classification, and every
 dispatch to CODE calls `handleBossInput` with text rather than a
 pre-classified FSM event.
+Whitespace-only idle input shall allocate no internal Captain runtime,
+session, call, status, visibility request, or telemetry event.
 
 ### CAPTAIN-13
 
@@ -69,6 +71,9 @@ status lines use the registered slash command in the
 data; the internal Captain root emits none of those lifecycle lines and its
 terminal response causes no second visible chat call; and shell `dispose()` disposes any active runtime without
 emitting shell status or shell FSM telemetry for adapter teardown.
+An initial malformed Captain classification shall retain the real Captain's
+quiescent parked `ready` root, and a rejected runtime initialization shall
+emit a recovery transition to `chat` whose ledger has stack depth zero.
 
 ## Registry and options
 
@@ -220,6 +225,7 @@ When runtime initialization rejects, the test shall fail unless the
 shell disposes the partial runtime, clears it, and a later command constructs a
 different external engagement or a later ordinary idle turn constructs a
 different internal Captain root instead of reusing the failed one.
+The failed engagement's shell telemetry shall finish in `chat` with no frame.
 
 ## Nested playbook stack
 
