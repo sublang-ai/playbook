@@ -148,7 +148,7 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     logic: import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>;
     id: string | undefined;
 }, {
-    type: "clearBossReplyContext";
+    type: "rememberBossReply";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "rememberCaptainError";
@@ -196,15 +196,15 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     type: "setPendingBossQuestion";
     params: PendingBossQuestionParams;
 } | {
-    type: "rememberBossReply";
-    params: import("xstate").NonReducibleUnknown;
-} | {
     type: "clearBranchBossReplyContext";
     params: {
         stateId: ResumableStateId;
     };
 } | {
     type: "clearParallelRoundContext";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "clearBossReplyContext";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "stageHostResult";

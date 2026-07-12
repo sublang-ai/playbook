@@ -267,9 +267,10 @@ function makeHarness(script: HarnessScript = {}) {
       }
     },
     callJudge: async (prompt, signal) => {
-      const purpose = prompt.includes('Classify the Boss text')
-        ? 'classification'
-        : 'adjudication';
+      const purpose =
+        prompt.includes('BOSS_INTENT') && prompt.includes('NO_ACTION')
+          ? 'classification'
+          : 'adjudication';
       judgeCalls.push({ prompt, signal, purpose });
       const callNumber = judgeCalls.length;
       order.push(`host:judge:${callNumber}:started`);
@@ -1417,21 +1418,12 @@ describe('compiled default Captain runtime', () => {
       children: [{ state: 'suspended', childSessionId }],
     });
     let rejectedFailedStatus = false;
+    let rejectNextStatus = false;
     const ports: PlaybookPorts = {
       ...harness.ports,
       emitStatus: async (message, data) => {
         await harness.ports.emitStatus(message, data);
-        const statusData = data as
-          | {
-              readonly stateId?: unknown;
-              readonly state?: { readonly stateId?: unknown };
-            }
-          | undefined;
-        const stateId = statusData?.stateId ?? statusData?.state?.stateId;
-        if (
-          !rejectedFailedStatus &&
-          (stateId === 'failed' || /failed/i.test(message))
-        ) {
+        if (!rejectedFailedStatus && rejectNextStatus) {
           rejectedFailedStatus = true;
           throw new Error('secondary failed-status sink failure');
         }
@@ -1447,6 +1439,7 @@ describe('compiled default Captain runtime', () => {
       throw new Error('Expected a suspended child call');
     }
 
+    rejectNextStatus = true;
     await expect(
       runtime.resumePlaybookCall({
         callId: opened.pendingCall.callId,
@@ -1573,7 +1566,7 @@ describe('compiled default Captain runtime', () => {
         },
         signal: signal(),
       }),
-    ).rejects.toThrow(/unknown or stale/);
+    ).rejects.toThrow(/unknown.*stale/i);
 
     const recovered = await runtime.handleBossInput({
       text: 'Recover after the trace failure.',

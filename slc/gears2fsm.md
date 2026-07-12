@@ -370,6 +370,16 @@ call state's `invoke.input` mapper shall be a pure read of the already-validated
 typed context fields; it shall not call an assertion helper or throw while
 XState resolves actor input. This keeps state restoration, inspection, and
 scripted coverage from crashing outside the invocation's `onError` boundary.
+For the default Captain decide-call-observe loop, the delegation and
+continuing `onDone` arms shall transition directly into the invoking call
+state. Each arm's single guard validates its applicable actor-output and
+context constraints: both validate JSON shape, catalog membership,
+self-target, and duplicate history, while strict plan shrink applies only to
+`continuing`. Its actions store the selected target/input and append the
+signature before state entry. Do not interpose an eventless preparation or
+validation state between the Captain actor and the call state: it obscures the
+authored Captain entry edge from deterministic coverage and adds no XState
+safety beyond the guarded direct transition.
 
 ## Context and prompts
 
@@ -408,8 +418,14 @@ changing them during serialization.
 An accepted array shall have prototype exactly `Array.prototype`, no holes,
 symbols, accessors, or extra own string properties, and enumerable own data
 descriptors for every canonical index; its standard non-enumerable `length`
-descriptor is the sole exception. An accepted record shall have prototype
-exactly `Object.prototype` or `null`, and every key returned by
+descriptor is the sole exception. That data descriptor shall be
+non-configurable and carry the exact array length, but its `writable` flag may
+be either `true` on an ordinary array or `false` after the shared runtime
+recursively freezes a validated boundary value. `Reflect.ownKeys(array)` shall
+contain exactly `length + 1` keys: the `length` property and every canonical
+index from `0` through `length - 1`. A digit string whose numeric value is not
+less than `length` is an extra property, not an array index. An accepted record
+shall have prototype exactly `Object.prototype` or `null`, and every key returned by
 `Reflect.ownKeys` shall be a string whose own descriptor is enumerable and a
 data descriptor. Cycle detection shall track only the active recursion path
 and remove a container on unwind, so a shared acyclic array or record is valid

@@ -10,26 +10,35 @@ Compile the generic Captain's routing and multi-playbook planning policy from ma
 ## Deliverables
 
 - [x] Architecture, user behavior, system behavior, acceptance tests, and natural-language source recorded before implementation.
-- [ ] Direct Captain calls and dynamic nested targets supported by the runtime and compiler contracts.
-- [ ] `slc playbook` produces reviewed Captain GEARS, FSM, runtime, and verification artifacts.
-- [ ] The shell lazily hosts the compiled Captain with a sanitized enabled-playbook catalog.
-- [ ] Nested clarification, multi-call planning, active-leaf routing, visibility, and trace behavior pass end to end.
+- [x] Direct Captain calls and dynamic nested targets supported by the runtime and compiler contracts.
+- [x] `slc playbook` produces reviewed Captain GEARS, FSM, runtime, and verification artifacts.
+- [x] The shell lazily hosts the compiled Captain with a sanitized enabled-playbook catalog.
+- [x] Nested clarification, multi-call planning, active-leaf routing, visibility, and trace behavior pass end to end.
 - [ ] Immutable dependency and SLC pin refreshes preserve clean-install reproducibility.
 
 ## Tasks
 
 1. **Specify and author the Captain.** _[done]_
    Add DR-012, the CAPPLAY package, this iteration, and `reference/sdlc/captain.md` before changing runtime contracts.
-2. **Add Captain and dynamic-call primitives.**
+2. **Add Captain and dynamic-call primitives.** _[done]_
    Extend the shared runtime, linker definitions, traces, direct-actor FSM convention, and tests without modeling Captain as a player.
-3. **Compile the source.**
+3. **Compile the source.** _[done]_
    Extend SLC's dynamic-call verification and child coverage, compile through `slc playbook`, review the artifacts, and resolve generated-test portability.
-4. **Host the internal root.**
+4. **Host the internal root.** _[done]_
    Inject the sanitized catalog, route idle ordinary text into the lazy Captain, preserve explicit idle commands, and retain deterministic leaf routing and LIFO return.
-5. **Close immutable dependencies.**
+5. **Close immutable dependencies.** _[pending release gate]_
    Release the required cligent surface, release Playbook's breaking composed contract, then atomically refresh SLC's dependency, definitions, reviewed meta artifacts, provenance profile, and pins.
-6. **Verify and finalize.**
+6. **Verify and finalize.** _[in progress]_
    Run focused stack/compiler tests, clean-install package closure, both full suites, generated-drift checks, licensing checks, and an adversarial audit.
+
+The local runtime, compiler, shell, generated artifacts, and behavioral suites
+are complete. Immutable closure remains release-coordinated: publish the
+required cligent 0.14 surface and Playbook 1.0 composed contract, then refresh
+SLC's dependency, definitions, reviewed artifacts, provenance profile, and
+pins atomically. Until that authorized sequence, package versions, registry
+locks, and SLC pins remain unchanged and clean registry installation is an
+intentional open gate rather than evidence that the local implementation is
+incomplete.
 
 ## Acceptance criteria
 

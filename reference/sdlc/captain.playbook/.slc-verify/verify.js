@@ -894,7 +894,12 @@ function sentinelContext(reads) {
 }
 // The gears2fsm-normative Boss-reply context fields: present only on a
 // continuation turn, so an ordinary-turn probe must leave them unset.
-const BOSS_CONTEXT_FIELDS = ['pendingBossQuestion', 'bossReply'];
+const BOSS_CONTEXT_FIELDS = [
+    'pendingBossQuestion',
+    'bossReply',
+    'pendingBossQuestions',
+    'bossReplies',
+];
 function ordinaryContext(reads) {
     return sentinelContext(reads.filter((field) => !BOSS_CONTEXT_FIELDS.includes(field)));
 }
@@ -1033,19 +1038,24 @@ export function checkPromptComposition(opts) {
         // Q&A blocks before the domain body (gears2fsm.md, link.md).
         const question = sentinelFor('question');
         const reply = sentinelFor('bossReply');
+        const pendingBossQuestion = {
+            resumeStateId: state.stateId,
+            sourceItem: state.sourceItem,
+            player: state.player,
+            question,
+        };
         let continuation;
         let input;
         try {
             input = inputFn({
                 context: {
                     ...ordinaryContext(reads),
-                    pendingBossQuestion: {
-                        resumeStateId: state.stateId,
-                        sourceItem: state.sourceItem,
-                        player: state.player,
-                        question,
-                    },
+                    pendingBossQuestion,
                     bossReply: reply,
+                    pendingBossQuestions: {
+                        [state.stateId]: pendingBossQuestion,
+                    },
+                    bossReplies: { [state.stateId]: reply },
                 },
             });
             continuation = opts.compose(input);

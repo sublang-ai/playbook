@@ -22,8 +22,9 @@ const CONTRACT = [
     "player": "",
     "reads": [
       "bossIntent",
-      "bossReplyActive",
-      "enabledPlaybooks"
+      "bossReply",
+      "enabledPlaybooks",
+      "pendingBossQuestion"
     ],
     "wires": {
       "bossIntent": [
@@ -31,6 +32,12 @@ const CONTRACT = [
       ],
       "enabledPlaybooks": [
         "enabledPlaybooks"
+      ],
+      "pendingBossQuestion": [
+        "pendingBossQuestion"
+      ],
+      "bossReply": [
+        "bossReply"
       ]
     },
     "placeholders": [
@@ -39,14 +46,15 @@ const CONTRACT = [
     ]
   },
   {
-    "state": "reassessing",
+    "state": "reassessment",
     "sourceItem": "CAPTAIN-3",
     "player": "",
     "reads": [
       "bossIntent",
-      "bossReplyActive",
+      "bossReply",
       "completedCallResults",
       "enabledPlaybooks",
+      "pendingBossQuestion",
       "remainingPlan"
     ],
     "wires": {
@@ -61,6 +69,12 @@ const CONTRACT = [
       ],
       "completedCallResults": [
         "completedCallResults"
+      ],
+      "pendingBossQuestion": [
+        "pendingBossQuestion"
+      ],
+      "bossReply": [
+        "bossReply"
       ]
     },
     "placeholders": [
@@ -82,7 +96,7 @@ const CAPTAIN_SUBSTITUTED = {
     "<boss-intent>",
     "<enabled-playbooks>"
   ],
-  "reassessing": [
+  "reassessment": [
     "<boss-intent>",
     "<enabled-playbooks>",
     "<remaining-plan>",

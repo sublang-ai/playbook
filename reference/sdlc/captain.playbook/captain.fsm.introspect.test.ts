@@ -26,7 +26,7 @@ const PINNED = {
       "onDone": [
         {
           "index": 0,
-          "target": "finishing",
+          "target": "done",
           "guarded": true
         },
         {
@@ -36,7 +36,7 @@ const PINNED = {
         },
         {
           "index": 2,
-          "target": "callingPlaybook",
+          "target": "callPlaybook",
           "guarded": true
         },
         {
@@ -60,7 +60,7 @@ const PINNED = {
       "on": {}
     },
     {
-      "state": "reassessing",
+      "state": "reassessment",
       "actor": "captain",
       "sourceItem": "CAPTAIN-3",
       "player": "",
@@ -73,7 +73,7 @@ const PINNED = {
       "onDone": [
         {
           "index": 0,
-          "target": "finishing",
+          "target": "done",
           "guarded": true
         },
         {
@@ -83,7 +83,7 @@ const PINNED = {
         },
         {
           "index": 2,
-          "target": "callingPlaybook",
+          "target": "callPlaybook",
           "guarded": true
         },
         {
@@ -117,11 +117,6 @@ const PINNED = {
             "index": 0,
             "target": "routing",
             "guarded": true
-          },
-          {
-            "index": 1,
-            "target": "failed",
-            "guarded": false
           }
         ]
       }
@@ -138,13 +133,8 @@ const PINNED = {
           },
           {
             "index": 1,
-            "target": "reassessing",
+            "target": "reassessment",
             "guarded": true
-          },
-          {
-            "index": 2,
-            "target": "failed",
-            "guarded": false
           }
         ],
         "BOSS_INTENT": [
@@ -152,19 +142,9 @@ const PINNED = {
             "index": 0,
             "target": "routing",
             "guarded": true
-          },
-          {
-            "index": 1,
-            "target": "failed",
-            "guarded": false
           }
         ]
       }
-    },
-    {
-      "state": "finishing",
-      "final": false,
-      "on": {}
     },
     {
       "state": "failed",
@@ -175,11 +155,6 @@ const PINNED = {
             "index": 0,
             "target": "routing",
             "guarded": true
-          },
-          {
-            "index": 1,
-            "target": "failed",
-            "guarded": false
           }
         ]
       }
@@ -204,14 +179,14 @@ const PINNED = {
   ],
   "playbook": [
     {
-      "state": "callingPlaybook",
+      "state": "callPlaybook",
       "playbookIdContext": "nextPlaybookId",
       "textContext": "nextPlaybookInput",
       "sourceItem": "CAPTAIN-2",
       "onDone": [
         {
           "index": 0,
-          "target": "reassessing",
+          "target": "reassessment",
           "guarded": true
         },
         {
@@ -223,7 +198,7 @@ const PINNED = {
       "onError": [
         {
           "index": 0,
-          "target": "reassessing",
+          "target": "reassessment",
           "guarded": true
         },
         {
