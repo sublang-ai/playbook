@@ -16,23 +16,23 @@ to the package's intent per [META-15](../meta.md#meta-15).
 Verifies: [PLAYBOOK-1](../dev/playbook.md#playbook-1)
 
 When `pnpm test` runs from the repo root, the
-test suite shall fail if any captain-invoking state's `sourceItem`
+test suite shall fail if any player-invoking state's `sourceItem`
 is not a known CODE-N declared in `code.gears.md`, or if any
-CODE-N declared in `code.gears.md` has no captain-invoking state
+CODE-N declared in `code.gears.md` has no player-invoking state
 with matching `sourceItem`.
 
 ### PLAYBOOK-8
 Verifies: [PLAYBOOK-2](../dev/playbook.md#playbook-2)
 
 When `pnpm test` runs, the test suite shall fail if any
-captain-invoking state's `input.prompt` body diverges from the
+player-invoking state's `input.prompt` body diverges from the
 corresponding CODE-N blockquote body in `code.gears.md`.
 
 ### PLAYBOOK-9
 Verifies: [PLAYBOOK-3](../dev/playbook.md#playbook-3)
 
 When `pnpm test` runs, the test suite shall fail if any
-captain-invoking state's `input.player` does not match the section
+player-invoking state's `input.player` does not match the section
 heading under which the state's `sourceItem` CODE-N is declared in
 `code.gears.md`.
 
@@ -52,7 +52,7 @@ enumeration.
 Verifies: [PLAYBOOK-5](../dev/playbook.md#playbook-5), [PLAYBOOK-6](../dev/playbook.md#playbook-6)
 
 When `pnpm test` runs, the test suite shall fail if a
-captain-invoking state's composed prompt drops a labelled block
+player-invoking state's composed prompt drops a labelled block
 whose source field is wired, fails to substitute a declared
 placeholder with its wired source field's value, or emits labelled
 blocks out of DR-004 §6 order.
@@ -61,7 +61,7 @@ blocks out of DR-004 §6 order.
 Verifies: [PLAYBOOK-16](../dev/playbook.md#playbook-16)
 
 When `pnpm test` runs, the test suite shall fail if any Reviewer
-captain-invoking prompt in `code.gears.md` or `code.fsm.ts` omits
+player-invoking prompt in `code.gears.md` or `code.fsm.ts` omits
 the review-only instruction that forbids editing files or
 committing.
 
@@ -69,7 +69,7 @@ committing.
 Verifies: [PLAYBOOK-18](../dev/playbook.md#playbook-18)
 
 When `pnpm test` runs, the test suite shall fail if any Reviewer
-captain-invoking prompt in `code.gears.md` or `code.fsm.ts` asks
+player-invoking prompt in `code.gears.md` or `code.fsm.ts` asks
 Reviewer to verify affected spec items but omits any item from the
 current spec-review checklist, or if it uses
 `behavior (in @specs/dev)` instead of
@@ -81,17 +81,17 @@ current spec-review checklist, or if it uses
 Verifies: [PLAYBOOK-12](../dev/playbook.md#playbook-12)
 
 When `pnpm test` runs, the test suite shall fail if any
-captain-invoking state does not declare `needsBossReply` in its
-`result` map, if any captain-invoking state lacks a matching arm
+player-invoking state does not declare `needsBossReply` in its
+`result` map, if any player-invoking state lacks a matching arm
 in `awaitBossReply.on.BOSS_REPLY` keyed by `resumeStateId`, or
 if any arm in `awaitBossReply.on.BOSS_REPLY` targets a state that
-is not captain-invoking or does not declare `needsBossReply`.
+is not player-invoking or does not declare `needsBossReply`.
 
 ### PLAYBOOK-15
 Verifies: [PLAYBOOK-13](../dev/playbook.md#playbook-13)
 
 When `pnpm test` runs, the test suite shall fail if any
-non-`needsBossReply` arm in a captain-invoking state's `onDone` omits
+non-`needsBossReply` arm in a player-invoking state's `onDone` omits
 `actions: clearBossReplyContext`, or if any transition out of
 `awaitBossReply` other than its `BOSS_REPLY` resume arm omits
 `actions: clearBossReplyContext`.

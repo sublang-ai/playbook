@@ -13,12 +13,19 @@
 
 ## Initial Discussion
 
-The initial discussion proceeds round by round.
+Host and Participant make their initial proposals in parallel.
+Each later reconciliation round also runs Host and Participant in parallel, with both receiving only the proposals promoted by the previous completed round.
+Captain shall wait for both branch results and promote them together before starting the next round.
+If one branch asks Boss a question, only that branch waits; the sibling branch continues, and a completed sibling branch is not restarted when Boss replies.
+Boss interrupts target the whole `initialProposalRound` or `reconciliationRound`; the four branch working states are resumable question destinations but are not independently jumpable.
 Rounds continue until both Host and Participant state the end of initial discussion.
 
 ### DISCUSS-1
 
+Parallel group: initial-proposal-round
+
 When Boss gives a topic, Captain shall prompt Host:
+
 > Boss's topic: <topic>
 > Assess whether Boss's topic above is better expressed as a few spec items (per @specs/meta.md) or requires one or more DRs added to @specs/decisions/.
 > Consult @specs/map.md, if necessary, to find relevant context.
@@ -29,7 +36,10 @@ When Boss gives a topic, Captain shall prompt Host:
 
 ### DISCUSS-2
 
+Parallel group: initial-proposal-round
+
 When Boss gives a topic, Captain shall prompt Participant:
+
 > Boss's topic: <topic>
 > Assess whether Boss's topic above is better expressed as a few spec items (per @specs/meta.md) or requires one or more DRs added to @specs/decisions/.
 > Consult @specs/map.md, if necessary, to find relevant context.
@@ -40,7 +50,10 @@ When Boss gives a topic, Captain shall prompt Participant:
 
 ### DISCUSS-3
 
+Parallel group: reconciliation-round
+
 While the initial discussion is not ended and Participant made a proposal in the previous round, when a new initial-discussion round begins, Captain shall prompt Host:
+
 > Other agent's proposal: <participant-proposal>
 > Your previous proposal: <host-previous-proposal>
 > Consider the other agent's proposal below.
@@ -50,7 +63,10 @@ While the initial discussion is not ended and Participant made a proposal in the
 
 ### DISCUSS-4
 
+Parallel group: reconciliation-round
+
 While the initial discussion is not ended and Host made a proposal in the previous round, when a new initial-discussion round begins, Captain shall prompt Participant:
+
 > Other agent's proposal: <host-proposal>
 > Your previous proposal: <participant-previous-proposal>
 > Consider the other agent's proposal below.
@@ -61,6 +77,7 @@ While the initial discussion is not ended and Host made a proposal in the previo
 ### DISCUSS-5
 
 When Host and Participant both state the end of initial discussion, Captain shall prompt Host:
+
 > Agreement: <agreement>
 > Write spec items or DRs according to the agreement.
 > Update @specs/map.md to reflect your changes (if any) when done.
@@ -75,6 +92,7 @@ Rounds continue until Participant raises no findings.
 ### DISCUSS-6
 
 While new or updated spec items under @specs/user, @specs/dev, or @specs/test are under review and no new or updated DR is under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
+
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
@@ -93,6 +111,7 @@ While new or updated spec items under @specs/user, @specs/dev, or @specs/test ar
 ### DISCUSS-7
 
 While new or updated spec items under @specs/user, @specs/dev, or @specs/test are under review and no new or updated DR is under review, when Host addresses findings with changes, Captain shall prompt Participant:
+
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
@@ -111,6 +130,7 @@ While new or updated spec items under @specs/user, @specs/dev, or @specs/test ar
 ### DISCUSS-8
 
 While new or updated DRs are under review and no new or updated spec item under @specs/user, @specs/dev, or @specs/test is under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
+
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
@@ -128,6 +148,7 @@ While new or updated DRs are under review and no new or updated spec item under 
 ### DISCUSS-9
 
 While new or updated DRs are under review and no new or updated spec item under @specs/user, @specs/dev, or @specs/test is under review, when Host addresses findings with changes, Captain shall prompt Participant:
+
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
@@ -145,6 +166,7 @@ While new or updated DRs are under review and no new or updated spec item under 
 ### DISCUSS-10
 
 While new or updated spec items under @specs/user, @specs/dev, or @specs/test are under review and new or updated DRs are under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
+
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
@@ -168,6 +190,7 @@ While new or updated spec items under @specs/user, @specs/dev, or @specs/test ar
 ### DISCUSS-11
 
 While new or updated spec items under @specs/user, @specs/dev, or @specs/test are under review and new or updated DRs are under review, when Host addresses findings with changes, Captain shall prompt Participant:
+
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
@@ -191,6 +214,7 @@ While new or updated spec items under @specs/user, @specs/dev, or @specs/test ar
 ### DISCUSS-12
 
 When Participant raises any findings, Captain shall prompt Host:
+
 > Review items: <review-items>
 > For each review item below for the above changes, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 > Stage all current changes that belong in the repo before making any edits, and leave your edits unstaged/untracked.
@@ -198,6 +222,7 @@ When Participant raises any findings, Captain shall prompt Host:
 ### DISCUSS-13
 
 When Host raises any rebuttals, Captain shall prompt Participant:
+
 > Rebuttals: <rebuttals>
 > For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.
 
@@ -208,6 +233,7 @@ Model ID formatting examples: `claude-opus-4-7` becomes `Claude-Opus-4.7`; `gpt-
 ### DISCUSS-14
 
 When the spec items or DRs are written at the end of the initial discussion, Captain shall prompt Committer:
+
 > Then make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Write the commit message concisely.
 > Host is <host-llm>.
@@ -217,6 +243,7 @@ When the spec items or DRs are written at the end of the initial discussion, Cap
 ### DISCUSS-15
 
 When Participant raises no findings on uncommitted changes, Captain shall prompt Committer:
+
 > Then make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
 > Write the commit message concisely.
 > Host is <host-llm>.

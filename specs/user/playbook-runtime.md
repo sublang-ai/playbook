@@ -83,12 +83,12 @@ line is parseable at a glance:
   on entry to `awaitBossReply` (see the `◆` bullet) and carries the
   question verbatim and in full — not truncated — since the judge
   JSON that produced it is hidden.
-- `⤷` for entry into any captain-invoking state — the Coder,
+- `⤷` for entry into any player-invoking state — the Coder,
   Reviewer, and Committer states — carrying `<Player>: <label>`
   where `<label>` is the state's human-readable label. The line
   shall carry no source-item tag and no FSM-context rider fields.
 - `→` for the transition that drove the FSM into a new
-  captain-invoking state, carrying the guard that fired and
+  player-invoking state, carrying the guard that fired and
   `· <field>=<count>` tallies for any payload fields the guard
   populated. Visual nesting under the preceding `⤷` entry is the
   host presenter's concern; the runtime emits no leading

@@ -21,10 +21,8 @@ export declare function discussSavedCountsLine(counts: {
 }, rounds: number): string;
 export declare const discussSummaryPolicy: {
     stateCountLabels: {
-        readonly askHostInitial: "proposal round";
-        readonly askParticipantInitial: "proposal round";
-        readonly hostInitialRound: "proposal round";
-        readonly participantInitialRound: "proposal round";
+        readonly initialProposalRound: "proposal round";
+        readonly reconciliationRound: "proposal round";
         readonly reviewSpecInitialCommit: "review round";
         readonly reviewSpecHostChanges: "review round";
         readonly reviewDrInitialCommit: "review round";
@@ -40,15 +38,10 @@ export declare const discussPlaybookRegistryEntry: {
     command: string;
     intent: string;
     requiredRoleIds: string[];
-    idleStateId: string;
-    finalStateId: string;
-    parkStateIds: string[];
     summaryPolicy: {
         stateCountLabels: {
-            readonly askHostInitial: "proposal round";
-            readonly askParticipantInitial: "proposal round";
-            readonly hostInitialRound: "proposal round";
-            readonly participantInitialRound: "proposal round";
+            readonly initialProposalRound: "proposal round";
+            readonly reconciliationRound: "proposal round";
             readonly reviewSpecInitialCommit: "review round";
             readonly reviewSpecHostChanges: "review round";
             readonly reviewDrInitialCommit: "review round";

@@ -1,6 +1,6 @@
-import { type CaptainInput, type CaptainOutput, type CodingEvent, type CodingInput } from './code.fsm.js';
-import type { PlaybookSession, PlaybookPorts, PlaybookRuntime, PlayerResult } from '@sublang/playbook/runtime';
-export type { PlayerResult, PlaybookPorts, PlaybookSession, PlaybookRuntime, };
+import { type PlayerInput, type PlayerOutput, type CodingEvent, type CodingInput } from './code.fsm.js';
+import type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookRunResult, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlayerResult } from '@sublang/playbook/runtime';
+export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookRunResult, PlayerResult, PlaybookPorts, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, PlaybookRuntime, PlaybookRuntimeFactory, };
 export type CodePlaybookOptions = CodingInput;
 declare function normalizeErrorCompact(err: unknown): {
     name: string;
@@ -12,22 +12,26 @@ declare function normalizeErrorFull(err: unknown): {
     stack?: string;
 } | undefined;
 declare function normalizeEventForTelemetry(event: unknown): unknown;
-declare function composePlayerPrompt(input: CaptainInput): string;
-declare function resolvePlayerId(input: CaptainInput): string;
+declare function composePlayerPrompt(input: PlayerInput): string;
+declare function resolvePlayerId(input: PlayerInput): string;
 type JudgePurpose = 'boss-input-classification' | 'player-output-adjudication';
 interface RuntimeBoundaryCalls {
-    callPlayer(input: CaptainInput, playerId: string, prompt: string, signal: AbortSignal): Promise<PlayerResult>;
+    callPlayer(input: PlayerInput, playerId: string, prompt: string, signal: AbortSignal): Promise<PlayerResult>;
     callJudge(purpose: JudgePurpose, stateId: string | undefined, prompt: string, signal: AbortSignal): Promise<string>;
 }
-declare function adjudicate(input: CaptainInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal, boundary?: RuntimeBoundaryCalls): Promise<CaptainOutput>;
+declare function adjudicate(input: PlayerInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal, boundary?: RuntimeBoundaryCalls): Promise<PlayerOutput>;
 declare function classifyBossText(text: string, ports: PlaybookPorts, signal: AbortSignal, snapshotOrState?: unknown, boundary?: RuntimeBoundaryCalls): Promise<CodingEvent | undefined>;
-declare function captainBridge(ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined, boundary?: RuntimeBoundaryCalls): import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
+declare function captainBridge(ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined, boundary?: RuntimeBoundaryCalls, onControlPlaneError?: (error: unknown) => void): import("xstate").PromiseActorLogic<import("./code.fsm.js").CaptainOutput, PlayerInput, import("xstate").EventObject>;
 interface StateMetadata {
-    player: CaptainInput['player'];
+    player: PlayerInput['player'];
     sourceItem: string;
     label: string;
 }
+type BossReplyQuestionId = NonNullable<Extract<CodingEvent, {
+    type: 'BOSS_REPLY';
+}>['questionId']>;
 interface PendingBossQuestionForStatus {
+    questionId: BossReplyQuestionId;
     resumeStateId: string;
     sourceItem: string;
     player: string;

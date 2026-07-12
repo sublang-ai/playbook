@@ -18,6 +18,7 @@ intent per
 ## Runtime
 
 ### PBRT-17
+
 Verifies: [PBRT-11](../dev/playbook-runtime.md#pbrt-11)
 
 When a free-text coding turn is driven through `createPlaybookRuntime`
@@ -27,13 +28,18 @@ unless `handleBossInput` drives the FSM through one captain
 invocation and returns with the FSM at the idle state.
 
 ### PBRT-18
+
 Verifies: [PBRT-13](../dev/playbook-runtime.md#pbrt-13)
 
 When the per-turn `signal` aborts mid-`callPlayer`, the test suite
 shall fail unless the runtime drives the FSM to the failure state
-with `lastError` populated and returns from the turn.
+with `lastError` populated, the port-observed combined signal aborts, and the
+method waits for quiescence and paired emissions before returning. A deferred
+Captain call and deferred child opening shall prove that no later state,
+status, or trace mutation occurs after return.
 
 ### PBRT-19
+
 Verifies: [PBRT-11](../dev/playbook-runtime.md#pbrt-11)
 
 When a Boss turn is classified as `BOSS_INTERRUPT` with a valid
@@ -41,6 +47,7 @@ When a Boss turn is classified as `BOSS_INTERRUPT` with a valid
 to the named state and `handleBossInput` returns.
 
 ### PBRT-20
+
 Verifies: [PBRT-14](../dev/playbook-runtime.md#pbrt-14)
 
 When a Boss turn is driven through the runtime, the test suite
@@ -48,7 +55,7 @@ shall fail unless: telemetry is emitted for every transition
 under the `playbook.fsm.state` topic; the Captain-pane status
 emits cover the bare classification line (the FSM event type with
 no glyph and no echo of the verbatim Boss text), every
-captain-invoking state entry as `⤷ <Player>: <label>` with no
+player-invoking state entry as `⤷ <Player>: <label>` with no
 source-item tag and no FSM-context rider field, every transition
 guard that drove an entry as `→ <guard>` with `· <field>=<count>`
 tallies when applicable and no leading whitespace, the
@@ -67,11 +74,13 @@ Boss reply · <resumeStateId> · <player> · <sourceItem>` with no
 `q=` excerpt — and the corresponding `playbook.fsm.state`
 telemetry carries the selected pending question verbatim
 alongside the other transition fields; and emissions are observed
-in enqueue order.
+in enqueue order with at most one host emission in flight, contiguous trace
+sequence, and the entering-state trace observed before its actor-call start.
 
 ## Host adapter
 
 ### PBRT-21
+
 Verifies: [PBRT-4](../user/playbook-runtime.md#pbrt-4), [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [PBRT-16](../dev/playbook-runtime.md#pbrt-16), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
 
 When CODE is driven through the Playbook Captain shell with CODE
@@ -98,6 +107,7 @@ every CODE review state id as `review round` and
 state id, including `planAndImplement` or any tests-green state id.
 
 ### PBRT-32
+
 Verifies: [PBRT-15](../dev/playbook-runtime.md#pbrt-15), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
 
 When the Playbook Captain shell adapter is driven end to end
@@ -116,6 +126,7 @@ reaches the Boss pane — only the runtime-composed status lines do
 ## Lifecycle and captain bridge
 
 ### PBRT-22
+
 Verifies: [PBRT-6](../dev/playbook-runtime.md#pbrt-6)
 
 When the runtime is constructed by `createPlaybookRuntime`, `init`
@@ -127,6 +138,7 @@ at the idle state, the pre-`init` `handleBossInput` call rejects,
 emissions before resolving.
 
 ### PBRT-23
+
 Verifies: [PBRT-9](../dev/playbook-runtime.md#pbrt-9), [PBRT-10](../dev/playbook-runtime.md#pbrt-10)
 
 When the runtime's captain bridge is driven as an xstate actor
@@ -140,15 +152,17 @@ under fake ports, the test suite shall fail unless:
 - a `callJudge` reply that is malformed JSON, names an undeclared
   guard, or omits a required extracted (non-verbatim) payload
   field — for example `taskDescription` on `taskReady` or
-  `question` on `needsBossReply` — also routes the FSM to the
-  failure state;
+  `question` on `needsBossReply` — lets XState route internally to the
+  failure state for cleanup but then rejects the public runtime method with
+  the original adjudicator control error;
 - a `callJudge` reply that omits a verbatim payload field
-  (`reviews` or `challenges`) does *not* throw: the runtime
+  (`reviews` or `challenges`) does _not_ throw: the runtime
   substitutes the player's `finalText.trim()` into that field
   and the FSM advances; any judge-supplied value for those
   fields is overwritten by the verbatim text.
 
 ### PBRT-33
+
 Verifies: [PBRT-7](../dev/playbook-runtime.md#pbrt-7), [PBRT-10](../dev/playbook-runtime.md#pbrt-10)
 
 When the runtime is driven through a Boss turn whose `callJudge`
@@ -163,14 +177,15 @@ xstate actor advances the FSM under the named guard, and a messy
 classification reply driven through `handleBossInput` maps to the
 named FSM event and advances the actor. When a reply carries no
 recoverable JSON value, the test suite shall fail unless
-adjudication driven through the captain bridge routes the FSM to
-the failure state and classification driven through
+adjudication driven through the captain bridge lets the FSM settle at the
+failure state and then rejects the public runtime method, while classification driven through
 `handleBossInput` produces exactly one `emitStatus` call, makes no
 player call, sends no event, and leaves the actor unmoved.
 
 ## Classification and flow
 
 ### PBRT-24
+
 Verifies: [PBRT-1](../user/playbook-runtime.md#pbrt-1)
 
 When the integration suite drives non-empty Boss turns whose
@@ -183,6 +198,7 @@ carries a valid `targetId` selected from the FSM's jumpable
 states.
 
 ### PBRT-25
+
 Verifies: [PBRT-1](../user/playbook-runtime.md#pbrt-1), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
 
 When the runtime is driven through `handleBossInput` while the
@@ -199,16 +215,17 @@ empty text makes no judge call, player call, status emission, or FSM
 transition while still emitting the received/settled session trace.
 
 ### PBRT-26
+
 Verifies: [PBRT-8](../dev/playbook-runtime.md#pbrt-8)
 
 When the runtime is driven through full multi-stage Boss turns
-that reach each captain-invoking state involved in player
+that reach each player-invoking state involved in player
 binding — the single-commit flow (Coder, Committer CODE-15,
 Reviewer, ending at the terminal state), the Reviewer-cleared
 flow (CODE-16 with only `reviewerPlayer` populated), and the
 joint-commit flow (CODE-17 with both `coderPlayer` and
 `reviewerPlayer` populated) — the test suite shall fail unless
-each captain invocation resolves to the expected `playerId`:
+each player invocation resolves to the expected `playerId`:
 `coder` for Coder, `reviewer` for Reviewer, `coder` for CODE-15,
 `reviewer` for CODE-16, and `coder` for CODE-17.
 In addition, when a configured committer alias
@@ -219,17 +236,21 @@ fail unless every `Committer` state resolves to that player id
 `Committer`.
 
 ### PBRT-27
+
 Verifies: [PBRT-12](../dev/playbook-runtime.md#pbrt-12)
 
 When the runtime is driven to the FSM's terminal state and a
 further Boss turn is submitted, the test suite shall fail unless
-the runtime disposes and reconstructs the actor so the new turn
-is processed from the idle state.
+the runtime disposes and reconstructs the actor only after a real classified
+event so the new turn is processed from the idle state. `NO_ACTION`, classifier
+throw, and malformed classification shall leave the same terminal actor and
+shall emit no reconstruction transition.
 The shell's final-engagement disposal behavior is covered by
 [CAPTAIN-14](playbook-captain.md#captain-14), not by this direct
 runtime test.
 
 ### PBRT-28
+
 Verifies: [PBRT-2](../user/playbook-runtime.md#pbrt-2), [PBRT-7](../dev/playbook-runtime.md#pbrt-7)
 
 When the runtime is driven through `handleBossInput` while the actor
@@ -248,10 +269,15 @@ invalid replies surface one `emitStatus` call and leave the FSM
 unmoved, and empty text makes no judge call, player call, status
 emission, or FSM transition while still emitting the received/settled
 session trace.
+The classifier prompt shall carry the exact pending question ids, questions,
+and asking players; an initial or post-child answer shall resume the matching
+task with the same original intent, plan, completed results, and exactly ordered
+Q+A continuation blocks.
 
 ## Options validation
 
 ### PBRT-31
+
 Verifies: [PBRT-29](../user/playbook-runtime.md#pbrt-29), [PBRT-30](../dev/playbook-runtime.md#pbrt-30)
 
 When the Playbook Captain shell initializes the CODE registry entry
@@ -278,6 +304,7 @@ these assertions.
 ## Runtime contract module
 
 ### PBRT-35
+
 Verifies: [PBRT-34](../dev/playbook-runtime.md#pbrt-34)
 
 The test suite shall fail unless the `@sublang/playbook/runtime`
@@ -285,22 +312,27 @@ contract agrees with
 [slc/link.md](../../slc/link.md#playbookruntime-contract):
 `PlayerResult.status` admits exactly the members `ok`, `aborted`, and
 `error`, and `PlaybookPorts` declares exactly the members `callPlayer`,
-`callJudge`, `callPlaybook`, `emitStatus`, and `emitTelemetry`.
+`callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
+`emitTelemetry`.
 The test suite shall additionally fail unless the module exports
-the player-call, nested-call, JSON value/error, structured-state,
+the player-call, Captain-call, nested-call, JSON value/error, structured-state,
 session, trace, run-result, runtime, and runtime-factory contract types,
 unless `PlayerResult`
 exposes optional `resumeToken`, unless `callPlayer` requires explicit
-resume options, unless `PlaybookRuntime.init` accepts a causal
+resume options, unless `CaptainResult.status` admits `ok`, `aborted`, and
+`error` without exposing a player resume token, unless `CaptainCallOptions`
+requires visible-or-hidden visibility,
+unless `PlaybookRuntime.init` accepts a causal
 `PlaybookSession`, and unless `handleBossInput` and
 `resumePlaybookCall` return `PlaybookRunResult`; its import graph
 includes no CODE or FSM module.
 
 ### PBRT-36
+
 Verifies: [PBRT-5](../dev/playbook-runtime.md#pbrt-5)
 
 The test suite shall fail unless `@sublang/playbook/code/playbook`
-obtains and re-exports its shared player, nested-call, state, session,
+obtains and re-exports its shared player, Captain-call, nested-call, state, session,
 trace, result, and runtime contract types from
 `@sublang/playbook/runtime` rather than declaring its own.
 The check shall rest on observable declaration evidence: the shipped
@@ -316,18 +348,26 @@ still violated the re-export requirement of
 ## Session trace and player continuation
 
 ### PBRT-39
+
 Verifies: [PBRT-37](../dev/playbook-runtime.md#pbrt-37), [PBRT-38](../dev/playbook-runtime.md#pbrt-38)
 
-Where the integration suite drives CODE and DISCUSS through real linked
-runtimes with fake ports, the test suite shall fail unless each
+Where the integration suite drives CODE, DISCUSS, and a direct-Captain linked
+runtime through real or generated runtimes with fake ports, the test suite shall fail unless each
 init-to-dispose session keeps its supplied id immutable, two sessions
 use distinct ids, and every trace event carries the session/playbook
 ids, schema version, contiguous sequence, timestamp, and the required
 turn/call ids.
-The trace shall fail unless session, exact Boss input, judge/player
+The trace shall fail unless session, exact Boss input, judge/player/Captain
 call pairs, FSM transitions, status emissions, settlement, normalized
 failures, and disposal are present in boundary order; empty input shall
 produce only its Boss received/settled trace around no runtime action.
+Mutating the caller's session object after `init` shall not change later trace
+identity, and invalid root/child causality, including a child reusing its root
+or parent session id, shall reject before session start.
+When a session-start sink records and rejects while the best-effort disposal
+sink also rejects, CODE and DISCUSS shall each reject with the original start
+error, record one start/disposal pair, clear the failed binding, and start a
+replacement session with trace sequence one.
 The player calls shall fail unless the first call for each resolved
 player passes `resume: false`, the next same-player call passes the
 last returned token, a rotated token replaces it, an omitted token
@@ -335,10 +375,19 @@ clears it, an aborted or error result can preserve a returned token,
 separate players retain independent tokens, a Committer alias shares
 the selected player's token, and a new runtime session starts fresh
 rather than inheriting a prior token.
+Host `PlayerResult` and `CaptainResult` objects shall fail unless they are
+validated as exact JSON-safe shapes, detached, and frozen before final text,
+errors, or resume tokens are consumed. A non-cooperative player promise that
+resolves after its combined signal aborts shall be drained without adopting
+its token or tracing success. A first non-abort port or result-validation
+error shall remain the public failure when a coincident abort or the matching
+finish-trace sink also fails, while each started call still has only one
+finished boundary.
 
 ## Structured and composed execution
 
 ### PBRT-43
+
 Verifies: [PBRT-40](../dev/playbook-runtime.md#pbrt-40), [PBRT-41](../dev/playbook-runtime.md#pbrt-41)
 
 Where the integration suite drives DISCUSS through its real linked
@@ -351,13 +400,24 @@ The test suite shall fail unless one or two branch-local Boss questions
 park and resume independently without restarting a completed or still
 waiting sibling, a branch failure stops its sibling and reaches
 `failed`, distinct players overlap, same-player overlap rejects, and
-hidden judge calls never overlap.
+direct Captain and hidden judge calls never overlap.
+It shall fail unless the four parallel branch working leaves are absent from
+the Boss-interrupt catalog and interrupting either parallel round parent starts
+both of that round's branches intentionally.
 Structured state telemetry and trace shall remain JSON-safe, identify
 all active leaves and tags, contain no `[object Object]` classifier
 state, use contiguous trace sequence numbers, and settle only after all
 in-flight calls and emissions from the turn drain.
+Strict JSON cases shall reject dates, maps, class/accessor/symbol objects,
+undefined or sparse values, non-finite numbers, and cycles across options,
+child output, trace payload, and terminal output rather than silently changing
+them.
+Disposal shall fail rather than race an active turn, concurrent idle disposal
+shall share one teardown, and a canceled branch whose host ignores abort shall
+finish draining before the turn settles without mutating its player token.
 
 ### PBRT-44
+
 Verifies: [PBRT-42](../dev/playbook-runtime.md#pbrt-42)
 
 Where the integration suite drives a test linked parent and child
@@ -371,4 +431,16 @@ parent `onError`, unknown or duplicate call ids reject, parent disposal
 aborts a pending call, the parent's player token map survives
 suspension, and `playbook.call.started` / `playbook.call.finished` form
 one causally ordered trace pair around the child session, with the finish
-event preceding the parent transition caused by that return.
+event preceding the parent transition caused by that return and retaining the
+start event's turn id across a later resume.
+Wrong immediate targets, empty suspended session ids, unknown start states,
+malformed normalized errors, non-JSON output, and thrown ports shall each
+reject as control-plane errors, create no stale pending identity, and still
+pair every emitted call start exactly once. Disposal during a deferred opening
+or suspended child shall order child disposal before parent call finish before
+parent session disposal.
+An exceptional resume shall drain its emissions, preserve the call-start turn
+id, surface the first current-boundary control error, and clear its latches so
+the next Boss turn cannot inherit that failure. Concurrent idle disposal shall
+share one outcome, while disposal requested during a live public boundary
+shall reject without starting teardown.

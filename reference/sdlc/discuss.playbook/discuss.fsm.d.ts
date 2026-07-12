@@ -1,13 +1,17 @@
 type Player = 'Host' | 'Participant' | 'Committer';
 type ReviewScope = 'specItems' | 'decisionRecords' | 'mixed';
-type JumpableStateId = 'ready' | 'askHostInitial' | 'askParticipantInitial' | 'hostInitialRound' | 'participantInitialRound' | 'hostWritesAgreement' | 'commitInitialChanges' | 'reviewSpecInitialCommit' | 'reviewSpecHostChanges' | 'reviewDrInitialCommit' | 'reviewDrHostChanges' | 'reviewMixedInitialCommit' | 'reviewMixedHostChanges' | 'hostAddressesFindings' | 'participantAddressesRebuttals' | 'commitReviewedChanges' | 'awaitBossReply' | 'failed';
-type ResumableStateId = Exclude<JumpableStateId, 'ready' | 'awaitBossReply' | 'failed'>;
+type JumpableStateId = 'ready' | 'initialProposalRound' | 'reconciliationRound' | 'hostWritesAgreement' | 'commitInitialChanges' | 'reviewSpecInitialCommit' | 'reviewSpecHostChanges' | 'reviewDrInitialCommit' | 'reviewDrHostChanges' | 'reviewMixedInitialCommit' | 'reviewMixedHostChanges' | 'hostAddressesFindings' | 'participantAddressesRebuttals' | 'commitReviewedChanges' | 'awaitBossReply' | 'failed';
+type ResumableStateId = 'askHostInitial' | 'askParticipantInitial' | 'hostInitialRound' | 'participantInitialRound' | Exclude<JumpableStateId, 'ready' | 'initialProposalRound' | 'reconciliationRound' | 'awaitBossReply' | 'failed'>;
 export interface PendingBossQuestion {
+    questionId: ResumableStateId;
     resumeStateId: ResumableStateId;
     sourceItem: string;
     player: Player;
     question: string;
 }
+type PendingBossQuestions = Partial<Record<ResumableStateId, PendingBossQuestion>>;
+type BossReplies = Partial<Record<ResumableStateId, string>>;
+type PendingBossQuestionParams = Omit<PendingBossQuestion, 'questionId'>;
 export interface DiscussContext {
     hostPlayer?: string;
     participantPlayer?: string;
@@ -24,8 +28,10 @@ export interface DiscussContext {
     rebuttals?: string;
     lastResult?: CaptainOutput;
     lastError?: unknown;
-    pendingBossQuestion?: PendingBossQuestion;
-    bossReply?: string;
+    pendingBossQuestions?: PendingBossQuestions;
+    bossReplies?: BossReplies;
+    stagedHostResult?: CaptainOutput;
+    stagedParticipantResult?: CaptainOutput;
 }
 export type DiscussEvent = {
     type: 'START_DISCUSSION';
@@ -42,6 +48,7 @@ export type DiscussEvent = {
     targetId: JumpableStateId;
 } | {
     type: 'BOSS_REPLY';
+    questionId?: ResumableStateId;
     answer: string;
 };
 export interface DiscussInput {
@@ -50,7 +57,7 @@ export interface DiscussInput {
     committer?: string;
 }
 export interface CaptainInput {
-    player: Player;
+    stateId: ResumableStateId;
     sourceItem: string;
     prompt: string;
     result: Record<string, string>;
@@ -70,6 +77,9 @@ export interface CaptainInput {
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 }
+export interface PlayerInput extends CaptainInput {
+    player: Player;
+}
 export interface CaptainOutput {
     guard: string;
     proposal?: string;
@@ -81,7 +91,8 @@ export interface CaptainOutput {
     question?: string;
     [key: string]: unknown;
 }
-type DiscussActionName = 'copyStartDiscussion' | 'copyStartReview' | 'rememberHostProposal' | 'rememberParticipantProposal' | 'rememberAgreement' | 'rememberWrittenChanges' | 'rememberCommittedChanges' | 'rememberReviewFindings' | 'rememberHostReviewResponse' | 'rememberParticipantRebuttalResponse' | 'rememberCaptainResult' | 'rememberCaptainError' | 'rememberMalformedCaptainOutput' | 'rememberMalformedBossReply' | 'setPendingBossQuestion' | 'rememberBossReply' | 'clearBossReplyContext';
+export type PlayerOutput = CaptainOutput;
+type DiscussActionName = 'copyStartDiscussion' | 'copyStartReview' | 'rememberHostProposal' | 'rememberParticipantProposal' | 'rememberAgreement' | 'rememberWrittenChanges' | 'rememberCommittedChanges' | 'rememberReviewFindings' | 'rememberHostReviewResponse' | 'rememberParticipantRebuttalResponse' | 'rememberCaptainResult' | 'rememberCaptainError' | 'rememberMalformedCaptainOutput' | 'rememberMalformedBossReply' | 'setPendingBossQuestion' | 'rememberBossReply' | 'clearBranchBossReplyContext' | 'clearParallelRoundContext' | 'clearBossReplyContext';
 declare function bossInterrupts(ids: readonly string[], actions?: DiscussActionName | DiscussActionName[]): any[];
 declare function resumableStates(ids: readonly string[]): any[];
 export declare const discussMachine: import("xstate").StateMachine<DiscussContext, {
@@ -99,14 +110,21 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     targetId: JumpableStateId;
 } | {
     type: "BOSS_REPLY";
+    questionId?: ResumableStateId;
     answer: string;
 }, {
-    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>> | undefined;
+    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<CaptainOutput, PlayerInput, import("xstate").EventObject>> | undefined;
 }, {
-    src: "captain";
-    logic: import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
+    src: "player";
+    logic: import("xstate").PromiseActorLogic<CaptainOutput, PlayerInput, import("xstate").EventObject>;
     id: string | undefined;
 }, {
+    type: "clearBossReplyContext";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "rememberCaptainError";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "copyStartDiscussion";
     params: import("xstate").NonReducibleUnknown;
 } | {
@@ -140,9 +158,6 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     type: "rememberCaptainResult";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "rememberCaptainError";
-    params: import("xstate").NonReducibleUnknown;
-} | {
     type: "rememberMalformedCaptainOutput";
     params: import("xstate").NonReducibleUnknown;
 } | {
@@ -150,12 +165,29 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "setPendingBossQuestion";
-    params: PendingBossQuestion;
+    params: PendingBossQuestionParams;
 } | {
     type: "rememberBossReply";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "clearBossReplyContext";
+    type: "clearBranchBossReplyContext";
+    params: {
+        stateId: ResumableStateId;
+    };
+} | {
+    type: "clearParallelRoundContext";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "stageHostResult";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "stageParticipantResult";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "promoteInitialResults";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "promoteReconciliationResults";
     params: import("xstate").NonReducibleUnknown;
 }, {
     type: "noFindings";
@@ -171,6 +203,9 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     params: unknown;
 } | {
     type: "emptyBossReply";
+    params: unknown;
+} | {
+    type: "bothEndedInitialDiscussion";
     params: unknown;
 } | {
     type: "proposalMade";
@@ -202,23 +237,87 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
 } | {
     type: "mixedReview";
     params: unknown;
-}, never, "ready" | "failed" | "done" | "awaitBossReply" | "askHostInitial" | "askParticipantInitial" | "hostInitialRound" | "participantInitialRound" | "hostWritesAgreement" | "commitInitialChanges" | "reviewSpecInitialCommit" | "reviewSpecHostChanges" | "reviewDrInitialCommit" | "reviewDrHostChanges" | "reviewMixedInitialCommit" | "reviewMixedHostChanges" | "hostAddressesFindings" | "participantAddressesRebuttals" | "commitReviewedChanges", string, DiscussInput, import("xstate").NonReducibleUnknown, import("xstate").EventObject, import("xstate").MetaObject, {
+}, never, "done" | "failed" | "ready" | "awaitBossReply" | "hostWritesAgreement" | "commitInitialChanges" | "reviewSpecInitialCommit" | "reviewSpecHostChanges" | "reviewDrInitialCommit" | "reviewDrHostChanges" | "reviewMixedInitialCommit" | "reviewMixedHostChanges" | "hostAddressesFindings" | "participantAddressesRebuttals" | "commitReviewedChanges" | {
+    initialProposalRound: {
+        host: "working" | "waiting" | "complete";
+        participant: "working" | "waiting" | "complete";
+    };
+} | {
+    reconciliationRound: {
+        host: "working" | "waiting" | "complete";
+        participant: "working" | "waiting" | "complete";
+    };
+}, string, DiscussInput, import("xstate").NonReducibleUnknown, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "discuss";
     states: {
         readonly ready: {
             id: "ready";
         };
-        readonly askHostInitial: {
-            id: "askHostInitial";
+        readonly initialProposalRound: {
+            id: "initialProposalRound";
+            states: {
+                readonly host: {
+                    id: "initialProposalHost";
+                    states: {
+                        readonly working: {
+                            id: "askHostInitial";
+                        };
+                        readonly waiting: {
+                            id: "waitHostInitialReply";
+                        };
+                        readonly complete: {
+                            id: "hostInitialProposalComplete";
+                        };
+                    };
+                };
+                readonly participant: {
+                    id: "initialProposalParticipant";
+                    states: {
+                        readonly working: {
+                            id: "askParticipantInitial";
+                        };
+                        readonly waiting: {
+                            id: "waitParticipantInitialReply";
+                        };
+                        readonly complete: {
+                            id: "participantInitialProposalComplete";
+                        };
+                    };
+                };
+            };
         };
-        readonly askParticipantInitial: {
-            id: "askParticipantInitial";
-        };
-        readonly hostInitialRound: {
-            id: "hostInitialRound";
-        };
-        readonly participantInitialRound: {
-            id: "participantInitialRound";
+        readonly reconciliationRound: {
+            id: "reconciliationRound";
+            states: {
+                readonly host: {
+                    id: "reconciliationHost";
+                    states: {
+                        readonly working: {
+                            id: "hostInitialRound";
+                        };
+                        readonly waiting: {
+                            id: "waitHostReconciliationReply";
+                        };
+                        readonly complete: {
+                            id: "hostReconciliationComplete";
+                        };
+                    };
+                };
+                readonly participant: {
+                    id: "reconciliationParticipant";
+                    states: {
+                        readonly working: {
+                            id: "participantInitialRound";
+                        };
+                        readonly waiting: {
+                            id: "waitParticipantReconciliationReply";
+                        };
+                        readonly complete: {
+                            id: "participantReconciliationComplete";
+                        };
+                    };
+                };
+            };
         };
         readonly hostWritesAgreement: {
             id: "hostWritesAgreement";

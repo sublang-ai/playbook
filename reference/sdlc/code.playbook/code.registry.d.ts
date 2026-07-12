@@ -45,9 +45,6 @@ export interface CodePlaybookRegistryEntry {
     command: 'code';
     intent: string;
     requiredRoleIds: readonly string[];
-    idleStateId: 'ready';
-    finalStateId: 'done';
-    parkStateIds: readonly string[];
     summaryPolicy: PlaybookSummaryPolicy;
     validateOptions(captainOptions: unknown): CodeOptions;
     createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;

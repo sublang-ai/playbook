@@ -7,19 +7,19 @@
 // Tasks 3–5. Reaching into `machine.config` is internal but stable
 // in xstate v5: it preserves the literal `createMachine` argument,
 // so `invoke.input` is still the original `({ context }) =>
-// CaptainInput` function and `invoke.onDone` is still the per-arm
+// PlayerInput` function and `invoke.onDone` is still the per-arm
 // array with `guard` / `target` / `actions` keys.
 
 import type {
-  CaptainInput,
   CodingContext,
+  PlayerInput,
   codingMachine,
 } from './code.fsm.js';
 
 export interface CaptainStateInfo {
   readonly stateId: string;
   readonly sourceItem: string;
-  readonly getInput: (context: Partial<CodingContext>) => CaptainInput;
+  readonly getInput: (context: Partial<CodingContext>) => PlayerInput;
   readonly transitions: ReadonlyArray<CaptainTransition>;
 }
 
@@ -76,7 +76,7 @@ export interface RootEventTable {
 
 type RawInvoke = {
   src?: unknown;
-  input?: (args: { context: Partial<CodingContext> }) => CaptainInput;
+  input?: (args: { context: Partial<CodingContext> }) => PlayerInput;
   onDone?: unknown;
 };
 
@@ -101,11 +101,11 @@ export function enumerateCaptainStates(
   const out: CaptainStateInfo[] = [];
   for (const [stateId, def] of Object.entries(states)) {
     const invoke = def.invoke;
-    if (!invoke || invoke.src !== 'captain' || typeof invoke.input !== 'function') {
+    if (!invoke || invoke.src !== 'player' || typeof invoke.input !== 'function') {
       continue;
     }
     const inputFn = invoke.input;
-    const getInput = (context: Partial<CodingContext>): CaptainInput =>
+    const getInput = (context: Partial<CodingContext>): PlayerInput =>
       inputFn({ context });
     const probe = getInput({});
     const transitions = toArmArray(invoke.onDone).map(

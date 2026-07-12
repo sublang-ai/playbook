@@ -13,6 +13,26 @@ const repoRoot = fileURLToPath(new URL('../', import.meta.url));
 const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md'];
 const CLIGENT_DEP = '@sublang/cligent';
 const LOCAL_OVERRIDE = new URL('../pnpm-workspace.yaml', import.meta.url);
+const CAPTAIN_BASE = 'reference/sdlc/captain.playbook/';
+const CAPTAIN_GENERATED_BUNDLE = [
+  `${CAPTAIN_BASE}captain.gears.md`,
+  `${CAPTAIN_BASE}captain.fsm.ts`,
+  `${CAPTAIN_BASE}captain.fsm.js`,
+  `${CAPTAIN_BASE}captain.fsm.d.ts`,
+  `${CAPTAIN_BASE}captain.playbook.ts`,
+  `${CAPTAIN_BASE}captain.playbook.js`,
+  `${CAPTAIN_BASE}captain.playbook.d.ts`,
+  `${CAPTAIN_BASE}captain.gears-fsm.test.ts`,
+  `${CAPTAIN_BASE}captain.fsm.introspect.test.ts`,
+  `${CAPTAIN_BASE}captain.fsm.coverage.test.ts`,
+  `${CAPTAIN_BASE}captain.prompt-contract.test.ts`,
+  `${CAPTAIN_BASE}.slc-verify/hash.js`,
+  `${CAPTAIN_BASE}.slc-verify/hash.d.ts`,
+  `${CAPTAIN_BASE}.slc-verify/verify.js`,
+  `${CAPTAIN_BASE}.slc-verify/verify.d.ts`,
+  `${CAPTAIN_BASE}.slc-verify/verify-coverage.js`,
+  `${CAPTAIN_BASE}.slc-verify/verify-coverage.d.ts`,
+] as const;
 
 const pkg = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
@@ -48,6 +68,32 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         : recordsConcreteVersion,
     ).toBe(true);
   });
+
+  it('pins cligent pre-close and explicit player resume contracts', () => {
+    const script = `
+      import { readFileSync } from 'node:fs';
+      import { dirname, join } from 'node:path';
+      import { fileURLToPath } from 'node:url';
+      const entry = fileURLToPath(import.meta.resolve('@sublang/cligent/tmux-play'));
+      const contract = readFileSync(join(dirname(entry), 'contract.d.ts'), 'utf8');
+      if (!/prepareDispose\\?\\(\\): Promise<void>/.test(contract)) {
+        throw new Error('cligent Captain contract lacks prepareDispose');
+      }
+      if (!contract.includes('readonly resume?: string | false;')) {
+        throw new Error('cligent CallPlayerOptions lacks explicit resume selection');
+      }
+      if (!contract.includes('callPlayer(playerId: string, prompt: string, options?: CallPlayerOptions): Promise<PlayerRunResult>;')) {
+        throw new Error('cligent CaptainContext.callPlayer does not accept CallPlayerOptions');
+      }
+      process.stdout.write('OK');
+    `;
+    const out = execFileSync(
+      process.execPath,
+      ['--input-type=module', '-e', script],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    expect(out).toBe('OK');
+  });
 });
 
 describe('public slc/* surface (RELEASE-17)', () => {
@@ -77,8 +123,59 @@ describe('public slc/* surface (RELEASE-17)', () => {
   });
 });
 
+describe('public XState runtime surface (RELEASE-15)', () => {
+  it('resolves the shared engine through the package export', () => {
+    const script = `
+      import {
+        assertJsonSafe,
+        combineAbortSignals,
+        createNestedPlaybookBridge,
+        normalizeError,
+        normalizePlaybookSnapshot,
+        snapshotJsonValue,
+        snapshotPlaybookSession,
+        validateCaptainResult,
+        validatePlayerResult,
+        waitForPlaybookQuiescence,
+      } from '@sublang/playbook/xstate-runtime';
+      for (const value of [
+        assertJsonSafe,
+        combineAbortSignals,
+        createNestedPlaybookBridge,
+        normalizeError,
+        normalizePlaybookSnapshot,
+        snapshotJsonValue,
+        snapshotPlaybookSession,
+        validateCaptainResult,
+        validatePlayerResult,
+        waitForPlaybookQuiescence,
+      ]) {
+        if (typeof value !== 'function') throw new Error('missing helper');
+      }
+      process.stdout.write('OK');
+    `;
+    const out = execFileSync(
+      process.execPath,
+      ['--input-type=module', '-e', script],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    expect(out).toBe('OK');
+  });
+});
+
+describe('canonical Captain compiler bundle (CAPPLAY-11)', () => {
+  it('retains every generated artifact and its hermetic verifier support', () => {
+    for (const artifact of CAPTAIN_GENERATED_BUNDLE) {
+      expect(
+        existsSync(join(repoRoot, artifact)),
+        `canonical Captain bundle missing ${artifact}`,
+      ).toBe(true);
+    }
+  });
+});
+
 describe('packed tarball contents (RELEASE-18)', () => {
-  it('includes the /runtime artifacts and every slc/*.md', () => {
+  it('includes runtime, Captain, and slc artifacts', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
     let out: string;
     try {
@@ -94,7 +191,20 @@ describe('packed tarball contents (RELEASE-18)', () => {
     const packed: string[] = JSON.parse(out)[0].files.map(
       (f: { path: string }) => f.path,
     );
-    for (const artifact of ['src/runtime.js', 'src/runtime.d.ts']) {
+    for (const artifact of [
+      'src/runtime.js',
+      'src/runtime.d.ts',
+      'src/xstate-runtime.js',
+      'src/xstate-runtime.d.ts',
+      'reference/sdlc/captain.md',
+      `${CAPTAIN_BASE}captain.gears.md`,
+      `${CAPTAIN_BASE}captain.fsm.ts`,
+      `${CAPTAIN_BASE}captain.fsm.js`,
+      `${CAPTAIN_BASE}captain.fsm.d.ts`,
+      `${CAPTAIN_BASE}captain.playbook.ts`,
+      `${CAPTAIN_BASE}captain.playbook.js`,
+      `${CAPTAIN_BASE}captain.playbook.d.ts`,
+    ]) {
       expect(packed, `tarball missing ${artifact}`).toContain(artifact);
     }
     for (const name of SLC_SPECS) {
@@ -112,8 +222,12 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   it('declares the playbook bin and registry exports, not the retired surfaces', () => {
     expect(manifest.bin).toHaveProperty('playbook');
     expect(manifest.bin).not.toHaveProperty('playbook-code');
+    expect(manifest.exports).toHaveProperty('./runtime');
+    expect(manifest.exports).toHaveProperty('./xstate-runtime');
     expect(manifest.exports).toHaveProperty('./code/registry');
     expect(manifest.exports).toHaveProperty('./discuss/registry');
+    expect(manifest.exports).toHaveProperty('./captain/playbook');
+    expect(manifest.exports).not.toHaveProperty('./captain/registry');
     expect(manifest.exports).not.toHaveProperty('./code/tmux-play');
   });
 

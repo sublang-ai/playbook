@@ -23,7 +23,7 @@ Captain, the shell shall own a registry of playbook entries.
 Each entry shall be a manifest carrying `id` (stable playbook id and
 default options-namespace key), `command` (default slash command
 without `/`, overridable by config), `intent` (routing description
-for hidden Captain selection), `requiredRoleIds` (local role ids the
+for the compiled Captain catalog), `requiredRoleIds` (local role ids the
 runtime may pass to `callPlayer`), an optional `summaryPolicy`
 ([CAPTAIN-20](#captain-20)), a `validateOptions` function for that
 entry's own option slice, and a `createRuntime` factory for the
@@ -50,7 +50,7 @@ frames permitted by [CAPTAIN-29](#captain-29) and shall keep only a
 bounded control ledger: root and leaf playbook/session ids, bounded
 frame path and depth, shell mode, latest leaf runtime state descriptor,
 pending Boss questions when mirrored from telemetry, normalized last
-error when mirrored from telemetry, and last route decision.
+error when mirrored from telemetry, and last lifecycle decision.
 The normalized last error shall carry only `{ name, message }`.
 The shell shall not duplicate the full Boss conversation in its
 ledger.
@@ -76,26 +76,21 @@ telemetry that it passes through.
 ### CAPTAIN-7
 
 Where the Playbook Captain shell receives a Boss turn, the shell
-shall route by registered command parsing before using hidden
-Captain routing.
-The hidden router prompt shall receive the bounded ledger plus the
-registry command list and intent descriptions, and shall return one
-closed decision: `chat`, `dispatch`, `sub`, or `dismiss`.
-When the router chooses `dispatch`, the decision shall carry the
-target playbook id and text to submit to that playbook.
-When the router chooses `sub`, the decision shall carry text for
-the active leaf runtime.
-The shell shall treat unregistered slash-prefixed text as router
-input rather than as a failed command namespace.
-The shell shall handle near-miss command-like text as visible chat
-clarification rather than as low-confidence dispatch.
-When the hidden router reply is malformed, names an unknown
-decision, names an unknown playbook id, or omits text required by
-the chosen decision, the shell shall produce visible clarification
-and shall not dispatch to a sub-runtime.
-When the hidden router call returns a non-`ok` status or an `ok`
-status without `finalText`, the shell shall produce visible
-clarification and shall not dispatch to a sub-runtime.
+shall parse registered commands before runtime routing. While idle, a
+registered command shall select that external playbook directly and
+all other non-empty text shall lazily create the compiled default
+Captain root. While a stack exists, the shell shall select its active
+leaf from host state and shall not let a command replace the root.
+For engaged ordinary text, a hidden lifecycle-only classifier may
+return exactly `deliver` or `dismiss`; it shall choose `dismiss` only when
+Boss explicitly asks to stop or dismiss the active leaf and shall choose
+`deliver` for every task instruction, answer, clarification, continuation,
+near miss, or ambiguous message. It shall receive the original Boss text but
+no registry, ledger, frame, session, or call identity. `deliver`, a rejected
+or thrown call, malformed or unknown output, a non-`ok` result, or an `ok`
+result without `finalText` shall submit the original text unchanged to the
+active leaf. The classifier shall neither select a playbook nor synthesize
+replacement or dismissal text.
 
 ### CAPTAIN-8
 
@@ -113,11 +108,13 @@ registry, or otherwise decide in-playbook FSM events.
 
 Where the Playbook Captain shell uses cligent Captain primitives,
 the shell shall use one underlying Captain session for visible
-Boss chat, hidden router calls, and hidden sub-runtime judge calls.
-Hidden router and sub-runtime judge calls shall pass
+compiled Captain work, hidden lifecycle calls, and hidden sub-runtime
+judge calls, and shall serialize all Captain-backed calls through one
+abort-aware concurrency-one queue. Hidden lifecycle and sub-runtime judge calls shall pass
 `{ visibility: 'hidden' }` to `callCaptain`.
-Visible Boss chat shall use a separate prompt envelope that permits
-normal conversation and forbids exposing hidden control JSON.
+Shell-owned command guidance and turn summaries shall use their separate
+visible prompt envelopes; the shell shall not wrap or rewrite a compiled
+runtime's `callCaptain` prompt.
 Hidden control calls shall use a prompt envelope that identifies
 the call as control work and asks for control JSON only.
 
@@ -132,8 +129,11 @@ to host players `code-coder` and `code-reviewer`.
 The wrapper shall route a sub-runtime `callPlayer(localRole, …,
 { resume })` to `context.callPlayer(<id>-<localRole>, …,
 { resume })`, return the host result's `resumeToken`, route sub-runtime
-`callJudge` through one abort-aware concurrency-one FIFO to hidden
-`context.callCaptain`, route `callPlaybook` through the stack protocol
+`callCaptain(prompt, signal, { visibility })` through the shared
+Captain queue to `context.callCaptain(prompt, { visibility })`, preserving
+the requested visibility and returning Playbook's Captain status, final text,
+and error without player or resume-token fields, route sub-runtime `callJudge`
+through that same queue to hidden `context.callCaptain`, route `callPlaybook` through the stack protocol
 in [CAPTAIN-29](#captain-29), and pass sub-runtime
 `emitStatus` and `emitTelemetry` calls through to the host in order.
 The shell shall also pass the resolved binding in the metadata given
@@ -163,8 +163,8 @@ names to Boss-visible labels and supplies the saved-counts line
 template or equivalent wording policy.
 For that same duration, the shell shall aggregate sub-runtime
 `playbook.fsm.state` telemetry into a summary-visible progress
-phrase for the turn-summary prompt, excluding the active registry
-entry's idle and final state ids.
+phrase for the turn-summary prompt, counting only state ids that the
+active registry entry's `summaryPolicy` labels.
 The summary-visible progress phrase shall be `none` when no
 summary-visible state occurred.
 The summary-visible progress round total shall be the sum of all
@@ -188,7 +188,7 @@ rebuttal items the handoff text contains.
 Each registry entry's `summaryPolicy` shall own its exact copy-paste
 guard names, so an adjudicated guard removed from that list is not
 counted.
-The shell shall not count hidden router calls, visible chat calls,
+The shell shall not count hidden lifecycle calls, shell-owned command-guidance calls,
 sub-runtime classifier/event JSON, or malformed adjudication
 replies as saved copy-pastes.
 After the sub-runtime `handleBossInput` call settles, the shell
@@ -219,24 +219,25 @@ Where the Playbook Captain shell has an active leaf runtime, when its
 normalized state is quiescent and tagged `playbook.parked` or its run
 result is suspended, the shell shall park the root engagement in
 `engaged.parked`.
-Where the active root runtime returns terminal or the router dismisses
+Where the active root runtime returns terminal or the lifecycle classifier dismisses
 the root, the shell shall dispose the complete stack and return to
-`chat`; where a child returns terminal or is dismissed, the shell shall
+its idle `chat` mode without making another visible chat call; where a child returns terminal or is dismissed, the shell shall
 return it to its parent per [CAPTAIN-29](#captain-29).
 The shell shall defer terminal disposal until the active runtime call
 settles.
 Where the Boss submits text while a leaf is parked, the shell shall
 reuse that exact leaf runtime rather than constructing a replacement.
-Where the Playbook Captain shell has no active sub-runtime, when a
-registered command or router decision engages a playbook id, the
-shell shall construct a new sub-runtime from that registry entry's
-`createRuntime` function and the validated options captured during
-`init`, generate a previously unissued UUID playbook session id, and
-initialize the runtime with that id, the registry entry id, and the
-wrapped ports.
+Where the Playbook Captain shell has no active stack, when a registered
+command selects an enabled external playbook, the shell shall construct a new
+root runtime from that registry entry's `createRuntime` function and the
+validated options captured during `init`; when any other non-empty idle text
+arrives, it shall instead lazily construct the internal default Captain root.
+In either case it shall generate a previously unissued UUID playbook session
+id and initialize the runtime with that id, its playbook id, and the wrapped
+ports.
 Where the Playbook Captain shell has disposed an active root stack
 because it reached its final state or was dismissed, when a later
-registered command or router decision engages the same playbook id,
+registered command or compiled Captain call engages the same playbook id,
 the shell shall construct a replacement sub-runtime.
 
 ## Adapter lifecycle
@@ -275,7 +276,8 @@ entry's config `command` when present and the manifest's default
 The shell shall reject `init` when `from` is missing, the import
 fails, the module exposes no valid registry entry, a map key differs
 from its module's manifest `id`, two enabled playbooks share an `id`,
-or two enabled playbooks resolve to the same effective command.
+two enabled playbooks resolve to the same effective command, or an enabled
+playbook's id or effective command is the reserved internal name `captain`.
 The shell shall pass each entry only its normalized option slice and
 shall not extract an entry's namespace from the full Captain options
 bag.
@@ -313,12 +315,13 @@ and shell FSM telemetry, pass sub-runtime `playbook.trace` telemetry
 through unchanged, forward every explicit player `resume` selection to
 cligent's `context.callPlayer`, and return the authoritative host
 `resumeToken` unchanged.
-The shell shall put neither resume tokens nor trace payloads in its
-hidden-router prompt, visible status messages, or turn summaries.
+The shell shall put neither resume tokens nor trace payloads in model
+prompts, visible status messages, or turn summaries.
 If engagement initialization rejects, the shell shall clear the broken
 engagement, best-effort dispose its partially initialized runtime while
 preserving the original failure, and let a later command construct a
-new engagement with a new session id.
+new external engagement with a new session id or a later ordinary idle turn
+construct a new internal Captain root with a new session id.
 
 ## Nested playbook stack
 
@@ -343,9 +346,9 @@ return its suspended child session id so the parent runtime can settle
 its Boss turn; only the top frame shall receive later Boss turns.
 When a child returns terminal output, rejects at the runtime boundary,
 is aborted, or is dismissed, the
-shell shall dispose and pop it, restore parent visibility, and call the
-parent's `resumePlaybookCall` with the same call id and current turn
-signal, continuing until the top frame parks, suspends, or waits for
+shell shall dispose and pop it, restore external-parent visibility when
+applicable, and call the parent's `resumePlaybookCall` with the same call id
+and current-turn signal, continuing until the top frame parks, suspends, or waits for
 Boss, or the root finishes.
 Where a child returns workflow outcome `failed` in a recoverable parked
 state, the shell shall retain it as the active leaf for later Boss recovery
@@ -357,7 +360,8 @@ Root dismissal and adapter teardown shall dispose frames from leaf to
 root; teardown shall not resume callers after disposal begins.
 The shell's bounded ledger and shell telemetry shall identify the root
 and top session and contain only bounded causal frame metadata; hidden
-routing, visible chat, status, and summaries shall contain neither the
+lifecycle prompts, compiled Captain prompts, shell-owned visible prompts,
+status, and summaries shall contain neither the
 stack ledger nor session/call ids.
 The shell shall pass each frame's `playbook.trace` through unchanged,
 including the causal fields on child `session.started` and parent
@@ -368,13 +372,16 @@ including the causal fields on child `session.started` and parent
 ### CAPTAIN-22
 
 Where the Playbook Captain shell runs under tmux-play with one or more
-playbooks enabled, when the shell selects, resumes, routes a Boss turn,
-pushes a child, or returns to a parent, the shell shall request tmux-play
-visibility for the active leaf playbook's generated host player ids through
+playbooks enabled, when the shell selects, resumes, routes a Boss turn to,
+pushes, or returns to an enabled external leaf, the shell shall request tmux-play
+visibility for that leaf playbook's generated host player ids through
 `setVisiblePlayers` before dispatching Boss text to the playbook
 runtime.
-The requested visible set shall be the active playbook's generated
+The requested visible set shall be the external leaf's generated
 host player ids and shall never be empty.
+The playerless internal Captain root shall make no visibility request;
+when an external child is active, that child's non-empty generated set
+shall apply.
 Because the launcher has already validated those generated player
 ids against the composed tmux-play roster, a `setVisiblePlayers`
 validation rejection shall be treated as an internal shell or

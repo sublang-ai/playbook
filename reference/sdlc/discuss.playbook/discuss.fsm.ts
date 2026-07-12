@@ -3,8 +3,8 @@
 
 // FSM object artifact compiled from discuss.gears.md.
 // This module defines the machine, actor contracts, and typed inputs only.
-// It binds no runner and supplies no concrete Captain implementation; the runner
-// provides the `captain` actor via `.provide(...)`.
+// It binds no runner and supplies no concrete player implementation; the runner
+// provides the `player` actor via `.provide(...)`.
 
 import { assign, fromPromise, setup } from 'xstate';
 
@@ -14,10 +14,8 @@ type ReviewScope = 'specItems' | 'decisionRecords' | 'mixed';
 
 type JumpableStateId =
   | 'ready'
-  | 'askHostInitial'
-  | 'askParticipantInitial'
-  | 'hostInitialRound'
-  | 'participantInitialRound'
+  | 'initialProposalRound'
+  | 'reconciliationRound'
   | 'hostWritesAgreement'
   | 'commitInitialChanges'
   | 'reviewSpecInitialCommit'
@@ -32,17 +30,35 @@ type JumpableStateId =
   | 'awaitBossReply'
   | 'failed';
 
-type ResumableStateId = Exclude<
-  JumpableStateId,
-  'ready' | 'awaitBossReply' | 'failed'
->;
+type ResumableStateId =
+  | 'askHostInitial'
+  | 'askParticipantInitial'
+  | 'hostInitialRound'
+  | 'participantInitialRound'
+  | Exclude<
+      JumpableStateId,
+      | 'ready'
+      | 'initialProposalRound'
+      | 'reconciliationRound'
+      | 'awaitBossReply'
+      | 'failed'
+    >;
 
 export interface PendingBossQuestion {
+  questionId: ResumableStateId;
   resumeStateId: ResumableStateId;
   sourceItem: string;
   player: Player;
   question: string;
 }
+
+type PendingBossQuestions = Partial<
+  Record<ResumableStateId, PendingBossQuestion>
+>;
+
+type BossReplies = Partial<Record<ResumableStateId, string>>;
+
+type PendingBossQuestionParams = Omit<PendingBossQuestion, 'questionId'>;
 
 export interface DiscussContext {
   hostPlayer?: string;
@@ -60,8 +76,10 @@ export interface DiscussContext {
   rebuttals?: string;
   lastResult?: CaptainOutput;
   lastError?: unknown;
-  pendingBossQuestion?: PendingBossQuestion;
-  bossReply?: string;
+  pendingBossQuestions?: PendingBossQuestions;
+  bossReplies?: BossReplies;
+  stagedHostResult?: CaptainOutput;
+  stagedParticipantResult?: CaptainOutput;
 }
 
 export type DiscussEvent =
@@ -78,7 +96,11 @@ export type DiscussEvent =
       rebuttals?: string;
     }
   | { type: 'BOSS_INTERRUPT'; targetId: JumpableStateId }
-  | { type: 'BOSS_REPLY'; answer: string };
+  | {
+      type: 'BOSS_REPLY';
+      questionId?: ResumableStateId;
+      answer: string;
+    };
 
 export interface DiscussInput {
   host?: string;
@@ -87,7 +109,7 @@ export interface DiscussInput {
 }
 
 export interface CaptainInput {
-  player: Player;
+  stateId: ResumableStateId;
   sourceItem: string;
   prompt: string;
   result: Record<string, string>;
@@ -108,6 +130,10 @@ export interface CaptainInput {
   bossReply?: string;
 }
 
+export interface PlayerInput extends CaptainInput {
+  player: Player;
+}
+
 export interface CaptainOutput {
   guard: string;
   proposal?: string;
@@ -120,11 +146,13 @@ export interface CaptainOutput {
   [key: string]: unknown;
 }
 
-type CaptainDoneEvent = { type: string; output: CaptainOutput };
-type CaptainErrorEvent = { type: string; error: unknown };
+export type PlayerOutput = CaptainOutput;
+
+type PlayerDoneEvent = { type: string; output: PlayerOutput };
+type PlayerErrorEvent = { type: string; error: unknown };
 
 const NEEDS_BOSS_REPLY_DESCRIPTION =
-  "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.";
+  "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 
 const DISCUSS_1_PROMPT = [
   "Boss's topic: <topic>",
@@ -254,10 +282,8 @@ const DISCUSS_15_PROMPT = DISCUSS_14_PROMPT;
 
 const jumpableStateIds = [
   'ready',
-  'askHostInitial',
-  'askParticipantInitial',
-  'hostInitialRound',
-  'participantInitialRound',
+  'initialProposalRound',
+  'reconciliationRound',
   'hostWritesAgreement',
   'commitInitialChanges',
   'reviewSpecInitialCommit',
@@ -292,7 +318,7 @@ const resumableStateIds = [
 ] as const satisfies readonly ResumableStateId[];
 
 const outputOf = (event: unknown): CaptainOutput =>
-  (event as CaptainDoneEvent).output;
+  (event as PlayerDoneEvent).output;
 
 const guardIs =
   (guard: string) =>
@@ -319,6 +345,28 @@ const needsBossReplyWithoutQuestion = ({ event }: { event: unknown }) => {
 const emptyBossReply = ({ event }: { event: DiscussEvent }) =>
   event.type === 'BOSS_REPLY' && event.answer.trim().length === 0;
 
+const pendingQuestionIds = (context: DiscussContext): ResumableStateId[] =>
+  Object.keys(context.pendingBossQuestions ?? {}) as ResumableStateId[];
+
+const resolvedQuestionId = (
+  context: DiscussContext,
+  event: DiscussEvent,
+): ResumableStateId | undefined => {
+  if (event.type !== 'BOSS_REPLY') return undefined;
+  if (event.questionId) return event.questionId;
+  const ids = pendingQuestionIds(context);
+  return ids.length === 1 ? ids[0] : undefined;
+};
+
+const bossReplyTargets =
+  (stateId: ResumableStateId, requireAnswer: boolean) =>
+  ({ context, event }: { context: DiscussContext; event: DiscussEvent }) =>
+    event.type === 'BOSS_REPLY' &&
+    resolvedQuestionId(context, event) === stateId &&
+    (requireAnswer
+      ? event.answer.trim().length > 0
+      : event.answer.trim().length === 0);
+
 const hasReviewScope =
   (scope: ReviewScope) =>
   ({ context, event }: { context: DiscussContext; event: DiscussEvent }) =>
@@ -343,6 +391,8 @@ type DiscussActionName =
   | 'rememberMalformedBossReply'
   | 'setPendingBossQuestion'
   | 'rememberBossReply'
+  | 'clearBranchBossReplyContext'
+  | 'clearParallelRoundContext'
   | 'clearBossReplyContext';
 
 function bossInterrupts(
@@ -369,19 +419,38 @@ function resumableStates(ids: readonly string[]): any[] {
     }) =>
       event.type === 'BOSS_REPLY' &&
       event.answer.trim().length > 0 &&
-      context.pendingBossQuestion?.resumeStateId === id,
+      resolvedQuestionId(context, event) === id,
     target: `#${id}`,
     reenter: true,
     actions: 'rememberBossReply',
   }));
 }
 
-const bossReplyFields = (context: DiscussContext) => ({
-  ...(context.pendingBossQuestion
-    ? { pendingBossQuestion: context.pendingBossQuestion }
+const bossReplyFields = (
+  context: DiscussContext,
+  stateId: ResumableStateId,
+) => ({
+  ...(context.pendingBossQuestions?.[stateId]
+    ? { pendingBossQuestion: context.pendingBossQuestions[stateId] }
     : {}),
-  ...(context.bossReply ? { bossReply: context.bossReply } : {}),
+  ...(context.bossReplies?.[stateId]
+    ? { bossReply: context.bossReplies[stateId] }
+    : {}),
 });
+
+const withoutKey = <T>(
+  record: Partial<Record<ResumableStateId, T>> | undefined,
+  stateId: ResumableStateId,
+): Partial<Record<ResumableStateId, T>> | undefined => {
+  if (!record || record[stateId] === undefined) return record;
+  const next = { ...record };
+  delete next[stateId];
+  return Object.keys(next).length > 0 ? next : undefined;
+};
+
+const bothEndedInitialDiscussion = ({ context }: { context: DiscussContext }) =>
+  context.stagedHostResult?.guard === 'endedInitialDiscussion' &&
+  context.stagedParticipantResult?.guard === 'endedInitialDiscussion';
 
 const withNeedsBossReply = <T extends Record<string, string>>(result: T) => ({
   ...result,
@@ -434,8 +503,8 @@ export const discussMachine = setup({
     input: {} as DiscussInput,
   },
   actors: {
-    captain: fromPromise<CaptainOutput, CaptainInput>(async () => {
-      throw new Error('captain actor must be provided by the runner');
+    player: fromPromise<PlayerOutput, PlayerInput>(async () => {
+      throw new Error('player actor must be provided by the runner');
     }),
   },
   actions: {
@@ -461,8 +530,10 @@ export const discussMachine = setup({
       rebuttals: undefined,
       lastResult: undefined,
       lastError: undefined,
-      pendingBossQuestion: undefined,
-      bossReply: undefined,
+      pendingBossQuestions: undefined,
+      bossReplies: undefined,
+      stagedHostResult: undefined,
+      stagedParticipantResult: undefined,
     }),
     copyStartReview: assign({
       latestChanges: ({ event }) =>
@@ -474,8 +545,10 @@ export const discussMachine = setup({
       reviewItems: undefined,
       lastResult: undefined,
       lastError: undefined,
-      pendingBossQuestion: undefined,
-      bossReply: undefined,
+      pendingBossQuestions: undefined,
+      bossReplies: undefined,
+      stagedHostResult: undefined,
+      stagedParticipantResult: undefined,
     }),
     rememberHostProposal: assign({
       hostProposal: ({ event }) => outputOf(event).proposal,
@@ -485,6 +558,61 @@ export const discussMachine = setup({
     rememberParticipantProposal: assign({
       participantProposal: ({ event }) => outputOf(event).proposal,
       lastResult: ({ event }) => outputOf(event),
+      lastError: undefined,
+    }),
+    stageHostResult: assign({
+      stagedHostResult: ({ event }) => outputOf(event),
+      lastResult: ({ event }) => outputOf(event),
+      lastError: undefined,
+    }),
+    stageParticipantResult: assign({
+      stagedParticipantResult: ({ event }) => outputOf(event),
+      lastResult: ({ event }) => outputOf(event),
+      lastError: undefined,
+    }),
+    promoteInitialResults: assign({
+      hostProposal: ({ context }) => context.stagedHostResult?.proposal,
+      participantProposal: ({ context }) =>
+        context.stagedParticipantResult?.proposal,
+      stagedHostResult: undefined,
+      stagedParticipantResult: undefined,
+      lastResult: undefined,
+      lastError: undefined,
+    }),
+    promoteReconciliationResults: assign({
+      hostProposal: ({ context }) =>
+        context.stagedHostResult?.proposal ?? context.hostProposal,
+      participantProposal: ({ context }) =>
+        context.stagedParticipantResult?.proposal ??
+        context.participantProposal,
+      agreement: ({ context }) => {
+        const host = context.stagedHostResult;
+        const participant = context.stagedParticipantResult;
+        if (
+          host?.guard === 'endedInitialDiscussion' &&
+          participant?.guard === 'endedInitialDiscussion'
+        ) {
+          return (
+            participant.agreement ??
+            host.agreement ??
+            context.agreement ??
+            participant.proposal ??
+            host.proposal ??
+            context.participantProposal ??
+            context.hostProposal
+          );
+        }
+        if (participant?.guard === 'endedInitialDiscussion') {
+          return participant.agreement ?? context.agreement;
+        }
+        if (host?.guard === 'endedInitialDiscussion') {
+          return host.agreement ?? context.agreement;
+        }
+        return context.agreement;
+      },
+      stagedHostResult: undefined,
+      stagedParticipantResult: undefined,
+      lastResult: undefined,
       lastError: undefined,
     }),
     rememberAgreement: assign({
@@ -502,7 +630,8 @@ export const discussMachine = setup({
     rememberWrittenChanges: assign({
       latestChanges: ({ event }) => outputOf(event).latestChanges,
       reviewScope: ({ event }) => outputOf(event).reviewScope,
-      agreement: ({ context, event }) => outputOf(event).agreement ?? context.agreement,
+      agreement: ({ context, event }) =>
+        outputOf(event).agreement ?? context.agreement,
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
@@ -516,7 +645,8 @@ export const discussMachine = setup({
     }),
     rememberReviewFindings: assign({
       reviewItems: ({ event }) => outputOf(event).reviewItems,
-      rebuttals: ({ context, event }) => outputOf(event).rebuttals ?? context.rebuttals,
+      rebuttals: ({ context, event }) =>
+        outputOf(event).rebuttals ?? context.rebuttals,
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
@@ -537,7 +667,7 @@ export const discussMachine = setup({
       lastError: undefined,
     }),
     rememberCaptainError: assign({
-      lastError: ({ event }) => (event as unknown as CaptainErrorEvent).error,
+      lastError: ({ event }) => (event as unknown as PlayerErrorEvent).error,
     }),
     rememberMalformedCaptainOutput: assign({
       lastError: ({ event }) => outputOf(event),
@@ -546,28 +676,55 @@ export const discussMachine = setup({
       lastError: ({ event }) => event,
     }),
     setPendingBossQuestion: assign({
-      pendingBossQuestion: ({ event }, params: PendingBossQuestion) => ({
-        ...params,
-        question: outputOf(event).question ?? '',
+      pendingBossQuestions: (
+        { context, event },
+        params: PendingBossQuestionParams,
+      ) => ({
+        ...context.pendingBossQuestions,
+        [params.resumeStateId]: {
+          ...params,
+          questionId: params.resumeStateId,
+          question: outputOf(event).question ?? '',
+        },
       }),
-      bossReply: undefined,
+      bossReplies: ({ context }, params: PendingBossQuestionParams) =>
+        withoutKey(context.bossReplies, params.resumeStateId),
       lastResult: ({ event }) => outputOf(event),
       lastError: undefined,
     }),
     rememberBossReply: assign({
-      bossReply: ({ event }) =>
-        event.type === 'BOSS_REPLY' ? event.answer : undefined,
+      bossReplies: ({ context, event }) => {
+        const questionId = resolvedQuestionId(context, event);
+        return event.type === 'BOSS_REPLY' && questionId
+          ? { ...context.bossReplies, [questionId]: event.answer }
+          : context.bossReplies;
+      },
       lastError: undefined,
     }),
+    clearBranchBossReplyContext: assign({
+      pendingBossQuestions: (
+        { context },
+        params: { stateId: ResumableStateId },
+      ) => withoutKey(context.pendingBossQuestions, params.stateId),
+      bossReplies: ({ context }, params: { stateId: ResumableStateId }) =>
+        withoutKey(context.bossReplies, params.stateId),
+    }),
+    clearParallelRoundContext: assign({
+      pendingBossQuestions: undefined,
+      bossReplies: undefined,
+      stagedHostResult: undefined,
+      stagedParticipantResult: undefined,
+    }),
     clearBossReplyContext: assign({
-      pendingBossQuestion: undefined,
-      bossReply: undefined,
+      pendingBossQuestions: undefined,
+      bossReplies: undefined,
     }),
   },
   guards: {
     needsBossReplyWithQuestion,
     needsBossReplyWithoutQuestion,
     emptyBossReply,
+    bothEndedInitialDiscussion,
     proposalMade: guardIs('proposalMade'),
     endedInitialDiscussion: guardIs('endedInitialDiscussion'),
     wroteChanges: guardIs('wroteChanges'),
@@ -595,15 +752,51 @@ export const discussMachine = setup({
     participantLlm: input.participant,
   }),
   on: {
-    BOSS_INTERRUPT: bossInterrupts(jumpableStateIds),
+    START_DISCUSSION: {
+      target: '#initialProposalRound',
+      reenter: true,
+      actions: ['clearParallelRoundContext', 'copyStartDiscussion'],
+    },
+    START_REVIEW: [
+      {
+        guard: 'specReview',
+        target: '#reviewSpecInitialCommit',
+        reenter: true,
+        actions: ['clearParallelRoundContext', 'copyStartReview'],
+      },
+      {
+        guard: 'drReview',
+        target: '#reviewDrInitialCommit',
+        reenter: true,
+        actions: ['clearParallelRoundContext', 'copyStartReview'],
+      },
+      {
+        guard: 'mixedReview',
+        target: '#reviewMixedInitialCommit',
+        reenter: true,
+        actions: ['clearParallelRoundContext', 'copyStartReview'],
+      },
+    ],
+    BOSS_INTERRUPT: bossInterrupts(
+      jumpableStateIds,
+      'clearParallelRoundContext',
+    ),
   },
   states: {
     ready: {
       id: 'ready',
+      tags: 'playbook.parked',
       description: 'Idle hub awaiting a Boss discussion or review directive.',
+      meta: {
+        playbook: {
+          stateId: 'ready',
+          description:
+            'Idle hub awaiting a Boss discussion or review directive.',
+        },
+      },
       on: {
         START_DISCUSSION: {
-          target: 'askHostInitial',
+          target: 'initialProposalRound',
           actions: 'copyStartDiscussion',
         },
         START_REVIEW: [
@@ -625,238 +818,632 @@ export const discussMachine = setup({
         ],
       },
     },
-    askHostInitial: {
-      id: 'askHostInitial',
-      description: 'Host proposes whether the Boss topic should become spec items or DRs.',
-      invoke: {
-        id: 'askHostInitialCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Host',
-          sourceItem: 'DISCUSS-1',
-          prompt: DISCUSS_1_PROMPT,
-          result: withNeedsBossReply({
-            proposalMade:
-              'Host proposed a design. Output shall include `proposal: <host proposal>`.',
-          }),
-          topic: context.topic,
-          hostPlayer: context.hostPlayer,
-          ...bossReplyFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: 'awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: {
-                ...captainStateMetadata.askHostInitial,
-                resumeStateId: 'askHostInitial',
-                question: '',
+    initialProposalRound: {
+      id: 'initialProposalRound',
+      type: 'parallel',
+      description: 'Host and Participant independently propose designs.',
+      meta: {
+        playbook: {
+          stateId: 'initialProposalRound',
+          description: 'Host and Participant independently propose designs.',
+        },
+      },
+      states: {
+        host: {
+          id: 'initialProposalHost',
+          initial: 'working',
+          description: 'Host branch for the parallel initial proposal round.',
+          meta: {
+            playbook: {
+              stateId: 'initialProposalHost',
+              description:
+                'Host branch for the parallel initial proposal round.',
+            },
+          },
+          states: {
+            working: {
+              id: 'askHostInitial',
+              tags: 'playbook.busy',
+              description:
+                'Host proposes whether the Boss topic should become spec items or DRs.',
+              meta: {
+                playbook: {
+                  stateId: 'askHostInitial',
+                  description:
+                    'Host proposes whether the Boss topic should become spec items or DRs.',
+                },
+              },
+              invoke: {
+                id: 'askHostInitialCaptain',
+                src: 'player',
+                input: ({ context }): PlayerInput => ({
+                  stateId: 'askHostInitial',
+                  player: 'Host',
+                  sourceItem: 'DISCUSS-1',
+                  prompt: DISCUSS_1_PROMPT,
+                  result: withNeedsBossReply({
+                    proposalMade:
+                      'Host proposed a design. Output shall include `proposal: <host proposal>`.',
+                  }),
+                  topic: context.topic,
+                  hostPlayer: context.hostPlayer,
+                  ...bossReplyFields(context, 'askHostInitial'),
+                }),
+                onDone: [
+                  {
+                    guard: 'needsBossReplyWithQuestion',
+                    target: 'waiting',
+                    actions: {
+                      type: 'setPendingBossQuestion',
+                      params: {
+                        ...captainStateMetadata.askHostInitial,
+                        resumeStateId: 'askHostInitial',
+                        question: '',
+                      },
+                    },
+                  },
+                  {
+                    guard: 'needsBossReplyWithoutQuestion',
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedCaptainOutput',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                  {
+                    guard: 'proposalMade',
+                    target: 'complete',
+                    actions: [
+                      'stageHostResult',
+                      {
+                        type: 'clearBranchBossReplyContext',
+                        params: { stateId: 'askHostInitial' },
+                      },
+                    ],
+                  },
+                  {
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedCaptainOutput',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                ],
+                onError: {
+                  target: '#failed',
+                  actions: [
+                    'rememberCaptainError',
+                    'clearParallelRoundContext',
+                  ],
+                },
+              },
+            },
+            waiting: {
+              id: 'waitHostInitialReply',
+              tags: 'playbook.parked',
+              description:
+                'Host waits for Boss to answer its proposal question.',
+              meta: {
+                playbook: {
+                  stateId: 'waitHostInitialReply',
+                  description:
+                    'Host waits for Boss to answer its proposal question.',
+                },
+              },
+              on: {
+                BOSS_REPLY: [
+                  {
+                    guard: bossReplyTargets('askHostInitial', false),
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedBossReply',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                  {
+                    guard: bossReplyTargets('askHostInitial', true),
+                    target: 'working',
+                    actions: 'rememberBossReply',
+                  },
+                ],
+              },
+            },
+            complete: {
+              id: 'hostInitialProposalComplete',
+              type: 'final',
+              description:
+                'Host initial proposal is staged for the round join.',
+              meta: {
+                playbook: {
+                  stateId: 'hostInitialProposalComplete',
+                  description:
+                    'Host initial proposal is staged for the round join.',
+                },
               },
             },
           },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'proposalMade',
-            target: 'askParticipantInitial',
-            actions: ['rememberHostProposal', 'clearBossReplyContext'],
-          },
-          {
-            target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
-          },
-        ],
-        onError: {
-          target: 'failed',
-          actions: ['rememberCaptainError', 'clearBossReplyContext'],
         },
+        participant: {
+          id: 'initialProposalParticipant',
+          initial: 'working',
+          description:
+            'Participant branch for the parallel initial proposal round.',
+          meta: {
+            playbook: {
+              stateId: 'initialProposalParticipant',
+              description:
+                'Participant branch for the parallel initial proposal round.',
+            },
+          },
+          states: {
+            working: {
+              id: 'askParticipantInitial',
+              tags: 'playbook.busy',
+              description:
+                'Participant independently proposes whether the Boss topic should become spec items or DRs.',
+              meta: {
+                playbook: {
+                  stateId: 'askParticipantInitial',
+                  description:
+                    'Participant independently proposes whether the Boss topic should become spec items or DRs.',
+                },
+              },
+              invoke: {
+                id: 'askParticipantInitialCaptain',
+                src: 'player',
+                input: ({ context }): PlayerInput => ({
+                  stateId: 'askParticipantInitial',
+                  player: 'Participant',
+                  sourceItem: 'DISCUSS-2',
+                  prompt: DISCUSS_2_PROMPT,
+                  result: withNeedsBossReply({
+                    proposalMade:
+                      'Participant proposed a design. Output shall include `proposal: <participant proposal>`.',
+                  }),
+                  topic: context.topic,
+                  participantPlayer: context.participantPlayer,
+                  ...bossReplyFields(context, 'askParticipantInitial'),
+                }),
+                onDone: [
+                  {
+                    guard: 'needsBossReplyWithQuestion',
+                    target: 'waiting',
+                    actions: {
+                      type: 'setPendingBossQuestion',
+                      params: {
+                        ...captainStateMetadata.askParticipantInitial,
+                        resumeStateId: 'askParticipantInitial',
+                        question: '',
+                      },
+                    },
+                  },
+                  {
+                    guard: 'needsBossReplyWithoutQuestion',
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedCaptainOutput',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                  {
+                    guard: 'proposalMade',
+                    target: 'complete',
+                    actions: [
+                      'stageParticipantResult',
+                      {
+                        type: 'clearBranchBossReplyContext',
+                        params: { stateId: 'askParticipantInitial' },
+                      },
+                    ],
+                  },
+                  {
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedCaptainOutput',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                ],
+                onError: {
+                  target: '#failed',
+                  actions: [
+                    'rememberCaptainError',
+                    'clearParallelRoundContext',
+                  ],
+                },
+              },
+            },
+            waiting: {
+              id: 'waitParticipantInitialReply',
+              tags: 'playbook.parked',
+              description:
+                'Participant waits for Boss to answer its proposal question.',
+              meta: {
+                playbook: {
+                  stateId: 'waitParticipantInitialReply',
+                  description:
+                    'Participant waits for Boss to answer its proposal question.',
+                },
+              },
+              on: {
+                BOSS_REPLY: [
+                  {
+                    guard: bossReplyTargets('askParticipantInitial', false),
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedBossReply',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                  {
+                    guard: bossReplyTargets('askParticipantInitial', true),
+                    target: 'working',
+                    actions: 'rememberBossReply',
+                  },
+                ],
+              },
+            },
+            complete: {
+              id: 'participantInitialProposalComplete',
+              type: 'final',
+              description:
+                'Participant initial proposal is staged for the round join.',
+              meta: {
+                playbook: {
+                  stateId: 'participantInitialProposalComplete',
+                  description:
+                    'Participant initial proposal is staged for the round join.',
+                },
+              },
+            },
+          },
+        },
+      },
+      onDone: {
+        target: 'reconciliationRound',
+        actions: 'promoteInitialResults',
       },
     },
-    askParticipantInitial: {
-      id: 'askParticipantInitial',
-      description: 'Participant independently proposes whether the Boss topic should become spec items or DRs.',
-      invoke: {
-        id: 'askParticipantInitialCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Participant',
-          sourceItem: 'DISCUSS-2',
-          prompt: DISCUSS_2_PROMPT,
-          result: withNeedsBossReply({
-            proposalMade:
-              'Participant proposed a design. Output shall include `proposal: <participant proposal>`.',
-          }),
-          topic: context.topic,
-          participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: 'awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: {
-                ...captainStateMetadata.askParticipantInitial,
-                resumeStateId: 'askParticipantInitial',
-                question: '',
+    reconciliationRound: {
+      id: 'reconciliationRound',
+      type: 'parallel',
+      description:
+        'Host and Participant independently reconcile one completed prior round.',
+      meta: {
+        playbook: {
+          stateId: 'reconciliationRound',
+          description:
+            'Host and Participant independently reconcile one completed prior round.',
+        },
+      },
+      states: {
+        host: {
+          id: 'reconciliationHost',
+          initial: 'working',
+          description: 'Host branch for the parallel reconciliation round.',
+          meta: {
+            playbook: {
+              stateId: 'reconciliationHost',
+              description: 'Host branch for the parallel reconciliation round.',
+            },
+          },
+          states: {
+            working: {
+              id: 'hostInitialRound',
+              tags: 'playbook.busy',
+              description:
+                'Host reconciles the Participant proposal during initial discussion.',
+              meta: {
+                playbook: {
+                  stateId: 'hostInitialRound',
+                  description:
+                    'Host reconciles the Participant proposal during initial discussion.',
+                },
+              },
+              invoke: {
+                id: 'hostInitialRoundCaptain',
+                src: 'player',
+                input: ({ context }): PlayerInput => ({
+                  stateId: 'hostInitialRound',
+                  player: 'Host',
+                  sourceItem: 'DISCUSS-3',
+                  prompt: DISCUSS_3_PROMPT,
+                  result: withNeedsBossReply({
+                    proposalMade:
+                      'Host continued the discussion with a revised or challenged proposal. Output shall include `proposal: <host proposal>`.',
+                    endedInitialDiscussion:
+                      'Host stated the end of initial discussion. Output may include `agreement: <agreement>`.',
+                  }),
+                  hostProposal: context.hostProposal,
+                  participantProposal: context.participantProposal,
+                  hostPlayer: context.hostPlayer,
+                  ...bossReplyFields(context, 'hostInitialRound'),
+                }),
+                onDone: [
+                  {
+                    guard: 'needsBossReplyWithQuestion',
+                    target: 'waiting',
+                    actions: {
+                      type: 'setPendingBossQuestion',
+                      params: {
+                        ...captainStateMetadata.hostInitialRound,
+                        resumeStateId: 'hostInitialRound',
+                        question: '',
+                      },
+                    },
+                  },
+                  {
+                    guard: 'needsBossReplyWithoutQuestion',
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedCaptainOutput',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                  {
+                    guard: 'proposalMade',
+                    target: 'complete',
+                    actions: [
+                      'stageHostResult',
+                      {
+                        type: 'clearBranchBossReplyContext',
+                        params: { stateId: 'hostInitialRound' },
+                      },
+                    ],
+                  },
+                  {
+                    guard: 'endedInitialDiscussion',
+                    target: 'complete',
+                    actions: [
+                      'stageHostResult',
+                      {
+                        type: 'clearBranchBossReplyContext',
+                        params: { stateId: 'hostInitialRound' },
+                      },
+                    ],
+                  },
+                  {
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedCaptainOutput',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                ],
+                onError: {
+                  target: '#failed',
+                  actions: [
+                    'rememberCaptainError',
+                    'clearParallelRoundContext',
+                  ],
+                },
+              },
+            },
+            waiting: {
+              id: 'waitHostReconciliationReply',
+              tags: 'playbook.parked',
+              description:
+                'Host waits for Boss to answer its reconciliation question.',
+              meta: {
+                playbook: {
+                  stateId: 'waitHostReconciliationReply',
+                  description:
+                    'Host waits for Boss to answer its reconciliation question.',
+                },
+              },
+              on: {
+                BOSS_REPLY: [
+                  {
+                    guard: bossReplyTargets('hostInitialRound', false),
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedBossReply',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                  {
+                    guard: bossReplyTargets('hostInitialRound', true),
+                    target: 'working',
+                    actions: 'rememberBossReply',
+                  },
+                ],
+              },
+            },
+            complete: {
+              id: 'hostReconciliationComplete',
+              type: 'final',
+              description: 'Host reconciliation result is staged for the join.',
+              meta: {
+                playbook: {
+                  stateId: 'hostReconciliationComplete',
+                  description:
+                    'Host reconciliation result is staged for the join.',
+                },
               },
             },
           },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'proposalMade',
-            target: 'hostInitialRound',
-            actions: ['rememberParticipantProposal', 'clearBossReplyContext'],
-          },
-          {
-            target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
-          },
-        ],
-        onError: {
-          target: 'failed',
-          actions: ['rememberCaptainError', 'clearBossReplyContext'],
         },
-      },
-    },
-    hostInitialRound: {
-      id: 'hostInitialRound',
-      description: 'Host reconciles the Participant proposal during initial discussion.',
-      invoke: {
-        id: 'hostInitialRoundCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Host',
-          sourceItem: 'DISCUSS-3',
-          prompt: DISCUSS_3_PROMPT,
-          result: withNeedsBossReply({
-            proposalMade:
-              'Host continued the discussion with a revised or challenged proposal. Output shall include `proposal: <host proposal>`.',
-            endedInitialDiscussion:
-              'Host stated the end of initial discussion. Output may include `agreement: <agreement>`.',
-          }),
-          hostProposal: context.hostProposal,
-          participantProposal: context.participantProposal,
-          hostPlayer: context.hostPlayer,
-          ...bossReplyFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: 'awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: {
-                ...captainStateMetadata.hostInitialRound,
-                resumeStateId: 'hostInitialRound',
-                question: '',
+        participant: {
+          id: 'reconciliationParticipant',
+          initial: 'working',
+          description:
+            'Participant branch for the parallel reconciliation round.',
+          meta: {
+            playbook: {
+              stateId: 'reconciliationParticipant',
+              description:
+                'Participant branch for the parallel reconciliation round.',
+            },
+          },
+          states: {
+            working: {
+              id: 'participantInitialRound',
+              tags: 'playbook.busy',
+              description:
+                'Participant reconciles the Host proposal during initial discussion.',
+              meta: {
+                playbook: {
+                  stateId: 'participantInitialRound',
+                  description:
+                    'Participant reconciles the Host proposal during initial discussion.',
+                },
+              },
+              invoke: {
+                id: 'participantInitialRoundCaptain',
+                src: 'player',
+                input: ({ context }): PlayerInput => ({
+                  stateId: 'participantInitialRound',
+                  player: 'Participant',
+                  sourceItem: 'DISCUSS-4',
+                  prompt: DISCUSS_4_PROMPT,
+                  result: withNeedsBossReply({
+                    proposalMade:
+                      'Participant continued the discussion with a revised or challenged proposal. Output shall include `proposal: <participant proposal>`.',
+                    endedInitialDiscussion:
+                      'Participant stated the end of initial discussion. Output may include `agreement: <agreement>`.',
+                  }),
+                  hostProposal: context.hostProposal,
+                  participantProposal: context.participantProposal,
+                  agreement: context.agreement,
+                  participantPlayer: context.participantPlayer,
+                  ...bossReplyFields(context, 'participantInitialRound'),
+                }),
+                onDone: [
+                  {
+                    guard: 'needsBossReplyWithQuestion',
+                    target: 'waiting',
+                    actions: {
+                      type: 'setPendingBossQuestion',
+                      params: {
+                        ...captainStateMetadata.participantInitialRound,
+                        resumeStateId: 'participantInitialRound',
+                        question: '',
+                      },
+                    },
+                  },
+                  {
+                    guard: 'needsBossReplyWithoutQuestion',
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedCaptainOutput',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                  {
+                    guard: 'proposalMade',
+                    target: 'complete',
+                    actions: [
+                      'stageParticipantResult',
+                      {
+                        type: 'clearBranchBossReplyContext',
+                        params: { stateId: 'participantInitialRound' },
+                      },
+                    ],
+                  },
+                  {
+                    guard: 'endedInitialDiscussion',
+                    target: 'complete',
+                    actions: [
+                      'stageParticipantResult',
+                      {
+                        type: 'clearBranchBossReplyContext',
+                        params: { stateId: 'participantInitialRound' },
+                      },
+                    ],
+                  },
+                  {
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedCaptainOutput',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                ],
+                onError: {
+                  target: '#failed',
+                  actions: [
+                    'rememberCaptainError',
+                    'clearParallelRoundContext',
+                  ],
+                },
+              },
+            },
+            waiting: {
+              id: 'waitParticipantReconciliationReply',
+              tags: 'playbook.parked',
+              description:
+                'Participant waits for Boss to answer its reconciliation question.',
+              meta: {
+                playbook: {
+                  stateId: 'waitParticipantReconciliationReply',
+                  description:
+                    'Participant waits for Boss to answer its reconciliation question.',
+                },
+              },
+              on: {
+                BOSS_REPLY: [
+                  {
+                    guard: bossReplyTargets('participantInitialRound', false),
+                    target: '#failed',
+                    actions: [
+                      'rememberMalformedBossReply',
+                      'clearParallelRoundContext',
+                    ],
+                  },
+                  {
+                    guard: bossReplyTargets('participantInitialRound', true),
+                    target: 'working',
+                    actions: 'rememberBossReply',
+                  },
+                ],
+              },
+            },
+            complete: {
+              id: 'participantReconciliationComplete',
+              type: 'final',
+              description:
+                'Participant reconciliation result is staged for the join.',
+              meta: {
+                playbook: {
+                  stateId: 'participantReconciliationComplete',
+                  description:
+                    'Participant reconciliation result is staged for the join.',
+                },
               },
             },
           },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'proposalMade',
-            target: 'participantInitialRound',
-            actions: ['rememberHostProposal', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'endedInitialDiscussion',
-            target: 'participantInitialRound',
-            actions: ['rememberAgreement', 'clearBossReplyContext'],
-          },
-          {
-            target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
-          },
-        ],
-        onError: {
-          target: 'failed',
-          actions: ['rememberCaptainError', 'clearBossReplyContext'],
         },
       },
-    },
-    participantInitialRound: {
-      id: 'participantInitialRound',
-      description: 'Participant reconciles the Host proposal during initial discussion.',
-      invoke: {
-        id: 'participantInitialRoundCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
-          player: 'Participant',
-          sourceItem: 'DISCUSS-4',
-          prompt: DISCUSS_4_PROMPT,
-          result: withNeedsBossReply({
-            proposalMade:
-              'Participant continued the discussion with a revised or challenged proposal. Output shall include `proposal: <participant proposal>`.',
-            endedInitialDiscussion:
-              'Participant stated the end of initial discussion. Output may include `agreement: <agreement>`.',
-          }),
-          hostProposal: context.hostProposal,
-          participantProposal: context.participantProposal,
-          agreement: context.agreement,
-          participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
-        }),
-        onDone: [
-          {
-            guard: 'needsBossReplyWithQuestion',
-            target: 'awaitBossReply',
-            actions: {
-              type: 'setPendingBossQuestion',
-              params: {
-                ...captainStateMetadata.participantInitialRound,
-                resumeStateId: 'participantInitialRound',
-                question: '',
-              },
-            },
-          },
-          {
-            guard: 'needsBossReplyWithoutQuestion',
-            target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'proposalMade',
-            target: 'hostInitialRound',
-            actions: ['rememberParticipantProposal', 'clearBossReplyContext'],
-          },
-          {
-            guard: 'endedInitialDiscussion',
-            target: 'hostWritesAgreement',
-            actions: ['rememberAgreement', 'clearBossReplyContext'],
-          },
-          {
-            target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
-          },
-        ],
-        onError: {
-          target: 'failed',
-          actions: ['rememberCaptainError', 'clearBossReplyContext'],
+      onDone: [
+        {
+          guard: 'bothEndedInitialDiscussion',
+          target: 'hostWritesAgreement',
+          actions: 'promoteReconciliationResults',
         },
-      },
+        {
+          target: 'reconciliationRound',
+          reenter: true,
+          actions: 'promoteReconciliationResults',
+        },
+      ],
     },
     hostWritesAgreement: {
       id: 'hostWritesAgreement',
-      description: 'Host writes the agreed spec items or DRs and updates the spec map.',
+      tags: 'playbook.busy',
+      description:
+        'Host writes the agreed spec items or DRs and updates the spec map.',
+      meta: {
+        playbook: {
+          stateId: 'hostWritesAgreement',
+          description:
+            'Host writes the agreed spec items or DRs and updates the spec map.',
+        },
+      },
       invoke: {
         id: 'hostWritesAgreementCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'hostWritesAgreement',
           player: 'Host',
           sourceItem: 'DISCUSS-5',
           prompt: DISCUSS_5_PROMPT,
@@ -866,7 +1453,7 @@ export const discussMachine = setup({
           }),
           agreement: context.agreement,
           hostPlayer: context.hostPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'hostWritesAgreement'),
         }),
         onDone: [
           {
@@ -884,7 +1471,10 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'wroteChanges',
@@ -893,7 +1483,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -904,11 +1497,21 @@ export const discussMachine = setup({
     },
     commitInitialChanges: {
       id: 'commitInitialChanges',
-      description: 'Committer commits the changes produced at the end of initial discussion.',
+      tags: 'playbook.busy',
+      description:
+        'Committer commits the changes produced at the end of initial discussion.',
+      meta: {
+        playbook: {
+          stateId: 'commitInitialChanges',
+          description:
+            'Committer commits the changes produced at the end of initial discussion.',
+        },
+      },
       invoke: {
         id: 'commitInitialChangesCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'commitInitialChanges',
           player: 'Committer',
           sourceItem: 'DISCUSS-14',
           prompt: DISCUSS_14_PROMPT,
@@ -921,7 +1524,7 @@ export const discussMachine = setup({
           hostLlm: context.hostLlm,
           participantLlm: context.participantLlm,
           committerPlayer: context.committerPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'commitInitialChanges'),
         }),
         onDone: [
           {
@@ -939,12 +1542,16 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: ({ context, event }) =>
               outputOf(event).guard === 'committed' &&
-              (outputOf(event).reviewScope ?? context.reviewScope) === 'specItems',
+              (outputOf(event).reviewScope ?? context.reviewScope) ===
+                'specItems',
             target: reviewTargets.specItems.initial,
             actions: ['rememberCommittedChanges', 'clearBossReplyContext'],
           },
@@ -965,7 +1572,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -976,11 +1586,19 @@ export const discussMachine = setup({
     },
     reviewSpecInitialCommit: {
       id: 'reviewSpecInitialCommit',
+      tags: 'playbook.busy',
       description: 'Participant reviews newly committed spec-item changes.',
+      meta: {
+        playbook: {
+          stateId: 'reviewSpecInitialCommit',
+          description: 'Participant reviews newly committed spec-item changes.',
+        },
+      },
       invoke: {
         id: 'reviewSpecInitialCommitCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewSpecInitialCommit',
           player: 'Participant',
           sourceItem: 'DISCUSS-6',
           prompt: DISCUSS_6_PROMPT,
@@ -992,7 +1610,7 @@ export const discussMachine = setup({
           latestChanges: context.latestChanges,
           rebuttals: context.rebuttals,
           participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'reviewSpecInitialCommit'),
         }),
         onDone: [
           {
@@ -1010,7 +1628,10 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'noFindings',
@@ -1024,7 +1645,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1035,11 +1659,21 @@ export const discussMachine = setup({
     },
     reviewSpecHostChanges: {
       id: 'reviewSpecHostChanges',
-      description: 'Participant reviews Host changes to spec items after findings.',
+      tags: 'playbook.busy',
+      description:
+        'Participant reviews Host changes to spec items after findings.',
+      meta: {
+        playbook: {
+          stateId: 'reviewSpecHostChanges',
+          description:
+            'Participant reviews Host changes to spec items after findings.',
+        },
+      },
       invoke: {
         id: 'reviewSpecHostChangesCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewSpecHostChanges',
           player: 'Participant',
           sourceItem: 'DISCUSS-7',
           prompt: DISCUSS_7_PROMPT,
@@ -1051,7 +1685,7 @@ export const discussMachine = setup({
           latestChanges: context.latestChanges,
           rebuttals: context.rebuttals,
           participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'reviewSpecHostChanges'),
         }),
         onDone: [
           {
@@ -1069,7 +1703,10 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'noFindings',
@@ -1083,7 +1720,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1094,11 +1734,21 @@ export const discussMachine = setup({
     },
     reviewDrInitialCommit: {
       id: 'reviewDrInitialCommit',
-      description: 'Participant reviews newly committed decision-record changes.',
+      tags: 'playbook.busy',
+      description:
+        'Participant reviews newly committed decision-record changes.',
+      meta: {
+        playbook: {
+          stateId: 'reviewDrInitialCommit',
+          description:
+            'Participant reviews newly committed decision-record changes.',
+        },
+      },
       invoke: {
         id: 'reviewDrInitialCommitCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewDrInitialCommit',
           player: 'Participant',
           sourceItem: 'DISCUSS-8',
           prompt: DISCUSS_8_PROMPT,
@@ -1110,7 +1760,7 @@ export const discussMachine = setup({
           latestChanges: context.latestChanges,
           rebuttals: context.rebuttals,
           participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'reviewDrInitialCommit'),
         }),
         onDone: [
           {
@@ -1128,7 +1778,10 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'noFindings',
@@ -1142,7 +1795,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1153,11 +1809,21 @@ export const discussMachine = setup({
     },
     reviewDrHostChanges: {
       id: 'reviewDrHostChanges',
-      description: 'Participant reviews Host changes to decision records after findings.',
+      tags: 'playbook.busy',
+      description:
+        'Participant reviews Host changes to decision records after findings.',
+      meta: {
+        playbook: {
+          stateId: 'reviewDrHostChanges',
+          description:
+            'Participant reviews Host changes to decision records after findings.',
+        },
+      },
       invoke: {
         id: 'reviewDrHostChangesCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewDrHostChanges',
           player: 'Participant',
           sourceItem: 'DISCUSS-9',
           prompt: DISCUSS_9_PROMPT,
@@ -1169,7 +1835,7 @@ export const discussMachine = setup({
           latestChanges: context.latestChanges,
           rebuttals: context.rebuttals,
           participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'reviewDrHostChanges'),
         }),
         onDone: [
           {
@@ -1187,7 +1853,10 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'noFindings',
@@ -1201,7 +1870,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1212,11 +1884,21 @@ export const discussMachine = setup({
     },
     reviewMixedInitialCommit: {
       id: 'reviewMixedInitialCommit',
-      description: 'Participant reviews newly committed mixed spec-item and DR changes.',
+      tags: 'playbook.busy',
+      description:
+        'Participant reviews newly committed mixed spec-item and DR changes.',
+      meta: {
+        playbook: {
+          stateId: 'reviewMixedInitialCommit',
+          description:
+            'Participant reviews newly committed mixed spec-item and DR changes.',
+        },
+      },
       invoke: {
         id: 'reviewMixedInitialCommitCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewMixedInitialCommit',
           player: 'Participant',
           sourceItem: 'DISCUSS-10',
           prompt: DISCUSS_10_PROMPT,
@@ -1228,7 +1910,7 @@ export const discussMachine = setup({
           latestChanges: context.latestChanges,
           rebuttals: context.rebuttals,
           participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'reviewMixedInitialCommit'),
         }),
         onDone: [
           {
@@ -1246,7 +1928,10 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'noFindings',
@@ -1260,7 +1945,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1271,11 +1959,21 @@ export const discussMachine = setup({
     },
     reviewMixedHostChanges: {
       id: 'reviewMixedHostChanges',
-      description: 'Participant reviews Host changes to mixed spec items and DRs after findings.',
+      tags: 'playbook.busy',
+      description:
+        'Participant reviews Host changes to mixed spec items and DRs after findings.',
+      meta: {
+        playbook: {
+          stateId: 'reviewMixedHostChanges',
+          description:
+            'Participant reviews Host changes to mixed spec items and DRs after findings.',
+        },
+      },
       invoke: {
         id: 'reviewMixedHostChangesCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewMixedHostChanges',
           player: 'Participant',
           sourceItem: 'DISCUSS-11',
           prompt: DISCUSS_11_PROMPT,
@@ -1287,7 +1985,7 @@ export const discussMachine = setup({
           latestChanges: context.latestChanges,
           rebuttals: context.rebuttals,
           participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'reviewMixedHostChanges'),
         }),
         onDone: [
           {
@@ -1305,7 +2003,10 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'noFindings',
@@ -1319,7 +2020,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1330,11 +2034,21 @@ export const discussMachine = setup({
     },
     hostAddressesFindings: {
       id: 'hostAddressesFindings',
-      description: 'Host accepts or challenges review findings and stages repo changes.',
+      tags: 'playbook.busy',
+      description:
+        'Host accepts or challenges review findings and stages repo changes.',
+      meta: {
+        playbook: {
+          stateId: 'hostAddressesFindings',
+          description:
+            'Host accepts or challenges review findings and stages repo changes.',
+        },
+      },
       invoke: {
         id: 'hostAddressesFindingsCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'hostAddressesFindings',
           player: 'Host',
           sourceItem: 'DISCUSS-12',
           prompt: DISCUSS_12_PROMPT,
@@ -1347,7 +2061,7 @@ export const discussMachine = setup({
           reviewItems: context.reviewItems,
           latestChanges: context.latestChanges,
           hostPlayer: context.hostPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'hostAddressesFindings'),
         }),
         onDone: [
           {
@@ -1365,12 +2079,16 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: ({ context, event }) =>
               outputOf(event).guard === 'changesMade' &&
-              (outputOf(event).reviewScope ?? context.reviewScope) === 'specItems',
+              (outputOf(event).reviewScope ?? context.reviewScope) ===
+                'specItems',
             target: reviewTargets.specItems.afterChanges,
             actions: ['rememberHostReviewResponse', 'clearBossReplyContext'],
           },
@@ -1396,7 +2114,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1407,11 +2128,19 @@ export const discussMachine = setup({
     },
     participantAddressesRebuttals: {
       id: 'participantAddressesRebuttals',
+      tags: 'playbook.busy',
       description: 'Participant accepts or challenges Host rebuttals.',
+      meta: {
+        playbook: {
+          stateId: 'participantAddressesRebuttals',
+          description: 'Participant accepts or challenges Host rebuttals.',
+        },
+      },
       invoke: {
         id: 'participantAddressesRebuttalsCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'participantAddressesRebuttals',
           player: 'Participant',
           sourceItem: 'DISCUSS-13',
           prompt: DISCUSS_13_PROMPT,
@@ -1421,7 +2150,7 @@ export const discussMachine = setup({
           }),
           rebuttals: context.rebuttals,
           participantPlayer: context.participantPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'participantAddressesRebuttals'),
         }),
         onDone: [
           {
@@ -1439,16 +2168,25 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'rebuttalsAddressed',
             target: 'hostAddressesFindings',
-            actions: ['rememberParticipantRebuttalResponse', 'clearBossReplyContext'],
+            actions: [
+              'rememberParticipantRebuttalResponse',
+              'clearBossReplyContext',
+            ],
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1459,11 +2197,21 @@ export const discussMachine = setup({
     },
     commitReviewedChanges: {
       id: 'commitReviewedChanges',
-      description: 'Committer commits reviewed changes once Participant raises no findings.',
+      tags: 'playbook.busy',
+      description:
+        'Committer commits reviewed changes once Participant raises no findings.',
+      meta: {
+        playbook: {
+          stateId: 'commitReviewedChanges',
+          description:
+            'Committer commits reviewed changes once Participant raises no findings.',
+        },
+      },
       invoke: {
         id: 'commitReviewedChangesCaptain',
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'commitReviewedChanges',
           player: 'Committer',
           sourceItem: 'DISCUSS-15',
           prompt: DISCUSS_15_PROMPT,
@@ -1474,7 +2222,7 @@ export const discussMachine = setup({
           hostLlm: context.hostLlm,
           participantLlm: context.participantLlm,
           committerPlayer: context.committerPlayer,
-          ...bossReplyFields(context),
+          ...bossReplyFields(context, 'commitReviewedChanges'),
         }),
         onDone: [
           {
@@ -1492,7 +2240,10 @@ export const discussMachine = setup({
           {
             guard: 'needsBossReplyWithoutQuestion',
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
           {
             guard: 'committed',
@@ -1501,7 +2252,10 @@ export const discussMachine = setup({
           },
           {
             target: 'failed',
-            actions: ['rememberMalformedCaptainOutput', 'clearBossReplyContext'],
+            actions: [
+              'rememberMalformedCaptainOutput',
+              'clearBossReplyContext',
+            ],
           },
         ],
         onError: {
@@ -1512,7 +2266,14 @@ export const discussMachine = setup({
     },
     awaitBossReply: {
       id: 'awaitBossReply',
+      tags: 'playbook.parked',
       description: 'Waiting for Boss to answer a player question.',
+      meta: {
+        playbook: {
+          stateId: 'awaitBossReply',
+          description: 'Waiting for Boss to answer a player question.',
+        },
+      },
       on: {
         BOSS_REPLY: [
           {
@@ -1526,9 +2287,12 @@ export const discussMachine = setup({
             actions: ['rememberMalformedBossReply', 'clearBossReplyContext'],
           },
         ],
-        BOSS_INTERRUPT: bossInterrupts(jumpableStateIds, 'clearBossReplyContext'),
+        BOSS_INTERRUPT: bossInterrupts(
+          jumpableStateIds,
+          'clearBossReplyContext',
+        ),
         START_DISCUSSION: {
-          target: 'askHostInitial',
+          target: 'initialProposalRound',
           actions: ['clearBossReplyContext', 'copyStartDiscussion'],
         },
         START_REVIEW: [
@@ -1552,10 +2316,19 @@ export const discussMachine = setup({
     },
     failed: {
       id: 'failed',
-      description: 'The discussion workflow failed and is waiting for Boss recovery.',
+      tags: 'playbook.parked',
+      description:
+        'The discussion workflow failed and is waiting for Boss recovery.',
+      meta: {
+        playbook: {
+          stateId: 'failed',
+          description:
+            'The discussion workflow failed and is waiting for Boss recovery.',
+        },
+      },
       on: {
         START_DISCUSSION: {
-          target: 'askHostInitial',
+          target: 'initialProposalRound',
           actions: 'copyStartDiscussion',
         },
         START_REVIEW: [
@@ -1581,6 +2354,13 @@ export const discussMachine = setup({
       id: 'done',
       type: 'final',
       description: 'The discussion workflow completed with a reviewed commit.',
+      meta: {
+        playbook: {
+          stateId: 'done',
+          description:
+            'The discussion workflow completed with a reviewed commit.',
+        },
+      },
     },
   },
 });

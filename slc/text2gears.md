@@ -13,10 +13,10 @@ The second phase (spec items → state machine) is out of scope.
 
 ## Formats
 
-| Role | Format | Extension |
-| --- | --- | --- |
-| source | text | .md |
-| target | gears | .md |
+| Role   | Format | Extension |
+| ------ | ------ | --------- |
+| source | text   | .md       |
+| target | gears  | .md       |
 
 ## Players
 
@@ -39,8 +39,40 @@ Capitalize English player names (e.g., `Writer`); quote non-English names (e.g.,
 
 ## Behaviors
 
-Each spec item names a condition, the player to prompt, and the prompt itself.
+Each spec item names a condition, one behavior kind, and the complete prompt
+for that behavior.
+The behavior kind shall be one of:
+
+- direct Captain work, written `Captain shall <behavior>:` without naming a
+  delegated player;
+- delegated player work, written `Captain shall prompt <Player>:` or the
+  existing `Captain shall relay ... to <Player> ...:` form; or
+- a literal or dynamic nested playbook call as defined below.
+
+Direct Captain work means the coordinating Captain performs the behavior
+itself. It shall not be rewritten as `Captain shall prompt Captain`, because
+Captain is a distinct runtime actor rather than a player binding.
+Delegated work shall name the declared player that receives the prompt.
 Prompts shall be blockquoted, one point per line.
+
+Source statements that assign active-leaf routing, call identity, suspension,
+or return matching to the host describe execution preconditions rather than
+behaviors for Captain to perform. text2gears shall use such a statement only as
+a condition on an actual behavior when needed and shall not emit a standalone
+direct-Captain item that asks Captain to implement host stack bookkeeping.
+The same applies to a host-owned input catalog's immutability: retain it as a
+condition/invariant on the behaviors that consume the catalog, never as an LLM
+action that can replace or mutate host configuration.
+Opening source invariants consumed by later behaviors shall remain explicit in
+the emitted conditions or prompts rather than being summarized away. In
+particular, preserve the declared exact entry shape of a structured host
+catalog and any progress invariant that makes a decide-call-observe plan
+finite, such as `remainingPlan` containing only calls after the selected call
+and strictly shrinking on continuation.
+Likewise, a source invariant that restricts a nested-call target to a
+non-empty member of an input catalog is a condition on that call item, not a
+separate Captain rejection behavior, unless Source requires an observable
+response distinct from taking or skipping the call.
 
 E.g.:
 
@@ -48,38 +80,61 @@ E.g.:
 ### CODE-10
 
 When Reviewer is about to review any change, Captain shall prompt Reviewer:
+
 > Flag any issues or improvements (numbered; no duplication).
 > Think thoroughly — don't just approve or reject.
 > If the change is ready to commit or push, don't raise nitpicks.
 > Do not edit files or commit; report findings only.
 ```
 
+Direct Captain example:
+
+```markdown
+### ROUTE-1
+
+When Boss gives an intent, Captain shall decide how to handle it:
+
+> Preserve Boss's intended outcome and constraints.
+> Ask one question only when its answer would materially change routing.
+```
+
 ### Parallel behaviors
 
-Where two or more items share one trigger and Source requires them to run
-independently before later work uses all results, text2gears shall place
-`Parallel group: <stable-kebab-case-id>` immediately below each item heading.
+Where two or more delegated-player items share one trigger and Source requires
+them to run independently before later work uses all results, text2gears shall
+place `Parallel group: <stable-kebab-case-id>` immediately below each item
+heading.
 Every item in one parallel group shall receive the same completed-prior-group
 inputs; no item prompt may depend on another member's result from the current
 group.
+Every member shall delegate to a named player, and the source shall permit
+those members to resolve to distinct players. Direct-Captain work shares one
+Captain session and nested calls share one pending-child stack slot, so neither
+kind may receive parallel-group metadata. If Source explicitly requires either
+unsupported kind to run concurrently, text2gears shall report that the source
+cannot be represented rather than silently serialize it or emit metadata the
+next phase cannot compile.
 
 Example:
 
 ```markdown
 ### DISCUSS-1
+
 Parallel group: initial-proposals
 
 When Boss gives a topic, Captain shall prompt Host:
+
 > Propose your design independently.
 ```
 
 ### Nested playbook calls
 
-Where Source requires one playbook to call another, text2gears shall emit an
-item whose behavior uses `Captain shall call playbook <playbook-id>:` and whose
-blockquote is the complete JSON-safe input-text template for that call.
-The target id shall be a stable configured playbook id, not a slash command or
-module specifier.
+Where Source requires one playbook to call a statically known playbook,
+text2gears shall emit an item whose behavior uses
+`Captain shall call playbook <playbook-id>:` and whose blockquote is the
+complete JSON-safe input-text template for that call.
+The literal target id shall be a stable configured playbook id, not a slash
+command or module specifier.
 
 Example:
 
@@ -87,9 +142,33 @@ Example:
 ### RELEASE-8
 
 When implementation is ready for review, Captain shall call playbook `code-review`:
+
 > Review these changes:
 > <changes>
 ```
+
+Where Source selects the target at runtime, text2gears shall instead emit the
+first-class dynamic form
+``Captain shall call playbook selected by `<playbook-id-context>`:``.
+The backtick-delimited name identifies a typed FSM context field whose runtime
+value is the target playbook id; it is not itself a target id.
+The blockquote shall be exactly one placeholder naming the typed context field
+whose runtime string is the complete child input text.
+
+Example:
+
+```markdown
+### CAPTAIN-2
+
+When Captain selects a next call, Captain shall call playbook selected by `nextPlaybookId`:
+
+> <nextPlaybookInput>
+```
+
+Here `nextPlaybookId` and `nextPlaybookInput` are stable context-field names.
+The dynamic form shall not use a slash command, module specifier, opaque
+expression, or prose from which a downstream compiler would have to infer
+either field.
 
 Target should be written in the same language as Source.
 

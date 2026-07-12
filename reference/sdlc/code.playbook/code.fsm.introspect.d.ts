@@ -1,8 +1,8 @@
-import type { CaptainInput, CodingContext, codingMachine } from './code.fsm.js';
+import type { CodingContext, PlayerInput, codingMachine } from './code.fsm.js';
 export interface CaptainStateInfo {
     readonly stateId: string;
     readonly sourceItem: string;
-    readonly getInput: (context: Partial<CodingContext>) => CaptainInput;
+    readonly getInput: (context: Partial<CodingContext>) => PlayerInput;
     readonly transitions: ReadonlyArray<CaptainTransition>;
 }
 export interface CaptainTransition {

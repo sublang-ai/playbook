@@ -1,0 +1,92 @@
+import { type AnyActorRef, type PromiseActorLogic, type SnapshotFrom } from 'xstate';
+import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+/**
+ * Compose invocation-lifetime and imperative-boundary cancellation without
+ * installing a second forwarding listener in each generated runtime.
+ */
+export declare function combineAbortSignals(...signals: readonly (AbortSignal | undefined)[]): AbortSignal;
+/**
+ * Register host cleanup started synchronously by an invocation abort.
+ * The nested bridge drains these promises before it publishes the matching
+ * call-finish boundary, without widening the public six-port contract.
+ */
+export declare function registerPlaybookAbortCleanup(signal: AbortSignal, cleanup: Promise<unknown>): void;
+/** Reject values that would be changed, omitted, or rejected by JSON. */
+export declare function assertJsonSafe(value: unknown, path?: string, ancestors?: ReadonlySet<object>): asserts value is JsonValue;
+/** Validate, detach, and recursively freeze host-owned JSON input. */
+export declare function snapshotJsonValue(value: unknown, path?: string): JsonValue;
+/** Validate session causality and detach its immutable identity from the host. */
+export declare function snapshotPlaybookSession(session: PlaybookSession): PlaybookSession;
+export declare function normalizeError(error: unknown): NormalizedError;
+export interface PlaybookStateMetadata {
+    stateId: string;
+    description: string;
+}
+/** Read stable state identity without consulting XState's private `_nodes`. */
+export declare function activePlaybookStateMetadata(snapshot: unknown): readonly PlaybookStateMetadata[];
+export interface SnapshotNormalizationOptions {
+    pendingCall?: PlaybookPendingCall;
+}
+export declare function normalizePlaybookSnapshot(snapshot: unknown, options?: SnapshotNormalizationOptions): PlaybookState;
+export interface NestedPlaybookInput {
+    stateId: string;
+    playbookId: string;
+    text: string;
+}
+export interface PlaybookCallStarted {
+    callId: string;
+    stateId: string;
+    playbookId: string;
+    text: string;
+}
+export interface PlaybookCallFinished extends PlaybookCallStarted {
+    result: PlaybookCallResult;
+}
+export interface NestedPlaybookBridgeOptions {
+    nextCallId(): string;
+    /** Active public runtime boundary whose abort also owns a new child call. */
+    getBoundarySignal?(): AbortSignal | undefined;
+    callPlaybook(request: PlaybookCallRequest, signal: AbortSignal): Promise<PlaybookCallStart>;
+    emitStarted(event: PlaybookCallStarted): Promise<void>;
+    emitFinished(event: PlaybookCallFinished): Promise<void>;
+    drain(): Promise<void>;
+    bindResumeSignal?(signal: AbortSignal): void;
+    onControlPlaneError?(error: unknown): void;
+    onBackgroundError?(error: unknown): void;
+}
+export declare class NestedPlaybookCallError extends Error {
+    readonly result: PlaybookCallResult;
+    constructor(result: PlaybookCallResult);
+}
+export interface PendingCallObserver {
+    getPendingCall(): PlaybookPendingCall | undefined;
+    subscribePendingCall(listener: (pendingCall: PlaybookPendingCall) => void): () => void;
+}
+export interface NestedPlaybookBridge<TInput extends NestedPlaybookInput = NestedPlaybookInput> extends PendingCallObserver {
+    actorLogic: PromiseActorLogic<JsonValue | undefined, TInput>;
+    resume(input: {
+        callId: string;
+        result: PlaybookCallResult;
+        signal: AbortSignal;
+    }): Promise<void>;
+    abortPending(error?: unknown): Promise<void>;
+    dispose(): Promise<void>;
+}
+/** Validate, detach, and freeze a host direct-Captain result. */
+export declare function validateCaptainResult(value: unknown, path?: string): CaptainResult;
+/** Validate, detach, and freeze a host delegated-player result. */
+export declare function validatePlayerResult(value: unknown, path?: string): PlayerResult;
+export declare function validatePlaybookCallResult(result: unknown, expectedPlaybookId: string, expectedChildSessionId?: string): PlaybookCallResult;
+export declare function validatePlaybookCallStart(start: unknown, expectedPlaybookId: string): PlaybookCallStart;
+export declare function createNestedPlaybookBridge<TInput extends NestedPlaybookInput = NestedPlaybookInput>(options: NestedPlaybookBridgeOptions): NestedPlaybookBridge<TInput>;
+export interface WaitForPlaybookQuiescenceOptions {
+    signal?: AbortSignal;
+    timeout?: number;
+    pendingCalls?: PendingCallObserver;
+}
+/**
+ * Wait at the imperative runtime boundary; workflow waiting remains in XState.
+ * A pending-call notification covers the case where the suspended state was
+ * entered before its host returned the child session id.
+ */
+export declare function waitForPlaybookQuiescence<TActorRef extends AnyActorRef>(actor: TActorRef, options?: WaitForPlaybookQuiescenceOptions): Promise<SnapshotFrom<TActorRef>>;
