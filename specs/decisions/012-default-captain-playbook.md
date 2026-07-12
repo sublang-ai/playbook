@@ -46,6 +46,11 @@ revise or remove later calls after observing child evidence.
 
 The Captain shall prefer a matching specialized playbook only when delegation materially improves the outcome.
 It shall not call a playbook merely to restate or classify the intent, repeat an equivalent completed or failed call without new information, or select itself.
+The model-facing policy owns that semantic equivalence judgment. As a
+deterministic safety floor, the machine shall separately reject a continuation
+whose stable target id and complete standalone input exactly match a prior
+attempt, including one that later succeeded, aborted, or failed. A revised
+input carrying new information is distinct for that exact check.
 
 Plans shall be sequential because one child may park for Boss input and one parent frame may own only one outstanding child.
 The current child result may change the input or necessity of later calls, so the Captain shall reassess between calls rather than launch a static batch.

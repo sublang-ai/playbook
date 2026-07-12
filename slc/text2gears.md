@@ -98,6 +98,21 @@ When Boss gives an intent, Captain shall decide how to handle it:
 > Ask one question only when its answer would materially change routing.
 ```
 
+### Boss-reply continuation
+
+Where a direct-Captain or delegated-player behavior may ask Boss a question
+and wait, Boss's answer resumes that same behavior with continuation context;
+it is not a distinct behavior item. text2gears shall keep the question result,
+the wait, and the answer-dependent continuation on the originating item even
+when the answer changes its complete runtime prompt. It shall not emit a
+second item solely for "Boss answers," "after the question," or clearing the
+consumed question/reply. The FSM and linker own the same-leaf suspension,
+continuation blocks, and consumed-context cleanup.
+
+This rule is an exception to splitting by accumulated prompt content below.
+Split only when Source requires a genuinely different acting behavior after
+the reply, not when the same decision or task continues with Boss's answer.
+
 ### Parallel behaviors
 
 Where two or more delegated-player items share one trigger and Source requires

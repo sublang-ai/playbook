@@ -22,6 +22,11 @@ Target is an object artifact only: it defines the machine, actor contracts, and 
 
 The artifact shall use XState v5's `setup(...)` then `.createMachine(...)` [[10]].
 The artifact shall restrict itself to erasable TypeScript syntax — type annotations that strip cleanly, no constructor parameter properties, `enum`s, or namespaces — so a host running under type stripping loads it directly.
+It shall also pass the repository's strict `noUnusedLocals` and
+`noUnusedParameters` checks. Helper signatures and XState callbacks shall omit
+values they do not read; for example, a fresh-context helper that uses only
+`bossIntent` shall not also accept an unused `context`, and an assign callback
+that reads only `event` shall destructure only `event`.
 The `types` block shall declare only `context`, `events`, machine `input`, and
 machine `output`. XState v5's `SetupTypes` has no `actors` property; emitting
 `types: { actors: ... }` is invalid and prevents registered action and actor
@@ -80,6 +85,22 @@ playbook actor input/output type that the linker must provide. The linked
 module imports those exact types; it shall not redeclare near-duplicates that
 can drift in optional fields, dynamic-call metadata, question ids, or child
 result shapes.
+Any recursive JSON value type in the artifact shall exactly preserve the
+shared boundary's readonly variance:
+
+```typescript
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly JsonValue[]
+  | { readonly [key: string]: JsonValue };
+```
+
+Nested-playbook output, completed-result evidence, plans, context, and machine
+output shall use that readonly type rather than a mutable array/record
+near-duplicate. The linker shall not cast or copy around a variance mismatch.
 
 Every runtime-value placeholder established by Source in a direct-Captain or
 delegated-player prompt shall be backed by a typed actor-input field populated
@@ -116,6 +137,21 @@ authored question shall name `question`. A vague description such as
 fields. Deterministic verification synthesizes valid actor output from this
 local result contract and shall not infer hidden guard payloads from guard
 source text.
+
+For the default generic Captain decide-call-observe pattern, the local guard
+discriminants are a stable compiler contract, not names the compiler may
+invent:
+
+- initial routing uses `direct` with required `response`, `question` with
+  required `question`, and `delegation` with required `remainingPlan`,
+  `nextPlaybookId`, and `nextPlaybookInput`;
+- post-child reassessment uses `final` with required `response`,
+  `followUpQuestion` with required `question`, and `continuing` with required
+  `remainingPlan`, `nextPlaybookId`, and `nextPlaybookInput`.
+
+Both direct-Captain states additionally receive the universal
+`needsBossReply` result. Their guards and actions shall use those exact
+case-sensitive names so the compiled adjudication contract remains stable.
 
 ## States
 
@@ -321,9 +357,14 @@ remains responsible for its independent registry validation.
 Where Source forbids repeating an equivalent completed or failed call without
 new information, the machine shall also keep a private deterministic history
 of target-and-input signatures and reject a continuation whose target and
-complete input exactly match a prior call. That history shall not be included
-in a Captain or player prompt; a revised input containing new information is a
-different call.
+complete input exactly match a prior call. Encode each signature as the
+collision-free `JSON.stringify([playbookId, text])` tuple of exact JavaScript
+strings, not delimiter concatenation, and append it before invocation so
+success, abort, and authored failure all count. That history shall not be
+included in a Captain or player prompt; a revised input containing new
+information is a different call. The exact machine check is a safety floor;
+the acting Captain remains responsible for Source's broader semantic
+equivalence policy.
 That validation belongs on the guarded transition into the call state. The
 call state's `invoke.input` mapper shall be a pure read of the already-validated
 typed context fields; it shall not call an assertion helper or throw while
@@ -364,6 +405,15 @@ arrays, and plain own enumerable data-property objects. It shall reject cycles,
 non-plain instances (`Error`, `Date`, `Map`, and class instances), accessors,
 symbol keys, sparse/undefined values, `NaN`, and infinities rather than silently
 changing them during serialization.
+An accepted array shall have prototype exactly `Array.prototype`, no holes,
+symbols, accessors, or extra own string properties, and enumerable own data
+descriptors for every canonical index; its standard non-enumerable `length`
+descriptor is the sole exception. An accepted record shall have prototype
+exactly `Object.prototype` or `null`, and every key returned by
+`Reflect.ownKeys` shall be a string whose own descriptor is enumerable and a
+data descriptor. Cycle detection shall track only the active recursion path
+and remove a container on unwind, so a shared acyclic array or record is valid
+while an actual back-edge is rejected.
 
 ## Transitions
 
@@ -407,6 +457,17 @@ into a working or reassessment state with missing intent, prior result, plan,
 or other required context and shall not invent defaults merely to make an
 interrupt target executable.
 XState automatically stops the current state's invoked actor on transition [[2]].
+Where the default Captain's routing state accepts a fresh intent while another
+state or Boss-reply wait is active, its `BOSS_INTERRUPT` event shall carry a
+required non-empty `bossIntent`. The guarded routing arm shall copy that value,
+clear the prior plan, child evidence, exact-call history, selected call,
+response, error, and consumed question/reply context, then reenter routing.
+It shall not restart the old intent or retain a stale pending question.
+For this default Captain, `routing` is the sole `BOSS_INTERRUPT` target; a
+fresh directive always returns to routing and shall not jump directly into
+reassessment or the Boss-reply wait. The typed event union and classifier
+contract shall require exactly `targetId: 'routing'` plus the fresh
+`bossIntent`.
 
 ### Boss entry events vs. BOSS_INTERRUPT
 

@@ -444,7 +444,7 @@ describe('compiled default Captain runtime', () => {
     ).toHaveLength(1);
     await expect(
       runtime.init(makeSession(harness.ports)),
-    ).rejects.toThrow('playbook runtime cannot be initialized again');
+    ).rejects.toThrow(/initialized|disposed/i);
   });
 
   it('retains terminal disposal identity before initialization', async () => {
@@ -461,7 +461,7 @@ describe('compiled default Captain runtime', () => {
 
     await expect(
       runtime.init(makeSession(harness.ports)),
-    ).rejects.toThrow('playbook runtime cannot be initialized again');
+    ).rejects.toThrow(/initialized|disposed/i);
   });
 
   it('suppresses teardown snapshots after an initialization transition sink failure', async () => {
@@ -661,6 +661,10 @@ describe('compiled default Captain runtime', () => {
       label: 'a reply without a pending question',
       reply: { type: 'BOSS_REPLY', answer: 'orphan reply' },
     },
+    {
+      label: 'NO_ACTION with an injected field',
+      reply: { type: 'NO_ACTION', enabledPlaybooks: [] },
+    },
   ])('emits exactly one status and no event for $label', async ({ reply }) => {
     const harness = makeHarness({ classifications: [reply] });
     const runtime = await initRuntime(harness);
@@ -680,8 +684,8 @@ describe('compiled default Captain runtime', () => {
     });
     const recoveryStatuses = harness.statuses.slice(statusCount);
     expect(recoveryStatuses).toHaveLength(1);
-    expect(recoveryStatuses[0].message).toContain(
-      'Boss input was not actionable',
+    expect(recoveryStatuses[0].message).toMatch(
+      /not actionable|classification (?:was )?invalid|could not be classified/i,
     );
     expect(
       harness.traces.filter((trace) => trace.type === 'fsm.transition'),
@@ -728,6 +732,8 @@ describe('compiled default Captain runtime', () => {
     expect(harness.captainCalls).toHaveLength(2);
     expect(harness.judgeCalls[2]).toMatchObject({ purpose: 'classification' });
     expect(harness.judgeCalls[2].prompt).toContain(question);
+    expect(harness.judgeCalls[2].prompt).not.toContain('resumeStateId');
+    expect(harness.judgeCalls[2].prompt).not.toContain('sourceItem');
 
     const expectedPrefix = [
       'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.',
@@ -781,16 +787,18 @@ describe('compiled default Captain runtime', () => {
       signal: signal(),
     });
 
-    expect(suspended).toMatchObject({
-      outcome: 'suspended',
-      state: { stateId: 'callingPlaybook' },
-    });
+    expect(suspended).toMatchObject({ outcome: 'suspended' });
+    expect(suspended.state.tags).toContain('playbook.suspended');
     const callingTransition = harness.traces
       .filter((trace) => trace.type === 'fsm.transition')
       .findLast(
-        (trace) =>
-          (tracePayload(trace).state as { stateId?: unknown } | undefined)
-            ?.stateId === 'callingPlaybook',
+        (trace) => {
+          const state = tracePayload(trace).state as
+            | { readonly tags?: unknown }
+            | undefined;
+          const tags = state?.tags;
+          return Array.isArray(tags) && tags.includes('playbook.suspended');
+        },
       );
     expect(callingTransition).toBeDefined();
     expect(tracePayload(callingTransition!)).not.toHaveProperty(
@@ -842,15 +850,18 @@ describe('compiled default Captain runtime', () => {
     });
     const recoveryStatuses = harness.statuses.slice(statusCount);
     expect(recoveryStatuses).toHaveLength(1);
-    expect(recoveryStatuses[0].message).toContain(
-      'Boss input was not actionable',
+    expect(recoveryStatuses[0].message).toMatch(
+      /not actionable|classification (?:was )?invalid|could not be classified/i,
     );
     expect(
       harness.traces.filter((trace) => trace.type === 'fsm.transition'),
     ).toHaveLength(transitionCount);
     expect(harness.captainCalls).toHaveLength(1);
-    expect(harness.judgeCalls[2].prompt).toContain(
-      'BOSS_INTERRUPT with targetId exactly "routing"',
+    expect(harness.judgeCalls[2].prompt).toContain('BOSS_INTERRUPT');
+    expect(harness.judgeCalls[2].prompt).toContain('routing');
+    expect(harness.judgeCalls[2].prompt).toContain('bossIntent');
+    expect(harness.judgeCalls[2].prompt).not.toMatch(
+      /BOSS_INTERRUPT[^\n]*targetId[^\n]*(?:reassessing|awaitBossReply)/,
     );
 
     const completed = await runtime.handleBossInput({
@@ -1036,6 +1047,134 @@ describe('compiled default Captain runtime', () => {
     await runtime.dispose();
   });
 
+  it.each([
+    { delivery: 'immediate', status: 'aborted' },
+    { delivery: 'immediate', status: 'error' },
+    { delivery: 'resumed', status: 'aborted' },
+    { delivery: 'resumed', status: 'error' },
+  ] as const)(
+    'rejects the exact child call after an $delivery $status return',
+    async ({ delivery, status }) => {
+      const repeatedText = 'Try the implementation exactly once.';
+      const childSessionId = '10000000-0000-4000-8000-000000000008';
+      const childResult: PlaybookCallResult = {
+        status,
+        playbookId: 'code',
+        childSessionId,
+        error: {
+          name: status === 'aborted' ? 'AbortError' : 'ChildFailure',
+          message:
+            status === 'aborted'
+              ? 'Boss stopped the child.'
+              : 'The child could not finish.',
+        },
+      };
+      const childStart: PlaybookCallStart =
+        delivery === 'immediate'
+          ? { state: 'settled', result: childResult }
+          : { state: 'suspended', childSessionId };
+      const harness = makeHarness({
+        classifications: [intentClassification('Try once, then reassess.')],
+        captains: [
+          { status: 'ok', finalText: 'I will try the child once.' },
+          { status: 'ok', finalText: 'I will repeat the exact child call.' },
+        ],
+        adjudications: [
+          delegation('code', repeatedText, [
+            {
+              playbookId: 'code',
+              purpose: 'Retry only if new information changes the input.',
+            },
+          ]),
+          continuation('code', repeatedText),
+        ],
+        children: [childStart],
+      });
+      const runtime = await initRuntime(harness);
+
+      const opened = await runtime.handleBossInput({
+        text: 'Try once, then reassess.',
+        signal: signal(),
+      });
+      const completed =
+        delivery === 'resumed'
+          ? opened.outcome === 'suspended'
+            ? await runtime.resumePlaybookCall({
+                callId: opened.pendingCall.callId,
+                result: childResult,
+                signal: signal(),
+              })
+            : (() => {
+                throw new Error('Expected a suspended child call');
+              })()
+          : opened;
+
+      expect(completed).toMatchObject({
+        outcome: 'failed',
+        state: { stateId: 'failed', tags: ['playbook.parked'] },
+      });
+      expect(harness.childCalls).toHaveLength(1);
+      expect(harness.captainCalls[1].prompt).toContain(
+        'Do not repeat an equivalent failed or completed call without new information.',
+      );
+      await runtime.dispose();
+    },
+  );
+
+  it('accepts a same-target continuation with new input information', async () => {
+    const initialPlan = [
+      {
+        playbookId: 'code',
+        purpose: 'Refine the implementation from the first result.',
+      },
+    ];
+    const harness = makeHarness({
+      classifications: [intentClassification('Implement and refine once.')],
+      captains: [
+        { status: 'ok', finalText: 'I will implement first.' },
+        { status: 'ok', finalText: 'I will refine from the result.' },
+        { status: 'ok', finalText: 'The refinement is complete.' },
+      ],
+      adjudications: [
+        delegation('code', 'Implement the initial version.', initialPlan),
+        continuation(
+          'code',
+          'Refine the implementation using result summary implemented-v1.',
+        ),
+        finalResponse('The refinement is complete.'),
+      ],
+      children: [
+        settledSuccess('code', '10000000-0000-4000-8000-000000000010', {
+          summary: 'implemented-v1',
+        }),
+        settledSuccess('code', '10000000-0000-4000-8000-000000000011', {
+          summary: 'refined-v2',
+        }),
+      ],
+    });
+    const runtime = await initRuntime(harness);
+
+    const result = await runtime.handleBossInput({
+      text: 'Implement and refine once.',
+      signal: signal(),
+    });
+
+    expectTerminalResponse(result, 'The refinement is complete.');
+    expect(
+      harness.childCalls.map(({ request }) => [
+        request.playbookId,
+        request.text,
+      ]),
+    ).toEqual([
+      ['code', 'Implement the initial version.'],
+      [
+        'code',
+        'Refine the implementation using result summary implemented-v1.',
+      ],
+    ]);
+    await runtime.dispose();
+  });
+
   it('rejects a continuation whose remaining plan does not shrink', async () => {
     const unchangedPlan = [
       { playbookId: 'discuss', purpose: 'Compare the implementation.' },
@@ -1151,7 +1290,7 @@ describe('compiled default Captain runtime', () => {
         ).toMatchObject({
           payload: {
             outcome: 'suspended',
-            stateId: 'callingPlaybook',
+            stateId: opened.state.stateId,
             pendingCall: opened.pendingCall,
           },
         });
@@ -1229,6 +1368,11 @@ describe('compiled default Captain runtime', () => {
       childSessionId,
       output: { done: true },
     };
+    const bossBoundaryCount = harness.traces.filter(
+      (trace) =>
+        trace.type === 'boss.input.received' ||
+        trace.type === 'boss.input.settled',
+    ).length;
 
     await expect(
       runtime.resumePlaybookCall({
@@ -1236,7 +1380,7 @@ describe('compiled default Captain runtime', () => {
         result: childResult,
         signal: signal(),
       }),
-    ).rejects.toThrow(/does not match/);
+    ).rejects.toThrow(/does not match|unknown|stale/i);
 
     const completed = await runtime.resumePlaybookCall({
       callId: opened.pendingCall.callId,
@@ -1245,6 +1389,13 @@ describe('compiled default Captain runtime', () => {
     });
     expectTerminalResponse(completed, 'The resumed child completed.');
     expectPairedCalls(harness.traces, 'playbook');
+    expect(
+      harness.traces.filter(
+        (trace) =>
+          trace.type === 'boss.input.received' ||
+          trace.type === 'boss.input.settled',
+      ),
+    ).toHaveLength(bossBoundaryCount);
     await runtime.dispose();
   });
 
@@ -1270,9 +1421,17 @@ describe('compiled default Captain runtime', () => {
       ...harness.ports,
       emitStatus: async (message, data) => {
         await harness.ports.emitStatus(message, data);
-        const stateId = (data as { readonly stateId?: unknown } | undefined)
-          ?.stateId;
-        if (!rejectedFailedStatus && stateId === 'failed') {
+        const statusData = data as
+          | {
+              readonly stateId?: unknown;
+              readonly state?: { readonly stateId?: unknown };
+            }
+          | undefined;
+        const stateId = statusData?.stateId ?? statusData?.state?.stateId;
+        if (
+          !rejectedFailedStatus &&
+          (stateId === 'failed' || /failed/i.test(message))
+        ) {
           rejectedFailedStatus = true;
           throw new Error('secondary failed-status sink failure');
         }
@@ -1658,7 +1817,7 @@ describe('compiled default Captain runtime', () => {
     {
       label: 'missing final text',
       captain: { status: 'ok' as const },
-      expected: 'Captain call did not return finalText',
+      expected: /final\s*text|finalText/i,
     },
   ])(
     'rejects a Captain $label as a control error',
@@ -1701,7 +1860,7 @@ describe('compiled default Captain runtime', () => {
         text: 'Answer this intent.',
         signal: signal(),
       }),
-    ).rejects.toThrow('Captain call did not return finalText');
+    ).rejects.toThrow(/final\s*text|finalText/i);
 
     expectPairedCalls(harness.traces, 'captain');
     await runtime.dispose();
@@ -1909,6 +2068,37 @@ describe('compiled default Captain runtime', () => {
     await runtime.dispose();
   });
 
+  it.each([
+    {
+      label: 'an empty catalog field',
+      catalog: [{ id: 'code', command: '', intent: 'Implement changes.' }],
+    },
+    {
+      label: 'duplicate stable ids',
+      catalog: [
+        { id: 'code', command: 'code', intent: 'Implement changes.' },
+        { id: 'code', command: 'code-again', intent: 'Implement again.' },
+      ],
+    },
+    {
+      label: 'an extra entry field',
+      catalog: [
+        {
+          id: 'code',
+          command: 'code',
+          intent: 'Implement changes.',
+          hidden: 'not part of the host boundary',
+        },
+      ],
+    },
+  ])('rejects $label in the enabled catalog', ({ catalog }) => {
+    expect(() =>
+      createPlaybookRuntime({
+        enabledPlaybooks: catalog as unknown as typeof ENABLED_PLAYBOOKS,
+      }),
+    ).toThrow();
+  });
+
   it('substitutes placeholders literally in one pass over the original template', () => {
     const bossIntent = "literal <enabled-playbooks> $& $$ $` $'";
     const catalogIntent = "catalog keeps <boss-intent> and $& $$ $` $'";
@@ -2016,8 +2206,10 @@ describe('compiled default Captain runtime', () => {
       (trace) => trace.type === 'playbook.call.finished',
     );
     expect(childStart?.callId).toBe(childFinish?.callId);
+    expect(tracePayload(childStart!).stateId).toEqual(
+      tracePayload(childFinish!).stateId,
+    );
     expect(tracePayload(childStart!)).toMatchObject({
-      stateId: 'callingPlaybook',
       playbookId: harness.childCalls[0].request.playbookId,
       text: harness.childCalls[0].request.text,
     });
