@@ -442,6 +442,26 @@ describe('compiled default Captain runtime', () => {
     expect(
       harness.traces.filter((trace) => trace.type === 'session.disposed'),
     ).toHaveLength(1);
+    await expect(
+      runtime.init(makeSession(harness.ports)),
+    ).rejects.toThrow('playbook runtime cannot be initialized again');
+  });
+
+  it('retains terminal disposal identity before initialization', async () => {
+    const harness = makeHarness();
+    const runtime = createPlaybookRuntime({
+      enabledPlaybooks: ENABLED_PLAYBOOKS,
+    });
+
+    const firstDisposal = runtime.dispose();
+    expect(runtime.dispose()).toBe(firstDisposal);
+    await firstDisposal;
+    expect(runtime.dispose()).toBe(firstDisposal);
+    expect(harness.traces).toEqual([]);
+
+    await expect(
+      runtime.init(makeSession(harness.ports)),
+    ).rejects.toThrow('playbook runtime cannot be initialized again');
   });
 
   it('suppresses teardown snapshots after an initialization transition sink failure', async () => {

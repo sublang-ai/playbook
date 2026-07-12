@@ -1578,6 +1578,63 @@ describe('createPlaybookRuntime.init (Task 8 wiring)', () => {
     await runtime.dispose();
   });
 
+  it('serializes concurrent disposal behind failed initialization', async () => {
+    const traces: PlaybookTraceEvent[] = [];
+    const startError = new Error('deferred CODE session-start failure');
+    let observeStart!: () => void;
+    const startObserved = new Promise<void>((resolve) => {
+      observeStart = resolve;
+    });
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const ports = makeFakePorts({
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (trace.type === 'session.started') {
+          observeStart();
+          await startGate;
+          throw startError;
+        }
+      },
+    });
+    const runtime = createPlaybookRuntime({});
+
+    const initialization = runtime.init(
+      makePlaybookSession(ports, 'code-init-dispose-race'),
+    );
+    await startObserved;
+    const firstDisposal = runtime.dispose();
+    expect(runtime.dispose()).toBe(firstDisposal);
+    releaseStart();
+
+    await expect(initialization).rejects.toBe(startError);
+    await expect(firstDisposal).resolves.toBeUndefined();
+    expect(
+      traces.filter((trace) => trace.type === 'session.disposed'),
+    ).toHaveLength(1);
+    await expect(
+      runtime.init(makePlaybookSession(ports, 'code-init-after-disposal')),
+    ).rejects.toThrow('already initialized');
+  });
+
+  it('retains terminal disposal identity before initialization', async () => {
+    const runtime = createPlaybookRuntime({});
+    const firstDisposal = runtime.dispose();
+    expect(runtime.dispose()).toBe(firstDisposal);
+    await firstDisposal;
+    expect(runtime.dispose()).toBe(firstDisposal);
+
+    await expect(
+      runtime.init(
+        makePlaybookSession(makeFakePorts(), 'code-disposed-before-init'),
+      ),
+    ).rejects.toThrow('already initialized');
+  });
+
   it.each([
     {
       name: 'root id mismatch',
