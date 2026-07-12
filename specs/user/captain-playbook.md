@@ -17,6 +17,10 @@ Where no selected playbook is active, when Boss submits an ordinary intent, the 
 Where a Boss intent requires several specialized workflows, when the default Captain plans the work, it shall divide the intent into the smallest finite ordered set of useful playbook calls, issue at most one call at a time, and reassess the remaining plan after each child result.
 The remaining plan names only calls after the selected next call, and each
 continuation shortens it, so one intent cannot create an unbounded call loop.
+Captain shall not repeat semantically equivalent completed or failed work
+without new information. Independently, the machine shall reject the same
+stable target id plus exact complete input after any prior attempt while
+allowing a revised input that carries new information.
 
 ### CAPPLAY-3
 

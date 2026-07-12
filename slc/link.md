@@ -144,6 +144,14 @@ recoverable workflow `failed` result.
 
 `PlaybookRuntimeOptions` is host-agnostic and carries only _per-run_ knobs such as identity strings (e.g., model names a playbook substitutes into prompt placeholders) and strategy overrides the linker exposes.
 The link compiler emits a typed options interface per playbook based on the FSM's `CodingInput` (or equivalent).
+The CLI's absence of `--link-option` values does not mean that
+`PlaybookRuntimeOptions` is empty. CLI link options are compile-time inputs;
+the runtime options interface is independently derived from every required FSM
+input field that is not supplied by `PlaybookSession` or another linker-owned
+source. In particular, a required immutable `enabledPlaybooks` catalog shall
+remain a required readonly runtime option passed through to machine input; the
+linker shall neither invent an empty catalog nor require it to be baked into a
+CLI link option.
 
 Player binding is a _linker-time_ input baked into the emitted runtime by default.
 A linker may also expose it via `PlaybookRuntimeOptions` for per-run remapping; the contract requires only that the runtime ship with a deterministic binding it applies at every `callPlayer` site.
@@ -236,6 +244,13 @@ workflow calls. `CaptainResult` carries no resume token or player-continuation
 selection: the host owns one Captain session and its continuity. A non-`ok`
 result, or an `ok` result without `finalText`, shall reject the actor through
 the FSM's error path.
+Outside a signal-driven abort, those invalid direct-Captain results are
+latched control-plane failures. The runtime shall let the actor take `onError`,
+drive it to quiescence, and drain ordered emissions before the public method
+rejects with the original failure. It shall never translate either case into
+a recoverable workflow `{ outcome: 'failed' }` result. If the combined signal
+has aborted, an aborted host result follows the ordinary abort settlement
+instead of being promoted to a control-plane failure.
 
 Every linked runtime owns a map from resolved player id to its latest non-empty `resumeToken`.
 Before reading a resolved direct-Captain or delegated-player result, the
@@ -341,6 +356,16 @@ The trace types are `session.started`, `boss.input.received`,
 `boss.input.settled`, and `session.disposed`.
 Call pairs carry exact prompts and replies, normalized failures, actor and state
 identity, and their boundary-specific options.
+`session.started` and `session.disposed` carry their descriptor as top-level
+`state` and its singular `stateId` when present. Every judge start and finish
+carries the working snapshot's singular `stateId` when one exists;
+classification uses the current descriptor and adjudication uses the invoking
+actor input. The default Captain always has such a singular id, while a
+parallel snapshot may omit it. Every judge finish also carries
+`status: 'ok' | 'aborted' | 'error'`. Every `status.emitted` carries the
+described top-level `state` and its singular `stateId` when present, as well as
+its message and optional data; consumers shall not have to recover state
+identity from a nested ad hoc object.
 Judge results use `reply`; player start and finish payloads both carry the
 selected `resume`; Captain start and finish payloads both carry
 the exact composed prompt, `visibility: 'visible'`, the direct invocation's
@@ -353,6 +378,10 @@ The Captain finish payload shall preserve the exact `CaptainResult` status and
 final text when present, while carrying any failure in normalized form.
 An `ok` result without `finalText` therefore retains status `ok` but also
 carries the normalized missing-text failure that makes the actor reject.
+If the Captain port rejects before returning a result, the finish instead
+carries explicit `status: 'aborted'` when the combined signal has aborted or
+`status: 'error'` otherwise. A finish boundary never omits status merely
+because there was no structured host result.
 The pair obligation also applies when a port promise rejects or throws: the
 linked runtime shall emit and drain one normalized finish boundary before it
 propagates the failure. No started call boundary may be left without its
@@ -382,6 +411,14 @@ delays `emitTelemetry`.
 The linked module shall use `PQueue({ concurrency: 1 })` from `p-queue` for
 this ordering and drain it with `onIdle()` rather than recreate a promise-queue
 implementation in every generated artifact.
+An XState inspection callback shall synchronously enqueue the transition
+trace, state telemetry, status trace, and human status in that order before it
+returns. `emitStatus` likewise enqueues its trace and port emission in the same
+synchronous call. Do not enqueue state telemetry or the status port from a
+`trace(...).then(...)` continuation: the queue can become momentarily idle,
+letting an invoked actor's `await drain()` overtake those dependent enqueues.
+All validation happens before these synchronous enqueues; later sink failures
+are caught into the appropriate latch without changing their queue position.
 FSM trace events carry the same transition, pending-question, and normalized-error fields as state telemetry.
 Trace emissions are awaited and sequenced before the boundary operation or human status/state telemetry they describe.
 Every event in one session carries the same root/parent/depth identity.
@@ -495,6 +532,11 @@ prompt independent of host property insertion order.
 At construction, a structured host-owned catalog shall be validated against its
 declared exact entry shape, copied, and frozen recursively so later caller
 mutation or extra properties cannot alter a prompt or machine decision.
+For the default Captain catalog, every entry has exactly the own enumerable
+data keys `id`, `command`, and `intent`; all three values are non-empty strings,
+and `id` values are unique. Empty values, duplicate ids, extra keys, accessors,
+non-plain objects, and non-JSON data reject runtime construction rather than
+being silently repaired or discarded.
 
 When a direct Captain task resumes from its own Boss question, the composer
 shall prepend the same continuation preamble and labelled Q&A blocks defined in
@@ -502,6 +544,18 @@ shall prepend the same continuation preamble and labelled Q&A blocks defined in
 once to `callCaptain` with `{ visibility: 'visible' }`; it shall not expose the
 subsequent adjudicator prompt or structured judge reply through that visible
 call.
+The shared Captain composer shall replace every known placeholder whose
+matching typed field is present in the supplied input. It shall not choose one
+exclusive replacement set from `stateId`, source-item identity, or another
+variant discriminator. Verification may deliberately combine catalog,
+intent, plan, result, question, and reply fields in one synthetic input; every
+matching placeholder in that template still has to be rendered.
+Construct the replacement table from field presence alone. In particular,
+populate `<remaining-plan>` when `remainingPlan` is supplied and
+`<completed-call-results>` when `completedCallResults` is supplied, regardless
+of the input's `stateId` or `sourceItem`. An implementation branch such as
+`if (input.stateId === 'reassessment')` around either replacement is
+nonconformant.
 
 ## Boss-event mapping
 
@@ -520,12 +574,28 @@ comma before a closing brace or bracket, and complete a truncated
 unterminated string or unclosed object/array. When several values are
 recoverable, it shall choose the first object in document order, preferring a
 strict parse at each candidate position before repairing that same candidate.
+For each opening-brace position, first scan strings and nesting to find that
+candidate's earliest balanced closing boundary. Both the strict parse and the
+trailing-comma repair shall operate on only that bounded substring. If no
+closing boundary exists, repair may complete the unterminated suffix. The
+implementation shall never repair the entire remaining document after a
+balanced candidate, because later prose or a later clean object would make the
+earlier repair fail. Advance to the next opening brace only after strict and
+repaired parsing of the current bounded candidate both fail; an earlier
+repairable object therefore wins over every later strict object.
 When no object is recoverable or the recovered event/payload is invalid, the
 runtime shall emit exactly one status and send no FSM event; a malformed
 classification is recoverable control input, not a public boundary rejection.
+If a recovered `BOSS_REPLY` names no question that is currently pending, it is
+such a malformed classification: emit the one recovery status, send no event,
+leave the actor unchanged, and return `no-action` after emissions drain.
 Host-owned runtime options, player bindings, and enabled-playbook catalogs are
 not Boss-event payload. The classifier schema and parser shall not invite or
 accept them, and classified prose shall never overwrite their machine context.
+Every recovered event object shall have exactly the keys declared for its
+selected event arm. Extra own keys reject the classification; the parser shall
+not accept and discard injected catalog, option, state, or routing fields.
+`NO_ACTION` in particular is exactly `{ type: 'NO_ACTION' }`.
 When the FSM supports a Boss-reply suspension state, the prompt shall inspect
 the actor snapshot context and include each exact pending Boss question,
 question id, and asking player so the judge can distinguish a reply from a
@@ -534,6 +604,10 @@ omits its optional id shall be filled with that sole id. With several pending
 questions, the classifier shall require a known id. A reply shall re-enter only
 its recorded resume state and preserve the original intent, plan, prior child
 results, and Q+A continuation context.
+The classifier-facing pending-question block contains only `questionId`,
+`player`, and `question`. Internal `resumeStateId`, source-item identity, and
+other machine-routing fields remain authoritative in snapshot context and
+shall not be serialized into the judge prompt.
 The allowed fresh directives while parked include every applicable root entry
 event and `BOSS_INTERRUPT`; accepting one shall abandon and clear the pending
 question and reply context before new work begins.
@@ -597,6 +671,12 @@ The adjudicator shall fail loudly on:
 - A guard the state does not declare,
 - A missing payload field the state's `result` description requires,
 - An empty / malformed response.
+
+These cases shall remain distinguishable in the thrown error: malformed JSON
+recovery shall identify the missing JSON object, an unknown selection shall
+identify an undeclared guard, and an incomplete selection shall identify the
+missing required field. A generic “no declared guard selected” error for all
+three cases is nonconformant.
 
 Adjudicator failures are control-plane errors.
 The runtime shall propagate them by throwing out of `handleBossInput` after attempting cleanup.
@@ -663,6 +743,11 @@ and awaits a runtime-owned deferred result.
 Only after that pending record exists may the drive boundary treat the call
 state's `playbook.suspended` tag as quiescent.
 One runtime supports at most one pending child call; a second shall reject.
+The pending record shall also retain the call-start `turnId`. A resumed finish
+and every parent transition, Captain reassessment, and status caused by that
+return shall use this retained id, not an absent or newly allocated
+current-turn value. The finish callback shall receive or close over that stored
+id rather than read a mutable global turn id at resume time.
 The bridge shall strictly validate the start discriminant, non-empty suspended
 child session id, settled target identity, optional state descriptor,
 normalized error, and JSON-safe output. A malformed start, malformed result,
@@ -685,6 +770,12 @@ opening promise, surface any other late rejection as a control-plane cleanup
 failure, and recover a child session identity from a late resolved start when
 available. Generated runtimes shall pass the host port directly to the shared
 bridge rather than recreate this opening-promise drainage locally.
+In particular, aborting a public turn during that opening promise shall abort
+the combined bridge signal, wait for opening cleanup and the paired finish,
+let the promise actor reach its `onError` quiescent state, and only then return
+an aborted run result. It shall neither hang waiting for a child-resume path
+that was never registered nor return while the opening promise or finish
+emission remains live.
 The pending record shall retain a one-shot invocation-signal listener. If the
 call state is stopped, that listener shall settle and clear the deferred call
 as an aborted `NestedPlaybookCallError`, drain the matching finish boundary after
@@ -768,6 +859,12 @@ The `PlaybookRuntime` shall:
   Generated code shall pass the repository's full strict `tsc` build with no
   unused helper or destructured parameter, not only a transpile-only or
   target-local syntax check.
+  For the default Captain runtime, the initial quiescent `ready` snapshot may
+  emit the ordinary structured transition trace and telemetry, but it is not a
+  Boss-relevant transition and shall emit no human status. Any initial
+  transition-trace or telemetry sink failure is part of `init`: initialization
+  shall reject, stop the actor, and perform the failed-start cleanup below
+  rather than swallowing it as a later background error.
   Where the FSM input declares `selfPlaybookId`, seed it from the immutable
   `session.playbookId`; do not expose a caller option or reuse a working leaf's
   `stateId` as the self-call identity.
@@ -822,6 +919,10 @@ The `PlaybookRuntime` shall:
   non-abort control error before considering abort, and clear its boundary
   latches in `finally`, so a failed resume cannot leak an emission error into a
   later turn.
+  A resume is not a Boss-input turn and shall emit neither
+  `boss.input.received` nor `boss.input.settled`; the structured result is the
+  method return. Reusing the originating turn id on the child finish and
+  continuation emissions does not create a second Boss trace pair.
   This quiescence and drain path is mandatory even when
   `nestedBridge.resume(...)` rejects: capture that operation error, allow the
   promise actor's `onError` transition to settle, and select the first latched
@@ -836,6 +937,10 @@ The `PlaybookRuntime` shall:
   `session.disposed`.
 
 The actor's `lastError` field shall be surfaced via `emitStatus` when the machine enters its `failed` state.
+For the default Captain runtime, an initial `ready` state and a terminal `done`
+state shall not emit human status. The terminal response is already visible
+Captain prose; a synthetic “entered done” message would present it twice.
+Structured transition trace and telemetry still apply to both states.
 Every provided actor boundary shall first drain the queued state-entry
 transition/status/telemetry caused by entering its working leaf, so a call's
 `*.started` trace cannot overtake the transition that explains it. Every public
@@ -844,6 +949,14 @@ This initial `await drain()` is required inside each provided `fromPromise`
 body: XState may begin that body before publishing the root snapshot, and the
 await yields so the synchronous inspection callback can enqueue the entering
 transition first.
+
+If a `*.call.started` trace records and then its sink rejects, no host call may
+begin. The runtime shall still enqueue exactly one synthetic paired
+`*.call.finished` trace with `status: 'error'`, preserving the original call
+id, turn id, actor visibility, state/source identity, and prompt or request
+metadata from the start boundary. It shall then follow the same latched
+control-error, FSM settlement, and ordered-drain path as any other call-start
+failure; the synthetic finish must not replace the original sink error.
 
 ## Abort
 

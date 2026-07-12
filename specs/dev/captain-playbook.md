@@ -14,6 +14,14 @@ Where the package ships the default Captain playbook, the maintained source shal
 The initial `ready` hub shall carry `playbook.parked`, and a consumed routing
 or reassessment answer shall clear its pending question and reply before the
 machine enters a child-call or terminal state.
+Routing and reassessment answers shall resume their originating Captain leaf
+through the universal Boss-reply continuation; text2gears shall not model an
+answer as a separate GEARS item or working state.
+The machine shall record each selected child's stable target id and exact
+complete input before invocation, using a collision-free serialized tuple, and
+shall reject that exact pair on a later continuation whether the prior child
+succeeded, aborted, or failed. That deterministic history is private prompt
+state and does not replace Captain's broader semantic no-repeat instruction.
 
 ### CAPPLAY-7
 

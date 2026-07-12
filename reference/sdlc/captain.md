@@ -31,9 +31,18 @@ When Boss gives a new intent while Captain is the active playbook, Captain shall
 > Select exactly one next enabled playbook by stable id and give it complete standalone input containing only the context it needs.
 > Do not expose internal state ids, session ids, call ids, stack data, hidden control data, or private reasoning.
 
+A fresh directive that interrupts any parked Captain work shall restart this
+routing behavior with that fresh intent. It shall not jump directly into
+reassessment or retain the prior question, answer, plan, call history,
+evidence, selection, response, or error.
+
 A direct decision shall carry a concise JSON-safe `response` and complete.
 A question decision shall carry one concise `question` and wait for Boss without losing the original intent.
+Boss's answer resumes this same routing decision with continuation context; it is not a separate Captain behavior.
 A delegation decision shall carry a finite `remainingPlan` plus non-empty `nextPlaybookId` and `nextPlaybookInput` for its first call.
+The compiled routing result guards are exactly `direct`, `question`, and
+`delegation`, respectively; these names are part of this default playbook's
+stable machine contract.
 
 When Captain selects a next call with a non-empty `nextPlaybookId` from the enabled catalog, Captain shall call playbook selected by `nextPlaybookId`:
 > <nextPlaybookInput>
@@ -52,10 +61,21 @@ When the called playbook returns successfully, aborts, or fails, Captain shall r
 > Otherwise select exactly one next enabled playbook by stable id and give it complete standalone input containing only the context it needs.
 > Do not expose internal state ids, session ids, call ids, stack data, hidden control data, or private reasoning.
 
+For the machine's deterministic safety floor, two calls are the same only when
+both the stable target id and complete standalone input match exactly.
+Captain shall record that exact pair before invoking the child, so an `ok`,
+`aborted`, or `error` return all prevent the same later attempt. An input
+revised with new information is different for this exact check; Captain still
+owns the broader semantic no-repeat instruction above.
+
 Each completed call result shall contain only the selected playbook id, its `ok`, `aborted`, or `error` status, and either the child's actual JSON-safe output or a compact error with only `name` and `message`.
 It shall never retain or expose a child session id, call id, child state, stack trace, or an opaque runtime result object.
 
 A final decision shall carry a concise JSON-safe `response` and complete.
 A follow-up question shall carry one concise `question` and wait for Boss without losing the original intent, plan, or completed results.
+Boss's answer resumes this same reassessment with continuation context; it is not a separate Captain behavior.
 A continuing decision shall carry a strictly shorter finite `remainingPlan` plus non-empty `nextPlaybookId` and `nextPlaybookInput`.
+The compiled reassessment result guards are exactly `final`,
+`followUpQuestion`, and `continuing`, respectively; these names are part of
+this default playbook's stable machine contract.
 A child abort or failure is a completed call result for reassessment and shall not route this playbook directly to its generic failure state.

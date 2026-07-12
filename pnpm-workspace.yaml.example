@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-# Optional dev override: link @sublang/cligent to a local checkout
-# instead of resolving the registry version pinned in pnpm-lock.yaml.
+# Unreleased-branch dev override: link @sublang/cligent to a compatible local
+# checkout instead of the older registry version pinned in pnpm-lock.yaml.
 #
-# Production installs should not use this file. Copy it into place only
-# when you want pnpm to consume your local cligent source tree:
+# Production installs should not use this file. Until cligent 0.14.0 is
+# released and pinned, copy it into place for source development:
 #
 #   cp pnpm-workspace.yaml.example pnpm-workspace.yaml
 #   # adjust the relative path to your local cligent checkout, then

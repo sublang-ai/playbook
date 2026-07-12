@@ -179,28 +179,26 @@ Clone, install, and run the suite locally:
 ```sh
 git clone https://github.com/sublang-ai/playbook.git
 cd playbook
+git clone https://github.com/sublang-ai/cligent.git ../cligent
+cp pnpm-workspace.yaml.example pnpm-workspace.yaml
 pnpm install
 pnpm build
 pnpm test
 ```
 
-`pnpm install` here installs the `@sublang/cligent` version pinned
-in the checked-in `pnpm-lock.yaml` — the same version CI installs
-via `--frozen-lockfile`, so contributor checkouts and CI agree.
-The published `package.json` declares `@sublang/cligent` as
-`^0.13.0`, so an end-user install with no lockfile (e.g., `npm
-install -g @sublang/playbook`) resolves a compatible cligent 0.13.x
-release (see [RELEASE-14](specs/dev/release.md#release-14)). To
-refresh the contributor pin within that range, run
-`pnpm update @sublang/cligent` and commit the resulting
-`pnpm-lock.yaml` change. To adopt a later cligent minor, update the
-`package.json` specifier and lockfile together.
-No local link required for any of this. To point pnpm at a local
-`cligent` checkout
-instead, copy
-[`pnpm-workspace.yaml.example`](pnpm-workspace.yaml.example)
-into place; the override is gitignored so it never leaks into a
-production install.
+The current Unreleased branch requires cligent's explicit player-resume and
+pre-close Captain contracts, which registry release 0.13.0 does not contain.
+Source development therefore uses a compatible sibling `../cligent` checkout
+through the gitignored
+[`pnpm-workspace.yaml`](pnpm-workspace.yaml.example) override shown above.
+Do not commit the local lockfile rewrite produced by that override.
+
+A registry-only frozen install becomes supported after cligent 0.14.0 is
+released and this package's dependency range and lockfile are updated together
+under [RELEASE-14](specs/dev/release.md#release-14). Until that authorized
+release sequence, the checked-in `^0.13.0` / 0.13.0 registry closure is an
+intentional clean-install gate for this Unreleased work, not a compatible
+development runtime.
 
 Drive a Boss turn against the source tree with the launcher, which
 resolves `tmux-play`, the Playbook Captain shell, and the CODE registry
