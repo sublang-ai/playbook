@@ -35,6 +35,7 @@ meta.md     The spec of specs
 | DR-009 | [009-generic-playbook-cli-and-registry.md](decisions/009-generic-playbook-cli-and-registry.md) | Generic `playbook` CLI and multi-playbook registry enablement: explicit `from`-loaded registry modules, profile-based agent settings, playbook-scoped namespaced players, active-playbook tmux-play pane visibility, registry-owned park states and summary policy, and one active engagement preserved |
 | DR-010 | [010-playbook-session-tracing-and-resume.md](decisions/010-playbook-session-tracing-and-resume.md) | Immutable per-runtime playbook session UUIDs, boundary-complete ordered traces, and explicit per-player fresh/resume selection from authoritative adapter tokens |
 | DR-011 | [011-composable-playbook-execution.md](decisions/011-composable-playbook-execution.md) | XState parallel-region joins, structured runtime state, function-style nested playbook calls, a live Captain session stack, and causally linked trace schema v2 |
+| DR-012 | [012-default-captain-playbook.md](decisions/012-default-captain-playbook.md) | Compiled default Captain policy, first-class Captain calls, dynamic sequential child plans, and deterministic host-owned stack routing |
 
 ## Iterations
 
@@ -56,6 +57,7 @@ meta.md     The spec of specs
 | IR-016 | [016-generic-playbook-cli-and-registry.md](iterations/016-generic-playbook-cli-and-registry.md) | Decompose DR-009: generic `playbook` CLI, multi-playbook registry loaded via explicit `from` modules, profile-based settings, namespaced `<id>-<role>` players, active-playbook tmux-play visibility, registry-owned park states and summary policy, and retirement of `playbook-code` / `./code/tmux-play` / `captain.options.code` / PBCODE |
 | IR-017 | [017-playbook-session-trace-resume.md](iterations/017-playbook-session-trace-resume.md) | Give every runtime session an immutable UUID and ordered full boundary trace, with explicit player-session isolation and continuation through adapter resume tokens |
 | IR-018 | [018-composable-playbook-execution.md](iterations/018-composable-playbook-execution.md) | Run independent player tasks concurrently and let live playbooks call, suspend for, and resume from nested enabled playbooks |
+| IR-019 | [019-default-captain-playbook.md](iterations/019-default-captain-playbook.md) | Compile and host a generic Captain that can clarify, answer, and execute finite sequential plans of nested playbook calls |
 
 ## Packages
 
@@ -66,6 +68,14 @@ meta.md     The spec of specs
 | user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: per-playbook slash selection, visible chat, active-engagement routing, nested child call/return, active-leaf pane visibility, status pass-through, parking, dismissal, final disposal, and optional registry-owned turn summaries |
 | dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: registry loading, namespaced role binding, hidden routing, causal UUID runtime-session stack, active-leaf visibility, explicit player and nested-call resume bridges, trace pass-through, summaries, telemetry, and LIFO lifecycle |
 | test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, lifecycle, registry loading, role binding, visibility, causal nested sessions, player/nested resume, trace/status/telemetry pass-through, summaries, parking, dismissal, and LIFO disposal |
+
+### CAPPLAY
+
+| Group | File | Summary |
+| --- | --- | --- |
+| user | [captain-playbook.md](user/captain-playbook.md) | Default generic Captain behavior for direct answers, material clarification, finite sequential delegation plans, and active-leaf Boss routing |
+| dev | [captain-playbook.md](dev/captain-playbook.md) | Captain source and compiled runtime, first-class Captain port, sanitized catalog, dynamic child calls, and lazy internal-root hosting |
+| test | [captain-playbook.md](test/captain-playbook.md) | Compilation and shell integration tests for Captain planning, nested pause/return, direct-call visibility, trace completeness, and privacy |
 
 ### GIT
 
