@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 // IR-005 Task 4 — edge coverage.
-// Pins every captain-invoking state's `onDone` arms, `onError`
+// Pins every delegated-player state's `onDone` arms, `onError`
 // route, and every root-level event (START_CODING / CONTINUE_IR
 // / SUMMARIZE_IR / BOSS_INTERRUPT[targetId]).
 //
 // Driver pattern: synthesize a snapshot at `ready` with the
-// target context, start an actor with a fake `captain` actor,
+// target context, start an actor with a fake `player` actor,
 // then send `BOSS_INTERRUPT` to jump into the source state. The
-// re-entry transition's `reenter: true` re-invokes the captain,
-// the fake returns the fixture's `CaptainOutput`, and xstate
+// re-entry transition's `reenter: true` re-invokes the player,
+// the fake returns the fixture's `PlayerOutput`, and xstate
 // fires the `onDone` arm that matches. The fake hangs on any
 // second invocation, so we stay at the resulting state.
 //
@@ -23,8 +23,8 @@ import { createActor, fromPromise } from 'xstate';
 
 import { codingMachine } from './code.fsm.js';
 import type {
-  CaptainInput,
-  CaptainOutput,
+  PlayerInput as CaptainInput,
+  PlayerOutput as CaptainOutput,
   CodingContext,
   CodingEvent,
 } from './code.fsm.js';
@@ -68,6 +68,7 @@ function bossReplyFx(
   bossReplyFixtures.set(index, {
     context: {
       pendingBossQuestion: {
+        questionId: resumeStateId as never,
         resumeStateId: resumeStateId as never,
         sourceItem: 'CODE-X',
         player: 'Coder',
@@ -83,6 +84,7 @@ const staleBossReplyContext: Pick<
   'pendingBossQuestion' | 'bossReply'
 > = {
   pendingBossQuestion: {
+    questionId: 'planAndImplement',
     resumeStateId: 'planAndImplement',
     sourceItem: 'CODE-1',
     player: 'Coder',
@@ -112,7 +114,9 @@ function actionClearsBossReplyContext(action: unknown): boolean {
   }
   const args = { context: {}, event: {} };
   try {
-    return pendingBossQuestion(args) === undefined && bossReply(args) === undefined;
+    return (
+      pendingBossQuestion(args) === undefined && bossReply(args) === undefined
+    );
   } catch {
     return false;
   }
@@ -126,7 +130,10 @@ function expectBossReplyContextCleared(
   context: CodingContext,
   label: string,
 ): void {
-  expect(context.pendingBossQuestion, `${label}: pendingBossQuestion`).toBeUndefined();
+  expect(
+    context.pendingBossQuestion,
+    `${label}: pendingBossQuestion`,
+  ).toBeUndefined();
   expect(context.bossReply, `${label}: bossReply`).toBeUndefined();
 }
 
@@ -157,7 +164,10 @@ function awaitBossReplyEventFor(transition: {
 fx('planAndImplement', 0, { captainOutput: { guard: 'singleCommitReady' } });
 fx('planAndImplement', 1, { captainOutput: { guard: 'irDrafted' } });
 fx('planAndImplement', 2, {
-  captainOutput: { guard: 'needsBossReply', question: 'Which scope should I use?' },
+  captainOutput: {
+    guard: 'needsBossReply',
+    question: 'Which scope should I use?',
+  },
 });
 
 // CODE-2 — respondToReview (11 arms)
@@ -165,13 +175,22 @@ fx('respondToReview', 0, { captainOutput: { guard: 'changesMadeSpecs' } });
 fx('respondToReview', 1, { captainOutput: { guard: 'changesMadeCode' } });
 fx('respondToReview', 2, { captainOutput: { guard: 'changesMadeMixed' } });
 fx('respondToReview', 3, {
-  captainOutput: { guard: 'changesMadeSpecsAndChallenged', challenges: '1. rebut x' },
+  captainOutput: {
+    guard: 'changesMadeSpecsAndChallenged',
+    challenges: '1. rebut x',
+  },
 });
 fx('respondToReview', 4, {
-  captainOutput: { guard: 'changesMadeCodeAndChallenged', challenges: '1. rebut x' },
+  captainOutput: {
+    guard: 'changesMadeCodeAndChallenged',
+    challenges: '1. rebut x',
+  },
 });
 fx('respondToReview', 5, {
-  captainOutput: { guard: 'changesMadeMixedAndChallenged', challenges: '1. rebut x' },
+  captainOutput: {
+    guard: 'changesMadeMixedAndChallenged',
+    challenges: '1. rebut x',
+  },
 });
 fx('respondToReview', 6, {
   captainOutput: { guard: 'challengesRaised', challenges: '1. rebut x' },
@@ -200,14 +219,20 @@ fx('continueIr', 0, {
 });
 fx('continueIr', 1, { captainOutput: { guard: 'iterationDone' } });
 fx('continueIr', 2, {
-  captainOutput: { guard: 'needsBossReply', question: 'Which task should I do?' },
+  captainOutput: {
+    guard: 'needsBossReply',
+    question: 'Which task should I do?',
+  },
 });
 
 // CODE-4 — summarizeSpecs (3 arms)
 fx('summarizeSpecs', 0, { captainOutput: { guard: 'specsReady' } });
 fx('summarizeSpecs', 1, { captainOutput: { guard: 'noSpecChanges' } });
 fx('summarizeSpecs', 2, {
-  captainOutput: { guard: 'needsBossReply', question: 'Which spec scope should I summarize?' },
+  captainOutput: {
+    guard: 'needsBossReply',
+    question: 'Which spec scope should I summarize?',
+  },
 });
 
 // CODE-5..10 — review*Commit*  (5 arms each, identical shape)
@@ -283,7 +308,9 @@ fx('adjudicateChallenges', 3, {
   context: { reviewSubject: 'commit', afterReview: 'done' },
   captainOutput: { guard: 'challengeAccepted' },
 });
-fx('adjudicateChallenges', 4, { captainOutput: { guard: 'challengeRejected' } });
+fx('adjudicateChallenges', 4, {
+  captainOutput: { guard: 'challengeRejected' },
+});
 needsBossReplyFx('adjudicateChallenges', 5);
 
 // CODE-18 — commitCoderInitial (9 arms)
@@ -347,7 +374,9 @@ function makeFakeCaptain(behavior: CaptainOutput | 'throw' | 'hang') {
 }
 
 function machineWith(behavior: CaptainOutput | 'throw' | 'hang') {
-  return codingMachine.provide({ actors: { captain: makeFakeCaptain(behavior) } });
+  return codingMachine.provide({
+    actors: { player: makeFakeCaptain(behavior) },
+  });
 }
 
 type DrivenSnapshot = {
@@ -489,9 +518,14 @@ describe('edge coverage — needsBossReply provenance', () => {
   for (const state of states.filter(
     (s) => 'needsBossReply' in s.getInput({}).result,
   )) {
-    const transition = state.transitions.find((t) => t.target === 'awaitBossReply');
+    const transition = state.transitions.find(
+      (t) => t.target === 'awaitBossReply',
+    );
     it(`${state.stateId} needsBossReply populates pendingBossQuestion from invocation metadata`, async () => {
-      expect(transition, `${state.stateId}: missing needsBossReply arm`).toBeDefined();
+      expect(
+        transition,
+        `${state.stateId}: missing needsBossReply arm`,
+      ).toBeDefined();
       const fixture = fixtures.get(`${state.stateId}#${transition!.index}`);
       expect(
         fixture?.captainOutput.guard,
@@ -510,6 +544,7 @@ describe('edge coverage — needsBossReply provenance', () => {
       });
       const input = state.getInput(initialContext);
       expect(snap.context.pendingBossQuestion).toEqual({
+        questionId: state.stateId,
         resumeStateId: state.stateId,
         sourceItem: input.sourceItem,
         player: input.player,
@@ -648,7 +683,10 @@ describe('edge coverage — awaitBossReply BOSS_REPLY arms', () => {
       });
       expect(snap.value).toBe(transition.target);
       if (transition.target === 'failed') {
-        expectBossReplyContextCleared(snap.context, `BOSS_REPLY#${transition.index}`);
+        expectBossReplyContextCleared(
+          snap.context,
+          `BOSS_REPLY#${transition.index}`,
+        );
         expect((snap.context.lastError as Error).message).toBe(
           'BOSS_REPLY received empty answer',
         );
@@ -714,7 +752,7 @@ describe('edge coverage — structural', () => {
     expect(fixtures.size).toBe(armCount);
   });
 
-  it('every captain-invoking state has a matching awaitBossReply BOSS_REPLY arm', () => {
+  it('every player-invoking state has a matching awaitBossReply BOSS_REPLY arm', () => {
     const captainStateIds = states.map((s) => s.stateId).sort();
     const bossReplyTargets = awaitBossReply.bossReplyTransitions
       .map((t) => t.target)
@@ -731,7 +769,10 @@ describe('edge coverage — structural', () => {
       .filter((target) => target !== 'failed')
       .filter((target) => {
         const state = stateById.get(target);
-        return state === undefined || !('needsBossReply' in state.getInput({}).result);
+        return (
+          state === undefined ||
+          !('needsBossReply' in state.getInput({}).result)
+        );
       });
 
     expect(targetsMissingNeedsBossReply).toEqual([]);
@@ -746,7 +787,9 @@ describe('edge coverage — structural', () => {
   });
 
   it('no awaitBossReply BOSS_REPLY fixture is unused', () => {
-    const indexes = new Set(awaitBossReply.bossReplyTransitions.map((t) => t.index));
+    const indexes = new Set(
+      awaitBossReply.bossReplyTransitions.map((t) => t.index),
+    );
     const unused: number[] = [];
     for (const index of bossReplyFixtures.keys()) {
       if (!indexes.has(index)) unused.push(index);

@@ -48,10 +48,8 @@ export function createDiscussRuntimeOptions({ captainOptions, players, }) {
 // between the players by hand, and the saved-counts wording — so the shell
 // reports how many interruptions a run saved.
 const discussStateCountLabels = {
-    askHostInitial: 'proposal round',
-    askParticipantInitial: 'proposal round',
-    hostInitialRound: 'proposal round',
-    participantInitialRound: 'proposal round',
+    initialProposalRound: 'proposal round',
+    reconciliationRound: 'proposal round',
     reviewSpecInitialCommit: 'review round',
     reviewSpecHostChanges: 'review round',
     reviewDrInitialCommit: 'review round',
@@ -90,9 +88,6 @@ export const discussPlaybookRegistryEntry = {
     command: 'discuss',
     intent: 'design discussion: two agents converge on spec items or decision records',
     requiredRoleIds: ['host', 'participant'],
-    idleStateId: 'ready',
-    finalStateId: 'done',
-    parkStateIds: ['failed', 'awaitBossReply'],
     summaryPolicy: discussSummaryPolicy,
     validateOptions: validateDiscussOptions,
     createRuntime(options) {

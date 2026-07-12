@@ -11,15 +11,17 @@
 //                       Committer -> committer
 //                       (default binding: lowercased player name)
 //   Composite players:  Committer = Host | Participant. DISCUSS-14 and
-//                       DISCUSS-15 keep CaptainInput.player = 'Committer';
+//                       DISCUSS-15 keep PlayerInput.player = 'Committer';
 //                       callPlayer resolution uses options.committer when
 //                       supplied, otherwise falls back to Host, the first
 //                       listed alias alternative.
 //   Adjudication:       LLM-judge per state (default)
 //   Boss-event mapping: free-text judge classification (default)
-//   Abort strategy:     natural rejection; every Captain-invoking state's
+//   Abort strategy:     natural rejection; every player-invoking state's
 //                       onError routes to the quiescent failed state.
+import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
+import { assertJsonSafe, combineAbortSignals, normalizeError, normalizePlaybookSnapshot, snapshotJsonValue, snapshotPlaybookSession, validatePlayerResult, waitForPlaybookQuiescence, } from '../../../src/xstate-runtime.js';
 import discussMachine from './discuss.fsm.js';
 const DEFAULT_PLAYER_BINDING = {
     Host: 'host',
@@ -30,6 +32,48 @@ const ALIAS_RESOLUTION = {
     'DISCUSS-14': 'Committer = Host | Participant; uses input.committerPlayer when supplied, otherwise Host.',
     'DISCUSS-15': 'Committer = Host | Participant; uses input.committerPlayer when supplied, otherwise Host.',
 };
+function snapshotDiscussRuntimeOptions(value) {
+    const captured = snapshotJsonValue(value, 'DISCUSS runtime options');
+    if (!isPlainObject(captured)) {
+        throw new TypeError('DISCUSS runtime options must be an object');
+    }
+    const allowed = new Set([
+        'host',
+        'participant',
+        'committer',
+        'playerBinding',
+    ]);
+    for (const key of Object.keys(captured)) {
+        if (!allowed.has(key)) {
+            throw new TypeError(`DISCUSS runtime options.${key} is not declared`);
+        }
+    }
+    for (const key of ['host', 'participant', 'committer']) {
+        if (key in captured && typeof captured[key] !== 'string') {
+            throw new TypeError(`DISCUSS runtime options.${key} must be a string`);
+        }
+    }
+    if ('playerBinding' in captured) {
+        const playerBinding = captured.playerBinding;
+        if (!isPlainObject(playerBinding)) {
+            throw new TypeError('DISCUSS runtime options.playerBinding must be an object');
+        }
+        const playerNames = new Set([
+            'Host',
+            'Participant',
+            'Committer',
+        ]);
+        for (const [player, playerId] of Object.entries(playerBinding)) {
+            if (!playerNames.has(player)) {
+                throw new TypeError(`DISCUSS runtime options.playerBinding.${player} is not declared`);
+            }
+            if (typeof playerId !== 'string' || playerId.trim().length === 0) {
+                throw new TypeError(`DISCUSS runtime options.playerBinding.${player} must be a non-empty string`);
+            }
+        }
+    }
+    return captured;
+}
 const STATE_DESCRIPTIONS = {
     ready: 'Idle hub awaiting a Boss discussion or review directive.',
     askHostInitial: 'Host proposes whether the Boss topic should become spec items or DRs.',
@@ -117,18 +161,10 @@ const CAPTAIN_STATES = [
     },
 ];
 const CAPTAIN_STATE_IDS = new Set(CAPTAIN_STATES.map((state) => state.stateId));
-const QUIESCENT_STATES = new Set([
-    'ready',
-    'awaitBossReply',
-    'failed',
-    'done',
-]);
 const BOSS_INTERRUPT_TARGETS = [
     'ready',
-    'askHostInitial',
-    'askParticipantInitial',
-    'hostInitialRound',
-    'participantInitialRound',
+    'initialProposalRound',
+    'reconciliationRound',
     'hostWritesAgreement',
     'commitInitialChanges',
     'reviewSpecInitialCommit',
@@ -218,54 +254,135 @@ function requiredFieldsFor(description) {
     }
     return fields;
 }
+// LLM judges routinely wrap JSON in prose/fences or damage its tail. Match
+// CODE's recovery contract: scan candidate starts in document order, prefer a
+// strict balanced value at each position, then repair trailing commas and
+// truncation before considering a later candidate.
 function extractJson(raw) {
-    const trimmed = raw.trim();
-    const tryParse = (value) => {
-        try {
-            const parsed = JSON.parse(value);
-            return parsed !== null &&
-                typeof parsed === 'object' &&
-                !Array.isArray(parsed)
-                ? parsed
-                : null;
-        }
-        catch {
-            return null;
-        }
-    };
-    const direct = tryParse(trimmed);
-    if (direct)
-        return direct;
-    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-    if (fenced) {
-        const parsed = tryParse(fenced[1].trim());
-        if (parsed)
-            return parsed;
+    try {
+        const parsed = parseJudgeJson(raw);
+        return isPlainObject(parsed) ? parsed : null;
     }
-    const first = trimmed.indexOf('{');
-    const last = trimmed.lastIndexOf('}');
-    if (first >= 0 && last > first) {
-        return tryParse(trimmed.slice(first, last + 1));
+    catch {
+        return null;
     }
-    return null;
+}
+function parseJudgeJson(raw) {
+    const text = stripCodeFence(raw.trim());
+    try {
+        return JSON.parse(text);
+    }
+    catch {
+        // Fall through to candidate extraction and repair.
+    }
+    const starts = [];
+    for (let index = 0; index < text.length; index++) {
+        if (text[index] === '{' || text[index] === '[')
+            starts.push(index);
+    }
+    let firstValue;
+    for (const start of starts) {
+        let parsedHere;
+        for (const repair of [false, true]) {
+            const candidate = extractJsonValue(text, start, repair);
+            if (candidate === undefined)
+                continue;
+            try {
+                parsedHere = { value: JSON.parse(candidate) };
+            }
+            catch {
+                // Try repair at this position, then continue in document order.
+                continue;
+            }
+            break;
+        }
+        if (parsedHere === undefined)
+            continue;
+        if (isPlainObject(parsedHere.value))
+            return parsedHere.value;
+        firstValue ??= parsedHere;
+    }
+    if (firstValue !== undefined)
+        return firstValue.value;
+    throw new Error('judge response is not valid JSON');
+}
+function isPlainObject(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function stripCodeFence(text) {
+    const fence = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
+    return fence ? fence[1].trim() : text;
+}
+function extractJsonValue(text, start, repair) {
+    const stack = [];
+    let output = '';
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index++) {
+        const character = text[index];
+        if (inString) {
+            output += character;
+            if (escaped)
+                escaped = false;
+            else if (character === '\\')
+                escaped = true;
+            else if (character === '"')
+                inString = false;
+            continue;
+        }
+        if (character === '"') {
+            inString = true;
+            output += character;
+            continue;
+        }
+        if (character === '{' || character === '[') {
+            stack.push(character === '{' ? '}' : ']');
+            output += character;
+            continue;
+        }
+        if (character === '}' || character === ']') {
+            if (repair)
+                output = dropTrailingComma(output);
+            output += character;
+            stack.pop();
+            if (stack.length === 0)
+                return output;
+            continue;
+        }
+        output += character;
+    }
+    if (!repair)
+        return undefined;
+    if (inString)
+        output += '"';
+    output = dropTrailingComma(output);
+    while (stack.length > 0)
+        output += stack.pop();
+    return output;
+}
+function dropTrailingComma(value) {
+    return value.replace(/,(\s*)$/, '$1');
 }
 function buildClassifierPrompt(text, ctx) {
     const lines = [];
     lines.push('You are the Boss-input classifier for the discuss playbook.');
     lines.push('Classify the Boss message into exactly one FSM event, or into no event.');
     lines.push('');
-    lines.push(`Current FSM state: ${ctx.state}`);
-    if (ctx.pendingQuestion) {
-        lines.push('Pending Boss question:');
-        lines.push(ctx.pendingQuestion);
-        lines.push('If the Boss message answers that question, classify it as BOSS_REPLY; if it is a fresh directive, classify it accordingly.');
+    lines.push(`Current FSM state: ${JSON.stringify(ctx.state.value)}`);
+    lines.push(`Active state ids: ${ctx.state.activeStateIds.join(', ')}`);
+    if (ctx.pendingQuestions.length > 0) {
+        lines.push('Pending Boss questions:');
+        for (const pending of ctx.pendingQuestions) {
+            lines.push(`- ${pending.questionId} (${pending.player}, ${pending.sourceItem}): ${pending.question}`);
+        }
+        lines.push('If the Boss message answers a pending question, classify it as BOSS_REPLY; if it is a fresh directive, classify it accordingly.');
     }
     lines.push('');
     lines.push('Events and payload contracts:');
     lines.push('- START_DISCUSSION: required topic string; optional hostLlm, participantLlm strings (identities normally come from run options).');
     lines.push('- START_REVIEW: required latestChanges string, required reviewScope string ("specItems" | "decisionRecords" | "mixed"), optional rebuttals string.');
     lines.push(`- BOSS_INTERRUPT: required targetId string, one of ${BOSS_INTERRUPT_TARGETS.join(', ')}.`);
-    lines.push('- BOSS_REPLY: required answer string; valid when the FSM waits in awaitBossReply.');
+    lines.push('- BOSS_REPLY: required answer string and questionId when several questions are pending; valid only while at least one Boss question is pending.');
     lines.push('');
     lines.push('Boss message:');
     lines.push(text);
@@ -274,7 +391,7 @@ function buildClassifierPrompt(text, ctx) {
     lines.push('Use null when no FSM action applies.');
     return lines.join('\n');
 }
-function parseClassification(raw) {
+function parseClassification(raw, pendingQuestionIds = []) {
     const obj = extractJson(raw);
     if (!obj)
         return null;
@@ -302,7 +419,9 @@ function parseClassification(raw) {
                 type: 'START_REVIEW',
                 latestChanges: obj.latestChanges,
                 reviewScope: obj.reviewScope,
-                ...(typeof obj.rebuttals === 'string' ? { rebuttals: obj.rebuttals } : {}),
+                ...(typeof obj.rebuttals === 'string'
+                    ? { rebuttals: obj.rebuttals }
+                    : {}),
             };
         }
         return null;
@@ -315,8 +434,24 @@ function parseClassification(raw) {
         return null;
     }
     if (eventType === 'BOSS_REPLY') {
-        return typeof obj.answer === 'string'
-            ? { type: 'BOSS_REPLY', answer: obj.answer }
+        if (typeof obj.answer !== 'string' || pendingQuestionIds.length === 0) {
+            return null;
+        }
+        if (typeof obj.questionId === 'string') {
+            return pendingQuestionIds.includes(obj.questionId)
+                ? {
+                    type: 'BOSS_REPLY',
+                    questionId: obj.questionId,
+                    answer: obj.answer,
+                }
+                : null;
+        }
+        return pendingQuestionIds.length === 1
+            ? {
+                type: 'BOSS_REPLY',
+                questionId: pendingQuestionIds[0],
+                answer: obj.answer,
+            }
             : null;
     }
     return null;
@@ -372,120 +507,129 @@ function parseAdjudication(raw, input) {
     return output;
 }
 function combineSignals(a, b) {
-    const signals = [a, b].filter((signal) => signal instanceof AbortSignal);
-    if (signals.length === 0)
-        return new AbortController().signal;
-    if (signals.length === 1)
-        return signals[0];
-    return AbortSignal.any(signals);
+    return combineAbortSignals(a, b);
 }
 function normalizeErrorCompact(err) {
     if (err === undefined || err === null)
         return undefined;
-    if (err instanceof Error)
-        return { name: err.name, message: err.message };
-    if (typeof err === 'object') {
-        const obj = err;
-        if (typeof obj.message === 'string') {
-            return {
-                name: typeof obj.name === 'string' ? obj.name : 'Error',
-                message: obj.message,
-            };
-        }
-        // A message-less object (e.g. a malformed CaptainOutput remembered by
-        // the FSM's failure actions) would String() to "[object Object]",
-        // hiding the very payload that explains the failure. Serialize it.
-        return { name: 'Error', message: stringifyCompact(err) };
-    }
-    return { name: 'Error', message: String(err) };
-}
-function stringifyCompact(value) {
-    try {
-        return JSON.stringify(value) ?? String(value);
-    }
-    catch {
-        return String(value);
-    }
+    const normalized = normalizeError(err);
+    return { name: normalized.name, message: normalized.message };
 }
 function normalizeErrorFull(err) {
-    const compact = normalizeErrorCompact(err);
-    if (!compact)
-        return undefined;
-    if (err instanceof Error && err.stack !== undefined) {
-        return { ...compact, stack: err.stack };
-    }
-    if (typeof err === 'object' && err !== null) {
-        const stack = err.stack;
-        if (typeof stack === 'string')
-            return { ...compact, stack };
-    }
-    return compact;
+    return err === undefined || err === null ? undefined : normalizeError(err);
 }
-function pendingQuestionFromContext(context) {
-    const pending = context.pendingBossQuestion;
-    if (pending === undefined || pending === null || typeof pending !== 'object') {
-        return undefined;
-    }
-    const obj = pending;
-    if (typeof obj.player === 'string' &&
-        typeof obj.question === 'string' &&
-        typeof obj.resumeStateId === 'string') {
-        return {
-            player: obj.player,
-            question: obj.question,
-            resumeStateId: obj.resumeStateId,
-        };
-    }
-    return undefined;
+function isAbortFailure(error, signal) {
+    if (!signal.aborted)
+        return false;
+    if (Object.is(error, signal.reason))
+        return true;
+    return normalizeErrorCompact(error)?.name === 'AbortError';
 }
-function formatStateStatus(to, context) {
-    if (to === 'awaitBossReply') {
-        const pending = pendingQuestionFromContext(context);
-        return `${pending?.player ?? 'Player'} asks: ${pending?.question ?? ''}`;
+function pendingQuestionsFromContext(context) {
+    const pending = context.pendingBossQuestions;
+    if (pending === undefined ||
+        pending === null ||
+        typeof pending !== 'object') {
+        return [];
     }
-    return STATE_DESCRIPTIONS[to] ?? to;
+    const questions = [];
+    for (const [key, value] of Object.entries(pending)) {
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+            continue;
+        }
+        const obj = value;
+        if (typeof obj.questionId === 'string' &&
+            obj.questionId === key &&
+            typeof obj.resumeStateId === 'string' &&
+            typeof obj.sourceItem === 'string' &&
+            typeof obj.player === 'string' &&
+            typeof obj.question === 'string') {
+            questions.push(obj);
+        }
+    }
+    return questions.sort((left, right) => left.questionId.localeCompare(right.questionId));
 }
-function telemetryPayload(from, to, event, context) {
+const WAIT_STATE_RESUME_IDS = {
+    waitHostInitialReply: 'askHostInitial',
+    waitParticipantInitialReply: 'askParticipantInitial',
+    waitHostReconciliationReply: 'hostInitialRound',
+    waitParticipantReconciliationReply: 'participantInitialRound',
+};
+const WAIT_STATE_IDS = new Set([
+    ...Object.keys(WAIT_STATE_RESUME_IDS),
+    'awaitBossReply',
+]);
+const STATUS_STATE_IDS = new Set([
+    ...CAPTAIN_STATE_IDS,
+    ...WAIT_STATE_IDS,
+    'failed',
+]);
+function questionForWaitState(stateId, pendingQuestions) {
+    const resumeStateId = WAIT_STATE_RESUME_IDS[stateId];
+    if (resumeStateId !== undefined) {
+        return pendingQuestions.find((pending) => pending.resumeStateId === resumeStateId);
+    }
+    return stateId === 'awaitBossReply' && pendingQuestions.length === 1
+        ? pendingQuestions[0]
+        : undefined;
+}
+function normalizedEventType(event) {
+    if (event !== null &&
+        typeof event === 'object' &&
+        !Array.isArray(event) &&
+        'type' in event) {
+        const type = event.type;
+        return typeof type === 'string' ? type : String(type);
+    }
+    if (event === null ||
+        typeof event === 'string' ||
+        typeof event === 'boolean' ||
+        (typeof event === 'number' && Number.isFinite(event))) {
+        return event;
+    }
+    return String(event);
+}
+function telemetryPayload(previousState, state, event, context) {
+    const eventError = event !== null &&
+        typeof event === 'object' &&
+        !Array.isArray(event) &&
+        'error' in event
+        ? normalizeErrorFull(event.error)
+        : undefined;
+    const pendingBossQuestions = pendingQuestionsFromContext(context);
     const payload = {
-        from: from ?? null,
-        to,
-        event: event !== null &&
-            typeof event === 'object' &&
-            !Array.isArray(event) &&
-            'type' in event
-            ? event.type
-            : (event ?? null),
+        from: previousState?.value ?? null,
+        to: state.value,
+        event: normalizedEventType(event),
+        previousState: previousState ?? null,
+        state,
+        ...(pendingBossQuestions.length > 0 ? { pendingBossQuestions } : {}),
+        ...(eventError !== undefined ? { error: eventError } : {}),
+        ...(state.activeStateIds.includes('failed')
+            ? { lastError: normalizeErrorFull(context.lastError) ?? null }
+            : {}),
     };
-    const pending = pendingQuestionFromContext(context);
-    if (pending)
-        payload.pendingBossQuestion = pending;
-    if (to === 'failed') {
-        payload.lastError = normalizeErrorFull(context.lastError) ?? null;
-    }
+    assertJsonSafe(payload);
     return payload;
 }
-function isQuiescent(snapshot) {
-    return (snapshot.status === 'done' ||
-        (typeof snapshot.value === 'string' && QUIESCENT_STATES.has(snapshot.value)));
-}
 export const createPlaybookRuntime = (options) => {
+    const boundOptions = snapshotDiscussRuntimeOptions(options);
     const binding = {
         ...DEFAULT_PLAYER_BINDING,
-        ...(options.playerBinding ?? {}),
+        ...(boundOptions.playerBinding ?? {}),
     };
     const fsmInput = {
-        host: options.host,
-        participant: options.participant,
-        committer: options.committer,
+        host: boundOptions.host,
+        participant: boundOptions.participant,
+        committer: boundOptions.committer,
     };
     let ports;
     let sessionIdentity;
     let actor;
     let currentSignal;
     let currentTurnId;
-    let adjudicatorError;
-    let previousValue;
-    let emissionChain = Promise.resolve();
+    let previousState;
+    let suppressInspectionEmissions = false;
     let emissionFailures = [];
     let traceSequence = 0;
     let turnSequence = 0;
@@ -493,7 +637,14 @@ export const createPlaybookRuntime = (options) => {
     let playerCallSequence = 0;
     let lifecycleStarted = false;
     let disposed = false;
+    let disposalPromise;
+    let controlPlaneError;
     const playerResumeTokens = new Map();
+    const inFlightPlayerIds = new Set();
+    const activeBoundaryCalls = new Set();
+    const activeEmissionCalls = new Set();
+    const emissionQueue = new PQueue({ concurrency: 1 });
+    const judgeQueue = new PQueue({ concurrency: 1 });
     const collectFailure = (failures, error) => {
         if (error instanceof AggregateError) {
             for (const nested of error.errors)
@@ -504,15 +655,31 @@ export const createPlaybookRuntime = (options) => {
             failures.push(error);
         }
     };
+    const latchControlPlaneError = (error, signal) => {
+        if (!isAbortFailure(error, signal))
+            controlPlaneError ??= error;
+    };
     const enqueue = (fn) => {
-        const queued = emissionChain.then(() => fn());
-        emissionChain = queued.catch((error) => {
+        const queued = emissionQueue.add(fn);
+        activeEmissionCalls.add(queued);
+        void queued.then(() => activeEmissionCalls.delete(queued), (error) => {
+            activeEmissionCalls.delete(queued);
             collectFailure(emissionFailures, error);
         });
         return queued;
     };
     const flush = async () => {
-        await emissionChain;
+        while (true) {
+            const active = [...activeEmissionCalls];
+            if (active.length > 0)
+                await Promise.allSettled(active);
+            await emissionQueue.onIdle();
+            if (activeEmissionCalls.size === 0 &&
+                emissionQueue.size === 0 &&
+                emissionQueue.pending === 0) {
+                break;
+            }
+        }
         if (emissionFailures.length === 0)
             return;
         const failures = emissionFailures;
@@ -520,6 +687,21 @@ export const createPlaybookRuntime = (options) => {
         if (failures.length === 1)
             throw failures[0];
         throw new AggregateError(failures, 'discuss runtime emissions failed');
+    };
+    const drainBoundaryCallsAndEmissions = async () => {
+        while (true) {
+            if (activeBoundaryCalls.size > 0) {
+                await Promise.allSettled([...activeBoundaryCalls]);
+            }
+            await flush();
+            if (activeBoundaryCalls.size === 0)
+                return;
+        }
+    };
+    const trackBoundaryCall = (call) => {
+        activeBoundaryCalls.add(call);
+        void call.then(() => activeBoundaryCalls.delete(call), () => activeBoundaryCalls.delete(call));
+        return call;
     };
     const requirePorts = () => {
         if (!ports) {
@@ -533,321 +715,531 @@ export const createPlaybookRuntime = (options) => {
         }
         return sessionIdentity;
     };
-    const stateId = () => {
-        const snapshot = actor?.getSnapshot();
-        return typeof snapshot?.value === 'string' ? snapshot.value : previousValue;
+    const currentState = () => {
+        const live = actor;
+        if (!live) {
+            throw new Error('discuss runtime: actor is not initialized');
+        }
+        return normalizePlaybookSnapshot(live.getSnapshot());
     };
-    const stateIdentity = () => {
-        const current = stateId();
-        return current === undefined ? {} : { stateId: current };
+    const stateIdentity = (state) => {
+        return state.stateId === undefined ? {} : { stateId: state.stateId };
     };
-    const emitTrace = (type, payload, meta = {}) => {
+    const enqueueTracedEmission = (type, payload, meta = {}, describedEmission) => {
         const runtimePorts = requirePorts();
         const identity = requireSessionIdentity();
-        const trace = {
-            schemaVersion: 1,
+        const jsonPayload = snapshotJsonValue(payload, `trace ${type} payload`);
+        const trace = Object.freeze({
+            schemaVersion: 2,
             sessionId: identity.sessionId,
             playbookId: identity.playbookId,
+            rootSessionId: identity.rootSessionId,
+            ...(identity.parentSessionId !== undefined
+                ? { parentSessionId: identity.parentSessionId }
+                : {}),
+            ...(identity.parentCallId !== undefined
+                ? { parentCallId: identity.parentCallId }
+                : {}),
+            depth: identity.depth,
             sequence: ++traceSequence,
             timestamp: Date.now(),
             type,
             ...(meta.turnId !== undefined ? { turnId: meta.turnId } : {}),
             ...(meta.callId !== undefined ? { callId: meta.callId } : {}),
-            payload,
-        };
-        return enqueue(() => runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace }));
+            payload: jsonPayload,
+        });
+        return enqueue(async () => {
+            await runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace });
+            await describedEmission?.(runtimePorts);
+        });
     };
-    const callJudge = async (prompt, signal, purpose, callStateId) => {
-        const callId = `judge-${++judgeCallSequence}`;
+    const emitTrace = (type, payload, meta = {}) => enqueueTracedEmission(type, payload, meta);
+    const emitBoundaryStatus = async (message, state) => {
+        const bossRelevantStateIds = state.activeStateIds.filter((stateId) => STATUS_STATE_IDS.has(stateId));
+        await enqueueTracedEmission('status.emitted', {
+            ...(bossRelevantStateIds.length === 1
+                ? { stateId: bossRelevantStateIds[0] }
+                : {}),
+            message,
+            state,
+        }, { turnId: currentTurnId }, (runtimePorts) => runtimePorts.emitStatus(message));
+    };
+    const emitCallStarted = async (startedType, finishedType, identity, meta, signal) => {
+        try {
+            await emitTrace(startedType, identity, meta);
+        }
+        catch (error) {
+            latchControlPlaneError(error, signal);
+            try {
+                await emitTrace(finishedType, {
+                    ...identity,
+                    status: 'error',
+                    error: normalizeErrorFull(error) ?? {
+                        name: 'Error',
+                        message: String(error),
+                    },
+                }, meta);
+            }
+            catch {
+                // Preserve the start failure after one best-effort finish attempt.
+            }
+            throw error;
+        }
+    };
+    const runJudgeCall = async (prompt, signal, purpose, callStateId) => {
         const identity = {
             purpose,
             ...(callStateId !== undefined ? { stateId: callStateId } : {}),
         };
-        await emitTrace('judge.call.started', { ...identity, prompt }, { turnId: currentTurnId, callId });
-        let finalText;
-        try {
-            finalText = await requirePorts().callJudge(prompt, signal);
+        const queued = await judgeQueue.add(async () => {
+            // Keep the complete queue task pending until an active host promise
+            // settles. PQueue's signal option may reject add() while that task is
+            // still running, which would let the turn drain race a late finish.
+            signal.throwIfAborted();
+            const callId = `judge-${++judgeCallSequence}`;
+            await emitCallStarted('judge.call.started', 'judge.call.finished', { ...identity, prompt }, { turnId: currentTurnId, callId }, signal);
+            let finalText;
+            try {
+                signal.throwIfAborted();
+                const reply = await requirePorts().callJudge(prompt, signal);
+                if (typeof reply !== 'string') {
+                    throw new TypeError('judge result must be a string');
+                }
+                finalText = reply;
+                // A cancelled parallel actor can outlive a judge port that ignores
+                // its signal. Do not report that late resolution as success.
+                signal.throwIfAborted();
+            }
+            catch (error) {
+                latchControlPlaneError(error, signal);
+                await emitTrace('judge.call.finished', {
+                    ...identity,
+                    status: signal.aborted ? 'aborted' : 'error',
+                    error: normalizeErrorFull(error) ?? {
+                        name: 'Error',
+                        message: String(error),
+                    },
+                }, { turnId: currentTurnId, callId });
+                throw error;
+            }
+            await emitTrace('judge.call.finished', { ...identity, status: 'ok', reply: finalText }, { turnId: currentTurnId, callId });
+            return finalText;
+        });
+        if (queued === undefined) {
+            throw new Error('judge call completed without a reply');
         }
-        catch (error) {
-            await emitTrace('judge.call.finished', {
-                ...identity,
-                status: signal.aborted ? 'aborted' : 'error',
-                error: normalizeErrorFull(error) ?? {
-                    name: 'Error',
-                    message: String(error),
-                },
-            }, { turnId: currentTurnId, callId });
-            throw error;
-        }
-        await emitTrace('judge.call.finished', { ...identity, status: 'ok', reply: finalText }, { turnId: currentTurnId, callId });
-        return finalText;
+        return queued;
     };
-    const callPlayer = async (input, signal) => {
+    const callJudge = (prompt, signal, purpose, callStateId) => trackBoundaryCall(runJudgeCall(prompt, signal, purpose, callStateId));
+    const runPlayerCall = async (input, signal) => {
         const playerId = resolvePlayerId(input, binding);
+        if (inFlightPlayerIds.has(playerId)) {
+            throw new Error(`resolved player "${playerId}" already has an in-flight call`);
+        }
+        inFlightPlayerIds.add(playerId);
         const prompt = composePlayerPrompt(input);
         const resume = playerResumeTokens.get(playerId) ?? false;
         const callId = `player-${++playerCallSequence}`;
-        const callStateId = stateId() ??
-            CAPTAIN_STATES.find((state) => state.sourceItem === input.sourceItem)
-                ?.stateId;
         const identity = {
             purpose: 'captain',
-            ...(callStateId !== undefined ? { stateId: callStateId } : {}),
+            stateId: input.stateId,
             sourceItem: input.sourceItem,
             playerId,
             resume,
         };
-        await emitTrace('player.call.started', { ...identity, prompt }, { turnId: currentTurnId, callId });
-        let result;
+        const emitFailure = (error) => emitTrace('player.call.finished', {
+            ...identity,
+            status: signal.aborted ? 'aborted' : 'error',
+            error: normalizeErrorFull(error) ?? {
+                name: 'Error',
+                message: String(error),
+            },
+        }, { turnId: currentTurnId, callId });
         try {
-            result = await requirePorts().callPlayer(playerId, prompt, signal, {
-                resume,
-            });
-        }
-        catch (error) {
-            // A rejected call produced no authoritative result, so the previous
-            // token remains untouched.
+            await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt }, { turnId: currentTurnId, callId }, signal);
+            let rawResult;
+            try {
+                signal.throwIfAborted();
+                const boundary = Promise.resolve(requirePorts().callPlayer(playerId, prompt, signal, { resume }));
+                rawResult = await boundary;
+                // An XState sibling cancellation does not cancel an arbitrary host
+                // promise. Re-check before a late resolution can mutate continuity or
+                // masquerade as a successful boundary finish.
+                signal.throwIfAborted();
+            }
+            catch (error) {
+                // A rejected call produced no authoritative result, so the previous
+                // token remains untouched. This also covers a host promise that
+                // resolves after its invocation signal was cancelled.
+                await emitFailure(error);
+                throw error;
+            }
+            let result;
+            try {
+                result = validatePlayerResult(rawResult);
+            }
+            catch (error) {
+                latchControlPlaneError(error, signal);
+                await emitFailure(error);
+                throw error;
+            }
+            // The resolved result is authoritative even on aborted/error status.
+            // Update continuation state before interpreting that status.
+            if (typeof result.resumeToken === 'string' &&
+                result.resumeToken.trim().length > 0) {
+                playerResumeTokens.set(playerId, result.resumeToken);
+            }
+            else {
+                playerResumeTokens.delete(playerId);
+            }
+            // Keep this finish outside the boundary catch. A trace sink can record
+            // the event and then reject; retrying from that catch would duplicate the
+            // same call id and falsely recast an emission failure as a player error.
             await emitTrace('player.call.finished', {
                 ...identity,
-                status: signal.aborted ? 'aborted' : 'error',
-                error: normalizeErrorFull(error) ?? {
-                    name: 'Error',
-                    message: String(error),
-                },
+                status: result.status,
+                ...(result.resumeToken !== undefined
+                    ? { resumeToken: result.resumeToken }
+                    : {}),
+                ...(result.finalText !== undefined
+                    ? { finalText: result.finalText }
+                    : {}),
+                ...(result.error !== undefined
+                    ? { error: normalizeErrorFull(result.error) }
+                    : {}),
             }, { turnId: currentTurnId, callId });
+            return { playerId, result };
+        }
+        finally {
+            inFlightPlayerIds.delete(playerId);
+        }
+    };
+    const callPlayer = (input, signal) => {
+        return trackBoundaryCall(runPlayerCall(input, signal));
+    };
+    const player = fromPromise(async ({ input, signal }) => {
+        const combined = combineSignals(signal, currentSignal);
+        // XState starts invoked actors while publishing the entering snapshot.
+        // Yield through the runtime emission queue before crossing the player
+        // boundary so state trace/status always precede its call-start trace.
+        try {
+            await flush();
+        }
+        catch (error) {
+            latchControlPlaneError(error, combined);
             throw error;
         }
-        // The resolved result is authoritative even on aborted/error status.
-        // Update continuation state before interpreting that status.
-        if (typeof result.resumeToken === 'string' &&
-            result.resumeToken.trim().length > 0) {
-            playerResumeTokens.set(playerId, result.resumeToken);
-        }
-        else {
-            playerResumeTokens.delete(playerId);
-        }
-        await emitTrace('player.call.finished', {
-            ...identity,
-            status: result.status,
-            ...(result.resumeToken !== undefined
-                ? { resumeToken: result.resumeToken }
-                : {}),
-            ...(result.finalText !== undefined
-                ? { finalText: result.finalText }
-                : {}),
-            ...(result.error !== undefined
-                ? { error: normalizeErrorFull(result.error) }
-                : {}),
-        }, { turnId: currentTurnId, callId });
-        return { playerId, result };
-    };
-    const captain = fromPromise(async ({ input, signal }) => {
-        const combined = combineSignals(signal, currentSignal);
         combined.throwIfAborted();
         const { playerId, result } = await callPlayer(input, combined);
         if (result.status !== 'ok') {
             throw new Error(`player "${playerId}" returned status "${result.status}"${result.error ? `: ${result.error}` : ''}`);
         }
+        if (result.finalText === undefined) {
+            throw new Error(`player "${playerId}" returned status "ok" with no finalText`);
+        }
         combined.throwIfAborted();
         try {
-            const prompt = buildAdjudicatorPrompt(input, result.finalText ?? '');
-            return parseAdjudication(await callJudge(prompt, combined, 'player-output-adjudication', stateId()), input);
+            const prompt = buildAdjudicatorPrompt(input, result.finalText);
+            return parseAdjudication(await callJudge(prompt, combined, 'player-output-adjudication', input.stateId), input);
         }
         catch (error) {
-            if (!combined.aborted)
-                adjudicatorError = error;
+            latchControlPlaneError(error, combined);
             throw error;
         }
     });
-    const providedMachine = discussMachine.provide({ actors: { captain } });
+    const providedMachine = discussMachine.provide({ actors: { player } });
     const inspect = (event) => {
         if (event.type !== '@xstate.snapshot')
             return;
         if (actor === undefined || event.actorRef !== actor)
             return;
-        const snapshot = event.snapshot;
-        if (typeof snapshot.value !== 'string')
+        if (suppressInspectionEmissions)
             return;
-        const to = snapshot.value;
-        const from = previousValue;
-        previousValue = to;
+        const snapshot = event.snapshot;
+        const state = normalizePlaybookSnapshot(snapshot);
+        const prior = previousState;
+        previousState = state;
         const runtimePorts = ports;
         if (!runtimePorts)
             return;
         const context = snapshot.context;
-        const fsmPayload = telemetryPayload(from, to, event.event, context);
-        const statusMessage = formatStateStatus(to, context);
-        const lastError = to === 'failed' ? normalizeErrorCompact(context.lastError) : undefined;
-        const statusData = lastError === undefined ? undefined : { lastError };
-        void emitTrace('fsm.transition', fsmPayload, {
-            turnId: currentTurnId,
-        });
-        // A reentering transition can keep the same state id while still being
-        // a real FSM transition (for example BOSS_INTERRUPT targeting `ready`).
-        // Trace it, but retain DISCUSS's established host telemetry/status rule
-        // of announcing only state-id changes.
-        if (from === to)
-            return;
-        void enqueue(() => runtimePorts.emitTelemetry({
+        const fsmPayload = telemetryPayload(prior, state, event.event, context);
+        void enqueueTracedEmission('fsm.transition', fsmPayload, { turnId: currentTurnId }, (emissionPorts) => emissionPorts.emitTelemetry({
             topic: TELEMETRY_TOPIC,
             payload: fsmPayload,
-        }));
-        void emitTrace('status.emitted', {
-            stateId: to,
-            message: statusMessage,
-            ...(statusData !== undefined ? { data: statusData } : {}),
-        }, { turnId: currentTurnId });
-        void enqueue(() => runtimePorts.emitStatus(statusMessage, statusData));
+        })).catch(() => undefined);
+        const priorIds = new Set(prior?.activeStateIds ?? []);
+        const pendingQuestions = pendingQuestionsFromContext(context);
+        const bossRelevantStateIds = state.activeStateIds.filter((stateId) => STATUS_STATE_IDS.has(stateId));
+        const scheduleStatus = (message, stateId, data) => {
+            const tracePayload = {
+                ...(bossRelevantStateIds.length === 1 ? { stateId } : {}),
+                message,
+                state,
+                ...(data !== undefined ? { data } : {}),
+            };
+            assertJsonSafe(tracePayload);
+            void enqueueTracedEmission('status.emitted', tracePayload, { turnId: currentTurnId }, (emissionPorts) => emissionPorts.emitStatus(message, data)).catch(() => undefined);
+        };
+        for (const activeStateId of state.activeStateIds) {
+            if (priorIds.has(activeStateId) || !STATUS_STATE_IDS.has(activeStateId)) {
+                continue;
+            }
+            if (WAIT_STATE_IDS.has(activeStateId)) {
+                const pending = questionForWaitState(activeStateId, pendingQuestions);
+                if (pending) {
+                    scheduleStatus(`${pending.player} asks: ${pending.question}`, activeStateId);
+                    scheduleStatus(`◆ awaiting Boss reply · ${pending.resumeStateId} · ${pending.player} · ${pending.sourceItem}`, activeStateId);
+                }
+                continue;
+            }
+            const lastError = activeStateId === 'failed'
+                ? normalizeErrorCompact(context.lastError)
+                : undefined;
+            scheduleStatus(STATE_DESCRIPTIONS[activeStateId] ?? activeStateId, activeStateId, lastError === undefined ? undefined : { lastError });
+        }
+    };
+    const createRuntimeActor = () => {
+        previousState = undefined;
+        actor = createActor(providedMachine, { input: fsmInput, inspect });
     };
     const startActor = () => {
-        previousValue = undefined;
-        actor = createActor(providedMachine, { input: fsmInput, inspect });
-        actor.start();
+        createRuntimeActor();
+        actor?.start();
     };
-    const driveToQuiescence = () => new Promise((resolve) => {
+    const driveToQuiescence = async () => {
         const live = actor;
-        if (!live) {
-            resolve();
-            return;
-        }
-        let settled = false;
-        let subscription;
-        const finish = () => {
-            if (settled)
-                return;
-            settled = true;
-            subscription?.unsubscribe();
-            resolve();
-        };
-        const check = (snapshot) => {
-            if (isQuiescent(snapshot))
-                finish();
-        };
-        subscription = live.subscribe(check);
-        check(live.getSnapshot());
-    });
+        if (!live)
+            throw new Error('discuss runtime: actor is not initialized');
+        await waitForPlaybookQuiescence(live);
+    };
     const classify = async (text, signal) => {
         const live = actor;
         if (!live)
             throw new Error('discuss runtime: actor is not initialized');
         const snapshot = live.getSnapshot();
         const context = snapshot.context;
+        const state = normalizePlaybookSnapshot(snapshot);
+        const pendingQuestions = pendingQuestionsFromContext(context);
         const prompt = buildClassifierPrompt(text, {
-            state: String(snapshot.value),
-            pendingQuestion: pendingQuestionFromContext(context)?.question,
+            state,
+            pendingQuestions,
         });
-        const raw = await callJudge(prompt, signal, 'boss-input-classification', String(snapshot.value));
-        return parseClassification(raw);
+        const raw = await callJudge(prompt, signal, 'boss-input-classification', state.stateId);
+        return parseClassification(raw, pendingQuestions.map(({ questionId }) => questionId));
+    };
+    const resultForSnapshot = (signal) => {
+        const live = actor;
+        if (!live)
+            throw new Error('discuss runtime: actor is not initialized');
+        const snapshot = live.getSnapshot();
+        const state = normalizePlaybookSnapshot(snapshot);
+        const context = snapshot.context;
+        if (signal?.aborted) {
+            return {
+                outcome: 'aborted',
+                state,
+                ...(signal.reason === undefined
+                    ? {}
+                    : {
+                        error: normalizeErrorFull(signal.reason) ?? {
+                            name: 'AbortError',
+                            message: String(signal.reason),
+                        },
+                    }),
+            };
+        }
+        if (snapshot.status === 'done') {
+            const output = snapshot.output;
+            if (output !== undefined)
+                assertJsonSafe(output, 'terminal output');
+            return {
+                outcome: 'terminal',
+                state,
+                ...(output === undefined ? {} : { output }),
+            };
+        }
+        if (snapshot.status === 'error') {
+            throw (snapshot.error ??
+                new Error('discuss runtime actor entered error status'));
+        }
+        if (state.activeStateIds.includes('failed')) {
+            const error = normalizeErrorFull(context.lastError);
+            return {
+                outcome: 'failed',
+                state,
+                ...(error === undefined ? {} : { error }),
+            };
+        }
+        return { outcome: 'quiescent', state };
     };
     return {
         async init(session) {
             if (lifecycleStarted) {
                 throw new Error('discuss runtime: init(session) may only be called once');
             }
-            if (!session ||
-                typeof session.sessionId !== 'string' ||
-                session.sessionId.trim().length === 0) {
-                throw new Error('discuss runtime: sessionId must be a non-empty string');
-            }
-            if (typeof session.playbookId !== 'string' ||
-                session.playbookId.trim().length === 0) {
-                throw new Error('discuss runtime: playbookId must be a non-empty string');
-            }
-            if (!session.ports) {
-                throw new Error('discuss runtime: session.ports is required');
-            }
+            const identity = snapshotPlaybookSession(session);
             lifecycleStarted = true;
-            ports = session.ports;
-            sessionIdentity = Object.freeze({
-                sessionId: session.sessionId,
-                playbookId: session.playbookId,
-            });
-            await emitTrace('session.started', { stateId: 'ready' });
-            startActor();
-            await flush();
+            ports = identity.ports;
+            sessionIdentity = identity;
+            try {
+                suppressInspectionEmissions = false;
+                createRuntimeActor();
+                const state = currentState();
+                await emitTrace('session.started', {
+                    state,
+                    ...stateIdentity(state),
+                });
+                actor?.start();
+                await flush();
+            }
+            catch (error) {
+                const finalState = actor ? currentState() : undefined;
+                suppressInspectionEmissions = true;
+                try {
+                    actor?.stop();
+                }
+                catch {
+                    // Preserve the original initialization failure.
+                }
+                try {
+                    await judgeQueue.onIdle();
+                    await drainBoundaryCallsAndEmissions();
+                }
+                catch {
+                    // Preserve the original initialization failure.
+                }
+                try {
+                    await emitTrace('session.disposed', {
+                        ...(finalState === undefined
+                            ? {}
+                            : { state: finalState, ...stateIdentity(finalState) }),
+                    });
+                    await flush();
+                }
+                catch {
+                    // The session-start error remains authoritative.
+                }
+                playerResumeTokens.clear();
+                inFlightPlayerIds.clear();
+                activeBoundaryCalls.clear();
+                activeEmissionCalls.clear();
+                emissionQueue.clear();
+                judgeQueue.clear();
+                actor = undefined;
+                currentSignal = undefined;
+                currentTurnId = undefined;
+                ports = undefined;
+                sessionIdentity = undefined;
+                previousState = undefined;
+                suppressInspectionEmissions = false;
+                controlPlaneError = undefined;
+                emissionFailures = [];
+                traceSequence = 0;
+                turnSequence = 0;
+                judgeCallSequence = 0;
+                playerCallSequence = 0;
+                lifecycleStarted = false;
+                throw error;
+            }
         },
         async handleBossInput(turn) {
+            if (disposalPromise !== undefined) {
+                throw new Error('discuss runtime: runtime is disposing or disposed');
+            }
             requirePorts();
             if (!actor) {
                 throw new Error('discuss runtime: init(session) must be called before handleBossInput');
             }
+            if (currentTurnId !== undefined) {
+                throw new Error('discuss runtime: another runtime turn is active');
+            }
             const turnId = ++turnSequence;
             currentTurnId = turnId;
             currentSignal = turn.signal;
-            adjudicatorError = undefined;
-            let settlement = {
-                outcome: 'failed',
-                ...stateIdentity(),
-            };
+            controlPlaneError = undefined;
+            let result = resultForSnapshot(turn.signal);
+            let settlement = result;
             const failures = [];
             try {
                 await emitTrace('boss.input.received', { text: turn.text }, { turnId });
                 if (turn.text.trim().length === 0) {
-                    settlement = { outcome: 'no-action', ...stateIdentity() };
+                    const state = currentState();
+                    result = { outcome: 'no-action', state };
                 }
                 else {
                     const event = await classify(turn.text, turn.signal);
                     if (!event) {
-                        settlement = { outcome: 'no-action', ...stateIdentity() };
+                        const state = currentState();
+                        await emitBoundaryStatus('No playbook action classified.', state);
+                        result = { outcome: 'no-action', state };
                     }
                     else {
+                        await emitBoundaryStatus(event.type, currentState());
                         if (actor.getSnapshot().status === 'done') {
                             actor.stop();
                             startActor();
                         }
                         actor.send(event);
                         await driveToQuiescence();
-                        await flush();
-                        if (adjudicatorError !== undefined) {
-                            const error = adjudicatorError;
-                            adjudicatorError = undefined;
-                            throw error;
-                        }
-                        const settledStateId = stateId();
-                        settlement = {
-                            outcome: turn.signal.aborted
-                                ? 'aborted'
-                                : actor.getSnapshot().status === 'done' ||
-                                    settledStateId === 'done'
-                                    ? 'terminal'
-                                    : settledStateId === 'failed'
-                                        ? 'failed'
-                                        : 'quiescent',
-                            ...(settledStateId !== undefined
-                                ? { stateId: settledStateId }
-                                : {}),
-                        };
+                        await drainBoundaryCallsAndEmissions();
+                        if (controlPlaneError !== undefined)
+                            throw controlPlaneError;
+                        result = resultForSnapshot(turn.signal);
                     }
                 }
-            }
-            catch (error) {
-                collectFailure(failures, error);
                 settlement = {
-                    outcome: turn.signal.aborted ? 'aborted' : 'failed',
-                    ...stateIdentity(),
-                    error: normalizeErrorFull(error) ?? {
-                        name: 'Error',
-                        message: String(error),
-                    },
+                    ...result,
+                    ...stateIdentity(result.state),
                 };
             }
-            currentSignal = undefined;
+            catch (error) {
+                const primaryError = controlPlaneError;
+                if (primaryError !== undefined) {
+                    collectFailure(failures, primaryError);
+                }
+                else if (!turn.signal.aborted) {
+                    collectFailure(failures, error);
+                }
+                const state = currentState();
+                const effectiveError = primaryError ?? error;
+                result =
+                    turn.signal.aborted && primaryError === undefined
+                        ? resultForSnapshot(turn.signal)
+                        : {
+                            outcome: 'failed',
+                            state,
+                            error: normalizeErrorFull(effectiveError) ?? {
+                                name: 'Error',
+                                message: String(effectiveError),
+                            },
+                        };
+                settlement = {
+                    ...result,
+                    ...stateIdentity(state),
+                };
+            }
             try {
-                await flush();
+                await drainBoundaryCallsAndEmissions();
             }
             catch (error) {
-                collectFailure(failures, error);
-                if (!('error' in settlement)) {
-                    settlement = {
-                        outcome: turn.signal.aborted ? 'aborted' : 'failed',
-                        ...stateIdentity(),
-                        error: normalizeErrorFull(error) ?? {
-                            name: 'Error',
-                            message: String(error),
-                        },
-                    };
-                }
+                const primaryError = controlPlaneError;
+                const effectiveError = primaryError ?? error;
+                collectFailure(failures, effectiveError);
+                const state = currentState();
+                result = {
+                    outcome: turn.signal.aborted && primaryError === undefined
+                        ? 'aborted'
+                        : 'failed',
+                    state,
+                    error: normalizeErrorFull(effectiveError) ?? {
+                        name: 'Error',
+                        message: String(effectiveError),
+                    },
+                };
+                settlement = { ...result, ...stateIdentity(state) };
             }
+            currentSignal = undefined;
             try {
                 await emitTrace('boss.input.settled', settlement, { turnId });
             }
@@ -861,57 +1253,87 @@ export const createPlaybookRuntime = (options) => {
                 collectFailure(failures, error);
             }
             finally {
+                const primaryError = controlPlaneError;
                 currentTurnId = undefined;
-                adjudicatorError = undefined;
+                controlPlaneError = undefined;
+                if (primaryError !== undefined)
+                    throw primaryError;
             }
             if (failures.length === 1)
                 throw failures[0];
             if (failures.length > 1) {
                 throw new AggregateError(failures, 'discuss runtime turn failed');
             }
+            return result;
         },
-        async dispose() {
+        async resumePlaybookCall({ callId, }) {
+            if (disposalPromise !== undefined) {
+                throw new Error('discuss runtime: runtime is disposing or disposed');
+            }
+            requirePorts();
+            if (!actor) {
+                throw new Error('discuss runtime: init(session) must be called before resumePlaybookCall');
+            }
+            throw new Error(`unknown or stale playbook call id ${callId}`);
+        },
+        dispose() {
+            if (disposalPromise !== undefined)
+                return disposalPromise;
             if (!sessionIdentity || disposed)
-                return;
-            const finalStateId = stateId();
-            const failures = [];
-            if (actor) {
-                actor.stop();
+                return Promise.resolve();
+            if (currentTurnId !== undefined) {
+                return Promise.reject(new Error('discuss runtime: cannot dispose while a runtime turn is active'));
             }
-            try {
-                await flush();
-            }
-            catch (error) {
-                collectFailure(failures, error);
-            }
-            try {
-                await emitTrace('session.disposed', {
-                    ...(finalStateId !== undefined ? { stateId: finalStateId } : {}),
-                });
-            }
-            catch (error) {
-                collectFailure(failures, error);
-            }
-            try {
-                await flush();
-            }
-            catch (error) {
-                collectFailure(failures, error);
-            }
-            finally {
-                playerResumeTokens.clear();
-                actor = undefined;
-                currentSignal = undefined;
-                currentTurnId = undefined;
-                ports = undefined;
-                sessionIdentity = undefined;
-                disposed = true;
-            }
-            if (failures.length === 1)
-                throw failures[0];
-            if (failures.length > 1) {
-                throw new AggregateError(failures, 'discuss runtime disposal failed');
-            }
+            disposalPromise = (async () => {
+                const finalState = currentState();
+                const failures = [];
+                if (actor) {
+                    actor.stop();
+                }
+                try {
+                    await drainBoundaryCallsAndEmissions();
+                }
+                catch (error) {
+                    collectFailure(failures, error);
+                }
+                try {
+                    await emitTrace('session.disposed', {
+                        state: finalState,
+                        ...stateIdentity(finalState),
+                    });
+                }
+                catch (error) {
+                    collectFailure(failures, error);
+                }
+                try {
+                    await flush();
+                }
+                catch (error) {
+                    collectFailure(failures, error);
+                }
+                finally {
+                    playerResumeTokens.clear();
+                    inFlightPlayerIds.clear();
+                    activeBoundaryCalls.clear();
+                    activeEmissionCalls.clear();
+                    emissionQueue.clear();
+                    judgeQueue.clear();
+                    actor = undefined;
+                    currentSignal = undefined;
+                    currentTurnId = undefined;
+                    ports = undefined;
+                    sessionIdentity = undefined;
+                    previousState = undefined;
+                    controlPlaneError = undefined;
+                    disposed = true;
+                }
+                if (failures.length === 1)
+                    throw failures[0];
+                if (failures.length > 1) {
+                    throw new AggregateError(failures, 'discuss runtime disposal failed');
+                }
+            })();
+            return disposalPromise;
         },
     };
 };
@@ -925,6 +1347,7 @@ export const _internal = {
     buildAdjudicatorPrompt,
     parseAdjudication,
     combineSignals,
+    pendingQuestionsFromContext,
     normalizeErrorCompact,
     normalizeErrorFull,
     DEFAULT_PLAYER_BINDING,
@@ -932,7 +1355,6 @@ export const _internal = {
     STATE_DESCRIPTIONS,
     CAPTAIN_STATES,
     CAPTAIN_STATE_IDS,
-    QUIESCENT_STATES,
     BOSS_INTERRUPT_TARGETS,
     CONTINUATION_PREAMBLE,
     TELEMETRY_TOPIC,

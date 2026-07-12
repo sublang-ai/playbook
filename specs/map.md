@@ -28,11 +28,11 @@ meta.md     The spec of specs
 | DR-002 | [002-in-page-xstate-visualizer.md](decisions/002-in-page-xstate-visualizer.md) | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) — superseded by DR-003 |
 | DR-003 | [003-sketch-controlled-shell.md](decisions/003-sketch-controlled-shell.md) | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
 | DR-004 | [004-link-code-fsm-to-playbook-runtime.md](decisions/004-link-code-fsm-to-playbook-runtime.md) | CODE linker/runtime bindings: player binding (Committer alias config-driven per Addendum A2), free-text Boss-event classification with no in-playbook slash commands, adjudication, lifecycle, abort, telemetry, and direct CODE adapter wiring superseded by DR-008 shell target per Addendum A3; runtime contract types sourced from the shared `@sublang/playbook/runtime` module per Addendum A4 |
-| DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + universal `needsBossReply` guard for captain-invoking states, so player questions suspend and resume the same state with the answer in context |
+| DR-005 | [005-boss-reply-suspension-path.md](decisions/005-boss-reply-suspension-path.md) | Third Boss surface for `gears2fsm`: `awaitBossReply` quiescent state + `BOSS_REPLY` event + universal `needsBossReply` guard for Captain- and player-invoking states, so player questions suspend and resume the same state with the answer in context |
 | DR-006 | [006-code-config-composition.md](decisions/006-code-config-composition.md) | CODE config via `captain.options.code` (namespaced, registry-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config and targets the DR-008 shell adapter; base-inheritable host fields are `theme`, `layout`, `notifications`, and the captain-judge fields (§2.4); object-launcher deferred — superseded by DR-009 |
 | DR-007 | [007-hidden-judge-captain-pane.md](decisions/007-hidden-judge-captain-pane.md) | No raw judge JSON on the Captain pane: route every CODE judge call through cligent's hidden `callCaptain({ visibility: 'hidden' })`, surface a suspended player's full question as captain speech then a rider-less marker (transitional augmentation + gated PBRT-32 test retired at the cligent 0.11.0 pin refresh) |
-| DR-008 | [008-playbook-captain-shell.md](decisions/008-playbook-captain-shell.md) | Built-in Playbook Captain shell over registered sub-runtimes: `/code` as top-level selection, hidden routing plus visible chat in one Captain session, telemetry-mirrored sub-state, park/resume semantics, and `./code/tmux-play` compatibility shim; generic binary/discovery deferral superseded by DR-009 |
-| DR-009 | [009-generic-playbook-cli-and-registry.md](decisions/009-generic-playbook-cli-and-registry.md) | Generic `playbook` CLI and multi-playbook registry enablement: explicit `from`-loaded registry modules, profile-based agent settings, playbook-scoped namespaced players, active-playbook tmux-play pane visibility, registry-owned park states and summary policy, and one active engagement preserved |
+| DR-008 | [008-playbook-captain-shell.md](decisions/008-playbook-captain-shell.md) | Built-in Playbook Captain host over registered sub-runtimes: command selection, one Captain session, telemetry-mirrored lifecycle, park/resume, and adapter responsibilities; its hand-authored chat/selection/router policy is superseded by DR-012 |
+| DR-009 | [009-generic-playbook-cli-and-registry.md](decisions/009-generic-playbook-cli-and-registry.md) | Generic `playbook` CLI and multi-playbook registry enablement: explicit `from` modules, compiled-Captain catalog intents, reserved `captain` id/command, namespaced players, external-playbook pane visibility, summary policy, and one active root engagement |
 | DR-010 | [010-playbook-session-tracing-and-resume.md](decisions/010-playbook-session-tracing-and-resume.md) | Immutable per-runtime playbook session UUIDs, boundary-complete ordered traces, and explicit per-player fresh/resume selection from authoritative adapter tokens |
 | DR-011 | [011-composable-playbook-execution.md](decisions/011-composable-playbook-execution.md) | XState parallel-region joins, structured runtime state, function-style nested playbook calls, a live Captain session stack, and causally linked trace schema v2 |
 | DR-012 | [012-default-captain-playbook.md](decisions/012-default-captain-playbook.md) | Compiled default Captain policy, first-class Captain calls, dynamic sequential child plans, and deterministic host-owned stack routing |
@@ -65,17 +65,17 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-captain.md](user/playbook-captain.md) | Built-in Playbook Captain shell Boss surface: per-playbook slash selection, visible chat, active-engagement routing, nested child call/return, active-leaf pane visibility, status pass-through, parking, dismissal, final disposal, and optional registry-owned turn summaries |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain shell system behavior: registry loading, namespaced role binding, hidden routing, causal UUID runtime-session stack, active-leaf visibility, explicit player and nested-call resume bridges, trace pass-through, summaries, telemetry, and LIFO lifecycle |
-| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for shell routing, lifecycle, registry loading, role binding, visibility, causal nested sessions, player/nested resume, trace/status/telemetry pass-through, summaries, parking, dismissal, and LIFO disposal |
+| user | [playbook-captain.md](user/playbook-captain.md) | Playbook Captain host Boss surface: external slash selection, lazy compiled-Captain routing, lifecycle-only fail-open delivery, nested call/return, active-leaf visibility, external lifecycle status, parking, dismissal, and optional summaries |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain host behavior: registry loading, lazy internal root, lifecycle classifier, six-port bridge, shared Captain queue, causal UUID stack, external-leaf visibility, trace pass-through, summaries, telemetry, and LIFO lifecycle |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for lazy routing, fail-open lifecycle delivery, registry/reserved-name validation, direct Captain and player bridges, visibility/status privacy, causal nesting, summaries, parking, dismissal, and LIFO disposal |
 
 ### CAPPLAY
 
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [captain-playbook.md](user/captain-playbook.md) | Default generic Captain behavior for direct answers, material clarification, finite sequential delegation plans, and active-leaf Boss routing |
-| dev | [captain-playbook.md](dev/captain-playbook.md) | Captain source and compiled runtime, first-class Captain port, sanitized catalog, dynamic child calls, and lazy internal-root hosting |
-| test | [captain-playbook.md](test/captain-playbook.md) | Compilation and shell integration tests for Captain planning, nested pause/return, direct-call visibility, trace completeness, and privacy |
+| dev | [captain-playbook.md](dev/captain-playbook.md) | Captain source, canonical compiled/verification bundle, first-class Captain port, sanitized catalog, dynamic child calls, and lazy internal-root hosting |
+| test | [captain-playbook.md](test/captain-playbook.md) | Compilation and shell integration tests for Captain planning, fail-open nested pause/return, direct-call visibility, internal status/visibility suppression, trace completeness, and privacy |
 
 ### GIT
 
@@ -95,16 +95,16 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-cli.md](user/playbook-cli.md) | Generic `playbook` command: top-level `profiles`/`playbooks` config model (no `config:` wrapper, no top-level `players`), starter-config seeding that enables CODE via explicit `from`, `--config` raw pass-through, `--list`, `--help`, launcher-owned adapter readiness gate, exit/signal behavior, and launch under the Playbook Captain shell on tmux-play |
-| dev | [playbook-cli.md](dev/playbook-cli.md) | Generic `playbook` launcher: tmux-play resolution and Node floor, `profiles`/`playbooks` normalization into `captain.options.playbooks` (`from`/optional `command`/`options` slice, profile-vs-adapter-shorthand collision rejection), namespaced `<id>-<role>` roster generation with manifest import and pre-launch loader rejections (missing `from`, failed import, invalid entry, duplicate id/command, reserved `captain` role, unresolved or zero visible roles), launcher-owned `layout.initialVisible`, session column weights, and `notifications`/`theme` carry-through, seeded default lineup with every agent in protected auto mode (Codex roles also granting `.git` writablePaths) and agent/model-named profiles distinct from player roles, and launcher-owned adapter readiness |
-| test | [playbook-cli.md](test/playbook-cli.md) | Integration tests for starter-config seeding/no-reseed, composition (`captain.from`, per-playbook option slice, profile/adapter resolution, namespaced roster, `layout.initialVisible`, `notifications`/`theme` carry-through), enablement rejection rules, readiness pass/fail/unknown-adapter warning, and the `--list`/`--help`/`--config`/exit-code CLI surface |
+| dev | [playbook-cli.md](dev/playbook-cli.md) | Generic `playbook` launcher: tmux-play resolution, config normalization, namespaced roster generation, pre-launch manifest checks including reserved `captain` id/command/role rejection, launcher-owned initial visibility, seeded protected-auto lineup, and adapter readiness |
+| test | [playbook-cli.md](test/playbook-cli.md) | Integration tests for seeding, composition, namespaced visibility, reserved `captain` id/command/role rejection, readiness, and the `--list`/`--help`/`--config`/exit-code surface |
 
 ### PBRT
 
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through `@sublang/playbook/playbook-captain` with host-owned fields such as notifications, namespaced `code-coder`/`code-reviewer` binding, plus CODE options under `captain.options.playbooks.code.options` and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | Linked runtime behavior: host-agnostic ports, causal sessions, trace schema v2, player continuation, XState parallel joins and structured state, nested playbook call/resume, classification, adjudication, abort, telemetry, registry wiring, and the shared public contract |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for trace/session/player continuation, parallel DISCUSS execution and branch waits, structured state, nested call/resume, classification, adjudication, status/telemetry, lifecycle, registry wiring, and public-contract identity |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | Linked runtime behavior: six host-agnostic ports including direct Captain, causal sessions, Captain/player/judge/nested traces, continuation, XState parallel joins and structured state, nested call/resume, abort, telemetry, and the public contract |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for six-port identity, Captain/player/judge traces and abort, continuation, parallel DISCUSS and branch waits, structured state, nested call/resume, lifecycle, and registry wiring |
 
 ### PLAYBOOK
 
@@ -117,8 +117,8 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [release.md](dev/release.md) | npm publish + GitHub Release workflow for `@sublang/playbook` runtime, Playbook Captain shell, and the generic `playbook` CLI (semver, changelog, tag-driven CI, OIDC trusted publishing, cligent dependency range admitting the tmux-play dynamic-visibility surface), plus public semver-stable `/runtime`, `slc/*`, `playbook` bin, and `@sublang/playbook/code/registry` surfaces and the breaking removal of `playbook-code` / `./code/tmux-play` / legacy CODE configs |
-| test | [release.md](test/release.md) | Integration tests for the published install closure (`@sublang/cligent` nested under playbook, adapter SDKs resolvable), cligent dependency specifier/lockfile agreement, and public surfaces (`slc/*` resolution via `import.meta.resolve`, `npm pack` inclusion of `/runtime` artifacts and `slc/**`, and the `playbook` bin / `./code/registry` presence with `playbook-code` / `./code/tmux-play` absent) |
+| dev | [release.md](dev/release.md) | npm/GitHub release workflow, install closure, and semver-stable runtime, SLC, CLI, CODE/DISCUSS registry, and default `captain/playbook` package surfaces, including packed Captain source and compiled artifacts with no Captain registry export |
+| test | [release.md](test/release.md) | Integration tests for install closure, dependency/lock agreement, SLC resolution, packed runtime and Captain artifacts, and CLI/registry/`captain/playbook` exports with retired and internal-only surfaces absent |
 
 ### SKETCH
 

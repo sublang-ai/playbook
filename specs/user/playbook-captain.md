@@ -8,6 +8,9 @@
 This spec defines the Boss-visible behavior of the built-in
 Playbook Captain shell that runs under tmux-play and routes Boss
 turns to registered playbook runtimes.
+Ordinary idle text is handled by the lazy compiled default Captain; the
+hand-authored shell retains command selection, lifecycle, visibility, and the
+causal runtime stack.
 The first registered playbook is CODE.
 CODE runtime behavior after a turn reaches CODE remains specified
 by [PBRT](playbook-runtime.md).
@@ -29,10 +32,9 @@ visible Captain chat asking for the task to run.
 Where the Playbook Captain shell is running under tmux-play with one
 or more playbooks enabled, while no playbook is engaged, when the
 Boss submits ordinary text, an unregistered slash-prefixed command,
-or a near-miss command-like input, the shell shall route the turn by
-hidden Captain routing; a low-confidence or near-miss selection
-shall produce visible clarification rather than dispatching to a
-playbook.
+or a near-miss command-like input, the shell shall lazily run the
+default Captain playbook, which may answer directly, ask one material
+question, or select one or more enabled playbooks in sequence.
 
 ### CAPTAIN-2
 
@@ -54,10 +56,10 @@ dispatch that command and shall ask the Boss to finish, dismiss, or
 resolve the current engagement first.
 Where the Playbook Captain shell is running under tmux-play with one
 or more playbooks enabled, while a playbook is engaged, when the Boss
-submits ordinary text, the shell shall route the turn by hidden
-Captain routing and shall either continue the existing runtime,
-respond in visible Captain chat, or dispose the engagement and
-return to Captain chat.
+submits ordinary text, the shell shall deliver the original text to
+the active leaf runtime unless its hidden lifecycle classifier selects
+dismissal; classifier failure or malformed output shall deliver rather
+than discard or rewrite the turn.
 
 ## Engagement progress
 
@@ -68,7 +70,7 @@ a playbook is engaged, when the engaged runtime emits status or
 telemetry, the shell shall pass those emissions through to the host
 in order.
 Where the Playbook Captain shell is running under tmux-play, when
-the shell engages, dismisses, or disposes a playbook engagement,
+the shell engages, dismisses, or disposes an enabled external root playbook,
 the shell shall emit Boss-visible Captain status lines
 `◇ /<command> started` when it engages the playbook,
 `◇ /<command> stopped` when Boss dismisses the engagement, and
@@ -76,6 +78,7 @@ the shell shall emit Boss-visible Captain status lines
 completion, using the registered slash command such as `/code`
 rather than the internal playbook id, without changing or reusing
 the engaged runtime's glyph vocabulary.
+The internal default Captain root shall emit none of these lifecycle lines.
 Those shell-owned status lines shall be complete human-readable
 messages and shall not attach structured status data that the host
 could render as raw JSON.
@@ -92,7 +95,8 @@ keep that engagement available for the next Boss turn.
 Where the Playbook Captain shell is running under tmux-play, while a
 root playbook is engaged, when the root run result is terminal or the
 Boss explicitly dismisses the root engagement, the
-shell shall dispose that engagement and return to Captain chat.
+shell shall dispose that engagement and return to its idle state; completion
+of the internal Captain root shall not trigger a second visible chat call.
 Nested child completion and dismissal shall instead follow
 [CAPTAIN-28](#captain-28).
 
@@ -134,9 +138,9 @@ copy-pastes are inter-player handoffs — including reviews,
 rebuttals, revisions, approvals, and passes — that Boss did not
 have to transfer manually, and review/rebuttal rounds are the
 counted review-round and rebuttal occurrences for that turn.
-Where the Playbook Captain shell handles a Boss turn as Captain chat,
-clarification, bare playbook selection without sub-runtime
-submission, or routing failure recovery, the shell shall not append
+Where the Playbook Captain shell handles a Boss turn in the internal Captain,
+as shell-owned command guidance, as a bare playbook selection without
+sub-runtime submission, or as lifecycle recovery, the shell shall not append
 a turn-summary block for that Boss turn.
 
 ## Active-playbook visibility
@@ -145,9 +149,11 @@ a turn-summary block for that Boss turn.
 
 Where the Playbook Captain shell is running under tmux-play with two
 or more playbooks enabled, when the shell engages, resumes, or routes
-a Boss turn to a playbook, the shell shall make that playbook's panes
+a Boss turn to an enabled external playbook, the shell shall make that playbook's panes
 the visible ones in the main tmux window and not the panes of the
 other enabled playbooks.
+The internal default Captain root shall make no visibility request and may
+leave the last external playbook's panes visible.
 After the engaged playbook reaches its final state or the Boss
 dismisses it, the shell may leave the visible panes on the last
 selected playbook until the next selection.
@@ -160,12 +166,16 @@ Where an engaged playbook calls another enabled playbook, when the
 child begins, the Playbook Captain shell shall make the child the active
 playbook for Boss input and player-pane visibility while preserving the
 parent for automatic return.
-The shell shall emit `◇ /<child> called by /<parent>` when it enters the
-child and `◇ /<child> returned to /<parent>` when the child finishes and
-its result resumes the parent.
+Where the parent is an enabled external playbook, the shell shall emit
+`◇ /<child> called by /<parent>` when it enters the child and
+`◇ /<child> returned to /<parent>` when the child finishes and its result
+resumes the parent.
+Where the parent is the internal default Captain, those lines shall instead be
+`◇ /<child> called by Captain` and `◇ /<child> returned to Captain`.
 Where a child is parked for Boss input, the next Boss turn shall reach
 that same child session; where the Boss dismisses a child, the shell
-shall emit `◇ /<child> stopped; returning to /<parent>`, abort the child
+shall emit `◇ /<child> stopped; returning to /<parent>` for an external
+parent or `◇ /<child> stopped; returning to Captain` for the internal parent, abort the child
 call, and resume the parent rather than discard the root engagement.
 Where the Boss dismisses the root engagement, the shell shall stop the
 complete nested stack.

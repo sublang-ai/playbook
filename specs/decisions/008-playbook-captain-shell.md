@@ -6,6 +6,8 @@
 ## Status
 
 Accepted.
+The hand-authored chat, selection, and hidden-router policy portions of this record are superseded by [DR-012](012-default-captain-playbook.md).
+The registry, host-adapter, one-Captain-session, lifecycle, visibility, and in-playbook event-authority constraints remain in force where later decisions have not amended them.
 
 ## Context
 
@@ -165,7 +167,9 @@ The implementing specs shall reconcile this DR with released CODE runtime and la
 - [PBRT-1](../user/playbook-runtime.md#pbrt-1) and [PBRT-2](../user/playbook-runtime.md#pbrt-2) shall be scoped to Boss turns that reach an engaged CODE runtime.
 - [PBRT-15](../dev/playbook-runtime.md#pbrt-15) and [PBRT-16](../dev/playbook-runtime.md#pbrt-16) shall be amended so the tmux-play `captain.from` target is the Playbook Captain shell, which constructs registered sub-runtimes and wires their `PlaybookPorts`.
 - [PBRT-30](../dev/playbook-runtime.md#pbrt-30) shall be amended so CODE option validation is owned by the CODE registry entry rather than by a direct CODE tmux adapter.
-- [PBRT-29](../user/playbook-runtime.md#pbrt-29) and [PBCODE-16](../user/playbook-code.md#pbcode-16) shall be amended so the composer-injected `captain.from` value points at the Playbook Captain shell adapter.
+- [PBRT-29](../user/playbook-runtime.md#pbrt-29) and the now-retired
+  PBCODE-16 launcher contract shall be amended so the composer-injected
+  `captain.from` value points at the Playbook Captain shell adapter.
 - [PBRT-12](../dev/playbook-runtime.md#pbrt-12) remains a CODE runtime contract for direct runtime use; the Captain shell normally disposes final sub-runtime engagements instead of sending another Boss turn into a final sub-runtime.
 
 ### 9. Out of scope

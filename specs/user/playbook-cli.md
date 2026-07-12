@@ -76,6 +76,8 @@ is that playbook's option slice; `from` is the explicit registry
 module specifier, `command` optionally overrides the playbook's
 default slash command, and the `<id>` key shall be the enabled
 playbook's own id, matching the registry module's manifest `id`.
+The enabled playbook id and effective command shall not equal the reserved
+internal name `captain`.
 A scalar `captain` value or a scalar `players.<role>` value shall name
 either a profile id from `profiles` or an adapter shorthand such as
 `claude` or `codex`; a full `captain` or `players.<role>` block shall
@@ -100,8 +102,8 @@ shall not seed config, compose, run readiness checks, or launch
 tmux-play.
 The help text shall include the resolved top-level config path, the
 auth or CLI setup pointers for known adapters, and an agent-swap
-recipe showing that users may retune `profiles` and each
-`playbooks.<id>` block's `captain` and `players` settings.
+recipe showing that users may retune `profiles`, the top-level
+`captain`, and each `playbooks.<id>.players` map.
 When the readiness gate ([PBCLI-12](../dev/playbook-cli.md#pbcli-12))
 blocks a launch, the command shall print the same help content to
 stderr, additionally name every failing adapter id, exit non-zero with

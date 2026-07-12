@@ -5,7 +5,7 @@ export function enumerateCaptainStates(machine) {
     const out = [];
     for (const [stateId, def] of Object.entries(states)) {
         const invoke = def.invoke;
-        if (!invoke || invoke.src !== 'captain' || typeof invoke.input !== 'function') {
+        if (!invoke || invoke.src !== 'player' || typeof invoke.input !== 'function') {
             continue;
         }
         const inputFn = invoke.input;

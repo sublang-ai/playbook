@@ -112,9 +112,6 @@ export const codePlaybookRegistryEntry = {
     command: 'code',
     intent: 'software development / SDLC coding workflow',
     requiredRoleIds: ['coder', 'reviewer'],
-    idleStateId: 'ready',
-    finalStateId: 'done',
-    parkStateIds: ['failed', 'awaitBossReply'],
     summaryPolicy: codeSummaryPolicy,
     validateOptions: validateCodeOptions,
     createRuntime(options) {

@@ -19,10 +19,10 @@ const pkg = JSON.parse(readFileSync(fromRepo('package.json'), 'utf8')) as {
   exports: Record<string, unknown>;
 };
 
-// The members of `PlayerResult.status` (the first such field declared).
-function statusMembers(src: string): string[] {
-  const m = src.match(/status\??:\s*([^;]+);/);
-  if (!m) throw new Error('PlayerResult.status not found');
+// The members of a result interface's `status` field.
+function statusMembers(src: string, interfaceName = 'PlayerResult'): string[] {
+  const m = interfaceBody(src, interfaceName).match(/status\??:\s*([^;]+);/);
+  if (!m) throw new Error(`${interfaceName}.status not found`);
   return m[1]
     .split('|')
     .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
@@ -46,27 +46,58 @@ function interfaceBody(src: string, name: string): string {
 }
 
 function interfaceProperties(src: string, name: string): string[] {
-  return [
-    ...interfaceBody(src, name).matchAll(
-      /^\s*(\w+)(\??):\s*([^;]+);/gm,
-    ),
-  ]
+  return [...interfaceBody(src, name).matchAll(/^\s*(\w+)(\??):\s*([^;]+);/gm)]
     .map((match) => `${match[1]}${match[2]}:${normalizeType(match[3])}`)
     .sort();
 }
 
 function normalizeType(type: string): string {
-  return type.replace(/\s+/g, '');
+  return type.replace(/\s+/g, '').replace(/;}/g, '}').replace(/^\|/, '');
 }
 
 function unionMembers(src: string, name: string): string[] {
-  const alias = src.match(
-    new RegExp(`(?:export\\s+)?type ${name}\\s*=([\\s\\S]*?);`),
-  );
-  if (!alias) throw new Error(`${name} type alias not found`);
-  return [...alias[1].matchAll(/['"]([^'"]+)['"]/g)]
+  return [...typeAliasBody(src, name).matchAll(/['"]([^'"]+)['"]/g)]
     .map((match) => match[1])
     .sort();
+}
+
+function typeAliasBody(src: string, name: string): string {
+  const declaration = new RegExp(`(?:export\\s+)?type ${name}\\s*=`).exec(src);
+  if (!declaration) throw new Error(`${name} type alias not found`);
+
+  const start = declaration.index + declaration[0].length;
+  let braces = 0;
+  let brackets = 0;
+  let parentheses = 0;
+  let quote: string | undefined;
+
+  for (let index = start; index < src.length; index += 1) {
+    const character = src[index];
+    const previous = src[index - 1];
+    if (quote) {
+      if (character === quote && previous !== '\\') quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '{') braces += 1;
+    if (character === '}') braces -= 1;
+    if (character === '[') brackets += 1;
+    if (character === ']') brackets -= 1;
+    if (character === '(') parentheses += 1;
+    if (character === ')') parentheses -= 1;
+    if (
+      character === ';' &&
+      braces === 0 &&
+      brackets === 0 &&
+      parentheses === 0
+    ) {
+      return src.slice(start, index);
+    }
+  }
+  throw new Error(`${name} type alias is not terminated`);
 }
 
 function callPlayerParameters(src: string): string {
@@ -85,12 +116,33 @@ function initParameters(src: string): string {
   return normalizeType(signature[1]);
 }
 
+function methodSignature(
+  src: string,
+  interfaceName: string,
+  methodName: string,
+): { parameters: string; result: string } {
+  const signature = interfaceBody(src, interfaceName).match(
+    new RegExp(`${methodName}\\s*\\(([\\s\\S]*?)\\)\\s*:\\s*Promise<([^>]+)>`),
+  );
+  if (!signature) {
+    throw new Error(`${interfaceName}.${methodName} not found`);
+  }
+  return {
+    parameters: normalizeType(signature[1]).replace(/,$/, ''),
+    result: normalizeType(signature[2]),
+  };
+}
+
 const TRACE_TYPES = [
   'boss.input.received',
   'boss.input.settled',
+  'captain.call.finished',
+  'captain.call.started',
   'fsm.transition',
   'judge.call.finished',
   'judge.call.started',
+  'playbook.call.finished',
+  'playbook.call.started',
   'player.call.finished',
   'player.call.started',
   'session.disposed',
@@ -102,13 +154,23 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
   // PBRT-35: consistency with the authored slc/link.md contract.
   it('matches slc/link.md on result, resume, session, trace, and runtime shapes', () => {
     expect(statusMembers(runtimeDts)).toEqual(['aborted', 'error', 'ok']);
+    expect(statusMembers(runtimeDts, 'CaptainResult')).toEqual([
+      'aborted',
+      'error',
+      'ok',
+    ]);
     expect(portsMembers(runtimeDts)).toEqual([
+      'callCaptain',
       'callJudge',
+      'callPlaybook',
       'callPlayer',
       'emitStatus',
       'emitTelemetry',
     ]);
     expect(statusMembers(runtimeDts)).toEqual(statusMembers(linkSpec));
+    expect(statusMembers(runtimeDts, 'CaptainResult')).toEqual(
+      statusMembers(linkSpec, 'CaptainResult'),
+    );
     expect(portsMembers(runtimeDts)).toEqual(portsMembers(linkSpec));
     expect(interfaceProperties(runtimeDts, 'PlayerResult')).toEqual(
       interfaceProperties(linkSpec, 'PlayerResult'),
@@ -122,15 +184,101 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(interfaceProperties(runtimeDts, 'PlayerCallOptions')).toEqual(
       interfaceProperties(linkSpec, 'PlayerCallOptions'),
     );
+    expect(interfaceProperties(runtimeDts, 'CaptainCallOptions')).toEqual([
+      "visibility:'visible'|'hidden'",
+    ]);
+    expect(interfaceProperties(runtimeDts, 'CaptainCallOptions')).toEqual(
+      interfaceProperties(linkSpec, 'CaptainCallOptions'),
+    );
+    expect(interfaceProperties(runtimeDts, 'CaptainResult')).toEqual([
+      'error?:string',
+      'finalText?:string',
+      "status:'ok'|'aborted'|'error'",
+    ]);
+    expect(interfaceProperties(runtimeDts, 'CaptainResult')).toEqual(
+      interfaceProperties(linkSpec, 'CaptainResult'),
+    );
     expect(callPlayerParameters(runtimeDts)).toBe(
       'playerId:string,prompt:string,signal:AbortSignal,options:PlayerCallOptions',
     );
     expect(callPlayerParameters(runtimeDts)).toBe(
       callPlayerParameters(linkSpec),
     );
+    expect(methodSignature(runtimeDts, 'PlaybookPorts', 'callCaptain')).toEqual(
+      {
+        parameters:
+          'prompt:string,signal:AbortSignal,options:CaptainCallOptions',
+        result: 'CaptainResult',
+      },
+    );
+    expect(methodSignature(runtimeDts, 'PlaybookPorts', 'callCaptain')).toEqual(
+      methodSignature(linkSpec, 'PlaybookPorts', 'callCaptain'),
+    );
+    expect(
+      methodSignature(runtimeDts, 'PlaybookPorts', 'callPlaybook'),
+    ).toEqual({
+      parameters: 'request:PlaybookCallRequest,signal:AbortSignal',
+      result: 'PlaybookCallStart',
+    });
+    expect(
+      methodSignature(runtimeDts, 'PlaybookPorts', 'callPlaybook'),
+    ).toEqual(methodSignature(linkSpec, 'PlaybookPorts', 'callPlaybook'));
+    expect(interfaceProperties(runtimeDts, 'NormalizedError')).toEqual([
+      'message:string',
+      'name:string',
+      'stack?:string',
+    ]);
+    expect(interfaceProperties(runtimeDts, 'NormalizedError')).toEqual(
+      interfaceProperties(linkSpec, 'NormalizedError'),
+    );
+    expect(normalizeType(typeAliasBody(runtimeDts, 'JsonValue'))).toBe(
+      normalizeType(typeAliasBody(linkSpec, 'JsonValue')),
+    );
+    expect(normalizeType(typeAliasBody(runtimeDts, 'PlaybookStateValue'))).toBe(
+      normalizeType(typeAliasBody(linkSpec, 'PlaybookStateValue')),
+    );
+    expect(interfaceProperties(runtimeDts, 'PlaybookState')).toEqual([
+      'activeStateIds:readonlystring[]',
+      'quiescent:boolean',
+      'stateId?:string',
+      "status:'active'|'done'|'error'|'stopped'",
+      'tags:readonlystring[]',
+      'value:PlaybookStateValue',
+    ]);
+    expect(interfaceProperties(runtimeDts, 'PlaybookState')).toEqual(
+      interfaceProperties(linkSpec, 'PlaybookState'),
+    );
+    expect(interfaceProperties(runtimeDts, 'PlaybookPendingCall')).toEqual([
+      'callId:string',
+      'childSessionId:string',
+      'playbookId:string',
+    ]);
+    expect(interfaceProperties(runtimeDts, 'PlaybookPendingCall')).toEqual(
+      interfaceProperties(linkSpec, 'PlaybookPendingCall'),
+    );
+    expect(interfaceProperties(runtimeDts, 'PlaybookCallRequest')).toEqual([
+      'callId:string',
+      'playbookId:string',
+      'text:string',
+    ]);
+    expect(interfaceProperties(runtimeDts, 'PlaybookCallRequest')).toEqual(
+      interfaceProperties(linkSpec, 'PlaybookCallRequest'),
+    );
+    for (const name of ['PlaybookCallResult', 'PlaybookCallStart']) {
+      expect(normalizeType(typeAliasBody(runtimeDts, name))).toBe(
+        normalizeType(typeAliasBody(linkSpec, name)),
+      );
+    }
+    expect(normalizeType(typeAliasBody(runtimeDts, 'PlaybookRunResult'))).toBe(
+      normalizeType(typeAliasBody(linkSpec, 'PlaybookRunResult')),
+    );
     expect(interfaceProperties(runtimeDts, 'PlaybookSession')).toEqual([
+      'depth:number',
+      'parentCallId?:string',
+      'parentSessionId?:string',
       'playbookId:string',
       'ports:PlaybookPorts',
+      'rootSessionId:string',
       'sessionId:string',
     ]);
     expect(interfaceProperties(runtimeDts, 'PlaybookSession')).toEqual(
@@ -142,9 +290,13 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     );
     expect(interfaceProperties(runtimeDts, 'PlaybookTraceEvent')).toEqual([
       'callId?:string',
-      'payload:unknown',
+      'depth:number',
+      'parentCallId?:string',
+      'parentSessionId?:string',
+      'payload:JsonValue',
       'playbookId:string',
-      'schemaVersion:1',
+      'rootSessionId:string',
+      'schemaVersion:2',
       'sequence:number',
       'sessionId:string',
       'timestamp:number',
@@ -156,6 +308,27 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     );
     expect(initParameters(runtimeDts)).toBe('session:PlaybookSession');
     expect(initParameters(runtimeDts)).toBe(initParameters(linkSpec));
+    expect(
+      methodSignature(runtimeDts, 'PlaybookRuntime', 'handleBossInput'),
+    ).toEqual({
+      parameters: 'turn:{text:string;signal:AbortSignal}',
+      result: 'PlaybookRunResult',
+    });
+    expect(
+      methodSignature(runtimeDts, 'PlaybookRuntime', 'handleBossInput'),
+    ).toEqual(methodSignature(linkSpec, 'PlaybookRuntime', 'handleBossInput'));
+    expect(
+      methodSignature(runtimeDts, 'PlaybookRuntime', 'resumePlaybookCall'),
+    ).toEqual({
+      parameters:
+        'input:{callId:string;result:PlaybookCallResult;signal:AbortSignal}',
+      result: 'PlaybookRunResult',
+    });
+    expect(
+      methodSignature(runtimeDts, 'PlaybookRuntime', 'resumePlaybookCall'),
+    ).toEqual(
+      methodSignature(linkSpec, 'PlaybookRuntime', 'resumePlaybookCall'),
+    );
   });
 
   // PBRT-34/35: every authored contract type is exported.
@@ -163,6 +336,12 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     for (const name of [
       'PlayerResult',
       'PlayerCallOptions',
+      'CaptainResult',
+      'CaptainCallOptions',
+      'NormalizedError',
+      'PlaybookState',
+      'PlaybookPendingCall',
+      'PlaybookCallRequest',
       'PlaybookPorts',
       'PlaybookSession',
       'PlaybookTraceEvent',
@@ -170,7 +349,15 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     ]) {
       expect(runtimeDts).toMatch(new RegExp(`export interface ${name}\\b`));
     }
-    for (const name of ['PlaybookTraceType', 'PlaybookRuntimeFactory']) {
+    for (const name of [
+      'JsonValue',
+      'PlaybookStateValue',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookRunResult',
+      'PlaybookTraceType',
+      'PlaybookRuntimeFactory',
+    ]) {
       expect(runtimeDts).toMatch(new RegExp(`export type ${name}\\b`));
     }
   });

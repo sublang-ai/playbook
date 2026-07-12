@@ -40,6 +40,11 @@ Answering the question shall re-enter only that branch's working leaf.
 If both branches ask, their questions shall remain independently addressable.
 A branch failure shall exit the parallel parent to the workflow's failure state, which stops sibling invocations through XState lifecycle semantics.
 
+The fixed parallel parent is one Boss-interrupt unit. An interrupt may restart
+the whole parent, but shall not target one branch working leaf and implicitly
+restart its siblings. A branch-local Boss reply remains narrower: it resumes
+only the identified waiting branch.
+
 Parallel calls may target distinct resolved players.
 A linked runtime shall reject simultaneous calls that resolve to the same player id because one backend resume-token chain cannot be forked deterministically.
 The host Captain judge remains one single-flight resource, so hidden classifier and adjudicator calls shall pass through one abort-aware FIFO with concurrency one.
@@ -152,9 +157,9 @@ XState deep persistence can preserve invoked child actors in a future durable de
 
 ## References
 
-[1]: https://stately.ai/docs/parallel-states "XState parallel states and joins"
-[2]: https://stately.ai/docs/invoke "XState invoked actors and lifecycle"
-[3]: https://stately.ai/docs/actors#waitfor "XState actor waitFor"
-[4]: https://stately.ai/docs/output "XState actor output"
-[5]: https://github.com/sindresorhus/p-queue#readme "p-queue concurrency and AbortSignal support"
-[6]: https://stately.ai/docs/persistence "XState deep actor persistence"
+[1]: https://stately.ai/docs/parallel-states 'XState parallel states and joins'
+[2]: https://stately.ai/docs/invoke 'XState invoked actors and lifecycle'
+[3]: https://stately.ai/docs/actors#waitfor 'XState actor waitFor'
+[4]: https://stately.ai/docs/output 'XState actor output'
+[5]: https://github.com/sindresorhus/p-queue#readme 'p-queue concurrency and AbortSignal support'
+[6]: https://stately.ai/docs/persistence 'XState deep actor persistence'

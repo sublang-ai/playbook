@@ -6,6 +6,8 @@
 ## Status
 
 Accepted.
+[DR-012](012-default-captain-playbook.md) amends this record by routing ordinary idle intent through a compiled non-registry Captain, reserving `captain` as a playbook id and effective command, and exempting that internal root from player visibility.
+The registry, CLI, role-binding, enabled-external-playbook visibility, and summary-policy constraints remain in force where later decisions have not amended them.
 
 ## Context
 
@@ -35,7 +37,7 @@ Each registered playbook shall be represented by a registry entry with these des
 | --- | --- |
 | `id` | Stable playbook id and default options namespace key. |
 | `command` | Default slash command without `/`; may be overridden by config. |
-| `intent` | Routing description for hidden Captain selection. |
+| `intent` | Routing description for the compiled default Captain's sanitized catalog. |
 | `requiredRoleIds` | Local role ids the runtime may pass to `callPlayer`. |
 | `summaryPolicy` | Optional declaration for visible turn summaries and wording. |
 | `validateOptions` | Validator for that playbook's own option slice. |
@@ -56,7 +58,7 @@ Registry entries shall no longer declare `idleStateId`, `finalStateId`, or
 
 The generic `playbook` command shall load every enabled playbook from an explicit module specifier.
 CODE shall be configured with `from: "@sublang/playbook/code/registry"` like any other playbook.
-The loader shall reject missing `from`, failed imports, modules without a valid registry entry, duplicate playbook ids, and duplicate effective commands.
+The loader shall reject missing `from`, failed imports, modules without a valid registry entry, duplicate playbook ids, duplicate effective commands, and any configured playbook id or effective command equal to the reserved internal name `captain`.
 
 tmux-play custom Captain configuration already uses user-supplied module specifiers for `captain.from` [[1]].
 Registry `from` modules reuse that executable local-configuration trust boundary.
@@ -133,16 +135,17 @@ The shell shall apply the binding at two boundaries:
 
 The generic launcher shall validate that every enabled playbook's required local roles resolve to generated host player ids present in the composed tmux-play roster.
 
-For the tmux-play host, the first generic design requires each enabled playbook to resolve at least one visible local role.
-Pure Captain-only playbooks are deferred until a host supports a zero-player visible state or a later design defines a fallback visible set.
+For the tmux-play host, the first generic design requires each enabled registry playbook to resolve at least one visible local role.
+Pure Captain-only registry playbooks are deferred until a host supports a zero-player visible state or a later design defines a fallback visible set.
+The compiled default Captain of [DR-012](012-default-captain-playbook.md) is an internal non-registry root, so it is exempt and makes no visibility request.
 
 The generic launcher shall set the composed tmux-play `layout.initialVisible` to the generated players for the first enabled playbook in config order.
 The generic config may use tmux-play layout window and column-weight fields, including the cligent 0.13.0 shape-specific `singlePlayerColumnWeights` and `multiPlayerColumnWeights` fields, but the generic launcher owns `layout.initialVisible`.
 Column-weight fields are session-level per visible-column shape, not per playbook.
 Raw tmux-play configs launched through `--config` pass-through retain direct access to `layout.initialVisible`.
 
-When the shell selects, resumes, or routes to a playbook, it shall request tmux-play visibility for that playbook's generated host player ids before dispatching Boss text to the playbook runtime.
-The shell shall not request an empty visible set.
+When the shell selects, resumes, or routes to an enabled registry playbook, it shall request tmux-play visibility for that playbook's generated host player ids before dispatching Boss text to the playbook runtime.
+The shell shall not request an empty visible set and shall make no visibility request for the internal default Captain root.
 Because the launcher has already validated generated player ids, a `setVisiblePlayers` validation rejection is an internal shell or composition error.
 tmux pane reconciliation failures are display-only in tmux-play, so they shall not block dispatch to the playbook runtime.
 After a playbook reaches final completion or is dismissed, the visible panes may remain on the last selected playbook until the next selection.

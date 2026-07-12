@@ -31,6 +31,7 @@ const ADAPTER_SHORTHANDS = ['claude', 'codex'];
 // PBCLI-8: launcher-owned keys inside a `playbooks.<id>` block; every other
 // key belongs to that playbook's option slice.
 const PLAYBOOK_LAUNCHER_KEYS = ['from', 'command', 'players'];
+const RESERVED_CAPTAIN_PLAYBOOK_ID = 'captain';
 // PBCLI-9: the bare `captain` id names the tmux-play host Captain, so no
 // playbook-local role may take it.
 const RESERVED_CAPTAIN_ROLE_ID = 'captain';
@@ -155,9 +156,6 @@ function isValidRegistryEntry(value) {
     typeof value.command === 'string' &&
     typeof value.intent === 'string' &&
     Array.isArray(value.requiredRoleIds) &&
-    typeof value.idleStateId === 'string' &&
-    typeof value.finalStateId === 'string' &&
-    Array.isArray(value.parkStateIds) &&
     typeof value.validateOptions === 'function' &&
     typeof value.createRuntime === 'function'
   );
@@ -199,6 +197,11 @@ export async function composeGenericConfig(top, loadModule) {
   let firstVisible;
 
   for (const id of ids) {
+    if (id === RESERVED_CAPTAIN_PLAYBOOK_ID) {
+      throw new Error(
+        `playbooks.${id} collides with the reserved internal Captain id`,
+      );
+    }
     const block = requireObject(playbooksCfg[id], `playbooks.${id}`);
     const from = block.from;
     if (typeof from !== 'string' || from.length === 0) {
@@ -232,6 +235,11 @@ export async function composeGenericConfig(top, loadModule) {
       typeof block.command === 'string' && block.command.length > 0
         ? block.command
         : entry.command;
+    if (command === RESERVED_CAPTAIN_PLAYBOOK_ID) {
+      throw new Error(
+        `playbooks.${id}.command collides with the reserved internal Captain command`,
+      );
+    }
     if (seenCommands.has(command)) {
       throw new Error(`duplicate effective command "${command}"`);
     }

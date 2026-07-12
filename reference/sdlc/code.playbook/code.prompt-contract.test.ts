@@ -253,6 +253,7 @@ function continuationContext(
   const input = state?.getInput({});
   return {
     pendingBossQuestion: {
+      questionId: stateId as never,
       resumeStateId: stateId as never,
       sourceItem: input?.sourceItem ?? 'CODE-X',
       player: (input?.player ?? 'Coder') as never,
@@ -298,7 +299,9 @@ describe('prompt contract — per state', () => {
           const expected = contract.wiredFields.includes(f)
             ? FULL_CONTEXT[f]
             : undefined;
-          expect(inputField(input, f), `${contract.stateId}.${f}`).toBe(expected);
+          expect(inputField(input, f), `${contract.stateId}.${f}`).toBe(
+            expected,
+          );
         }
       });
 
@@ -319,8 +322,14 @@ describe('prompt contract — per state', () => {
         );
         for (const p of contract.placeholders) {
           const replacement = FULL_CONTEXT[PLACEHOLDER_SOURCE[p]];
-          expect(composed, `${contract.stateId}: ${p} should be substituted`).not.toContain(p);
-          expect(composed, `${contract.stateId}: ${replacement} should appear (substituted from ${p})`).toContain(replacement);
+          expect(
+            composed,
+            `${contract.stateId}: ${p} should be substituted`,
+          ).not.toContain(p);
+          expect(
+            composed,
+            `${contract.stateId}: ${replacement} should appear (substituted from ${p})`,
+          ).toContain(replacement);
         }
       });
 
@@ -372,7 +381,9 @@ describe('prompt contract — structural', () => {
       for (const p of c.placeholders) {
         const required = PLACEHOLDER_SOURCE[p];
         if (!c.wiredFields.includes(required)) {
-          orphans.push(`${c.stateId}: placeholder ${p} but ${required} is not wired`);
+          orphans.push(
+            `${c.stateId}: placeholder ${p} but ${required} is not wired`,
+          );
         }
       }
     }
@@ -460,15 +471,18 @@ describe('prompt contract — Boss-reply continuation', () => {
         ['pendingOnly', pendingOnly],
         ['replyOnly', replyOnly],
       ] as const) {
-        expect(composed, `${contract.stateId} ${label}: no preamble`).not.toContain(
-          CONTINUATION_PREAMBLE,
-        );
-        expect(composed, `${contract.stateId} ${label}: no question block`).not.toContain(
-          'Boss question:',
-        );
-        expect(composed, `${contract.stateId} ${label}: no reply block`).not.toContain(
-          'Boss reply:',
-        );
+        expect(
+          composed,
+          `${contract.stateId} ${label}: no preamble`,
+        ).not.toContain(CONTINUATION_PREAMBLE);
+        expect(
+          composed,
+          `${contract.stateId} ${label}: no question block`,
+        ).not.toContain('Boss question:');
+        expect(
+          composed,
+          `${contract.stateId} ${label}: no reply block`,
+        ).not.toContain('Boss reply:');
       }
     });
   }

@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest';
 import { assign, createActor, setup } from 'xstate';
 import type { PlaybookTraceEvent } from '@sublang/playbook/runtime';
-import { codingMachine, type CaptainInput } from './code.fsm.js';
+import type { NestedPlaybookBridge } from '../../../src/xstate-runtime.js';
+import { codingMachine, type PlayerInput as CaptainInput } from './code.fsm.js';
 import {
   enumerateCaptainStates,
   enumerateRootEvents,
@@ -13,6 +14,7 @@ import createPlaybookRuntime, {
   _internal,
   type PlaybookPorts,
   type PlaybookSession,
+  type PlayerResult,
 } from './code.playbook.js';
 
 const {
@@ -26,14 +28,18 @@ const {
   normalizeEventForTelemetry,
 } = _internal;
 
-function makeFakePorts(
-  overrides: Partial<PlaybookPorts> = {},
-): PlaybookPorts {
+function makeFakePorts(overrides: Partial<PlaybookPorts> = {}): PlaybookPorts {
   return {
     callPlayer: async () => {
       throw new Error('callPlayer not used in this test');
     },
+    callCaptain: async () => {
+      throw new Error('callCaptain not used in this test');
+    },
     callJudge: async () => '{}',
+    callPlaybook: async () => {
+      throw new Error('callPlaybook not used in this test');
+    },
     emitStatus: async () => {},
     emitTelemetry: async () => {},
     ...overrides,
@@ -46,11 +52,18 @@ function makePlaybookSession(
   ports: PlaybookPorts,
   sessionId = `code-test-session-${++sessionSequence}`,
 ): PlaybookSession {
-  return { sessionId, playbookId: 'code', ports };
+  return {
+    sessionId,
+    playbookId: 'code',
+    rootSessionId: sessionId,
+    depth: 0,
+    ports,
+  };
 }
 
 function makeInput(overrides: Partial<CaptainInput> = {}): CaptainInput {
   return {
+    stateId: 'planAndImplement',
     player: 'Coder',
     sourceItem: 'TEST-1',
     prompt: 'do the thing',
@@ -105,9 +118,7 @@ describe('composePlayerPrompt', () => {
     });
 
     it('leaves a placeholder unchanged when its source field is undefined', () => {
-      const out = composePlayerPrompt(
-        makeInput({ prompt: 'IR-<#> stays.' }),
-      );
+      const out = composePlayerPrompt(makeInput({ prompt: 'IR-<#> stays.' }));
       expect(out).toBe('IR-<#> stays.');
     });
   });
@@ -194,9 +205,7 @@ describe('resolvePlayerId', () => {
   });
 
   it('returns "reviewer" for non-composite Reviewer', () => {
-    expect(resolvePlayerId(makeInput({ player: 'Reviewer' }))).toBe(
-      'reviewer',
-    );
+    expect(resolvePlayerId(makeInput({ player: 'Reviewer' }))).toBe('reviewer');
   });
 
   describe('Committer composite (DR-004 §2)', () => {
@@ -244,9 +253,7 @@ describe('resolvePlayerId', () => {
     });
 
     it('neither field set → "coder" (alias first-alternative fallback per slc/link.md)', () => {
-      expect(resolvePlayerId(makeInput({ player: 'Committer' }))).toBe(
-        'coder',
-      );
+      expect(resolvePlayerId(makeInput({ player: 'Committer' }))).toBe('coder');
     });
 
     describe('configured committer alias (PBRT-8)', () => {
@@ -338,7 +345,7 @@ describe('adjudicate', () => {
     }
   });
 
-  it('includes the player\'s verbatim output in the prompt', async () => {
+  it("includes the player's verbatim output in the prompt", async () => {
     let prompt = '';
     const ports = makeFakePorts({
       callJudge: async (p) => {
@@ -720,8 +727,7 @@ describe('adjudicate', () => {
 
     it('substitutes finalText.trim() for `challenges` even when the judge omits it', async () => {
       const ports = makeFakePorts({
-        callJudge: async () =>
-          JSON.stringify({ guard: 'challengesRaised' }),
+        callJudge: async () => JSON.stringify({ guard: 'challengesRaised' }),
       });
       const finalText = '  1. Counter-evidence A.\n2. Counter-evidence B.  ';
       const out = await adjudicate(
@@ -771,7 +777,11 @@ describe('error normalization at emission boundaries', () => {
 
     it('extracts { name, message } from an error-shaped plain object', () => {
       expect(
-        normalizeErrorCompact({ name: 'CustomErr', message: 'msg', stack: 's' }),
+        normalizeErrorCompact({
+          name: 'CustomErr',
+          message: 'msg',
+          stack: 's',
+        }),
       ).toEqual({ name: 'CustomErr', message: 'msg' });
     });
 
@@ -787,7 +797,10 @@ describe('error normalization at emission boundaries', () => {
         name: 'Error',
         message: 'plain string',
       });
-      expect(normalizeErrorCompact(42)).toEqual({ name: 'Error', message: '42' });
+      expect(normalizeErrorCompact(42)).toEqual({
+        name: 'Error',
+        message: '42',
+      });
     });
   });
 
@@ -849,22 +862,30 @@ describe('error normalization at emission boundaries', () => {
       expect(normalizeEventForTelemetry(null)).toBeNull();
     });
 
-    it('recursively removes undefined and normalizes non-JSON values', () => {
-      const circular: Record<string, unknown> = {};
-      circular.self = circular;
+    it('recursively omits undefined object members before snapshotting', () => {
       const out = normalizeEventForTelemetry({
         type: 'xstate.init',
         input: { coderPlayer: 'codex', committerPlayer: undefined },
-        values: [undefined, Number.POSITIVE_INFINITY, 2n],
-        circular,
+        values: [1, 2],
       });
       expect(out).toEqual({
         type: 'xstate.init',
         input: { coderPlayer: 'codex' },
-        values: [null, null, '2'],
-        circular: { self: '[Circular]' },
+        values: [1, 2],
       });
-      expect(() => JSON.stringify(out)).not.toThrow();
+      expect(Object.isFrozen(out)).toBe(true);
+      expect(Object.isFrozen((out as { input: unknown }).input)).toBe(true);
+    });
+
+    it('rejects inspection values that strict JSON would change', () => {
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+      expect(() => normalizeEventForTelemetry({ value: 2n })).toThrow(
+        'FSM event.value must be a JSON value',
+      );
+      expect(() => normalizeEventForTelemetry({ circular })).toThrow(
+        'must not contain a JSON cycle',
+      );
     });
   });
 });
@@ -885,9 +906,10 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
         });
       },
     });
-    expect(
-      await classifyBossText('/start fix the bug', ports, sig()),
-    ).toEqual({ type: 'START_CODING', intent: 'fix the bug' });
+    expect(await classifyBossText('/start fix the bug', ports, sig())).toEqual({
+      type: 'START_CODING',
+      intent: 'fix the bug',
+    });
     expect(called).toBe(true);
     expect(prompt).toContain('/start fix the bug');
   });
@@ -900,9 +922,10 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
           payload: { irNumber: '4' },
         }),
     });
-    expect(
-      await classifyBossText('continue IR 4', ports, sig()),
-    ).toEqual({ type: 'CONTINUE_IR', irNumber: '4' });
+    expect(await classifyBossText('continue IR 4', ports, sig())).toEqual({
+      type: 'CONTINUE_IR',
+      irNumber: '4',
+    });
   });
 
   it('classifier reply wrapped in prose with a trailing comma still classifies', async () => {
@@ -911,9 +934,10 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
         'Classification:\n```json\n{"event":"CONTINUE_IR",' +
         '"payload":{"irNumber":"4",}}\n```\nDone.',
     });
-    expect(
-      await classifyBossText('continue IR 4', ports, sig()),
-    ).toEqual({ type: 'CONTINUE_IR', irNumber: '4' });
+    expect(await classifyBossText('continue IR 4', ports, sig())).toEqual({
+      type: 'CONTINUE_IR',
+      irNumber: '4',
+    });
   });
 
   it('free-form text routes through callJudge and lands on SUMMARIZE_IR', async () => {
@@ -924,9 +948,10 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
           payload: { irNumber: '7' },
         }),
     });
-    expect(
-      await classifyBossText('summarize IR 7', ports, sig()),
-    ).toEqual({ type: 'SUMMARIZE_IR', irNumber: '7' });
+    expect(await classifyBossText('summarize IR 7', ports, sig())).toEqual({
+      type: 'SUMMARIZE_IR',
+      irNumber: '7',
+    });
   });
 
   it('free-form text routes through callJudge and lands on BOSS_INTERRUPT', async () => {
@@ -954,11 +979,7 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
         }),
     });
     expect(
-      await classifyBossText(
-        'switch to implementing the fix',
-        ports,
-        sig(),
-      ),
+      await classifyBossText('switch to implementing the fix', ports, sig()),
     ).toEqual({
       type: 'BOSS_INTERRUPT',
       targetId: 'planAndImplement',
@@ -971,9 +992,7 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
       callJudge: async () =>
         JSON.stringify({ event: 'NO_ACTION', payload: {} }),
     });
-    expect(
-      await classifyBossText('/bogus rest', ports, sig()),
-    ).toBeUndefined();
+    expect(await classifyBossText('/bogus rest', ports, sig())).toBeUndefined();
   });
 
   it('invalid BOSS_INTERRUPT target emits status and returns undefined', async () => {
@@ -1039,8 +1058,7 @@ describe('classifyBossText (free-text classifier — DR-004 §3)', () => {
   it('unknown event type from classifier → emitStatus + undefined', async () => {
     const statuses: string[] = [];
     const ports = makeFakePorts({
-      callJudge: async () =>
-        JSON.stringify({ event: 'BOGUS', payload: {} }),
+      callJudge: async () => JSON.stringify({ event: 'BOGUS', payload: {} }),
       emitStatus: async (m) => {
         statuses.push(m);
       },
@@ -1070,10 +1088,22 @@ describe('classifyBossText (awaitBossReply branch — DR-005 §6)', () => {
     });
 
     await expect(
-      classifyBossText('Use the narrow scope.', ports, sig(), 'awaitBossReply'),
+      classifyBossText('Use the narrow scope.', ports, sig(), {
+        value: 'awaitBossReply',
+        context: {
+          pendingBossQuestion: {
+            questionId: 'planAndImplement',
+            resumeStateId: 'planAndImplement',
+            sourceItem: 'CODE-1',
+            player: 'Coder',
+            question: 'Which scope should I use?',
+          },
+        },
+      }),
     ).resolves.toEqual({
       type: 'BOSS_REPLY',
       answer: 'Use the narrow scope.',
+      questionId: 'planAndImplement',
     });
     expect(judgeCalled).toBe(true);
     expect(prompt).toContain('Current state: awaitBossReply');
@@ -1096,6 +1126,7 @@ describe('classifyBossText (awaitBossReply branch — DR-005 §6)', () => {
         value: 'awaitBossReply',
         context: {
           pendingBossQuestion: {
+            questionId: 'planAndImplement',
             resumeStateId: 'planAndImplement',
             sourceItem: 'CODE-1',
             player: 'Coder',
@@ -1106,9 +1137,13 @@ describe('classifyBossText (awaitBossReply branch — DR-005 §6)', () => {
     ).resolves.toEqual({
       type: 'BOSS_REPLY',
       answer: 'Use the narrow scope.',
+      questionId: 'planAndImplement',
     });
-    expect(prompt).toContain('Pending Boss question: Which scope should I use?');
-    expect(prompt).toContain('Pending resume state: planAndImplement');
+    expect(prompt).toContain(
+      'Pending Boss question: Which scope should I use?',
+    );
+    expect(prompt).toContain('Pending question id: planAndImplement');
+    expect(prompt).toContain('Pending asking player: Coder');
   });
 
   it('BOSS_REPLY outside awaitBossReply emits status and returns undefined', async () => {
@@ -1164,7 +1199,10 @@ const PBRT33_DAMAGE_KINDS: ReadonlyArray<{
   name: string;
   damage: (json: string) => string;
 }> = [
-  { name: 'prose-wrapped', damage: (j) => `Here is the outcome:\n${j}\nThanks.` },
+  {
+    name: 'prose-wrapped',
+    damage: (j) => `Here is the outcome:\n${j}\nThanks.`,
+  },
   {
     name: 'code-fenced amid prose',
     damage: (j) => 'My call:\n```json\n' + j + '\n```\nDone.',
@@ -1184,12 +1222,15 @@ const PBRT33_DAMAGE_KINDS: ReadonlyArray<{
 describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
   function buildActor(ports: PlaybookPorts) {
     return createActor(
-      codingMachine.provide({ actors: { captain: captainBridge(ports) } }),
+      codingMachine.provide({ actors: { player: captainBridge(ports) } }),
       { input: { coderPlayer: 'claude', reviewerPlayer: 'codex' } },
     );
   }
 
-  function settleAt(actor: ReturnType<typeof createActor>, values: readonly string[]) {
+  function settleAt(
+    actor: ReturnType<typeof createActor>,
+    values: readonly string[],
+  ) {
     return new Promise<void>((resolve) => {
       const sub = actor.subscribe((snap) => {
         if (typeof snap.value === 'string' && values.includes(snap.value)) {
@@ -1203,19 +1244,20 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
   function buildBridgeValidationActor(
     input: CaptainInput,
     ports: PlaybookPorts,
+    getActiveSignal?: () => AbortSignal | undefined,
   ) {
     const machine = setup({
       types: {} as {
         context: { lastError?: unknown };
       },
-      actors: { captain: captainBridge(ports) },
+      actors: { player: captainBridge(ports, getActiveSignal) },
     }).createMachine({
       context: {},
       initial: 'ask',
       states: {
         ask: {
           invoke: {
-            src: 'captain',
+            src: 'player',
             input: () => input,
             onDone: { target: 'done' },
             onError: {
@@ -1307,6 +1349,41 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     expect(actor.getSnapshot().value).toBe('failed');
   });
 
+  it('combines invocation and public-boundary cancellation', async () => {
+    const boundaryController = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    let markStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const ports = makeFakePorts({
+      callPlayer: async (_playerId, _prompt, signal) => {
+        observedSignal = signal;
+        markStarted?.();
+        return new Promise<PlayerResult>((_resolve, reject) => {
+          const rejectAbort = (): void => reject(signal.reason);
+          if (signal.aborted) rejectAbort();
+          else signal.addEventListener('abort', rejectAbort, { once: true });
+        });
+      },
+    });
+    const actor = buildBridgeValidationActor(
+      makeInput(),
+      ports,
+      () => boundaryController.signal,
+    );
+    actor.subscribe({ error: () => {} });
+    actor.start();
+    await started;
+
+    expect(observedSignal?.aborted).toBe(false);
+    actor.stop();
+    await Promise.resolve();
+
+    expect(observedSignal?.aborted).toBe(true);
+    expect(boundaryController.signal.aborted).toBe(false);
+  });
+
   it('lands at #failed when callPlayer returns status="ok" with no finalText', async () => {
     const ports = makeFakePorts({
       callPlayer: async () => ({ status: 'ok' }),
@@ -1345,7 +1422,10 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
         { guard: 'needsBossInput' },
       ]);
       const ports = makeFakePorts({
-        callPlayer: async () => ({ status: 'ok', finalText: 'Progress noted.' }),
+        callPlayer: async () => ({
+          status: 'ok',
+          finalText: 'Progress noted.',
+        }),
         callJudge: async (prompt) => damage(await clean(prompt)),
       });
 
@@ -1420,6 +1500,7 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     });
     const actor = buildBridgeValidationActor(
       makeInput({
+        stateId: 'notRegistered' as CaptainInput['stateId'],
         sourceItem: 'CODE-X',
         result: { needsBossReply: needsBossReplyDescription },
       }),
@@ -1432,7 +1513,7 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     expect(actor.getSnapshot().value).toBe('failed');
     expectLastErrorMessage(
       actor,
-      'state CODE-X declared needsBossReply but is not registered as resumable',
+      'state notRegistered declared needsBossReply but is not registered as resumable',
     );
   });
 });
@@ -1443,7 +1524,212 @@ describe('createPlaybookRuntime.init (Task 8 wiring)', () => {
       coderPlayer: 'claude',
       reviewerPlayer: 'codex',
     });
-    await expect(runtime.init(makePlaybookSession(makeFakePorts()))).resolves.toBeUndefined();
+    await expect(
+      runtime.init(makePlaybookSession(makeFakePorts())),
+    ).resolves.toBeUndefined();
+  });
+
+  it('disposes a failed session start, preserves its error, and permits retry', async () => {
+    const runtime = createPlaybookRuntime({});
+    const failedTraces: PlaybookTraceEvent[] = [];
+    const failedPorts: PlaybookPorts = {
+      ...makeFakePorts(),
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        failedTraces.push(trace);
+        if (trace.type === 'session.started') {
+          throw new Error('original CODE session-start sink failure');
+        }
+        if (trace.type === 'session.disposed') {
+          throw new Error('secondary CODE session-disposal sink failure');
+        }
+      },
+    };
+
+    await expect(
+      runtime.init(makePlaybookSession(failedPorts, 'failed-code-session')),
+    ).rejects.toThrow('original CODE session-start sink failure');
+    expect(failedTraces.map(({ type }) => type)).toEqual([
+      'session.started',
+      'session.disposed',
+    ]);
+
+    const retryTraces: PlaybookTraceEvent[] = [];
+    const retryPorts: PlaybookPorts = {
+      ...makeFakePorts(),
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          retryTraces.push(event.payload as PlaybookTraceEvent);
+        }
+      },
+    };
+    await expect(
+      runtime.init(makePlaybookSession(retryPorts, 'retry-code-session')),
+    ).resolves.toBeUndefined();
+    expect(retryTraces[0]).toMatchObject({
+      sessionId: 'retry-code-session',
+      sequence: 1,
+      type: 'session.started',
+    });
+    await runtime.dispose();
+  });
+
+  it.each([
+    {
+      name: 'root id mismatch',
+      patch: { rootSessionId: 'different-root' },
+      error: /must be its own rootSessionId/,
+    },
+    {
+      name: 'root parent identity',
+      patch: { parentSessionId: 'parent', parentCallId: 'call-1' },
+      error: /must not carry parent identity/,
+    },
+    {
+      name: 'negative depth',
+      patch: { depth: -1 },
+      error: /non-negative integer/,
+    },
+    {
+      name: 'unsafe depth',
+      patch: { depth: Number.MAX_SAFE_INTEGER + 1 },
+      error: /non-negative integer/,
+    },
+    {
+      name: 'child without parent identity',
+      patch: { rootSessionId: 'root-session', depth: 1 },
+      error: /parentSessionId must be a non-empty string/,
+    },
+  ])(
+    'rejects invalid causal session identity: $name',
+    async ({ patch, error, sessionId }) => {
+      const runtime = createPlaybookRuntime({});
+      const session = Object.assign(
+        makePlaybookSession(makeFakePorts(), sessionId),
+        patch,
+      );
+      await expect(runtime.init(session)).rejects.toThrow(error);
+    },
+  );
+
+  it.each([
+    'callPlayer',
+    'callCaptain',
+    'callJudge',
+    'callPlaybook',
+    'emitStatus',
+    'emitTelemetry',
+  ] as const)('rejects a missing or non-function %s port', async (port) => {
+    for (const invalid of [undefined, 'not callable'] as const) {
+      const runtime = createPlaybookRuntime({});
+      const ports = makeFakePorts() as unknown as Record<string, unknown>;
+      if (invalid === undefined) delete ports[port];
+      else ports[port] = invalid;
+
+      await expect(
+        runtime.init(
+          makePlaybookSession(
+            ports as unknown as PlaybookPorts,
+            `invalid-${port}-${String(invalid)}`,
+          ),
+        ),
+      ).rejects.toThrow(
+        new RegExp(
+          `playbook session ports\\.${port} must be (?:a function|an own data property)`,
+        ),
+      );
+    }
+  });
+
+  it('binds valid child lineage immutably into every trace event', async () => {
+    const traces: PlaybookTraceEvent[] = [];
+    const ports = makeFakePorts({
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          traces.push(event.payload as PlaybookTraceEvent);
+        }
+      },
+    });
+    const runtime = createPlaybookRuntime({});
+    const session: PlaybookSession = {
+      sessionId: 'child-session',
+      playbookId: 'code',
+      rootSessionId: 'root-session',
+      parentSessionId: 'parent-session',
+      parentCallId: 'playbook-7',
+      depth: 2,
+      ports,
+    };
+    await runtime.init(session);
+    session.parentCallId = 'mutated';
+    await runtime.dispose();
+
+    expect(traces.length).toBeGreaterThan(0);
+    expect(
+      traces.every(
+        (trace) =>
+          trace.schemaVersion === 2 &&
+          trace.rootSessionId === 'root-session' &&
+          trace.parentSessionId === 'parent-session' &&
+          trace.parentCallId === 'playbook-7' &&
+          trace.depth === 2,
+      ),
+    ).toBe(true);
+  });
+
+  it('detaches the six port references from caller mutation', async () => {
+    const judgeCalls: string[] = [];
+    const originalPorts = makeFakePorts({
+      callJudge: async () => {
+        judgeCalls.push('original');
+        return '{}';
+      },
+    });
+    const runtime = createPlaybookRuntime({}) as RuntimeWithInternals;
+    const suppliedSession = makePlaybookSession(
+      originalPorts,
+      'detached-port-session',
+    );
+    await runtime.init(suppliedSession);
+
+    originalPorts.callJudge = async () => {
+      judgeCalls.push('mutated-port-object');
+      return '{}';
+    };
+    suppliedSession.ports = makeFakePorts({
+      callJudge: async () => {
+        judgeCalls.push('replaced-session-ports');
+        return '{}';
+      },
+    });
+
+    await runtime
+      ._getBoundary()
+      .callJudge('boss-input-classification', 'ready', 'prompt', sig());
+    expect(judgeCalls).toEqual(['original']);
+    await runtime.dispose();
+  });
+
+  it('latches an inspection emission failure instead of escaping actor start', async () => {
+    let transitionAttempts = 0;
+    const ports = makeFakePorts({
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.fsm.state') {
+          transitionAttempts++;
+          if (transitionAttempts === 1) {
+            throw new Error('transition sink unavailable');
+          }
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+
+    await expect(
+      runtime.init(makePlaybookSession(ports, 'inspection-failure-session')),
+    ).rejects.toThrow('transition sink unavailable');
+    expect(transitionAttempts).toBe(1);
+    await runtime.dispose();
   });
 });
 
@@ -1451,6 +1737,21 @@ describe('createPlaybookRuntime.init (Task 8 wiring)', () => {
 // supersede it with proper status/telemetry assertions.
 type RuntimeWithInternals = ReturnType<typeof createPlaybookRuntime> & {
   _getActor(): ReturnType<typeof createActor> | undefined;
+  _getBoundary(): {
+    callPlayer(
+      input: CaptainInput,
+      playerId: string,
+      prompt: string,
+      signal: AbortSignal,
+    ): ReturnType<PlaybookPorts['callPlayer']>;
+    callJudge(
+      purpose: 'boss-input-classification' | 'player-output-adjudication',
+      stateId: string | undefined,
+      prompt: string,
+      signal: AbortSignal,
+    ): ReturnType<PlaybookPorts['callJudge']>;
+  };
+  _getNestedBridge(): NestedPlaybookBridge;
 };
 
 function makeRuntimeWithInternals(): RuntimeWithInternals {
@@ -1461,6 +1762,527 @@ function makeRuntimeWithInternals(): RuntimeWithInternals {
 }
 
 const sig = () => new AbortController().signal;
+
+describe('runtime option snapshots', () => {
+  it('rejects strict-JSON violations before constructing a runtime', () => {
+    const cyclic: Record<string, unknown> = { coderPlayer: 'coder' };
+    cyclic.ignored = cyclic;
+    expect(() => createPlaybookRuntime(cyclic as never)).toThrow(
+      'must not contain a JSON cycle',
+    );
+    expect(() =>
+      createPlaybookRuntime(
+        Object.defineProperty({}, 'coderPlayer', {
+          enumerable: true,
+          get: () => 'coder',
+        }) as never,
+      ),
+    ).toThrow('must be a JSON data property');
+  });
+
+  it('detaches machine input from later option mutation', async () => {
+    const options = { coderPlayer: 'original-coder' };
+    const runtime = createPlaybookRuntime(options) as RuntimeWithInternals;
+    options.coderPlayer = 'mutated-coder';
+    await runtime.init(makePlaybookSession(makeFakePorts()));
+
+    expect(runtime._getActor()?.getSnapshot().context).toMatchObject({
+      coderPlayer: 'original-coder',
+    });
+    await runtime.dispose();
+  });
+});
+
+describe('host result validation and snapshots', () => {
+  function traceFromBoundary(event: {
+    topic: string;
+    payload: unknown;
+  }): PlaybookTraceEvent | undefined {
+    return event.topic === 'playbook.trace'
+      ? (event.payload as PlaybookTraceEvent)
+      : undefined;
+  }
+
+  it.each([
+    {
+      name: 'non-object',
+      result: 'ok',
+      error: /player result must be an object/,
+    },
+    {
+      name: 'unknown property',
+      result: { status: 'ok', finalText: 'done', extra: true },
+      error: /player result\.extra is not a declared property/,
+    },
+    {
+      name: 'invalid status',
+      result: { status: 'finished', finalText: 'done' },
+      error: /player result\.status is invalid/,
+    },
+    {
+      name: 'non-string optional field',
+      result: { status: 'ok', resumeToken: 42, finalText: 'done' },
+      error: /player result\.resumeToken must be a string/,
+    },
+    {
+      name: 'explicit undefined',
+      result: { status: 'ok', finalText: undefined },
+      error: /player result\.finalText must be a JSON value/,
+    },
+    {
+      name: 'accessor property',
+      result: Object.defineProperty({ status: 'ok' }, 'finalText', {
+        enumerable: true,
+        get: () => 'done',
+      }),
+      error: /player result\.finalText must be a JSON data property/,
+    },
+  ])(
+    'rejects and traces a malformed player result: $name',
+    async ({ result, error }) => {
+      const traces: PlaybookTraceEvent[] = [];
+      const ports = makeFakePorts({
+        callPlayer: async () => result as never,
+        emitTelemetry: async (event) => {
+          const trace = traceFromBoundary(event);
+          if (trace) traces.push(trace);
+        },
+      });
+      const runtime = makeRuntimeWithInternals();
+      await runtime.init(makePlaybookSession(ports, `malformed-${result}`));
+
+      await expect(
+        runtime
+          ._getBoundary()
+          .callPlayer(makeInput(), 'coder', 'prompt', sig()),
+      ).rejects.toThrow(error);
+
+      const finishes = traces.filter(
+        (trace) => trace.type === 'player.call.finished',
+      );
+      expect(finishes).toHaveLength(1);
+      expect(finishes[0]).toMatchObject({
+        payload: { status: 'error', error: { name: 'TypeError' } },
+      });
+      expect(finishes[0]?.payload).not.toHaveProperty('resumeToken');
+      expect(finishes[0]?.payload).not.toHaveProperty('finalText');
+      await runtime.dispose();
+    },
+  );
+
+  it('does not adopt a resume token from an invalid player result', async () => {
+    const resumeSelections: Array<string | false> = [];
+    let invocation = 0;
+    const ports = makeFakePorts({
+      callPlayer: async (_playerId, _prompt, _signal, options) => {
+        resumeSelections.push(options.resume);
+        invocation++;
+        return invocation === 1
+          ? ({
+              status: 'ok',
+              resumeToken: 'untrusted-token',
+              finalText: 'untrusted text',
+              extra: true,
+            } as never)
+          : { status: 'ok', finalText: 'valid text' };
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'invalid-token-isolation'));
+
+    await expect(
+      runtime
+        ._getBoundary()
+        .callPlayer(makeInput(), 'coder', 'invalid prompt', sig()),
+    ).rejects.toThrow('player result.extra is not a declared property');
+    await runtime
+      ._getBoundary()
+      .callPlayer(makeInput(), 'coder', 'valid prompt', sig());
+
+    expect(resumeSelections).toEqual([false, false]);
+    await runtime.dispose();
+  });
+
+  it('rejects a late non-cooperative player result before token mutation', async () => {
+    const controller = new AbortController();
+    let releaseResult!: (result: PlayerResult) => void;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const lateResult = new Promise<PlayerResult>((resolve) => {
+      releaseResult = resolve;
+    });
+    const resumeSelections: Array<string | false> = [];
+    const finishes: PlaybookTraceEvent[] = [];
+    let invocation = 0;
+    const ports = makeFakePorts({
+      callPlayer: async (_playerId, _prompt, _signal, options) => {
+        resumeSelections.push(options.resume);
+        invocation++;
+        if (invocation === 1) {
+          markStarted();
+          return lateResult;
+        }
+        return { status: 'ok', finalText: 'recovered' };
+      },
+      emitTelemetry: async (event) => {
+        const trace = traceFromBoundary(event);
+        if (trace?.type === 'player.call.finished') finishes.push(trace);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'late-player-result'));
+
+    const first = runtime
+      ._getBoundary()
+      .callPlayer(makeInput(), 'coder', 'late prompt', controller.signal);
+    await started;
+    controller.abort(new DOMException('turn cancelled', 'AbortError'));
+    releaseResult({
+      status: 'ok',
+      resumeToken: 'must-not-be-adopted',
+      finalText: 'too late',
+    });
+    await expect(first).rejects.toThrow('turn cancelled');
+    await runtime
+      ._getBoundary()
+      .callPlayer(makeInput(), 'coder', 'recovery prompt', sig());
+
+    expect(resumeSelections).toEqual([false, false]);
+    expect(finishes[0]?.payload).toMatchObject({ status: 'aborted' });
+    expect(finishes[0]?.payload).not.toHaveProperty('resumeToken');
+    expect(finishes[0]?.payload).not.toHaveProperty('finalText');
+    await runtime.dispose();
+  });
+
+  it('detaches a player result before token, trace, and caller mutation', async () => {
+    const mutableResult: {
+      status: 'ok' | 'error';
+      resumeToken: string;
+      finalText: string;
+    } = {
+      status: 'ok',
+      resumeToken: 'stable-token',
+      finalText: 'stable final text',
+    };
+    const resumeSelections: Array<string | false> = [];
+    const playerFinishes: PlaybookTraceEvent[] = [];
+    let invocation = 0;
+    const ports = makeFakePorts({
+      callPlayer: async (_playerId, _prompt, _signal, options) => {
+        resumeSelections.push(options.resume);
+        invocation++;
+        return invocation === 1
+          ? mutableResult
+          : { status: 'ok', finalText: 'second result' };
+      },
+      emitTelemetry: async (event) => {
+        const trace = traceFromBoundary(event);
+        if (trace?.type !== 'player.call.finished') return;
+        playerFinishes.push(trace);
+        if (playerFinishes.length === 1) {
+          mutableResult.status = 'error';
+          mutableResult.resumeToken = 'mutated-token';
+          mutableResult.finalText = 'mutated text';
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'player-result-snapshot'));
+
+    const first = await runtime
+      ._getBoundary()
+      .callPlayer(makeInput(), 'coder', 'first prompt', sig());
+    await runtime
+      ._getBoundary()
+      .callPlayer(makeInput(), 'coder', 'second prompt', sig());
+
+    expect(first).toEqual({
+      status: 'ok',
+      resumeToken: 'stable-token',
+      finalText: 'stable final text',
+    });
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(resumeSelections).toEqual([false, 'stable-token']);
+    expect(playerFinishes[0]?.payload).toMatchObject({
+      status: 'ok',
+      resumeToken: 'stable-token',
+      finalText: 'stable final text',
+    });
+    expect(Object.isFrozen(playerFinishes[0]?.payload)).toBe(true);
+    await runtime.dispose();
+  });
+
+  it('rejects and traces a non-string judge reply', async () => {
+    const traces: PlaybookTraceEvent[] = [];
+    const ports = makeFakePorts({
+      callJudge: async () => 42 as never,
+      emitTelemetry: async (event) => {
+        const trace = traceFromBoundary(event);
+        if (trace) traces.push(trace);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'judge-result-validation'));
+
+    await expect(
+      runtime
+        ._getBoundary()
+        .callJudge('boss-input-classification', 'ready', 'prompt', sig()),
+    ).rejects.toThrow('judge reply must be a string');
+    expect(
+      traces.filter((trace) => trace.type === 'judge.call.finished'),
+    ).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          status: 'error',
+          error: expect.objectContaining({
+            name: 'TypeError',
+            message: 'judge reply must be a string',
+          }),
+        }),
+      }),
+    ]);
+    await runtime.dispose();
+  });
+
+  it('does not duplicate a recorded judge success when its sink throws', async () => {
+    const finishes: PlaybookTraceEvent[] = [];
+    const ports = makeFakePorts({
+      callJudge: async () => '{}',
+      emitTelemetry: async (event) => {
+        const trace = traceFromBoundary(event);
+        if (trace?.type !== 'judge.call.finished') return;
+        finishes.push(trace);
+        throw new Error('trace sink failed after recording');
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'judge-finish-sink'));
+
+    await expect(
+      runtime
+        ._getBoundary()
+        .callJudge('boss-input-classification', 'ready', 'prompt', sig()),
+    ).rejects.toThrow('trace sink failed after recording');
+    expect(finishes).toHaveLength(1);
+    expect(finishes[0]?.payload).toMatchObject({ status: 'ok', reply: '{}' });
+    await expect(runtime.dispose()).rejects.toThrow(
+      'trace sink failed after recording',
+    );
+  });
+
+  it('attempts a judge finish when the start trace records then rejects', async () => {
+    const traces: PlaybookTraceEvent[] = [];
+    const startError = new Error('judge start sink failed after recording');
+    const ports = makeFakePorts({
+      emitTelemetry: async (event) => {
+        const trace = traceFromBoundary(event);
+        if (!trace) return;
+        traces.push(trace);
+        if (trace.type === 'judge.call.started') throw startError;
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'judge-start-sink'));
+
+    await expect(
+      runtime
+        ._getBoundary()
+        .callJudge('boss-input-classification', 'ready', 'prompt', sig()),
+    ).rejects.toBe(startError);
+    const starts = traces.filter(
+      (trace) => trace.type === 'judge.call.started',
+    );
+    const finishes = traces.filter(
+      (trace) => trace.type === 'judge.call.finished',
+    );
+    expect(starts).toHaveLength(1);
+    expect(finishes).toHaveLength(1);
+    expect(finishes[0]?.callId).toBe(starts[0]?.callId);
+    expect(finishes[0]?.payload).toMatchObject({ status: 'error' });
+    await expect(runtime.dispose()).rejects.toBe(startError);
+  });
+});
+
+describe('nested bridge lifecycle bookkeeping', () => {
+  function deferredValue<T>(): {
+    promise: Promise<T>;
+    resolve(value: T): void;
+  } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((resolvePromise) => {
+      resolve = resolvePromise;
+    });
+    return { promise, resolve };
+  }
+
+  function traceFromNested(event: {
+    topic: string;
+    payload: unknown;
+  }): PlaybookTraceEvent | undefined {
+    return event.topic === 'playbook.trace'
+      ? (event.payload as PlaybookTraceEvent)
+      : undefined;
+  }
+
+  it('retains the call-start turn id through resume without consuming a turn', async () => {
+    const traces: PlaybookTraceEvent[] = [];
+    const classifierStarted = deferredValue<void>();
+    const classifierReply = deferredValue<string>();
+    const childOpened = deferredValue<void>();
+    let request:
+      | { callId: string; playbookId: string; text: string }
+      | undefined;
+    const ports = makeFakePorts({
+      callJudge: async (prompt) => {
+        if (!isClassifierPrompt(prompt)) return '{}';
+        classifierStarted.resolve();
+        return classifierReply.promise;
+      },
+      callPlaybook: async (nextRequest) => {
+        request = nextRequest;
+        childOpened.resolve();
+        return { state: 'suspended', childSessionId: 'child-session' };
+      },
+      emitTelemetry: async (event) => {
+        const trace = traceFromNested(event);
+        if (trace) traces.push(trace);
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'nested-turn-session'));
+
+    const turn = runtime.handleBossInput({
+      text: 'hold routing',
+      signal: sig(),
+    });
+    await classifierStarted.promise;
+    const child = createActor(runtime._getNestedBridge().actorLogic, {
+      input: { stateId: 'ready', playbookId: 'child', text: 'nested work' },
+    });
+    child.subscribe({ error: () => {} });
+    child.start();
+    await childOpened.promise;
+    classifierReply.resolve(
+      JSON.stringify({ event: 'NO_ACTION', payload: {} }),
+    );
+    await turn;
+
+    expect(request).toBeDefined();
+    await runtime.resumePlaybookCall({
+      callId: request!.callId,
+      result: {
+        status: 'ok',
+        playbookId: 'child',
+        childSessionId: 'child-session',
+        output: { completed: true },
+      },
+      signal: sig(),
+    });
+    await runtime.handleBossInput({ text: ' ', signal: sig() });
+
+    const nestedTraces = traces.filter(
+      (trace) =>
+        trace.type === 'playbook.call.started' ||
+        trace.type === 'playbook.call.finished',
+    );
+    expect(nestedTraces).toHaveLength(2);
+    expect(nestedTraces.map(({ turnId }) => turnId)).toEqual([1, 1]);
+    expect(nestedTraces[0]?.callId).toBe(nestedTraces[1]?.callId);
+    expect(
+      traces.filter((trace) => trace.type === 'boss.input.received').at(-1)
+        ?.turnId,
+    ).toBe(2);
+
+    child.stop();
+    await runtime.dispose();
+  });
+
+  it('stops the root before disposal settles a suspended child', async () => {
+    const childOpened = deferredValue<void>();
+    let rootStatusAtFinish: unknown;
+    let runtime!: RuntimeWithInternals;
+    const ports = makeFakePorts({
+      callPlaybook: async () => {
+        childOpened.resolve();
+        return { state: 'suspended', childSessionId: 'dispose-child' };
+      },
+      emitTelemetry: async (event) => {
+        const trace = traceFromNested(event);
+        if (trace?.type === 'playbook.call.finished') {
+          rootStatusAtFinish = runtime._getActor()?.getSnapshot().status;
+        }
+      },
+    });
+    runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'nested-dispose-session'));
+    const child = createActor(runtime._getNestedBridge().actorLogic, {
+      input: { stateId: 'ready', playbookId: 'child', text: 'nested work' },
+    });
+    child.subscribe({ error: () => {} });
+    child.start();
+    await childOpened.promise;
+
+    await runtime.dispose();
+
+    expect(rootStatusAtFinish).toBe('stopped');
+    child.stop();
+  });
+
+  it('drains and clears a resume emission failure before the next boundary', async () => {
+    const childOpened = deferredValue<void>();
+    let request:
+      | { callId: string; playbookId: string; text: string }
+      | undefined;
+    let failFinish = true;
+    const ports = makeFakePorts({
+      callPlaybook: async (nextRequest) => {
+        request = nextRequest;
+        childOpened.resolve();
+        return { state: 'suspended', childSessionId: 'resume-child' };
+      },
+      emitTelemetry: async (event) => {
+        const trace = traceFromNested(event);
+        if (trace?.type === 'playbook.call.finished' && failFinish) {
+          failFinish = false;
+          throw new Error('resume finish sink failed');
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'resume-drain-session'));
+    const child = createActor(runtime._getNestedBridge().actorLogic, {
+      input: { stateId: 'ready', playbookId: 'child', text: 'nested work' },
+    });
+    child.subscribe({ error: () => {} });
+    child.start();
+    await childOpened.promise;
+    while (runtime._getNestedBridge().getPendingCall() === undefined) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+
+    await expect(
+      runtime.resumePlaybookCall({
+        callId: request!.callId,
+        result: {
+          status: 'ok',
+          playbookId: 'child',
+          childSessionId: 'resume-child',
+          output: { completed: true },
+        },
+        signal: sig(),
+      }),
+    ).rejects.toThrow('resume finish sink failed');
+    await expect(
+      runtime.handleBossInput({ text: ' ', signal: sig() }),
+    ).resolves.toMatchObject({ outcome: 'no-action' });
+
+    child.stop();
+    await runtime.dispose();
+  });
+});
 
 function isClassifierPrompt(prompt: string): boolean {
   return prompt.startsWith('Classify the following Boss message');
@@ -1559,7 +2381,10 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     const runtime = makeRuntimeWithInternals();
     await runtime.init(makePlaybookSession(ports));
 
-    await runtime.handleBossInput({ text: '/start add a button', signal: sig() });
+    const result = await runtime.handleBossInput({
+      text: '/start add a button',
+      signal: sig(),
+    });
 
     expect(playerCalls).toHaveLength(2);
     expect(playerCalls[0].playerId).toBe('coder');
@@ -1567,6 +2392,17 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(classifierCalls).toBe(1);
     expect(adjudicatorCalls).toBe(2);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+    expect(result).toEqual({
+      outcome: 'quiescent',
+      state: {
+        value: 'ready',
+        activeStateIds: ['ready'],
+        tags: ['playbook.parked'],
+        status: 'active',
+        quiescent: true,
+        stateId: 'ready',
+      },
+    });
   });
 
   it.each(PBRT33_DAMAGE_KINDS)(
@@ -1595,7 +2431,10 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
       const runtime = makeRuntimeWithInternals();
       await runtime.init(makePlaybookSession(ports));
 
-      await runtime.handleBossInput({ text: 'please add a button', signal: sig() });
+      await runtime.handleBossInput({
+        text: 'please add a button',
+        signal: sig(),
+      });
 
       expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
       expect(statuses).toContain('START_CODING');
@@ -1621,7 +2460,10 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
     await expect(
       runtime.handleBossInput({ text: 'do something', signal: sig() }),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+      outcome: 'no-action',
+      state: { stateId: 'ready', quiescent: true },
+    });
 
     expect(statuses).toHaveLength(1);
     expect(playerCalled).toBe(false);
@@ -1641,7 +2483,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     const runtime = makeRuntimeWithInternals();
     await runtime.init(makePlaybookSession(ports));
 
-    await runtime.handleBossInput({
+    const result = await runtime.handleBossInput({
       text: '/start ambiguous task',
       signal: sig(),
     });
@@ -1649,13 +2491,21 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     const snap = runtime._getActor()?.getSnapshot();
     expect(snap?.value).toBe('awaitBossReply');
     expect(
-      (snap?.context as { pendingBossQuestion?: unknown })
-        .pendingBossQuestion,
+      (snap?.context as { pendingBossQuestion?: unknown }).pendingBossQuestion,
     ).toEqual({
+      questionId: 'planAndImplement',
       resumeStateId: 'planAndImplement',
       sourceItem: 'CODE-1',
       player: 'Coder',
       question: FIRST_BOSS_QUESTION,
+    });
+    expect(result).toMatchObject({
+      outcome: 'quiescent',
+      state: {
+        stateId: 'awaitBossReply',
+        tags: ['playbook.parked'],
+        quiescent: true,
+      },
     });
   });
 
@@ -1685,10 +2535,11 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     const snap = runtime._getActor()?.getSnapshot();
     expect(snap?.value).toBe('ready');
     expect(
-      (snap?.context as { pendingBossQuestion?: unknown })
-        .pendingBossQuestion,
+      (snap?.context as { pendingBossQuestion?: unknown }).pendingBossQuestion,
     ).toBeUndefined();
-    expect((snap?.context as { bossReply?: unknown }).bossReply).toBeUndefined();
+    expect(
+      (snap?.context as { bossReply?: unknown }).bossReply,
+    ).toBeUndefined();
   });
 
   it('follow-up needsBossReply overwrites the question and clears the prior reply', async () => {
@@ -1718,15 +2569,17 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     const snap = runtime._getActor()?.getSnapshot();
     expect(snap?.value).toBe('awaitBossReply');
     expect(
-      (snap?.context as { pendingBossQuestion?: unknown })
-        .pendingBossQuestion,
+      (snap?.context as { pendingBossQuestion?: unknown }).pendingBossQuestion,
     ).toEqual({
+      questionId: 'planAndImplement',
       resumeStateId: 'planAndImplement',
       sourceItem: 'CODE-1',
       player: 'Coder',
       question: FOLLOW_UP_BOSS_QUESTION,
     });
-    expect((snap?.context as { bossReply?: unknown }).bossReply).toBeUndefined();
+    expect(
+      (snap?.context as { bossReply?: unknown }).bossReply,
+    ).toBeUndefined();
     expect(playerPrompts[1]).toContain(
       `Boss question:\n${FIRST_BOSS_QUESTION}`,
     );
@@ -1760,7 +2613,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     await runtime.init(makePlaybookSession(ports));
 
     setTimeout(() => controller.abort(), 5);
-    await runtime.handleBossInput({
+    const result = await runtime.handleBossInput({
       text: '/start do something',
       signal: controller.signal,
     });
@@ -1770,6 +2623,152 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect((snap?.context as { lastError?: unknown }).lastError).toBeDefined();
     expect(classifierCalls).toBe(1);
     expect(adjudicatorCalls).toBe(0); // callPlayer aborted; adjudication never reached
+    expect(result).toMatchObject({
+      outcome: 'aborted',
+      state: { stateId: 'failed', quiescent: true },
+      error: { name: 'AbortError' },
+    });
+  });
+
+  it('returns aborted when Boss classification is cancelled', async () => {
+    const controller = new AbortController();
+    const ports = makeFakePorts({
+      callJudge: async (_prompt, signal) =>
+        new Promise<string>((_resolve, reject) => {
+          const rejectAbort = (): void => reject(signal.reason);
+          if (signal.aborted) rejectAbort();
+          else signal.addEventListener('abort', rejectAbort, { once: true });
+        }),
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports));
+
+    const pending = runtime.handleBossInput({
+      text: 'classify this',
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      outcome: 'aborted',
+      state: { stateId: 'ready', quiescent: true },
+      error: { name: 'AbortError' },
+    });
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('preserves a player-result control error over a coincident abort', async () => {
+    const controller = new AbortController();
+    const ports = makeFakePorts({
+      callPlayer: async () =>
+        ({ status: 'ok', finalText: 'invalid', extra: true }) as never,
+      callJudge: async (prompt) => {
+        if (isClassifierPrompt(prompt)) {
+          return JSON.stringify(classifierReplyForTestPrompt(prompt));
+        }
+        return '{}';
+      },
+      emitTelemetry: async (event) => {
+        if (
+          event.topic === 'playbook.trace' &&
+          (event.payload as { type?: unknown }).type ===
+            'player.call.finished' &&
+          (event.payload as { payload?: { status?: unknown } }).payload
+            ?.status === 'error'
+        ) {
+          controller.abort(new DOMException('coincident abort', 'AbortError'));
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'control-before-abort'));
+
+    await expect(
+      runtime.handleBossInput({
+        text: '/start invalid',
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('player result.extra is not a declared property');
+    expect(controller.signal.aborted).toBe(true);
+    await runtime.dispose();
+  });
+
+  it.each([
+    {
+      name: 'judge port rejection',
+      judge: async () => {
+        throw new Error('original judge rejection');
+      },
+      expected: 'original judge rejection',
+    },
+    {
+      name: 'non-string judge result',
+      judge: async () => 42 as never,
+      expected: 'judge reply must be a string',
+    },
+  ])(
+    'preserves the original $name when its finish sink rejects',
+    async ({ judge, expected }) => {
+      let maskFinish = true;
+      const ports = makeFakePorts({
+        callJudge: judge,
+        emitTelemetry: async (event) => {
+          if (
+            event.topic === 'playbook.trace' &&
+            (event.payload as { type?: unknown }).type ===
+              'judge.call.finished' &&
+            maskFinish
+          ) {
+            maskFinish = false;
+            throw new Error('finish sink mask');
+          }
+        },
+      });
+      const runtime = makeRuntimeWithInternals();
+      await runtime.init(makePlaybookSession(ports, `judge-mask-${expected}`));
+
+      await expect(
+        runtime.handleBossInput({ text: 'classify', signal: sig() }),
+      ).rejects.toThrow(expected);
+      await runtime.dispose();
+    },
+  );
+
+  it('reports a non-abort settlement sink error over an authored abort', async () => {
+    const controller = new AbortController();
+    let markJudgeStarted!: () => void;
+    const judgeStarted = new Promise<void>((resolve) => {
+      markJudgeStarted = resolve;
+    });
+    const ports = makeFakePorts({
+      callJudge: async (_prompt, signal) => {
+        markJudgeStarted();
+        return new Promise<string>((_resolve, reject) => {
+          const rejectAbort = (): void => reject(signal.reason);
+          if (signal.aborted) rejectAbort();
+          else signal.addEventListener('abort', rejectAbort, { once: true });
+        });
+      },
+      emitTelemetry: async (event) => {
+        if (
+          event.topic === 'playbook.trace' &&
+          (event.payload as { type?: unknown }).type === 'boss.input.settled'
+        ) {
+          throw new Error('settlement sink failed');
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'abort-settlement-failure'));
+    const turn = runtime.handleBossInput({
+      text: 'classify',
+      signal: controller.signal,
+    });
+    await judgeStarted;
+    controller.abort(new DOMException('authored abort', 'AbortError'));
+
+    await expect(turn).rejects.toThrow('settlement sink failed');
+    await runtime.dispose();
   });
 
   it('classifier BOSS_INTERRUPT redirects the FSM to the target state', async () => {
@@ -1829,6 +2828,185 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     await expect(
       runtime.handleBossInput({ text: '/start x', signal: sig() }),
     ).rejects.toThrow(/init must be called first/);
+  });
+
+  it('rejects resume before init and unknown or stale call ids after init', async () => {
+    const input = {
+      callId: 'playbook-stale',
+      result: {
+        status: 'ok' as const,
+        playbookId: 'child',
+        childSessionId: 'child-session',
+      },
+      signal: sig(),
+    };
+    const runtime = makeRuntimeWithInternals();
+    await expect(runtime.resumePlaybookCall(input)).rejects.toThrow(
+      /init must be called first/,
+    );
+    await runtime.init(makePlaybookSession(makeFakePorts()));
+    await expect(runtime.resumePlaybookCall(input)).rejects.toThrow(
+      /unknown or stale playbook call id playbook-stale/,
+    );
+    expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
+  });
+
+  it('rejects overlapping calls to the same resolved player', async () => {
+    let release!: () => void;
+    let announceStart!: () => void;
+    const started = new Promise<void>((resolve) => {
+      announceStart = resolve;
+    });
+    let hostCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        hostCalls += 1;
+        announceStart();
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return { status: 'ok', finalText: 'done' };
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports));
+    const boundary = runtime._getBoundary();
+    const input = makeInput();
+    const first = boundary.callPlayer(input, 'coder', 'first', sig());
+    await started;
+
+    await expect(
+      boundary.callPlayer(input, 'coder', 'second', sig()),
+    ).rejects.toThrow(/simultaneous calls to resolved player coder/);
+    expect(hostCalls).toBe(1);
+    release();
+    await expect(first).resolves.toMatchObject({ status: 'ok' });
+  });
+
+  it('serializes hidden judge calls through one abort-aware FIFO', async () => {
+    let releaseFirst!: () => void;
+    let announceFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      announceFirst = resolve;
+    });
+    let calls = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        calls += 1;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        if (calls === 1) {
+          announceFirst();
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        inFlight -= 1;
+        return '{}';
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports));
+    const boundary = runtime._getBoundary();
+    const first = boundary.callJudge(
+      'boss-input-classification',
+      'ready',
+      'first',
+      sig(),
+    );
+    await firstStarted;
+    const second = boundary.callJudge(
+      'player-output-adjudication',
+      'planAndImplement',
+      'second',
+      sig(),
+    );
+    const cancelled = new AbortController();
+    const cancelledCall = boundary.callJudge(
+      'player-output-adjudication',
+      'respondToReview',
+      'cancelled',
+      cancelled.signal,
+    );
+    cancelled.abort();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(calls).toBe(1);
+    releaseFirst();
+    await expect(Promise.all([first, second])).resolves.toEqual(['{}', '{}']);
+    await expect(cancelledCall).rejects.toThrow();
+    expect(maxInFlight).toBe(1);
+  });
+
+  it('drains a non-cooperative running judge before releasing its queue slot', async () => {
+    let releaseFirst!: () => void;
+    let announceFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      announceFirst = resolve;
+    });
+    const traces: PlaybookTraceEvent[] = [];
+    let calls = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        calls += 1;
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        if (calls === 1) {
+          announceFirst();
+          await new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+        inFlight -= 1;
+        return '{}';
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          traces.push(event.payload as PlaybookTraceEvent);
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports));
+    const boundary = runtime._getBoundary();
+    const controller = new AbortController();
+    const first = boundary.callJudge(
+      'boss-input-classification',
+      'ready',
+      'first',
+      controller.signal,
+    );
+    await firstStarted;
+    controller.abort(new DOMException('cancelled', 'AbortError'));
+    const second = boundary.callJudge(
+      'player-output-adjudication',
+      'planAndImplement',
+      'second',
+      sig(),
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(calls).toBe(1);
+
+    releaseFirst();
+    await expect(first).rejects.toThrow();
+    await expect(second).resolves.toBe('{}');
+    expect(maxInFlight).toBe(1);
+    const firstFinish = traces.find(
+      (trace) =>
+        trace.type === 'judge.call.finished' &&
+        (trace.payload as { prompt?: string }).prompt === undefined &&
+        trace.callId ===
+          traces.find(
+            (candidate) =>
+              candidate.type === 'judge.call.started' &&
+              (candidate.payload as { prompt?: string }).prompt === 'first',
+          )?.callId,
+    );
+    expect(firstFinish?.payload).toMatchObject({ status: 'aborted' });
+    await runtime.dispose();
   });
 
   it('dispose stops the actor and clears state', async () => {
@@ -1993,8 +3171,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
         playerCalls++;
         return { status: 'ok', finalText: '' };
       },
-      callJudge: async () =>
-        JSON.stringify({ event: 'BOGUS', payload: {} }),
+      callJudge: async () => JSON.stringify({ event: 'BOGUS', payload: {} }),
       emitStatus: async (m) => {
         statuses.push(m);
       },
@@ -2059,9 +3236,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
 
     await runtime.handleBossInput({ text: '/interrupt', signal: sig() });
 
-    expect(
-      statuses.some((m) => m.includes('targetId')),
-    ).toBe(true);
+    expect(statuses.some((m) => m.includes('targetId'))).toBe(true);
     expect(playerCalls).toBe(0);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
@@ -2091,9 +3266,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
       signal: sig(),
     });
 
-    expect(
-      statuses.some((m) => m.includes('notAState')),
-    ).toBe(true);
+    expect(statuses.some((m) => m.includes('notAState'))).toBe(true);
     expect(playerCalls).toBe(0);
     expect(runtime._getActor()?.getSnapshot().value).toBe('ready');
   });
@@ -2184,8 +3357,7 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(playerPrompts[1]).toContain('Boss reply:\n/continue 9');
     expect(snap?.value).toBe('ready');
     expect(
-      (snap?.context as { pendingBossQuestion?: unknown })
-        .pendingBossQuestion,
+      (snap?.context as { pendingBossQuestion?: unknown }).pendingBossQuestion,
     ).toBeUndefined();
     expect(
       (snap?.context as { bossReply?: unknown }).bossReply,
@@ -2238,10 +3410,11 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(classifierPrompts[1]).toContain('Current state: awaitBossReply');
     expect(snap?.value).toBe('ready');
     expect(
-      (snap?.context as { pendingBossQuestion?: unknown })
-        .pendingBossQuestion,
+      (snap?.context as { pendingBossQuestion?: unknown }).pendingBossQuestion,
     ).toBeUndefined();
-    expect((snap?.context as { bossReply?: unknown }).bossReply).toBeUndefined();
+    expect(
+      (snap?.context as { bossReply?: unknown }).bossReply,
+    ).toBeUndefined();
   });
 
   it('awaitBossReply invalid classifier reply emits status and leaves the pending question in place', async () => {
@@ -2388,6 +3561,72 @@ describe('handleBossInput drive-to-quiescence (Task 9)', () => {
     expect(runtime._getActor()?.getSnapshot().status).toBe('active');
   });
 
+  it('rejects disposal deterministically while a public boundary is active', async () => {
+    let releaseClassifier!: (reply: string) => void;
+    let markClassifierStarted!: () => void;
+    const classifierStarted = new Promise<void>((resolve) => {
+      markClassifierStarted = resolve;
+    });
+    const classifierReply = new Promise<string>((resolve) => {
+      releaseClassifier = resolve;
+    });
+    const ports = makeFakePorts({
+      callJudge: async () => {
+        markClassifierStarted();
+        return classifierReply;
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'active-dispose-session'));
+    const turn = runtime.handleBossInput({ text: 'wait', signal: sig() });
+    await classifierStarted;
+
+    await expect(runtime.dispose()).rejects.toThrow(
+      'cannot dispose during an active runtime boundary',
+    );
+    releaseClassifier(JSON.stringify({ event: 'NO_ACTION', payload: {} }));
+    await turn;
+    await runtime.dispose();
+  });
+
+  it('runs disposal once and returns one stable promise', async () => {
+    let releaseDisposed!: () => void;
+    let markDisposedStarted!: () => void;
+    const disposedStarted = new Promise<void>((resolve) => {
+      markDisposedStarted = resolve;
+    });
+    const disposedRelease = new Promise<void>((resolve) => {
+      releaseDisposed = resolve;
+    });
+    let disposedTraces = 0;
+    const ports = makeFakePorts({
+      emitTelemetry: async (event) => {
+        if (
+          event.topic === 'playbook.trace' &&
+          (event.payload as { type?: unknown }).type === 'session.disposed'
+        ) {
+          disposedTraces++;
+          markDisposedStarted();
+          await disposedRelease;
+        }
+      },
+    });
+    const runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, 'single-flight-dispose'));
+
+    const first = runtime.dispose();
+    const second = runtime.dispose();
+    expect(second).toBe(first);
+    await disposedStarted;
+    expect(disposedTraces).toBe(1);
+    releaseDisposed();
+    await Promise.all([first, second]);
+    const third = runtime.dispose();
+    expect(third).toBe(first);
+    await third;
+    expect(disposedTraces).toBe(1);
+  });
+
   it('dispose awaits in-flight port emissions before resolving', async () => {
     let release: (() => void) | undefined;
     let blockNextEmission = true;
@@ -2429,9 +3668,7 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
   type StatusCall = { message: string; data?: unknown };
   type TelemetryCall = { topic: string; payload: unknown };
 
-  function makeRecordingPorts(
-    overrides: Partial<PlaybookPorts> = {},
-  ): {
+  function makeRecordingPorts(overrides: Partial<PlaybookPorts> = {}): {
     ports: PlaybookPorts;
     statuses: StatusCall[];
     telemetry: TelemetryCall[];
@@ -2494,6 +3731,11 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
       expect(payload).toHaveProperty('from');
       expect(payload).toHaveProperty('to');
       expect(payload).toHaveProperty('event');
+      expect(payload).toHaveProperty('previousState');
+      expect(payload).toHaveProperty('state');
+      expect(
+        (payload.state as { activeStateIds?: unknown }).activeStateIds,
+      ).toEqual(expect.any(Array));
     }
     const transitions = stateTelemetry.map(
       (t) => (t.payload as { to: string }).to,
@@ -2566,9 +3808,11 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     );
     expect(awaitTelemetry).toBeDefined();
     expect(
-      (awaitTelemetry?.payload as {
-        pendingBossQuestion?: { question?: string };
-      }).pendingBossQuestion?.question,
+      (
+        awaitTelemetry?.payload as {
+          pendingBossQuestion?: { question?: string };
+        }
+      ).pendingBossQuestion?.question,
     ).toBe(question);
   });
 
@@ -2628,7 +3872,9 @@ describe('status and telemetry (Task 10 — DR-004 §9)', () => {
     expect(failedTelemetry).toBeDefined();
     const payload = failedTelemetry?.payload as {
       lastError?: { name?: unknown; message?: unknown; stack?: unknown };
-      event?: { error?: { name?: unknown; message?: unknown; stack?: unknown } };
+      event?: {
+        error?: { name?: unknown; message?: unknown; stack?: unknown };
+      };
     };
     // Telemetry carries the full `{ name, message, stack }` shape on
     // both `lastError` (context-level snapshot) and `event.error`
@@ -2896,16 +4142,28 @@ describe('session trace and player continuation (PBRT-39)', () => {
     expect(
       traces.every(
         (event) =>
-          event.schemaVersion === 1 &&
+          event.schemaVersion === 2 &&
           event.sessionId === 'code-session-trace' &&
           event.playbookId === 'code' &&
+          event.rootSessionId === 'code-session-trace' &&
+          event.parentSessionId === undefined &&
+          event.parentCallId === undefined &&
+          event.depth === 0 &&
           Number.isFinite(event.timestamp),
       ),
     ).toBe(true);
 
     expect(traces[0]).toMatchObject({
       type: 'session.started',
-      payload: { stateId: 'ready' },
+      payload: {
+        stateId: 'ready',
+        state: {
+          value: 'ready',
+          activeStateIds: ['ready'],
+          tags: ['playbook.parked'],
+          quiescent: true,
+        },
+      },
     });
     expect(
       traces.find((event) => event.type === 'boss.input.received'),
@@ -2917,12 +4175,32 @@ describe('session trace and player continuation (PBRT-39)', () => {
       traces.find((event) => event.type === 'boss.input.settled'),
     ).toMatchObject({
       turnId: 1,
-      payload: { outcome: 'quiescent', stateId: 'ready' },
+      payload: {
+        outcome: 'quiescent',
+        stateId: 'ready',
+        state: { value: 'ready', quiescent: true },
+      },
     });
     expect(traces.at(-1)).toMatchObject({
       type: 'session.disposed',
-      payload: { stateId: 'ready' },
+      payload: {
+        stateId: 'ready',
+        state: { value: 'ready', quiescent: true },
+      },
     });
+
+    const transition = traces.find((event) => event.type === 'fsm.transition');
+    expect(transition?.payload).toMatchObject({
+      from: null,
+      to: 'ready',
+      previousState: null,
+      state: {
+        value: 'ready',
+        activeStateIds: ['ready'],
+        tags: ['playbook.parked'],
+      },
+    });
+    expect(JSON.parse(JSON.stringify(traces))).toEqual(traces);
 
     const judgeStarted = traces.filter(
       (event) => event.type === 'judge.call.started',
@@ -3072,7 +4350,12 @@ describe('session trace and player continuation (PBRT-39)', () => {
         event.type === 'status.emitted' &&
         (event.payload as { message?: unknown }).message === '◆ failed',
     );
-    expect(failedStatus?.payload).toEqual({ message: '◆ failed' });
+    expect(failedStatus?.payload).toMatchObject({
+      message: '◆ failed',
+      stateId: 'failed',
+      state: { value: 'failed', quiescent: true },
+    });
+    expect(failedStatus?.payload).not.toHaveProperty('data');
     expect(JSON.parse(JSON.stringify(failedStatus))).toEqual(failedStatus);
     await runtime.dispose();
   });
@@ -3133,9 +4416,10 @@ describe('session trace and player continuation (PBRT-39)', () => {
     const judge = judgeSequence([
       { guard: 'singleCommitReady' },
       { guard: 'needsBossInput' },
-      { guard: 'needsBossInput' },
-      { guard: 'needsBossInput' },
-      { guard: 'needsBossInput' },
+      { guard: 'needsBossReply', question: 'Continue this session?' },
+      { guard: 'needsBossReply', question: 'Continue this session?' },
+      { guard: 'needsBossReply', question: 'Continue this session?' },
+      { guard: 'needsBossReply', question: 'Continue this session?' },
     ]);
     const ports = makeFakePorts({
       callPlayer: async (_playerId, _prompt, _signal, playerOptions) => {
@@ -3488,7 +4772,9 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
     expect(playerCalls[1].prompt).toContain('Make a commit of the changes');
     expect(playerCalls[1].prompt).toContain('Coder is claude.');
     expect(playerCalls[6].prompt).toContain('Make a commit of the changes');
-    expect(playerCalls[6].prompt).toContain('Coder is claude; Reviewer is codex.');
+    expect(playerCalls[6].prompt).toContain(
+      'Coder is claude; Reviewer is codex.',
+    );
     expect(runtime._getActor()?.getSnapshot().status).toBe('done');
   });
 });

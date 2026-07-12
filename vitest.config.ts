@@ -15,7 +15,7 @@ export default defineConfig({
     // a stale `.js` sitting next to a freshly-edited `.ts`.
     //
     // Scope the rewrite to this project's own sources: rewrite only
-    // when a sibling `.ts` actually exists next to the importer. A
+    // when the resolved relative target has a `.ts` source. A
     // plain regex alias would also catch the same-shaped relative
     // imports inside compiled dependencies (e.g. the published — or
     // link-local — `@sublang/cligent` dist, whose `index.js` does
@@ -27,7 +27,7 @@ export default defineConfig({
       enforce: 'pre',
       resolveId(source: string, importer: string | undefined) {
         if (importer === undefined) return null;
-        const match = /^(\.\/.*)\.js$/.exec(source);
+        const match = /^(\.\.?\/.*)\.js$/.exec(source);
         if (match === null) return null;
         const importerPath = importer.startsWith('file://')
           ? fileURLToPath(importer)
@@ -45,6 +45,7 @@ export default defineConfig({
     // package's lockfile.
     include: [
       'src/*.test.ts',
+      'reference/sdlc/captain.playbook/*.test.ts',
       'reference/sdlc/code.playbook/*.test.ts',
       'reference/sdlc/discuss.playbook/*.test.ts',
     ],

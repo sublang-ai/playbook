@@ -1,21 +1,21 @@
-import { type CaptainInput, type CaptainOutput, type DiscussEvent, type DiscussInput } from './discuss.fsm.js';
-import type { PlayerCallOptions, PlayerResult, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookSession, PlaybookTraceEvent, PlaybookTraceType } from '@sublang/playbook/runtime';
-export type { PlayerCallOptions, PlayerResult, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookSession, PlaybookTraceEvent, PlaybookTraceType, };
+import { type PlayerInput, type PlayerOutput, type DiscussEvent, type DiscussInput, type PendingBossQuestion } from './discuss.fsm.js';
+import type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlayerResult, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookPorts, PlaybookRunResult, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType } from '@sublang/playbook/runtime';
+export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlayerResult, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookPorts, PlaybookRunResult, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, };
 type PlayerName = 'Host' | 'Participant' | 'Committer';
 export interface PlaybookRuntimeOptions extends DiscussInput {
     playerBinding?: Partial<Record<PlayerName, string>>;
 }
-declare function composePlayerPrompt(input: CaptainInput): string;
-declare function resolvePlayerId(input: CaptainInput, binding: Record<PlayerName, string>): string;
+declare function composePlayerPrompt(input: PlayerInput): string;
+declare function resolvePlayerId(input: PlayerInput, binding: Record<PlayerName, string>): string;
 declare function requiredFieldsFor(description: string): string[];
 declare function extractJson(raw: string): Record<string, unknown> | null;
 declare function buildClassifierPrompt(text: string, ctx: {
-    state: string;
-    pendingQuestion?: string;
+    state: PlaybookState;
+    pendingQuestions: readonly PendingBossQuestion[];
 }): string;
-declare function parseClassification(raw: string): DiscussEvent | null;
-declare function buildAdjudicatorPrompt(input: CaptainInput, playerOutput: string): string;
-declare function parseAdjudication(raw: string, input: CaptainInput): CaptainOutput;
+declare function parseClassification(raw: string, pendingQuestionIds?: readonly string[]): DiscussEvent | null;
+declare function buildAdjudicatorPrompt(input: PlayerInput, playerOutput: string): string;
+declare function parseAdjudication(raw: string, input: PlayerInput): PlayerOutput;
 declare function combineSignals(a: AbortSignal | undefined, b: AbortSignal | undefined): AbortSignal;
 declare function normalizeErrorCompact(err: unknown): {
     name: string;
@@ -26,6 +26,7 @@ declare function normalizeErrorFull(err: unknown): {
     message: string;
     stack?: string;
 } | undefined;
+declare function pendingQuestionsFromContext(context: Record<string, unknown>): PendingBossQuestion[];
 export declare const createPlaybookRuntime: PlaybookRuntimeFactory<PlaybookRuntimeOptions>;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
@@ -37,6 +38,7 @@ export declare const _internal: {
     buildAdjudicatorPrompt: typeof buildAdjudicatorPrompt;
     parseAdjudication: typeof parseAdjudication;
     combineSignals: typeof combineSignals;
+    pendingQuestionsFromContext: typeof pendingQuestionsFromContext;
     normalizeErrorCompact: typeof normalizeErrorCompact;
     normalizeErrorFull: typeof normalizeErrorFull;
     DEFAULT_PLAYER_BINDING: Readonly<Record<PlayerName, string>>;
@@ -104,8 +106,7 @@ export declare const _internal: {
         readonly sourceItem: "DISCUSS-15";
     }];
     CAPTAIN_STATE_IDS: ReadonlySet<string>;
-    QUIESCENT_STATES: ReadonlySet<string>;
-    BOSS_INTERRUPT_TARGETS: readonly ["ready", "askHostInitial", "askParticipantInitial", "hostInitialRound", "participantInitialRound", "hostWritesAgreement", "commitInitialChanges", "reviewSpecInitialCommit", "reviewSpecHostChanges", "reviewDrInitialCommit", "reviewDrHostChanges", "reviewMixedInitialCommit", "reviewMixedHostChanges", "hostAddressesFindings", "participantAddressesRebuttals", "commitReviewedChanges", "awaitBossReply", "failed"];
+    BOSS_INTERRUPT_TARGETS: readonly ["ready", "initialProposalRound", "reconciliationRound", "hostWritesAgreement", "commitInitialChanges", "reviewSpecInitialCommit", "reviewSpecHostChanges", "reviewDrInitialCommit", "reviewDrHostChanges", "reviewMixedInitialCommit", "reviewMixedHostChanges", "hostAddressesFindings", "participantAddressesRebuttals", "commitReviewedChanges", "awaitBossReply", "failed"];
     CONTINUATION_PREAMBLE: string;
     TELEMETRY_TOPIC: string;
 };

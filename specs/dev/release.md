@@ -7,12 +7,14 @@
 
 This spec defines the release workflow for publishing the
 `@sublang/playbook` package — the reference CODE playbook
-runtime, Playbook Captain shell, the generic `playbook` CLI,
+runtime, compiled default Captain playbook, Playbook Captain shell, the generic `playbook` CLI,
 the host-agnostic `@sublang/playbook/runtime` type contract, and the
-authored `slc/*` specs, all at the repo root —
+shared `@sublang/playbook/xstate-runtime` engine plus authored `slc/*` specs,
+all at the repo root —
 to npm and tagging the corresponding GitHub release.
 It also covers the public, semver-stable package surfaces
-([RELEASE-15](#release-15), [RELEASE-16](#release-16)).
+([RELEASE-15](#release-15), [RELEASE-16](#release-16),
+[RELEASE-20](#release-20)).
 
 ## Versioning
 
@@ -83,8 +85,9 @@ The release workflow on GitHub shall:
    so the build sees the registry-pinned `@sublang/cligent` rather
    than the contributor-machine local link (see
    [RELEASE-11](#release-11)).
-3. Install with `pnpm install --frozen-lockfile`, then `pnpm build`
-   and `pnpm test`.
+3. Install with `pnpm install --frozen-lockfile`, run `pnpm build`, verify
+   that the build changed no committed `.js` or `.d.ts` shipping artifact,
+   and then run `pnpm test`.
 4. Extract release notes for the tag version from the root
    `CHANGELOG.md` into a file (not a shell variable), so backticks
    and `$()` in the notes can't be interpreted as commands when the
@@ -136,7 +139,8 @@ so the CI install in [RELEASE-7](#release-7) and contributor
 `pnpm install --frozen-lockfile` runs stay reproducible until a
 developer deliberately refreshes the pin within the declared range.
 That pinned version shall itself expose both explicit player resume and
-the pre-close Captain lifecycle used by [CAPTAIN-26](playbook-captain.md#captain-26);
+the pre-close Captain lifecycle used by [CAPTAIN-16](playbook-captain.md#captain-16),
+first released together in `@sublang/cligent` 0.14.0;
 merely using a range that could admit a later compatible version shall
 not satisfy this requirement.
 
@@ -152,9 +156,18 @@ That module shall carry only the runtime contract types
 ([PBRT-34](playbook-runtime.md#pbrt-34)) — no runtime engine and no
 linker. A breaking change to its exported type names or shapes shall
 be released under [RELEASE-1](#release-1) SemVer.
+The package shall additionally expose `@sublang/playbook/xstate-runtime` with
+JavaScript and declaration artifacts for the shared XState snapshot,
+quiescence, strict JSON, error-normalization, and nested-call bridge helpers
+used by linked runtimes. This engine subpath shall depend one-way on the
+type-only runtime contract and shall import no generated FSM or host adapter.
 The `PlaybookSession`, player-resume, and trace shapes introduced by
 [DR-010](../decisions/010-playbook-session-tracing-and-resume.md) are
 such a breaking public-contract change.
+The six-port contract's `CaptainResult`, `CaptainCallOptions`,
+`PlaybookPorts.callCaptain`, and `captain.call.*` trace types introduced by
+[DR-012](../decisions/012-default-captain-playbook.md) are part of the same
+breaking 1.0 contract boundary.
 
 ### RELEASE-16
 
@@ -176,8 +189,15 @@ module — CODE and DISCUSS — through public
 `exports['./code/registry']` and `exports['./discuss/registry']`
 subpaths, all backed by files listed in `files`, as public,
 semver-stable surfaces.
+The package shall also ship `reference/sdlc/captain.md` and the default
+Captain's GEARS, FSM, and linked-runtime TypeScript, JavaScript, and declaration
+artifacts, and shall expose the compiled runtime through the public semver-stable
+`exports['./captain/playbook']` subpath.
+The internal Captain shall have no `exports['./captain/registry']` subpath
+because it is not an enabled registry entry.
 Removing or renaming the `playbook` bin or a
-`@sublang/playbook/<id>/registry` export shall be released under
+`@sublang/playbook/<id>/registry` or `@sublang/playbook/captain/playbook`
+export shall be released under
 [RELEASE-1](#release-1) SemVer.
 The removal of the `playbook-code` bin, the
 `@sublang/playbook/code/tmux-play` export, and the bundled legacy CODE
@@ -203,5 +223,5 @@ Before tagging a release, the developer/agent shall verify:
 
 ## References
 
-[1]: https://semver.org/spec/v2.0.0.html "Semantic Versioning 2.0.0"
-[2]: https://keepachangelog.com/en/1.1.0/ "Keep a Changelog 1.1.0"
+[1]: https://semver.org/spec/v2.0.0.html 'Semantic Versioning 2.0.0'
+[2]: https://keepachangelog.com/en/1.1.0/ 'Keep a Changelog 1.1.0'

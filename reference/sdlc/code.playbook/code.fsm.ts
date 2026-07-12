@@ -4,9 +4,9 @@
 // XState v5's generics do not flow through helpers declared outside the
 // machine (e.g., shared guard/action factories, the `readyEvents` block),
 // so strict checking emits structural-mismatch noise without surfacing real
-// bugs. The runner overrides `captain` via `.provide({ actors: { ... } })`
+// bugs. The runner overrides `player` via `.provide({ actors: { ... } })`
 // and re-asserts the public surface (`CodingContext`, `CodingEvent`,
-// `CaptainInput`, `CaptainOutput`) at the boundary.
+// `PlayerInput`, `PlayerOutput`) at the boundary.
 // @ts-nocheck
 
 import { assign, fromPromise, setup } from 'xstate';
@@ -43,6 +43,7 @@ type AfterReview = 'continueIr' | 'summarizeSpecs' | 'done';
 type ResumableStateId = Exclude<JumpableStateId, 'ready' | 'failed'>;
 
 type PendingBossQuestion = {
+  questionId: ResumableStateId;
   resumeStateId: ResumableStateId;
   sourceItem: string;
   player: Player;
@@ -50,7 +51,7 @@ type PendingBossQuestion = {
 };
 
 export type CaptainInput = {
-  player: Player;
+  stateId: ResumableStateId;
   sourceItem: string;
   prompt: string;
   result: Record<string, string>;
@@ -78,6 +79,10 @@ export type CaptainInput = {
   bossReply?: string;
 };
 
+export type PlayerInput = CaptainInput & {
+  player: Player;
+};
+
 export type CaptainOutput = {
   guard: string;
   irNumber?: string;
@@ -88,6 +93,8 @@ export type CaptainOutput = {
   question?: string;
   [k: string]: unknown;
 };
+
+export type PlayerOutput = CaptainOutput;
 
 export type CodingInput = {
   intent?: string;
@@ -121,7 +128,11 @@ export type CodingEvent =
       intent?: string;
       irNumber?: string;
     }
-  | { type: 'BOSS_REPLY'; answer: string };
+  | {
+      type: 'BOSS_REPLY';
+      answer: string;
+      questionId?: ResumableStateId;
+    };
 
 const jumpableStateIds = [
   'ready',
@@ -169,39 +180,113 @@ const resumableStateIds = [
   'commitJoint',
 ] as const satisfies readonly ResumableStateId[];
 
+const stateDescriptions = {
+  ready: 'Idle hub: waits for Boss to start or resume a coding sub-procedure.',
+  awaitBossReply: 'Waiting for Boss to answer a player question.',
+  planAndImplement:
+    'CODE-1: Coder assesses a Boss intent and either implements a single-commit change or drafts an IR.',
+  respondToReview: 'CODE-2: Coder addresses or challenges Reviewer findings.',
+  continueIr:
+    'CODE-3: Coder continues an IR after the previous task or IR draft passed review.',
+  summarizeSpecs:
+    'CODE-4: Coder summarizes a completed IR into minimal spec items.',
+  reviewBossCommitSpecs:
+    'CODE-5: Reviewer reviews a Boss-intent commit whose changes are only in @specs/{user,dev,test}/.',
+  reviewBossCommitCode:
+    'CODE-6: Reviewer reviews a Boss-intent commit whose changes are only outside @specs/{user,dev,test}/.',
+  reviewBossCommitMixed:
+    'CODE-7: Reviewer reviews a Boss-intent commit whose changes span both @specs/{user,dev,test}/ and other files.',
+  reviewIrTaskCommitSpecs:
+    'CODE-8: Reviewer reviews an IR-task commit whose changes are only in @specs/{user,dev,test}/.',
+  reviewIrTaskCommitCode:
+    'CODE-9: Reviewer reviews an IR-task commit whose changes are only outside @specs/{user,dev,test}/.',
+  reviewIrTaskCommitMixed:
+    'CODE-10: Reviewer reviews an IR-task commit whose changes span both @specs/{user,dev,test}/ and other files.',
+  reviewChangesSpecs:
+    'CODE-11: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ with no accompanying rebuttals.',
+  reviewChangesCode:
+    'CODE-12: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ with no accompanying rebuttals.',
+  reviewChangesMixed:
+    'CODE-13: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files with no accompanying rebuttals.',
+  reviewChangesAndChallengesSpecs:
+    'CODE-15: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ and adjudicates accompanying rebuttals in one round.',
+  reviewChangesAndChallengesCode:
+    'CODE-16: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ and adjudicates accompanying rebuttals in one round.',
+  reviewChangesAndChallengesMixed:
+    'CODE-17: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files and adjudicates accompanying rebuttals in one round.',
+  adjudicateChallenges:
+    'CODE-14: Reviewer adjudicates Coder rebuttals against the prior review when Coder produced no code edits this round.',
+  commitCoderInitial:
+    'CODE-18: Committer commits Coder Initial Changes when Reviewer has not played since the last commit.',
+  commitJoint:
+    'CODE-19: Committer commits changes when both Coder and Reviewer have played since the last commit.',
+  failed:
+    'Captures the last Captain error so the runner can report it. Boss may resume from here.',
+  done: 'The selected coding workflow has completed.',
+} as const satisfies Record<
+  JumpableStateId | 'awaitBossReply' | 'done',
+  string
+>;
+
+const playbookMeta = <StateId extends keyof typeof stateDescriptions>(
+  stateId: StateId,
+) => ({
+  playbook: {
+    stateId,
+    description: stateDescriptions[stateId],
+  },
+});
+
 const outputOf = (event: unknown): CaptainOutput | undefined =>
   (event as { output?: CaptainOutput }).output;
 
-const guardIs = (guard: string) =>
-  ({ event }: { event: unknown }) => outputOf(event)?.guard === guard;
+const guardIs =
+  (guard: string) =>
+  ({ event }: { event: unknown }) =>
+    outputOf(event)?.guard === guard;
 
-const guardAndOrigin = (guard: string, origin: ChangeOrigin) =>
+const guardAndOrigin =
+  (guard: string, origin: ChangeOrigin) =>
   ({ context, event }: { context: CodingContext; event: unknown }) =>
     outputOf(event)?.guard === guard && context.changeOrigin === origin;
 
-const acceptedAfter = (subject: ReviewSubject) =>
+const acceptedAfter =
+  (subject: ReviewSubject) =>
   ({ context, event }: { context: CodingContext; event: unknown }) =>
     outputOf(event)?.guard === 'accepted' && context.reviewSubject === subject;
 
-const noFindingsAfter = (afterReview: AfterReview) =>
+const noFindingsAfter =
+  (afterReview: AfterReview) =>
   ({ context, event }: { context: CodingContext; event: unknown }) =>
-    outputOf(event)?.guard === 'noFindings' && context.afterReview === afterReview;
+    outputOf(event)?.guard === 'noFindings' &&
+    context.afterReview === afterReview;
 
 const rememberCaptainOutput = assign({
   lastResult: ({ event }: { event: unknown }) => outputOf(event),
   lastError: () => undefined,
   irNumber: ({ context, event }: { context: CodingContext; event: unknown }) =>
     outputOf(event)?.irNumber ?? context.irNumber,
-  taskDescription: ({ context, event }: { context: CodingContext; event: unknown }) =>
-    outputOf(event)?.taskDescription ?? context.taskDescription,
+  taskDescription: ({
+    context,
+    event,
+  }: {
+    context: CodingContext;
+    event: unknown;
+  }) => outputOf(event)?.taskDescription ?? context.taskDescription,
   reviews: ({ context, event }: { context: CodingContext; event: unknown }) =>
     outputOf(event)?.reviews ?? context.reviews,
-  challenges: ({ context, event }: { context: CodingContext; event: unknown }) =>
-    outputOf(event)?.challenges ?? context.challenges,
+  challenges: ({
+    context,
+    event,
+  }: {
+    context: CodingContext;
+    event: unknown;
+  }) => outputOf(event)?.challenges ?? context.challenges,
 });
 
 const rememberCaptainError = assign({
-  lastError: ({ event }: { event: unknown }) => (event as { error?: unknown }).error,
+  lastError: ({ event }: { event: unknown }) =>
+    (event as { error?: unknown }).error,
 });
 
 const rememberEmptyBossReplyError = assign({
@@ -215,10 +300,10 @@ const rememberBossInput = assign({
     (event as { irNumber?: string }).irNumber ?? context.irNumber,
 });
 
-type CaptainInputFactory = (context: Partial<CodingContext>) => CaptainInput;
+type PlayerInputFactory = (context: Partial<CodingContext>) => PlayerInput;
 
 const needsBossReplyDescription =
-  "The player's prose surfaces a clarifying question for Boss that the player cannot answer alone. Output shall include `question: <verbatim question text from the player's prose>`.";
+  "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 
 const bossReplyInputFields = (context: Partial<CodingContext>) => ({
   pendingBossQuestion: context.pendingBossQuestion,
@@ -244,9 +329,15 @@ const captainStateMetadata = {
   reviewChangesSpecs: { sourceItem: 'CODE-11', player: 'Reviewer' },
   reviewChangesCode: { sourceItem: 'CODE-12', player: 'Reviewer' },
   reviewChangesMixed: { sourceItem: 'CODE-13', player: 'Reviewer' },
-  reviewChangesAndChallengesSpecs: { sourceItem: 'CODE-15', player: 'Reviewer' },
+  reviewChangesAndChallengesSpecs: {
+    sourceItem: 'CODE-15',
+    player: 'Reviewer',
+  },
   reviewChangesAndChallengesCode: { sourceItem: 'CODE-16', player: 'Reviewer' },
-  reviewChangesAndChallengesMixed: { sourceItem: 'CODE-17', player: 'Reviewer' },
+  reviewChangesAndChallengesMixed: {
+    sourceItem: 'CODE-17',
+    player: 'Reviewer',
+  },
   adjudicateChallenges: { sourceItem: 'CODE-14', player: 'Reviewer' },
   commitCoderInitial: { sourceItem: 'CODE-18', player: 'Committer' },
   commitJoint: { sourceItem: 'CODE-19', player: 'Committer' },
@@ -255,7 +346,8 @@ const captainStateMetadata = {
   { sourceItem: string; player: Player }
 >;
 
-const planAndImplementInput: CaptainInputFactory = (context) => ({
+const planAndImplementInput: PlayerInputFactory = (context) => ({
+  stateId: 'planAndImplement',
   player: 'Coder',
   sourceItem: 'CODE-1',
   intent: context.intent,
@@ -275,7 +367,8 @@ const planAndImplementInput: CaptainInputFactory = (context) => ({
   }),
 });
 
-const continueIrInput: CaptainInputFactory = (context) => ({
+const continueIrInput: PlayerInputFactory = (context) => ({
+  stateId: 'continueIr',
   player: 'Coder',
   sourceItem: 'CODE-3',
   irNumber: context.irNumber,
@@ -293,7 +386,8 @@ const continueIrInput: CaptainInputFactory = (context) => ({
   }),
 });
 
-const summarizeSpecsInput: CaptainInputFactory = (context) => ({
+const summarizeSpecsInput: PlayerInputFactory = (context) => ({
+  stateId: 'summarizeSpecs',
   player: 'Coder',
   sourceItem: 'CODE-4',
   irNumber: context.irNumber,
@@ -329,6 +423,7 @@ const setPendingBossQuestion = (resumeStateId: ResumableStateId) =>
     }) => {
       const input = captainStateMetadata[resumeStateId];
       return {
+        questionId: resumeStateId,
         resumeStateId,
         sourceItem: input.sourceItem,
         player: input.player,
@@ -351,7 +446,9 @@ const clearBossReplyContext = assign({
 const actionsArray = (actions: unknown) =>
   actions === undefined ? [] : Array.isArray(actions) ? actions : [actions];
 
-const withClearBossReplyContext = <T extends { actions?: unknown }>(transition: T): T => ({
+const withClearBossReplyContext = <T extends { actions?: unknown }>(
+  transition: T,
+): T => ({
   ...transition,
   actions: [clearBossReplyContext, ...actionsArray(transition.actions)],
 });
@@ -371,9 +468,17 @@ const bossInterrupts = (
 const resumableStates = (ids: readonly ResumableStateId[]) =>
   ids.map((id) => ({
     target: `#${id}` as const,
-    guard: ({ context, event }: { context: CodingContext; event: CodingEvent }) =>
+    guard: ({
+      context,
+      event,
+    }: {
+      context: CodingContext;
+      event: CodingEvent;
+    }) =>
       event.type === 'BOSS_REPLY' &&
-      context.pendingBossQuestion?.resumeStateId === id,
+      context.pendingBossQuestion?.resumeStateId === id &&
+      (event.questionId === undefined ||
+        event.questionId === context.pendingBossQuestion.questionId),
     reenter: true,
     actions: rememberBossReply,
   }));
@@ -451,8 +556,8 @@ const awaitBossReplyEvents = {
   ],
 };
 
-const captainPlaceholder = fromPromise<CaptainOutput, CaptainInput>(async () => {
-  throw new Error('captain actor must be provided by the runner');
+const playerPlaceholder = fromPromise<PlayerOutput, PlayerInput>(async () => {
+  throw new Error('player actor must be provided by the runner');
 });
 
 export const codingMachine = setup({
@@ -462,7 +567,7 @@ export const codingMachine = setup({
     input: CodingInput | undefined;
   },
   actors: {
-    captain: captainPlaceholder,
+    player: playerPlaceholder,
   },
 }).createMachine({
   id: 'coding',
@@ -480,23 +585,28 @@ export const codingMachine = setup({
   states: {
     ready: {
       id: 'ready',
-      description: 'Idle hub: waits for Boss to start or resume a coding sub-procedure.',
+      description: stateDescriptions.ready,
+      meta: playbookMeta('ready'),
+      tags: ['playbook.parked'],
       on: readyEvents,
     },
 
     awaitBossReply: {
       id: 'awaitBossReply',
-      description: 'Waiting for Boss to answer a player question.',
+      description: stateDescriptions.awaitBossReply,
+      meta: playbookMeta('awaitBossReply'),
+      tags: ['playbook.parked'],
       on: awaitBossReplyEvents,
     },
 
     planAndImplement: {
       id: 'planAndImplement',
-      description:
-        'CODE-1: Coder assesses a Boss intent and either implements a single-commit change or drafts an IR.',
+      description: stateDescriptions.planAndImplement,
+      meta: playbookMeta('planAndImplement'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => planAndImplementInput(context),
+        src: 'player',
+        input: ({ context }): PlayerInput => planAndImplementInput(context),
         onDone: withNeedsBossReplyTransition('planAndImplement', [
           {
             guard: guardIs('singleCommitReady'),
@@ -529,10 +639,13 @@ export const codingMachine = setup({
 
     respondToReview: {
       id: 'respondToReview',
-      description: 'CODE-2: Coder addresses or challenges Reviewer findings.',
+      description: stateDescriptions.respondToReview,
+      meta: playbookMeta('respondToReview'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'respondToReview',
           player: 'Coder',
           sourceItem: 'CODE-2',
           ...bossReplyInputFields(context),
@@ -633,11 +746,12 @@ export const codingMachine = setup({
 
     continueIr: {
       id: 'continueIr',
-      description:
-        'CODE-3: Coder continues an IR after the previous task or IR draft passed review.',
+      description: stateDescriptions.continueIr,
+      meta: playbookMeta('continueIr'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => continueIrInput(context),
+        src: 'player',
+        input: ({ context }): PlayerInput => continueIrInput(context),
         onDone: withNeedsBossReplyTransition('continueIr', [
           {
             guard: guardIs('taskReady'),
@@ -669,10 +783,12 @@ export const codingMachine = setup({
 
     summarizeSpecs: {
       id: 'summarizeSpecs',
-      description: 'CODE-4: Coder summarizes a completed IR into minimal spec items.',
+      description: stateDescriptions.summarizeSpecs,
+      meta: playbookMeta('summarizeSpecs'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => summarizeSpecsInput(context),
+        src: 'player',
+        input: ({ context }): PlayerInput => summarizeSpecsInput(context),
         onDone: withNeedsBossReplyTransition('summarizeSpecs', [
           {
             guard: guardIs('specsReady'),
@@ -698,11 +814,13 @@ export const codingMachine = setup({
 
     reviewBossCommitSpecs: {
       id: 'reviewBossCommitSpecs',
-      description:
-        'CODE-5: Reviewer reviews a Boss-intent commit whose changes are only in @specs/{user,dev,test}/.',
+      description: stateDescriptions.reviewBossCommitSpecs,
+      meta: playbookMeta('reviewBossCommitSpecs'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewBossCommitSpecs',
           player: 'Reviewer',
           sourceItem: 'CODE-5',
           ...bossReplyInputFields(context),
@@ -731,13 +849,28 @@ export const codingMachine = setup({
           },
         }),
         onDone: withNeedsBossReplyTransition('reviewBossCommitSpecs', [
-          { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
+          {
+            guard: noFindingsAfter('continueIr'),
+            target: '#continueIr',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('summarizeSpecs'),
+            target: '#summarizeSpecs',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('done'),
+            target: '#done',
+            actions: rememberCaptainOutput,
+          },
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'commit' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -746,11 +879,13 @@ export const codingMachine = setup({
 
     reviewBossCommitCode: {
       id: 'reviewBossCommitCode',
-      description:
-        'CODE-6: Reviewer reviews a Boss-intent commit whose changes are only outside @specs/{user,dev,test}/.',
+      description: stateDescriptions.reviewBossCommitCode,
+      meta: playbookMeta('reviewBossCommitCode'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewBossCommitCode',
           player: 'Reviewer',
           sourceItem: 'CODE-6',
           ...bossReplyInputFields(context),
@@ -773,13 +908,28 @@ export const codingMachine = setup({
           },
         }),
         onDone: withNeedsBossReplyTransition('reviewBossCommitCode', [
-          { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
+          {
+            guard: noFindingsAfter('continueIr'),
+            target: '#continueIr',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('summarizeSpecs'),
+            target: '#summarizeSpecs',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('done'),
+            target: '#done',
+            actions: rememberCaptainOutput,
+          },
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'commit' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -788,11 +938,13 @@ export const codingMachine = setup({
 
     reviewBossCommitMixed: {
       id: 'reviewBossCommitMixed',
-      description:
-        'CODE-7: Reviewer reviews a Boss-intent commit whose changes span both @specs/{user,dev,test}/ and other files.',
+      description: stateDescriptions.reviewBossCommitMixed,
+      meta: playbookMeta('reviewBossCommitMixed'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewBossCommitMixed',
           player: 'Reviewer',
           sourceItem: 'CODE-7',
           ...bossReplyInputFields(context),
@@ -823,13 +975,28 @@ export const codingMachine = setup({
           },
         }),
         onDone: withNeedsBossReplyTransition('reviewBossCommitMixed', [
-          { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
+          {
+            guard: noFindingsAfter('continueIr'),
+            target: '#continueIr',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('summarizeSpecs'),
+            target: '#summarizeSpecs',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('done'),
+            target: '#done',
+            actions: rememberCaptainOutput,
+          },
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'commit' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -838,11 +1005,13 @@ export const codingMachine = setup({
 
     reviewIrTaskCommitSpecs: {
       id: 'reviewIrTaskCommitSpecs',
-      description:
-        'CODE-8: Reviewer reviews an IR-task commit whose changes are only in @specs/{user,dev,test}/.',
+      description: stateDescriptions.reviewIrTaskCommitSpecs,
+      meta: playbookMeta('reviewIrTaskCommitSpecs'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewIrTaskCommitSpecs',
           player: 'Reviewer',
           sourceItem: 'CODE-8',
           ...bossReplyInputFields(context),
@@ -872,13 +1041,28 @@ export const codingMachine = setup({
           },
         }),
         onDone: withNeedsBossReplyTransition('reviewIrTaskCommitSpecs', [
-          { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
+          {
+            guard: noFindingsAfter('continueIr'),
+            target: '#continueIr',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('summarizeSpecs'),
+            target: '#summarizeSpecs',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('done'),
+            target: '#done',
+            actions: rememberCaptainOutput,
+          },
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'commit' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -887,11 +1071,13 @@ export const codingMachine = setup({
 
     reviewIrTaskCommitCode: {
       id: 'reviewIrTaskCommitCode',
-      description:
-        'CODE-9: Reviewer reviews an IR-task commit whose changes are only outside @specs/{user,dev,test}/.',
+      description: stateDescriptions.reviewIrTaskCommitCode,
+      meta: playbookMeta('reviewIrTaskCommitCode'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewIrTaskCommitCode',
           player: 'Reviewer',
           sourceItem: 'CODE-9',
           ...bossReplyInputFields(context),
@@ -915,13 +1101,28 @@ export const codingMachine = setup({
           },
         }),
         onDone: withNeedsBossReplyTransition('reviewIrTaskCommitCode', [
-          { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
+          {
+            guard: noFindingsAfter('continueIr'),
+            target: '#continueIr',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('summarizeSpecs'),
+            target: '#summarizeSpecs',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('done'),
+            target: '#done',
+            actions: rememberCaptainOutput,
+          },
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'commit' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -930,11 +1131,13 @@ export const codingMachine = setup({
 
     reviewIrTaskCommitMixed: {
       id: 'reviewIrTaskCommitMixed',
-      description:
-        'CODE-10: Reviewer reviews an IR-task commit whose changes span both @specs/{user,dev,test}/ and other files.',
+      description: stateDescriptions.reviewIrTaskCommitMixed,
+      meta: playbookMeta('reviewIrTaskCommitMixed'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewIrTaskCommitMixed',
           player: 'Reviewer',
           sourceItem: 'CODE-10',
           ...bossReplyInputFields(context),
@@ -966,13 +1169,28 @@ export const codingMachine = setup({
           },
         }),
         onDone: withNeedsBossReplyTransition('reviewIrTaskCommitMixed', [
-          { guard: noFindingsAfter('continueIr'), target: '#continueIr', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('summarizeSpecs'), target: '#summarizeSpecs', actions: rememberCaptainOutput },
-          { guard: noFindingsAfter('done'), target: '#done', actions: rememberCaptainOutput },
+          {
+            guard: noFindingsAfter('continueIr'),
+            target: '#continueIr',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('summarizeSpecs'),
+            target: '#summarizeSpecs',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: noFindingsAfter('done'),
+            target: '#done',
+            actions: rememberCaptainOutput,
+          },
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'commit' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'commit' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -981,11 +1199,13 @@ export const codingMachine = setup({
 
     reviewChangesSpecs: {
       id: 'reviewChangesSpecs',
-      description:
-        'CODE-11: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ with no accompanying rebuttals.',
+      description: stateDescriptions.reviewChangesSpecs,
+      meta: playbookMeta('reviewChangesSpecs'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewChangesSpecs',
           player: 'Reviewer',
           sourceItem: 'CODE-11',
           ...bossReplyInputFields(context),
@@ -1006,7 +1226,8 @@ export const codingMachine = setup({
             'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
-            noFindings: 'The uncommitted spec-only changes are ready to commit.',
+            noFindings:
+              'The uncommitted spec-only changes are ready to commit.',
             hasFindings:
               'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
             needsBossReply: needsBossReplyDescription,
@@ -1021,7 +1242,10 @@ export const codingMachine = setup({
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'changes' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -1030,11 +1254,13 @@ export const codingMachine = setup({
 
     reviewChangesCode: {
       id: 'reviewChangesCode',
-      description:
-        'CODE-12: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ with no accompanying rebuttals.',
+      description: stateDescriptions.reviewChangesCode,
+      meta: playbookMeta('reviewChangesCode'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewChangesCode',
           player: 'Reviewer',
           sourceItem: 'CODE-12',
           ...bossReplyInputFields(context),
@@ -1049,7 +1275,8 @@ export const codingMachine = setup({
             'Do not edit files or commit; report findings only.',
           ].join('\n'),
           result: {
-            noFindings: 'The uncommitted code-only changes are ready to commit.',
+            noFindings:
+              'The uncommitted code-only changes are ready to commit.',
             hasFindings:
               'The review produced findings for Coder. Output shall include `reviews: <numbered list of findings, no duplication>`.',
             needsBossReply: needsBossReplyDescription,
@@ -1064,7 +1291,10 @@ export const codingMachine = setup({
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'changes' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -1073,11 +1303,13 @@ export const codingMachine = setup({
 
     reviewChangesMixed: {
       id: 'reviewChangesMixed',
-      description:
-        'CODE-13: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files with no accompanying rebuttals.',
+      description: stateDescriptions.reviewChangesMixed,
+      meta: playbookMeta('reviewChangesMixed'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewChangesMixed',
           player: 'Reviewer',
           sourceItem: 'CODE-13',
           ...bossReplyInputFields(context),
@@ -1115,7 +1347,10 @@ export const codingMachine = setup({
           {
             guard: guardIs('hasFindings'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'changes' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -1124,11 +1359,13 @@ export const codingMachine = setup({
 
     reviewChangesAndChallengesSpecs: {
       id: 'reviewChangesAndChallengesSpecs',
-      description:
-        'CODE-15: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ and adjudicates accompanying rebuttals in one round.',
+      description: stateDescriptions.reviewChangesAndChallengesSpecs,
+      meta: playbookMeta('reviewChangesAndChallengesSpecs'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewChangesAndChallengesSpecs',
           player: 'Reviewer',
           sourceItem: 'CODE-15',
           ...bossReplyInputFields(context),
@@ -1159,29 +1396,37 @@ export const codingMachine = setup({
             needsBossReply: needsBossReplyDescription,
           },
         }),
-        onDone: withNeedsBossReplyTransition('reviewChangesAndChallengesSpecs', [
-          {
-            guard: guardIs('approved'),
-            target: '#commitJoint',
-            actions: rememberCaptainOutput,
-          },
-          {
-            guard: guardIs('needsRevision'),
-            target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
-          },
-        ]),
+        onDone: withNeedsBossReplyTransition(
+          'reviewChangesAndChallengesSpecs',
+          [
+            {
+              guard: guardIs('approved'),
+              target: '#commitJoint',
+              actions: rememberCaptainOutput,
+            },
+            {
+              guard: guardIs('needsRevision'),
+              target: '#respondToReview',
+              actions: [
+                rememberCaptainOutput,
+                assign({ reviewSubject: () => 'changes' as const }),
+              ],
+            },
+          ],
+        ),
         onError: captainError,
       },
     },
 
     reviewChangesAndChallengesCode: {
       id: 'reviewChangesAndChallengesCode',
-      description:
-        'CODE-16: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ and adjudicates accompanying rebuttals in one round.',
+      description: stateDescriptions.reviewChangesAndChallengesCode,
+      meta: playbookMeta('reviewChangesAndChallengesCode'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewChangesAndChallengesCode',
           player: 'Reviewer',
           sourceItem: 'CODE-16',
           ...bossReplyInputFields(context),
@@ -1215,7 +1460,10 @@ export const codingMachine = setup({
           {
             guard: guardIs('needsRevision'),
             target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
+            actions: [
+              rememberCaptainOutput,
+              assign({ reviewSubject: () => 'changes' as const }),
+            ],
           },
         ]),
         onError: captainError,
@@ -1224,11 +1472,13 @@ export const codingMachine = setup({
 
     reviewChangesAndChallengesMixed: {
       id: 'reviewChangesAndChallengesMixed',
-      description:
-        'CODE-17: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files and adjudicates accompanying rebuttals in one round.',
+      description: stateDescriptions.reviewChangesAndChallengesMixed,
+      meta: playbookMeta('reviewChangesAndChallengesMixed'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'reviewChangesAndChallengesMixed',
           player: 'Reviewer',
           sourceItem: 'CODE-17',
           ...bossReplyInputFields(context),
@@ -1261,28 +1511,37 @@ export const codingMachine = setup({
             needsBossReply: needsBossReplyDescription,
           },
         }),
-        onDone: withNeedsBossReplyTransition('reviewChangesAndChallengesMixed', [
-          {
-            guard: guardIs('approved'),
-            target: '#commitJoint',
-            actions: rememberCaptainOutput,
-          },
-          {
-            guard: guardIs('needsRevision'),
-            target: '#respondToReview',
-            actions: [rememberCaptainOutput, assign({ reviewSubject: () => 'changes' as const })],
-          },
-        ]),
+        onDone: withNeedsBossReplyTransition(
+          'reviewChangesAndChallengesMixed',
+          [
+            {
+              guard: guardIs('approved'),
+              target: '#commitJoint',
+              actions: rememberCaptainOutput,
+            },
+            {
+              guard: guardIs('needsRevision'),
+              target: '#respondToReview',
+              actions: [
+                rememberCaptainOutput,
+                assign({ reviewSubject: () => 'changes' as const }),
+              ],
+            },
+          ],
+        ),
         onError: captainError,
       },
     },
 
     adjudicateChallenges: {
       id: 'adjudicateChallenges',
-      description: 'CODE-14: Reviewer adjudicates Coder rebuttals against the prior review when Coder produced no code edits this round.',
+      description: stateDescriptions.adjudicateChallenges,
+      meta: playbookMeta('adjudicateChallenges'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'adjudicateChallenges',
           player: 'Reviewer',
           sourceItem: 'CODE-14',
           ...bossReplyInputFields(context),
@@ -1349,11 +1608,13 @@ export const codingMachine = setup({
 
     commitCoderInitial: {
       id: 'commitCoderInitial',
-      description:
-        'CODE-18: Committer commits Coder Initial Changes when Reviewer has not played since the last commit.',
+      description: stateDescriptions.commitCoderInitial,
+      meta: playbookMeta('commitCoderInitial'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'commitCoderInitial',
           player: 'Committer',
           sourceItem: 'CODE-18',
           ...bossReplyInputFields(context),
@@ -1366,9 +1627,12 @@ export const codingMachine = setup({
             'Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
           ].join('\n'),
           result: {
-            committedSpecs: 'Committed changes that touch only @specs/{user,dev,test}/.',
-            committedCode: 'Committed changes that touch only files outside @specs/{user,dev,test}/.',
-            committedMixed: 'Committed changes that span both @specs/{user,dev,test}/ and other files.',
+            committedSpecs:
+              'Committed changes that touch only @specs/{user,dev,test}/.',
+            committedCode:
+              'Committed changes that touch only files outside @specs/{user,dev,test}/.',
+            committedMixed:
+              'Committed changes that span both @specs/{user,dev,test}/ and other files.',
             noRelevantChanges: 'There are no relevant changes to commit.',
             needsBossInput: 'Committing requires additional Boss input.',
             needsBossReply: needsBossReplyDescription,
@@ -1405,8 +1669,16 @@ export const codingMachine = setup({
             target: '#reviewIrTaskCommitMixed',
             actions: rememberCaptainOutput,
           },
-          { guard: guardIs('noRelevantChanges'), target: '#ready', actions: rememberCaptainOutput },
-          { guard: guardIs('needsBossInput'), target: '#ready', actions: rememberCaptainOutput },
+          {
+            guard: guardIs('noRelevantChanges'),
+            target: '#ready',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: guardIs('needsBossInput'),
+            target: '#ready',
+            actions: rememberCaptainOutput,
+          },
         ]),
         onError: captainError,
       },
@@ -1414,11 +1686,13 @@ export const codingMachine = setup({
 
     commitJoint: {
       id: 'commitJoint',
-      description:
-        'CODE-19: Committer commits changes when both Coder and Reviewer have played since the last commit.',
+      description: stateDescriptions.commitJoint,
+      meta: playbookMeta('commitJoint'),
+      tags: ['playbook.busy'],
       invoke: {
-        src: 'captain',
-        input: ({ context }): CaptainInput => ({
+        src: 'player',
+        input: ({ context }): PlayerInput => ({
+          stateId: 'commitJoint',
           player: 'Committer',
           sourceItem: 'CODE-19',
           ...bossReplyInputFields(context),
@@ -1441,24 +1715,35 @@ export const codingMachine = setup({
         onDone: withNeedsBossReplyTransition('commitJoint', [
           {
             guard: ({ context, event }) =>
-              outputOf(event)?.guard === 'committed' && context.afterReview === 'continueIr',
+              outputOf(event)?.guard === 'committed' &&
+              context.afterReview === 'continueIr',
             target: '#continueIr',
             actions: rememberCaptainOutput,
           },
           {
             guard: ({ context, event }) =>
-              outputOf(event)?.guard === 'committed' && context.afterReview === 'summarizeSpecs',
+              outputOf(event)?.guard === 'committed' &&
+              context.afterReview === 'summarizeSpecs',
             target: '#summarizeSpecs',
             actions: rememberCaptainOutput,
           },
           {
             guard: ({ context, event }) =>
-              outputOf(event)?.guard === 'committed' && context.afterReview === 'done',
+              outputOf(event)?.guard === 'committed' &&
+              context.afterReview === 'done',
             target: '#done',
             actions: rememberCaptainOutput,
           },
-          { guard: guardIs('noRelevantChanges'), target: '#done', actions: rememberCaptainOutput },
-          { guard: guardIs('needsBossInput'), target: '#ready', actions: rememberCaptainOutput },
+          {
+            guard: guardIs('noRelevantChanges'),
+            target: '#done',
+            actions: rememberCaptainOutput,
+          },
+          {
+            guard: guardIs('needsBossInput'),
+            target: '#ready',
+            actions: rememberCaptainOutput,
+          },
         ]),
         onError: captainError,
       },
@@ -1466,14 +1751,16 @@ export const codingMachine = setup({
 
     failed: {
       id: 'failed',
-      description:
-        'Captures the last Captain error so the runner can report it. Boss may resume from here.',
+      description: stateDescriptions.failed,
+      meta: playbookMeta('failed'),
+      tags: ['playbook.parked'],
       on: readyEvents,
     },
 
     done: {
       id: 'done',
-      description: 'The selected coding workflow has completed.',
+      description: stateDescriptions.done,
+      meta: playbookMeta('done'),
       type: 'final',
     },
   },

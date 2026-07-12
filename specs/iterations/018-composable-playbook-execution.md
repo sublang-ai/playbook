@@ -10,26 +10,26 @@ Run independent playbook tasks concurrently and let one live playbook call, awai
 ## Deliverables
 
 - [x] Parallel, structured-state, nested-call, stack, and trace semantics recorded in canonical specs.
-- [ ] DISCUSS initial and reconciliation rounds use XState parallel regions and branch-local Boss waits.
-- [ ] Linked runtimes expose structured state, XState-tag quiescence, and concurrency-safe calls.
-- [ ] The public runtime contract supports opening and resuming nested playbook calls.
-- [ ] The Captain shell maintains a bounded causal LIFO runtime-session stack.
-- [ ] Integration tests cover overlap, joins, independent waits, child return, cascading calls, cancellation, and trace causality.
-- [ ] Generated JavaScript and declaration artifacts agree with their TypeScript sources.
+- [x] DISCUSS initial and reconciliation rounds use XState parallel regions and branch-local Boss waits.
+- [x] Linked runtimes expose structured state, XState-tag quiescence, and concurrency-safe calls.
+- [x] The public runtime contract supports opening and resuming nested playbook calls.
+- [x] The Captain shell maintains a bounded causal LIFO runtime-session stack.
+- [x] Integration tests cover overlap, joins, independent waits, child return, cascading calls, cancellation, and trace causality.
+- [ ] Generated Captain verification artifacts agree with their TypeScript sources after canonical SLC regeneration.
 
 ## Tasks
 
 1. **Specify composition.** _[done]_
    Add DR-011 and coordinated PBRT/CAPTAIN/SLC requirements before implementation.
-2. **Compile parallel DISCUSS rounds.**
+2. **Compile parallel DISCUSS rounds.** _[done]_
    Update the authored discussion, GEARS, FSM, runtime, and focused tests for independent Host and Participant regions.
-3. **Normalize runtime state.**
+3. **Normalize runtime state.** _[done]_
    Add shared structured descriptors, XState tags, `waitFor` quiescence, and abort-aware judge serialization.
-4. **Add the nested-call protocol.**
+4. **Add the nested-call protocol.** _[done]_
    Extend the shared contract and linked-runtime convention with child open, suspension, result, resume, and trace types.
-5. **Implement the Captain stack.**
+5. **Implement the Captain stack.** _[done]_
    Push enabled child runtimes, route the top frame, return results to parents, enforce bounds, and dispose LIFO.
-6. **Verify and regenerate.**
+6. **Verify and regenerate.** _[in progress]_
    Exercise real linked runtimes and test-only nested callers, rebuild artifacts, run the complete suite, and audit the committed diff.
 
 ## Acceptance criteria

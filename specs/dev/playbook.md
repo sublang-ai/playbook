@@ -19,18 +19,18 @@ outside this project.
 
 The set of CODE-N identifiers declared in `code.gears.md` under
 `### CODE-N` headings shall equal the set of `sourceItem` values
-across captain-invoking states in `code.fsm.ts`.
+across player-invoking states in `code.fsm.ts`.
 
 ### PLAYBOOK-2
 
-Where a captain-invoking state references CODE-N via `sourceItem`,
+Where a player-invoking state references CODE-N via `sourceItem`,
 the state's `input.prompt` body shall equal the CODE-N blockquote
 body in `code.gears.md` verbatim, including any `<#>`,
 `<coder-llm>`, and `<reviewer-llm>` placeholder tokens.
 
 ### PLAYBOOK-3
 
-Where a captain-invoking state references CODE-N via `sourceItem`,
+Where a player-invoking state references CODE-N via `sourceItem`,
 the state's `input.player` shall equal the section heading
 (`Coder` / `Reviewer` / `Committer`) under which CODE-N is declared
 in `code.gears.md`.
@@ -45,7 +45,7 @@ Reviewer` agreement holds.
 
 ### PLAYBOOK-4
 
-Where `code.fsm.ts` declares an `onDone` arm for a captain-invoking
+Where `code.fsm.ts` declares an `onDone` arm for a player-invoking
 state, the arm shall be exercisable by some
 `(context, CaptainOutput)` pair that satisfies its guard and
 falsifies every earlier arm in the same state's `onDone` list,
@@ -55,7 +55,7 @@ honoring xstate's first-match-wins semantics.
 
 ### PLAYBOOK-5
 
-Where a captain-invoking state wires a structured field (`intent`,
+Where a player-invoking state wires a structured field (`intent`,
 `taskDescription`, `reviews`, or `challenges`) into the
 `CaptainInput`, the composer shall emit a labelled block
 (`Boss intent:`, `Task description:`, `Review items:`, or
@@ -70,7 +70,7 @@ rendered layout.
 
 ### PLAYBOOK-6
 
-Where a captain-invoking state's prompt body contains a placeholder
+Where a player-invoking state's prompt body contains a placeholder
 (`<#>`, `<coder-llm>`, or `<reviewer-llm>`), the state shall wire
 the corresponding source field (`irNumber`, `coderPlayer`, or
 `reviewerPlayer`) into the `CaptainInput`, and the composer shall
@@ -78,13 +78,13 @@ substitute the placeholder with the wired field's value.
 
 ### PLAYBOOK-16
 
-Every Reviewer captain-invoking prompt in `code.gears.md` and
+Every Reviewer player-invoking prompt in `code.gears.md` and
 `code.fsm.ts` shall include the line
 `Do not edit files or commit; report findings only.`.
 
 ### PLAYBOOK-18
 
-Where a Reviewer captain-invoking prompt in `code.gears.md` or
+Where a Reviewer player-invoking prompt in `code.gears.md` or
 `code.fsm.ts` includes `Verify any affected spec items are:`,
 the prompt shall include the complete spec-review checklist:
 
@@ -100,7 +100,7 @@ The prompt shall not include the legacy line
 
 ### PLAYBOOK-12
 
-Every captain-invoking state shall declare `needsBossReply` in its
+Every player-invoking state shall declare `needsBossReply` in its
 `result` map (per
 [slc/gears2fsm.md "Boss-reply suspension"](../../slc/gears2fsm.md#boss-reply-suspension)),
 and the FSM shall declare a matching arm in
@@ -110,7 +110,7 @@ that targets `'#<state-id>'` with `reenter: true`.
 
 ### PLAYBOOK-13
 
-For every captain-invoking state, every
+For every player-invoking state, every
 non-`needsBossReply` arm in that state's `onDone` shall carry
 `actions: clearBossReplyContext`. Where the FSM declares the
 `awaitBossReply` state, every transition out of it other than a

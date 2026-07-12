@@ -2,7 +2,7 @@
   "name": "@sublang/playbook",
   "version": "0.9.0",
   "type": "module",
-  "description": "Reference CODE playbook \u2014 XState v5 FSM, host-agnostic runtime, and Playbook Captain shell for a coder/reviewer/committer loop driven by GEARS spec items.",
+  "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, and DISCUSS workflows driven by GEARS specs.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/sublang-ai/playbook#readme",
   "repository": {
@@ -28,9 +28,20 @@
     "src/runtime.ts",
     "src/runtime.js",
     "src/runtime.d.ts",
+    "src/xstate-runtime.ts",
+    "src/xstate-runtime.js",
+    "src/xstate-runtime.d.ts",
     "slc/link.md",
     "slc/gears2fsm.md",
     "slc/text2gears.md",
+    "reference/sdlc/captain.md",
+    "reference/sdlc/captain.playbook/captain.gears.md",
+    "reference/sdlc/captain.playbook/captain.fsm.ts",
+    "reference/sdlc/captain.playbook/captain.fsm.js",
+    "reference/sdlc/captain.playbook/captain.fsm.d.ts",
+    "reference/sdlc/captain.playbook/captain.playbook.ts",
+    "reference/sdlc/captain.playbook/captain.playbook.js",
+    "reference/sdlc/captain.playbook/captain.playbook.d.ts",
     "reference/sdlc/code.playbook/code.fsm.ts",
     "reference/sdlc/code.playbook/code.fsm.js",
     "reference/sdlc/code.playbook/code.fsm.d.ts",
@@ -68,6 +79,14 @@
       "types": "./src/runtime.d.ts",
       "default": "./src/runtime.js"
     },
+    "./xstate-runtime": {
+      "types": "./src/xstate-runtime.d.ts",
+      "default": "./src/xstate-runtime.js"
+    },
+    "./captain/playbook": {
+      "types": "./reference/sdlc/captain.playbook/captain.playbook.d.ts",
+      "default": "./reference/sdlc/captain.playbook/captain.playbook.js"
+    },
     "./code/playbook": {
       "types": "./reference/sdlc/code.playbook/code.playbook.d.ts",
       "default": "./reference/sdlc/code.playbook/code.playbook.js"
@@ -103,6 +122,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.143",
     "@openai/codex-sdk": "^0.139.0",
     "@sublang/cligent": "^0.13.0",
+    "p-queue": "^9.3.1",
     "xstate": "^5.19.4",
     "yaml": "^2.9.0"
   },

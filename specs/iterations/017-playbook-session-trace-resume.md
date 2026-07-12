@@ -24,7 +24,8 @@ Give every linked runtime session an immutable id, emit a boundary-complete orde
 2. **Extend the host player-call contract.** _[done]_
    Add explicit `resume: string | false` forwarding to cligent tmux-play and fix every advertised adapter resume path.
 3. **Extend the shared runtime contract.** _[done]_
-   Add `PlaybookSession`, `PlayerCallOptions`, trace types, and returned resume tokens while keeping the four-port boundary.
+   Add `PlaybookSession`, `PlayerCallOptions`, trace types, and returned resume
+   tokens while extending the boundary to its six final ports.
 4. **Instrument linked runtimes.** _[done]_
    Add sequenced trace emission and resolved-player token maps to CODE and DISCUSS.
 5. **Wire the Captain shell.** _[done]_

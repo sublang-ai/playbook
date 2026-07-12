@@ -14,20 +14,36 @@ const dts = readFileSync(
 );
 
 const SHARED_TYPES = [
+  'JsonValue',
+  'NormalizedError',
+  'PlayerCallOptions',
   'PlayerResult',
+  'PlaybookCallRequest',
+  'PlaybookCallResult',
+  'PlaybookCallStart',
+  'PlaybookPendingCall',
   'PlaybookPorts',
+  'PlaybookRunResult',
+  'PlaybookRuntimeFactory',
   'PlaybookSession',
+  'PlaybookState',
+  'PlaybookStateValue',
+  'PlaybookTraceEvent',
+  'PlaybookTraceType',
   'PlaybookRuntime',
 ];
 
 describe('CODE re-exports the shared runtime contract types (PBRT-36)', () => {
-  it('imports the four contract types from @sublang/playbook/runtime', () => {
-    const importLine = dts
-      .split('\n')
-      .find((l) => l.includes('@sublang/playbook/runtime'));
-    expect(importLine, 'no reference to @sublang/playbook/runtime').toBeDefined();
+  it('imports every contract type from @sublang/playbook/runtime', () => {
+    const importStatement = dts.match(
+      /import type \{([\s\S]*?)\} from '@sublang\/playbook\/runtime';/,
+    )?.[0];
+    expect(
+      importStatement,
+      'no reference to @sublang/playbook/runtime',
+    ).toBeDefined();
     for (const name of SHARED_TYPES) {
-      expect(importLine).toContain(name);
+      expect(importStatement).toContain(name);
     }
   });
 
@@ -37,14 +53,15 @@ describe('CODE re-exports the shared runtime contract types (PBRT-36)', () => {
     }
   });
 
-  it('re-exports all four via one export statement', () => {
-    const reexport = dts
-      .split('\n')
-      .find(
-        (l) =>
-          /^\s*export\s+(?:type\s+)?\{/.test(l) &&
-          SHARED_TYPES.every((n) => l.includes(n)),
-      );
-    expect(reexport, 'no export {…} re-exporting all four').toBeDefined();
+  it('re-exports every contract type via one export statement', () => {
+    const reexports = [
+      ...dts.matchAll(/export type \{([\s\S]*?)\};/g),
+    ].map((match) => match[0]);
+    expect(
+      reexports.some((statement) =>
+        SHARED_TYPES.every((name) => statement.includes(name)),
+      ),
+      'no export {…} re-exporting every shared contract type',
+    ).toBe(true);
   });
 });

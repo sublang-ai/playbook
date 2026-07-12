@@ -34,9 +34,6 @@ const fakeEntry = {
   command: 'code',
   intent: 'software development / SDLC coding workflow',
   requiredRoleIds: ['coder', 'reviewer'],
-  idleStateId: 'ready',
-  finalStateId: 'done',
-  parkStateIds: ['failed', 'awaitBossReply'],
   validateOptions: () => ({}),
   createRuntime: () => ({}),
 };
@@ -238,6 +235,39 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
     ).rejects.toThrow(
       /playbooks\.code\.players\.captain binds local role "captain", which is reserved for the tmux-play Captain/,
     );
+  });
+
+  it('rejects the reserved internal Captain id and command', async () => {
+    await expect(
+      composeGenericConfig(
+        {
+          captain: 'claude',
+          playbooks: {
+            captain: {
+              from: 'mod://code',
+              players,
+            },
+          },
+        },
+        ld,
+      ),
+    ).rejects.toThrow(/reserved internal Captain id/);
+
+    await expect(
+      composeGenericConfig(
+        {
+          captain: 'claude',
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              command: 'captain',
+              players,
+            },
+          },
+        },
+        ld,
+      ),
+    ).rejects.toThrow(/reserved internal Captain command/);
   });
 });
 

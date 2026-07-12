@@ -13,7 +13,10 @@
 //   (f) hidden prompt lines not traceable to `code.md`,
 //   (g) stale source/gears `needsBossReply` metadata,
 //   (h) Reviewer prompts missing the review-only instruction,
-//   (i) Reviewer spec-checklist prompts drifting from source wording.
+//   (i) Reviewer spec-checklist prompts drifting from source wording,
+//   (j) Captain input state identity drift,
+//   (k) public state metadata or quiescence-tag drift,
+//   (l) delegated work regressing to the legacy Captain actor encoding.
 
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -195,7 +198,7 @@ describe('GEARS ↔ FSM conformance — gears parser sanity', () => {
 
 });
 
-describe('GEARS ↔ FSM conformance — assertions (a)–(i)', () => {
+describe('GEARS ↔ FSM conformance — assertions (a)–(l)', () => {
   it('(a) every CODE-N in gears has an FSM state with matching sourceItem', () => {
     for (const id of gears.keys()) {
       expect(fsmBySourceItem.has(id), `gears CODE-${id.slice(5)} has no FSM state`).toBe(true);
@@ -220,6 +223,23 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(i)', () => {
     }
   });
 
+  it('(l) every delegated CODE state invokes the first-class player actor', () => {
+    const config = codingMachine.config as unknown as {
+      states: Record<string, { invoke?: { src?: unknown } }>;
+    };
+    for (const state of states) {
+      expect(
+        config.states[state.stateId]?.invoke?.src,
+        `${state.stateId} (${state.sourceItem}): actor-kind drift`,
+      ).toBe('player');
+    }
+    expect(
+      Object.values(config.states).some(
+        (state) => state.invoke?.src === 'captain',
+      ),
+    ).toBe(false);
+  });
+
   it('(d) each FSM state input.prompt body equals the CODE-N blockquote body verbatim', () => {
     for (const s of states) {
       const g = gears.get(s.sourceItem);
@@ -232,9 +252,9 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(i)', () => {
     }
   });
 
-  it('(e) every captain-invoking FSM state has the generated needsBossReply declaration', () => {
+  it('(e) every player-invoking FSM state has the generated needsBossReply declaration', () => {
     const marker =
-      "Output shall include `question: <verbatim question text from the player's prose>`.";
+      "Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 
     for (const s of states) {
       const fsmDescription = s.getInput({}).result.needsBossReply;
@@ -319,6 +339,45 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(i)', () => {
         `${s.stateId} (${s.sourceItem}): FSM`,
         input.prompt,
       );
+    }
+  });
+
+  it('(j) each Captain input names its invoking stable state id', () => {
+    for (const state of states) {
+      expect(
+        state.getInput({}).stateId,
+        `${state.stateId} (${state.sourceItem}): input state id drift`,
+      ).toBe(state.stateId);
+    }
+  });
+
+  it('(k) every state exposes matching metadata and quiescence tags', () => {
+    const parked = new Set(['ready', 'awaitBossReply', 'failed']);
+    const machineStates = codingMachine.config.states ?? {};
+
+    for (const [stateId, state] of Object.entries(machineStates)) {
+      expect(state.id, `${stateId}: stable id drift`).toBe(stateId);
+      expect(state.meta, `${stateId}: public metadata drift`).toEqual({
+        playbook: {
+          stateId,
+          description: state.description,
+        },
+      });
+
+      const tags = state.tags === undefined
+        ? []
+        : Array.isArray(state.tags)
+          ? state.tags
+          : [state.tags];
+      if (parked.has(stateId)) {
+        expect(tags, `${stateId}: parked tag drift`).toEqual([
+          'playbook.parked',
+        ]);
+      } else if (stateId === 'done') {
+        expect(tags, `${stateId}: terminal state must not be busy`).toEqual([]);
+      } else {
+        expect(tags, `${stateId}: busy tag drift`).toEqual(['playbook.busy']);
+      }
     }
   });
 });

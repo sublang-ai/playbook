@@ -16,11 +16,23 @@
 //                @sublang/playbook/runtime
 //                (slc/link.md §Output, DR-004 Addendum A4)
 
+import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
+import type { InspectionEvent, SnapshotFrom } from 'xstate';
+import {
+  combineAbortSignals,
+  createNestedPlaybookBridge,
+  normalizeError,
+  normalizePlaybookSnapshot,
+  snapshotJsonValue,
+  snapshotPlaybookSession,
+  validatePlayerResult,
+  waitForPlaybookQuiescence,
+} from '../../../src/xstate-runtime.js';
 import {
   codingMachine,
-  type CaptainInput,
-  type CaptainOutput,
+  type PlayerInput,
+  type PlayerOutput,
   type CodingEvent,
   type CodingInput,
 } from './code.fsm.js';
@@ -30,10 +42,24 @@ import {
   enumerateRootEvents,
 } from './code.fsm.introspect.js';
 import type {
+  CaptainCallOptions,
+  CaptainResult,
+  JsonValue,
+  NormalizedError,
+  PlayerCallOptions,
+  PlaybookCallRequest,
+  PlaybookCallResult,
+  PlaybookCallStart,
+  PlaybookPendingCall,
+  PlaybookRunResult,
   PlaybookSession,
+  PlaybookState,
+  PlaybookStateValue,
   PlaybookTraceEvent,
+  PlaybookTraceType,
   PlaybookPorts,
   PlaybookRuntime,
+  PlaybookRuntimeFactory,
   PlayerResult,
 } from '@sublang/playbook/runtime';
 
@@ -45,13 +71,56 @@ import type {
 // (typed `PlaybookRuntimeFactory<CodePlaybookOptions>`) stay
 // CODE-specific.
 export type {
+  CaptainCallOptions,
+  CaptainResult,
+  JsonValue,
+  NormalizedError,
+  PlayerCallOptions,
+  PlaybookCallRequest,
+  PlaybookCallResult,
+  PlaybookCallStart,
+  PlaybookPendingCall,
+  PlaybookRunResult,
   PlayerResult,
   PlaybookPorts,
   PlaybookSession,
+  PlaybookState,
+  PlaybookStateValue,
+  PlaybookTraceEvent,
+  PlaybookTraceType,
   PlaybookRuntime,
+  PlaybookRuntimeFactory,
 };
 
 export type CodePlaybookOptions = CodingInput;
+
+function snapshotCodePlaybookOptions(value: unknown): CodePlaybookOptions {
+  const captured = snapshotJsonValue(value, 'CODE runtime options');
+  if (
+    captured === null ||
+    typeof captured !== 'object' ||
+    Array.isArray(captured)
+  ) {
+    throw new TypeError('CODE runtime options must be an object');
+  }
+  const record = captured as Readonly<Record<string, JsonValue>>;
+  const allowed = new Set([
+    'intent',
+    'irNumber',
+    'coderPlayer',
+    'reviewerPlayer',
+    'committerPlayer',
+  ]);
+  for (const [key, option] of Object.entries(record)) {
+    if (!allowed.has(key)) {
+      throw new TypeError(`CODE runtime options.${key} is not declared`);
+    }
+    if (typeof option !== 'string') {
+      throw new TypeError(`CODE runtime options.${key} must be a string`);
+    }
+  }
+  return captured as unknown as CodePlaybookOptions;
+}
 
 const BOSS_REPLY_ERRORS = {
   missingQuestion: "needsBossReply outcome missing 'question' field",
@@ -76,19 +145,8 @@ function normalizeErrorCompact(
   err: unknown,
 ): { name: string; message: string } | undefined {
   if (err === undefined || err === null) return undefined;
-  if (err instanceof Error) {
-    return { name: err.name, message: err.message };
-  }
-  if (typeof err === 'object') {
-    const o = err as Record<string, unknown>;
-    if (typeof o.message === 'string') {
-      return {
-        name: typeof o.name === 'string' ? o.name : 'Error',
-        message: o.message,
-      };
-    }
-  }
-  return { name: 'Error', message: String(err) };
+  const normalized = normalizeError(err);
+  return { name: normalized.name, message: normalized.message };
 }
 
 // Normalize an unknown error value to the full `{ name, message, stack }`
@@ -97,59 +155,65 @@ function normalizeErrorCompact(
 function normalizeErrorFull(
   err: unknown,
 ): { name: string; message: string; stack?: string } | undefined {
-  const compact = normalizeErrorCompact(err);
-  if (compact === undefined) return undefined;
-  if (err instanceof Error) {
-    return err.stack !== undefined ? { ...compact, stack: err.stack } : compact;
-  }
-  if (typeof err === 'object' && err !== null) {
-    const stack = (err as Record<string, unknown>).stack;
-    if (typeof stack === 'string') {
-      return { ...compact, stack };
-    }
-  }
-  return compact;
+  if (err === undefined || err === null) return undefined;
+  return normalizeError(err);
+}
+
+function isAbortFailure(error: unknown, signal: AbortSignal): boolean {
+  return (
+    signal.aborted &&
+    (error === signal.reason || normalizeError(error).name === 'AbortError')
+  );
 }
 
 // Normalize any `error` field inside a telemetry event so failed
 // transitions don't leak raw Error instances through the channel.
 function normalizeEventForTelemetry(event: unknown): unknown {
-  return normalizeJsonSafe(event, new WeakSet<object>(), false);
+  if (event === undefined) return undefined;
+  return normalizeEventValue(event, 'FSM event', new Set());
 }
 
-function normalizeJsonSafe(
+function normalizeEventValue(
   value: unknown,
-  seen: WeakSet<object>,
-  arrayItem: boolean,
-): unknown {
-  if (value === undefined) return arrayItem ? null : undefined;
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
-    return value;
+  path: string,
+  ancestors: ReadonlySet<object>,
+): JsonValue {
+  if (Array.isArray(value)) return snapshotJsonValue(value, path);
+  if (value === null || typeof value !== 'object') {
+    return snapshotJsonValue(value, path);
   }
-  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
-  if (typeof value === 'bigint') return value.toString();
-  if (typeof value === 'symbol' || typeof value === 'function') {
-    return arrayItem ? null : undefined;
+  if (ancestors.has(value)) {
+    throw new TypeError(`${path} must not contain a JSON cycle`);
   }
-  if (value instanceof Error) return normalizeErrorFull(value);
-  if (value instanceof Date) return value.toISOString();
-  if (seen.has(value)) return '[Circular]';
-  seen.add(value);
-  if (Array.isArray(value)) {
-    const normalized = value.map((item) => normalizeJsonSafe(item, seen, true));
-    seen.delete(value);
-    return normalized;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) {
+    return snapshotJsonValue(value, path);
   }
-  const normalized: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    const next =
+  if (Object.getOwnPropertySymbols(value).length > 0) {
+    return snapshotJsonValue(value, path);
+  }
+  const nextAncestors = new Set(ancestors).add(value);
+  const normalized: Record<string, JsonValue> = {};
+  for (const [key, descriptor] of Object.entries(
+    Object.getOwnPropertyDescriptors(value),
+  )) {
+    if (!descriptor.enumerable) {
+      throw new TypeError(`${path}.${key} must be an enumerable JSON property`);
+    }
+    if (!Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+      throw new TypeError(`${path}.${key} must be a JSON data property`);
+    }
+    if (descriptor.value === undefined) continue;
+    normalized[key] =
       key === 'error'
-        ? normalizeErrorFull(item)
-        : normalizeJsonSafe(item, seen, false);
-    if (next !== undefined) normalized[key] = next;
+        ? snapshotJsonValue(normalizeError(descriptor.value), `${path}.error`)
+        : normalizeEventValue(
+            descriptor.value,
+            `${path}.${key}`,
+            nextAncestors,
+          );
   }
-  seen.delete(value);
-  return normalized;
+  return snapshotJsonValue(normalized, path);
 }
 
 // Internal capabilities (DR-004 §10). Each ships with its final
@@ -168,7 +232,7 @@ function normalizeJsonSafe(
 // reply, the continuation preamble and Q/A blocks precede every
 // ordinary block. The FSM's prompt body is never re-flowed.
 
-function composePlayerPrompt(input: CaptainInput): string {
+function composePlayerPrompt(input: PlayerInput): string {
   const blocks: string[] = [];
   if (
     input.pendingBossQuestion !== undefined &&
@@ -226,7 +290,7 @@ function composePlayerPrompt(input: CaptainInput): string {
 // set. The alias selects only the host pane; it is not a PBRT-4
 // identity string, so it leaves <coder-llm> / <reviewer-llm>
 // untouched and `input.player` stays `Committer` (PLAYBOOK-3).
-function resolvePlayerId(input: CaptainInput): string {
+function resolvePlayerId(input: PlayerInput): string {
   switch (input.player) {
     case 'Coder':
       return 'coder';
@@ -239,20 +303,16 @@ function resolvePlayerId(input: CaptainInput): string {
       return 'coder';
     default: {
       const exhaustive: never = input.player;
-      throw new Error(
-        `resolvePlayerId: unknown player ${String(exhaustive)}`,
-      );
+      throw new Error(`resolvePlayerId: unknown player ${String(exhaustive)}`);
     }
   }
 }
 
-type JudgePurpose =
-  | 'boss-input-classification'
-  | 'player-output-adjudication';
+type JudgePurpose = 'boss-input-classification' | 'player-output-adjudication';
 
 interface RuntimeBoundaryCalls {
   callPlayer(
-    input: CaptainInput,
+    input: PlayerInput,
     playerId: string,
     prompt: string,
     signal: AbortSignal,
@@ -272,17 +332,17 @@ interface RuntimeBoundaryCalls {
 // Adjudicator failures (malformed JSON, missing/unknown guard) are
 // control-plane errors and propagate via throw per slc/link.md.
 async function adjudicate(
-  input: CaptainInput,
+  input: PlayerInput,
   finalText: string,
   ports: PlaybookPorts,
   signal: AbortSignal,
   boundary?: RuntimeBoundaryCalls,
-): Promise<CaptainOutput> {
+): Promise<PlayerOutput> {
   const prompt = buildJudgePrompt(input, finalText);
   const raw = boundary
     ? await boundary.callJudge(
         'player-output-adjudication',
-        stateIdBySourceItem.get(input.sourceItem),
+        input.stateId,
         prompt,
         signal,
       )
@@ -328,7 +388,7 @@ async function adjudicate(
       );
     }
   }
-  return obj as CaptainOutput;
+  return obj as PlayerOutput;
 }
 
 function extractRequiredFields(description: string): string[] {
@@ -340,7 +400,7 @@ function extractRequiredFields(description: string): string[] {
   return fields;
 }
 
-function buildJudgePrompt(input: CaptainInput, finalText: string): string {
+function buildJudgePrompt(input: PlayerInput, finalText: string): string {
   const lines: string[] = [];
   lines.push(`The ${input.player} just produced this output:`);
   lines.push('');
@@ -636,7 +696,36 @@ async function classifyWithLlm(
         await ports.emitStatus('Classifier omitted answer for BOSS_REPLY');
         return undefined;
       }
-      return { type: 'BOSS_REPLY', answer: payload.answer };
+      const pending = pendingBossQuestionFromContext(state.context);
+      if (!pending) {
+        await ports.emitStatus(
+          'Classifier returned BOSS_REPLY without a pending question',
+        );
+        return undefined;
+      }
+      if (
+        payload.questionId !== undefined &&
+        typeof payload.questionId !== 'string'
+      ) {
+        await ports.emitStatus(
+          'Classifier supplied a non-string questionId for BOSS_REPLY',
+        );
+        return undefined;
+      }
+      if (
+        typeof payload.questionId === 'string' &&
+        payload.questionId !== pending.questionId
+      ) {
+        await ports.emitStatus(
+          `Classifier supplied unknown questionId for BOSS_REPLY: ${payload.questionId}`,
+        );
+        return undefined;
+      }
+      return {
+        type: 'BOSS_REPLY',
+        answer: payload.answer,
+        questionId: pending.questionId,
+      };
     }
     default:
       await ports.emitStatus(
@@ -676,7 +765,9 @@ function classifierState(snapshotOrState: unknown): ClassifierState {
 
 function buildClassifierPrompt(text: string, state: ClassifierState): string {
   const currentState =
-    typeof state.value === 'string' ? state.value : 'unknown';
+    typeof state.value === 'string'
+      ? state.value
+      : JSON.stringify(state.value ?? null);
   const pendingBossQuestion = pendingBossQuestionFromContext(state.context);
   const lines = [
     'Classify the following Boss message into exactly one of these events.',
@@ -687,8 +778,9 @@ function buildClassifierPrompt(text: string, state: ClassifierState): string {
   ];
   if (pendingBossQuestion !== undefined) {
     lines.push(
+      `Pending question id: ${pendingBossQuestion.questionId}`,
+      `Pending asking player: ${pendingBossQuestion.player}`,
       `Pending Boss question: ${pendingBossQuestion.question}`,
-      `Pending resume state: ${pendingBossQuestion.resumeStateId}`,
     );
   }
   lines.push(
@@ -704,27 +796,24 @@ function buildClassifierPrompt(text: string, state: ClassifierState): string {
     lines.push(`  - ${target.stateId}: ${target.description}`);
   }
   if (currentState === 'awaitBossReply') {
-    lines.push('- BOSS_REPLY: payload { answer: "<verbatim Boss answer>" }');
+    lines.push(
+      '- BOSS_REPLY: payload { answer: "<verbatim Boss answer>", questionId?: "<pending question id>" }',
+    );
   } else {
     lines.push('- BOSS_REPLY: valid only when Current state is awaitBossReply');
   }
-  lines.push(
-    '',
-    'Boss message:',
-    '```',
-    text,
-    '```',
-  );
+  lines.push('', 'Boss message:', '```', text, '```');
   return lines.join('\n');
 }
 
-// Captain-actor bridge — DR-004 §7. One PromiseActorLogic that the
-// codingMachine invokes from every captain-invoking state. Per turn:
+// Delegated-player actor bridge — DR-004 §7. One PromiseActorLogic that the
+// codingMachine invokes from every player-invoking state. Per turn:
 // resolve playerId, compose the player prompt, await
 // ports.callPlayer, adjudicate the finalText. PlayerResult status of
 // 'aborted' or 'error' throws so XState routes via onError → #failed
 // (the single fail-stop sink for both Captain errors and player
-// failures).
+// failures). Captain remains the orchestrator and adjudicator; it is not
+// encoded as the delegated FSM actor.
 //
 // `getActiveSignal` is the runtime's hook for flowing the Boss's
 // `handleBossInput.signal` into the host port calls — fromPromise
@@ -735,28 +824,28 @@ function captainBridge(
   ports: PlaybookPorts,
   getActiveSignal?: () => AbortSignal | undefined,
   boundary?: RuntimeBoundaryCalls,
+  onControlPlaneError?: (error: unknown) => void,
 ) {
-  return fromPromise<CaptainOutput, CaptainInput>(
-    async ({ input, signal }) => {
-      const activeSignal = getActiveSignal?.() ?? signal;
-      const playerId = resolvePlayerId(input);
-      const prompt = composePlayerPrompt(input);
-      const result = boundary
-        ? await boundary.callPlayer(input, playerId, prompt, activeSignal)
-        : await ports.callPlayer(playerId, prompt, activeSignal, {
-            resume: false,
-          });
-      if (result.status !== 'ok') {
-        throw new Error(
-          result.error ??
-            `captainBridge: callPlayer status "${result.status}"`,
-        );
-      }
-      if (result.finalText === undefined) {
-        throw new Error(
-          'captainBridge: callPlayer returned status=ok with no finalText',
-        );
-      }
+  return fromPromise<PlayerOutput, PlayerInput>(async ({ input, signal }) => {
+    const activeSignal = combineAbortSignals(signal, getActiveSignal?.());
+    const playerId = resolvePlayerId(input);
+    const prompt = composePlayerPrompt(input);
+    const result = boundary
+      ? await boundary.callPlayer(input, playerId, prompt, activeSignal)
+      : await ports.callPlayer(playerId, prompt, activeSignal, {
+          resume: false,
+        });
+    if (result.status !== 'ok') {
+      throw new Error(
+        result.error ?? `captainBridge: callPlayer status "${result.status}"`,
+      );
+    }
+    if (result.finalText === undefined) {
+      throw new Error(
+        'captainBridge: callPlayer returned status=ok with no finalText',
+      );
+    }
+    try {
       const output = await adjudicate(
         input,
         result.finalText,
@@ -766,8 +855,11 @@ function captainBridge(
       );
       validateBossReplyOutput(input, output);
       return output;
-    },
-  );
+    } catch (error) {
+      onControlPlaneError?.(error);
+      throw error;
+    }
+  });
 }
 
 // Captain pane display — PBRT-3 / PBRT-14.
@@ -776,7 +868,7 @@ function captainBridge(
 // glance:
 //   (no glyph)  bare FSM event type — host renders as captain speech
 //               (e.g., `captain> START_CODING`)
-//   ⤷           captain-invoking state entry: `<Player>: <label>`
+//   ⤷           player-invoking state entry: `<Player>: <label>`
 //   →           transition guard outcome (`· field=N` tallies
 //               appended); the host presenter owns any visual
 //               nesting under the preceding ⤷ entry
@@ -815,7 +907,7 @@ const STATE_LABELS: Readonly<Record<string, string>> = {
 };
 
 interface StateMetadata {
-  player: CaptainInput['player'];
+  player: PlayerInput['player'];
   sourceItem: string;
   label: string;
 }
@@ -826,7 +918,7 @@ const stateMetadata: ReadonlyMap<string, StateMetadata> = (() => {
     const label = STATE_LABELS[s.stateId];
     if (!label) {
       throw new Error(
-        `code.playbook.ts: STATE_LABELS missing entry for captain-invoking state '${s.stateId}'`,
+        `code.playbook.ts: STATE_LABELS missing entry for player-invoking state '${s.stateId}'`,
       );
     }
     const input = s.getInput({});
@@ -835,13 +927,6 @@ const stateMetadata: ReadonlyMap<string, StateMetadata> = (() => {
   return m;
 })();
 
-const stateIdBySourceItem: ReadonlyMap<string, string> = new Map(
-  [...stateMetadata.entries()].map(([stateId, meta]) => [
-    meta.sourceItem,
-    stateId,
-  ]),
-);
-
 const registeredResumableStateIds: ReadonlySet<string> = new Set(
   enumerateAwaitBossReply(codingMachine).bossReplyTransitions.map(
     (transition) => transition.target,
@@ -849,18 +934,16 @@ const registeredResumableStateIds: ReadonlySet<string> = new Set(
 );
 
 function validateBossReplyOutput(
-  input: CaptainInput,
-  output: CaptainOutput,
+  input: PlayerInput,
+  output: PlayerOutput,
 ): void {
   if (output.guard !== 'needsBossReply') return;
   if (typeof output.question !== 'string') {
     throw new Error(BOSS_REPLY_ERRORS.missingQuestion);
   }
-  const stateId = stateIdBySourceItem.get(input.sourceItem);
-  if (stateId === undefined || !registeredResumableStateIds.has(stateId)) {
-    throw new Error(
-      BOSS_REPLY_ERRORS.unregisteredState(stateId ?? input.sourceItem),
-    );
+  const stateId = input.stateId;
+  if (!registeredResumableStateIds.has(stateId)) {
+    throw new Error(BOSS_REPLY_ERRORS.unregisteredState(stateId));
   }
 }
 
@@ -875,12 +958,9 @@ const QUIESCENT_STATES: ReadonlySet<string> = new Set([
 // pane per PBRT-3: the readline returning to its `boss>` prompt is
 // the implicit "turn over" signal, so a `◆ ready` / `◆ done`
 // tombstone is redundant.
-const SUPPRESSED_ENTRY_STATES: ReadonlySet<string> = new Set([
-  'ready',
-  'done',
-]);
+const SUPPRESSED_ENTRY_STATES: ReadonlySet<string> = new Set(['ready', 'done']);
 
-// Captain-pane surface (PBRT-3): every captain-invoking state plus
+// Captain-pane surface (PBRT-3): every player-invoking state plus
 // the quiescent states whose entry still carries information
 // (failure with `lastError`, awaitBossReply with the pending
 // question). `ready` and `done` flow through the inspect handler
@@ -891,7 +971,12 @@ const CAPTAIN_PANE_STATES: ReadonlySet<string> = new Set([
   ...QUIESCENT_STATES,
 ]);
 
+type BossReplyQuestionId = NonNullable<
+  Extract<CodingEvent, { type: 'BOSS_REPLY' }>['questionId']
+>;
+
 interface PendingBossQuestionForStatus {
+  questionId: BossReplyQuestionId;
   resumeStateId: string;
   sourceItem: string;
   player: string;
@@ -910,6 +995,7 @@ function pendingBossQuestionFromContext(
   >;
   if (
     typeof candidate.resumeStateId !== 'string' ||
+    typeof candidate.questionId !== 'string' ||
     typeof candidate.sourceItem !== 'string' ||
     typeof candidate.player !== 'string' ||
     typeof candidate.question !== 'string'
@@ -917,6 +1003,7 @@ function pendingBossQuestionFromContext(
     return undefined;
   }
   return {
+    questionId: candidate.questionId as BossReplyQuestionId,
     resumeStateId: candidate.resumeStateId,
     sourceItem: candidate.sourceItem,
     player: candidate.player,
@@ -944,9 +1031,7 @@ function formatAwaitBossReplyQuestion(
 // It carries only the resume target, asking player, and source item;
 // the former `q="<first 80 chars>"` excerpt rider is dropped now that
 // the full question rides the captain-speech line above.
-function formatAwaitBossReplyMarker(
-  context: Record<string, unknown>,
-): string {
+function formatAwaitBossReplyMarker(context: Record<string, unknown>): string {
   const pending = pendingBossQuestionFromContext(context);
   const resumeStateId = pending?.resumeStateId ?? 'unknown';
   const player = pending?.player ?? 'unknown';
@@ -1011,6 +1096,32 @@ function stateTelemetryPayload(
   return payload;
 }
 
+function structuredStateTelemetryPayload(
+  previousState: PlaybookState | undefined,
+  state: PlaybookState,
+  event: unknown,
+  context: Record<string, unknown>,
+): JsonValue {
+  const payload: Record<string, unknown> = {
+    from: previousState?.value ?? null,
+    to: state.value,
+    event: normalizeEventForTelemetry(event) ?? null,
+    previousState: previousState ?? null,
+    state,
+  };
+  if (state.stateId === 'awaitBossReply') {
+    const pendingBossQuestion = pendingBossQuestionFromContext(context);
+    if (pendingBossQuestion !== undefined) {
+      payload.pendingBossQuestion = pendingBossQuestion;
+    }
+  }
+  if (state.stateId === 'failed') {
+    const lastError = normalizeErrorFull(context.lastError);
+    if (lastError !== undefined) payload.lastError = lastError;
+  }
+  return snapshotJsonValue(payload, 'FSM telemetry payload');
+}
+
 // Internal export surface for tests. Not part of the stable public API;
 // the leading underscore signals "subject to change." Each member is
 // referenced here so `noUnusedLocals` stays clean while later tasks
@@ -1036,13 +1147,13 @@ export const _internal = {
   VERBATIM_PAYLOAD_FIELDS,
 };
 
-type TraceType = PlaybookTraceEvent['type'];
 type BossSettlementOutcome =
   | 'no-action'
   | 'quiescent'
   | 'failed'
   | 'terminal'
-  | 'aborted';
+  | 'aborted'
+  | 'suspended';
 
 interface TracePosition {
   turnId?: number;
@@ -1052,10 +1163,13 @@ interface TracePosition {
 export default function createPlaybookRuntime(
   options: CodePlaybookOptions,
 ): PlaybookRuntime {
+  const boundOptions = snapshotCodePlaybookOptions(options);
   let actor: ReturnType<typeof createActor> | undefined;
   let session: PlaybookSession | undefined;
   let initialized = false;
   let initInFlight: Promise<void> | undefined;
+  let disposalPromise: Promise<void> | undefined;
+  let disposed = false;
   let savedPorts: PlaybookPorts | undefined;
   let runtimePorts: PlaybookPorts | undefined;
   // The Boss's per-turn AbortSignal, surfaced to captainBridge so
@@ -1063,38 +1177,54 @@ export default function createPlaybookRuntime(
   // null between turns; set by handleBossInput.
   let activeSignal: AbortSignal | undefined;
   let activeTurnId: number | undefined;
+  let controlPlaneError: unknown;
   // Previous root-machine state for the inspect-driven telemetry /
   // status emitter. undefined before the first inspect firing.
-  let priorState: unknown;
+  let priorState: PlaybookState | undefined;
+  let suppressInspectionEmissions = false;
 
   let traceSequence = 0;
   let turnSequence = 0;
   let judgeCallSequence = 0;
   let playerCallSequence = 0;
+  let playbookCallSequence = 0;
   const playerResumeTokens = new Map<string, string>();
+  const activePlayerIds = new Set<string>();
+  const playbookCallTurnIds = new Map<string, number | undefined>();
+  const judgeQueue = new PQueue({ concurrency: 1 });
+  const emissionQueue = new PQueue({ concurrency: 1 });
+  const activeEmissionCalls = new Set<Promise<void>>();
 
-  // Emission queue. slc/link.md says emissions "shall be ordered,
-  // awaited, and never-dropped"; subscribe/inspect callbacks are
-  // synchronous and can't await, so each emit is enqueued and a
-  // single drainer processes them sequentially.
-  let emissionTail: Promise<void> = Promise.resolve();
+  // All trace, state-telemetry, and status work shares this one queue.
+  // Inspection callbacks enqueue a complete ordered batch synchronously;
+  // imperative boundaries await their queued work directly.
   let emissionFailure: unknown;
 
-  function enqueueEmit(fn: () => Promise<void>): void {
-    emissionTail = emissionTail.then(async () => {
-      try {
-        await fn();
-      } catch (error) {
+  function enqueueEmission(fn: () => Promise<void>): Promise<void> {
+    const queued = emissionQueue.add(fn).then(() => undefined);
+    activeEmissionCalls.add(queued);
+    void queued.then(
+      () => activeEmissionCalls.delete(queued),
+      (error: unknown) => {
+        activeEmissionCalls.delete(queued);
         emissionFailure ??= error;
-      }
-    });
+      },
+    );
+    return queued;
   }
 
   async function drainEmissions(): Promise<void> {
     while (true) {
-      const tail = emissionTail;
-      await tail;
-      if (tail === emissionTail) break;
+      const active = [...activeEmissionCalls];
+      if (active.length > 0) await Promise.allSettled(active);
+      await emissionQueue.onIdle();
+      if (
+        activeEmissionCalls.size === 0 &&
+        emissionQueue.size === 0 &&
+        emissionQueue.pending === 0
+      ) {
+        break;
+      }
     }
     if (emissionFailure !== undefined) {
       const error = emissionFailure;
@@ -1117,55 +1247,139 @@ export default function createPlaybookRuntime(
     return savedPorts;
   }
 
-  async function emitTrace(
-    type: TraceType,
+  function createTraceEvent(
+    type: PlaybookTraceType,
+    payload: unknown,
+    position: TracePosition = {},
+  ): PlaybookTraceEvent {
+    const currentSession = requireSession();
+    const safePayload = snapshotJsonValue(payload, `trace ${type} payload`);
+    return {
+      schemaVersion: 2,
+      sessionId: currentSession.sessionId,
+      playbookId: currentSession.playbookId,
+      rootSessionId: currentSession.rootSessionId,
+      ...(currentSession.parentSessionId !== undefined
+        ? { parentSessionId: currentSession.parentSessionId }
+        : {}),
+      ...(currentSession.parentCallId !== undefined
+        ? { parentCallId: currentSession.parentCallId }
+        : {}),
+      depth: currentSession.depth,
+      sequence: ++traceSequence,
+      timestamp: Date.now(),
+      type,
+      ...(position.turnId !== undefined ? { turnId: position.turnId } : {}),
+      ...(position.callId !== undefined ? { callId: position.callId } : {}),
+      payload: safePayload,
+    };
+  }
+
+  function emitTrace(
+    type: PlaybookTraceType,
     payload: unknown,
     position: TracePosition = {},
   ): Promise<void> {
     const currentSession = requireSession();
-    const event: PlaybookTraceEvent = {
-      schemaVersion: 1,
-      sessionId: currentSession.sessionId,
-      playbookId: currentSession.playbookId,
-      sequence: ++traceSequence,
-      timestamp: Date.now(),
-      type,
-      ...(position.turnId !== undefined
-        ? { turnId: position.turnId }
-        : {}),
-      ...(position.callId !== undefined
-        ? { callId: position.callId }
-        : {}),
-      payload,
-    };
-    await currentSession.ports.emitTelemetry({
-      topic: 'playbook.trace',
-      payload: event,
-    });
+    const event = createTraceEvent(type, payload, position);
+    return enqueueEmission(() =>
+      currentSession.ports.emitTelemetry({
+        topic: 'playbook.trace',
+        payload: event,
+      }),
+    );
   }
 
   function stateIdentity(stateId: string | undefined): { stateId?: string } {
     return stateId === undefined ? {} : { stateId };
   }
 
+  function currentState(): PlaybookState {
+    if (!actor) {
+      throw new Error('createPlaybookRuntime: actor is not initialized');
+    }
+    return normalizePlaybookSnapshot(actor.getSnapshot(), {
+      pendingCall: nestedBridge.getPendingCall(),
+    });
+  }
+
+  function stateTracePayload(state = currentState()): Record<string, unknown> {
+    return {
+      state,
+      ...stateIdentity(state.stateId),
+    };
+  }
+
   function createRuntimePorts(hostPorts: PlaybookPorts): PlaybookPorts {
     return {
       callPlayer: (playerId, prompt, signal, callOptions) =>
         hostPorts.callPlayer(playerId, prompt, signal, callOptions),
+      callCaptain: (prompt, signal, callOptions) =>
+        hostPorts.callCaptain(prompt, signal, callOptions),
       callJudge: (prompt, signal) => hostPorts.callJudge(prompt, signal),
-      emitStatus: async (message, data) => {
-        await emitTrace(
+      callPlaybook: (request, signal) =>
+        hostPorts.callPlaybook(request, signal),
+      emitStatus: (message, data) => {
+        const descriptor = actor ? currentState() : undefined;
+        const safeData =
+          data === undefined
+            ? undefined
+            : snapshotJsonValue(data, 'status data');
+        const trace = createTraceEvent(
           'status.emitted',
           {
             message,
-            ...(data !== undefined ? { data } : {}),
+            ...(safeData !== undefined ? { data: safeData } : {}),
+            ...(descriptor !== undefined
+              ? {
+                  state: descriptor,
+                  ...stateIdentity(descriptor.stateId),
+                }
+              : {}),
           },
           activeTurnId !== undefined ? { turnId: activeTurnId } : {},
         );
-        await hostPorts.emitStatus(message, data);
+        return enqueueEmission(async () => {
+          await hostPorts.emitTelemetry({
+            topic: 'playbook.trace',
+            payload: trace,
+          });
+          await hostPorts.emitStatus(message, safeData);
+        });
       },
-      emitTelemetry: (event) => hostPorts.emitTelemetry(event),
+      emitTelemetry: (event) => {
+        if (typeof event.topic !== 'string' || event.topic.length === 0) {
+          throw new TypeError('telemetry topic must be a non-empty string');
+        }
+        const payload = snapshotJsonValue(event.payload, 'telemetry payload');
+        return enqueueEmission(() =>
+          hostPorts.emitTelemetry({ topic: event.topic, payload }),
+        );
+      },
     };
+  }
+
+  async function emitCallStarted(
+    startedType: 'player.call.started' | 'judge.call.started',
+    finishedType: 'player.call.finished' | 'judge.call.finished',
+    identity: Record<string, unknown>,
+    position: TracePosition,
+  ): Promise<void> {
+    try {
+      await emitTrace(startedType, identity, position);
+    } catch (error) {
+      controlPlaneError ??= error;
+      try {
+        await emitTrace(
+          finishedType,
+          { ...identity, status: 'error', error: normalizeError(error) },
+          position,
+        );
+      } catch {
+        // Preserve the start failure after one best-effort finish attempt.
+      }
+      throw error;
+    }
   }
 
   const boundary: RuntimeBoundaryCalls = {
@@ -1174,7 +1388,7 @@ export default function createPlaybookRuntime(
       await drainEmissions();
       const turnId = activeTurnId;
       const callId = `player-${++playerCallSequence}`;
-      const stateId = stateIdBySourceItem.get(input.sourceItem);
+      const stateId = input.stateId;
       const resume = playerResumeTokens.get(playerId) ?? false;
       const identity = {
         purpose: 'captain' as const,
@@ -1184,91 +1398,179 @@ export default function createPlaybookRuntime(
         resume,
       };
 
-      await emitTrace(
-        'player.call.started',
-        { ...identity, prompt },
-        {
-          ...(turnId !== undefined ? { turnId } : {}),
-          callId,
-        },
-      );
-
-      let result: PlayerResult;
-      try {
-        result = await requireHostPorts().callPlayer(
-          playerId,
-          prompt,
-          signal,
-          { resume },
+      if (activePlayerIds.has(playerId)) {
+        const error = new Error(
+          `simultaneous calls to resolved player ${playerId} are not allowed`,
         );
-      } catch (error) {
+        await emitCallStarted(
+          'player.call.started',
+          'player.call.finished',
+          { ...identity, prompt },
+          {
+            ...(turnId !== undefined ? { turnId } : {}),
+            callId,
+          },
+        );
+        await emitTrace(
+          'player.call.finished',
+          { ...identity, status: 'error', error: normalizeError(error) },
+          {
+            ...(turnId !== undefined ? { turnId } : {}),
+            callId,
+          },
+        );
+        throw error;
+      }
+      activePlayerIds.add(playerId);
+
+      try {
+        await emitTrace(
+          'player.call.started',
+          { ...identity, prompt },
+          {
+            ...(turnId !== undefined ? { turnId } : {}),
+            callId,
+          },
+        );
+
+        let rawResult: unknown;
+        try {
+          rawResult = await requireHostPorts().callPlayer(
+            playerId,
+            prompt,
+            signal,
+            { resume },
+          );
+          // A host promise is not required to honor cancellation. Do not let
+          // a late result mutate continuity or publish a successful finish.
+          signal.throwIfAborted();
+        } catch (error) {
+          await emitTrace(
+            'player.call.finished',
+            {
+              ...identity,
+              status: signal.aborted ? 'aborted' : 'error',
+              error: normalizeError(error),
+            },
+            {
+              ...(turnId !== undefined ? { turnId } : {}),
+              callId,
+            },
+          );
+          // A thrown port call carries no authoritative result, so the
+          // prior token remains available for a later explicit resume.
+          throw error;
+        }
+
+        let result: PlayerResult;
+        try {
+          result = validatePlayerResult(rawResult);
+        } catch (error) {
+          if (!signal.aborted) controlPlaneError ??= error;
+          await emitTrace(
+            'player.call.finished',
+            { ...identity, status: 'error', error: normalizeError(error) },
+            {
+              ...(turnId !== undefined ? { turnId } : {}),
+              callId,
+            },
+          );
+          throw error;
+        }
+
+        if (
+          typeof result.resumeToken === 'string' &&
+          result.resumeToken.trim().length > 0
+        ) {
+          playerResumeTokens.set(playerId, result.resumeToken);
+        } else {
+          playerResumeTokens.delete(playerId);
+        }
+
         await emitTrace(
           'player.call.finished',
           {
             ...identity,
-            status: signal.aborted ? 'aborted' : 'error',
-            error: normalizeErrorFull(error),
+            status: result.status,
+            ...(result.finalText !== undefined
+              ? { finalText: result.finalText }
+              : {}),
+            ...(result.error !== undefined
+              ? { error: normalizeError(result.error) }
+              : {}),
+            ...(result.resumeToken !== undefined
+              ? { resumeToken: result.resumeToken }
+              : {}),
           },
           {
             ...(turnId !== undefined ? { turnId } : {}),
             callId,
           },
         );
-        // A thrown port call carries no authoritative result, so the
-        // prior token remains available for a later explicit resume.
-        throw error;
+        return result;
+      } finally {
+        activePlayerIds.delete(playerId);
       }
-
-      if (
-        typeof result.resumeToken === 'string' &&
-        result.resumeToken.trim().length > 0
-      ) {
-        playerResumeTokens.set(playerId, result.resumeToken);
-      } else {
-        playerResumeTokens.delete(playerId);
-      }
-
-      await emitTrace(
-        'player.call.finished',
-        {
-          ...identity,
-          status: result.status,
-          ...(result.finalText !== undefined
-            ? { finalText: result.finalText }
-            : {}),
-          ...(result.error !== undefined
-            ? { error: normalizeErrorFull(result.error) }
-            : {}),
-          ...(result.resumeToken !== undefined
-            ? { resumeToken: result.resumeToken }
-            : {}),
-        },
-        {
-          ...(turnId !== undefined ? { turnId } : {}),
-          callId,
-        },
-      );
-      return result;
     },
 
     async callJudge(purpose, stateId, prompt, signal): Promise<string> {
-      // A transition/status queued synchronously by XState must reach the
-      // host before the judge call that follows it.
-      await drainEmissions();
-      const turnId = activeTurnId;
-      const callId = `judge-${++judgeCallSequence}`;
-      const identity = { purpose, ...stateIdentity(stateId) };
+      return judgeQueue.add(async () => {
+        signal.throwIfAborted();
+        // A transition/status queued synchronously by XState must reach
+        // the host before the judge call that follows it.
+        await drainEmissions();
+        signal.throwIfAborted();
+        const turnId = activeTurnId;
+        const callId = `judge-${++judgeCallSequence}`;
+        const identity = { purpose, ...stateIdentity(stateId) };
 
-      await emitTrace(
-        'judge.call.started',
-        { ...identity, prompt },
-        {
-          ...(turnId !== undefined ? { turnId } : {}),
-          callId,
-        },
-      );
-      try {
-        const reply = await requireHostPorts().callJudge(prompt, signal);
+        await emitCallStarted(
+          'judge.call.started',
+          'judge.call.finished',
+          { ...identity, prompt },
+          {
+            ...(turnId !== undefined ? { turnId } : {}),
+            callId,
+          },
+        );
+        let reply: unknown;
+        try {
+          reply = await requireHostPorts().callJudge(prompt, signal);
+          signal.throwIfAborted();
+        } catch (error) {
+          if (!isAbortFailure(error, signal)) {
+            controlPlaneError ??= error;
+          }
+          await emitTrace(
+            'judge.call.finished',
+            {
+              ...identity,
+              status: signal.aborted ? 'aborted' : 'error',
+              error: normalizeError(error),
+            },
+            {
+              ...(turnId !== undefined ? { turnId } : {}),
+              callId,
+            },
+          );
+          throw error;
+        }
+        if (typeof reply !== 'string') {
+          const error = new TypeError('judge reply must be a string');
+          controlPlaneError ??= error;
+          await emitTrace(
+            'judge.call.finished',
+            { ...identity, status: 'error', error: normalizeError(error) },
+            {
+              ...(turnId !== undefined ? { turnId } : {}),
+              callId,
+            },
+          );
+          throw error;
+        }
+        // Keep the success finish outside the port-call catch. If a
+        // telemetry sink records this boundary and then rejects, that sink
+        // failure must not synthesize a second, contradictory finish.
         await emitTrace(
           'judge.call.finished',
           { ...identity, status: 'ok', reply },
@@ -1278,151 +1580,359 @@ export default function createPlaybookRuntime(
           },
         );
         return reply;
-      } catch (error) {
+      });
+    },
+  };
+
+  const nestedBridge = createNestedPlaybookBridge({
+    nextCallId: () => `playbook-${++playbookCallSequence}`,
+    getBoundarySignal: () => activeSignal,
+    callPlaybook: (request, signal) =>
+      requireHostPorts().callPlaybook(request, signal),
+    emitStarted: async (event) => {
+      playbookCallTurnIds.set(event.callId, activeTurnId);
+      try {
         await emitTrace(
-          'judge.call.finished',
+          'playbook.call.started',
           {
-            ...identity,
-            status: signal.aborted ? 'aborted' : 'error',
-            error: normalizeErrorFull(error),
+            stateId: event.stateId,
+            playbookId: event.playbookId,
+            text: event.text,
           },
           {
-            ...(turnId !== undefined ? { turnId } : {}),
-            callId,
+            ...(activeTurnId !== undefined ? { turnId: activeTurnId } : {}),
+            callId: event.callId,
           },
         );
+      } catch (error) {
+        playbookCallTurnIds.delete(event.callId);
         throw error;
       }
     },
-  };
+    emitFinished: async (event) => {
+      const turnId = playbookCallTurnIds.get(event.callId);
+      try {
+        await emitTrace(
+          'playbook.call.finished',
+          {
+            stateId: event.stateId,
+            playbookId: event.playbookId,
+            text: event.text,
+            result: event.result,
+          },
+          {
+            ...(turnId !== undefined ? { turnId } : {}),
+            callId: event.callId,
+          },
+        );
+      } finally {
+        playbookCallTurnIds.delete(event.callId);
+      }
+    },
+    drain: drainEmissions,
+    bindResumeSignal: (signal) => {
+      activeSignal = signal;
+    },
+    onControlPlaneError: (error) => {
+      if (!activeSignal?.aborted) controlPlaneError ??= error;
+    },
+    onBackgroundError: (error) => {
+      emissionFailure ??= error;
+    },
+  });
 
   function tracePositionForActiveTurn(): TracePosition {
     return activeTurnId === undefined ? {} : { turnId: activeTurnId };
   }
 
-  function buildActor(
-    ports: PlaybookPorts,
-  ): ReturnType<typeof createActor> {
+  interface ScheduledStatus {
+    message: string;
+    data?: JsonValue;
+  }
+
+  function enqueueTransitionEmission(
+    payload: JsonValue,
+    state: PlaybookState,
+    statuses: readonly ScheduledStatus[],
+    position: TracePosition,
+  ): void {
+    const currentSession = requireSession();
+    const transitionTrace = createTraceEvent(
+      'fsm.transition',
+      payload,
+      position,
+    );
+    const statusEmissions = statuses.map(({ message, data }) => ({
+      message,
+      data,
+      trace: createTraceEvent(
+        'status.emitted',
+        {
+          message,
+          ...(data === undefined ? {} : { data }),
+          state,
+          ...stateIdentity(state.stateId),
+        },
+        position,
+      ),
+    }));
+    void enqueueEmission(async () => {
+      await currentSession.ports.emitTelemetry({
+        topic: 'playbook.trace',
+        payload: transitionTrace,
+      });
+      await currentSession.ports.emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload,
+      });
+      for (const status of statusEmissions) {
+        await currentSession.ports.emitTelemetry({
+          topic: 'playbook.trace',
+          payload: status.trace,
+        });
+        await currentSession.ports.emitStatus(status.message, status.data);
+      }
+    }).catch(() => undefined);
+  }
+
+  function latchInspectionError(error: unknown): void {
+    if (activeSignal !== undefined) controlPlaneError ??= error;
+    else emissionFailure ??= error;
+  }
+
+  function buildActor(ports: PlaybookPorts): ReturnType<typeof createActor> {
     priorState = undefined;
-    return createActor(
+    let builtActor: ReturnType<typeof createActor>;
+    builtActor = createActor(
       codingMachine.provide({
         actors: {
-          captain: captainBridge(ports, () => activeSignal, boundary),
+          player: captainBridge(
+            ports,
+            () => activeSignal,
+            boundary,
+            (error) => {
+              if (!activeSignal?.aborted) controlPlaneError ??= error;
+            },
+          ),
         },
       }),
       {
-        input: options,
-        inspect: (inspectionEvent) => {
+        input: boundOptions,
+        inspect: (inspectionEvent: InspectionEvent) => {
           if (inspectionEvent.type !== '@xstate.snapshot') return;
-          const snap = inspectionEvent.snapshot as {
-            value?: unknown;
-            context?: Record<string, unknown>;
-          };
-          // Filter out captain sub-actor (fromPromise) snapshots —
-          // only the root codingMachine snapshot has a string value.
-          if (typeof snap.value !== 'string') return;
-          const to = snap.value;
-          const from = priorState;
-          priorState = to;
-          // Telemetry on every transition (PBRT-14).
-          const context = snap.context ?? {};
-          const payload = stateTelemetryPayload(
-            from,
-            to,
-            inspectionEvent.event,
-            context,
-          );
-          const tracePosition = tracePositionForActiveTurn();
-          enqueueEmit(async () => {
-            await emitTrace('fsm.transition', payload, tracePosition);
-            await ports.emitTelemetry({
-              topic: 'playbook.fsm.state',
-              payload,
-            });
-          });
-          // Captain pane (PBRT-3 / PBRT-14): show the transition
-          // guard first (when this is an actor-done transition with
-          // a known guard), then the new state entry, then any
-          // context riders the entering state cares about. Terminal
-          // entry to `failed` carries `lastError` as the data arg.
-          if (!CAPTAIN_PANE_STATES.has(to)) return;
-          const transitionLine = formatTransition(inspectionEvent.event);
-          if (transitionLine !== undefined) {
-            enqueueEmit(() => ports.emitStatus(transitionLine));
-          }
-          // awaitBossReply surfaces two lines per PBRT-3 / PBRT-14: the
-          // full player question as captain speech, then the rider-less
-          // routing marker. The full-question telemetry rides
-          // stateTelemetryPayload above.
-          if (to === 'awaitBossReply') {
-            const questionLine = formatAwaitBossReplyQuestion(context);
-            const markerLine = formatAwaitBossReplyMarker(context);
-            enqueueEmit(() => ports.emitStatus(questionLine));
-            enqueueEmit(() => ports.emitStatus(markerLine));
-            return;
-          }
-          const entryLine = formatStateEntry(to);
-          if (entryLine === undefined) return;
-          if (to === 'failed') {
-            const lastError = (snap.context as { lastError?: unknown })
-              ?.lastError;
-            const normalized = normalizeErrorCompact(lastError);
-            enqueueEmit(() =>
-              ports.emitStatus(
-                entryLine,
-                normalized === undefined
-                  ? undefined
-                  : { lastError: normalized },
-              ),
+          if (inspectionEvent.actorRef !== builtActor) return;
+          if (suppressInspectionEmissions) return;
+          try {
+            const snap = inspectionEvent.snapshot as SnapshotFrom<
+              typeof codingMachine
+            >;
+            const state = normalizePlaybookSnapshot(snap);
+            const to = state.stateId;
+            if (to === undefined) {
+              throw new Error(
+                'CODE root snapshot must expose exactly one playbook state id',
+              );
+            }
+            const previousState = priorState;
+            const context = snap.context as Record<string, unknown>;
+            const payload = structuredStateTelemetryPayload(
+              previousState,
+              state,
+              inspectionEvent.event,
+              context,
             );
-          } else {
-            enqueueEmit(() => ports.emitStatus(entryLine));
+            const statuses: ScheduledStatus[] = [];
+            if (CAPTAIN_PANE_STATES.has(to)) {
+              const transitionLine = formatTransition(inspectionEvent.event);
+              if (transitionLine !== undefined) {
+                statuses.push({ message: transitionLine });
+              }
+              if (to === 'awaitBossReply') {
+                statuses.push(
+                  { message: formatAwaitBossReplyQuestion(context) },
+                  { message: formatAwaitBossReplyMarker(context) },
+                );
+              } else {
+                const entryLine = formatStateEntry(to);
+                if (entryLine !== undefined) {
+                  const lastError =
+                    to === 'failed'
+                      ? normalizeErrorCompact(
+                          (snap.context as { lastError?: unknown }).lastError,
+                        )
+                      : undefined;
+                  statuses.push({
+                    message: entryLine,
+                    ...(lastError === undefined
+                      ? {}
+                      : {
+                          data: snapshotJsonValue(
+                            { lastError },
+                            'failed status data',
+                          ),
+                        }),
+                  });
+                }
+              }
+            }
+            enqueueTransitionEmission(
+              payload,
+              state,
+              statuses,
+              tracePositionForActiveTurn(),
+            );
+            priorState = state;
+          } catch (error) {
+            latchInspectionError(error);
           }
         },
       },
     );
+    return builtActor;
+  }
+
+  function runResultFor(
+    outcome: BossSettlementOutcome,
+    error?: unknown,
+  ): PlaybookRunResult {
+    const state = currentState();
+    if (outcome === 'quiescent' || outcome === 'no-action') {
+      return { outcome, state };
+    }
+    if (outcome === 'suspended') {
+      const pendingCall = nestedBridge.getPendingCall();
+      if (!pendingCall) {
+        throw new Error('suspended runtime has no pending playbook call');
+      }
+      return { outcome, state, pendingCall };
+    }
+    if (outcome === 'terminal') {
+      const output = (actor?.getSnapshot() as { output?: unknown } | undefined)
+        ?.output;
+      if (output !== undefined) {
+        return {
+          outcome,
+          state,
+          output: snapshotJsonValue(output, 'terminal playbook output'),
+        };
+      }
+      return { outcome, state };
+    }
+    const failure =
+      error ??
+      (outcome === 'failed'
+        ? (actor?.getSnapshot() as { context?: { lastError?: unknown } })
+            ?.context?.lastError
+        : outcome === 'aborted'
+          ? activeSignal?.reason
+          : undefined);
+    return {
+      outcome,
+      state,
+      ...(failure !== undefined ? { error: normalizeError(failure) } : {}),
+    };
+  }
+
+  function settledOutcome(signal: AbortSignal): BossSettlementOutcome {
+    if (nestedBridge.getPendingCall()) return 'suspended';
+    if (signal.aborted) return 'aborted';
+    const state = currentState();
+    if (state.status === 'error') {
+      const actorError = (
+        actor?.getSnapshot() as { error?: unknown } | undefined
+      )?.error;
+      throw actorError ?? new Error('CODE actor entered error status');
+    }
+    if (state.status === 'done') return 'terminal';
+    if (state.stateId === 'failed') return 'failed';
+    return 'quiescent';
+  }
+
+  function settlementTracePayload(
+    result: PlaybookRunResult,
+  ): Record<string, unknown> {
+    return {
+      ...result,
+      ...stateIdentity(result.state.stateId),
+    };
   }
 
   const runtime = {
     async init(nextSession: PlaybookSession): Promise<void> {
-      if (initialized) {
+      if (initialized || disposed || disposalPromise !== undefined) {
         throw new Error('createPlaybookRuntime.init: already initialized');
       }
-      if (
-        typeof nextSession.sessionId !== 'string' ||
-        nextSession.sessionId.trim().length === 0
-      ) {
-        throw new Error(
-          'createPlaybookRuntime.init: sessionId must be a non-empty string',
-        );
-      }
-      if (
-        typeof nextSession.playbookId !== 'string' ||
-        nextSession.playbookId.trim().length === 0
-      ) {
-        throw new Error(
-          'createPlaybookRuntime.init: playbookId must be a non-empty string',
-        );
-      }
+      const boundSession = snapshotPlaybookSession(nextSession);
       initialized = true;
       const initTask = (async () => {
-        // Copy the identity fields so later caller mutation cannot change the
-        // session bound to trace events.
-        session = {
-          sessionId: nextSession.sessionId,
-          playbookId: nextSession.playbookId,
-          ports: nextSession.ports,
-        };
-        savedPorts = nextSession.ports;
-        runtimePorts = createRuntimePorts(nextSession.ports);
-        await emitTrace('session.started', { stateId: 'ready' });
+        session = boundSession;
+        savedPorts = boundSession.ports;
+        runtimePorts = createRuntimePorts(boundSession.ports);
+        suppressInspectionEmissions = false;
         actor = buildActor(runtimePorts);
+        await emitTrace('session.started', stateTracePayload());
         actor.start();
         await drainEmissions();
       })();
       initInFlight = initTask;
       try {
         await initTask;
+      } catch (error) {
+        const finalState = actor ? currentState() : undefined;
+        suppressInspectionEmissions = true;
+        try {
+          actor?.stop();
+        } catch {
+          // Preserve the original initialization failure.
+        }
+        try {
+          await nestedBridge.abortPending(error);
+        } catch {
+          // Preserve the original initialization failure.
+        }
+        try {
+          await judgeQueue.onIdle();
+          await drainEmissions();
+        } catch {
+          // Preserve the original initialization failure.
+        }
+        try {
+          await emitTrace(
+            'session.disposed',
+            finalState === undefined
+              ? {}
+              : {
+                  state: finalState,
+                  ...stateIdentity(finalState.stateId),
+                },
+          );
+          await drainEmissions();
+        } catch {
+          // The session-start error remains authoritative.
+        }
+        playerResumeTokens.clear();
+        activePlayerIds.clear();
+        playbookCallTurnIds.clear();
+        activeEmissionCalls.clear();
+        emissionQueue.clear();
+        judgeQueue.clear();
+        actor = undefined;
+        session = undefined;
+        savedPorts = undefined;
+        runtimePorts = undefined;
+        activeSignal = undefined;
+        activeTurnId = undefined;
+        controlPlaneError = undefined;
+        emissionFailure = undefined;
+        priorState = undefined;
+        suppressInspectionEmissions = false;
+        initialized = false;
+        traceSequence = 0;
+        turnSequence = 0;
+        judgeCallSequence = 0;
+        playerCallSequence = 0;
+        playbookCallSequence = 0;
+        throw error;
       } finally {
         if (initInFlight === initTask) initInFlight = undefined;
       }
@@ -1434,23 +1944,30 @@ export default function createPlaybookRuntime(
     }: {
       text: string;
       signal: AbortSignal;
-    }): Promise<void> {
+    }): Promise<PlaybookRunResult> {
       if (!actor || !savedPorts) {
         throw new Error(
           'createPlaybookRuntime.handleBossInput: init must be called first',
         );
       }
+      if (disposed || disposalPromise !== undefined) {
+        throw new Error(
+          'createPlaybookRuntime.handleBossInput: runtime is disposing or disposed',
+        );
+      }
+      if (activeSignal !== undefined) {
+        throw new Error(
+          'createPlaybookRuntime.handleBossInput: another runtime turn is active',
+        );
+      }
       const turnId = ++turnSequence;
       activeTurnId = turnId;
       activeSignal = signal;
-      let outcome: BossSettlementOutcome = 'no-action';
-      let settlementError: unknown;
+      controlPlaneError = undefined;
+      let result: PlaybookRunResult | undefined;
+      let operationError: unknown;
       try {
-        await emitTrace(
-          'boss.input.received',
-          { text },
-          { turnId },
-        );
+        await emitTrace('boss.input.received', { text }, { turnId });
         // 1. Classify non-empty text into an FSM event through the judge.
         const event = await classifyBossText(
           text,
@@ -1462,108 +1979,214 @@ export default function createPlaybookRuntime(
         // Empty input, no-action classifier output, or invalid classifier
         // output — nothing to send.
         if (event === undefined) {
-          await drainEmissions();
-          return;
+          result = runResultFor('no-action');
+        } else {
+          // 2. Captain-pane classification line (PBRT-14): the bare
+          //    FSM event type, emitted before the FSM advances.
+          await runtimePorts!.emitStatus(formatClassification(event.type));
+          // 3. A final actor cannot accept new events; reconstruct only after
+          //    classification produced a real event.
+          if (actor.getSnapshot().status === 'done') {
+            actor.stop();
+            actor = buildActor(runtimePorts!);
+            actor.start();
+          }
+          actor.send(event);
+          await waitForPlaybookQuiescence(actor, {
+            pendingCalls: nestedBridge,
+          });
+          if (controlPlaneError !== undefined) throw controlPlaneError;
+          result = runResultFor(settledOutcome(signal));
         }
-        // 2. Captain-pane classification line (PBRT-14): the bare
-        //    FSM event type, emitted before the FSM advances so the
-        //    host can render it as captain speech (e.g.,
-        //    `captain> START_CODING`). Enqueued so it interleaves
-        //    cleanly with the inspect-driven transition emissions.
-        const echoPorts = runtimePorts!;
-        enqueueEmit(() =>
-          echoPorts.emitStatus(formatClassification(event.type)),
-        );
-        // 3. final state ('done') cannot accept new events — dispose
-        //    and reconstruct per DR-004 §5.
-        if (actor.getSnapshot().status === 'done') {
-          actor.stop();
-          actor = buildActor(runtimePorts!);
-          actor.start();
-        }
-        // 4. Send the event.
-        actor.send(event);
-        // 5. Drive to quiescence. On signal-abort we take no FSM
-        //    action: the captain bridge's awaited callPlayer rejects
-        //    naturally, the bridge throws, XState routes through
-        //    onError → #failed, and this loop sees the quiescent
-        //    snapshot and returns (DR-004 §8 natural rejection).
-        await driveToQuiescence(actor);
-        // Drain transition emissions before returning so the Boss
-        // sees the final status line for this turn.
-        await drainEmissions();
-        const stateId = actor.getSnapshot().value;
-        outcome = signal.aborted
-          ? 'aborted'
-          : stateId === 'failed'
-            ? 'failed'
-            : actor.getSnapshot().status === 'done' || stateId === 'done'
-              ? 'terminal'
-              : 'quiescent';
       } catch (error) {
-        settlementError = error;
-        outcome = signal.aborted ? 'aborted' : 'failed';
-        throw error;
-      } finally {
-        try {
-          await drainEmissions();
-          const stateId = actor?.getSnapshot().value;
-          await emitTrace(
-            'boss.input.settled',
-            {
-              outcome,
-              ...(typeof stateId === 'string' ? { stateId } : {}),
-              ...(settlementError !== undefined
-                ? { error: normalizeErrorFull(settlementError) }
-                : {}),
-            },
-            { turnId },
-          );
-        } finally {
-          activeSignal = undefined;
-          activeTurnId = undefined;
-        }
+        operationError = error;
       }
-    },
 
-    async dispose(): Promise<void> {
-      if (initInFlight !== undefined) {
-        try {
-          await initInFlight;
-        } catch {
-          // Dispose still releases whatever an unsuccessful init bound.
-        }
-      }
-      const stateId = actor?.getSnapshot().value;
-      if (actor) {
-        actor.stop();
-        actor = undefined;
-      }
-      // Drain any in-flight emissions per slc/link.md §Session
-      // lifecycle ("stop the actor and drain pending port emissions").
-      const failures: unknown[] = [];
+      let drainError: unknown;
       try {
         await drainEmissions();
       } catch (error) {
-        failures.push(error);
+        drainError = error;
       }
-      if (session !== undefined) {
+      const latchedControlError = controlPlaneError;
+      const primaryError = latchedControlError ?? drainError ?? operationError;
+      const abortError =
+        latchedControlError === undefined &&
+        drainError === undefined &&
+        operationError !== undefined &&
+        isAbortFailure(operationError, signal);
+      const settlementResult =
+        primaryError === undefined
+          ? (result ?? runResultFor('no-action'))
+          : runResultFor(abortError ? 'aborted' : 'failed', primaryError);
+
+      let settlementEmissionError: unknown;
+      try {
+        await emitTrace(
+          'boss.input.settled',
+          settlementTracePayload(settlementResult),
+          { turnId },
+        );
+      } catch (error) {
+        settlementEmissionError = error;
+      }
+      try {
+        await drainEmissions();
+      } catch (error) {
+        settlementEmissionError ??= error;
+      }
+      const failure =
+        controlPlaneError ??
+        latchedControlError ??
+        drainError ??
+        (abortError
+          ? (settlementEmissionError ?? operationError)
+          : (operationError ?? settlementEmissionError));
+      activeSignal = undefined;
+      activeTurnId = undefined;
+      controlPlaneError = undefined;
+
+      if (
+        failure !== undefined &&
+        !(abortError && settlementEmissionError === undefined)
+      ) {
+        throw failure;
+      }
+      return settlementResult;
+    },
+
+    async resumePlaybookCall(input: {
+      callId: string;
+      result: PlaybookCallResult;
+      signal: AbortSignal;
+    }): Promise<PlaybookRunResult> {
+      if (!actor || !savedPorts) {
+        throw new Error(
+          'createPlaybookRuntime.resumePlaybookCall: init must be called first',
+        );
+      }
+      if (disposed || disposalPromise !== undefined) {
+        throw new Error(
+          'createPlaybookRuntime.resumePlaybookCall: runtime is disposing or disposed',
+        );
+      }
+      if (activeSignal !== undefined) {
+        throw new Error(
+          'createPlaybookRuntime.resumePlaybookCall: another runtime turn is active',
+        );
+      }
+      activeTurnId = playbookCallTurnIds.get(input.callId);
+      activeSignal = input.signal;
+      controlPlaneError = undefined;
+      let result: PlaybookRunResult | undefined;
+      let operationError: unknown;
+      try {
+        await nestedBridge.resume(input);
+      } catch (error) {
+        operationError = error;
+      }
+      try {
+        await waitForPlaybookQuiescence(actor, {
+          pendingCalls: nestedBridge,
+        });
+        result = runResultFor(settledOutcome(input.signal));
+      } catch (error) {
+        operationError ??= error;
+      }
+      let drainError: unknown;
+      try {
+        await drainEmissions();
+      } catch (error) {
+        drainError = error;
+      }
+      const failure = controlPlaneError ?? drainError ?? operationError;
+      activeSignal = undefined;
+      activeTurnId = undefined;
+      controlPlaneError = undefined;
+      if (failure !== undefined) throw failure;
+      if (result === undefined) {
+        throw new Error('playbook resume produced no runtime result');
+      }
+      return result;
+    },
+
+    dispose(): Promise<void> {
+      if (disposalPromise !== undefined) return disposalPromise;
+      if (disposed) return Promise.resolve();
+      if (activeSignal !== undefined) {
+        return Promise.reject(
+          new Error(
+            'createPlaybookRuntime.dispose: cannot dispose during an active runtime boundary',
+          ),
+        );
+      }
+      const task = (async (): Promise<void> => {
+        const failures: unknown[] = [];
         try {
-          await emitTrace('session.disposed', {
-            ...(typeof stateId === 'string' ? { stateId } : {}),
-          });
-        } catch (error) {
-          failures.push(error);
+          if (initInFlight !== undefined) {
+            try {
+              await initInFlight;
+            } catch {
+              // Dispose still releases whatever an unsuccessful init bound.
+            }
+          }
+          const finalState = actor ? currentState() : undefined;
+          // Stop the root before settling a suspended child. Its rejection
+          // must not re-enter CODE and start fresh work during disposal.
+          if (actor) actor.stop();
+          try {
+            await nestedBridge.dispose();
+          } catch (error) {
+            failures.push(error);
+          }
+          try {
+            await drainEmissions();
+          } catch (error) {
+            failures.push(error);
+          }
+          if (session !== undefined) {
+            try {
+              await emitTrace(
+                'session.disposed',
+                finalState === undefined
+                  ? {}
+                  : {
+                      state: finalState,
+                      ...stateIdentity(finalState.stateId),
+                    },
+              );
+              await drainEmissions();
+            } catch (error) {
+              failures.push(error);
+            }
+          }
+        } finally {
+          playerResumeTokens.clear();
+          activePlayerIds.clear();
+          playbookCallTurnIds.clear();
+          activeEmissionCalls.clear();
+          emissionQueue.clear();
+          judgeQueue.clear();
+          actor = undefined;
+          activeSignal = undefined;
+          activeTurnId = undefined;
+          controlPlaneError = undefined;
+          emissionFailure = undefined;
+          savedPorts = undefined;
+          runtimePorts = undefined;
+          session = undefined;
+          disposed = true;
         }
-      }
-      playerResumeTokens.clear();
-      savedPorts = undefined;
-      runtimePorts = undefined;
-      session = undefined;
-      if (failures.length === 1) throw failures[0];
-      if (failures.length > 1) {
-        throw new AggregateError(failures, 'playbook runtime disposal failed');
-      }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          throw new AggregateError(
+            failures,
+            'playbook runtime disposal failed',
+          );
+        }
+      })();
+      disposalPromise = task;
+      return task;
     },
 
     // @internal — test-only escape hatch for inspecting the
@@ -1575,28 +2198,12 @@ export default function createPlaybookRuntime(
     _getActor() {
       return actor;
     },
+    _getBoundary() {
+      return boundary;
+    },
+    _getNestedBridge() {
+      return nestedBridge;
+    },
   };
   return runtime as PlaybookRuntime;
-}
-
-function driveToQuiescence(
-  actor: ReturnType<typeof createActor>,
-): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (isQuiescent(actor.getSnapshot())) {
-      resolve();
-      return;
-    }
-    const sub = actor.subscribe((snap) => {
-      if (isQuiescent(snap)) {
-        sub.unsubscribe();
-        resolve();
-      }
-    });
-  });
-}
-
-function isQuiescent(snap: { value: unknown }): boolean {
-  const v = snap.value;
-  return typeof v === 'string' && QUIESCENT_STATES.has(v);
 }

@@ -7,28 +7,30 @@
 [![Node.js](https://img.shields.io/node/v/@sublang/playbook)](https://nodejs.org/)
 [![CI](https://github.com/sublang-ai/playbook/actions/workflows/ci.yml/badge.svg)](https://github.com/sublang-ai/playbook/actions/workflows/ci.yml)
 
-*Skills made reliable through state machines and visualization.*
+_Skills made reliable through state machines and visualization._
 
 playbook is a compiler stack and reference implementation for turning a
 natural-language procedure into a runnable, inspectable state-machine
-agent — a *playbook* — that orchestrates other AI agents (players) per a
+agent — a _playbook_ — that orchestrates other AI agents (players) per a
 spec written in plain prose. Three phases take prose to runtime:
 
 1. **text → GEARS** ([slc/text2gears.md](slc/text2gears.md)) — normative
    spec items, one per state behavior, partitioned by trigger and prompt
    content.
 2. **GEARS → FSM** ([slc/gears2fsm.md](slc/gears2fsm.md)) — an XState v5
-   finite state machine; each gear maps to one captain-invoking state
-   with a typed Captain actor contract.
+   finite state machine; each gear maps to one direct-Captain,
+   delegated-player, or nested-playbook state with a typed actor contract.
 3. **FSM → runtime** ([slc/link.md](slc/link.md)) — a host-agnostic
    module that drives Boss turns through ports the host wires up
    (cligent's `tmux-play` is one such host).
 
-The repository is itself an end-to-end worked example: this
-package — `@sublang/playbook` — is the SDLC coding workflow,
-generated from [`reference/sdlc/code.md`](reference/sdlc/code.md)
-as its prose source. The runtime drives a coder / reviewer /
-committer loop end to end.
+The repository contains end-to-end worked examples. The generic default
+Captain is generated from
+[`reference/sdlc/captain.md`](reference/sdlc/captain.md), CODE from
+[`reference/sdlc/code.md`](reference/sdlc/code.md), and DISCUSS from
+[`reference/sdlc/discuss.md`](reference/sdlc/discuss.md). Together they show
+direct Captain work, sequential nested playbook calls, parallel players, and a
+coder / reviewer / committer loop.
 
 ## Getting started — the reference CODE playbook
 
@@ -122,7 +124,7 @@ commit-message trailers can name the concrete model
 `committer` is an optional CODE alias naming which role — `coder` or
 `reviewer` — runs the commit turn; the seeded config points it at the
 Coder, and absent the alias the Committer falls back to the Coder
-([PBRT-8](specs/user/playbook-runtime.md#pbrt-8)).
+([PBRT-8](specs/dev/playbook-runtime.md#pbrt-8)).
 
 For example, the seeded config runs the Coder on Claude Opus 4.8 1m and
 the Reviewer on GPT-5.5, with the Committer aliased to the Coder:
@@ -134,13 +136,13 @@ profiles:
     model: claude-opus-4-8
     reasoningEffort: high
     permissions:
-      mode: auto        # protected auto mode for the Claude Captain
+      mode: auto # protected auto mode for the Claude Captain
   claude-opus-1m:
     adapter: claude
     model: claude-opus-4-8[1m]
     reasoningEffort: xhigh
     permissions:
-      mode: auto        # protected auto mode for the Claude Coder
+      mode: auto # protected auto mode for the Claude Coder
   codex-gpt:
     adapter: codex
     model: gpt-5.5
@@ -148,17 +150,17 @@ profiles:
     permissions:
       mode: auto
       writablePaths:
-        - .git          # allow git metadata writes under Codex auto mode
+        - .git # allow git metadata writes under Codex auto mode
 
 captain: claude-opus
 
 playbooks:
   code:
-    from: "@sublang/playbook/code/registry"
+    from: '@sublang/playbook/code/registry'
     players:
       coder: claude-opus-1m
       reviewer: codex-gpt
-    committer: coder      # which role commits — `coder` or `reviewer`
+    committer: coder # which role commits — `coder` or `reviewer`
 ```
 
 If you need a separate config file for a one-off run, pass a raw
@@ -218,7 +220,9 @@ globally.
 
 The Boss pane starts at the Playbook Captain shell. Use `/code <task>`
 to explicitly select the CODE playbook, or use ordinary text and let the
-shell route it. Once a turn reaches CODE, the CODE judge classifies it
+compiled default Captain answer, ask a material routing question, or plan
+one or more enabled playbook calls. Calls run sequentially so Captain can
+reassess after every child result. Once a turn reaches CODE, the CODE judge classifies it
 into an FSM event (start a coding turn, continue or summarize an IR,
 interrupt to a named state, or nothing) per
 [PBRT-1](specs/user/playbook-runtime.md#pbrt-1).
@@ -228,7 +232,8 @@ next turn is normally classified as the reply, or a fresh directive
 abandons it ([PBRT-2](specs/user/playbook-runtime.md#pbrt-2)).
 
 The Captain pane shows `/code` start/stop/finished status with `◇` lines
-and streams the CODE state machine with the four-glyph vocabulary `◆ ▸ ⮕ ⤷` per
+and streams CODE with captain-speech classification/questions plus the
+three-glyph vocabulary `⤷ → ◆` per
 [PBRT-3](specs/user/playbook-runtime.md#pbrt-3), while player prompts
 ride their own panes.
 
@@ -245,13 +250,17 @@ The runtime is host-agnostic; the `tmux-play` adapter is one host.
 The port and runtime contracts live in the type-only module
 [`@sublang/playbook/runtime`](src/runtime.ts) — a public, semver-stable
 surface (`PlayerResult`, `PlaybookPorts`, `PlaybookRuntime`,
-`PlaybookSession`, `PlayerCallOptions`, `PlaybookTraceEvent`, and
+`PlaybookSession`, `PlayerCallOptions`, `CaptainCallOptions`,
+`CaptainResult`, `PlaybookTraceEvent`, and
 `PlaybookRuntimeFactory`) that imports no CODE or FSM types, so a host
 satisfies it once and inherits every playbook. The CODE runtime
 re-exports `PlayerResult`, `PlaybookPorts`, `PlaybookSession`, and
 `PlaybookRuntime` from
 `@sublang/playbook/code/playbook`; `PlaybookRuntimeFactory` is available
 from `@sublang/playbook/runtime`.
+Generated linked runtimes reuse the XState integration engine exposed as
+`@sublang/playbook/xstate-runtime`, including strict JSON validation,
+normalized snapshots, quiescence waiting, and the nested-playbook bridge.
 Construct the runtime against your own ports:
 
 ```ts
@@ -265,9 +274,19 @@ const ports: PlaybookPorts = {
     // prior backend conversation. Return the adapter's next token.
     return { status: 'ok', finalText: 'done', resumeToken: 'next-token' };
   },
-  callJudge: async (prompt, signal) => { /* … */ },
-  emitStatus: async (message, data) => { /* … */ },
-  emitTelemetry: async ({ topic, payload }) => { /* … */ },
+  callCaptain: async (prompt, signal, { visibility }) => {
+    return { status: 'ok', finalText: 'done' };
+  },
+  callJudge: async (prompt, signal) => '{}',
+  callPlaybook: async (request, signal) => {
+    throw new Error('No nested playbook host configured');
+  },
+  emitStatus: async (message, data) => {
+    /* … */
+  },
+  emitTelemetry: async ({ topic, payload }) => {
+    /* … */
+  },
 };
 
 const runtime = createPlaybookRuntime({
@@ -275,9 +294,12 @@ const runtime = createPlaybookRuntime({
   reviewerPlayer: 'codex',
 });
 
+const playbookSessionId = randomUUID();
 await runtime.init({
-  sessionId: randomUUID(),
+  sessionId: playbookSessionId,
   playbookId: 'code',
+  rootSessionId: playbookSessionId,
+  depth: 0,
   ports,
 });
 await runtime.handleBossInput({
@@ -290,7 +312,8 @@ await runtime.dispose();
 Every init-to-dispose lifecycle is one playbook session. Its
 `playbook.trace` telemetry carries that immutable ID plus a contiguous
 sequence across exact Boss input, judge/player calls, FSM transitions,
-status, settlement, and disposal. Each resolved player starts fresh in
+visible Captain work, nested playbook calls, status, settlement, and
+disposal. Each resolved player starts fresh in
 a new playbook session and then resumes only from the latest opaque
 `resumeToken` its adapter returned; trace data and tokens never enter
 Boss-visible status text. Because trace observers do receive opaque
@@ -326,15 +349,17 @@ playbook is itself spec-driven: the compiler phases are specs in `slc/`,
 and the reference playbook is regenerated from its prose source. The
 loop:
 
-1. **Edit source.** For the reference, that's
-   [`reference/sdlc/code.md`](reference/sdlc/code.md).
+1. **Edit source.** The worked examples include
+   [`reference/sdlc/code.md`](reference/sdlc/code.md) and the generic
+   [`reference/sdlc/captain.md`](reference/sdlc/captain.md).
 2. **Recompile gears** per [`slc/text2gears.md`](slc/text2gears.md) into
-   the package's `code.gears.md`.
-3. **Recompile FSM** per [`slc/gears2fsm.md`](slc/gears2fsm.md) into
-   the package's `code.fsm.ts`.
+   the source's `<name>.playbook/<name>.gears.md`.
+3. **Recompile FSM and runtime** per
+   [`slc/gears2fsm.md`](slc/gears2fsm.md) and
+   [`slc/link.md`](slc/link.md) into that playbook artifact directory.
 4. **Sync runtime, tests, and downstream specs** so `pnpm test` stays
    green and the introspect contract holds 1:1 between gear items and
-   FSM captain-invoking states.
+   FSM direct-Captain, delegated-player, and nested-playbook states.
 5. **Commit** with co-author trailers per
    [`specs/dev/git.md`](specs/dev/git.md).
 

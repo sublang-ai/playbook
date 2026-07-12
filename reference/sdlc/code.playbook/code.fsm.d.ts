@@ -6,13 +6,14 @@ type ReviewSubject = 'commit' | 'changes';
 type AfterReview = 'continueIr' | 'summarizeSpecs' | 'done';
 type ResumableStateId = Exclude<JumpableStateId, 'ready' | 'failed'>;
 type PendingBossQuestion = {
+    questionId: ResumableStateId;
     resumeStateId: ResumableStateId;
     sourceItem: string;
     player: Player;
     question: string;
 };
 export type CaptainInput = {
-    player: Player;
+    stateId: ResumableStateId;
     sourceItem: string;
     prompt: string;
     result: Record<string, string>;
@@ -27,6 +28,9 @@ export type CaptainInput = {
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 };
+export type PlayerInput = CaptainInput & {
+    player: Player;
+};
 export type CaptainOutput = {
     guard: string;
     irNumber?: string;
@@ -37,6 +41,7 @@ export type CaptainOutput = {
     question?: string;
     [k: string]: unknown;
 };
+export type PlayerOutput = CaptainOutput;
 export type CodingInput = {
     intent?: string;
     irNumber?: string;
@@ -74,6 +79,7 @@ export type CodingEvent = {
 } | {
     type: 'BOSS_REPLY';
     answer: string;
+    questionId?: ResumableStateId;
 };
 export declare const codingMachine: import("xstate").StateMachine<CodingContext, {
     type: "START_CODING";
@@ -92,11 +98,12 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
 } | {
     type: "BOSS_REPLY";
     answer: string;
+    questionId?: ResumableStateId;
 }, {
-    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>> | undefined;
+    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<CaptainOutput, PlayerInput, import("xstate").EventObject>> | undefined;
 }, {
-    src: "captain";
-    logic: import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
+    src: "player";
+    logic: import("xstate").PromiseActorLogic<CaptainOutput, PlayerInput, import("xstate").EventObject>;
     id: string | undefined;
 }, never, never, never, {}, string, CodingInput, import("xstate").NonReducibleUnknown, import("xstate").EventObject, import("xstate").MetaObject, {
     states?: {} | undefined;

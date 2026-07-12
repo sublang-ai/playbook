@@ -4,13 +4,13 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     // Build-only redirect: when this package's own sources self-import
-    // `@sublang/playbook/runtime`, resolve it to the `src/runtime.ts`
-    // source already in the program rather than to the emitted
-    // `src/runtime.d.ts` (which would be an emit target — TS5055). This
-    // is compile-time only; emitted specifiers and the published
-    // `exports` map downstream consumers resolve are unchanged.
+    // this package's runtime subpaths, resolve them to source files already
+    // in the program rather than emitted declarations (which would be emit
+    // targets — TS5055). This is compile-time only; emitted specifiers and
+    // the published `exports` map downstream consumers resolve are unchanged.
     "paths": {
-      "@sublang/playbook/runtime": ["./src/runtime.ts"]
+      "@sublang/playbook/runtime": ["./src/runtime.ts"],
+      "@sublang/playbook/xstate-runtime": ["./src/xstate-runtime.ts"]
     },
     "lib": ["ES2022"],
     "declaration": true,
@@ -24,6 +24,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/*.ts", "reference/sdlc/code.playbook/*.ts", "reference/sdlc/discuss.playbook/*.ts"],
+  "include": ["src/*.ts", "reference/sdlc/captain.playbook/*.ts", "reference/sdlc/code.playbook/*.ts", "reference/sdlc/discuss.playbook/*.ts"],
   "exclude": ["**/*.test.ts", "vitest.config.ts", "node_modules"]
 }

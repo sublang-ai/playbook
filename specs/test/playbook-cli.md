@@ -69,7 +69,8 @@ playbooks resolving to the same effective command, a `profiles` id
 colliding with the `claude` or `codex` adapter shorthand, a full block
 `profile` key naming no known profile, a manifest `requiredRoleIds`
 naming the reserved `captain` role, a `playbooks.<id>.players` map
-binding the reserved `captain` role, a manifest required role with no
+binding the reserved `captain` role, a configured playbook id equal to
+`captain`, an effective command equal to `captain`, a manifest required role with no
 generated roster id, and an enabled playbook with no visible local
 role — the test suite shall fail unless the
 command rejects each before launching tmux-play with a diagnostic
