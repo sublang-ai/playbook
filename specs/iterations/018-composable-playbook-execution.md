@@ -15,7 +15,7 @@ Run independent playbook tasks concurrently and let one live playbook call, awai
 - [x] The public runtime contract supports opening and resuming nested playbook calls.
 - [x] The Captain shell maintains a bounded causal LIFO runtime-session stack.
 - [x] Integration tests cover overlap, joins, independent waits, child return, cascading calls, cancellation, and trace causality.
-- [ ] Generated Captain verification artifacts agree with their TypeScript sources after canonical SLC regeneration.
+- [x] Generated Captain verification artifacts agree with their TypeScript sources after canonical SLC regeneration.
 
 ## Tasks
 
@@ -29,7 +29,7 @@ Run independent playbook tasks concurrently and let one live playbook call, awai
    Extend the shared contract and linked-runtime convention with child open, suspension, result, resume, and trace types.
 5. **Implement the Captain stack.** _[done]_
    Push enabled child runtimes, route the top frame, return results to parents, enforce bounds, and dispose LIFO.
-6. **Verify and regenerate.** _[in progress]_
+6. **Verify and regenerate.** _[done]_
    Exercise real linked runtimes and test-only nested callers, rebuild artifacts, run the complete suite, and audit the committed diff.
 
 ## Acceptance criteria

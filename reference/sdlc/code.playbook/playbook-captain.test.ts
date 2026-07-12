@@ -634,7 +634,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     const context = stubContext([
       (prompt, options) => {
         expect(options).toEqual({ visibility: 'hidden' });
-        expect(prompt).toContain('Boss text: answer this directly');
+        expect(prompt).toMatch(/Boss text:\s*answer this directly/);
         return captainJson({
           type: 'BOSS_INTENT',
           bossIntent: 'answer this directly',

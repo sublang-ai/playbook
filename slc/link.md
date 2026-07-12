@@ -849,6 +849,15 @@ The `PlaybookRuntime` shall:
   inspection callback shall only validate and synchronously enqueue emission
   work, catching validation/enqueue failures into the control/background-error
   latch; it shall not let an exception escape or call an async port directly.
+  Its transition `event` field shall be a detached JSON-safe descriptor, never
+  the raw XState inspection event. Preserve the string `type` (or use
+  `unknown` when absent); copy only declared Boss-union payload fields and a
+  validated actor `output`, and normalize an `error` member before inclusion.
+  Omit `input`, `actorId`, system/ref data, and every other XState-internal
+  field even when it happens to be JSON-safe, so `xstate.init.input` cannot
+  leak the host catalog into transition telemetry. In particular, do not call
+  `snapshotJsonValue(event)` on an `xstate.error.actor.*` event that contains a
+  raw `Error`.
   Construct the actor without starting it, read its public initial snapshot,
   emit and drain `session.started`, and only then call `actor.start()`. The
   initial inspection-driven transition/status emissions shall not precede the
