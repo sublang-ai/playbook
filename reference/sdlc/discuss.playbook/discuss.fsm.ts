@@ -27,7 +27,6 @@ type JumpableStateId =
   | 'hostAddressesFindings'
   | 'participantAddressesRebuttals'
   | 'commitReviewedChanges'
-  | 'awaitBossReply'
   | 'failed';
 
 type ResumableStateId =
@@ -40,7 +39,6 @@ type ResumableStateId =
       | 'ready'
       | 'initialProposalRound'
       | 'reconciliationRound'
-      | 'awaitBossReply'
       | 'failed'
     >;
 
@@ -74,12 +72,12 @@ export interface DiscussContext {
   reviewScope?: ReviewScope;
   reviewItems?: string;
   rebuttals?: string;
-  lastResult?: CaptainOutput;
+  lastResult?: PlayerOutput;
   lastError?: unknown;
   pendingBossQuestions?: PendingBossQuestions;
   bossReplies?: BossReplies;
-  stagedHostResult?: CaptainOutput;
-  stagedParticipantResult?: CaptainOutput;
+  stagedHostResult?: PlayerOutput;
+  stagedParticipantResult?: PlayerOutput;
 }
 
 export type DiscussEvent =
@@ -108,11 +106,12 @@ export interface DiscussInput {
   committer?: string;
 }
 
-export interface CaptainInput {
+export interface PlayerInput {
   stateId: ResumableStateId;
   sourceItem: string;
   prompt: string;
   result: Record<string, string>;
+  player: Player;
   topic?: string;
   hostLlm?: string;
   participantLlm?: string;
@@ -130,12 +129,7 @@ export interface CaptainInput {
   bossReply?: string;
 }
 
-export interface PlayerInput extends CaptainInput {
-  player: Player;
-}
-
-export interface CaptainOutput {
-  guard: string;
+type AdditionalPlayerFields = {
   proposal?: string;
   agreement?: string;
   latestChanges?: string;
@@ -143,10 +137,32 @@ export interface CaptainOutput {
   reviewItems?: string;
   rebuttals?: string;
   question?: string;
-  [key: string]: unknown;
-}
+  readonly [key: string]: unknown;
+};
 
-export type PlayerOutput = CaptainOutput;
+export type PlayerOutput =
+  | ({ guard: 'proposalMade'; proposal: string } & AdditionalPlayerFields)
+  | ({ guard: 'endedInitialDiscussion'; agreement?: string } & AdditionalPlayerFields)
+  | ({
+      guard: 'wroteChanges';
+      latestChanges: string;
+      reviewScope: ReviewScope;
+    } & AdditionalPlayerFields)
+  | ({
+      guard: 'committed';
+      latestChanges?: string;
+      reviewScope?: ReviewScope;
+    } & AdditionalPlayerFields)
+  | ({ guard: 'noFindings' } & AdditionalPlayerFields)
+  | ({ guard: 'findingsRaised'; reviewItems: string } & AdditionalPlayerFields)
+  | ({
+      guard: 'changesMade';
+      latestChanges?: string;
+      reviewScope?: ReviewScope;
+    } & AdditionalPlayerFields)
+  | ({ guard: 'rebuttalsRaised'; rebuttals: string } & AdditionalPlayerFields)
+  | ({ guard: 'rebuttalsAddressed'; rebuttals?: string } & AdditionalPlayerFields)
+  | ({ guard: 'needsBossReply'; question: string } & AdditionalPlayerFields);
 
 type PlayerDoneEvent = { type: string; output: PlayerOutput };
 type PlayerErrorEvent = { type: string; error: unknown };
@@ -295,7 +311,6 @@ const jumpableStateIds = [
   'hostAddressesFindings',
   'participantAddressesRebuttals',
   'commitReviewedChanges',
-  'awaitBossReply',
   'failed',
 ] as const satisfies readonly JumpableStateId[];
 
@@ -317,7 +332,7 @@ const resumableStateIds = [
   'commitReviewedChanges',
 ] as const satisfies readonly ResumableStateId[];
 
-const outputOf = (event: unknown): CaptainOutput =>
+const outputOf = (event: unknown): PlayerOutput =>
   (event as PlayerDoneEvent).output;
 
 const guardIs =
@@ -374,6 +389,77 @@ const hasReviewScope =
       ? event.reviewScope === scope
       : context.reviewScope === scope;
 
+const hasContextText = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
+
+const hasKnownReviewScope = (
+  context: DiscussContext,
+  scope?: ReviewScope,
+): boolean =>
+  scope === undefined
+    ? context.reviewScope === 'specItems' ||
+      context.reviewScope === 'decisionRecords' ||
+      context.reviewScope === 'mixed'
+    : context.reviewScope === scope;
+
+function canInterruptTo(
+  context: DiscussContext,
+  targetId: JumpableStateId,
+): boolean {
+  switch (targetId) {
+    case 'ready':
+    case 'failed':
+      return true;
+    case 'initialProposalRound':
+      return hasContextText(context.topic);
+    case 'reconciliationRound':
+      return (
+        hasContextText(context.hostProposal) &&
+        hasContextText(context.participantProposal)
+      );
+    case 'hostWritesAgreement':
+      return hasContextText(context.agreement);
+    case 'commitInitialChanges':
+      return (
+        hasContextText(context.latestChanges) &&
+        hasKnownReviewScope(context)
+      );
+    case 'reviewSpecInitialCommit':
+    case 'reviewSpecHostChanges':
+      return (
+        hasContextText(context.latestChanges) &&
+        hasKnownReviewScope(context, 'specItems')
+      );
+    case 'reviewDrInitialCommit':
+    case 'reviewDrHostChanges':
+      return (
+        hasContextText(context.latestChanges) &&
+        hasKnownReviewScope(context, 'decisionRecords')
+      );
+    case 'reviewMixedInitialCommit':
+    case 'reviewMixedHostChanges':
+      return (
+        hasContextText(context.latestChanges) &&
+        hasKnownReviewScope(context, 'mixed')
+      );
+    case 'hostAddressesFindings':
+      return (
+        hasContextText(context.latestChanges) &&
+        hasContextText(context.reviewItems) &&
+        hasKnownReviewScope(context)
+      );
+    case 'participantAddressesRebuttals':
+      return (
+        hasContextText(context.latestChanges) &&
+        hasContextText(context.reviewItems) &&
+        hasContextText(context.rebuttals) &&
+        hasKnownReviewScope(context)
+      );
+    case 'commitReviewedChanges':
+      return hasContextText(context.latestChanges);
+  }
+}
+
 type DiscussActionName =
   | 'copyStartDiscussion'
   | 'copyStartReview'
@@ -396,12 +482,20 @@ type DiscussActionName =
   | 'clearBossReplyContext';
 
 function bossInterrupts(
-  ids: readonly string[],
+  ids: readonly JumpableStateId[],
   actions?: DiscussActionName | DiscussActionName[],
 ): any[] {
   return ids.map((id) => ({
-    guard: ({ event }: { event: DiscussEvent }) =>
-      event.type === 'BOSS_INTERRUPT' && event.targetId === id,
+    guard: ({
+      context,
+      event,
+    }: {
+      context: DiscussContext;
+      event: DiscussEvent;
+    }) =>
+      event.type === 'BOSS_INTERRUPT' &&
+      event.targetId === id &&
+      canInterruptTo(context, id),
     target: `#${id}`,
     reenter: true,
     ...(actions ? { actions } : {}),

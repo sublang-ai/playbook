@@ -368,6 +368,10 @@ When a session-start sink records and rejects while the best-effort disposal
 sink also rejects, CODE and DISCUSS shall each reject with the original start
 error, record one start/disposal pair, clear the failed binding, and start a
 replacement session with trace sequence one.
+If disposal races that failed initialization, Captain and DISCUSS shall share
+one retained teardown, record only one disposal boundary, and reject later
+initialization after teardown begins. Pre-init disposal shall be terminal and
+promise-identical across repeated calls.
 The player calls shall fail unless the first call for each resolved
 player passes `resume: false`, the next same-player call passes the
 last returned token, a rotated token replaces it, an omitted token
@@ -403,11 +407,15 @@ waiting sibling, a branch failure stops its sibling and reaches
 direct Captain and hidden judge calls never overlap.
 It shall fail unless the four parallel branch working leaves are absent from
 the Boss-interrupt catalog and interrupting either parallel round parent starts
-both of that round's branches intentionally.
+both of that round's branches intentionally only after the required topic or
+promoted proposals exist; a contextless parent interrupt and an interrupt that
+targets a wait state shall leave the machine unmoved.
 Structured state telemetry and trace shall remain JSON-safe, identify
 all active leaves and tags, contain no `[object Object]` classifier
 state, use contiguous trace sequence numbers, and settle only after all
 in-flight calls and emissions from the turn drain.
+Mutating or attempting to mutate described state telemetry shall not alter a
+later transition's authoritative `from` state.
 Strict JSON cases shall reject dates, maps, class/accessor/symbol objects,
 undefined or sparse values, non-finite numbers, and cycles across options,
 child output, trace payload, and terminal output rather than silently changing
@@ -444,3 +452,5 @@ id, surface the first current-boundary control error, and clear its latches so
 the next Boss turn cannot inherit that failure. Concurrent idle disposal shall
 share one outcome, while disposal requested during a live public boundary
 shall reject without starting teardown.
+Suspended-child abort cleanup failure shall still emit the matching error
+finish and shall reject disposal with the original cleanup error.

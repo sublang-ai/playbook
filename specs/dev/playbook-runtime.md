@@ -507,6 +507,10 @@ round rather than completion-order-dependent inputs.
 The `initialProposalRound` and `reconciliationRound` parallel parents shall be
 Boss-interrupt targets; their four branch working leaves shall remain
 branch-reply resume destinations but shall not be independently jumpable.
+An interrupt may reenter either parent only when context already contains its
+complete input: a non-empty topic for initial proposals, or both promoted
+proposals for reconciliation. The scalar or branch-local wait state itself
+shall never be an interrupt target.
 Where one parallel DISCUSS branch needs a Boss reply, that branch shall
 park in its own waiting state while its sibling continues; a reply shall
 resume only the identified branch, and multiple pending branch questions
@@ -526,6 +530,9 @@ error; it shall not model workflow waiting with a polling loop, async
 action, or runtime-owned join.
 FSM telemetry and the matching `fsm.transition` trace shall carry
 structured `from` and `to` values plus previous/current descriptors.
+The described FSM telemetry payload shall be detached and recursively frozen
+before delivery and shall not share its state object with the runtime's
+authoritative previous-state record.
 Session, status, and Boss-settlement trace payloads shall include the
 current descriptor and may include `stateId` only when one
 Boss-relevant state id is active.
@@ -546,6 +553,10 @@ concurrent requests onto one teardown promise, and shall prevent later public
 work once teardown begins. A first non-abort control error shall take
 precedence over a coincident abort or later emission failure while the runtime
 still attempts the required finish and settlement boundaries exactly once.
+Disposal requested during initialization shall wait for that initialization's
+success or failure cleanup and emit at most one session-disposal trace;
+disposal before initialization shall be terminal and retain the same teardown
+promise for every later call.
 
 ### PBRT-42
 
@@ -581,3 +592,6 @@ port, malformed start/result, invocation abort, and disposal while opening —
 shall drain exactly one matching finish event; validation failures shall reject
 as control-plane errors without creating pending state or ordinary child
 evidence.
+If child abort cleanup rejects while the call is suspended, the bridge shall
+emit the paired error finish and reject parent disposal with the original
+cleanup error rather than swallowing it as an ordinary nested-call rejection.

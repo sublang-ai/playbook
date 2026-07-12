@@ -189,10 +189,10 @@ describe('runtime option snapshots', () => {
   });
 
   it('detaches player binding from later option mutation', async () => {
-    const options = { playerBinding: { Host: 'original-host' } };
+    const options = { playerBinding: { Participant: 'original-participant' } };
     const playerIds: string[] = [];
     const runtime = createPlaybookRuntime(options);
-    options.playerBinding.Host = 'mutated-host';
+    options.playerBinding.Participant = 'mutated-participant';
     const ports: PlaybookPorts = {
       callPlayer: async (playerId) => {
         playerIds.push(playerId);
@@ -200,8 +200,9 @@ describe('runtime option snapshots', () => {
       },
       callJudge: async () =>
         JSON.stringify({
-          event: 'BOSS_INTERRUPT',
-          targetId: 'hostWritesAgreement',
+          event: 'START_REVIEW',
+          latestChanges: 'detached option review',
+          reviewScope: 'mixed',
         }),
       callPlaybook: async () => {
         throw new Error('unexpected nested playbook call');
@@ -212,7 +213,7 @@ describe('runtime option snapshots', () => {
     await runtime.init(playbookSession(ports, 'detached-options'));
 
     await runtime.handleBossInput({ text: 'write', signal: signal() });
-    expect(playerIds).toEqual(['original-host']);
+    expect(playerIds).toEqual(['original-participant']);
     await runtime.dispose();
   });
 });
@@ -225,8 +226,9 @@ describe('delegated-player final text boundary', () => {
       callJudge: async () => {
         judgeCalls += 1;
         return JSON.stringify({
-          event: 'BOSS_INTERRUPT',
-          targetId: 'hostWritesAgreement',
+          event: 'START_REVIEW',
+          latestChanges: 'missing final text review',
+          reviewScope: 'mixed',
         });
       },
       callPlaybook: async () => {
@@ -459,6 +461,7 @@ describe('parseClassification (parallel Boss questions)', () => {
       'askParticipantInitial',
       'hostInitialRound',
       'participantInitialRound',
+      'awaitBossReply',
     ]) {
       expect(_internal.BOSS_INTERRUPT_TARGETS).not.toContain(branchId);
       expect(
@@ -967,7 +970,7 @@ describe('parallel runtime execution (PBRT-40/41/43)', () => {
         if (startedPlayers.size === 2) resolveBothStarted();
         if (playerId === 'host') {
           await bothStarted;
-          throw new TypeError('host branch failed');
+          return { status: 'error', error: 'host branch failed' };
         }
         await new Promise<void>((resolve) => {
           const onAbort = (): void => {
@@ -998,8 +1001,9 @@ describe('parallel runtime execution (PBRT-40/41/43)', () => {
               topic: 'Failure cancellation.',
             })
           : JSON.stringify({
-              event: 'BOSS_INTERRUPT',
-              targetId: 'reviewMixedInitialCommit',
+              event: 'START_REVIEW',
+              latestChanges: 'continuity review',
+              reviewScope: 'mixed',
             });
       },
       emitStatus: async () => {
@@ -1061,14 +1065,20 @@ describe('parallel runtime execution (PBRT-40/41/43)', () => {
     expect(result).toMatchObject({
       outcome: 'failed',
       state: { activeStateIds: ['failed'], quiescent: true },
-      error: { name: 'TypeError', message: 'host branch failed' },
+      error: {
+        name: 'Error',
+        message: 'player "host" returned status "error": host branch failed',
+      },
     });
     expect(startedPlayers).toEqual(new Set(['host', 'participant']));
     expect(participantCancelled).toBe(true);
     expect(pendingEmissions).toBe(0);
     expect(fsmTelemetry.at(-1)).toMatchObject({
       state: { activeStateIds: ['failed'], quiescent: true },
-      lastError: { name: 'TypeError', message: 'host branch failed' },
+      lastError: {
+        name: 'Error',
+        message: 'player "host" returned status "error": host branch failed',
+      },
     });
     const finished = traces.filter(
       (trace) => trace.type === 'player.call.finished',
@@ -1110,7 +1120,10 @@ describe('parallel runtime execution (PBRT-40/41/43)', () => {
       callPlayer: async (playerId) => {
         if (playerId === 'host') {
           await participantJudgeStarted;
-          throw new TypeError('host failed during sibling adjudication');
+          return {
+            status: 'error',
+            error: 'host failed during sibling adjudication',
+          };
         }
         return { status: 'ok', finalText: 'participant output for late judge' };
       },
@@ -1187,8 +1200,9 @@ describe('parallel runtime execution (PBRT-40/41/43)', () => {
     expect(result).toMatchObject({
       outcome: 'failed',
       error: {
-        name: 'TypeError',
-        message: 'host failed during sibling adjudication',
+        name: 'Error',
+        message:
+          'player "host" returned status "error": host failed during sibling adjudication',
       },
     });
     const lateFinish = traces.find(
@@ -1260,8 +1274,9 @@ describe('DISCUSS runtime queue and lifecycle regressions', () => {
       callJudge: async (prompt) =>
         prompt.includes('Boss-input classifier')
           ? JSON.stringify({
-              event: 'BOSS_INTERRUPT',
-              targetId: 'hostWritesAgreement',
+              event: 'START_REVIEW',
+              latestChanges: 'finish sink review',
+              reviewScope: 'mixed',
             })
           : JSON.stringify({
               guard: 'wroteChanges',
@@ -1348,6 +1363,53 @@ describe('DISCUSS runtime queue and lifecycle regressions', () => {
     await runtime.dispose();
   });
 
+  it('preserves a player port error when its paired finish trace also rejects', async () => {
+    const traces: TraceEvent[] = [];
+    const playerError = new TypeError('original participant port error');
+    const sinkError = new Error('participant finish sink error');
+    let rejectFinish = true;
+    const ports: PlaybookPorts = {
+      callPlayer: async () => {
+        throw playerError;
+      },
+      callPlaybook: async () => {
+        throw new Error('unexpected nested playbook call');
+      },
+      callJudge: async () =>
+        JSON.stringify({
+          event: 'START_REVIEW',
+          latestChanges: 'review this change',
+          reviewScope: 'mixed',
+        }),
+      emitStatus: async () => {},
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as TraceEvent;
+        traces.push(trace);
+        if (trace.type === 'player.call.finished' && rejectFinish) {
+          rejectFinish = false;
+          throw sinkError;
+        }
+      },
+    };
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(playbookSession(ports, 'player-port-precedence'));
+
+    await expect(
+      runtime.handleBossInput({ text: 'review it', signal: signal() }),
+    ).rejects.toBe(playerError);
+    expect(
+      traces.filter((trace) => trace.type === 'player.call.finished'),
+    ).toHaveLength(1);
+    await expect(
+      runtime.handleBossInput({ text: ' ', signal: signal() }),
+    ).resolves.toMatchObject({
+      outcome: 'no-action',
+      state: { stateId: 'failed' },
+    });
+    await runtime.dispose();
+  });
+
   it('keeps malformed PlayerResult ahead of coincident abort and finish-sink failure', async () => {
     const traces: TraceEvent[] = [];
     const controller = new AbortController();
@@ -1365,8 +1427,9 @@ describe('DISCUSS runtime queue and lifecycle regressions', () => {
       },
       callJudge: async () =>
         JSON.stringify({
-          event: 'BOSS_INTERRUPT',
-          targetId: 'hostWritesAgreement',
+          event: 'START_REVIEW',
+          latestChanges: 'malformed result review',
+          reviewScope: 'mixed',
         }),
       emitStatus: async () => {},
       emitTelemetry: async (event) => {
@@ -1509,7 +1572,7 @@ describe('DISCUSS runtime queue and lifecycle regressions', () => {
       callPlayer: async (playerId) => {
         playerCalls.push(playerId);
         await playerGate;
-        throw new Error(`${playerId} stopped`);
+        return { status: 'error', error: `${playerId} stopped` };
       },
       callPlaybook: async () => {
         throw new Error('unexpected nested playbook call');
@@ -1595,6 +1658,49 @@ describe('DISCUSS runtime queue and lifecycle regressions', () => {
     ).toBe(true);
   });
 
+  it('detaches described FSM telemetry from authoritative prior state', async () => {
+    const statePayloads: Array<{
+      from?: unknown;
+      state?: { value?: unknown };
+    }> = [];
+    let rejectedMutation = false;
+    const ports: PlaybookPorts = {
+      callPlayer: async () => ({ status: 'error', error: 'unexpected call' }),
+      callPlaybook: async () => {
+        throw new Error('unexpected nested playbook call');
+      },
+      callJudge: async () =>
+        JSON.stringify({ event: 'BOSS_INTERRUPT', targetId: 'ready' }),
+      emitStatus: async () => {},
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.fsm.state') return;
+        const payload = event.payload as {
+          from?: unknown;
+          state?: { value?: unknown };
+        };
+        statePayloads.push(payload);
+        if (statePayloads.length === 1 && payload.state) {
+          expect(Object.isFrozen(payload)).toBe(true);
+          expect(Object.isFrozen(payload.state)).toBe(true);
+          try {
+            payload.state.value = 'observer-tampered';
+          } catch (error) {
+            expect(error).toBeInstanceOf(TypeError);
+            rejectedMutation = true;
+          }
+        }
+      },
+    };
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(playbookSession(ports, 'immutable-state-session'));
+    await runtime.handleBossInput({ text: 'stay ready', signal: signal() });
+
+    expect(rejectedMutation).toBe(true);
+    expect(statePayloads).toHaveLength(2);
+    expect(statePayloads[1]?.from).toBe('ready');
+    await runtime.dispose();
+  });
+
   it('rejects a non-string judge reply before a success finish', async () => {
     const traces: TraceEvent[] = [];
     let playerCalls = 0;
@@ -1676,8 +1782,8 @@ describe('DISCUSS runtime queue and lifecycle regressions', () => {
               topic: 'Validate player result.',
             })
           : JSON.stringify({
-              event: 'BOSS_INTERRUPT',
-              targetId: 'hostWritesAgreement',
+              event: 'START_DISCUSSION',
+              topic: 'Retry malformed Host result.',
             });
       },
       emitStatus: async () => {},
@@ -2449,18 +2555,21 @@ describe('session trace and player continuation (PBRT-37/38/39)', () => {
     const resumes: Array<string | false> = [];
     const judgeReplies = [
       JSON.stringify({
-        event: 'BOSS_INTERRUPT',
-        targetId: 'hostWritesAgreement',
+        event: 'START_REVIEW',
+        latestChanges: 'first failure review',
+        reviewScope: 'mixed',
       }),
       JSON.stringify({
-        event: 'BOSS_INTERRUPT',
-        targetId: 'hostWritesAgreement',
+        event: 'START_REVIEW',
+        latestChanges: 'question review',
+        reviewScope: 'mixed',
       }),
       JSON.stringify({ guard: 'needsBossReply', question: 'Proceed?' }),
       JSON.stringify({ event: 'BOSS_REPLY', answer: 'Yes.' }),
       JSON.stringify({
-        event: 'BOSS_INTERRUPT',
-        targetId: 'hostWritesAgreement',
+        event: 'START_REVIEW',
+        latestChanges: 'final failure review',
+        reviewScope: 'mixed',
       }),
     ];
     let judgeIndex = 0;
@@ -2514,7 +2623,9 @@ describe('session trace and player continuation (PBRT-37/38/39)', () => {
     await runtime.init(playbookSession(ports, 'failure-resume-session'));
     await runtime.handleBossInput({ text: 'start', signal: signal() });
     await runtime.handleBossInput({ text: 'retry', signal: signal() });
-    await runtime.handleBossInput({ text: 'Yes.', signal: signal() });
+    await expect(
+      runtime.handleBossInput({ text: 'Yes.', signal: signal() }),
+    ).rejects.toThrow('transport broke');
     await runtime.handleBossInput({ text: 'retry again', signal: signal() });
 
     expect(resumes).toEqual([
@@ -2551,17 +2662,20 @@ describe('session trace and player continuation (PBRT-37/38/39)', () => {
     const resumes: Array<string | false> = [];
     const judgeReplies = [
       JSON.stringify({
-        event: 'BOSS_INTERRUPT',
-        targetId: 'hostWritesAgreement',
+        event: 'START_REVIEW',
+        latestChanges: 'aborted review',
+        reviewScope: 'mixed',
       }),
       JSON.stringify({
-        event: 'BOSS_INTERRUPT',
-        targetId: 'hostWritesAgreement',
+        event: 'START_REVIEW',
+        latestChanges: 'question review',
+        reviewScope: 'mixed',
       }),
       JSON.stringify({ guard: 'needsBossReply', question: 'Proceed?' }),
       JSON.stringify({
-        event: 'BOSS_INTERRUPT',
-        targetId: 'hostWritesAgreement',
+        event: 'START_REVIEW',
+        latestChanges: 'fresh review',
+        reviewScope: 'mixed',
       }),
     ];
     let judgeIndex = 0;
@@ -2628,8 +2742,9 @@ describe('session trace and player continuation (PBRT-37/38/39)', () => {
         },
         callJudge: async () =>
           JSON.stringify({
-            event: 'BOSS_INTERRUPT',
-            targetId: 'hostWritesAgreement',
+            event: 'START_REVIEW',
+            latestChanges: sessionId,
+            reviewScope: 'mixed',
           }),
         emitStatus: async () => {},
         emitTelemetry: async (event) => {
@@ -2710,6 +2825,80 @@ describe('session trace and player continuation (PBRT-37/38/39)', () => {
       type: 'session.started',
     });
     await runtime.dispose();
+  });
+
+  it('serializes concurrent disposal behind failed initialization', async () => {
+    const traces: TraceEvent[] = [];
+    const startError = new Error('deferred DISCUSS session-start failure');
+    let observeStart!: () => void;
+    const startObserved = new Promise<void>((resolve) => {
+      observeStart = resolve;
+    });
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const ports: PlaybookPorts = {
+      callPlayer: async () => ({ status: 'error', error: 'unexpected call' }),
+      callPlaybook: async () => {
+        throw new Error('unexpected nested playbook call');
+      },
+      callJudge: async () => JSON.stringify({ event: 'NO_ACTION' }),
+      emitStatus: async () => {},
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as TraceEvent;
+        traces.push(trace);
+        if (trace.type === 'session.started') {
+          observeStart();
+          await startGate;
+          throw startError;
+        }
+      },
+    };
+    const runtime = createPlaybookRuntime({});
+
+    const initialization = runtime.init(
+      playbookSession(ports, 'discuss-init-dispose-race'),
+    );
+    await startObserved;
+    const firstDisposal = runtime.dispose();
+    expect(runtime.dispose()).toBe(firstDisposal);
+    releaseStart();
+
+    await expect(initialization).rejects.toBe(startError);
+    await expect(firstDisposal).resolves.toBeUndefined();
+    expect(
+      traces.filter((trace) => trace.type === 'session.disposed'),
+    ).toHaveLength(1);
+  });
+
+  it('retains terminal disposal identity before initialization', async () => {
+    const runtime = createPlaybookRuntime({});
+    const firstDisposal = runtime.dispose();
+    expect(runtime.dispose()).toBe(firstDisposal);
+    await firstDisposal;
+    expect(runtime.dispose()).toBe(firstDisposal);
+
+    await expect(
+      runtime.init(
+        playbookSession(
+          {
+            callPlayer: async () => ({
+              status: 'error',
+              error: 'unexpected call',
+            }),
+            callPlaybook: async () => {
+              throw new Error('unexpected nested playbook call');
+            },
+            callJudge: async () => JSON.stringify({ event: 'NO_ACTION' }),
+            emitStatus: async () => {},
+            emitTelemetry: async () => {},
+          },
+          'disposed-before-init',
+        ),
+      ),
+    ).rejects.toThrow('may only be called once');
   });
 
   it('suppresses teardown snapshots after an initialization transition sink failure', async () => {

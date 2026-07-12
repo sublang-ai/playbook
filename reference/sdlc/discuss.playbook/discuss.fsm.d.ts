@@ -1,7 +1,7 @@
 type Player = 'Host' | 'Participant' | 'Committer';
 type ReviewScope = 'specItems' | 'decisionRecords' | 'mixed';
-type JumpableStateId = 'ready' | 'initialProposalRound' | 'reconciliationRound' | 'hostWritesAgreement' | 'commitInitialChanges' | 'reviewSpecInitialCommit' | 'reviewSpecHostChanges' | 'reviewDrInitialCommit' | 'reviewDrHostChanges' | 'reviewMixedInitialCommit' | 'reviewMixedHostChanges' | 'hostAddressesFindings' | 'participantAddressesRebuttals' | 'commitReviewedChanges' | 'awaitBossReply' | 'failed';
-type ResumableStateId = 'askHostInitial' | 'askParticipantInitial' | 'hostInitialRound' | 'participantInitialRound' | Exclude<JumpableStateId, 'ready' | 'initialProposalRound' | 'reconciliationRound' | 'awaitBossReply' | 'failed'>;
+type JumpableStateId = 'ready' | 'initialProposalRound' | 'reconciliationRound' | 'hostWritesAgreement' | 'commitInitialChanges' | 'reviewSpecInitialCommit' | 'reviewSpecHostChanges' | 'reviewDrInitialCommit' | 'reviewDrHostChanges' | 'reviewMixedInitialCommit' | 'reviewMixedHostChanges' | 'hostAddressesFindings' | 'participantAddressesRebuttals' | 'commitReviewedChanges' | 'failed';
+type ResumableStateId = 'askHostInitial' | 'askParticipantInitial' | 'hostInitialRound' | 'participantInitialRound' | Exclude<JumpableStateId, 'ready' | 'initialProposalRound' | 'reconciliationRound' | 'failed'>;
 export interface PendingBossQuestion {
     questionId: ResumableStateId;
     resumeStateId: ResumableStateId;
@@ -26,12 +26,12 @@ export interface DiscussContext {
     reviewScope?: ReviewScope;
     reviewItems?: string;
     rebuttals?: string;
-    lastResult?: CaptainOutput;
+    lastResult?: PlayerOutput;
     lastError?: unknown;
     pendingBossQuestions?: PendingBossQuestions;
     bossReplies?: BossReplies;
-    stagedHostResult?: CaptainOutput;
-    stagedParticipantResult?: CaptainOutput;
+    stagedHostResult?: PlayerOutput;
+    stagedParticipantResult?: PlayerOutput;
 }
 export type DiscussEvent = {
     type: 'START_DISCUSSION';
@@ -56,11 +56,12 @@ export interface DiscussInput {
     participant?: string;
     committer?: string;
 }
-export interface CaptainInput {
+export interface PlayerInput {
     stateId: ResumableStateId;
     sourceItem: string;
     prompt: string;
     result: Record<string, string>;
+    player: Player;
     topic?: string;
     hostLlm?: string;
     participantLlm?: string;
@@ -77,11 +78,7 @@ export interface CaptainInput {
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 }
-export interface PlayerInput extends CaptainInput {
-    player: Player;
-}
-export interface CaptainOutput {
-    guard: string;
+type AdditionalPlayerFields = {
     proposal?: string;
     agreement?: string;
     latestChanges?: string;
@@ -89,11 +86,43 @@ export interface CaptainOutput {
     reviewItems?: string;
     rebuttals?: string;
     question?: string;
-    [key: string]: unknown;
-}
-export type PlayerOutput = CaptainOutput;
+    readonly [key: string]: unknown;
+};
+export type PlayerOutput = ({
+    guard: 'proposalMade';
+    proposal: string;
+} & AdditionalPlayerFields) | ({
+    guard: 'endedInitialDiscussion';
+    agreement?: string;
+} & AdditionalPlayerFields) | ({
+    guard: 'wroteChanges';
+    latestChanges: string;
+    reviewScope: ReviewScope;
+} & AdditionalPlayerFields) | ({
+    guard: 'committed';
+    latestChanges?: string;
+    reviewScope?: ReviewScope;
+} & AdditionalPlayerFields) | ({
+    guard: 'noFindings';
+} & AdditionalPlayerFields) | ({
+    guard: 'findingsRaised';
+    reviewItems: string;
+} & AdditionalPlayerFields) | ({
+    guard: 'changesMade';
+    latestChanges?: string;
+    reviewScope?: ReviewScope;
+} & AdditionalPlayerFields) | ({
+    guard: 'rebuttalsRaised';
+    rebuttals: string;
+} & AdditionalPlayerFields) | ({
+    guard: 'rebuttalsAddressed';
+    rebuttals?: string;
+} & AdditionalPlayerFields) | ({
+    guard: 'needsBossReply';
+    question: string;
+} & AdditionalPlayerFields);
 type DiscussActionName = 'copyStartDiscussion' | 'copyStartReview' | 'rememberHostProposal' | 'rememberParticipantProposal' | 'rememberAgreement' | 'rememberWrittenChanges' | 'rememberCommittedChanges' | 'rememberReviewFindings' | 'rememberHostReviewResponse' | 'rememberParticipantRebuttalResponse' | 'rememberCaptainResult' | 'rememberCaptainError' | 'rememberMalformedCaptainOutput' | 'rememberMalformedBossReply' | 'setPendingBossQuestion' | 'rememberBossReply' | 'clearBranchBossReplyContext' | 'clearParallelRoundContext' | 'clearBossReplyContext';
-declare function bossInterrupts(ids: readonly string[], actions?: DiscussActionName | DiscussActionName[]): any[];
+declare function bossInterrupts(ids: readonly JumpableStateId[], actions?: DiscussActionName | DiscussActionName[]): any[];
 declare function resumableStates(ids: readonly string[]): any[];
 export declare const discussMachine: import("xstate").StateMachine<DiscussContext, {
     type: "START_DISCUSSION";
@@ -113,10 +142,10 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     questionId?: ResumableStateId;
     answer: string;
 }, {
-    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<CaptainOutput, PlayerInput, import("xstate").EventObject>> | undefined;
+    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>> | undefined;
 }, {
     src: "player";
-    logic: import("xstate").PromiseActorLogic<CaptainOutput, PlayerInput, import("xstate").EventObject>;
+    logic: import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>;
     id: string | undefined;
 }, {
     type: "clearBossReplyContext";
@@ -196,18 +225,6 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     type: "committed";
     params: unknown;
 } | {
-    type: "needsBossReplyWithQuestion";
-    params: unknown;
-} | {
-    type: "needsBossReplyWithoutQuestion";
-    params: unknown;
-} | {
-    type: "emptyBossReply";
-    params: unknown;
-} | {
-    type: "bothEndedInitialDiscussion";
-    params: unknown;
-} | {
     type: "proposalMade";
     params: unknown;
 } | {
@@ -227,6 +244,18 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
     params: unknown;
 } | {
     type: "rebuttalsAddressed";
+    params: unknown;
+} | {
+    type: "needsBossReplyWithQuestion";
+    params: unknown;
+} | {
+    type: "needsBossReplyWithoutQuestion";
+    params: unknown;
+} | {
+    type: "emptyBossReply";
+    params: unknown;
+} | {
+    type: "bothEndedInitialDiscussion";
     params: unknown;
 } | {
     type: "specReview";

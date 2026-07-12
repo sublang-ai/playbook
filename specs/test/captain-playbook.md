@@ -18,6 +18,8 @@ Where the Captain source is compiled through `slc playbook`, the test suite shal
 Verifies: [CAPPLAY-1](../user/captain-playbook.md#capplay-1), [CAPPLAY-2](../user/captain-playbook.md#capplay-2), [CAPPLAY-3](../user/captain-playbook.md#capplay-3), [CAPPLAY-7](../dev/captain-playbook.md#capplay-7)
 
 Where the shell provides two or more enabled playbooks, when tests drive direct handling, one material clarification, one-child delegation, and a revised multi-child plan, the suite shall fail unless the Captain preserves the intent and prior results, calls only catalog ids sequentially with standalone inputs, rejects an unknown or self target, rejects a continuation whose `remainingPlan` is not strictly shorter, and returns one final response without repeating an equivalent completed or failed call absent new information.
+After a routing or reassessment question is answered, the next delegated
+child state and its telemetry shall carry no consumed pending question.
 Immediate and resumed child success, abort, and error results shall be reduced
 to target, status, actual output, or compact error evidence before the next
 visible Captain prompt; that prompt shall contain no child session id, call id,

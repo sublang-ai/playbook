@@ -412,6 +412,7 @@ export function createPlaybookRuntime(options: PlaybookRuntimeOptions): Playbook
   let nestedBridge: ReturnType<typeof createNestedPlaybookBridge<PlaybookInput>> | undefined;
   let boundarySignal: AbortSignal | undefined;
   let activeBoundary = false;
+  let initInFlight: Promise<void> | undefined;
   let disposalPromise: Promise<void> | undefined;
   let disposed = false;
   let sequence = 0;
@@ -780,8 +781,11 @@ export function createPlaybookRuntime(options: PlaybookRuntimeOptions): Playbook
 
   const runtime: PlaybookRuntime = {
     async init(inputSession) {
-      if (session || actor || disposed || disposalPromise) throw new Error('playbook runtime cannot be initialized again');
+      if (session || actor || initInFlight || disposed || disposalPromise) throw new Error('playbook runtime cannot be initialized again');
       const bound = snapshotPlaybookSession(inputSession);
+      let finishInitialization!: () => void;
+      const initialization = new Promise<void>((resolve) => { finishInitialization = resolve; });
+      initInFlight = initialization;
       session = bound;
       try {
         suppressInspectionEmissions = false;
@@ -819,6 +823,9 @@ export function createPlaybookRuntime(options: PlaybookRuntimeOptions): Playbook
         turnSequence = 0;
         callSequence = 0;
         throw error;
+      } finally {
+        finishInitialization();
+        if (initInFlight === initialization) initInFlight = undefined;
       }
     },
 
@@ -910,6 +917,8 @@ export function createPlaybookRuntime(options: PlaybookRuntimeOptions): Playbook
       if (disposalPromise) return disposalPromise;
       if (disposed) return Promise.resolve();
       disposalPromise = (async () => {
+        const initialization = initInFlight;
+        if (initialization) await initialization;
         const bound = session;
         if (!bound) { disposed = true; return; }
         let firstError: unknown;

@@ -132,7 +132,6 @@ const jumpableStateIds = [
     'hostAddressesFindings',
     'participantAddressesRebuttals',
     'commitReviewedChanges',
-    'awaitBossReply',
     'failed',
 ];
 const resumableStateIds = [
@@ -183,9 +182,57 @@ const bossReplyTargets = (stateId, requireAnswer) => ({ context, event }) => eve
 const hasReviewScope = (scope) => ({ context, event }) => event.type === 'START_REVIEW'
     ? event.reviewScope === scope
     : context.reviewScope === scope;
+const hasContextText = (value) => typeof value === 'string' && value.trim().length > 0;
+const hasKnownReviewScope = (context, scope) => scope === undefined
+    ? context.reviewScope === 'specItems' ||
+        context.reviewScope === 'decisionRecords' ||
+        context.reviewScope === 'mixed'
+    : context.reviewScope === scope;
+function canInterruptTo(context, targetId) {
+    switch (targetId) {
+        case 'ready':
+        case 'failed':
+            return true;
+        case 'initialProposalRound':
+            return hasContextText(context.topic);
+        case 'reconciliationRound':
+            return (hasContextText(context.hostProposal) &&
+                hasContextText(context.participantProposal));
+        case 'hostWritesAgreement':
+            return hasContextText(context.agreement);
+        case 'commitInitialChanges':
+            return (hasContextText(context.latestChanges) &&
+                hasKnownReviewScope(context));
+        case 'reviewSpecInitialCommit':
+        case 'reviewSpecHostChanges':
+            return (hasContextText(context.latestChanges) &&
+                hasKnownReviewScope(context, 'specItems'));
+        case 'reviewDrInitialCommit':
+        case 'reviewDrHostChanges':
+            return (hasContextText(context.latestChanges) &&
+                hasKnownReviewScope(context, 'decisionRecords'));
+        case 'reviewMixedInitialCommit':
+        case 'reviewMixedHostChanges':
+            return (hasContextText(context.latestChanges) &&
+                hasKnownReviewScope(context, 'mixed'));
+        case 'hostAddressesFindings':
+            return (hasContextText(context.latestChanges) &&
+                hasContextText(context.reviewItems) &&
+                hasKnownReviewScope(context));
+        case 'participantAddressesRebuttals':
+            return (hasContextText(context.latestChanges) &&
+                hasContextText(context.reviewItems) &&
+                hasContextText(context.rebuttals) &&
+                hasKnownReviewScope(context));
+        case 'commitReviewedChanges':
+            return hasContextText(context.latestChanges);
+    }
+}
 function bossInterrupts(ids, actions) {
     return ids.map((id) => ({
-        guard: ({ event }) => event.type === 'BOSS_INTERRUPT' && event.targetId === id,
+        guard: ({ context, event, }) => event.type === 'BOSS_INTERRUPT' &&
+            event.targetId === id &&
+            canInterruptTo(context, id),
         target: `#${id}`,
         reenter: true,
         ...(actions ? { actions } : {}),

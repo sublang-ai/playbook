@@ -11,6 +11,9 @@ Essential project-specific references are the `reference/sdlc/captain.md` source
 ### CAPPLAY-6
 
 Where the package ships the default Captain playbook, the maintained source shall be `reference/sdlc/captain.md` and `slc playbook` shall compile it into `reference/sdlc/captain.playbook/` GEARS, XState FSM, linked runtime, and verification artifacts; the FSM shall implement a finite `ready` to decision to dynamic child call to reassessment loop, require every continuation to make `remainingPlan` strictly shorter, and return a JSON-safe `{ response }` terminal output; the repository shall retain the complete generated verification bundle, while the published npm subset and public runtime export shall follow [RELEASE-20](release.md#release-20).
+The initial `ready` hub shall carry `playbook.parked`, and a consumed routing
+or reassessment answer shall clear its pending question and reply before the
+machine enters a child-call or terminal state.
 
 ### CAPPLAY-7
 

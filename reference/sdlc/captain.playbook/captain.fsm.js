@@ -357,6 +357,7 @@ export const captainMachine = setup({
             id: 'ready',
             description: 'Waiting for Boss to provide an intent.',
             meta: { playbook: { stateId: 'ready', description: 'Waiting for Boss to provide an intent.' } },
+            tags: ['playbook.parked'],
             on: {
                 BOSS_INTENT: [
                     { guard: 'validBossIntent', target: 'routing', actions: 'setBossIntent' },
@@ -380,7 +381,7 @@ export const captainMachine = setup({
                 onDone: [
                     { guard: 'routingDirect', target: 'finishing', actions: ['rememberResponse', 'clearBossReplyContext'] },
                     { guard: 'routingQuestion', target: 'awaitBossReply', actions: 'setRoutingQuestion' },
-                    { guard: 'routingDelegation', target: 'callingPlaybook', actions: 'rememberPlannedCall' },
+                    { guard: 'routingDelegation', target: 'callingPlaybook', actions: ['rememberPlannedCall', 'clearBossReplyContext'] },
                     { guard: 'routingNeedsBossReply', target: 'awaitBossReply', actions: 'setRoutingQuestion' },
                     { target: 'failed', actions: 'rememberMalformedOutput' },
                 ],
@@ -428,7 +429,7 @@ export const captainMachine = setup({
                 onDone: [
                     { guard: 'finalResponse', target: 'finishing', actions: ['rememberResponse', 'clearBossReplyContext'] },
                     { guard: 'followUpQuestion', target: 'awaitBossReply', actions: 'setReassessmentQuestion' },
-                    { guard: 'continuingCall', target: 'callingPlaybook', actions: 'rememberPlannedCall' },
+                    { guard: 'continuingCall', target: 'callingPlaybook', actions: ['rememberPlannedCall', 'clearBossReplyContext'] },
                     { guard: 'reassessmentNeedsBossReply', target: 'awaitBossReply', actions: 'setReassessmentQuestion' },
                     { target: 'failed', actions: 'rememberMalformedOutput' },
                 ],

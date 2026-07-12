@@ -410,6 +410,40 @@ describe('compiled default Captain runtime', () => {
     await expect(runtime.dispose()).resolves.toBeUndefined();
   });
 
+  it('serializes concurrent disposal behind failed initialization', async () => {
+    const harness = makeHarness();
+    const started = deferred<void>();
+    const releaseStart = deferred<void>();
+    const startError = new Error('deferred Captain session-start failure');
+    const emitTelemetry = harness.ports.emitTelemetry;
+    harness.ports.emitTelemetry = async (event) => {
+      await emitTelemetry(event);
+      if (
+        isTraceTelemetry(event) &&
+        event.payload.type === 'session.started'
+      ) {
+        started.resolve();
+        await releaseStart.promise;
+        throw startError;
+      }
+    };
+    const runtime = createPlaybookRuntime({
+      enabledPlaybooks: ENABLED_PLAYBOOKS,
+    });
+
+    const initialization = runtime.init(makeSession(harness.ports));
+    await started.promise;
+    const firstDisposal = runtime.dispose();
+    expect(runtime.dispose()).toBe(firstDisposal);
+    releaseStart.resolve();
+
+    await expect(initialization).rejects.toBe(startError);
+    await expect(firstDisposal).resolves.toBeUndefined();
+    expect(
+      harness.traces.filter((trace) => trace.type === 'session.disposed'),
+    ).toHaveLength(1);
+  });
+
   it('suppresses teardown snapshots after an initialization transition sink failure', async () => {
     const harness = makeHarness({ rejectTraceType: 'fsm.transition' });
     const runtime = createPlaybookRuntime({
@@ -694,6 +728,54 @@ describe('compiled default Captain runtime', () => {
         (trace) => trace.sessionId === harness.traces[0].sessionId,
       ),
     ).toBe(true);
+    await runtime.dispose();
+  });
+
+  it('clears a consumed routing question before suspending on a delegated child', async () => {
+    const question = 'Should implementation happen before discussion?';
+    const answer = 'Implement first.';
+    const childSessionId = '10000000-0000-4000-8000-000000000040';
+    const harness = makeHarness({
+      classifications: [
+        intentClassification('Implement and discuss the change.'),
+        { type: 'BOSS_REPLY', answer },
+      ],
+      captains: [
+        { status: 'ok', finalText: question },
+        { status: 'ok', finalText: 'I will delegate implementation.' },
+      ],
+      adjudications: [
+        { guard: 'needsBossReply', question },
+        delegation('code', 'Implement the requested change.'),
+      ],
+      children: [{ state: 'suspended', childSessionId }],
+    });
+    const runtime = await initRuntime(harness);
+
+    await runtime.handleBossInput({
+      text: 'Implement and discuss the change.',
+      signal: signal(),
+    });
+    const suspended = await runtime.handleBossInput({
+      text: answer,
+      signal: signal(),
+    });
+
+    expect(suspended).toMatchObject({
+      outcome: 'suspended',
+      state: { stateId: 'callingPlaybook' },
+    });
+    const callingTransition = harness.traces
+      .filter((trace) => trace.type === 'fsm.transition')
+      .findLast(
+        (trace) =>
+          (tracePayload(trace).state as { stateId?: unknown } | undefined)
+            ?.stateId === 'callingPlaybook',
+      );
+    expect(callingTransition).toBeDefined();
+    expect(tracePayload(callingTransition!)).not.toHaveProperty(
+      'pendingBossQuestion',
+    );
     await runtime.dispose();
   });
 

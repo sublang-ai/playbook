@@ -106,7 +106,7 @@ export declare const _internal: {
         readonly sourceItem: "DISCUSS-15";
     }];
     CAPTAIN_STATE_IDS: ReadonlySet<string>;
-    BOSS_INTERRUPT_TARGETS: readonly ["ready", "initialProposalRound", "reconciliationRound", "hostWritesAgreement", "commitInitialChanges", "reviewSpecInitialCommit", "reviewSpecHostChanges", "reviewDrInitialCommit", "reviewDrHostChanges", "reviewMixedInitialCommit", "reviewMixedHostChanges", "hostAddressesFindings", "participantAddressesRebuttals", "commitReviewedChanges", "awaitBossReply", "failed"];
+    BOSS_INTERRUPT_TARGETS: readonly ["ready", "initialProposalRound", "reconciliationRound", "hostWritesAgreement", "commitInitialChanges", "reviewSpecInitialCommit", "reviewSpecHostChanges", "reviewDrInitialCommit", "reviewDrHostChanges", "reviewMixedInitialCommit", "reviewMixedHostChanges", "hostAddressesFindings", "participantAddressesRebuttals", "commitReviewedChanges", "failed"];
     CONTINUATION_PREAMBLE: string;
     TELEMETRY_TOPIC: string;
 };
