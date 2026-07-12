@@ -2871,6 +2871,11 @@ describe('session trace and player continuation (PBRT-37/38/39)', () => {
     expect(
       traces.filter((trace) => trace.type === 'session.disposed'),
     ).toHaveLength(1);
+    await expect(
+      runtime.init(
+        playbookSession(ports, 'discuss-init-after-disposal-started'),
+      ),
+    ).rejects.toThrow('may only be called once');
   });
 
   it('retains terminal disposal identity before initialization', async () => {

@@ -735,6 +735,11 @@ The `PlaybookRuntime` shall:
   `session.disposed` boundary. Disposal before initialization is terminal and
   coalesced: later initialization rejects and every later disposal call
   returns the first retained promise.
+  Represent in-flight initialization with a cleanup-complete latch resolved by
+  `init`'s outer `finally`, after either successful startup or the complete
+  failed-start cleanup. Do not expose the fallible inner startup promise as
+  that latch: it rejects before the outer cleanup and lets concurrent disposal
+  race the cleanup's own `session.disposed` attempt.
   The generated `dispose` method shall not be declared `async`, because an
   async wrapper returns a distinct promise and breaks identity coalescing; it
   shall return the retained teardown promise directly and use

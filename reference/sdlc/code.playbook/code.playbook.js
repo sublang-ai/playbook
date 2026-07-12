@@ -1410,6 +1410,11 @@ export default function createPlaybookRuntime(options) {
             }
             const boundSession = snapshotPlaybookSession(nextSession);
             initialized = true;
+            let finishInitialization;
+            const initialization = new Promise((resolve) => {
+                finishInitialization = resolve;
+            });
+            initInFlight = initialization;
             const initTask = (async () => {
                 session = boundSession;
                 savedPorts = boundSession.ports;
@@ -1420,7 +1425,6 @@ export default function createPlaybookRuntime(options) {
                 actor.start();
                 await drainEmissions();
             })();
-            initInFlight = initTask;
             try {
                 await initTask;
             }
@@ -1483,7 +1487,8 @@ export default function createPlaybookRuntime(options) {
                 throw error;
             }
             finally {
-                if (initInFlight === initTask)
+                finishInitialization();
+                if (initInFlight === initialization)
                     initInFlight = undefined;
             }
         },

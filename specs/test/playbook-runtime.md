@@ -368,10 +368,11 @@ When a session-start sink records and rejects while the best-effort disposal
 sink also rejects, CODE and DISCUSS shall each reject with the original start
 error, record one start/disposal pair, clear the failed binding, and start a
 replacement session with trace sequence one.
-If disposal races that failed initialization, Captain and DISCUSS shall share
-one retained teardown, record only one disposal boundary, and reject later
-initialization after teardown begins. Pre-init disposal shall be terminal and
-promise-identical across repeated calls.
+For each CODE, DISCUSS, and direct-Captain linked runtime, disposal requested
+during initialization shall share one retained teardown promise, wait for
+initialization cleanup, record at most one disposal boundary, and reject every
+later initialization after teardown begins. Disposal before initialization
+shall be terminal, and every later disposal shall return that same promise.
 The player calls shall fail unless the first call for each resolved
 player passes `resume: false`, the next same-player call passes the
 last returned token, a rotated token replaces it, an omitted token
