@@ -111,11 +111,11 @@ registry, or otherwise decide in-playbook FSM events.
 ### CAPTAIN-9
 
 Where the Playbook Captain shell uses cligent Captain primitives,
-the shell shall use one underlying Captain session for visible
-compiled Captain work, hidden lifecycle calls, and hidden sub-runtime
-judge calls, and shall serialize all Captain-backed calls through one
-abort-aware concurrency-one queue. Hidden lifecycle and sub-runtime judge calls shall pass
-`{ visibility: 'hidden' }` to `callCaptain`.
+the shell shall use one Captain agent configuration and shall serialize
+visible compiled Captain work, hidden lifecycle calls, and hidden sub-runtime
+judge calls through one abort-aware concurrency-one queue. Hidden lifecycle
+and sub-runtime judge calls shall pass `{ visibility: 'hidden' }` to
+`callCaptain`.
 Shell-owned command guidance and turn summaries shall use their separate
 visible prompt envelopes; the shell shall not wrap or rewrite a compiled
 runtime's `callCaptain` prompt.
@@ -133,11 +133,13 @@ to host players `code-coder` and `code-reviewer`.
 The wrapper shall route a sub-runtime `callPlayer(localRole, …,
 { resume })` to `context.callPlayer(<id>-<localRole>, …,
 { resume })`, return the host result's `resumeToken`, route sub-runtime
-`callCaptain(prompt, signal, { visibility })` through the shared
-Captain queue to `context.callCaptain(prompt, { visibility })`, preserving
-the requested visibility and returning Playbook's Captain status, final text,
-and error without player or resume-token fields, route sub-runtime `callJudge`
-through that same queue to hidden `context.callCaptain`, route `callPlaybook` through the stack protocol
+`callCaptain(prompt, signal, { visibility, resume, allowedTools })` through
+the shared Captain queue to
+`context.callCaptain(prompt, { visibility, resume, allowedTools })`,
+preserving the requested options and returning Playbook's Captain status,
+final text, and error without player or resume-token fields, route
+sub-runtime `callJudge` through that same queue to hidden
+`context.callCaptain`, route `callPlaybook` through the stack protocol
 in [CAPTAIN-29](#captain-29), and pass sub-runtime
 `emitStatus` and `emitTelemetry` calls through to the host in order.
 The shell shall also pass the resolved binding in the metadata given
@@ -151,6 +153,13 @@ Before passing through `playbook.fsm.state` telemetry, the wrapper
 shall mirror the active leaf's normalized state descriptor and any
 pending Boss questions or normalized error fields needed for the shell
 ledger.
+
+### CAPTAIN-31
+
+Where the shell hosts the compiled default Captain, when it forwards a visible routing or reassessment call or a hidden adjudication call, the shell shall request `resume: false` and `allowedTools: []`, preserve the exact prompt, and reject the call if the configured adapter cannot enforce the empty allowlist; the shared queue shall serialize these isolated calls without treating an agent conversation as workflow memory.
+Where the shell submits an ordinary idle turn to the default Captain runtime,
+it shall pass the original Boss text unchanged and shall not make a model call
+that can replace or paraphrase that text before runtime entry.
 
 ### CAPTAIN-20
 

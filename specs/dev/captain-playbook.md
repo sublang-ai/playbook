@@ -29,7 +29,7 @@ Where the default Captain runtime is constructed, the shell shall supply an immu
 
 ### CAPPLAY-8
 
-Where a compiled GEARS behavior has Captain act directly, the FSM shall invoke a first-class `captain` actor and the linked runtime shall call `PlaybookPorts.callCaptain` visibly; where Captain delegates behavior to a named player, the FSM shall invoke a distinct `player` actor and the runtime shall call `callPlayer`; the host shall serialize all direct Captain and judge work, including visible Captain and hidden `callJudge` calls, through one abort-aware concurrency-one queue and shall trace Captain calls with paired `captain.call.started` and `captain.call.finished` events.
+Where a compiled GEARS behavior has Captain decide routing or reassess results, the FSM shall invoke a first-class `captain` actor and the linked runtime shall call `PlaybookPorts.callCaptain` visibly with a fresh-session request and an explicit empty tool allowlist; where Captain delegates behavior to a named player, the FSM shall invoke a distinct `player` actor and the runtime shall call `callPlayer`; the host shall serialize all Captain and judge work, including visible Captain and hidden `callJudge` calls, through one abort-aware concurrency-one queue, apply the same fresh tool-free isolation to the default Captain's hidden adjudication, fail closed when the adapter cannot enforce it, and trace Captain calls with paired `captain.call.started` and `captain.call.finished` events.
 
 ### CAPPLAY-9
 
@@ -46,3 +46,14 @@ the selected playbook id, `ok` / `aborted` / `error` status, actual JSON-safe
 child output, or a compact `{ name, message }` error. It shall not retain a
 child session id, call id, child state, stack, or opaque runtime result in the
 Captain-visible completed-results context.
+
+### CAPPLAY-16
+
+Where SLC compiles the default Captain source, explicit result contracts shall be source metadata outside acting-agent blockquotes and the verifier shall compare them with every generated invocation result map; the initial routing state shall declare only question and delegation outcomes plus universal Boss-reply suspension, ready-state entry shall carry the exact Boss text without classification, and any classifier used after parking shall select only an event kind while the runtime attaches the original text.
+Visible Captain prompts shall contain only the supplied evidence and human
+decision instructions, with no guard names, result property names, control
+JSON request, workspace-investigation request, or private chain-of-thought
+request. For a question or final outcome, the linked runtime shall preserve
+the corresponding visible Captain call's exact final text as `question` or
+`response`; hidden adjudication may select the guard and structural plan
+fields but shall not replace that human prose.

@@ -94,12 +94,19 @@ valid CODE options do not construct a runtime until engagement;
 `handleBossTurn` before `init` rejects; CODE player calls reach
 `context.callPlayer` with the bound host player ids `code-coder` /
 `code-reviewer`; CODE judge calls reach `context.callCaptain` with
-`{ visibility: 'hidden' }`; a runtime `callCaptain` reaches
-`context.callCaptain` with its exact prompt and requested visibility and
+their requested hidden visibility and isolation options; a runtime
+`callCaptain` reaches `context.callCaptain` with its exact prompt and
+requested visibility, resume, and tool-allowlist options and
 returns Captain status, final text, or error without a player resume token;
 and compiled Captain work, lifecycle classification, shell-owned visible
-calls, and sub-runtime judge calls use the same Captain session primitives and
-never overlap.
+calls, and sub-runtime judge calls use the same Captain configuration and
+queue and never overlap.
+
+### CAPTAIN-32
+
+Verifies: [CAPTAIN-7](../dev/playbook-captain.md#captain-7), [CAPTAIN-9](../dev/playbook-captain.md#captain-9), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), [CAPTAIN-31](../dev/playbook-captain.md#captain-31)
+
+Where the shell hosts the real compiled default Captain, when an ordinary idle Boss turn is routed and adjudicated, the integration suite shall fail unless the runtime receives the original text unchanged, every visible decision and hidden adjudication call carries `resume: false` and `allowedTools: []`, calls remain single-flight, and an adapter unable to enforce the empty allowlist fails before an investigative agent turn can run.
 
 ## Registry loading and visibility
 

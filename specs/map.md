@@ -36,6 +36,7 @@ meta.md     The spec of specs
 | DR-010 | [010-playbook-session-tracing-and-resume.md](decisions/010-playbook-session-tracing-and-resume.md) | Immutable per-runtime playbook session UUIDs, boundary-complete ordered traces, and explicit per-player fresh/resume selection from authoritative adapter tokens |
 | DR-011 | [011-composable-playbook-execution.md](decisions/011-composable-playbook-execution.md) | XState parallel-region joins, structured runtime state, function-style nested playbook calls, a live Captain session stack, and causally linked trace schema v2 |
 | DR-012 | [012-default-captain-playbook.md](decisions/012-default-captain-playbook.md) | Compiled default Captain policy, first-class Captain calls, dynamic sequential child plans, and deterministic host-owned stack routing |
+| DR-013 | [013-routing-only-captain-control.md](decisions/013-routing-only-captain-control.md) | Routing-only Captain policy with exact Boss input, isolated control calls, out-of-prompt machine contracts, and exact visible-response ownership |
 
 ## Iterations
 
@@ -57,7 +58,8 @@ meta.md     The spec of specs
 | IR-016 | [016-generic-playbook-cli-and-registry.md](iterations/016-generic-playbook-cli-and-registry.md) | Decompose DR-009: generic `playbook` CLI, multi-playbook registry loaded via explicit `from` modules, profile-based settings, namespaced `<id>-<role>` players, active-playbook tmux-play visibility, registry-owned park states and summary policy, and retirement of `playbook-code` / `./code/tmux-play` / `captain.options.code` / PBCODE |
 | IR-017 | [017-playbook-session-trace-resume.md](iterations/017-playbook-session-trace-resume.md) | Give every runtime session an immutable UUID and ordered full boundary trace, with explicit player-session isolation and continuation through adapter resume tokens |
 | IR-018 | [018-composable-playbook-execution.md](iterations/018-composable-playbook-execution.md) | Run independent player tasks concurrently and let live playbooks call, suspend for, and resume from nested enabled playbooks |
-| IR-019 | [019-default-captain-playbook.md](iterations/019-default-captain-playbook.md) | Compile and host a generic Captain that can clarify, answer, and execute finite sequential plans of nested playbook calls |
+| IR-019 | [019-default-captain-playbook.md](iterations/019-default-captain-playbook.md) | Compile and host the original generic Captain routing and sequential nested-call policy, with initial direct handling superseded by IR-020 |
+| IR-020 | [020-routing-only-captain-control.md](iterations/020-routing-only-captain-control.md) | Prevent Captain self-execution through exact input provenance, tool-free fresh calls, clarify-or-delegate routing, and meaningful terminal prose |
 
 ## Packages
 
@@ -66,14 +68,14 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-captain.md](user/playbook-captain.md) | Playbook Captain host Boss surface: external slash selection, lazy compiled-Captain routing, lifecycle-only fail-open delivery, nested call/return, active-leaf visibility, external lifecycle status, parking, dismissal, and optional summaries |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain host behavior: registry loading, lazy internal root, lifecycle classifier, six-port bridge, shared Captain queue, causal UUID stack, external-leaf visibility, trace pass-through, summaries, telemetry, and LIFO lifecycle |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain host behavior: registry loading, lazy internal root, lifecycle classifier, option-preserving isolated Captain bridge, shared queue, causal UUID stack, external-leaf visibility, trace pass-through, summaries, telemetry, and LIFO lifecycle |
 | test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for lazy routing, fail-open lifecycle delivery, registry/reserved-name validation, direct Captain and player bridges, visibility/status privacy, causal nesting, summaries, parking, dismissal, and LIFO disposal |
 
 ### CAPPLAY
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [captain-playbook.md](user/captain-playbook.md) | Default generic Captain behavior for direct answers, material clarification, finite sequential delegation plans, and active-leaf Boss routing |
+| user | [captain-playbook.md](user/captain-playbook.md) | Default generic Captain behavior for routing-only clarification, finite sequential delegation plans, meaningful final responses, and active-leaf Boss routing |
 | dev | [captain-playbook.md](dev/captain-playbook.md) | Captain source, canonical compiled/verification bundle, first-class Captain port, sanitized catalog, dynamic child calls, and lazy internal-root hosting |
 | test | [captain-playbook.md](test/captain-playbook.md) | Compilation and shell integration tests for Captain planning, fail-open nested pause/return, direct-call visibility, internal status/visibility suppression, trace completeness, and privacy |
 

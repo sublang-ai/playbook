@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+The initial routing, Captain-call isolation, input provenance, and terminal-presentation decisions are superseded by [DR-013](013-routing-only-captain-control.md).
 
 ## Context
 

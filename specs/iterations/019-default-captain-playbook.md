@@ -6,6 +6,7 @@
 ## Goal
 
 Compile the generic Captain's routing and multi-playbook planning policy from maintained natural language and host it over the causal nested runtime stack.
+IR-020 supersedes this iteration's initial direct-answer routing and shared-agent-session assumptions.
 
 ## Deliverables
 

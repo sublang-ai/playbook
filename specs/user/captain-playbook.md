@@ -10,7 +10,7 @@ The Playbook Captain shell remains responsible for hosting it and for the nested
 
 ### CAPPLAY-1
 
-Where no selected playbook is active, when Boss submits an ordinary intent, the default Captain playbook shall either handle the intent directly, ask one concise question whose answer would materially change routing or call order, or delegate the intent to an enabled specialized playbook.
+Where no selected playbook is active, when Boss submits an ordinary intent, the default Captain playbook shall consider the exact Boss text only as a routing request and either ask one concise question whose answer would materially change routing or call order, or delegate the complete intent to an enabled specialized playbook; it shall not investigate, inspect the workspace, use tools, perform the requested work, or terminate directly.
 
 ### CAPPLAY-2
 
@@ -39,7 +39,7 @@ shall continue from that result.
 
 ### CAPPLAY-5
 
-When the default Captain answers directly or completes its plan, it shall give Boss one concise response and shall not expose internal state ids, session ids, call ids, stack data, hidden control data, or private reasoning.
+When the default Captain completes its plan, it shall give Boss one concise response that communicates the result or an actionable conclusion, shall not merely acknowledge or announce completion, and shall not expose internal state ids, session ids, call ids, stack data, hidden control data, or private reasoning.
 When it reassesses a child return, the evidence visible to Captain shall be
 limited to the selected playbook, outcome status, actual child output, or a
 compact error message; runtime identities and child state remain private.
