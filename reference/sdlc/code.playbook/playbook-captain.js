@@ -379,7 +379,11 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (!activeContext) {
                 throw new Error('callCaptain invoked outside a Boss turn');
             }
-            const result = await callCaptainQueued(frame, activeContext, prompt, { visibility: options.visibility }, signal);
+            const result = await callCaptainQueued(frame, activeContext, prompt, {
+                visibility: options.visibility,
+                resume: options.resume,
+                allowedTools: options.allowedTools,
+            }, signal);
             return {
                 status: result.status,
                 ...(result.finalText !== undefined
@@ -392,7 +396,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (!activeContext) {
                 throw new Error('callJudge invoked outside a Boss turn');
             }
-            const result = await callCaptainQueued(frame, activeContext, prompt, { visibility: 'hidden' }, signal);
+            const result = await callCaptainQueued(frame, activeContext, prompt, { visibility: 'hidden', resume: false, allowedTools: [] }, signal);
             if (result.status !== 'ok') {
                 throw new Error(result.error ?? `callCaptain status "${result.status}"`);
             }
@@ -1095,13 +1099,13 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
     };
     const callVisibleChat = async (frame, context, message) => {
-        const result = await callCaptainQueued(frame, context, visibleChatEnvelope(message), undefined, context.signal);
+        const result = await callCaptainQueued(frame, context, visibleChatEnvelope(message), { visibility: 'visible', resume: false, allowedTools: [] }, context.signal);
         if (result.status !== 'ok') {
             throw new Error(result.error ?? `callCaptain status "${result.status}"`);
         }
     };
     const callVisibleTurnSummary = async (frame, context, input) => {
-        const result = await callCaptainQueued(frame, context, visibleTurnSummaryEnvelope(input), undefined, context.signal);
+        const result = await callCaptainQueued(frame, context, visibleTurnSummaryEnvelope(input), { visibility: 'visible', resume: false, allowedTools: [] }, context.signal);
         if (result.status !== 'ok') {
             throw new Error(result.error ?? `callCaptain status "${result.status}"`);
         }
@@ -1145,7 +1149,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
         let decision;
         try {
-            const result = await callCaptainQueued(leaf, context, hiddenLifecycleEnvelope(turn.prompt), { visibility: 'hidden' }, context.signal);
+            const result = await callCaptainQueued(leaf, context, hiddenLifecycleEnvelope(turn.prompt), { visibility: 'hidden', resume: false, allowedTools: [] }, context.signal);
             if (result.status === 'ok' && result.finalText !== undefined) {
                 decision = parseLifecycleDecision(result.finalText);
             }

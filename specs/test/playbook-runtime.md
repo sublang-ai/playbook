@@ -321,7 +321,8 @@ unless `PlayerResult`
 exposes optional `resumeToken`, unless `callPlayer` requires explicit
 resume options, unless `CaptainResult.status` admits `ok`, `aborted`, and
 `error` without exposing a player resume token, unless `CaptainCallOptions`
-requires visible-or-hidden visibility,
+requires visible-or-hidden visibility plus explicit resume and tool-allowlist
+selection,
 unless `PlaybookRuntime.init` accepts a causal
 `PlaybookSession`, and unless `handleBossInput` and
 `resumePlaybookCall` return `PlaybookRunResult`; its import graph

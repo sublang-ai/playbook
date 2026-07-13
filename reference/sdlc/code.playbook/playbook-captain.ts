@@ -647,7 +647,11 @@ export function createPlaybookCaptainShell(
         frame,
         activeContext,
         prompt,
-        { visibility: options.visibility },
+        {
+          visibility: options.visibility,
+          resume: options.resume,
+          allowedTools: options.allowedTools,
+        },
         signal,
       );
       return {
@@ -666,7 +670,7 @@ export function createPlaybookCaptainShell(
         frame,
         activeContext,
         prompt,
-        { visibility: 'hidden' },
+        { visibility: 'hidden', resume: false, allowedTools: [] },
         signal,
       );
       if (result.status !== 'ok') {
@@ -1489,7 +1493,7 @@ export function createPlaybookCaptainShell(
       frame,
       context,
       visibleChatEnvelope(message),
-      undefined,
+      { visibility: 'visible', resume: false, allowedTools: [] },
       context.signal,
     );
     if (result.status !== 'ok') {
@@ -1513,7 +1517,7 @@ export function createPlaybookCaptainShell(
       frame,
       context,
       visibleTurnSummaryEnvelope(input),
-      undefined,
+      { visibility: 'visible', resume: false, allowedTools: [] },
       context.signal,
     );
     if (result.status !== 'ok') {
@@ -1571,7 +1575,7 @@ export function createPlaybookCaptainShell(
         leaf,
         context,
         hiddenLifecycleEnvelope(turn.prompt),
-        { visibility: 'hidden' },
+        { visibility: 'hidden', resume: false, allowedTools: [] },
         context.signal,
       );
       if (result.status === 'ok' && result.finalText !== undefined) {

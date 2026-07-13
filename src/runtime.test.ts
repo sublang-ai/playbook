@@ -185,6 +185,8 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       interfaceProperties(linkSpec, 'PlayerCallOptions'),
     );
     expect(interfaceProperties(runtimeDts, 'CaptainCallOptions')).toEqual([
+      'allowedTools:readonlystring[]',
+      'resume:string|false',
       "visibility:'visible'|'hidden'",
     ]);
     expect(interfaceProperties(runtimeDts, 'CaptainCallOptions')).toEqual(
