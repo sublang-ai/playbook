@@ -127,6 +127,14 @@ fields.
 Guard names shall be specified and interpreted **per state**, not as a global union.
 A global union encourages name reuse with divergent semantics and couples unrelated states.
 Shared helpers may accept `string`, but each state's `invoke.input.result` is the authoritative local contract.
+For an acting GEARS item, the compiler shall derive that contract only from
+the ordered bullets under the item's out-of-blockquote `Results:` label.
+Every declared guard name shall match `[A-Za-z_$][A-Za-z0-9_$]*`.
+It shall preserve every guard name, order, and description verbatim, reject a
+missing, duplicate, blank, or malformed declaration, and shall not infer a
+result contract from acting-prompt prose or transition implementation.
+The item's blockquote alone becomes `invoke.input.prompt`; the `Results:`
+label and bullets shall never enter that prompt.
 Each result description shall name every additional output field its accepting
 guard requires, using the exact case-sensitive property names. For example, a
 delegation or continuing-call description whose guard reads the planned child
@@ -142,9 +150,9 @@ For the default generic Captain decide-call-observe pattern, the local guard
 discriminants are a stable compiler contract, not names the compiler may
 invent:
 
-- initial routing uses `direct` with required `response`, `question` with
-  required `question`, and `delegation` with required `remainingPlan`,
-  `nextPlaybookId`, and `nextPlaybookInput`;
+- initial routing uses `question` with required `question` and `delegation`
+  with required `remainingPlan`, `nextPlaybookId`, and
+  `nextPlaybookInput`; it has no direct or terminal result;
 - post-child reassessment uses `final` with required `response`,
   `followUpQuestion` with required `question`, and `continuing` with required
   `remainingPlan`, `nextPlaybookId`, and `nextPlaybookInput`.
@@ -227,7 +235,7 @@ A spec item that still contains duplicate prompt lines is malformed; the compile
 Items carrying the same `Parallel group: <id>` metadata shall compile into one
 compound state with `type: 'parallel'` and one region per item [[12]].
 Each member shall be a delegated-player item; a direct-Captain or nested-call
-member is malformed because those actor kinds share one Captain session or one
+member is malformed because those actor kinds share one Captain control lane or one
 pending-child slot. Each region shall contain a delegated-player working leaf
 and a local final state; the working leaf retains the item's stable state id,
 `sourceItem`, player, prompt, and result contract.

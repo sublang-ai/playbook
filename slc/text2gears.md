@@ -98,6 +98,41 @@ When Boss gives an intent, Captain shall decide how to handle it:
 > Ask one question only when its answer would materially change routing.
 ```
 
+### Result contracts
+
+When Source gives an acting behavior more than one possible outcome,
+text2gears shall emit its machine-facing result contract immediately after the
+complete blockquote, outside the acting prompt, in this exact form:
+
+```markdown
+Results:
+- `question`: Captain asked one material question. Output shall include `question: <verbatim final text>`.
+- `delegation`: Captain selected a call. Output shall include `remainingPlan: <JSON-safe array>`, `nextPlaybookId: <stable id>`, and `nextPlaybookInput: <complete request>`.
+```
+
+`Results:` shall be a plain label rather than a heading.
+Every result shall occupy one bullet with exactly a backtick-delimited guard
+name, a colon, and a non-empty description.
+The guard name shall match the ASCII identifier pattern
+`[A-Za-z_$][A-Za-z0-9_$]*`.
+The bullet order is authoritative, guard names are unique within the item, and
+the description shall name every required output property with its exact
+case-sensitive identifier.
+
+Result metadata is compiler control data, not part of the acting agent's
+prompt.
+text2gears shall not put guard names, result-property schema, JSON control
+instructions, or adjudicator instructions inside the blockquote unless Source
+explicitly requires the acting agent to show that machine syntax to the user.
+It shall move Source's outcome contract into `Results:` while preserving the
+human domain instructions in the blockquote.
+It shall not emit the framework-owned `needsBossReply` result; gears2fsm adds
+that universal result for every Captain- or player-invoking state.
+
+Where Source restricts an initial Captain to routing, text2gears shall preserve
+only the authored question and delegation outcomes and shall not infer a
+direct-answer or terminal result merely because Captain is the acting agent.
+
 ### Boss-reply continuation
 
 Where a direct-Captain or delegated-player behavior may ask Boss a question

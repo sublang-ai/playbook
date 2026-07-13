@@ -186,6 +186,8 @@ interface PlayerCallOptions {
 
 interface CaptainCallOptions {
   visibility: 'visible' | 'hidden';
+  resume: string | false;
+  allowedTools: readonly string[];
 }
 
 interface PlayerResult {
@@ -239,9 +241,12 @@ type PlaybookCallStart =
 The runtime treats `status !== 'ok'` as a player failure and routes it through the FSM's error path (§Abort).
 
 `callCaptain` runs a direct-Captain FSM actor against the host's Captain
-session. The linked runtime shall pass `{ visibility: 'visible' }` for authored
-workflow calls. `CaptainResult` carries no resume token or player-continuation
-selection: the host owns one Captain session and its continuity. A non-`ok`
+agent. The linked runtime shall pass
+`{ visibility: 'visible', resume: false, allowedTools: [] }` for authored
+workflow calls so XState context, rather than an agent conversation, owns
+workflow continuity and the acting Captain cannot investigate through tools.
+`CaptainResult` carries no resume token or player-continuation selection.
+A non-`ok`
 result, or an `ok` result without `finalText`, shall reject the actor through
 the FSM's error path.
 Outside a signal-driven abort, those invalid direct-Captain results are
@@ -281,7 +286,7 @@ require a string reply and re-check the combined signal before tracing or
 parsing success, so a non-cooperative late judge cannot outlive cancellation.
 The host shall serialize `callCaptain` and `callJudge` together through one
 shared abort-aware concurrency-one FIFO because both use the same single-flight
-Captain session, even when distinct player ports overlap [[4]]. A direct Captain
+Captain lane, even when distinct player ports overlap [[4]]. A direct Captain
 call's subsequent adjudication shall enter that same queue only after the
 visible call has settled; the linked runtime shall not hold one queue lease
 while requesting the other port.
@@ -541,9 +546,14 @@ being silently repaired or discarded.
 When a direct Captain task resumes from its own Boss question, the composer
 shall prepend the same continuation preamble and labelled Q&A blocks defined in
 §Player prompt composition. The runtime shall pass the complete composed prompt
-once to `callCaptain` with `{ visibility: 'visible' }`; it shall not expose the
+once to `callCaptain` with
+`{ visibility: 'visible', resume: false, allowedTools: [] }`; it shall not expose the
 subsequent adjudicator prompt or structured judge reply through that visible
 call.
+The composed prompt shall contain only the GEARS blockquote, typed runtime
+evidence blocks, and the continuation preamble.
+It shall not append the state's result map, guard names, result-property
+schema, adjudication request, workspace context, or tool instructions.
 The shared Captain composer shall replace every known placeholder whose
 matching typed field is present in the supplied input. It shall not choose one
 exclusive replacement set from `stateId`, source-item identity, or another
@@ -560,12 +570,26 @@ nonconformant.
 ## Boss-event mapping
 
 The FSM's `events` union enumerates every Boss-originated event.
-The runtime receives Boss input as a free-form string (`handleBossInput.text`) and shall classify each non-empty turn into one of the FSM's events plus its payload, or no FSM action, by invoking `callJudge`.
+The runtime receives Boss input as a free-form string
+(`handleBossInput.text`).
+Where the current ready or reconstructed terminal machine accepts exactly one
+ordinary textual entry event and no Boss question is pending, the runtime
+shall send that event deterministically and attach the exact original text to
+its declared textual payload field without invoking `callJudge`.
+The default Captain's ready entry is
+`{ type: 'BOSS_INTENT', bossIntent: turn.text }`.
+All other non-empty turns shall use `callJudge` only to choose one of the FSM's
+event kinds and non-text routing fields, or no FSM action.
+For `BOSS_INTENT` and `BOSS_INTERRUPT`, the runtime shall attach the exact
+original text as `bossIntent`; for `BOSS_REPLY`, it shall attach the exact
+original text as `answer`.
+The classifier prompt shall neither request nor accept a copy of those fields,
+and classifier-authored paraphrases shall never become machine context.
 Empty or whitespace-only text produces no event, judge call, Captain call,
 player call, status emission, or FSM transition; its received and settled
 session-trace events are still emitted.
 
-The classifier prompt shall demand JSON against the FSM's typed event union and any state-specific Boss input contract, including the payload fields required for each event.
+The classifier prompt shall demand JSON against the FSM's typed event union and any state-specific Boss input contract, including non-text routing payload fields required for each event but excluding the runtime-owned textual fields above.
 Fields the FSM's event union declares optional shall stay optional in the classifier contract and the reply parser; the classifier shall not promote them to required.
 The runtime shall parse the judge reply tolerantly before validating the
 event. It shall recover the intended JSON object from surrounding prose or a
@@ -592,9 +616,11 @@ leave the actor unchanged, and return `no-action` after emissions drain.
 Host-owned runtime options, player bindings, and enabled-playbook catalogs are
 not Boss-event payload. The classifier schema and parser shall not invite or
 accept them, and classified prose shall never overwrite their machine context.
-Every recovered event object shall have exactly the keys declared for its
-selected event arm. Extra own keys reject the classification; the parser shall
-not accept and discard injected catalog, option, state, or routing fields.
+Every recovered classifier object shall have exactly `type` plus the declared
+non-text routing keys for its selected event arm. Extra own keys, including a
+classifier-authored `bossIntent` or `answer`, reject the classification; the
+parser shall not accept and discard injected catalog, option, state, or
+routing fields.
 `NO_ACTION` in particular is exactly `{ type: 'NO_ACTION' }`.
 When the FSM supports a Boss-reply suspension state, the prompt shall inspect
 the actor snapshot context and include each exact pending Boss question,
@@ -614,7 +640,7 @@ question and reply context before new work begins.
 
 A playbook runtime shall not define slash-prefix commands for states or features inside that playbook.
 The `/command` namespace is reserved for host-level or playbook-selection UX before a turn reaches `handleBossInput`.
-If a host forwards text beginning with `/` to `handleBossInput`, the runtime treats it as ordinary Boss text and classifies it through `callJudge`.
+If a host forwards text beginning with `/` to `handleBossInput`, the runtime treats it as ordinary Boss text and maps it through the same deterministic-or-classified Boss-event rules.
 
 Hosts that receive structured control input shall resolve host-level concerns before choosing a playbook runtime.
 Once they call `handleBossInput`, they shall pass the Boss content as text and shall not pre-classify in-playbook FSM events or rely on slash forms as a runtime protocol.
@@ -633,6 +659,18 @@ Required-field extraction shall recognize both an exact backticked property
 name such as `` `question` `` and the standard annotated form
 `` `question: <verbatim question text>` ``; in either form only `question` is
 the JSON property name.
+For a direct Captain result, `question` and `response` are human-presentation
+fields owned by the visible call rather than fields authored by the hidden
+judge.
+The adjudicator shall select the guard and supply only other structural fields
+required by that guard.
+After validating that selection, the runtime shall inject the exact non-empty
+`CaptainResult.finalText` as the selected output's `question` or `response`.
+It shall reject a judge reply that supplies either presentation field as an
+undeclared extra key, so hidden adjudication cannot replace, paraphrase, or
+decorate prose Boss already saw.
+Delegated-player adjudication retains extraction of every required field from
+the judge reply, including a player-authored Boss question.
 The adjudicator shall use the same document-order tolerant JSON recovery as
 the Boss classifier. Unlike invalid classification, a reply from which no
 object can be recovered, an undeclared guard, or a missing required field is a
@@ -645,8 +683,9 @@ Two default adjudication strategies, in selection order:
   names the source item's actor (and delegated player where applicable),
   includes the actor's verbatim output,
   lists the `result` keys with their descriptions, and demands a JSON
-  `{ guard, …payloadFields }` answer keyed to exactly one of the
-  declared guards. The judge prompt shall not interpret the player's
+  `{ guard, …structuralPayloadFields }` answer keyed to exactly one of the
+  declared guards, excluding the runtime-owned direct-Captain `question` and
+  `response` fields above. The judge prompt shall not interpret the player's
   output, paraphrase it, or alter the FSM's `result` text — it carries
   the description verbatim.
 - **Marker-parse** (delegated-player alternative): a deterministic parser that
@@ -661,8 +700,9 @@ LLM judge so their visible prose remains human-readable and carries no marker
 or control JSON. Their adjudicator call uses purpose
 `captain-output-adjudication` and remains hidden at the host adapter.
 
-When the adjudicated Captain prose supplies a terminal `response` that the FSM
-returns, that already-visible prose is the Boss presentation. The linked
+When the direct Captain result selects a terminal `response`, the exact
+already-visible `CaptainResult.finalText` is the machine response and Boss
+presentation. The linked
 runtime shall not make a second visible Captain call or expose the hidden
 structured adjudication merely to present the same response.
 
@@ -888,8 +928,9 @@ The `PlaybookRuntime` shall:
   sequence counters so a permitted retry starts with trace sequence `1`.
 - Per `handleBossInput`:
   1. Allocate a runtime-local turn id and trace the exact Boss text.
-  2. Classify `turn.text` through the Boss-event mapping.
-     If it produces no event, return after draining any port emissions.
+  2. Map `turn.text` through the Boss-event mapping, using deterministic exact
+     entry where applicable and classification otherwise.
+     If mapping produces no event, return after draining any port emissions.
      If the classifier port rejects, emit and drain the Boss-settled error
      boundary, send no event, leave the actor unchanged (including a terminal
      actor), and reject the original error. If the port resolves but its reply
