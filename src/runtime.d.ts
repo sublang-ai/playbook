@@ -9,6 +9,8 @@ export interface PlayerCallOptions {
 }
 export interface CaptainCallOptions {
     visibility: 'visible' | 'hidden';
+    resume: string | false;
+    allowedTools: readonly string[];
 }
 export interface CaptainResult {
     status: 'ok' | 'aborted' | 'error';

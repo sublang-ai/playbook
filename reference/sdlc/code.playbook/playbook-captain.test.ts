@@ -62,6 +62,18 @@ type CaptainCallHook = (
   options: CaptainCallOptions | undefined,
 ) => void;
 
+const ISOLATED_VISIBLE_CAPTAIN_OPTIONS = {
+  visibility: 'visible',
+  resume: false,
+  allowedTools: [],
+} as const;
+
+const ISOLATED_HIDDEN_CAPTAIN_OPTIONS = {
+  visibility: 'hidden',
+  resume: false,
+  allowedTools: [],
+} as const;
+
 type HandleHook = (
   runtime: FakeRuntime,
   turn: { text: string; signal: AbortSignal },
@@ -554,7 +566,9 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
     expect(registry.runtimes[0]?.inputs).toEqual([]);
     expect(context.captainCalls).toHaveLength(1);
-    expect(context.captainCalls[0]?.options).toBeUndefined();
+    expect(context.captainCalls[0]?.options).toEqual(
+      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
+    );
     expect(context.captainCalls[0]?.prompt).toContain('visible Boss chat');
     expect(context.captainCalls[0]?.prompt).toContain(
       'Ask what task to run with /code.',
@@ -599,21 +613,43 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(session.telemetry).toEqual([]);
   });
 
-  it('retains the real Captain ready state after malformed initial classification', async () => {
+  it('enters exact Boss text directly and parks on a routing question', async () => {
     const registry = fakeCodeEntry();
     const shell = makeShell(registry);
     const session = stubSession();
+    const bossText = 'Route THIS request exactly: preserve /slashes and CASE.';
+    const question = 'Should I route this to the CODE workflow?';
     const context = stubContext([
-      { status: 'ok', turnId: 1, finalText: 'not classification JSON' },
+      (prompt, options) => {
+        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
+        expect(prompt).toContain(`Boss intent: ${bossText}`);
+        expect(prompt).not.toContain('nextPlaybookId');
+        expect(prompt).not.toContain('remainingPlan');
+        return { status: 'ok', turnId: 1, finalText: question };
+      },
+      (prompt, options) => {
+        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
+        expect(prompt).toContain(question);
+        return captainJson({ guard: 'question' });
+      },
     ]);
 
     await shell.init!(session.session);
     await expect(
-      shell.handleBossTurn(turn('route this intent'), context.context),
+      shell.handleBossTurn(turn(bossText), context.context),
     ).resolves.toBeUndefined();
 
-    expect(context.captainCalls).toHaveLength(1);
+    expect(context.captainCalls).toHaveLength(2);
+    expect(
+      context.captainCalls.some(({ prompt }) =>
+        prompt.includes('Boss-event classifier'),
+      ),
+    ).toBe(false);
+    expect(registry.createRuntime).not.toHaveBeenCalled();
     expect(session.statuses).toEqual([]);
+    expect(
+      JSON.stringify(telemetryWithTopic(session, 'playbook.fsm.state')),
+    ).toContain(question);
     expect(
       telemetryWithTopic(session, 'playbook.captain.fsm.state').at(-1),
     ).toMatchObject({
@@ -625,38 +661,65 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     await shell.prepareDispose!();
   });
 
-  it('drives the real default Captain directly without exposing its control state', async () => {
-    const registry = fakeCodeEntry();
+  it('routes the real default Captain through a child before meaningful completion', async () => {
+    const bossText =
+      'Review parseAdjudication for prototype-chain guard lookup; keep this punctuation: /**proto**.';
+    const childInput =
+      'Review parseAdjudication for prototype-chain guard lookup and report the concrete conclusion.';
+    const registry = fakeCodeEntry(async (_runtime, runtimeTurn) => {
+      expect(runtimeTurn.text).toBe(childInput);
+      return terminalResult('done', {
+        conclusion: 'Use an own-property membership check for declared guards.',
+      });
+    });
+    delete registry.entry.summaryPolicy;
     const shell = makeShell(registry, {
       sessionIds: ['10000000-0000-4000-8000-000000000001'],
     });
     const session = stubSession();
     const context = stubContext([
       (prompt, options) => {
-        expect(options).toEqual({ visibility: 'hidden' });
-        expect(prompt).toMatch(/Boss text:\s*answer this directly/);
-        return captainJson({
-          type: 'BOSS_INTENT',
-          bossIntent: 'answer this directly',
-        });
-      },
-      (prompt, options) => {
-        expect(options).toEqual({ visibility: 'visible' });
-        expect(prompt).toContain('Boss intent: answer this directly');
+        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
+        expect(prompt).toContain(`Boss intent: ${bossText}`);
         expect(prompt).toContain('"id":"code"');
+        expect(prompt).not.toContain('nextPlaybookId');
+        expect(prompt).not.toContain('remainingPlan');
         return {
           status: 'ok',
-          turnId: 2,
-          finalText: 'Here is the direct answer.',
+          turnId: 1,
+          finalText: 'I will route this review to the CODE playbook.',
         };
       },
       (prompt, options) => {
-        expect(options).toEqual({ visibility: 'hidden' });
-        expect(prompt).toContain('Here is the direct answer.');
+        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
+        expect(prompt).toContain(
+          'I will route this review to the CODE playbook.',
+        );
         return captainJson({
-          guard: 'direct',
-          response: 'Here is the direct answer.',
+          guard: 'delegation',
+          remainingPlan: [],
+          nextPlaybookId: 'code',
+          nextPlaybookInput: childInput,
         });
+      },
+      (prompt, options) => {
+        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
+        expect(prompt).toContain(
+          'Use an own-property membership check for declared guards.',
+        );
+        return {
+          status: 'ok',
+          turnId: 3,
+          finalText:
+            'The CODE review found that declared guards need an own-property membership check.',
+        };
+      },
+      (prompt, options) => {
+        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
+        expect(prompt).toContain(
+          'The CODE review found that declared guards need an own-property membership check.',
+        );
+        return captainJson({ guard: 'final' });
       },
     ]);
 
@@ -664,11 +727,20 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(telemetryWithTopic(session, 'playbook.trace')).toEqual([]);
     expect(context.captainCalls).toEqual([]);
 
-    await shell.handleBossTurn(turn('answer this directly'), context.context);
+    await shell.handleBossTurn(turn(bossText), context.context);
 
-    expect(registry.createRuntime).not.toHaveBeenCalled();
-    expect(context.captainCalls).toHaveLength(3);
-    expect(session.statuses).toEqual([]);
+    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
+    expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
+      childInput,
+    ]);
+    expect(context.captainCalls).toHaveLength(4);
+    expect(
+      context.captainCalls.map(({ options }) => options?.visibility),
+    ).toEqual(['visible', 'hidden', 'visible', 'hidden']);
+    expect(session.statuses.map(({ message }) => message)).toEqual([
+      '◇ /code called by Captain',
+      '◇ /code returned to Captain',
+    ]);
     const visiblePrompts = context.captainCalls
       .filter(({ options }) => options?.visibility === 'visible')
       .map(({ prompt }) => prompt)
@@ -680,6 +752,13 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(visiblePrompts).not.toContain(
       '10000000-0000-4000-8000-000000000001',
     );
+    expect(visiblePrompts).not.toContain('nextPlaybookId');
+    expect(visiblePrompts).not.toContain('remainingPlan');
+    expect(
+      context.captainCalls.some(({ prompt }) =>
+        prompt.includes('Boss-event classifier'),
+      ),
+    ).toBe(false);
 
     const traces = telemetryWithTopic(session, 'playbook.trace').map(
       ({ payload }) => payload as { playbookId?: unknown; type?: unknown },
@@ -909,9 +988,11 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     const internal = fakeInternalCaptain(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await Promise.all([
-        runtime.ports.callCaptain('visible workflow call', runtimeTurn.signal, {
-          visibility: 'visible',
-        }),
+        runtime.ports.callCaptain(
+          'visible workflow call',
+          runtimeTurn.signal,
+          ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
+        ),
         runtime.ports.callJudge('hidden judge call', runtimeTurn.signal),
       ]);
       return quiescentResult();
@@ -1002,7 +1083,11 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       runtimeCall = runtime.ports.callCaptain(
         'unfinished runtime Captain work',
         runtimeTurn.signal,
-        { visibility: 'visible' },
+        {
+          visibility: 'visible',
+          resume: 'runtime-owned-session',
+          allowedTools: ['Read'],
+        },
       );
       void runtimeCall.catch(() => undefined);
       return quiescentResult();
@@ -1078,6 +1163,8 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
     expect(hiddenCaptainCalls(context)[0]?.options).toEqual({
       visibility: 'hidden',
+      resume: false,
+      allowedTools: [],
     });
     expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
       'first task',
@@ -1172,6 +1259,8 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(registry.runtimes[0]?.disposeCount).toBe(1);
     expect(hiddenCaptainCalls(context)[0]?.options).toEqual({
       visibility: 'hidden',
+      resume: false,
+      allowedTools: [],
     });
     expect(context.captainCalls).toHaveLength(1);
     expect(hiddenCaptainCalls(context)[0]?.prompt).toContain(
@@ -1259,7 +1348,11 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
-      captainJson({ decision: 'deliver' }),
+      (prompt, options) => {
+        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
+        expect(prompt).toContain('lifecycle classifier');
+        return captainJson({ decision: 'deliver' });
+      },
       captainJson({ decision: 'deliver' }),
     ]);
 
@@ -1342,6 +1435,9 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       data: undefined,
     });
     expect(context.captainCalls).toHaveLength(1);
+    expect(context.captainCalls[0]?.options).toEqual(
+      ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
+    );
   });
 
   it('rejects a different registered command while CODE is engaged', async () => {
@@ -1360,7 +1456,9 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     const visibleRejection = context.captainCalls.find((call) =>
       call.prompt.includes('/code is already running'),
     );
-    expect(visibleRejection?.options).toBeUndefined();
+    expect(visibleRejection?.options).toEqual(
+      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
+    );
     expect(visibleRejection?.prompt).toContain('/code is already running');
   });
 
@@ -1423,6 +1521,8 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       observed.push(
         await runtime.ports.callCaptain('captain prompt', runtimeTurn.signal, {
           visibility: 'visible',
+          resume: 'captain-resume-token',
+          allowedTools: ['Read', 'Search'],
         }),
       );
       observed.push(
@@ -1448,11 +1548,15 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     ).toEqual([
       {
         prompt: 'captain prompt',
-        options: { visibility: 'visible' },
+        options: {
+          visibility: 'visible',
+          resume: 'captain-resume-token',
+          allowedTools: ['Read', 'Search'],
+        },
       },
       {
         prompt: 'judge prompt',
-        options: { visibility: 'hidden' },
+        options: ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
       },
     ]);
     expect(observed).toEqual([
@@ -1616,7 +1720,11 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
 
     const summaries = turnSummaryCalls(context);
     expect(summaries).toHaveLength(3);
-    expect(summaries.every((call) => call.options === undefined)).toBe(true);
+    expect(summaries.map(({ options }) => options)).toEqual([
+      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
+      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
+      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
+    ]);
     expect(summaries.map((call) => call.prompt)).toEqual([
       expect.stringContaining(
         'Saved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.',
@@ -2455,24 +2563,32 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     });
     const session = stubSession();
     const context = stubContext([
-      captainJson({
-        type: 'BOSS_INTENT',
-        bossIntent: 'implement the feature and document it',
-      }),
-      {
-        status: 'ok',
-        turnId: 2,
-        finalText: 'Delegate the coordinated work to the code playbook.',
+      (prompt, options) => {
+        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
+        expect(prompt).toContain(
+          'Boss intent: implement the feature and document it',
+        );
+        return {
+          status: 'ok',
+          turnId: 1,
+          finalText: 'Delegate the coordinated work to the code playbook.',
+        };
       },
-      captainJson({
-        guard: 'delegation',
-        remainingPlan: [],
-        nextPlaybookId: 'code',
-        nextPlaybookInput: 'implement the feature and prepare its notes',
-      }),
+      (prompt, options) => {
+        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
+        expect(prompt).toContain(
+          'Delegate the coordinated work to the code playbook.',
+        );
+        return captainJson({
+          guard: 'delegation',
+          remainingPlan: [],
+          nextPlaybookId: 'code',
+          nextPlaybookInput: 'implement the feature and prepare its notes',
+        });
+      },
       captainJson({ decision: 'deliver' }),
       (prompt, options) => {
-        expect(options).toEqual({ visibility: 'visible' });
+        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
         expect(prompt).toContain('"codeResult":"implemented"');
         return {
           status: 'ok',
@@ -2480,10 +2596,11 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
           finalText: 'Implementation and notes are complete.',
         };
       },
-      captainJson({
-        guard: 'final',
-        response: 'Implementation and notes are complete.',
-      }),
+      (prompt, options) => {
+        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
+        expect(prompt).toContain('Implementation and notes are complete.');
+        return captainJson({ guard: 'final' });
+      },
     ]);
 
     await shell.init!(session.session);
@@ -2679,7 +2796,9 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     ]);
     expect(JSON.stringify(session.statuses)).not.toContain('/captain');
     expect(context.captainCalls).toHaveLength(1);
-    expect(context.captainCalls[0]?.options).toEqual({ visibility: 'hidden' });
+    expect(context.captainCalls[0]?.options).toEqual(
+      ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
+    );
   });
 
   it('suspends a caller, routes the next turn to the leaf, and resumes with the child result', async () => {
@@ -3504,7 +3623,9 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
       data: undefined,
     });
     expect(context.captainCalls).toHaveLength(1);
-    expect(context.captainCalls[0]?.options).toEqual({ visibility: 'hidden' });
+    expect(context.captainCalls[0]?.options).toEqual(
+      ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
+    );
 
     await shell.handleBossTurn(turn('/code continue root', 3), context.context);
     expect(code.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
