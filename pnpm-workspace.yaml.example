@@ -4,8 +4,9 @@
 # Unreleased-branch dev override: link @sublang/cligent to a compatible local
 # checkout instead of the older registry version pinned in pnpm-lock.yaml.
 #
-# Production installs should not use this file. Until cligent 0.14.0 is
-# released and pinned, copy it into place for source development:
+# Production installs should not use this file. Until a cligent release
+# containing every contract main requires is published and pinned
+# (RELEASE-14), copy it into place for source development:
 #
 #   cp pnpm-workspace.yaml.example pnpm-workspace.yaml
 #   # adjust the relative path to your local cligent checkout, then
