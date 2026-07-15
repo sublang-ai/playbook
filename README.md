@@ -133,6 +133,25 @@ bypass permissions. The seeded Codex Reviewer additionally grants
 available under the Codex sandbox; the Claude agents need no such grant
 under their auto mode.
 
+### Run a playbook non-interactively
+
+`playbook run <from> [task]` runs one playbook once, without tmux-play
+and without a config entry — point it straight at a registry module:
+
+```sh
+playbook run @sublang/playbook/code/registry "add a test for parseArgs" \
+  --player coder=claude --player reviewer=codex --cwd ./my-repo
+```
+
+`[task]` is read from stdin when omitted. Roles and the captain default
+to `claude`; bind them with `--player <role>=<agent>` and `--captain
+<agent>` (an adapter shorthand or `<adapter>:<model>`), pass a
+playbook option with `--option <key>=<value>`, and add `--json` to print
+the terminal output as JSON. It exits `0` on a terminal outcome, `2` on
+failure, `3` when the playbook needs a Boss reply a one-shot cannot give,
+and `1` on a bad argument or module. See
+[PBCLI-18](specs/user/playbook-cli.md#pbcli-18).
+
 ### Configure agents
 
 Edit the seeded user config when you want different coding agents:

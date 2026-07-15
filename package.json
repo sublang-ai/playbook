@@ -60,6 +60,7 @@
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
     "reference/sdlc/code.playbook/bin/playbook.js",
+    "reference/sdlc/code.playbook/bin/run.js",
     "reference/sdlc/discuss.playbook/discuss.gears.md",
     "reference/sdlc/discuss.playbook/discuss.fsm.ts",
     "reference/sdlc/discuss.playbook/discuss.fsm.js",

@@ -96,9 +96,9 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-cli.md](user/playbook-cli.md) | Generic `playbook` command: top-level `profiles`/`playbooks` config model (no `config:` wrapper, no top-level `players`), starter-config seeding that enables CODE via explicit `from`, `--config` raw pass-through, `--list`, `--help`, launcher-owned adapter readiness gate, exit/signal behavior, and launch under the Playbook Captain shell on tmux-play |
-| dev | [playbook-cli.md](dev/playbook-cli.md) | Generic `playbook` launcher: tmux-play resolution, config normalization, namespaced roster generation, pre-launch manifest checks including reserved `captain` id/command/role rejection, launcher-owned initial visibility, seeded protected-auto lineup, and adapter readiness |
-| test | [playbook-cli.md](test/playbook-cli.md) | Integration tests for seeding, composition, namespaced visibility, reserved `captain` id/command/role rejection, readiness, and the `--list`/`--help`/`--config`/exit-code surface |
+| user | [playbook-cli.md](user/playbook-cli.md) | Generic `playbook` command: top-level `profiles`/`playbooks` config model (no `config:` wrapper, no top-level `players`), starter-config seeding that enables CODE via explicit `from`, `--config` raw pass-through, `--list`, `--help`, launcher-owned adapter readiness gate, exit/signal behavior, launch under the Playbook Captain shell on tmux-play, and the non-interactive `run <from> [task]` one-shot |
+| dev | [playbook-cli.md](dev/playbook-cli.md) | Generic `playbook` launcher: tmux-play resolution, config normalization, namespaced roster generation, pre-launch manifest checks including reserved `captain` id/command/role rejection, launcher-owned initial visibility, seeded protected-auto lineup, adapter readiness, and the headless `run` host over cligent `Cligent` with its exit-code map |
+| test | [playbook-cli.md](test/playbook-cli.md) | Integration tests for seeding, composition, namespaced visibility, reserved `captain` id/command/role rejection, readiness, the `--list`/`--help`/`--config`/exit-code surface, and the `run` subcommand over an injected agent runner |
 
 ### PBRT
 
