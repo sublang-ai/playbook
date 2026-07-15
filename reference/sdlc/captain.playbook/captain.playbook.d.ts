@@ -1,6 +1,6 @@
 import { type CaptainInput, type EnabledPlaybook } from './captain.fsm.js';
 import type { PlaybookRuntime, PlaybookRuntimeFactory } from '../../../src/runtime.js';
-export type { CaptainCallOptions, CaptainResult, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPorts, PlaybookRunResult, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlayerCallOptions, PlayerResult, } from '../../../src/runtime.js';
+export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPorts, PlaybookRunResult, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlayerCallOptions, PlayerResult, } from '../../../src/runtime.js';
 export interface PlaybookRuntimeOptions {
     readonly enabledPlaybooks: readonly EnabledPlaybook[];
 }
@@ -12,10 +12,12 @@ export declare function composePlayerPrompt(input: {
     };
     readonly bossReply?: string;
 }): string;
-export declare function createPlaybookRuntime(options: PlaybookRuntimeOptions): PlaybookRuntime;
-export declare const _internal: Readonly<{
-    composePlayerPrompt: typeof composePlayerPrompt;
+declare function parseJsonObjectLoose(text: string): Record<string, unknown> | undefined;
+export declare const _internal: {
     composeCaptainPrompt: typeof composeCaptainPrompt;
-}>;
+    composePlayerPrompt: typeof composePlayerPrompt;
+    parseJsonObjectLoose: typeof parseJsonObjectLoose;
+};
+export declare function createPlaybookRuntime(options: PlaybookRuntimeOptions): PlaybookRuntime;
 declare const factory: PlaybookRuntimeFactory<PlaybookRuntimeOptions>;
 export default factory;

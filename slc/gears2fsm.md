@@ -356,6 +356,32 @@ The outer trusted error is an actual `Error` instance and therefore is not a
 plain JSON object. The structural guard shall inspect its public `.result`
 property directly, then validate only that nested result before sanitizing it;
 it shall not require the outer error itself to pass a plain-object/JSON guard.
+Validation of that nested public result includes its status-specific required
+members and target identity: `playbookId` shall equal the current selected
+target, an `error` result shall carry a normalized error, and every optional
+member that is present shall have the public contract's declared shape. A
+look-alike such as `{ status: 'error' }` is malformed control data, not an
+authored child failure, and shall take the fallback `failed` arm without
+appending evidence. The guard shall not fabricate missing identity or error
+members merely because the status string happens to be recognized.
+The public result's declared optional `childSessionId` and `state` members are
+valid when their shapes satisfy the shared contract; validate and then discard
+them when building compact Captain evidence. They are not undeclared extras.
+Likewise, the public normalized error may carry its declared optional string
+`stack`; validate it and omit it from the compact `{ name, message }` evidence
+rather than rejecting an otherwise valid authored child result.
+Apply the public union exactly: an `aborted` or `error` result shall reject an
+`output` member; `childSessionId`, when present, shall be non-empty; `error`
+shall contain only non-empty `name`, string `message`, and optional string
+`stack`; and `state`, when present, shall validate every declared
+`PlaybookState` member and reject unknown or missing members. Treating an
+arbitrary JSON-safe object as a valid `state`, or checking only that these
+members have broad string/object types, is not complete public-result
+validation.
+In other words, the guard validates the complete public result it received,
+while the action retains only the current selected playbook id, status, and
+compact error. Do not implement evidence minimization by accepting only the
+three keys that survive that projection.
 
 Before entering a dynamic call, the machine shall reject an empty target and
 empty input text, any target equal to `selfPlaybookId`, and any target that

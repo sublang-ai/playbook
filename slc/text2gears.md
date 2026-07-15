@@ -41,6 +41,9 @@ Capitalize English player names (e.g., `Writer`); quote non-English names (e.g.,
 
 Each spec item names a condition, one behavior kind, and the complete prompt
 for that behavior.
+Every emitted item shall use the exact Markdown heading form `### <ITEM-ID>`.
+An item heading at `##`, `####`, or another level is not GEARS item syntax and
+will not be visible to downstream compilers or verification.
 The behavior kind shall be one of:
 
 - direct Captain work, written `Captain shall <behavior>:` without naming a
@@ -54,6 +57,13 @@ itself. It shall not be rewritten as `Captain shall prompt Captain`, because
 Captain is a distinct runtime actor rather than a player binding.
 Delegated work shall name the declared player that receives the prompt.
 Prompts shall be blockquoted, one point per line.
+When Source already supplies the complete blockquoted acting prompt for a
+behavior, text2gears shall preserve those prompt lines exactly (apart from the
+documented Markdown unescaping) and shall not promote surrounding conditions,
+invariants, result fields, or continuation mechanics into that blockquote.
+Those requirements remain in the item's condition or `Results:` metadata.
+Adding control-oriented prompt lines merely to restate them changes the
+Boss-visible contract and is nonconformant.
 
 Source statements that assign active-leaf routing, call identity, suspension,
 or return matching to the host describe execution preconditions rather than
@@ -147,6 +157,13 @@ continuation blocks, and consumed-context cleanup.
 This rule is an exception to splitting by accumulated prompt content below.
 Split only when Source requires a genuinely different acting behavior after
 the reply, not when the same decision or task continues with Boss's answer.
+
+The same consolidation applies when Source says a fresh directive interrupts
+parked work and *restarts the same behavior* with cleared context. When the
+acting prompt and result contract are identical, retain the interrupt as an
+entry condition on the originating item; do not duplicate that item solely to
+describe the restart. Split only when the fresh directive invokes genuinely
+different acting work or a different prompt/result contract.
 
 ### Parallel behaviors
 

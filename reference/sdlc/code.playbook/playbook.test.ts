@@ -5,13 +5,16 @@ import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { loadTmuxPlayConfig } from '@sublang/cligent/tmux-play';
 import { afterEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
 const playbook = await import(
   new URL('./bin/playbook.js', import.meta.url).href
+);
+const { runCligentCall } = await import(
+  new URL('./bin/run.js', import.meta.url).href
 );
 
 const {
@@ -623,6 +626,7 @@ function runEntry(run: PortRun, extra: Record<string, unknown> = {}) {
       let ports: any;
       return {
         async init(session: any) {
+          runEntry.lastSession = session;
           ports = session.ports;
         },
         async handleBossInput(turn: any) {
@@ -638,6 +642,7 @@ function runEntry(run: PortRun, extra: Record<string, unknown> = {}) {
   };
 }
 runEntry.lastCreate = undefined as any;
+runEntry.lastSession = undefined as any;
 
 function fakeAgents(scripts: Record<string, PortRun>) {
   const calls: any[] = [];
@@ -666,8 +671,28 @@ async function runCli(argv: string[], modules: Record<string, unknown>, createAg
 }
 
 describe('playbook run — non-interactive (PBCLI-21)', () => {
+  it('uses Cligent text events when terminal done omits a result', async () => {
+    const cligent = {
+      async *run() {
+        yield { type: 'text', payload: { content: 'review' } };
+        yield { type: 'text_delta', payload: { delta: ' complete' } };
+        yield {
+          type: 'done',
+          payload: { status: 'success', resumeToken: 'session-1' },
+        };
+      },
+    };
+
+    await expect(runCligentCall(cligent, 'prompt')).resolves.toEqual({
+      status: 'ok',
+      finalText: 'review complete',
+      resumeToken: 'session-1',
+    });
+  });
+
   it('routes players, threads resume, isolates the captain, and prints a terminal outcome', async () => {
     runEntry.lastCreate = undefined;
+    runEntry.lastSession = undefined;
     const { createAgent, calls } = fakeAgents({
       coder: async (_p, o: any) => ({
         status: 'ok',
@@ -684,6 +709,7 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
         resume: false,
         allowedTools: [],
       });
+      await ports.callJudge('adjudicate', turn.signal);
       return { outcome: 'terminal', state: {}, output: { response: b.finalText } };
     });
 
@@ -702,10 +728,49 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
       { id: 'coder', adapter: 'claude' },
       { id: 'reviewer', adapter: 'claude' },
     ]);
+    expect(runEntry.lastSession.sessionId).toBe(
+      runEntry.lastSession.rootSessionId,
+    );
     const coderCalls = calls.filter((c) => c.role === 'coder');
     expect(coderCalls.map((c) => c.opts.resume)).toEqual([false, 'r1']);
-    const captainCall = calls.find((c) => c.role === 'captain');
-    expect(captainCall.opts.allowedTools).toEqual([]);
+    const captainCalls = calls.filter((c) => c.role === 'captain');
+    expect(
+      captainCalls.map(({ opts }) => ({
+        resume: opts.resume,
+        allowedTools: opts.allowedTools,
+      })),
+    ).toEqual([
+      { resume: false, allowedTools: [] },
+      { resume: false, allowedTools: [] },
+    ]);
+  });
+
+  it('omits absent optional text from player and Captain failures', async () => {
+    const { createAgent } = fakeAgents({
+      coder: async () => ({ status: 'error', error: 'player failed' }),
+      captain: async () => ({ status: 'aborted', error: 'captain aborted' }),
+    });
+    const entry = runEntry(async (ports, turn) => {
+      const player = await ports.callPlayer('coder', 'work', turn.signal, {
+        resume: false,
+      });
+      const captain = await ports.callCaptain('route', turn.signal, {
+        visibility: 'visible',
+        resume: false,
+        allowedTools: [],
+      });
+      expect(Object.hasOwn(player, 'finalText')).toBe(false);
+      expect(Object.hasOwn(captain, 'finalText')).toBe(false);
+      return { outcome: 'terminal', state: {}, output: 'validated' };
+    });
+
+    const out = await runCli(
+      ['run', 'mod://code', 'validate failures'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+    );
+
+    expect(out).toMatchObject({ code: 0, stdout: 'validated\n' });
   });
 
   it('prints JSON output under --json', async () => {
@@ -741,6 +806,53 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
     expect(seen).toBe('piped task');
   });
 
+  it('resolves a relative registry path from the caller working directory', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-run-module-'));
+    tempDirs.push(dir);
+    const modulePath = join(dir, 'registry.mjs');
+    await writeFile(
+      modulePath,
+      `export default {
+  id: 'fake',
+  command: 'fake',
+  intent: 'test registry',
+  requiredRoleIds: [],
+  validateOptions(value) { return value; },
+  createRuntime() {
+    return {
+      async init(session) {
+        if (session.sessionId !== session.rootSessionId) {
+          throw new Error('root identity mismatch');
+        }
+      },
+      async handleBossInput() {
+        return { outcome: 'terminal', state: {}, output: 'ok' };
+      },
+      async resumePlaybookCall() {
+        return { outcome: 'no-action', state: {} };
+      },
+      async dispose() {},
+    };
+  },
+};
+`,
+      'utf8',
+    );
+    const { createAgent } = fakeAgents({});
+    const relativePath = relative(process.cwd(), modulePath);
+    const from = relativePath.startsWith('.') ? relativePath : `./${relativePath}`;
+    const stdout = writer();
+    const stderr = writer();
+    const result = await runPlaybookCli({
+      argv: ['run', from, 'x'],
+      createAgent,
+      stdout: stdout as never,
+      stderr: stderr as never,
+    });
+    expect(result.code).toBe(0);
+    expect(stdout.text().trim()).toBe('ok');
+  });
+
   it('maps failed/aborted to 2 and suspended/quiescent to 3', async () => {
     const { createAgent } = fakeAgents({});
     const failed = runEntry(async () => ({
@@ -763,6 +875,30 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
       createAgent,
     );
     expect(parkedOut.code).toBe(3);
+
+    const nested = runEntry(async (ports, turn) => {
+      const start = await ports.callPlaybook(
+        { callId: 'call-1', playbookId: 'child', text: 'delegate this' },
+        turn.signal,
+      );
+      if (start.state !== 'suspended') throw new Error('expected suspension');
+      return {
+        outcome: 'suspended',
+        state: {},
+        pendingCall: {
+          callId: 'call-1',
+          playbookId: 'child',
+          childSessionId: start.childSessionId,
+        },
+      };
+    });
+    const nestedOut = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: nested } },
+      createAgent,
+    );
+    expect(nestedOut.code).toBe(3);
+    expect(nestedOut.stderr).toContain('nested call');
   });
 
   it('rejects a missing module, invalid entry, and unrequired --player with exit 1', async () => {

@@ -1,4 +1,4 @@
-/** A GEARS spec item: its id, the player it prompts, and its verbatim prompt body. */
+/** A GEARS spec item with its acting prompt and optional source-owned results. */
 export interface GearsItem {
     id: string;
     player: string;
@@ -11,6 +11,10 @@ export interface GearsItem {
     playbookIdContext?: string;
     /** Context field supplying a dynamic nested-playbook input. */
     textContext?: string;
+    /** Ordered source-owned domain guard contract, when explicitly declared. */
+    result?: Record<string, string>;
+    /** Malformed result-metadata details retained for fail-closed reporting. */
+    resultFindings?: string[];
 }
 /** A Captain/player-invoking state's introspected `gears2fsm` binding. */
 export interface CaptainState {
@@ -86,8 +90,8 @@ interface StateLike {
     onError?: unknown;
 }
 /**
- * Parses the GEARS items from a `gears` artifact: each `### <ID>` item's player
- * and its blockquoted prompt body, in document order.
+ * Parses the GEARS items from a `gears` artifact: each `### <ID>` item's player,
+ * blockquoted acting prompt, and optional ordered `Results:` metadata.
  */
 export declare function parseGearsItems(gears: string): GearsItem[];
 /**

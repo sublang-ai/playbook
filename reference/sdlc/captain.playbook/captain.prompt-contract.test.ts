@@ -46,7 +46,7 @@ const CONTRACT = [
     ]
   },
   {
-    "state": "reassessment",
+    "state": "reassessing",
     "sourceItem": "CAPTAIN-3",
     "player": "",
     "reads": [
@@ -96,7 +96,7 @@ const CAPTAIN_SUBSTITUTED = {
     "<boss-intent>",
     "<enabled-playbooks>"
   ],
-  "reassessment": [
+  "reassessing": [
     "<boss-intent>",
     "<enabled-playbooks>",
     "<remaining-plan>",

@@ -1,56 +1,65 @@
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | {
     readonly [key: string]: JsonValue;
 };
-export interface EnabledPlaybook {
+export type EnabledPlaybook = {
     readonly id: string;
     readonly command: string;
     readonly intent: string;
-}
-export interface PendingBossQuestion {
+};
+export type NormalizedError = {
+    readonly name: string;
+    readonly message: string;
+    readonly stack?: string;
+};
+export type PlaybookStateValue = string | {
+    readonly [key: string]: PlaybookStateValue;
+};
+export type PlaybookState = {
+    readonly value: PlaybookStateValue;
+    readonly activeStateIds: readonly string[];
+    readonly tags: readonly string[];
+    readonly status: 'active' | 'done' | 'error' | 'stopped';
+    readonly quiescent: boolean;
+    readonly stateId?: string;
+};
+export type CompletedCallResult = {
+    readonly playbookId: string;
+    readonly status: 'ok';
+    readonly output?: JsonValue;
+} | {
+    readonly playbookId: string;
+    readonly status: 'aborted' | 'error';
+    readonly error: NormalizedError;
+};
+export type PendingBossQuestion = {
     readonly questionId: ResumableStateId;
     readonly resumeStateId: ResumableStateId;
     readonly sourceItem: 'CAPTAIN-1' | 'CAPTAIN-3';
     readonly player: 'Captain';
     readonly question: string;
-}
-type RoutingResult = {
-    readonly direct: string;
-    readonly question: string;
-    readonly delegation: string;
-    readonly needsBossReply: string;
 };
-type ReassessmentResult = {
-    readonly final: string;
-    readonly followUpQuestion: string;
-    readonly continuing: string;
-    readonly needsBossReply: string;
+export type ResumableStateId = 'routing' | 'reassessing';
+export type CaptainMachineInput = {
+    readonly enabledPlaybooks: readonly EnabledPlaybook[];
+    readonly selfPlaybookId: string;
+    readonly bossIntent?: string;
 };
-interface CaptainInputBase {
+export type CaptainMachineOutput = {
+    readonly response: string;
+};
+export type CaptainInput = {
     readonly stateId: ResumableStateId;
     readonly sourceItem: 'CAPTAIN-1' | 'CAPTAIN-3';
     readonly prompt: string;
+    readonly result: Record<string, string>;
+    readonly bossIntent: string;
+    readonly enabledPlaybooks: readonly EnabledPlaybook[];
+    readonly remainingPlan?: readonly JsonValue[];
+    readonly completedCallResults?: readonly CompletedCallResult[];
     readonly pendingBossQuestion?: PendingBossQuestion;
     readonly bossReply?: string;
-}
-export type CaptainInput = (CaptainInputBase & {
-    readonly stateId: 'routing';
-    readonly sourceItem: 'CAPTAIN-1';
-    readonly result: RoutingResult;
-    readonly bossIntent: string;
-    readonly enabledPlaybooks: readonly EnabledPlaybook[];
-}) | (CaptainInputBase & {
-    readonly stateId: 'reassessment';
-    readonly sourceItem: 'CAPTAIN-3';
-    readonly result: ReassessmentResult;
-    readonly bossIntent: string;
-    readonly enabledPlaybooks: readonly EnabledPlaybook[];
-    readonly remainingPlan: readonly JsonValue[];
-    readonly completedCallResults: readonly CompletedCallResult[];
-});
+};
 export type CaptainOutput = {
-    readonly guard: 'direct';
-    readonly response: string;
-} | {
     readonly guard: 'question';
     readonly question: string;
 } | {
@@ -73,66 +82,44 @@ export type CaptainOutput = {
     readonly guard: 'needsBossReply';
     readonly question: string;
 };
-export interface PlaybookInput {
+export type PlaybookInput = {
     readonly stateId: 'callPlaybook';
     readonly sourceItem?: 'CAPTAIN-2';
     readonly playbookId: string;
     readonly text: string;
     readonly playbookIdContext: 'nextPlaybookId';
     readonly textContext: 'nextPlaybookInput';
-}
+};
 export type PlaybookOutput = JsonValue | undefined;
-export interface CaptainMachineInput {
-    readonly enabledPlaybooks: readonly EnabledPlaybook[];
-    readonly selfPlaybookId: string;
-}
-export type CaptainMachineOutput = {
-    readonly response: string;
-};
-type CompactError = {
-    readonly name: string;
-    readonly message: string;
-    readonly stack?: string;
-};
-type CompletedCallResult = {
-    readonly playbookId: string;
-    readonly status: 'ok';
-    readonly output?: JsonValue;
-} | {
-    readonly playbookId: string;
-    readonly status: 'aborted' | 'error';
-    readonly error: {
-        readonly name: string;
-        readonly message: string;
-    };
-};
-type ResumableStateId = 'routing' | 'reassessment';
-type CaptainContext = {
-    readonly enabledPlaybooks: readonly EnabledPlaybook[];
-    readonly selfPlaybookId: string;
+type Context = {
     readonly bossIntent: string;
+    readonly enabledPlaybooks: readonly EnabledPlaybook[];
+    readonly selfPlaybookId: string;
     readonly remainingPlan: readonly JsonValue[];
     readonly completedCallResults: readonly CompletedCallResult[];
-    readonly callSignatures: readonly string[];
     readonly nextPlaybookId: string;
     readonly nextPlaybookInput: string;
-    readonly response: string;
+    readonly callHistory: readonly string[];
+    readonly response?: string;
     readonly pendingBossQuestion?: PendingBossQuestion;
     readonly bossReply?: string;
-    readonly lastError?: CompactError;
+    readonly lastError?: JsonValue;
 };
-export declare const captainMachine: import("xstate").StateMachine<CaptainContext, {
-    readonly type: "BOSS_INTENT";
+type BossIntentEvent = {
+    readonly type: 'BOSS_INTENT';
     readonly bossIntent: string;
-} | {
-    readonly type: "BOSS_INTERRUPT";
-    readonly targetId: "routing";
+};
+type BossInterruptEvent = {
+    readonly type: 'BOSS_INTERRUPT';
+    readonly targetId: 'routing';
     readonly bossIntent: string;
-} | {
-    readonly type: "BOSS_REPLY";
+};
+type BossReplyEvent = {
+    readonly type: 'BOSS_REPLY';
     readonly answer: string;
     readonly questionId?: string;
-}, {
+};
+export declare const captainMachine: import("xstate").StateMachine<Context, BossIntentEvent | BossInterruptEvent | BossReplyEvent, {
     [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<PlaybookOutput, PlaybookInput, import("xstate").EventObject>> | import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>> | undefined;
 }, {
     src: "playbook";
@@ -143,36 +130,75 @@ export declare const captainMachine: import("xstate").StateMachine<CaptainContex
     logic: import("xstate").PromiseActorLogic<CaptainOutput, CaptainInput, import("xstate").EventObject>;
     id: string | undefined;
 }, {
-    type: "restartWithFreshIntent";
+    type: "startRoutingFromBoss";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "rememberBossReply";
+    type: "storeBossReply";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "rememberDirectResponse";
+    type: "rememberInvalidBossReply";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "rememberPlannedCall";
+    type: "setRoutingQuestion";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "setRoutingPendingBossQuestion";
+    type: "storeRoutingDelegation";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "setReassessmentPendingBossQuestion";
+    type: "appendSuccessfulChildResult";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "appendChildSuccess";
+    type: "appendRejectedChildResult";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "appendChildError";
+    type: "storeFinalResponse";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "rememberCaptainError";
+    type: "setReassessQuestion";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "rememberMalformedResult";
+    type: "storeContinuingCall";
     params: import("xstate").NonReducibleUnknown;
-}, never, never, "done" | "failed" | "callPlaybook" | "routing" | "reassessment" | "ready" | "awaitBossReply", string, CaptainMachineInput, CaptainMachineOutput, import("xstate").EventObject, import("xstate").MetaObject, {
+} | {
+    type: "rememberInvalidActorOutput";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "rememberActorError";
+    params: import("xstate").NonReducibleUnknown;
+}, {
+    type: "isRoutingInterrupt";
+    params: unknown;
+} | {
+    type: "canResumeRouting";
+    params: unknown;
+} | {
+    type: "canResumeReassessing";
+    params: unknown;
+} | {
+    type: "hasBossIntent";
+    params: unknown;
+} | {
+    type: "isRoutingQuestion";
+    params: unknown;
+} | {
+    type: "isRoutingDelegation";
+    params: unknown;
+} | {
+    type: "isReassessFinal";
+    params: unknown;
+} | {
+    type: "isReassessQuestion";
+    params: unknown;
+} | {
+    type: "isReassessContinuing";
+    params: unknown;
+} | {
+    type: "isPlaybookSuccessOutput";
+    params: unknown;
+} | {
+    type: "isAuthoredChildError";
+    params: unknown;
+}, never, "done" | "failed" | "callPlaybook" | "routing" | "reassessing" | "ready" | "awaitBossReply", string, CaptainMachineInput, CaptainMachineOutput, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "captain";
     states: {
         readonly ready: {
@@ -184,8 +210,8 @@ export declare const captainMachine: import("xstate").StateMachine<CaptainContex
         readonly callPlaybook: {
             id: "callPlaybook";
         };
-        readonly reassessment: {
-            id: "reassessment";
+        readonly reassessing: {
+            id: "reassessing";
         };
         readonly awaitBossReply: {
             id: "awaitBossReply";

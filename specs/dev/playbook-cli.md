@@ -178,7 +178,9 @@ readiness predicates; readiness remains launcher-owned
 Where `playbook run` ([PBCLI-18](../user/playbook-cli.md#pbcli-18))
 executes, the command shall import the `<from>` module, validate its
 default export with the same structural registry check as
-[PBCLI-9](#pbcli-9), and call `entry.createRuntime({ captainOptions,
+[PBCLI-9](#pbcli-9), resolving a relative filesystem `<from>` against
+the caller's process working directory, and call
+`entry.createRuntime({ captainOptions,
 players })`, where `players` binds each `requiredRoleIds` entry to its
 resolved agent under the entry's own local role id and `captainOptions`
 is the `--option` slice itself — the same shape the shell passes as
@@ -187,19 +189,27 @@ The command shall host the runtime through a headless `PlaybookPorts`
 ([PBRT](playbook-runtime.md)) backed by cligent: `callPlayer` runs the
 bound role's agent through a per-role `Cligent`, threading each call's
 `resumeToken` into the next `resume`; `callJudge` and `callCaptain` run
-the captain agent, and `callCaptain` starts a fresh session with an
-empty tool allowlist whenever its options request one; `callPlaybook`
-shall reject, since a one-shot run hosts no sub-playbooks; `emitStatus`
-shall write to stderr and `emitTelemetry` shall be dropped unless
-`--verbose`.
-The command shall run one `handleBossInput` turn under an abort signal,
-`dispose` the runtime, and map the `PlaybookRunResult` outcome to an
-exit status: `terminal` → `0` (printing `output`), `failed` or
+the captain agent, `callJudge` always starts a fresh session with an
+explicit empty tool allowlist, and `callCaptain` forwards its requested
+resume and tool-allowlist options exactly; `callPlaybook`
+shall return a suspended start with a fresh synthetic child-session id
+without launching a child, so the linked runtime reports the nested pause
+that the one-shot host cannot answer; `emitStatus` shall write to stderr
+and `emitTelemetry` shall be dropped unless `--verbose`.
+The command shall initialize a depth-zero `PlaybookSession` whose
+`sessionId` and `rootSessionId` are the same fresh UUID, run one
+`handleBossInput` turn under an abort signal, `dispose` the runtime,
+and map the `PlaybookRunResult` outcome to an exit status: `terminal`
+→ `0` (printing `output`), `failed` or
 `aborted` → `2`, `suspended` and `quiescent`/`no-action` → `3`.
 The default agent shall run each `Cligent` in protected auto mode
 (`permissions.mode: auto`, as the seeded lineup uses per
 [PBCLI-11](#pbcli-11)) so a one-shot run does not block on routine
-approval prompts.
+approval prompts. Where Cligent's terminal `done` event omits `result`,
+the agent drain shall derive `finalText` from the ordered `text` event
+`content` and `text_delta` event `delta` payloads. Player and Captain
+result adapters shall omit absent optional fields rather than emitting
+own properties whose value is `undefined`.
 The `run` subcommand shall accept an injected agent-run function so
 tests can drive it without real adapters, defaulting to cligent's
 `Cligent`.

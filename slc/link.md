@@ -580,6 +580,11 @@ The default Captain's ready entry is
 `{ type: 'BOSS_INTENT', bossIntent: turn.text }`.
 All other non-empty turns shall use `callJudge` only to choose one of the FSM's
 event kinds and non-text routing fields, or no FSM action.
+The classifier prompt shall include the exact, unmodified `turn.text` in a
+clearly labelled Boss-message block so the judge can make that choice. Omitting
+the message makes a parked-state classifier unable to distinguish an answer,
+a fresh directive, and no action; including it does not authorize the judge to
+rewrite the runtime-owned textual payload fields.
 For `BOSS_INTENT` and `BOSS_INTERRUPT`, the runtime shall attach the exact
 original text as `bossIntent`; for `BOSS_REPLY`, it shall attach the exact
 original text as `answer`.
@@ -622,6 +627,13 @@ classifier-authored `bossIntent` or `answer`, reject the classification; the
 parser shall not accept and discard injected catalog, option, state, or
 routing fields.
 `NO_ACTION` in particular is exactly `{ type: 'NO_ACTION' }`.
+A valid `NO_ACTION` returns `no-action` without an invalid-classification
+status and leaves the actor untouched. It is a successful classifier choice,
+not the same parser result as malformed or unrecoverable classifier output.
+After any successful classifier call drains, re-check the active Boss signal
+before reconstructing a terminal actor or sending the selected event. If it
+aborted while the classifier finish emission was pending, return and trace the
+same structured `aborted` result against the unchanged actor.
 When the FSM supports a Boss-reply suspension state, the prompt shall inspect
 the actor snapshot context and include each exact pending Boss question,
 question id, and asking player so the judge can distinguish a reply from a
@@ -659,6 +671,11 @@ Required-field extraction shall recognize both an exact backticked property
 name such as `` `question` `` and the standard annotated form
 `` `question: <verbatim question text>` ``; in either form only `question` is
 the JSON property name.
+Extraction is limited to the description's explicit `Output shall include`
+clause (or equivalent typed output metadata). Backticked prose before that
+clause can name statuses, guards, or concepts such as `ok`, `aborted`, and
+`error`; those names are not output properties and shall never become required
+judge fields.
 For a direct Captain result, `question` and `response` are human-presentation
 fields owned by the visible call rather than fields authored by the hidden
 judge.
@@ -734,6 +751,10 @@ The first latched non-abort control error takes precedence over a coincident
 boundary-signal abort. Read and clear the latch only in the public boundary's
 `finally` cleanup after XState and emissions have settled, so it cannot leak
 into a later Boss turn or be erased before rejection.
+An `AbortError`-named transport, validation, or trace-sink failure is still a
+non-abort control error unless it is causally identical to the applicable
+signal reason. Error names shall never change original-error or first-latch
+precedence.
 When a host port or structured-result validator fails after a call-start
 boundary, latch that original error before attempting the required finish
 trace. If the finish sink records the event and then rejects, do not emit a
@@ -803,6 +824,9 @@ resolution cannot alter identity, evidence, or trace payloads. A non-abort
 latch and rethrow the original error, and take the FSM fallback error path. A
 rejection caused by the combined abort signal remains an authored `aborted`
 child result.
+The optional output field may be absent from an otherwise valid successful
+child result. Generated event and trace descriptors shall omit an absent or
+`undefined` output instead of attempting to snapshot it as a JSON value.
 When cancellation wins while the host's opening promise is still pending, the
 shared bridge shall retain and drain that exact promise before emitting the
 matching finish boundary. It shall ignore an abort-reason rejection from that
@@ -845,7 +869,9 @@ trace before `session.disposed`.
 If registered child abort cleanup rejects, the bridge shall emit the paired
 finish with an error result and reject `abortPending` or disposal with that
 original cleanup error; it shall not swallow the failure merely because the
-promise actor also observes a `NestedPlaybookCallError`.
+promise actor also observes a `NestedPlaybookCallError`. Parent disposal shall
+still drain, emit its one `session.disposed` boundary, and clear the bound
+session before rejecting with that preserved cleanup error.
 Child output and errors must be JSON-safe; a non-JSON-safe result is a
 control-plane error.
 
@@ -871,6 +897,10 @@ The `PlaybookRuntime` shall:
   failed-start cleanup. Do not expose the fallible inner startup promise as
   that latch: it rejects before the outer cleanup and lets concurrent disposal
   race the cleanup's own `session.disposed` attempt.
+  Put session validation and snapshotting, bridge/actor construction, initial
+  state reads, and startup emissions inside that guarded outer `try`; none may
+  throw before the cleanup-complete latch's `finally` can resolve. A rejected
+  session identity must not leave later disposal waiting forever.
   The generated `dispose` method shall not be declared `async`, because an
   async wrapper returns a distinct promise and breaks identity coalescing; it
   shall return the retained teardown promise directly and use
@@ -905,6 +935,11 @@ The `PlaybookRuntime` shall:
   assign it at the call site; TypeScript does not narrow a captured optional
   actor variable from assignment hidden inside a helper. Retain a non-optional
   local actor reference across terminal reconstruction and event sending.
+  An actor-construction helper may read the already-bound immutable session
+  directly for machine input such as `session.playbookId`, but it shall not
+  call a lifecycle assertion that also requires the actor to exist. The actor
+  does not exist until that helper returns, so coupling session access to actor
+  availability makes every valid `init` fail before construction completes.
   Generated code shall pass the repository's full strict `tsc` build with no
   unused helper or destructured parameter, not only a transpile-only or
   target-local syntax check.
@@ -933,7 +968,9 @@ The `PlaybookRuntime` shall:
      If mapping produces no event, return after draining any port emissions.
      If the classifier port rejects, emit and drain the Boss-settled error
      boundary, send no event, leave the actor unchanged (including a terminal
-     actor), and reject the original error. If the port resolves but its reply
+     actor), and reject the original error. If that rejection is caused by the
+     active Boss abort signal, return and trace the same structured `aborted`
+     result instead of tracing `no-action`. If the port resolves but its reply
      cannot be recovered or validated, emit the one recovery status required
      by §Boss-event mapping, send no event, leave the actor unchanged, and
      return `no-action` after the ordinary settled boundary drains.
@@ -984,7 +1021,8 @@ The `PlaybookRuntime` shall:
   `session.disposed` with the final descriptor, and discard player resume
   tokens. Host child abort cleanup and child `session.disposed` shall drain
   before the parent call finish, which shall drain before parent
-  `session.disposed`.
+  `session.disposed`. Use cleanup/finally structure so a bridge or emission
+  failure cannot skip the parent disposal boundary or leave the runtime bound.
 
 The actor's `lastError` field shall be surfaced via `emitStatus` when the machine enters its `failed` state.
 For the default Captain runtime, an initial `ready` state and a terminal `done`
@@ -1016,7 +1054,12 @@ at every poll between transitions.
 Each provided Captain, player, judge, or nested-playbook boundary shall receive
 a signal combined from its XState invocation-lifetime signal and the currently
 active `handleBossInput` or `resumePlaybookCall` signal (for example with
-the shared `combineAbortSignals`). On abort, the runtime shall not merely race the imperative
+the shared `combineAbortSignals`). Classify a rejection as cancellation by its
+causal identity with the applicable signal reason, not by an `AbortError` name
+or by observing only that the signal is also aborted. Signals may carry an
+ordinary `Error`, while a distinct transport or sink failure that occurs after
+abort remains a non-abort control error and takes precedence. On abort, the
+runtime shall not merely race the imperative
 wait and return while an invocation remains live: it shall let the selected
 rejection path settle and drive the actor to a quiescent state before returning
 from the turn. No trace, status, state, or call completion caused by that turn
@@ -1064,6 +1107,10 @@ The runtime shall emit, at minimum:
   The payload shall additionally carry the exact pending Boss question or
   keyed questions selected from public snapshot context and normalize any
   transition error without retaining a raw `Error` instance.
+  Do not reduce this payload to the current state: `from` and `previousState`
+  are the authoritative prior descriptor, while `to` and `state` are the new
+  descriptor. On the first observed transition, use the initialized state as
+  both the prior and new descriptor when no earlier transition exists.
   Snapshot and recursively freeze the complete described telemetry payload
   independently from the state retained as `previousState`, so an observer
   cannot mutate a later transition's authoritative `from` state.
@@ -1126,6 +1173,13 @@ The link compiler emits **one** TypeScript module that:
   definition. The shared module imports no FSM or host types, so the
   dependency runs one way — from each linked module to the shared
   contract, never the reverse.
+
+When a co-located integration test for the linked runtime already exists, the
+link compiler shall run it before reporting success and treat any failure as a
+generation failure. It shall not delete, skip, or weaken that suite to make a
+new artifact pass; the suite is executable evidence for lifecycle, ordering,
+error-propagation, and host-boundary requirements that static artifact checks
+cannot establish.
 
 Internal trace/status helpers may accept `unknown`, validate it with the same
 JSON-safety rules as the public boundary, and only then emit a `JsonValue`.

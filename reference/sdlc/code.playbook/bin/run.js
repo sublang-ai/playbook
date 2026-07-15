@@ -7,6 +7,8 @@
 // config; its registry entry is loaded straight from the `<from>` module.
 
 import { randomUUID } from 'node:crypto';
+import { isAbsolute, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { Cligent } from '@sublang/cligent';
 
 // PBCLI-19: adapter shorthands the run host can construct.
@@ -29,10 +31,12 @@ export async function runPlaybookRun(options = {}) {
   const argv = options.argv ?? [];
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
-  const loadModule = options.loadModule ?? ((specifier) => import(specifier));
+  const cwdDefault = options.cwd ?? process.cwd();
+  const loadModule =
+    options.loadModule ??
+    ((specifier) => import(registryImportSpecifier(specifier, cwdDefault)));
   const createAgent = options.createAgent ?? defaultCreateAgent;
   const readStdin = options.readStdin ?? readAllStdin;
-  const cwdDefault = options.cwd ?? process.cwd();
 
   let args;
   try {
@@ -125,17 +129,30 @@ export async function runPlaybookRun(options = {}) {
         allowedTools: callOptions?.allowedTools,
         signal,
       });
-      return { status: result.status, finalText: result.finalText, ...(result.error ? { error: result.error } : {}) };
+      return {
+        status: result.status,
+        ...(result.finalText === undefined
+          ? {}
+          : { finalText: result.finalText }),
+        ...(result.error ? { error: result.error } : {}),
+      };
     },
     async callJudge(prompt, signal) {
-      const result = await captainAgent.run(prompt, { signal });
+      const result = await captainAgent.run(prompt, {
+        resume: false,
+        allowedTools: [],
+        signal,
+      });
       if (result.status !== 'ok' || result.finalText === undefined) {
         throw new Error(result.error ?? 'judge call failed');
       }
       return result.finalText;
     },
     async callPlaybook() {
-      throw new Error('playbook run cannot host nested playbook calls');
+      // The one-shot host cannot drive the child, but returning a suspended
+      // start lets the linked runtime expose that boundary as outcome
+      // `suspended`, which finishRun maps to the documented exit code 3.
+      return { state: 'suspended', childSessionId: randomUUID() };
     },
     async emitStatus(text) {
       stderr.write(`◇ ${text}\n`);
@@ -145,10 +162,11 @@ export async function runPlaybookRun(options = {}) {
     },
   };
 
+  const sessionId = randomUUID();
   const session = {
-    sessionId: randomUUID(),
+    sessionId,
     playbookId: entry.id,
-    rootSessionId: randomUUID(),
+    rootSessionId: sessionId,
     depth: 0,
     ports,
   };
@@ -218,7 +236,7 @@ function renderOutput(output) {
 function toPlayerResult(result) {
   return {
     status: result.status,
-    finalText: result.finalText,
+    ...(result.finalText === undefined ? {} : { finalText: result.finalText }),
     ...(result.resumeToken ? { resumeToken: result.resumeToken } : {}),
     ...(result.error ? { error: result.error } : {}),
   };
@@ -246,7 +264,7 @@ function defaultCreateAgent({ adapter, model, cwd, role }) {
   };
 }
 
-async function runCligentCall(cligent, prompt, callOptions = {}) {
+export async function runCligentCall(cligent, prompt, callOptions = {}) {
   const { resume, allowedTools, signal } = callOptions;
   const gen = cligent.run(prompt, {
     ...(signal ? { abortSignal: signal } : {}),
@@ -270,8 +288,13 @@ async function runCligentCall(cligent, prompt, callOptions = {}) {
         break;
       }
       const event = next.value;
-      if (event.type === 'text' && typeof event.payload?.text === 'string') {
-        textParts.push(event.payload.text);
+      if (event.type === 'text' && typeof event.payload?.content === 'string') {
+        textParts.push(event.payload.content);
+      } else if (
+        event.type === 'text_delta' &&
+        typeof event.payload?.delta === 'string'
+      ) {
+        textParts.push(event.payload.delta);
       }
       if (event.type === 'error') lastError = event.payload?.message;
       if (event.type === 'done') done = event.payload;
@@ -356,6 +379,19 @@ function takePair(value, flag) {
   const eq = value.indexOf('=');
   if (eq <= 0) throw new Error(`${flag} needs <key>=<value>`);
   return [value.slice(0, eq), value.slice(eq + 1)];
+}
+
+function registryImportSpecifier(specifier, cwd) {
+  if (
+    isAbsolute(specifier) ||
+    specifier.startsWith('./') ||
+    specifier.startsWith('../') ||
+    specifier.startsWith('.\\') ||
+    specifier.startsWith('..\\')
+  ) {
+    return pathToFileURL(resolve(cwd, specifier)).href;
+  }
+  return specifier;
 }
 
 function isValidRegistryEntry(value) {

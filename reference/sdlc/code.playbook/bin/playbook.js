@@ -53,7 +53,7 @@ export async function runPlaybookCli(options = {}) {
       argv: argv.slice(1),
       stdout,
       stderr,
-      loadModule,
+      ...(options.loadModule ? { loadModule: options.loadModule } : {}),
       ...(options.createAgent ? { createAgent: options.createAgent } : {}),
       ...(options.readStdin ? { readStdin: options.readStdin } : {}),
     });

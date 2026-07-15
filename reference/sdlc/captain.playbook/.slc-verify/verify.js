@@ -45,9 +45,12 @@ const DYNAMIC_TEXT = /^<([A-Za-z_$][A-Za-z0-9_$]*)>$/;
 const CAPTAIN_ACTS = /\bCaptain shall\b/;
 const BLOCKQUOTE = /^>\s?(.*)$/;
 const SECTION_HEADING = /^##\s/;
+const RESULTS_LABEL = /^Results:\s*$/;
+const RESULTS_LABEL_NEAR_MISS = /^Results\s*:?[ \t]*$/;
+const RESULT_BULLET = /^-\s+`([A-Za-z_$][A-Za-z0-9_$]*)`:\s+(\S(?:.*\S)?)\s*$/;
 /**
- * Parses the GEARS items from a `gears` artifact: each `### <ID>` item's player
- * and its blockquoted prompt body, in document order.
+ * Parses the GEARS items from a `gears` artifact: each `### <ID>` item's player,
+ * blockquoted acting prompt, and optional ordered `Results:` metadata.
  */
 export function parseGearsItems(gears) {
     const items = [];
@@ -62,6 +65,12 @@ export function parseGearsItems(gears) {
             const prompt = current.prompt.join('\n');
             const dynamicText = DYNAMIC_TEXT.exec(prompt);
             const playbookCall = current.playbookId !== '' || current.playbookIdContext !== '';
+            if (current.resultDeclared && current.results.length === 0) {
+                current.resultFindings.push('Results block declares no valid entries');
+            }
+            if (playbookCall && current.resultDeclared) {
+                current.resultFindings.push('nested-playbook call item shall not declare Results metadata');
+            }
             items.push({
                 id: current.id,
                 player,
@@ -81,6 +90,12 @@ export function parseGearsItems(gears) {
                         ...(dynamicText === null ? {} : { textContext: dynamicText[1] }),
                     }
                     : {}),
+                ...(current.resultDeclared
+                    ? { result: Object.fromEntries(current.results) }
+                    : {}),
+                ...(current.resultFindings.length > 0
+                    ? { resultFindings: current.resultFindings }
+                    : {}),
             });
         }
         current = null;
@@ -96,6 +111,11 @@ export function parseGearsItems(gears) {
                 playbookId: '',
                 playbookIdContext: '',
                 prompt: [],
+                resultsEligible: false,
+                resultDeclared: false,
+                inResults: false,
+                results: [],
+                resultFindings: [],
             };
             continue;
         }
@@ -105,6 +125,53 @@ export function parseGearsItems(gears) {
         }
         if (current === null)
             continue;
+        if (RESULTS_LABEL.test(line)) {
+            if (current.resultDeclared) {
+                current.resultFindings.push('duplicate Results label');
+            }
+            if (current.prompt.length === 0) {
+                current.resultFindings.push('Results block shall follow a non-empty acting blockquote');
+            }
+            else if (!current.resultsEligible) {
+                current.resultFindings.push('Results block shall immediately follow the acting blockquote');
+            }
+            current.resultDeclared = true;
+            current.inResults = true;
+            continue;
+        }
+        if (current.resultsEligible && RESULTS_LABEL_NEAR_MISS.test(line)) {
+            current.resultFindings.push(`malformed Results label ${JSON.stringify(line)}`);
+            current.resultDeclared = true;
+            current.inResults = true;
+            continue;
+        }
+        if (current.inResults) {
+            if (line.trim() === '')
+                continue;
+            const result = RESULT_BULLET.exec(line);
+            if (result === null) {
+                current.resultFindings.push(`malformed Results entry ${JSON.stringify(line)}`);
+                continue;
+            }
+            const [, guard, description] = result;
+            if (current.results.some(([existing]) => existing === guard)) {
+                current.resultFindings.push(`duplicate Results guard ${guard}`);
+                continue;
+            }
+            if (guard === NEEDS_BOSS_REPLY) {
+                current.resultFindings.push(`${NEEDS_BOSS_REPLY} is compiler-owned and shall not be source metadata`);
+            }
+            current.results.push([guard, description]);
+            continue;
+        }
+        const quote = BLOCKQUOTE.exec(line);
+        if (quote !== null) {
+            current.prompt.push(quote[1]);
+            current.resultsEligible = true;
+            continue;
+        }
+        if (line.trim() !== '')
+            current.resultsEligible = false;
         const player = ITEM_PLAYER.exec(line);
         if (player !== null && current.player === '') {
             current.player = player[1] ?? player[2] ?? player[3];
@@ -124,9 +191,6 @@ export function parseGearsItems(gears) {
         }
         if (CAPTAIN_ACTS.test(line))
             current.captainActs = true;
-        const quote = BLOCKQUOTE.exec(line);
-        if (quote !== null)
-            current.prompt.push(quote[1]);
     }
     flush();
     return items;
@@ -510,6 +574,9 @@ export function checkGearsFsmConformance(gears, config) {
     const playbookStates = enumeratePlaybookStates(config);
     const findings = [];
     findings.push(...structuredStateIdentityFindings(walkStateNodes(config)));
+    for (const item of items) {
+        findings.push(...(item.resultFindings ?? []).map((finding) => `GEARS item ${item.id}: ${finding}`));
+    }
     for (const state of states) {
         findings.push(...(state.bindingFindings ?? []).map((finding) => `FSM state ${state.stateId}: ${finding}`));
     }
@@ -641,6 +708,13 @@ export function checkGearsFsmConformance(gears, config) {
         }
         if (state.prompt !== item.prompt) {
             findings.push(`${item.id}: FSM prompt is not the GEARS prompt verbatim`);
+        }
+        if (item.result !== undefined) {
+            const expected = Object.entries(item.result);
+            const actual = Object.entries(state.result).filter(([guard]) => guard !== NEEDS_BOSS_REPLY);
+            if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+                findings.push(`${item.id}: FSM domain result contract ${JSON.stringify(actual)} is not GEARS Results ${JSON.stringify(expected)}`);
+            }
         }
     }
     const itemIds = new Set(items.map((item) => item.id));

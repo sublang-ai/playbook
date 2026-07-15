@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { describe, expect, it } from 'vitest';
+import { createActor, fromPromise } from 'xstate';
 import createPlaybookRuntime, {
   _internal,
   type CaptainCallOptions,
@@ -17,7 +18,13 @@ import createPlaybookRuntime, {
   type PlaybookTraceEvent,
   type PlaybookTraceType,
 } from './captain.playbook.js';
-import type { CaptainInput } from './captain.fsm.js';
+import {
+  captainMachine,
+  type CaptainInput,
+  type CaptainOutput,
+  type PlaybookInput,
+  type PlaybookOutput,
+} from './captain.fsm.js';
 
 const ENABLED_PLAYBOOKS = [
   {
@@ -33,6 +40,12 @@ const ENABLED_PLAYBOOKS = [
 ] as const;
 
 type JudgeReply = string | Readonly<Record<string, unknown>>;
+type JudgeStep =
+  | JudgeReply
+  | ((
+      prompt: string,
+      signal: AbortSignal,
+    ) => JudgeReply | Promise<JudgeReply>);
 type CaptainStep =
   | CaptainResult
   | ((
@@ -48,12 +61,13 @@ type ChildStep =
     ) => PlaybookCallStart | Promise<PlaybookCallStart>);
 
 interface HarnessScript {
-  readonly classifications?: readonly JudgeReply[];
-  readonly adjudications?: readonly JudgeReply[];
+  readonly classifications?: readonly JudgeStep[];
+  readonly adjudications?: readonly JudgeStep[];
   readonly captains?: readonly CaptainStep[];
   readonly children?: readonly ChildStep[];
   readonly delayedEmissions?: boolean;
   readonly rejectTraceType?: PlaybookTraceType;
+  readonly rejectTraceError?: Error;
 }
 
 interface CaptainInvocation {
@@ -162,10 +176,6 @@ function makeSession(
   };
 }
 
-function intentClassification(text: string): JudgeReply {
-  return { type: 'BOSS_INTENT', bossIntent: text };
-}
-
 function delegation(
   playbookId: string,
   text: string,
@@ -192,22 +202,23 @@ function continuation(
   };
 }
 
-function directResponse(response: string): JudgeReply {
-  return { guard: 'direct', response };
-}
-
-function finalResponse(response: string): JudgeReply {
-  return { guard: 'final', response };
+function finalResponse(): JudgeReply {
+  return { guard: 'final' };
 }
 
 function settledSuccess(
   playbookId: string,
   childSessionId: string,
-  output: JsonValue,
+  output?: JsonValue,
 ): PlaybookCallStart {
   return {
     state: 'settled',
-    result: { status: 'ok', playbookId, childSessionId, output },
+    result: {
+      status: 'ok',
+      playbookId,
+      childSessionId,
+      ...(output === undefined ? {} : { output }),
+    },
   };
 }
 
@@ -268,17 +279,20 @@ function makeHarness(script: HarnessScript = {}) {
     },
     callJudge: async (prompt, signal) => {
       const purpose =
-        prompt.includes('BOSS_INTENT') && prompt.includes('NO_ACTION')
+        prompt.includes('Classify this Boss turn') ||
+        (prompt.includes('NO_ACTION') && prompt.includes('BOSS_INTERRUPT'))
           ? 'classification'
           : 'adjudication';
       judgeCalls.push({ prompt, signal, purpose });
       const callNumber = judgeCalls.length;
       order.push(`host:judge:${callNumber}:started`);
       try {
-        const reply =
+        const step =
           purpose === 'classification'
             ? shiftRequired(classifications, 'classification judge')
             : shiftRequired(adjudications, 'adjudication judge');
+        const reply =
+          typeof step === 'function' ? await step(prompt, signal) : step;
         return encodeJudgeReply(reply);
       } finally {
         order.push(`host:judge:${callNumber}:finished`);
@@ -318,7 +332,10 @@ function makeHarness(script: HarnessScript = {}) {
         event.payload.type === script.rejectTraceType
       ) {
         traceRejected = true;
-        throw new Error(`Injected ${event.payload.type} trace sink failure`);
+        throw (
+          script.rejectTraceError ??
+          new Error(`Injected ${event.payload.type} trace sink failure`)
+        );
       }
     },
   };
@@ -448,6 +465,89 @@ describe('compiled default Captain runtime', () => {
     ).rejects.toThrow(/initialized|disposed/i);
   });
 
+  it('serializes concurrent disposal behind successful initialization emissions', async () => {
+    const harness = makeHarness();
+    const started = deferred<void>();
+    const releaseStart = deferred<void>();
+    const emitTelemetry = harness.ports.emitTelemetry;
+    harness.ports.emitTelemetry = async (event) => {
+      await emitTelemetry(event);
+      if (
+        isTraceTelemetry(event) &&
+        event.payload.type === 'session.started'
+      ) {
+        started.resolve();
+        await releaseStart.promise;
+      }
+    };
+    const runtime = createPlaybookRuntime({
+      enabledPlaybooks: ENABLED_PLAYBOOKS,
+    });
+    let initializationSettled = false;
+    let disposalSettled = false;
+
+    const initialization = runtime
+      .init(makeSession(harness.ports))
+      .finally(() => {
+        initializationSettled = true;
+      });
+    await started.promise;
+    const disposal = runtime.dispose().finally(() => {
+      disposalSettled = true;
+    });
+    await delay(20);
+
+    expect(initializationSettled).toBe(false);
+    expect(disposalSettled).toBe(false);
+    releaseStart.resolve();
+    const outcomes = await Promise.allSettled([initialization, disposal]);
+
+    expect(outcomes.map(({ status }) => status)).toEqual([
+      'fulfilled',
+      'fulfilled',
+    ]);
+    const startedIndex = harness.telemetry.findIndex(
+      (event) =>
+        isTraceTelemetry(event) && event.payload.type === 'session.started',
+    );
+    const transitionIndex = harness.telemetry.findIndex(
+      (event) =>
+        isTraceTelemetry(event) && event.payload.type === 'fsm.transition',
+    );
+    const stateTelemetryIndex = harness.telemetry.findIndex(
+      (event) => event.topic === 'playbook.fsm.state',
+    );
+    const disposedIndex = harness.telemetry.findIndex(
+      (event) =>
+        isTraceTelemetry(event) && event.payload.type === 'session.disposed',
+    );
+    expect(startedIndex).toBeGreaterThanOrEqual(0);
+    expect(transitionIndex).toBeGreaterThan(startedIndex);
+    expect(stateTelemetryIndex).toBeGreaterThan(transitionIndex);
+    expect(disposedIndex).toBeGreaterThan(stateTelemetryIndex);
+    await expect(runtime.dispose()).resolves.toBeUndefined();
+  });
+
+  it('completes initialization cleanup when session validation rejects', async () => {
+    const harness = makeHarness();
+    const runtime = createPlaybookRuntime({
+      enabledPlaybooks: ENABLED_PLAYBOOKS,
+    });
+    const invalidSession = {
+      ...makeSession(harness.ports),
+      rootSessionId: nextSessionId(),
+    };
+
+    await expect(runtime.init(invalidSession)).rejects.toThrow(
+      /rootSessionId|root session|identity/i,
+    );
+    const disposal = runtime.dispose();
+
+    await expect(within(disposal, 200)).resolves.toBeUndefined();
+    expect(runtime.dispose()).toBe(disposal);
+    expect(harness.traces).toEqual([]);
+  });
+
   it('retains terminal disposal identity before initialization', async () => {
     const harness = makeHarness();
     const runtime = createPlaybookRuntime({
@@ -493,11 +593,31 @@ describe('compiled default Captain runtime', () => {
     await runtime.dispose();
   });
 
-  it('returns one terminal direct response without a second visible presentation', async () => {
+  it('initializes, delegates one child, and returns the child-backed visible final response', async () => {
+    const intent =
+      'Implement the parser fix without changing the public API, then run its tests.';
     const harness = makeHarness({
-      classifications: [intentClassification('Explain the trade-off.')],
-      captains: [{ status: 'ok', finalText: 'Use the simpler option.' }],
-      adjudications: [directResponse('Use the simpler option.')],
+      captains: [
+        { status: 'ok', finalText: 'I will route this implementation to CODE.' },
+        {
+          status: 'ok',
+          finalText: 'The parser fix is implemented and its tests pass.',
+        },
+      ],
+      adjudications: [
+        delegation(
+          'code',
+          'Implement the parser fix without changing the public API, then run its tests.',
+        ),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000000',
+          { summary: 'Parser fixed; tests pass.' },
+        ),
+      ],
     });
     const runtime = await initRuntime(harness);
     expect(harness.statuses).toHaveLength(0);
@@ -515,16 +635,30 @@ describe('compiled default Captain runtime', () => {
     });
 
     const result = await runtime.handleBossInput({
-      text: 'Explain the trade-off.',
+      text: intent,
       signal: signal(),
     });
 
-    expectTerminalResponse(result, 'Use the simpler option.');
-    expect(harness.captainCalls).toHaveLength(1);
-    expect(harness.captainCalls[0].options).toEqual({ visibility: 'visible' });
+    expectTerminalResponse(
+      result,
+      'The parser fix is implemented and its tests pass.',
+    );
+    expect(harness.captainCalls).toHaveLength(2);
+    expect(harness.captainCalls.map(({ options }) => options)).toEqual([
+      { visibility: 'visible', resume: false, allowedTools: [] },
+      { visibility: 'visible', resume: false, allowedTools: [] },
+    ]);
+    expect(harness.captainCalls[0].prompt).toContain(`Boss intent: ${intent}`);
+    expect(harness.captainCalls[0].prompt).not.toMatch(
+      /"guard"|Output shall include|remainingPlan|nextPlaybookId|nextPlaybookInput|response:/i,
+    );
+    expect(
+      harness.judgeCalls.filter(({ purpose }) => purpose === 'classification'),
+    ).toHaveLength(0);
+    expect(harness.childCalls).toHaveLength(1);
     expect(
       harness.traces.filter((trace) => trace.type === 'captain.call.started'),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     expectPairedCalls(harness.traces, 'captain');
     expect(
       harness.traces
@@ -536,7 +670,9 @@ describe('compiled default Captain runtime', () => {
       payload: {
         outcome: 'terminal',
         stateId: 'done',
-        output: { response: 'Use the simpler option.' },
+        output: {
+          response: 'The parser fix is implemented and its tests pass.',
+        },
       },
     });
     expect(
@@ -559,51 +695,110 @@ describe('compiled default Captain runtime', () => {
     await runtime.dispose();
   });
 
-  it.each([
-    {
-      label: 'surrounding prose with earlier bracket fragments',
-      reply:
-        'Ignore [draft] and {n/a}. Intended: {"type":"BOSS_INTENT","bossIntent":"prose classification"} Thanks.',
-      bossIntent: 'prose classification',
-    },
-    {
-      label: 'a Markdown fence amid prose',
-      reply:
-        'Result follows:\n```json\n{"type":"BOSS_INTENT","bossIntent":"fenced classification"}\n```\nDone.',
-      bossIntent: 'fenced classification',
-    },
-    {
-      label: 'a trailing comma before a later clean decoy',
-      reply:
-        '{"type":"BOSS_INTENT","bossIntent":"trailing classification",} Ignore {"type":"NO_ACTION"}',
-      bossIntent: 'trailing classification',
-    },
-    {
-      label: 'a truncated object',
-      reply: '{"type":"BOSS_INTENT","bossIntent":"truncated classification"',
-      bossIntent: 'truncated classification',
-    },
-    {
-      label: 'an unterminated string',
-      reply: '{"type":"BOSS_INTENT","bossIntent":"unterminated classification',
-      bossIntent: 'unterminated classification',
-    },
-  ])('recovers classifier JSON from $label', async ({ reply, bossIntent }) => {
+  it('accepts a successful child result with no output', async () => {
     const harness = makeHarness({
-      classifications: [reply],
-      captains: [{ status: 'ok', finalText: 'Recovered classification.' }],
-      adjudications: [directResponse('Recovered classification.')],
+      captains: [
+        { status: 'ok', finalText: 'I will route this implementation.' },
+        { status: 'ok', finalText: 'The child completed successfully.' },
+      ],
+      adjudications: [delegation('code', 'Complete it.'), finalResponse()],
+      children: [
+        settledSuccess('code', '10000000-0000-4000-8000-000000000020'),
+      ],
     });
     const runtime = await initRuntime(harness);
 
     const result = await runtime.handleBossInput({
-      text: 'Route this messy classifier reply.',
+      text: 'Complete the implementation.',
       signal: signal(),
     });
 
-    expectTerminalResponse(result, 'Recovered classification.');
-    expect(harness.captainCalls[0].prompt).toContain(
-      `Boss intent: ${bossIntent}`,
+    expectTerminalResponse(result, 'The child completed successfully.');
+    const finish = harness.traces.find(
+      (trace) => trace.type === 'playbook.call.finished',
+    );
+    expect(finish).toBeDefined();
+    expect(
+      tracePayload(finish as PlaybookTraceEvent).result,
+    ).not.toHaveProperty('output');
+    await runtime.dispose();
+  });
+
+  it.each([
+    {
+      label: 'surrounding prose with earlier bracket fragments',
+      reply:
+        'Ignore [draft] and {n/a}. Intended: {"type":"BOSS_INTERRUPT","targetId":"routing"} Thanks.',
+    },
+    {
+      label: 'a Markdown fence amid prose',
+      reply:
+        'Result follows:\n```json\n{"type":"BOSS_INTERRUPT","targetId":"routing"}\n```\nDone.',
+    },
+    {
+      label: 'a trailing comma before a later clean decoy',
+      reply:
+        '{"type":"BOSS_INTERRUPT","targetId":"routing",} Ignore {"type":"NO_ACTION"}',
+    },
+    {
+      label: 'a truncated object',
+      reply: '{"type":"BOSS_INTERRUPT","targetId":"routing"',
+    },
+    {
+      label: 'an unterminated string',
+      reply: '{"type":"BOSS_INTERRUPT","targetId":"routing',
+    },
+  ])('recovers parked classifier JSON from $label without rewriting Boss text', async ({
+    reply,
+  }) => {
+    const exactFreshIntent =
+      'Implement the exact parser change; do not paraphrase this message.';
+    const harness = makeHarness({
+      classifications: [reply],
+      captains: [
+        { status: 'ok', finalText: 'Which outcome should I route?' },
+        { status: 'ok', finalText: 'I will route the exact request to CODE.' },
+        { status: 'ok', finalText: 'The exact parser change is complete.' },
+      ],
+      adjudications: [
+        { guard: 'question' },
+        delegation('code', exactFreshIntent),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000012',
+          { summary: 'exact parser change complete' },
+        ),
+      ],
+    });
+    const runtime = await initRuntime(harness);
+
+    const parked = await runtime.handleBossInput({
+      text: 'Ask one routing question first.',
+      signal: signal(),
+    });
+    expect(parked).toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply', quiescent: true },
+    });
+
+    const result = await runtime.handleBossInput({
+      text: exactFreshIntent,
+      signal: signal(),
+    });
+
+    expectTerminalResponse(result, 'The exact parser change is complete.');
+    const classification = harness.judgeCalls.find(
+      ({ purpose }) => purpose === 'classification',
+    );
+    expect(classification?.prompt).toContain(exactFreshIntent);
+    expect(harness.captainCalls[1].prompt).toContain(
+      `Boss intent: ${exactFreshIntent}`,
+    );
+    expect(harness.captainCalls[1].prompt).not.toContain(
+      'prose classification',
     );
     await runtime.dispose();
   });
@@ -612,36 +807,43 @@ describe('compiled default Captain runtime', () => {
     {
       label: 'surrounding prose with earlier bracket fragments',
       reply:
-        'Ignore [draft] and {n/a}. Intended: {"guard":"direct","response":"prose adjudication"} Thanks.',
-      response: 'prose adjudication',
+        'Ignore [draft] and {n/a}. Intended: {"guard":"final"} Thanks.',
     },
     {
       label: 'a Markdown fence amid prose',
       reply:
-        'Result follows:\n```json\n{"guard":"direct","response":"fenced adjudication"}\n```\nDone.',
-      response: 'fenced adjudication',
+        'Result follows:\n```json\n{"guard":"final"}\n```\nDone.',
     },
     {
       label: 'a trailing comma before a later clean decoy',
       reply:
-        '{"guard":"direct","response":"trailing adjudication",} Ignore {"guard":"direct","response":"decoy"}',
-      response: 'trailing adjudication',
+        '{"guard":"final",} Ignore {"guard":"continuing"}',
     },
     {
       label: 'a truncated object',
-      reply: '{"guard":"direct","response":"truncated adjudication"',
-      response: 'truncated adjudication',
+      reply: '{"guard":"final"',
     },
     {
       label: 'an unterminated string',
-      reply: '{"guard":"direct","response":"unterminated adjudication',
-      response: 'unterminated adjudication',
+      reply: '{"guard":"final',
     },
-  ])('recovers adjudicator JSON from $label', async ({ reply, response }) => {
+  ])('recovers final adjudicator JSON from $label', async ({ reply }) => {
     const harness = makeHarness({
-      classifications: [intentClassification('Adjudicate this output.')],
-      captains: [{ status: 'ok', finalText: 'Visible Captain output.' }],
-      adjudications: [reply],
+      captains: [
+        { status: 'ok', finalText: 'I will route this work to CODE.' },
+        { status: 'ok', finalText: 'Visible child-backed Captain output.' },
+      ],
+      adjudications: [
+        delegation('code', 'Produce the result to adjudicate.'),
+        reply,
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000013',
+          { result: 'child-backed' },
+        ),
+      ],
     });
     const runtime = await initRuntime(harness);
 
@@ -650,7 +852,7 @@ describe('compiled default Captain runtime', () => {
       signal: signal(),
     });
 
-    expectTerminalResponse(result, response);
+    expectTerminalResponse(result, 'Visible child-backed Captain output.');
     await runtime.dispose();
   });
 
@@ -659,16 +861,28 @@ describe('compiled default Captain runtime', () => {
     { label: 'a non-object JSON value', reply: '["NO_ACTION"]' },
     { label: 'an unknown event', reply: { type: 'UNKNOWN_EVENT' } },
     {
-      label: 'a reply without a pending question',
-      reply: { type: 'BOSS_REPLY', answer: 'orphan reply' },
+      label: 'a reply with an unknown question id',
+      reply: { type: 'BOSS_REPLY', questionId: 'unknown-question' },
     },
     {
       label: 'NO_ACTION with an injected field',
       reply: { type: 'NO_ACTION', enabledPlaybooks: [] },
     },
+    {
+      label: 'a classifier-authored Boss paraphrase',
+      reply: { type: 'BOSS_INTENT', bossIntent: 'rewritten by classifier' },
+    },
   ])('emits exactly one status and no event for $label', async ({ reply }) => {
-    const harness = makeHarness({ classifications: [reply] });
+    const harness = makeHarness({
+      classifications: [reply],
+      captains: [{ status: 'ok', finalText: 'Which route should I use?' }],
+      adjudications: [{ guard: 'question' }],
+    });
     const runtime = await initRuntime(harness);
+    await runtime.handleBossInput({
+      text: 'Ask for routing guidance.',
+      signal: signal(),
+    });
     const statusCount = harness.statuses.length;
     const transitionCount = harness.traces.filter(
       (trace) => trace.type === 'fsm.transition',
@@ -681,17 +895,21 @@ describe('compiled default Captain runtime', () => {
 
     expect(result).toMatchObject({
       outcome: 'no-action',
-      state: { stateId: 'ready', quiescent: true },
+      state: { stateId: 'awaitBossReply', quiescent: true },
     });
     const recoveryStatuses = harness.statuses.slice(statusCount);
     expect(recoveryStatuses).toHaveLength(1);
     expect(recoveryStatuses[0].message).toMatch(
-      /not actionable|classification (?:was )?invalid|could not be classified/i,
+      /not actionable|classification (?:was )?invalid|could not (?:be )?classified|could not classify/i,
     );
     expect(
       harness.traces.filter((trace) => trace.type === 'fsm.transition'),
     ).toHaveLength(transitionCount);
-    expect(harness.captainCalls).toHaveLength(0);
+    expect(harness.captainCalls).toHaveLength(1);
+    expect(
+      harness.judgeCalls.find(({ purpose }) => purpose === 'classification')
+        ?.prompt,
+    ).toContain('This classification is invalid.');
     expectPairedCalls(harness.traces, 'judge');
     await runtime.dispose();
   });
@@ -701,17 +919,23 @@ describe('compiled default Captain runtime', () => {
     const answer = 'Implement first.';
     const intent = 'Implement the idea and then compare alternatives.';
     const harness = makeHarness({
-      classifications: [
-        intentClassification(intent),
-        { type: 'BOSS_REPLY', answer },
-      ],
+      classifications: [{ type: 'BOSS_REPLY' }],
       captains: [
         { status: 'ok', finalText: question },
-        { status: 'ok', finalText: 'I will start with implementation.' },
+        { status: 'ok', finalText: 'I will route implementation to CODE.' },
+        { status: 'ok', finalText: 'Implementation completed first.' },
       ],
       adjudications: [
-        { guard: 'needsBossReply', question },
-        directResponse('I will start with implementation.'),
+        { guard: 'question' },
+        delegation('code', 'Implement the idea before comparing alternatives.'),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000014',
+          { summary: 'implementation completed first' },
+        ),
       ],
     });
     const runtime = await initRuntime(harness);
@@ -729,12 +953,15 @@ describe('compiled default Captain runtime', () => {
       text: answer,
       signal: signal(),
     });
-    expectTerminalResponse(completed, 'I will start with implementation.');
-    expect(harness.captainCalls).toHaveLength(2);
-    expect(harness.judgeCalls[2]).toMatchObject({ purpose: 'classification' });
-    expect(harness.judgeCalls[2].prompt).toContain(question);
-    expect(harness.judgeCalls[2].prompt).not.toContain('resumeStateId');
-    expect(harness.judgeCalls[2].prompt).not.toContain('sourceItem');
+    expectTerminalResponse(completed, 'Implementation completed first.');
+    expect(harness.captainCalls).toHaveLength(3);
+    const classification = harness.judgeCalls.find(
+      ({ purpose }) => purpose === 'classification',
+    );
+    expect(classification?.prompt).toContain(question);
+    expect(classification?.prompt).toContain(answer);
+    expect(classification?.prompt).not.toContain('resumeStateId');
+    expect(classification?.prompt).not.toContain('sourceItem');
 
     const expectedPrefix = [
       'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.',
@@ -763,16 +990,13 @@ describe('compiled default Captain runtime', () => {
     const answer = 'Implement first.';
     const childSessionId = '10000000-0000-4000-8000-000000000040';
     const harness = makeHarness({
-      classifications: [
-        intentClassification('Implement and discuss the change.'),
-        { type: 'BOSS_REPLY', answer },
-      ],
+      classifications: [{ type: 'BOSS_REPLY' }],
       captains: [
         { status: 'ok', finalText: question },
         { status: 'ok', finalText: 'I will delegate implementation.' },
       ],
       adjudications: [
-        { guard: 'needsBossReply', question },
+        { guard: 'question' },
         delegation('code', 'Implement the requested change.'),
       ],
       children: [{ state: 'suspended', childSessionId }],
@@ -813,17 +1037,25 @@ describe('compiled default Captain runtime', () => {
     const answer = 'Preserve compatibility.';
     const harness = makeHarness({
       classifications: [
-        intentClassification('Implement after clarifying constraints.'),
         { type: 'BOSS_INTERRUPT', targetId: 'awaitBossReply' },
-        { type: 'BOSS_REPLY', answer },
+        { type: 'BOSS_REPLY' },
       ],
       captains: [
         { status: 'ok', finalText: question },
-        { status: 'ok', finalText: 'I will preserve compatibility.' },
+        { status: 'ok', finalText: 'I will route the compatible change.' },
+        { status: 'ok', finalText: 'Compatibility was preserved.' },
       ],
       adjudications: [
-        { guard: 'needsBossReply', question },
-        directResponse('I will preserve compatibility.'),
+        { guard: 'question' },
+        delegation('code', 'Implement the change while preserving compatibility.'),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000015',
+          { summary: 'compatibility preserved' },
+        ),
       ],
     });
     const runtime = await initRuntime(harness);
@@ -852,16 +1084,22 @@ describe('compiled default Captain runtime', () => {
     const recoveryStatuses = harness.statuses.slice(statusCount);
     expect(recoveryStatuses).toHaveLength(1);
     expect(recoveryStatuses[0].message).toMatch(
-      /not actionable|classification (?:was )?invalid|could not be classified/i,
+      /not actionable|classification (?:was )?invalid|could not (?:be )?classified|could not classify/i,
     );
     expect(
       harness.traces.filter((trace) => trace.type === 'fsm.transition'),
     ).toHaveLength(transitionCount);
     expect(harness.captainCalls).toHaveLength(1);
-    expect(harness.judgeCalls[2].prompt).toContain('BOSS_INTERRUPT');
-    expect(harness.judgeCalls[2].prompt).toContain('routing');
-    expect(harness.judgeCalls[2].prompt).toContain('bossIntent');
-    expect(harness.judgeCalls[2].prompt).not.toMatch(
+    const rejectedClassification = harness.judgeCalls.find(
+      ({ purpose }) => purpose === 'classification',
+    );
+    expect(rejectedClassification?.prompt).toContain('BOSS_INTERRUPT');
+    expect(rejectedClassification?.prompt).toContain('routing');
+    expect(rejectedClassification?.prompt).toContain(
+      'Jump back into the same wait state.',
+    );
+    expect(rejectedClassification?.prompt).not.toContain('"bossIntent"');
+    expect(rejectedClassification?.prompt).not.toMatch(
       /BOSS_INTERRUPT[^\n]*targetId[^\n]*(?:reassessing|awaitBossReply)/,
     );
 
@@ -869,7 +1107,7 @@ describe('compiled default Captain runtime', () => {
       text: answer,
       signal: signal(),
     });
-    expectTerminalResponse(completed, 'I will preserve compatibility.');
+    expectTerminalResponse(completed, 'Compatibility was preserved.');
     expect(harness.captainCalls[1].prompt).toContain(question);
     expect(harness.captainCalls[1].prompt).toContain(answer);
     await runtime.dispose();
@@ -877,23 +1115,30 @@ describe('compiled default Captain runtime', () => {
 
   it('accepts a fresh routing interrupt while parked and clears the old question', async () => {
     const question = 'Which constraint should govern the original intent?';
-    const freshIntent = 'Explain the replacement approach directly.';
+    const freshIntent = 'Implement the replacement approach with tests.';
     const harness = makeHarness({
       classifications: [
-        intentClassification('Clarify the original intent.'),
         {
           type: 'BOSS_INTERRUPT',
           targetId: 'routing',
-          bossIntent: freshIntent,
         },
       ],
       captains: [
         { status: 'ok', finalText: question },
-        { status: 'ok', finalText: 'Use the replacement approach.' },
+        { status: 'ok', finalText: 'I will route the replacement to CODE.' },
+        { status: 'ok', finalText: 'The replacement is implemented and tested.' },
       ],
       adjudications: [
-        { guard: 'needsBossReply', question },
-        directResponse('Use the replacement approach.'),
+        { guard: 'question' },
+        delegation('code', 'Implement the replacement approach with tests.'),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000016',
+          { summary: 'replacement implemented and tested' },
+        ),
       ],
     });
     const runtime = await initRuntime(harness);
@@ -911,7 +1156,10 @@ describe('compiled default Captain runtime', () => {
       text: freshIntent,
       signal: signal(),
     });
-    expectTerminalResponse(completed, 'Use the replacement approach.');
+    expectTerminalResponse(
+      completed,
+      'The replacement is implemented and tested.',
+    );
     expect(harness.captainCalls[1].prompt).toContain(
       `Boss intent: ${freshIntent}`,
     );
@@ -919,20 +1167,23 @@ describe('compiled default Captain runtime', () => {
     expect(harness.captainCalls[1].prompt).not.toContain(
       'You previously paused this task',
     );
+    expect(
+      harness.judgeCalls.find(({ purpose }) => purpose === 'classification')
+        ?.prompt,
+    ).toContain(freshIntent);
     await runtime.dispose();
   });
 
   it('executes one child and reassesses its actual output before completing', async () => {
     const childSessionId = '10000000-0000-4000-8000-000000000001';
     const harness = makeHarness({
-      classifications: [intentClassification('Implement the fix.')],
       captains: [
         { status: 'ok', finalText: 'I will use CODE.' },
         { status: 'ok', finalText: 'The fix is complete.' },
       ],
       adjudications: [
         delegation('code', 'Implement the fix with tests.'),
-        finalResponse('The fix is complete.'),
+        finalResponse(),
       ],
       children: [
         settledSuccess('code', childSessionId, { summary: 'tests pass' }),
@@ -964,7 +1215,6 @@ describe('compiled default Captain runtime', () => {
 
   it('executes a revised multi-child plan strictly one child at a time', async () => {
     const harness = makeHarness({
-      classifications: [intentClassification('Implement, then compare.')],
       captains: [
         { status: 'ok', finalText: 'First I will implement.' },
         { status: 'ok', finalText: 'Now I will compare proposals.' },
@@ -979,7 +1229,7 @@ describe('compiled default Captain runtime', () => {
           'Compare alternatives using the implementation.',
           [],
         ),
-        finalResponse('Both steps are complete.'),
+        finalResponse(),
       ],
       children: [
         settledSuccess('code', '10000000-0000-4000-8000-000000000002', {
@@ -1016,7 +1266,6 @@ describe('compiled default Captain runtime', () => {
   it('rejects an equivalent completed child call before reinvocation', async () => {
     const repeatedText = 'Implement the requested change.';
     const harness = makeHarness({
-      classifications: [intentClassification('Implement once.')],
       captains: [
         { status: 'ok', finalText: 'I will implement it.' },
         { status: 'ok', finalText: 'I will repeat the same call.' },
@@ -1075,7 +1324,6 @@ describe('compiled default Captain runtime', () => {
           ? { state: 'settled', result: childResult }
           : { state: 'suspended', childSessionId };
       const harness = makeHarness({
-        classifications: [intentClassification('Try once, then reassess.')],
         captains: [
           { status: 'ok', finalText: 'I will try the child once.' },
           { status: 'ok', finalText: 'I will repeat the exact child call.' },
@@ -1130,7 +1378,6 @@ describe('compiled default Captain runtime', () => {
       },
     ];
     const harness = makeHarness({
-      classifications: [intentClassification('Implement and refine once.')],
       captains: [
         { status: 'ok', finalText: 'I will implement first.' },
         { status: 'ok', finalText: 'I will refine from the result.' },
@@ -1142,7 +1389,7 @@ describe('compiled default Captain runtime', () => {
           'code',
           'Refine the implementation using result summary implemented-v1.',
         ),
-        finalResponse('The refinement is complete.'),
+        finalResponse(),
       ],
       children: [
         settledSuccess('code', '10000000-0000-4000-8000-000000000010', {
@@ -1181,7 +1428,6 @@ describe('compiled default Captain runtime', () => {
       { playbookId: 'discuss', purpose: 'Compare the implementation.' },
     ];
     const harness = makeHarness({
-      classifications: [intentClassification('Implement with a bounded plan.')],
       captains: [
         { status: 'ok', finalText: 'I will implement first.' },
         { status: 'ok', finalText: 'I will keep extending the plan.' },
@@ -1255,14 +1501,13 @@ describe('compiled default Captain runtime', () => {
           ? { state: 'settled', result: childResult }
           : { state: 'suspended', childSessionId };
       const harness = makeHarness({
-        classifications: [intentClassification('Try the implementation.')],
         captains: [
           { status: 'ok', finalText: 'I will try CODE.' },
           { status: 'ok', finalText: 'I accounted for the child result.' },
         ],
         adjudications: [
           delegation('code', 'Try the implementation.'),
-          finalResponse('I accounted for the child result.'),
+          finalResponse(),
         ],
         children: [childStart],
       });
@@ -1341,17 +1586,123 @@ describe('compiled default Captain runtime', () => {
     },
   );
 
+  it.each([
+    {
+      label: 'missing target and normalized error',
+      result: { status: 'error' },
+    },
+    {
+      label: 'status-incompatible output',
+      result: {
+        status: 'error',
+        playbookId: 'code',
+        error: { name: 'Error', message: 'Child failed.' },
+        output: { shouldNotExist: true },
+      },
+    },
+    {
+      label: 'empty child session identity',
+      result: {
+        status: 'aborted',
+        playbookId: 'code',
+        childSessionId: '',
+      },
+    },
+    {
+      label: 'malformed public state',
+      result: {
+        status: 'aborted',
+        playbookId: 'code',
+        state: { status: 'active', quiescent: true },
+      },
+    },
+    {
+      label: 'normalized error with an undeclared field',
+      result: {
+        status: 'error',
+        playbookId: 'code',
+        error: {
+          name: 'Error',
+          message: 'Child failed.',
+          privateDetail: 'must not enter evidence',
+        },
+      },
+    },
+  ])('routes a malformed child result with $label to failed without reassessment evidence', async ({ result }) => {
+    const controlError = new Error('Child transport failed');
+    Object.defineProperty(controlError, 'result', {
+      value: result,
+      enumerable: true,
+    });
+    let reassessmentCalls = 0;
+    const machine = captainMachine.provide({
+      actors: {
+        captain: fromPromise<CaptainOutput, CaptainInput>(
+          async ({ input }) => {
+            if (input.sourceItem === 'CAPTAIN-3') {
+              reassessmentCalls += 1;
+              return {
+                guard: 'final',
+                response: 'Malformed control errors must not reach reassessment.',
+              };
+            }
+            return {
+              guard: 'delegation',
+              remainingPlan: [],
+              nextPlaybookId: 'code',
+              nextPlaybookInput: 'Run the child once.',
+            };
+          },
+        ),
+        playbook: fromPromise<PlaybookOutput, PlaybookInput>(async () => {
+          throw controlError;
+        }),
+      },
+    });
+    const actor = createActor(machine, {
+      input: {
+        enabledPlaybooks: ENABLED_PLAYBOOKS,
+        selfPlaybookId: 'captain',
+      },
+    });
+    const settled = deferred<ReturnType<typeof actor.getSnapshot>>();
+    const subscription = actor.subscribe({
+      next: (snapshot) => {
+        if (snapshot.value === 'failed' || snapshot.status === 'done') {
+          settled.resolve(snapshot);
+        }
+      },
+      error: settled.reject,
+    });
+
+    try {
+      actor.start();
+      actor.send({ type: 'BOSS_INTENT', bossIntent: 'Delegate one child.' });
+      const snapshot = await within(settled.promise);
+
+      expect(snapshot.value).toBe('failed');
+      expect(reassessmentCalls).toBe(0);
+      expect(snapshot.context.completedCallResults).toEqual([]);
+      expect(snapshot.context.lastError).toMatchObject({
+        name: 'Error',
+        message: 'Child transport failed',
+      });
+    } finally {
+      subscription.unsubscribe();
+      actor.stop();
+    }
+  });
+
   it('clears a failed resume boundary while retaining the pending child for a valid retry', async () => {
     const childSessionId = '10000000-0000-4000-8000-000000000006';
     const harness = makeHarness({
-      classifications: [intentClassification('Delegate and resume safely.')],
       captains: [
         { status: 'ok', finalText: 'I will delegate.' },
         { status: 'ok', finalText: 'The resumed child completed.' },
       ],
       adjudications: [
         delegation('code', 'Complete the resumable work.'),
-        finalResponse('The resumed child completed.'),
+        finalResponse(),
       ],
       children: [{ state: 'suspended', childSessionId }],
     });
@@ -1403,19 +1754,24 @@ describe('compiled default Captain runtime', () => {
   it('prefers malformed resumed output over a later failed-status sink error', async () => {
     const childSessionId = '10000000-0000-4000-8000-000000000007';
     const harness = makeHarness({
-      classifications: [
-        intentClassification('Delegate malformed resumable work.'),
-        intentClassification('Recover with a direct answer.'),
-      ],
       captains: [
         { status: 'ok', finalText: 'I will delegate.' },
-        { status: 'ok', finalText: 'Recovery completed.' },
+        { status: 'ok', finalText: 'I will route recovery to DISCUSS.' },
+        { status: 'ok', finalText: 'Recovery completed from child evidence.' },
       ],
       adjudications: [
         delegation('code', 'Return structured work.'),
-        directResponse('Recovery completed.'),
+        delegation('discuss', 'Recover from the malformed child result.'),
+        finalResponse(),
       ],
-      children: [{ state: 'suspended', childSessionId }],
+      children: [
+        { state: 'suspended', childSessionId },
+        settledSuccess(
+          'discuss',
+          '10000000-0000-4000-8000-000000000017',
+          { summary: 'recovered' },
+        ),
+      ],
     });
     let rejectedFailedStatus = false;
     let rejectNextStatus = false;
@@ -1483,29 +1839,37 @@ describe('compiled default Captain runtime', () => {
     }).toEqual(boundarySnapshot);
 
     const recovered = await runtime.handleBossInput({
-      text: 'Recover with a direct answer.',
+      text: 'Recover through a child playbook.',
       signal: signal(),
     });
-    expectTerminalResponse(recovered, 'Recovery completed.');
+    expectTerminalResponse(
+      recovered,
+      'Recovery completed from child evidence.',
+    );
     await runtime.dispose();
   });
 
   it('drains a resumed finish-sink failure without poisoning the next turn', async () => {
     const childSessionId = '10000000-0000-4000-8000-000000000008';
     const harness = makeHarness({
-      classifications: [
-        intentClassification('Delegate traced resumable work.'),
-        intentClassification('Recover after the trace failure.'),
-      ],
       captains: [
         { status: 'ok', finalText: 'I will delegate.' },
-        { status: 'ok', finalText: 'Trace recovery completed.' },
+        { status: 'ok', finalText: 'I will route trace recovery to DISCUSS.' },
+        { status: 'ok', finalText: 'Trace recovery used child evidence.' },
       ],
       adjudications: [
         delegation('code', 'Return traced structured work.'),
-        directResponse('Trace recovery completed.'),
+        delegation('discuss', 'Recover after the trace failure.'),
+        finalResponse(),
       ],
-      children: [{ state: 'suspended', childSessionId }],
+      children: [
+        { state: 'suspended', childSessionId },
+        settledSuccess(
+          'discuss',
+          '10000000-0000-4000-8000-000000000018',
+          { summary: 'trace recovery complete' },
+        ),
+      ],
       rejectTraceType: 'playbook.call.finished',
     });
     const runtime = await initRuntime(harness);
@@ -1572,7 +1936,7 @@ describe('compiled default Captain runtime', () => {
       text: 'Recover after the trace failure.',
       signal: signal(),
     });
-    expectTerminalResponse(recovered, 'Trace recovery completed.');
+    expectTerminalResponse(recovered, 'Trace recovery used child evidence.');
     await runtime.dispose();
   });
 
@@ -1580,7 +1944,6 @@ describe('compiled default Captain runtime', () => {
     'rejects the %s dynamic target before opening any child',
     async (target) => {
       const harness = makeHarness({
-        classifications: [intentClassification('Route this intent.')],
         captains: [{ status: 'ok', finalText: 'I selected a target.' }],
         adjudications: [delegation(target, 'Do the work.')],
       });
@@ -1618,21 +1981,25 @@ describe('compiled default Captain runtime', () => {
     },
     {
       name: 'a missing required field',
-      reply: { guard: 'direct' },
-      error: /requires response|required field|omitted/i,
+      reply: { guard: 'delegation' },
+      error: /missing (?:required field )?remainingPlan|required field|omitted/i,
+    },
+    {
+      name: 'an adjudicator-authored visible question',
+      reply: { guard: 'question', question: 'Spoofed hidden question.' },
+      error: /must not supply.*presentation|undeclared field question/i,
     },
   ])(
     'rejects $name as a control-plane error after quiescence',
     async ({ reply, error }) => {
       const harness = makeHarness({
-        classifications: [intentClassification('Answer directly.')],
-        captains: [{ status: 'ok', finalText: 'A visible answer.' }],
+        captains: [{ status: 'ok', finalText: 'A visible routing decision.' }],
         adjudications: [reply],
       });
       const runtime = await initRuntime(harness);
 
       await expect(
-        runtime.handleBossInput({ text: 'Answer directly.', signal: signal() }),
+        runtime.handleBossInput({ text: 'Route this request.', signal: signal() }),
       ).rejects.toThrow(error);
 
       const settled = [...harness.traces]
@@ -1650,13 +2017,289 @@ describe('compiled default Captain runtime', () => {
     },
   );
 
+  it.each([
+    { boundary: 'captain' as const },
+    { boundary: 'judge' as const },
+  ])(
+    'returns and traces the same aborted result when an in-flight $boundary boundary observes Boss abort',
+    async ({ boundary }) => {
+      const portStarted = deferred<void>();
+      const abortReason = new DOMException(
+        `Boss aborted the ${boundary} boundary`,
+        'AbortError',
+      );
+      const waitForAbort = async (receivedSignal: AbortSignal): Promise<never> => {
+        portStarted.resolve();
+        if (!receivedSignal.aborted) {
+          await new Promise<void>((resolve) =>
+            receivedSignal.addEventListener('abort', () => resolve(), {
+              once: true,
+            }),
+          );
+        }
+        throw receivedSignal.reason;
+      };
+      const harness =
+        boundary === 'captain'
+          ? makeHarness({
+              captains: [async (_prompt, receivedSignal) => waitForAbort(receivedSignal)],
+            })
+          : makeHarness({
+              captains: [
+                { status: 'ok', finalText: 'I will route this request.' },
+              ],
+              adjudications: [
+                async (_prompt, receivedSignal) => waitForAbort(receivedSignal),
+              ],
+            });
+      const runtime = await initRuntime(harness);
+      const controller = new AbortController();
+
+      const turn = runtime.handleBossInput({
+        text: `Route through the ${boundary} boundary.`,
+        signal: controller.signal,
+      });
+      await within(portStarted.promise);
+      controller.abort(abortReason);
+      const result = await within(turn);
+      const settled = [...harness.traces]
+        .reverse()
+        .find((trace) => trace.type === 'boss.input.settled');
+      const projected = {
+        outcome: result.outcome,
+        state: result.state,
+        ...(result.state.stateId === undefined
+          ? {}
+          : { stateId: result.state.stateId }),
+        ...('error' in result && result.error !== undefined
+          ? { error: result.error }
+          : {}),
+      };
+
+      expect(result).toMatchObject({
+        outcome: 'aborted',
+        error: { name: 'AbortError', message: abortReason.message },
+      });
+      expect(settled).toMatchObject({ turnId: expect.any(Number) });
+      expect(settled?.payload).toEqual(projected);
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    {
+      label: 'AbortError reason',
+      abortReason: new DOMException(
+        'Boss aborted the parked classifier',
+        'AbortError',
+      ),
+    },
+    {
+      label: 'ordinary Error reason',
+      abortReason: new Error('Boss cancelled the parked classifier'),
+    },
+  ])('returns and traces the same aborted result when a parked classifier observes Boss abort with an $label', async ({ abortReason }) => {
+    const classifierStarted = deferred<void>();
+    const harness = makeHarness({
+      classifications: [
+        async (_prompt, receivedSignal) => {
+          classifierStarted.resolve();
+          if (!receivedSignal.aborted) {
+            await new Promise<void>((resolve) =>
+              receivedSignal.addEventListener('abort', () => resolve(), {
+                once: true,
+              }),
+            );
+          }
+          throw receivedSignal.reason;
+        },
+      ],
+      captains: [{ status: 'ok', finalText: 'Which route should I use?' }],
+      adjudications: [{ guard: 'question' }],
+    });
+    const runtime = await initRuntime(harness);
+    await runtime.handleBossInput({
+      text: 'Ask for routing input.',
+      signal: signal(),
+    });
+    const controller = new AbortController();
+
+    const turn = runtime.handleBossInput({
+      text: 'Classify this interrupted reply.',
+      signal: controller.signal,
+    });
+    await within(classifierStarted.promise);
+    controller.abort(abortReason);
+    const result = await within(turn);
+    const settled = [...harness.traces]
+      .reverse()
+      .find((trace) => trace.type === 'boss.input.settled');
+    const projected = {
+      outcome: result.outcome,
+      state: result.state,
+      ...(result.state.stateId === undefined
+        ? {}
+        : { stateId: result.state.stateId }),
+      ...('error' in result && result.error !== undefined
+        ? { error: result.error }
+        : {}),
+    };
+
+    expect(result).toMatchObject({
+      outcome: 'aborted',
+      error: { name: abortReason.name, message: abortReason.message },
+    });
+    expect(settled?.payload).toEqual(projected);
+    await runtime.dispose();
+  });
+
+  it('preserves a classifier transport failure that coincides with Boss abort', async () => {
+    const classifierStarted = deferred<void>();
+    const transportError = new Error(
+      'Classifier transport failed during Boss abort',
+    );
+    const harness = makeHarness({
+      classifications: [
+        async (_prompt, receivedSignal) => {
+          classifierStarted.resolve();
+          if (!receivedSignal.aborted) {
+            await new Promise<void>((resolve) =>
+              receivedSignal.addEventListener('abort', () => resolve(), {
+                once: true,
+              }),
+            );
+          }
+          throw transportError;
+        },
+      ],
+      captains: [{ status: 'ok', finalText: 'Which route should I use?' }],
+      adjudications: [{ guard: 'question' }],
+    });
+    const runtime = await initRuntime(harness);
+    const parked = await runtime.handleBossInput({
+      text: 'Ask for routing input.',
+      signal: signal(),
+    });
+    const traceOffset = harness.traces.length;
+    const controller = new AbortController();
+
+    const turn = runtime.handleBossInput({
+      text: 'Classify this interrupted reply.',
+      signal: controller.signal,
+    });
+    await within(classifierStarted.promise);
+    controller.abort(new Error('Boss cancelled classification'));
+    await expect(turn).rejects.toBe(transportError);
+    const boundaryTraces = harness.traces.slice(traceOffset);
+    const judgeFinish = boundaryTraces.find(
+      (trace) => trace.type === 'judge.call.finished',
+    );
+    const settled = boundaryTraces.find(
+      (trace) => trace.type === 'boss.input.settled',
+    );
+
+    expect(judgeFinish?.payload).toMatchObject({
+      status: 'error',
+      error: {
+        name: 'Error',
+        message: transportError.message,
+      },
+    });
+    expect(settled?.payload).toMatchObject({
+      outcome: 'no-action',
+      state: parked.state,
+      error: {
+        name: 'Error',
+        message: transportError.message,
+      },
+    });
+    await runtime.dispose();
+  });
+
+  it.each([
+    {
+      label: 'ordinary Error',
+      sinkError: new Error('Captain finish trace sink failed during abort'),
+    },
+    {
+      label: 'AbortError-named error',
+      sinkError: new DOMException(
+        'Captain finish trace sink failed during abort',
+        'AbortError',
+      ),
+    },
+  ])('rejects a distinct $label trace sink failure while a Captain boundary is aborting', async ({ sinkError }) => {
+    const portStarted = deferred<void>();
+    const harness = makeHarness({
+      captains: [
+        async (_prompt, receivedSignal) => {
+          portStarted.resolve();
+          if (!receivedSignal.aborted) {
+            await new Promise<void>((resolve) =>
+              receivedSignal.addEventListener('abort', () => resolve(), {
+                once: true,
+              }),
+            );
+          }
+          throw receivedSignal.reason;
+        },
+      ],
+      rejectTraceType: 'captain.call.finished',
+      rejectTraceError: sinkError,
+    });
+    const runtime = await initRuntime(harness);
+    const controller = new AbortController();
+
+    const turn = runtime
+      .handleBossInput({
+        text: 'Abort while the Captain is running.',
+        signal: controller.signal,
+      })
+      .then(
+        (result) => ({ kind: 'resolved' as const, result }),
+        (error: unknown) => ({ kind: 'rejected' as const, error }),
+      );
+    await within(portStarted.promise);
+    controller.abort(new DOMException('Boss aborted the turn', 'AbortError'));
+    const settlement = await within(turn);
+    await runtime.dispose();
+
+    expect(settlement).toEqual({ kind: 'rejected', error: sinkError });
+  });
+
+  it('preserves an AbortError-named Captain transport failure over its finish-sink failure', async () => {
+    const transportError = new DOMException(
+      'Captain transport emitted an abort-like error',
+      'AbortError',
+    );
+    const sinkError = new Error('Captain finish trace sink failed');
+    const harness = makeHarness({
+      captains: [async () => Promise.reject(transportError)],
+      rejectTraceType: 'captain.call.finished',
+      rejectTraceError: sinkError,
+    });
+    const runtime = await initRuntime(harness);
+
+    await expect(
+      runtime.handleBossInput({
+        text: 'Run through an abort-shaped transport failure.',
+        signal: signal(),
+      }),
+    ).rejects.toBe(transportError);
+    expect(
+      harness.traces.filter(
+        (trace) => trace.type === 'captain.call.finished',
+      ),
+    ).toHaveLength(1);
+    await runtime.dispose();
+  });
+
   it('forwards abort into a visible Captain call and waits for its natural failure', async () => {
     const portStarted = deferred<void>();
     const portFinished = deferred<void>();
     const forceWake = deferred<void>();
     let portSignal: AbortSignal | undefined;
     const harness = makeHarness({
-      classifications: [intentClassification('Answer this slowly.')],
       captains: [
         async (_prompt, receivedSignal) => {
           portSignal = receivedSignal;
@@ -1727,7 +2370,6 @@ describe('compiled default Captain runtime', () => {
     const forceWake = deferred<void>();
     let portSignal: AbortSignal | undefined;
     const harness = makeHarness({
-      classifications: [intentClassification('Delegate this slowly.')],
       captains: [{ status: 'ok', finalText: 'I will delegate.' }],
       adjudications: [delegation('code', 'Open the slow child.')],
       children: [
@@ -1816,7 +2458,6 @@ describe('compiled default Captain runtime', () => {
     'rejects a Captain $label as a control error',
     async ({ captain, expected }) => {
       const harness = makeHarness({
-        classifications: [intentClassification('Answer this intent.')],
         captains: [captain],
       });
       const runtime = await initRuntime(harness);
@@ -1842,7 +2483,6 @@ describe('compiled default Captain runtime', () => {
 
   it('preserves the first Captain control error when its paired finish trace also rejects', async () => {
     const harness = makeHarness({
-      classifications: [intentClassification('Answer this intent.')],
       captains: [{ status: 'ok' }],
       rejectTraceType: 'captain.call.finished',
     });
@@ -1861,7 +2501,6 @@ describe('compiled default Captain runtime', () => {
 
   it('attempts a Captain finish when the start trace records then rejects', async () => {
     const harness = makeHarness({
-      classifications: [intentClassification('Answer this intent.')],
       rejectTraceType: 'captain.call.started',
     });
     const runtime = await initRuntime(harness);
@@ -1882,10 +2521,227 @@ describe('compiled default Captain runtime', () => {
     await runtime.dispose();
   });
 
+  it('pairs a rejected adjudication judge call, settles the failed turn, and remains recoverable', async () => {
+    const judgeError = new Error('Adjudication judge transport failed');
+    const harness = makeHarness({
+      captains: [
+        { status: 'ok', finalText: 'I will route this request.' },
+        { status: 'ok', finalText: 'I will retry the route.' },
+        { status: 'ok', finalText: 'The retried route completed.' },
+      ],
+      adjudications: [
+        async () => {
+          throw judgeError;
+        },
+        delegation('code', 'Complete the retried request.'),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000021',
+          { summary: 'retried request completed' },
+        ),
+      ],
+    });
+    const runtime = await initRuntime(harness);
+
+    let rejection: unknown;
+    try {
+      await runtime.handleBossInput({
+        text: 'Route the first request.',
+        signal: signal(),
+      });
+    } catch (error) {
+      rejection = error;
+    }
+    const failedBoundary = [...harness.traces];
+
+    const recovered = await runtime.handleBossInput({
+      text: 'Retry with a fresh request.',
+      signal: signal(),
+    });
+
+    expect(rejection).toBe(judgeError);
+    expectTerminalResponse(recovered, 'The retried route completed.');
+    const starts = failedBoundary.filter(
+      (trace) => trace.type === 'judge.call.started',
+    );
+    const finishes = failedBoundary.filter(
+      (trace) => trace.type === 'judge.call.finished',
+    );
+    expect(starts).toHaveLength(1);
+    expect(finishes.map(({ callId }) => callId)).toEqual(
+      starts.map(({ callId }) => callId),
+    );
+    expect(finishes[0]).toMatchObject({
+      turnId: starts[0].turnId,
+      payload: {
+        status: 'error',
+        error: {
+          name: 'Error',
+          message: 'Adjudication judge transport failed',
+        },
+      },
+    });
+    expect(
+      failedBoundary.find((trace) => trace.type === 'boss.input.settled'),
+    ).toMatchObject({
+      payload: {
+        outcome: 'failed',
+        state: { quiescent: true },
+        error: {
+          name: 'Error',
+          message: 'Adjudication judge transport failed',
+        },
+      },
+    });
+    await runtime.dispose();
+  });
+
+  it('pairs a rejected parked-state classifier, settles against the unchanged state, and accepts a later directive', async () => {
+    const judgeError = new Error('Classifier judge transport failed');
+    const harness = makeHarness({
+      classifications: [
+        async () => {
+          throw judgeError;
+        },
+        { type: 'BOSS_INTENT' },
+      ],
+      captains: [
+        { status: 'ok', finalText: 'Which route should I use?' },
+        { status: 'ok', finalText: 'I will route the fresh directive.' },
+        { status: 'ok', finalText: 'The fresh directive completed.' },
+      ],
+      adjudications: [
+        { guard: 'question' },
+        delegation('code', 'Complete the fresh directive.'),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000022',
+          { summary: 'fresh directive completed' },
+        ),
+      ],
+    });
+    const runtime = await initRuntime(harness);
+    const parked = await runtime.handleBossInput({
+      text: 'Ask before choosing a route.',
+      signal: signal(),
+    });
+    expect(parked).toMatchObject({
+      outcome: 'quiescent',
+      state: { quiescent: true },
+    });
+    const traceOffset = harness.traces.length;
+
+    let rejection: unknown;
+    try {
+      await runtime.handleBossInput({
+        text: 'This classification attempt should fail.',
+        signal: signal(),
+      });
+    } catch (error) {
+      rejection = error;
+    }
+    const failedBoundary = harness.traces.slice(traceOffset);
+
+    const recovered = await runtime.handleBossInput({
+      text: 'Treat this as a fresh directive.',
+      signal: signal(),
+    });
+
+    expect(rejection).toBe(judgeError);
+    expectTerminalResponse(recovered, 'The fresh directive completed.');
+    const received = failedBoundary.find(
+      (trace) => trace.type === 'boss.input.received',
+    );
+    const starts = failedBoundary.filter(
+      (trace) => trace.type === 'judge.call.started',
+    );
+    const finishes = failedBoundary.filter(
+      (trace) => trace.type === 'judge.call.finished',
+    );
+    expect(starts).toHaveLength(1);
+    expect(finishes.map(({ callId }) => callId)).toEqual(
+      starts.map(({ callId }) => callId),
+    );
+    expect(starts[0].turnId).toBe(received?.turnId);
+    expect(finishes[0]).toMatchObject({
+      turnId: received?.turnId,
+      payload: {
+        status: 'error',
+        error: {
+          name: 'Error',
+          message: 'Classifier judge transport failed',
+        },
+      },
+    });
+    expect(
+      failedBoundary.find((trace) => trace.type === 'boss.input.settled'),
+    ).toMatchObject({
+      turnId: received?.turnId,
+      payload: {
+        outcome: 'no-action',
+        state: parked.state,
+        error: {
+          name: 'Error',
+          message: 'Classifier judge transport failed',
+        },
+      },
+    });
+    await runtime.dispose();
+  });
+
+  it('pairs a rejected judge start trace without crossing the judge port', async () => {
+    const startError = new Error('Injected judge start trace sink failure');
+    const harness = makeHarness({
+      captains: [{ status: 'ok', finalText: 'I will route this request.' }],
+      rejectTraceType: 'judge.call.started',
+      rejectTraceError: startError,
+    });
+    const runtime = await initRuntime(harness);
+
+    let rejection: unknown;
+    try {
+      await runtime.handleBossInput({
+        text: 'Route this request.',
+        signal: signal(),
+      });
+    } catch (error) {
+      rejection = error;
+    }
+
+    expect(rejection).toBe(startError);
+    expect(harness.judgeCalls).toHaveLength(0);
+    const starts = harness.traces.filter(
+      (trace) => trace.type === 'judge.call.started',
+    );
+    const finishes = harness.traces.filter(
+      (trace) => trace.type === 'judge.call.finished',
+    );
+    expect(starts).toHaveLength(1);
+    expect(finishes.map(({ callId }) => callId)).toEqual(
+      starts.map(({ callId }) => callId),
+    );
+    expect(finishes[0]).toMatchObject({
+      turnId: starts[0].turnId,
+      payload: {
+        status: 'error',
+        error: {
+          name: 'Error',
+          message: 'Injected judge start trace sink failure',
+        },
+      },
+    });
+    await runtime.dispose();
+  });
+
   it('stops the root before disposing a suspended child bridge', async () => {
     const childSessionId = '10000000-0000-4000-8000-000000000005';
     const harness = makeHarness({
-      classifications: [intentClassification('Delegate and wait.')],
       captains: [{ status: 'ok', finalText: 'I will delegate.' }],
       adjudications: [delegation('code', 'Wait for Boss in the child.')],
       children: [{ state: 'suspended', childSessionId }],
@@ -1915,6 +2771,33 @@ describe('compiled default Captain runtime', () => {
           JSON.stringify(trace.payload).includes('reassessing'),
       ),
     ).toBe(false);
+  });
+
+  it('finishes session disposal after suspended-child cleanup rejects', async () => {
+    const childSessionId = '10000000-0000-4000-8000-000000000023';
+    const harness = makeHarness({
+      captains: [{ status: 'ok', finalText: 'I will delegate.' }],
+      adjudications: [delegation('code', 'Wait for Boss in the child.')],
+      children: [{ state: 'suspended', childSessionId }],
+      rejectTraceType: 'playbook.call.finished',
+    });
+    const runtime = await initRuntime(harness);
+    await runtime.handleBossInput({
+      text: 'Delegate before cleanup.',
+      signal: signal(),
+    });
+
+    const disposal = runtime.dispose();
+    await expect(disposal).rejects.toThrow(
+      'Injected playbook.call.finished trace sink failure',
+    );
+
+    expectPairedCalls(harness.traces, 'playbook');
+    const types = harness.traces.map(({ type }) => type);
+    expect(types.lastIndexOf('session.disposed')).toBeGreaterThan(
+      types.lastIndexOf('playbook.call.finished'),
+    );
+    expect(runtime.dispose()).toBe(disposal);
   });
 
   it('shares one in-flight disposal promise and emits one disposal boundary', async () => {
@@ -1975,22 +2858,31 @@ describe('compiled default Captain runtime', () => {
 
   it('leaves the terminal actor untouched when classification returns NO_ACTION', async () => {
     const harness = makeHarness({
-      classifications: [
-        intentClassification('Answer once.'),
-        { type: 'NO_ACTION' },
+      classifications: [{ type: 'NO_ACTION' }],
+      captains: [
+        { status: 'ok', finalText: 'I will route this once.' },
+        { status: 'ok', finalText: 'The one child call completed.' },
       ],
-      captains: [{ status: 'ok', finalText: 'One answer.' }],
-      adjudications: [directResponse('One answer.')],
+      adjudications: [delegation('code', 'Complete this once.'), finalResponse()],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000019',
+          { summary: 'completed once' },
+        ),
+      ],
     });
     const runtime = await initRuntime(harness);
     const terminal = await runtime.handleBossInput({
       text: 'Answer once.',
       signal: signal(),
     });
-    expectTerminalResponse(terminal, 'One answer.');
+    expectTerminalResponse(terminal, 'The one child call completed.');
     const transitionCount = harness.traces.filter(
       (trace) => trace.type === 'fsm.transition',
     ).length;
+    const statusCount = harness.statuses.length;
+    const traceOffset = harness.traces.length;
 
     const noAction = await runtime.handleBossInput({
       text: 'No state change.',
@@ -2001,10 +2893,113 @@ describe('compiled default Captain runtime', () => {
       outcome: 'no-action',
       state: { stateId: 'done', status: 'done', quiescent: true },
     });
-    expect(harness.captainCalls).toHaveLength(1);
+    expect(harness.captainCalls).toHaveLength(2);
     expect(
       harness.traces.filter((trace) => trace.type === 'fsm.transition'),
     ).toHaveLength(transitionCount);
+    expect(harness.statuses).toHaveLength(statusCount);
+    expect(
+      harness.traces
+        .slice(traceOffset)
+        .filter((trace) => trace.type === 'status.emitted'),
+    ).toHaveLength(0);
+    await runtime.dispose();
+  });
+
+  it('leaves a terminal actor untouched when Boss aborts a recorded classifier finish', async () => {
+    const finishRecorded = deferred<void>();
+    const releaseFinish = deferred<void>();
+    let blocked = false;
+    const harness = makeHarness({
+      classifications: [{ type: 'BOSS_INTENT' }],
+      captains: [
+        { status: 'ok', finalText: 'I will route this once.' },
+        { status: 'ok', finalText: 'The one child call completed.' },
+      ],
+      adjudications: [delegation('code', 'Complete this once.'), finalResponse()],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000024',
+          { summary: 'completed once' },
+        ),
+      ],
+    });
+    const ports: PlaybookPorts = {
+      ...harness.ports,
+      emitTelemetry: async (event) => {
+        await harness.ports.emitTelemetry(event);
+        if (
+          !blocked &&
+          isTraceTelemetry(event) &&
+          event.payload.type === 'judge.call.finished' &&
+          tracePayload(event.payload).purpose === 'boss-input-classification'
+        ) {
+          blocked = true;
+          finishRecorded.resolve();
+          await releaseFinish.promise;
+        }
+      },
+    };
+    const runtime = createPlaybookRuntime({
+      enabledPlaybooks: ENABLED_PLAYBOOKS,
+    });
+    await runtime.init(makeSession(ports));
+    const terminal = await runtime.handleBossInput({
+      text: 'Complete one routed call.',
+      signal: signal(),
+    });
+    expectTerminalResponse(terminal, 'The one child call completed.');
+    const traceOffset = harness.traces.length;
+    const transitionCount = harness.traces.filter(
+      (trace) => trace.type === 'fsm.transition',
+    ).length;
+    const abortReason = new DOMException(
+      'Boss aborted after classifier finish',
+      'AbortError',
+    );
+    const controller = new AbortController();
+
+    const turn = runtime.handleBossInput({
+      text: 'Do not restart the terminal actor.',
+      signal: controller.signal,
+    });
+    await within(finishRecorded.promise);
+    controller.abort(abortReason);
+    releaseFinish.resolve();
+    const result = await within(turn);
+    const boundaryTraces = harness.traces.slice(traceOffset);
+    const settled = [...boundaryTraces]
+      .reverse()
+      .find((trace) => trace.type === 'boss.input.settled');
+    const projected = {
+      outcome: result.outcome,
+      state: result.state,
+      ...(result.state.stateId === undefined
+        ? {}
+        : { stateId: result.state.stateId }),
+      ...('error' in result && result.error !== undefined
+        ? { error: result.error }
+        : {}),
+    };
+
+    expect(result).toMatchObject({
+      outcome: 'aborted',
+      state: terminal.state,
+      error: { name: 'AbortError', message: abortReason.message },
+    });
+    expect(settled?.payload).toEqual(projected);
+    expect(
+      harness.traces.filter((trace) => trace.type === 'fsm.transition'),
+    ).toHaveLength(transitionCount);
+    expect(
+      boundaryTraces.filter(
+        (trace) =>
+          trace.type === 'status.emitted' ||
+          trace.type === 'captain.call.started',
+      ),
+    ).toHaveLength(0);
+    expect(harness.captainCalls).toHaveLength(2);
     await runtime.dispose();
   });
 
@@ -2015,9 +3010,21 @@ describe('compiled default Captain runtime', () => {
       intent: string;
     }> = ENABLED_PLAYBOOKS.map((entry) => ({ ...entry }));
     const harness = makeHarness({
-      classifications: [intentClassification('Use the original catalog.')],
-      captains: [{ status: 'ok', finalText: 'Original data retained.' }],
-      adjudications: [directResponse('Original data retained.')],
+      captains: [
+        { status: 'ok', finalText: 'I will route using the original catalog.' },
+        { status: 'ok', finalText: 'Original catalog routing completed.' },
+      ],
+      adjudications: [
+        delegation('code', 'Use the original catalog data.'),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000020',
+          { summary: 'original catalog used' },
+        ),
+      ],
     });
     const runtime = createPlaybookRuntime({
       enabledPlaybooks: mutableCatalog,
@@ -2043,7 +3050,7 @@ describe('compiled default Captain runtime', () => {
       text: 'Use the original catalog.',
       signal: signal(),
     });
-    expectTerminalResponse(result, 'Original data retained.');
+    expectTerminalResponse(result, 'Original catalog routing completed.');
     expect(harness.captainCalls[0].prompt).toContain(
       'Enabled playbooks: [{"command":"code","id":"code","intent":"Implement and review a software change."},{"command":"discuss","id":"discuss","intent":"Develop independent proposals and synthesize them."}]',
     );
@@ -2126,14 +3133,13 @@ describe('compiled default Captain runtime', () => {
   it('serializes all emissions and orders complete trace pairs around host calls', async () => {
     const harness = makeHarness({
       delayedEmissions: true,
-      classifications: [intentClassification('Delegate with tracing.')],
       captains: [
         { status: 'ok', finalText: 'I will delegate.' },
         { status: 'ok', finalText: 'Delegation complete.' },
       ],
       adjudications: [
         delegation('code', 'Do the traced work.'),
-        finalResponse('Delegation complete.'),
+        finalResponse(),
       ],
       children: [
         settledSuccess('code', '10000000-0000-4000-8000-000000000005', {
@@ -2156,6 +3162,29 @@ describe('compiled default Captain runtime', () => {
     expect(harness.traces.map((trace) => trace.sequence)).toEqual(
       harness.traces.map((_trace, index) => index + 1),
     );
+    const transitions = harness.traces.filter(
+      (trace) => trace.type === 'fsm.transition',
+    );
+    const stateTelemetry = harness.telemetry.filter(
+      (event) => event.topic === 'playbook.fsm.state',
+    );
+    expect(stateTelemetry.map(({ payload }) => payload)).toEqual(
+      transitions.map(({ payload }) => payload),
+    );
+    for (let index = 0; index < transitions.length; index += 1) {
+      const payload = tracePayload(transitions[index]);
+      expect(payload).toMatchObject({
+        from: expect.any(Object),
+        to: expect.any(Object),
+        previousState: expect.any(Object),
+        state: expect.any(Object),
+      });
+      expect(payload.to).toEqual(payload.state);
+      expect(payload.from).toEqual(payload.previousState);
+      if (index > 0) {
+        expect(payload.from).toEqual(tracePayload(transitions[index - 1]).state);
+      }
+    }
     expectPairedCalls(harness.traces, 'captain');
     expectPairedCalls(harness.traces, 'judge');
     expectPairedCalls(harness.traces, 'playbook');

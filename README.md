@@ -245,11 +245,6 @@ pnpm build
 pnpm test
 ```
 
-> **Note:** main is mid-migration to cligent's isolated Captain
-> control-call contract — until the compiled default Captain bundle
-> under `reference/sdlc/captain.playbook/` is regenerated against it,
-> `pnpm build` and `pnpm test` fail on those artifacts.
-
 Why the override: the current Unreleased branch requires cligent
 contracts beyond any published release — the explicit player-resume and
 pre-close Captain contracts first shipped in cligent 0.14.0, plus the
@@ -279,11 +274,13 @@ globally.
 The Boss pane starts at the Playbook Captain shell. Use `/code <task>`
 to explicitly select the CODE playbook — on the published 0.9.0 this is
 the way in — or, on `main`, use ordinary text and let the compiled
-default Captain answer, ask a material routing question, or plan one or
-more enabled playbook calls. Calls run sequentially so Captain can
-reassess after every child result. Once a turn reaches CODE, the CODE
-judge classifies it into an FSM event (start a coding turn, continue or
-summarize an iteration, interrupt to a named state, or nothing) per
+default Captain ask a material routing question or plan one or more
+enabled playbook calls. It cannot answer the initial intent directly;
+calls run sequentially so Captain can reassess after every child result
+and then return a concrete result or actionable conclusion. Once a turn
+reaches CODE, the CODE judge classifies it into an FSM event (start a coding
+turn, continue or summarize an iteration, interrupt to a named state, or
+nothing) per
 [PBRT-1](specs/user/playbook-runtime.md#pbrt-1).
 When a player surfaces a clarifying question
 the FSM parks, the pane shows the question, and your

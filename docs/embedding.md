@@ -35,8 +35,40 @@ nested-playbook bridge.
 
 ```ts
 import createPlaybookRuntime from '@sublang/playbook/code/playbook';
-import type { PlaybookPorts } from '@sublang/playbook/runtime';
+import type {
+  CaptainCallOptions,
+  CaptainResult,
+  PlaybookPorts,
+} from '@sublang/playbook/runtime';
 import { randomUUID } from 'node:crypto';
+import PQueue from 'p-queue';
+
+declare const captainAdapter: {
+  run(
+    prompt: string,
+    options: {
+      signal: AbortSignal;
+      visibility: 'visible' | 'hidden';
+      resume: string | false;
+      allowedTools: readonly string[];
+    },
+  ): Promise<CaptainResult>;
+};
+
+// Construct one host-wide lane and reuse it for every runtime. Passing each
+// call's signal to both the lane and adapter cancels queued and active work.
+const captainLane = new PQueue({ concurrency: 1 });
+
+async function runCaptain(
+  prompt: string,
+  signal: AbortSignal,
+  options: CaptainCallOptions,
+): Promise<CaptainResult> {
+  return await captainLane.add(
+    () => captainAdapter.run(prompt, { signal, ...options }),
+    { signal },
+  );
+}
 
 const ports: PlaybookPorts = {
   callPlayer: async (playerId, prompt, signal, { resume }) => {
@@ -44,12 +76,31 @@ const ports: PlaybookPorts = {
     // prior backend conversation. Return the adapter's next token.
     return { status: 'ok', finalText: 'done', resumeToken: 'next-token' };
   },
-  callCaptain: async (prompt, signal, { visibility }) => {
-    // visibility is 'visible' or 'hidden' — hidden calls (judge-style
-    // control work) must produce no Boss-facing output.
-    return { status: 'ok', finalText: 'done' };
+  callCaptain: async (
+    prompt,
+    signal,
+    { visibility, resume, allowedTools },
+  ) => {
+    // Forward every option exactly. In particular, an adapter that cannot
+    // enforce visibility or an explicit empty allowlist must reject the call.
+    return await runCaptain(prompt, signal, {
+      visibility,
+      resume,
+      allowedTools,
+    });
   },
-  callJudge: async (prompt, signal) => '{}',
+  callJudge: async (prompt, signal) => {
+    // Judge work is hidden control work: run it fresh and tool-free.
+    const result = await runCaptain(prompt, signal, {
+      visibility: 'hidden',
+      resume: false,
+      allowedTools: [],
+    });
+    if (result.status !== 'ok' || result.finalText === undefined) {
+      throw new Error(result.error ?? 'Judge call failed');
+    }
+    return result.finalText;
+  },
   callPlaybook: async (request, signal) => {
     throw new Error('No nested playbook host configured');
   },

@@ -109,8 +109,13 @@ agent-run function over a fake registry entry, the test suite shall
 fail unless: a terminal turn prints its output to stdout and exits `0`;
 `--json` prints that output as JSON; `callPlayer` routes to the agent
 bound for each required role and threads the returned resume token into
-the next call; `callCaptain` requesting isolation runs a fresh
-tool-free captain call; the `--option` slice reaches the entry's
-`validateOptions`; a failed or aborted turn exits `2`; a suspended,
-quiescent, or nested-call outcome exits `3`; and a missing `<from>`,
-an invalid registry entry, or an unrequired `--player` role exits `1`.
+the next call; the depth-zero session uses one fresh UUID as both its
+session and root-session id; a relative `<from>` file path resolves from
+the caller's process working directory; `callCaptain` requesting
+isolation and every `callJudge` run fresh and tool-free; player and
+Captain failures omit absent optional text fields; the default Cligent drain
+preserves `text` and `text_delta` output when terminal `done` omits a
+`result`; the `--option` slice reaches the entry's `validateOptions`; a
+failed or aborted turn exits `2`; a suspended, quiescent, or nested-call
+outcome exits `3`; and a missing `<from>`, an invalid registry entry, or
+an unrequired `--player` role exits `1`.

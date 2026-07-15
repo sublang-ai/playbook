@@ -1,407 +1,536 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 import { assign, fromPromise, setup } from 'xstate';
-const routingPrompt = [
+const ROUTING_PROMPT = [
     'Boss intent: <boss-intent>',
     'Enabled playbooks: <enabled-playbooks>',
+    'You are routing this intent, not performing the requested work.',
+    'Use only the Boss intent and enabled-playbooks catalog supplied here.',
+    'Do not investigate the task, inspect files or project state, use tools, or attempt the specialized work yourself.',
     "Preserve Boss's intended outcome and constraints.",
-    'Treat the enabled-playbooks catalog as immutable host input for the session; Boss events and Captain decisions cannot replace it.',
-    'Each enabled-playbooks catalog entry contains only a stable playbook id, its command, and its intent.',
-    'Prefer a matching specialized playbook when delegation materially improves execution; otherwise handle the intent directly.',
-    'Ask exactly one concise question only when its answer would materially change routing or call order.',
+    'If the supplied evidence identifies a useful route, select an enabled playbook; do not finish the intent yourself.',
+    'Ask exactly one concise question only when its answer is necessary to choose a useful route or call order.',
     'For a complex intent, divide it into the smallest finite ordered plan of useful playbook calls.',
-    'Keep the plan finite and ordered, and issue at most one child call at a time.',
-    'Put only calls after the selected first call in remainingPlan.',
-    'Every continuation must strictly reduce the length of remainingPlan.',
+    'Name the selected first playbook and state its complete standalone request containing only the context it needs.',
+    'List any later playbook calls in their intended order after the selected first call.',
     'Do not call a playbook merely to restate or classify the intent.',
-    'Select exactly one next enabled playbook by stable id and give it complete standalone input containing only the context it needs.',
-    'Call only ids in the enabled-playbooks catalog and never call this Captain playbook itself.',
+    'Write only concise human-facing routing prose or the one routing question.',
+    'Do not emit JSON, guard names, result property names, or control instructions.',
     'Do not expose internal state ids, session ids, call ids, stack data, hidden control data, or private reasoning.',
-    'On a fresh directive that interrupts parked Captain work, restart this routing behavior with the fresh intent; do not jump directly into reassessment or retain the prior question, answer, plan, call history, evidence, selection, response, or error.',
-    'A direct decision must carry a concise JSON-safe response and complete; its result guard is exactly direct.',
-    'A question decision must carry one concise question and wait for Boss without losing the original intent; its result guard is exactly question.',
-    "Boss's answer resumes this same routing decision with continuation context, not a separate behavior.",
-    'After consuming the answer to the routing question, the question and answer are no longer pending before calling a child or completing.',
-    'A delegation decision must carry a finite remainingPlan plus non-empty nextPlaybookId and nextPlaybookInput for its first call; its result guard is exactly delegation.',
 ].join('\n');
-const reassessmentPrompt = [
+const REASSESS_PROMPT = [
     'Boss intent: <boss-intent>',
     'Enabled playbooks: <enabled-playbooks>',
     'Remaining plan: <remaining-plan>',
     'Completed call results: <completed-call-results>',
     "Preserve Boss's intended outcome and constraints.",
-    'Treat the enabled-playbooks catalog as immutable host input for the session; Boss events and Captain decisions cannot replace it.',
-    'Each enabled-playbooks catalog entry contains only a stable playbook id, its command, and its intent.',
     'Treat each returned result as evidence and revise the remaining plan when needed.',
-    'Keep the plan finite and ordered, and issue at most one child call at a time.',
-    'A continuing decision must strictly reduce the remaining plan length, and its remainingPlan must contain only calls after the selected next call.',
+    'A continuing decision must strictly reduce the remaining plan length.',
     'Do not repeat an equivalent failed or completed call without new information.',
-    'For the deterministic safety floor, two calls are the same only when both the stable target id and complete standalone input match exactly.',
-    'Record that exact stable-target-id and complete-standalone-input pair before invoking the child, so an ok, aborted, or error return prevents the same later attempt.',
-    'Input revised with new information is different for this exact check; still apply the broader semantic no-repeat requirement.',
-    "Each completed call result must contain only the selected playbook id, its ok, aborted, or error status, and either the child's actual JSON-safe output or a compact error containing only name and message.",
-    'Never retain or expose a child session id, call id, child state, stack trace, or opaque runtime result object.',
-    'If the intent is fulfilled, give Boss one concise final response.',
+    'If the intent is fulfilled, give Boss one concise final response that states the result or actionable conclusion.',
+    'Do not finish with a bare acknowledgement, a promise to act, or an announcement that the round is complete.',
     'If information from Boss is now necessary, ask exactly one concise question.',
-    'Otherwise select exactly one next enabled playbook by stable id and give it complete standalone input containing only the context it needs.',
-    'Call only ids in the enabled-playbooks catalog and never call this Captain playbook itself.',
+    'Otherwise name exactly one next enabled playbook and state its complete standalone request containing only the context it needs.',
+    'List any still-later playbook calls in their intended order after the selected next call.',
+    'Write only concise human-facing final, question, or routing prose.',
+    'Do not emit JSON, guard names, result property names, or control instructions.',
     'Do not expose internal state ids, session ids, call ids, stack data, hidden control data, or private reasoning.',
-    'A final decision must carry a concise JSON-safe response and complete; its result guard is exactly final.',
-    'A follow-up question must carry one concise question and wait for Boss without losing the original intent, plan, or completed results; its result guard is exactly followUpQuestion.',
-    "Boss's answer resumes this same reassessment with continuation context, not a separate behavior.",
-    'After consuming the answer to the reassessment question, the question and answer are no longer pending before calling a child or completing.',
-    'A continuing decision must carry a strictly shorter finite remainingPlan plus non-empty nextPlaybookId and nextPlaybookInput; its result guard is exactly continuing.',
-    'Treat a child abort or failure as a completed call result for reassessment; do not route this playbook directly to its generic failure state.',
 ].join('\n');
-function isRecord(value) {
-    if (typeof value !== 'object' || value === null)
+const NEEDS_BOSS_REPLY_DESCRIPTION = "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
+const ROUTING_RESULTS = {
+    question: 'Captain asked the one material routing question. Output shall include `question: <verbatim final text from the visible Captain call>`.',
+    delegation: 'Captain selected the first useful call. Output shall include `remainingPlan: <finite JSON-safe array of only later calls>`, `nextPlaybookId: <selected stable enabled-playbook id>`, and `nextPlaybookInput: <complete standalone request>`.',
+    needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
+};
+const REASSESS_RESULTS = {
+    final: 'Captain gave Boss the concrete result or actionable conclusion. Output shall include `response: <verbatim final text from the visible Captain call>`.',
+    followUpQuestion: 'Captain asked one necessary follow-up question. Output shall include `question: <verbatim final text from the visible Captain call>`.',
+    continuing: 'Captain selected another useful call. Output shall include `remainingPlan: <strictly shorter finite JSON-safe array of only later calls>`, `nextPlaybookId: <selected stable enabled-playbook id>`, and `nextPlaybookInput: <complete standalone request>`.',
+    needsBossReply: NEEDS_BOSS_REPLY_DESCRIPTION,
+};
+function isPlainRecord(value) {
+    if (value === null || typeof value !== 'object') {
         return false;
+    }
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
 }
-function isJsonValue(value, active = new Set()) {
-    if (value === null || typeof value === 'string' || typeof value === 'boolean')
+function isJsonValue(value, seen = []) {
+    if (value === null || typeof value === 'boolean' || typeof value === 'string') {
         return true;
-    if (typeof value === 'number')
+    }
+    if (typeof value === 'number') {
         return Number.isFinite(value);
-    if (typeof value !== 'object')
+    }
+    if (typeof value !== 'object') {
         return false;
-    if (active.has(value))
+    }
+    if (seen.includes(value)) {
         return false;
-    active.add(value);
-    let valid = true;
+    }
     if (Array.isArray(value)) {
-        if (Object.getPrototypeOf(value) !== Array.prototype)
-            valid = false;
+        if (Object.getPrototypeOf(value) !== Array.prototype) {
+            return false;
+        }
         const keys = Reflect.ownKeys(value);
-        const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
-        if (keys.length !== value.length + 1 ||
-            !lengthDescriptor ||
-            lengthDescriptor.enumerable ||
-            lengthDescriptor.configurable ||
-            lengthDescriptor.value !== value.length ||
-            (lengthDescriptor.writable !== true && lengthDescriptor.writable !== false))
-            valid = false;
-        for (let index = 0; valid && index < value.length; index += 1) {
+        if (keys.length !== value.length + 1 || !keys.includes('length')) {
+            return false;
+        }
+        for (let index = 0; index < value.length; index += 1) {
             const key = String(index);
-            if (keys[index] !== key) {
-                valid = false;
-                break;
+            if (!Object.prototype.hasOwnProperty.call(value, key)) {
+                return false;
             }
             const descriptor = Object.getOwnPropertyDescriptor(value, key);
             if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-                valid = false;
-                break;
+                return false;
             }
-            valid = isJsonValue(descriptor.value, active);
-        }
-        if (valid && keys[keys.length - 1] !== 'length')
-            valid = false;
-    }
-    else if (isRecord(value)) {
-        for (const key of Reflect.ownKeys(value)) {
-            if (typeof key !== 'string') {
-                valid = false;
-                break;
-            }
-            const descriptor = Object.getOwnPropertyDescriptor(value, key);
-            if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
-                valid = false;
-                break;
-            }
-            if (!isJsonValue(descriptor.value, active)) {
-                valid = false;
-                break;
+            if (!isJsonValue(descriptor.value, [...seen, value])) {
+                return false;
             }
         }
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+        return Boolean(lengthDescriptor && !lengthDescriptor.enumerable && !lengthDescriptor.configurable && lengthDescriptor.value === value.length);
     }
-    else {
-        valid = false;
+    if (!isPlainRecord(value)) {
+        return false;
     }
-    active.delete(value);
-    return valid;
+    for (const key of Reflect.ownKeys(value)) {
+        if (typeof key !== 'string') {
+            return false;
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+            return false;
+        }
+        if (!isJsonValue(descriptor.value, [...seen, value])) {
+            return false;
+        }
+    }
+    return true;
 }
-function actorOutput(event) {
-    return isRecord(event) ? event.output : undefined;
+function isJsonArray(value) {
+    return Array.isArray(value) && isJsonValue(value);
 }
-function actorError(event) {
-    return isRecord(event) ? event.error : undefined;
+function hasDoneOutput(event) {
+    return isPlainRecord(event) && 'output' in event;
 }
-function hasGuard(event, guard) {
-    const output = actorOutput(event);
-    return isRecord(output) && isJsonValue(output) && output.guard === guard;
+function hasErrorValue(event) {
+    return isPlainRecord(event) && 'error' in event;
 }
-function hasNonEmptyStringField(event, guard, field) {
-    const output = actorOutput(event);
-    return hasGuard(event, guard) && isRecord(output) && typeof output[field] === 'string' && output[field].length > 0;
+function isNonEmptyString(value) {
+    return typeof value === 'string' && value.trim().length > 0;
+}
+function isRoutingQuestionOutput(output) {
+    return isPlainRecord(output) && (output.guard === 'question' || output.guard === 'needsBossReply') && isNonEmptyString(output.question);
+}
+function isReassessQuestionOutput(output) {
+    return isPlainRecord(output) && (output.guard === 'followUpQuestion' || output.guard === 'needsBossReply') && isNonEmptyString(output.question);
+}
+function isDelegationOutput(output) {
+    return (isPlainRecord(output) &&
+        output.guard === 'delegation' &&
+        isJsonArray(output.remainingPlan) &&
+        isNonEmptyString(output.nextPlaybookId) &&
+        isNonEmptyString(output.nextPlaybookInput));
+}
+function isContinuingOutput(output) {
+    return (isPlainRecord(output) &&
+        output.guard === 'continuing' &&
+        isJsonArray(output.remainingPlan) &&
+        isNonEmptyString(output.nextPlaybookId) &&
+        isNonEmptyString(output.nextPlaybookInput));
+}
+function isFinalOutput(output) {
+    return isPlainRecord(output) && output.guard === 'final' && isNonEmptyString(output.response);
+}
+function outputFrom(event) {
+    return hasDoneOutput(event) ? event.output : undefined;
+}
+function errorFrom(event) {
+    return hasErrorValue(event) ? event.error : undefined;
+}
+function targetInCatalog(context, playbookId) {
+    return context.enabledPlaybooks.some((entry) => entry.id === playbookId);
 }
 function callSignature(playbookId, text) {
     return JSON.stringify([playbookId, text]);
 }
-function isValidPlannedCall(context, event, guard) {
-    const output = actorOutput(event);
-    if (!hasGuard(event, guard) || !isRecord(output))
-        return false;
-    const plan = output.remainingPlan;
-    const playbookId = output.nextPlaybookId;
-    const text = output.nextPlaybookInput;
-    if (!Array.isArray(plan) || !isJsonValue(plan))
-        return false;
-    if (guard === 'continuing' && plan.length >= context.remainingPlan.length)
-        return false;
-    if (typeof playbookId !== 'string' || playbookId.length === 0)
-        return false;
-    if (typeof text !== 'string' || text.length === 0)
-        return false;
-    if (playbookId === context.selfPlaybookId)
-        return false;
-    if (!context.enabledPlaybooks.some((entry) => entry.id === playbookId))
-        return false;
-    return !context.callSignatures.includes(callSignature(playbookId, text));
+function canEnterDynamicCall(context, playbookId, text) {
+    return (isNonEmptyString(playbookId) &&
+        isNonEmptyString(text) &&
+        playbookId !== context.selfPlaybookId &&
+        targetInCatalog(context, playbookId) &&
+        !context.callHistory.includes(callSignature(playbookId, text)));
 }
-function plannedCallUpdate(event) {
-    const output = actorOutput(event);
-    return {
-        remainingPlan: output.remainingPlan,
-        nextPlaybookId: output.nextPlaybookId,
-        nextPlaybookInput: output.nextPlaybookInput,
-    };
-}
-function normalizeError(value) {
-    if (value instanceof Error) {
-        return value.stack === undefined
-            ? { name: value.name, message: value.message }
-            : { name: value.name, message: value.message, stack: value.stack };
+function normalizeError(error) {
+    if (error instanceof Error) {
+        const normalized = {
+            name: error.name || 'Error',
+            message: error.message || 'Unknown error',
+        };
+        if (typeof error.stack === 'string') {
+            normalized.stack = error.stack;
+        }
+        return normalized;
     }
-    return { name: 'Error', message: typeof value === 'string' ? value : 'Unknown actor error' };
+    if (isPlainRecord(error) && typeof error.name === 'string' && typeof error.message === 'string') {
+        const normalized = {
+            name: error.name,
+            message: error.message,
+        };
+        if (typeof error.stack === 'string') {
+            normalized.stack = error.stack;
+        }
+        return normalized;
+    }
+    return { name: 'Error', message: String(error) };
 }
-function authoredChildResult(event) {
-    const error = actorError(event);
-    if (!(error instanceof Error) || !('result' in error))
+function isNormalizedError(value) {
+    const allowed = new Set(['name', 'message', 'stack']);
+    return (isPlainRecord(value) &&
+        Reflect.ownKeys(value).every((key) => typeof key === 'string' && allowed.has(key)) &&
+        isNonEmptyString(value.name) &&
+        typeof value.message === 'string' &&
+        (!('stack' in value) || typeof value.stack === 'string'));
+}
+function isStringArray(value) {
+    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+}
+function isPlaybookStateValue(value, seen = []) {
+    if (typeof value === 'string') {
+        return true;
+    }
+    if (!isPlainRecord(value) || seen.includes(value)) {
+        return false;
+    }
+    return Reflect.ownKeys(value).every((key) => {
+        if (typeof key !== 'string') {
+            return false;
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        return Boolean(descriptor &&
+            descriptor.enumerable &&
+            'value' in descriptor &&
+            isPlaybookStateValue(descriptor.value, [...seen, value]));
+    });
+}
+function isPlaybookState(value) {
+    if (!isPlainRecord(value)) {
+        return false;
+    }
+    const allowed = new Set(['value', 'activeStateIds', 'tags', 'status', 'quiescent', 'stateId']);
+    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' || !allowed.has(key))) {
+        return false;
+    }
+    return (isPlaybookStateValue(value.value) &&
+        isStringArray(value.activeStateIds) &&
+        isStringArray(value.tags) &&
+        (value.status === 'active' || value.status === 'done' || value.status === 'error' || value.status === 'stopped') &&
+        typeof value.quiescent === 'boolean' &&
+        (!('stateId' in value) || typeof value.stateId === 'string'));
+}
+function publicChildResult(error) {
+    if (!(error instanceof Error) || !('result' in error)) {
         return undefined;
+    }
     const result = error.result;
-    if (!isRecord(result) || !isJsonValue(result))
-        return undefined;
-    if (result.status !== 'aborted' && result.status !== 'error')
-        return undefined;
-    if (result.error !== undefined) {
-        if (!isRecord(result.error) || typeof result.error.name !== 'string' || typeof result.error.message !== 'string')
-            return undefined;
-    }
-    else if (result.status === 'error') {
-        return undefined;
-    }
-    return result;
+    return isPlainRecord(result) ? result : undefined;
 }
-function isAuthoredChildError(event) {
-    return authoredChildResult(event) !== undefined;
-}
-function completedChildError(playbookId, event) {
-    const result = authoredChildResult(event);
-    if (!result)
-        throw new Error('Authored child result was not validated');
-    const error = result.error ?? { name: 'AbortError', message: 'Child playbook aborted' };
-    return { playbookId, status: result.status, error: { name: error.name, message: error.message } };
-}
-function completedChildSuccess(playbookId, event) {
-    const output = actorOutput(event);
-    if (output !== undefined && !isJsonValue(output))
-        return undefined;
-    return output === undefined
-        ? { playbookId, status: 'ok' }
-        : { playbookId, status: 'ok', output };
-}
-function validBossReply(context, event) {
-    if (event.type !== 'BOSS_REPLY' || event.answer.trim().length === 0)
+function isValidPublicChildResult(error, context) {
+    const result = publicChildResult(error);
+    if (!result) {
         return false;
-    const pending = context.pendingBossQuestion;
-    if (!pending)
+    }
+    const allowed = new Set(['playbookId', 'status', 'error', 'output', 'childSessionId', 'state']);
+    if (Reflect.ownKeys(result).some((key) => typeof key !== 'string' || !allowed.has(key))) {
         return false;
-    return event.questionId === undefined || event.questionId === pending.questionId;
+    }
+    if (result.playbookId !== context.nextPlaybookId || (result.status !== 'aborted' && result.status !== 'error')) {
+        return false;
+    }
+    if ('output' in result) {
+        return false;
+    }
+    if ('childSessionId' in result && !isNonEmptyString(result.childSessionId)) {
+        return false;
+    }
+    if ('state' in result && !isPlaybookState(result.state)) {
+        return false;
+    }
+    if (result.status === 'error') {
+        return isNormalizedError(result.error);
+    }
+    return !('error' in result) || isNormalizedError(result.error);
 }
-function setPendingBossQuestion(resumeStateId, sourceItem, event) {
-    const output = actorOutput(event);
+function compactChildError(error) {
+    const result = publicChildResult(error);
+    if (result && isNormalizedError(result.error)) {
+        return { name: result.error.name, message: result.error.message };
+    }
+    return { name: 'AbortError', message: 'Child playbook aborted.' };
+}
+function childStatus(error) {
+    const result = publicChildResult(error);
+    return result?.status === 'error' ? 'error' : 'aborted';
+}
+function makePendingQuestion(stateId, sourceItem, question) {
     return {
-        pendingBossQuestion: {
-            questionId: resumeStateId,
-            resumeStateId,
-            sourceItem,
-            player: 'Captain',
-            question: output.question,
-        },
-        bossReply: undefined,
+        questionId: stateId,
+        resumeStateId: stateId,
+        sourceItem,
+        player: 'Captain',
+        question,
     };
 }
-function clearBossReplyContext() {
-    return { pendingBossQuestion: undefined, bossReply: undefined };
+function bossIntentFromEvent(event) {
+    return event.type === 'BOSS_INTENT' || event.type === 'BOSS_INTERRUPT' ? event.bossIntent : '';
+}
+function answerMatchesPending(context, event) {
+    if (event.type !== 'BOSS_REPLY' || !context.pendingBossQuestion || !isNonEmptyString(event.answer)) {
+        return false;
+    }
+    return event.questionId === undefined || event.questionId === context.pendingBossQuestion.questionId;
 }
 function bossInterrupts(ids) {
-    return [{
-            guard: ({ event }) => event.type === 'BOSS_INTERRUPT' && event.targetId === ids[0] && event.bossIntent.trim().length > 0,
-            target: '#routing',
-            reenter: true,
-            actions: 'restartWithFreshIntent',
-        }];
+    return ids.map((id) => ({
+        guard: 'isRoutingInterrupt',
+        target: `#${id}`,
+        reenter: true,
+        actions: 'startRoutingFromBoss',
+    }));
 }
-function resumableStates(ids) {
+function resumableStates() {
     return [
         {
-            guard: ({ context, event }) => validBossReply(context, event) && context.pendingBossQuestion?.resumeStateId === ids[0],
+            guard: 'canResumeRouting',
             target: '#routing',
-            actions: 'rememberBossReply',
+            actions: 'storeBossReply',
         },
         {
-            guard: ({ context, event }) => validBossReply(context, event) && context.pendingBossQuestion?.resumeStateId === ids[1],
-            target: '#reassessment',
-            actions: 'rememberBossReply',
+            guard: 'canResumeReassessing',
+            target: '#reassessing',
+            actions: 'storeBossReply',
+        },
+        {
+            target: 'failed',
+            actions: 'rememberInvalidBossReply',
         },
     ];
 }
-const needsBossReplyDescription = "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 export const captainMachine = setup({
-    types: {
-        context: {},
-        events: {},
-        input: {},
-        output: {},
-    },
+    types: {},
     actors: {
-        captain: fromPromise(async () => {
+        captain: fromPromise(() => {
             throw new Error('captain actor must be provided by the runner');
         }),
-        playbook: fromPromise(async () => {
+        playbook: fromPromise(() => {
             throw new Error('playbook actor must be provided by the runner');
         }),
     },
+    guards: {
+        hasBossIntent: ({ event }) => event.type === 'BOSS_INTENT' && isNonEmptyString(event.bossIntent),
+        isRoutingInterrupt: ({ event }) => event.type === 'BOSS_INTERRUPT' && event.targetId === 'routing' && isNonEmptyString(event.bossIntent),
+        canResumeRouting: ({ context, event }) => answerMatchesPending(context, event) && context.pendingBossQuestion?.resumeStateId === 'routing',
+        canResumeReassessing: ({ context, event }) => answerMatchesPending(context, event) && context.pendingBossQuestion?.resumeStateId === 'reassessing',
+        isRoutingQuestion: ({ event }) => isRoutingQuestionOutput(outputFrom(event)),
+        isRoutingDelegation: ({ context, event }) => {
+            const output = outputFrom(event);
+            return isDelegationOutput(output) && canEnterDynamicCall(context, output.nextPlaybookId, output.nextPlaybookInput);
+        },
+        isReassessFinal: ({ event }) => isFinalOutput(outputFrom(event)),
+        isReassessQuestion: ({ event }) => isReassessQuestionOutput(outputFrom(event)),
+        isReassessContinuing: ({ context, event }) => {
+            const output = outputFrom(event);
+            return (isContinuingOutput(output) &&
+                output.remainingPlan.length < context.remainingPlan.length &&
+                canEnterDynamicCall(context, output.nextPlaybookId, output.nextPlaybookInput));
+        },
+        isPlaybookSuccessOutput: ({ event }) => {
+            const output = outputFrom(event);
+            return output === undefined || isJsonValue(output);
+        },
+        isAuthoredChildError: ({ context, event }) => isValidPublicChildResult(errorFrom(event), context),
+    },
     actions: {
-        restartWithFreshIntent: assign(({ context, event }) => {
-            if ((event.type !== 'BOSS_INTERRUPT' && event.type !== 'BOSS_INTENT') || event.bossIntent.trim().length === 0)
-                return {};
+        startRoutingFromBoss: assign(({ event }) => ({
+            bossIntent: bossIntentFromEvent(event),
+            remainingPlan: [],
+            completedCallResults: [],
+            nextPlaybookId: '',
+            nextPlaybookInput: '',
+            callHistory: [],
+            response: undefined,
+            pendingBossQuestion: undefined,
+            bossReply: undefined,
+            lastError: undefined,
+        })),
+        storeBossReply: assign(({ event }) => ({
+            bossReply: event.type === 'BOSS_REPLY' ? event.answer : undefined,
+            lastError: undefined,
+        })),
+        setRoutingQuestion: assign(({ event }) => {
+            const output = outputFrom(event);
             return {
-                bossIntent: event.bossIntent,
-                remainingPlan: [],
-                completedCallResults: [],
-                callSignatures: [],
-                nextPlaybookId: '',
-                nextPlaybookInput: '',
-                response: '',
+                pendingBossQuestion: isRoutingQuestionOutput(output) ? makePendingQuestion('routing', 'CAPTAIN-1', output.question) : undefined,
+                bossReply: undefined,
+            };
+        }),
+        storeRoutingDelegation: assign(({ context, event }) => {
+            const output = outputFrom(event);
+            if (!isDelegationOutput(output)) {
+                return {};
+            }
+            return {
+                remainingPlan: output.remainingPlan,
+                nextPlaybookId: output.nextPlaybookId,
+                nextPlaybookInput: output.nextPlaybookInput,
+                callHistory: [...context.callHistory, callSignature(output.nextPlaybookId, output.nextPlaybookInput)],
                 pendingBossQuestion: undefined,
                 bossReply: undefined,
                 lastError: undefined,
-                enabledPlaybooks: context.enabledPlaybooks,
             };
         }),
-        rememberDirectResponse: assign(({ event }) => {
-            const output = actorOutput(event);
-            return { response: output.response, ...clearBossReplyContext() };
-        }),
-        rememberPlannedCall: assign(({ context, event }) => {
-            const update = plannedCallUpdate(event);
+        appendSuccessfulChildResult: assign(({ context, event }) => {
+            const output = outputFrom(event);
+            const result = isJsonValue(output)
+                ? { playbookId: context.nextPlaybookId, status: 'ok', output }
+                : { playbookId: context.nextPlaybookId, status: 'ok' };
             return {
-                ...update,
-                callSignatures: [...context.callSignatures, callSignature(update.nextPlaybookId, update.nextPlaybookInput)],
-                ...clearBossReplyContext(),
+                completedCallResults: [...context.completedCallResults, result],
+                lastError: undefined,
             };
         }),
-        setRoutingPendingBossQuestion: assign(({ event }) => setPendingBossQuestion('routing', 'CAPTAIN-1', event)),
-        setReassessmentPendingBossQuestion: assign(({ event }) => setPendingBossQuestion('reassessment', 'CAPTAIN-3', event)),
-        rememberBossReply: assign(({ event }) => event.type === 'BOSS_REPLY' ? { bossReply: event.answer } : {}),
-        appendChildSuccess: assign(({ context, event }) => {
-            const result = completedChildSuccess(context.nextPlaybookId, event);
-            return result ? { completedCallResults: [...context.completedCallResults, result] } : {};
+        appendRejectedChildResult: assign(({ context, event }) => {
+            const error = errorFrom(event);
+            const result = {
+                playbookId: context.nextPlaybookId,
+                status: childStatus(error),
+                error: compactChildError(error),
+            };
+            return {
+                completedCallResults: [...context.completedCallResults, result],
+                lastError: undefined,
+            };
         }),
-        appendChildError: assign(({ context, event }) => ({
-            completedCallResults: [...context.completedCallResults, completedChildError(context.nextPlaybookId, event)],
+        storeFinalResponse: assign(({ event }) => {
+            const output = outputFrom(event);
+            return isFinalOutput(output)
+                ? {
+                    response: output.response,
+                    pendingBossQuestion: undefined,
+                    bossReply: undefined,
+                    lastError: undefined,
+                }
+                : {};
+        }),
+        setReassessQuestion: assign(({ event }) => {
+            const output = outputFrom(event);
+            return {
+                pendingBossQuestion: isReassessQuestionOutput(output) ? makePendingQuestion('reassessing', 'CAPTAIN-3', output.question) : undefined,
+                bossReply: undefined,
+            };
+        }),
+        storeContinuingCall: assign(({ context, event }) => {
+            const output = outputFrom(event);
+            if (!isContinuingOutput(output)) {
+                return {};
+            }
+            return {
+                remainingPlan: output.remainingPlan,
+                nextPlaybookId: output.nextPlaybookId,
+                nextPlaybookInput: output.nextPlaybookInput,
+                callHistory: [...context.callHistory, callSignature(output.nextPlaybookId, output.nextPlaybookInput)],
+                pendingBossQuestion: undefined,
+                bossReply: undefined,
+                lastError: undefined,
+            };
+        }),
+        rememberInvalidActorOutput: assign({
+            lastError: () => ({ name: 'ActorOutputError', message: 'Actor output did not match any declared result contract.' }),
+        }),
+        rememberInvalidBossReply: assign({
+            lastError: () => ({ name: 'BossReplyError', message: 'BOSS_REPLY did not match a pending question or carried an empty answer.' }),
+        }),
+        rememberActorError: assign(({ event }) => ({
+            lastError: normalizeError(errorFrom(event)),
         })),
-        rememberCaptainError: assign(({ event }) => ({ lastError: normalizeError(actorError(event)) })),
-        rememberMalformedResult: assign(() => ({ lastError: { name: 'ResultError', message: 'Actor returned a malformed or unsupported result' } })),
     },
 }).createMachine({
     id: 'captain',
     initial: 'ready',
     context: ({ input }) => ({
+        bossIntent: input.bossIntent ?? '',
         enabledPlaybooks: input.enabledPlaybooks,
         selfPlaybookId: input.selfPlaybookId,
-        bossIntent: '',
         remainingPlan: [],
         completedCallResults: [],
-        callSignatures: [],
         nextPlaybookId: '',
         nextPlaybookInput: '',
-        response: '',
+        callHistory: [],
     }),
-    output: ({ context }) => ({ response: context.response }),
+    output: ({ context }) => ({
+        response: context.response ?? '',
+    }),
     on: {
         BOSS_INTERRUPT: bossInterrupts(['routing']),
     },
     states: {
         ready: {
             id: 'ready',
-            description: 'Waiting for Boss to provide an intent.',
-            meta: { playbook: { stateId: 'ready', description: 'Waiting for Boss to provide an intent.' } },
+            description: 'Idle hub waiting for Boss to provide a new intent.',
             tags: ['playbook.parked'],
+            meta: { playbook: { stateId: 'ready', description: 'Idle hub waiting for Boss to provide a new intent.' } },
             on: {
                 BOSS_INTENT: {
-                    guard: ({ event }) => event.bossIntent.trim().length > 0,
+                    guard: 'hasBossIntent',
                     target: 'routing',
-                    actions: 'restartWithFreshIntent',
+                    actions: 'startRoutingFromBoss',
                 },
             },
         },
         routing: {
             id: 'routing',
-            description: 'Deciding how to handle the Boss intent.',
-            meta: { playbook: { stateId: 'routing', description: 'Deciding how to handle the Boss intent.' } },
+            description: 'Captain routes the Boss intent to a first enabled playbook or asks one routing question.',
             tags: ['playbook.busy'],
+            meta: {
+                playbook: {
+                    stateId: 'routing',
+                    description: 'Captain routes the Boss intent to a first enabled playbook or asks one routing question.',
+                },
+            },
             invoke: {
-                id: 'routing',
                 src: 'captain',
                 input: ({ context }) => ({
-                    stateId: 'routing',
-                    sourceItem: 'CAPTAIN-1',
-                    prompt: routingPrompt,
-                    result: {
-                        direct: 'Captain chose a direct response. Output shall include `response: concise JSON-safe response`.',
-                        question: 'Captain chose to ask Boss a routing question. Output shall include `question: concise question`.',
-                        delegation: 'Captain selected the first call. Output shall include `remainingPlan: finite ordered JSON-safe array`, `nextPlaybookId: non-empty stable id`, and `nextPlaybookInput: non-empty complete standalone input`.',
-                        needsBossReply: needsBossReplyDescription,
+                    ...{
+                        stateId: 'routing',
+                        sourceItem: 'CAPTAIN-1',
+                        prompt: ROUTING_PROMPT,
+                        result: ROUTING_RESULTS,
+                        bossIntent: context.bossIntent,
+                        enabledPlaybooks: context.enabledPlaybooks,
                     },
-                    bossIntent: context.bossIntent,
-                    enabledPlaybooks: context.enabledPlaybooks,
                     ...(context.pendingBossQuestion ? { pendingBossQuestion: context.pendingBossQuestion } : {}),
-                    ...(context.bossReply !== undefined ? { bossReply: context.bossReply } : {}),
+                    ...(context.bossReply ? { bossReply: context.bossReply } : {}),
                 }),
                 onDone: [
-                    {
-                        guard: ({ event }) => hasNonEmptyStringField(event, 'direct', 'response'),
-                        target: 'done',
-                        actions: 'rememberDirectResponse',
-                    },
-                    {
-                        guard: ({ event }) => hasNonEmptyStringField(event, 'question', 'question'),
-                        target: 'awaitBossReply',
-                        actions: 'setRoutingPendingBossQuestion',
-                    },
-                    {
-                        guard: ({ context, event }) => isValidPlannedCall(context, event, 'delegation'),
-                        target: 'callPlaybook',
-                        actions: 'rememberPlannedCall',
-                    },
-                    {
-                        guard: ({ event }) => hasNonEmptyStringField(event, 'needsBossReply', 'question'),
-                        target: 'awaitBossReply',
-                        actions: 'setRoutingPendingBossQuestion',
-                    },
-                    { target: 'failed', actions: 'rememberMalformedResult' },
+                    { guard: 'isRoutingQuestion', target: 'awaitBossReply', actions: 'setRoutingQuestion' },
+                    { guard: 'isRoutingDelegation', target: 'callPlaybook', actions: 'storeRoutingDelegation' },
+                    { target: 'failed', actions: 'rememberInvalidActorOutput' },
                 ],
-                onError: { target: 'failed', actions: 'rememberCaptainError' },
+                onError: { target: 'failed', actions: 'rememberActorError' },
             },
         },
         callPlaybook: {
             id: 'callPlaybook',
-            description: 'Calling the selected enabled playbook.',
-            meta: { playbook: { stateId: 'callPlaybook', description: 'Calling the selected enabled playbook.' } },
+            description: 'Captain calls the selected enabled playbook with the selected standalone request.',
             tags: ['playbook.suspended'],
+            meta: {
+                playbook: {
+                    stateId: 'callPlaybook',
+                    description: 'Captain calls the selected enabled playbook with the selected standalone request.',
+                },
+            },
             invoke: {
                 src: 'playbook',
                 input: ({ context }) => ({
@@ -413,106 +542,87 @@ export const captainMachine = setup({
                     textContext: 'nextPlaybookInput',
                 }),
                 onDone: [
-                    {
-                        guard: ({ event }) => completedChildSuccess('', event) !== undefined,
-                        target: 'reassessment',
-                        actions: 'appendChildSuccess',
-                    },
-                    { target: 'failed', actions: 'rememberMalformedResult' },
+                    { guard: 'isPlaybookSuccessOutput', target: 'reassessing', actions: 'appendSuccessfulChildResult' },
+                    { target: 'failed', actions: 'rememberInvalidActorOutput' },
                 ],
                 onError: [
-                    {
-                        guard: ({ event }) => isAuthoredChildError(event),
-                        target: 'reassessment',
-                        actions: 'appendChildError',
-                    },
-                    { target: 'failed', actions: 'rememberCaptainError' },
+                    { guard: 'isAuthoredChildError', target: 'reassessing', actions: 'appendRejectedChildResult' },
+                    { target: 'failed', actions: 'rememberActorError' },
                 ],
             },
         },
-        reassessment: {
-            id: 'reassessment',
-            description: 'Reassessing the intent after a completed child call.',
-            meta: { playbook: { stateId: 'reassessment', description: 'Reassessing the intent after a completed child call.' } },
+        reassessing: {
+            id: 'reassessing',
+            description: 'Captain reassesses the original intent, remaining plan, and completed call results.',
             tags: ['playbook.busy'],
+            meta: {
+                playbook: {
+                    stateId: 'reassessing',
+                    description: 'Captain reassesses the original intent, remaining plan, and completed call results.',
+                },
+            },
             invoke: {
-                id: 'reassessment',
                 src: 'captain',
                 input: ({ context }) => ({
-                    stateId: 'reassessment',
-                    sourceItem: 'CAPTAIN-3',
-                    prompt: reassessmentPrompt,
-                    result: {
-                        final: 'Captain determined the intent is fulfilled. Output shall include `response: concise JSON-safe response`.',
-                        followUpQuestion: 'Captain needs information from Boss. Output shall include `question: concise question`.',
-                        continuing: 'Captain selected the next call. Output shall include `remainingPlan: strictly shorter finite ordered JSON-safe array`, `nextPlaybookId: non-empty stable id`, and `nextPlaybookInput: non-empty complete standalone input`.',
-                        needsBossReply: needsBossReplyDescription,
+                    ...{
+                        stateId: 'reassessing',
+                        sourceItem: 'CAPTAIN-3',
+                        prompt: REASSESS_PROMPT,
+                        result: REASSESS_RESULTS,
+                        bossIntent: context.bossIntent,
+                        enabledPlaybooks: context.enabledPlaybooks,
+                        remainingPlan: context.remainingPlan,
+                        completedCallResults: context.completedCallResults,
                     },
-                    bossIntent: context.bossIntent,
-                    enabledPlaybooks: context.enabledPlaybooks,
-                    remainingPlan: context.remainingPlan,
-                    completedCallResults: context.completedCallResults,
                     ...(context.pendingBossQuestion ? { pendingBossQuestion: context.pendingBossQuestion } : {}),
-                    ...(context.bossReply !== undefined ? { bossReply: context.bossReply } : {}),
+                    ...(context.bossReply ? { bossReply: context.bossReply } : {}),
                 }),
                 onDone: [
-                    {
-                        guard: ({ event }) => hasNonEmptyStringField(event, 'final', 'response'),
-                        target: 'done',
-                        actions: 'rememberDirectResponse',
-                    },
-                    {
-                        guard: ({ event }) => hasNonEmptyStringField(event, 'followUpQuestion', 'question'),
-                        target: 'awaitBossReply',
-                        actions: 'setReassessmentPendingBossQuestion',
-                    },
-                    {
-                        guard: ({ context, event }) => isValidPlannedCall(context, event, 'continuing'),
-                        target: 'callPlaybook',
-                        actions: 'rememberPlannedCall',
-                    },
-                    {
-                        guard: ({ event }) => hasNonEmptyStringField(event, 'needsBossReply', 'question'),
-                        target: 'awaitBossReply',
-                        actions: 'setReassessmentPendingBossQuestion',
-                    },
-                    { target: 'failed', actions: 'rememberMalformedResult' },
+                    { guard: 'isReassessFinal', target: 'done', actions: 'storeFinalResponse' },
+                    { guard: 'isReassessQuestion', target: 'awaitBossReply', actions: 'setReassessQuestion' },
+                    { guard: 'isReassessContinuing', target: 'callPlaybook', actions: 'storeContinuingCall' },
+                    { target: 'failed', actions: 'rememberInvalidActorOutput' },
                 ],
-                onError: { target: 'failed', actions: 'rememberCaptainError' },
+                onError: { target: 'failed', actions: 'rememberActorError' },
             },
         },
         awaitBossReply: {
             id: 'awaitBossReply',
             description: "Waiting for Boss to answer the acting agent's question.",
-            meta: { playbook: { stateId: 'awaitBossReply', description: "Waiting for Boss to answer the acting agent's question." } },
             tags: ['playbook.parked'],
+            meta: {
+                playbook: {
+                    stateId: 'awaitBossReply',
+                    description: "Waiting for Boss to answer the acting agent's question.",
+                },
+            },
             on: {
-                BOSS_REPLY: resumableStates(['routing', 'reassessment']),
+                BOSS_REPLY: resumableStates(),
                 BOSS_INTENT: {
-                    guard: ({ event }) => event.bossIntent.trim().length > 0,
+                    guard: 'hasBossIntent',
                     target: 'routing',
-                    actions: 'restartWithFreshIntent',
+                    actions: 'startRoutingFromBoss',
                 },
             },
         },
         failed: {
             id: 'failed',
-            description: 'Waiting for Boss recovery after an unrecoverable error.',
-            meta: { playbook: { stateId: 'failed', description: 'Waiting for Boss recovery after an unrecoverable error.' } },
+            description: 'Recoverable failure retaining context for Boss recovery.',
             tags: ['playbook.parked'],
+            meta: { playbook: { stateId: 'failed', description: 'Recoverable failure retaining context for Boss recovery.' } },
             on: {
                 BOSS_INTENT: {
-                    guard: ({ event }) => event.bossIntent.trim().length > 0,
+                    guard: 'hasBossIntent',
                     target: 'routing',
-                    actions: 'restartWithFreshIntent',
+                    actions: 'startRoutingFromBoss',
                 },
             },
         },
         done: {
             id: 'done',
             type: 'final',
-            description: 'Returning the completed response to Boss.',
-            meta: { playbook: { stateId: 'done', description: 'Returning the completed response to Boss.' } },
+            description: 'Captain completed with a concise response for Boss.',
+            meta: { playbook: { stateId: 'done', description: 'Captain completed with a concise response for Boss.' } },
         },
     },
 });

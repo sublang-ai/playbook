@@ -19,33 +19,22 @@ const PINNED = {
       "player": "",
       "resultKeys": [
         "delegation",
-        "direct",
         "needsBossReply",
         "question"
       ],
       "onDone": [
         {
           "index": 0,
-          "target": "done",
+          "target": "awaitBossReply",
           "guarded": true
         },
         {
           "index": 1,
-          "target": "awaitBossReply",
-          "guarded": true
-        },
-        {
-          "index": 2,
           "target": "callPlaybook",
           "guarded": true
         },
         {
-          "index": 3,
-          "target": "awaitBossReply",
-          "guarded": true
-        },
-        {
-          "index": 4,
+          "index": 2,
           "target": "failed",
           "guarded": false
         }
@@ -60,7 +49,7 @@ const PINNED = {
       "on": {}
     },
     {
-      "state": "reassessment",
+      "state": "reassessing",
       "actor": "captain",
       "sourceItem": "CAPTAIN-3",
       "player": "",
@@ -88,11 +77,6 @@ const PINNED = {
         },
         {
           "index": 3,
-          "target": "awaitBossReply",
-          "guarded": true
-        },
-        {
-          "index": 4,
           "target": "failed",
           "guarded": false
         }
@@ -133,8 +117,13 @@ const PINNED = {
           },
           {
             "index": 1,
-            "target": "reassessment",
+            "target": "reassessing",
             "guarded": true
+          },
+          {
+            "index": 2,
+            "target": "failed",
+            "guarded": false
           }
         ],
         "BOSS_INTENT": [
@@ -186,7 +175,7 @@ const PINNED = {
       "onDone": [
         {
           "index": 0,
-          "target": "reassessment",
+          "target": "reassessing",
           "guarded": true
         },
         {
@@ -198,7 +187,7 @@ const PINNED = {
       "onError": [
         {
           "index": 0,
-          "target": "reassessment",
+          "target": "reassessing",
           "guarded": true
         },
         {
