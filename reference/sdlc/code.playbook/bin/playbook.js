@@ -43,9 +43,24 @@ export async function runPlaybookCli(options = {}) {
   const env = options.env ?? process.env;
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
+  const loadModule = options.loadModule ?? ((specifier) => import(specifier));
+
+  // PBCLI-18: `playbook run ...` is the non-interactive one-shot path; it
+  // never seeds, composes, resolves tmux-play, or launches it.
+  if (argv[0] === 'run') {
+    const { runPlaybookRun } = await import('./run.js');
+    return await runPlaybookRun({
+      argv: argv.slice(1),
+      stdout,
+      stderr,
+      loadModule,
+      ...(options.createAgent ? { createAgent: options.createAgent } : {}),
+      ...(options.readStdin ? { readStdin: options.readStdin } : {}),
+    });
+  }
+
   const spawnFn = options.spawn ?? spawn;
   const tmuxPlayBin = options.tmuxPlayBin ?? resolveTmuxPlayBin();
-  const loadModule = options.loadModule ?? ((specifier) => import(specifier));
   const home = options.homeDir ?? env.HOME ?? homedir();
   const userConfigPath = resolveUserConfigPath(env, home);
 
@@ -377,6 +392,7 @@ function helpText({ userConfigPath, failingAdapters = [] }) {
     ...failures,
     'Usage:',
     '  playbook [--list] [--config <path>] [tmux-play options]',
+    '  playbook run <from> [task] [options]   # non-interactive one-shot',
     '  playbook --help',
     '',
     `Default config: ${userConfigPath}`,

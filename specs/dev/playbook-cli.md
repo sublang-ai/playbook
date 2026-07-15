@@ -181,8 +181,8 @@ default export with the same structural registry check as
 [PBCLI-9](#pbcli-9), and call `entry.createRuntime({ captainOptions,
 players })`, where `players` binds each `requiredRoleIds` entry to its
 resolved agent under the entry's own local role id and `captainOptions`
-carries `{ playbooks: { <id>: { from, options } } }` built from the
-`--option` slice so the entry's `validateOptions` sees its own options.
+is the `--option` slice itself — the same shape the shell passes as
+`optionInput`, so the entry's `validateOptions` sees its own options.
 The command shall host the runtime through a headless `PlaybookPorts`
 ([PBRT](playbook-runtime.md)) backed by cligent: `callPlayer` runs the
 bound role's agent through a per-role `Cligent`, threading each call's
@@ -196,6 +196,10 @@ The command shall run one `handleBossInput` turn under an abort signal,
 `dispose` the runtime, and map the `PlaybookRunResult` outcome to an
 exit status: `terminal` → `0` (printing `output`), `failed` or
 `aborted` → `2`, `suspended` and `quiescent`/`no-action` → `3`.
+The default agent shall run each `Cligent` in protected auto mode
+(`permissions.mode: auto`, as the seeded lineup uses per
+[PBCLI-11](#pbcli-11)) so a one-shot run does not block on routine
+approval prompts.
 The `run` subcommand shall accept an injected agent-run function so
 tests can drive it without real adapters, defaulting to cligent's
 `Cligent`.

@@ -607,6 +607,188 @@ function fakeSpawn(opts: { exitCode?: number; signal?: string } = {}) {
   };
 }
 
+// PBCLI-21: `playbook run` over an injected agent runner and fake entries.
+
+type PortRun = (ports: any, turn: any) => Promise<any>;
+
+function runEntry(run: PortRun, extra: Record<string, unknown> = {}) {
+  return {
+    id: 'code',
+    command: 'code',
+    intent: 'x',
+    requiredRoleIds: ['coder', 'reviewer'],
+    validateOptions: (o: unknown) => o,
+    createRuntime(created: any) {
+      runEntry.lastCreate = created;
+      let ports: any;
+      return {
+        async init(session: any) {
+          ports = session.ports;
+        },
+        async handleBossInput(turn: any) {
+          return run(ports, turn);
+        },
+        async resumePlaybookCall() {
+          return { outcome: 'no-action', state: {} };
+        },
+        async dispose() {},
+      };
+    },
+    ...extra,
+  };
+}
+runEntry.lastCreate = undefined as any;
+
+function fakeAgents(scripts: Record<string, PortRun>) {
+  const calls: any[] = [];
+  const createAgent = (spec: any) => ({
+    run: async (prompt: string, opts: any) => {
+      calls.push({ role: spec.role, adapter: spec.adapter, model: spec.model, prompt, opts });
+      const script = scripts[spec.role] ?? (async () => ({ status: 'ok', finalText: 'ok' }));
+      return script(prompt, opts);
+    },
+  });
+  return { createAgent, calls };
+}
+
+async function runCli(argv: string[], modules: Record<string, unknown>, createAgent: any, readStdin?: () => Promise<string>) {
+  const stdout = writer();
+  const stderr = writer();
+  const result = await runPlaybookCli({
+    argv,
+    loadModule: loader(modules),
+    createAgent,
+    ...(readStdin ? { readStdin } : {}),
+    stdout: stdout as never,
+    stderr: stderr as never,
+  });
+  return { code: result.code, stdout: stdout.text(), stderr: stderr.text() };
+}
+
+describe('playbook run — non-interactive (PBCLI-21)', () => {
+  it('routes players, threads resume, isolates the captain, and prints a terminal outcome', async () => {
+    runEntry.lastCreate = undefined;
+    const { createAgent, calls } = fakeAgents({
+      coder: async (_p, o: any) => ({
+        status: 'ok',
+        finalText: o.resume ? `second(${o.resume})` : 'first',
+        resumeToken: 'r1',
+      }),
+      captain: async () => ({ status: 'ok', finalText: 'judged' }),
+    });
+    const entry = runEntry(async (ports, turn) => {
+      const a = await ports.callPlayer('coder', 'p1', turn.signal, { resume: false });
+      const b = await ports.callPlayer('coder', 'p2', turn.signal, { resume: a.resumeToken });
+      await ports.callCaptain('route', turn.signal, {
+        visibility: 'hidden',
+        resume: false,
+        allowedTools: [],
+      });
+      return { outcome: 'terminal', state: {}, output: { response: b.finalText } };
+    });
+
+    const out = await runCli(
+      ['run', 'mod://code', 'do', 'the', 'thing', '--option', 'committer=coder'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+    );
+
+    expect(out.code).toBe(0);
+    expect(out.stdout.trim()).toBe('second(r1)');
+    // captainOptions is the raw --option slice the entry's validateOptions sees.
+    expect(runEntry.lastCreate.captainOptions).toEqual({ committer: 'coder' });
+    // players bind by local role id, defaulting to claude.
+    expect(runEntry.lastCreate.players).toEqual([
+      { id: 'coder', adapter: 'claude' },
+      { id: 'reviewer', adapter: 'claude' },
+    ]);
+    const coderCalls = calls.filter((c) => c.role === 'coder');
+    expect(coderCalls.map((c) => c.opts.resume)).toEqual([false, 'r1']);
+    const captainCall = calls.find((c) => c.role === 'captain');
+    expect(captainCall.opts.allowedTools).toEqual([]);
+  });
+
+  it('prints JSON output under --json', async () => {
+    const { createAgent } = fakeAgents({});
+    const entry = runEntry(async () => ({
+      outcome: 'terminal',
+      state: {},
+      output: { response: 'hi' },
+    }));
+    const out = await runCli(
+      ['run', 'mod://code', 'go', '--json'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+    );
+    expect(out.code).toBe(0);
+    expect(JSON.parse(out.stdout)).toEqual({ response: 'hi' });
+  });
+
+  it('reads the task from stdin when omitted', async () => {
+    const { createAgent } = fakeAgents({});
+    let seen: string | undefined;
+    const entry = runEntry(async (_ports, turn) => {
+      seen = turn.text;
+      return { outcome: 'terminal', state: {}, output: 'ok' };
+    });
+    const out = await runCli(
+      ['run', 'mod://code'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+      async () => '  piped task  ',
+    );
+    expect(out.code).toBe(0);
+    expect(seen).toBe('piped task');
+  });
+
+  it('maps failed/aborted to 2 and suspended/quiescent to 3', async () => {
+    const { createAgent } = fakeAgents({});
+    const failed = runEntry(async () => ({
+      outcome: 'failed',
+      state: {},
+      error: { name: 'E', message: 'boom' },
+    }));
+    const failedOut = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: failed } },
+      createAgent,
+    );
+    expect(failedOut.code).toBe(2);
+    expect(failedOut.stderr).toContain('boom');
+
+    const parked = runEntry(async () => ({ outcome: 'quiescent', state: {} }));
+    const parkedOut = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: parked } },
+      createAgent,
+    );
+    expect(parkedOut.code).toBe(3);
+  });
+
+  it('rejects a missing module, invalid entry, and unrequired --player with exit 1', async () => {
+    const { createAgent } = fakeAgents({});
+    const missing = await runCli(['run', 'mod://nope', 'x'], {}, createAgent);
+    expect(missing.code).toBe(1);
+
+    const invalid = await runCli(
+      ['run', 'mod://bad', 'x'],
+      { 'mod://bad': { default: { id: 'code' } } },
+      createAgent,
+    );
+    expect(invalid.code).toBe(1);
+    expect(invalid.stderr).toContain('no valid registry entry');
+
+    const entry = runEntry(async () => ({ outcome: 'terminal', state: {}, output: 'ok' }));
+    const badRole = await runCli(
+      ['run', 'mod://code', 'x', '--player', 'wizard=claude'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+    );
+    expect(badRole.code).toBe(1);
+    expect(badRole.stderr).toContain('wizard');
+  });
+});
+
 function writer() {
   const chunks: string[] = [];
   return {
