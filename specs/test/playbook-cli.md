@@ -100,3 +100,17 @@ help to stdout and exits `0` without seeding or launching;
 composition, or the readiness gate; and the command propagates the
 tmux-play exit code, re-raises a terminating signal on itself, and
 exits `127` when it cannot launch tmux-play.
+
+### PBCLI-21
+Verifies: [PBCLI-18](../user/playbook-cli.md#pbcli-18), [PBCLI-19](../user/playbook-cli.md#pbcli-19), [PBCLI-20](../dev/playbook-cli.md#pbcli-20)
+
+When the test suite exercises `playbook run` with an injected
+agent-run function over a fake registry entry, the test suite shall
+fail unless: a terminal turn prints its output to stdout and exits `0`;
+`--json` prints that output as JSON; `callPlayer` routes to the agent
+bound for each required role and threads the returned resume token into
+the next call; `callCaptain` requesting isolation runs a fresh
+tool-free captain call; the `--option` slice reaches the entry's
+`validateOptions`; a failed or aborted turn exits `2`; a suspended,
+quiescent, or nested-call outcome exits `3`; and a missing `<from>`,
+an invalid registry entry, or an unrequired `--player` role exits `1`.

@@ -170,3 +170,32 @@ from the blocking readiness result.
 Playbook registry entries shall not define adapter or credential
 readiness predicates; readiness remains launcher-owned
 ([DR-009 §7](../decisions/009-generic-playbook-cli-and-registry.md)).
+
+## Non-interactive run
+
+### PBCLI-20
+
+Where `playbook run` ([PBCLI-18](../user/playbook-cli.md#pbcli-18))
+executes, the command shall import the `<from>` module, validate its
+default export with the same structural registry check as
+[PBCLI-9](#pbcli-9), and call `entry.createRuntime({ captainOptions,
+players })`, where `players` binds each `requiredRoleIds` entry to its
+resolved agent under the entry's own local role id and `captainOptions`
+carries `{ playbooks: { <id>: { from, options } } }` built from the
+`--option` slice so the entry's `validateOptions` sees its own options.
+The command shall host the runtime through a headless `PlaybookPorts`
+([PBRT](playbook-runtime.md)) backed by cligent: `callPlayer` runs the
+bound role's agent through a per-role `Cligent`, threading each call's
+`resumeToken` into the next `resume`; `callJudge` and `callCaptain` run
+the captain agent, and `callCaptain` starts a fresh session with an
+empty tool allowlist whenever its options request one; `callPlaybook`
+shall reject, since a one-shot run hosts no sub-playbooks; `emitStatus`
+shall write to stderr and `emitTelemetry` shall be dropped unless
+`--verbose`.
+The command shall run one `handleBossInput` turn under an abort signal,
+`dispose` the runtime, and map the `PlaybookRunResult` outcome to an
+exit status: `terminal` → `0` (printing `output`), `failed` or
+`aborted` → `2`, `suspended` and `quiescent`/`no-action` → `3`.
+The `run` subcommand shall accept an injected agent-run function so
+tests can drive it without real adapters, defaulting to cligent's
+`Cligent`.
