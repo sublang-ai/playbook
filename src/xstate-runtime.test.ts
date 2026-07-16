@@ -1570,6 +1570,11 @@ describe('JSON boundary validation', () => {
 
     const hostile = new Error('hidden');
     Object.defineProperties(hostile, {
+      stack: {
+        get: () => {
+          throw new Error('stack trap');
+        },
+      },
       name: {
         get: () => {
           throw new Error('name trap');
@@ -1578,11 +1583,6 @@ describe('JSON boundary validation', () => {
       message: {
         get: () => {
           throw new Error('message trap');
-        },
-      },
-      stack: {
-        get: () => {
-          throw new Error('stack trap');
         },
       },
     });

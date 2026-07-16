@@ -131,16 +131,20 @@ The declared range shall admit cligent's tmux-play dynamic
 visible-player surface used by the Playbook Captain shell, first
 available in `@sublang/cligent` 0.13.0, and shall admit the explicit
 `CallPlayerOptions.resume` surface required by
-[CAPTAIN-26](playbook-captain.md#captain-26).
+[CAPTAIN-26](playbook-captain.md#captain-26), the pre-close
+`Captain.prepareDispose()` lifecycle used by
+[CAPTAIN-16](playbook-captain.md#captain-16), and the isolated
+`CallCaptainOptions.resume` and `CallCaptainOptions.allowedTools`
+surface required by [CAPTAIN-31](playbook-captain.md#captain-31).
 
 The repo-local `pnpm-lock.yaml` root importer shall use the same
 specifier and continue to pin a specific resolved cligent version,
 so the CI install in [RELEASE-7](#release-7) and contributor
 `pnpm install --frozen-lockfile` runs stay reproducible until a
 developer deliberately refreshes the pin within the declared range.
-That pinned version shall itself expose both explicit player resume and
-the pre-close Captain lifecycle used by [CAPTAIN-16](playbook-captain.md#captain-16),
-first released together in `@sublang/cligent` 0.14.0;
+That pinned version shall itself expose explicit player resume,
+the pre-close Captain lifecycle, and isolated fresh, tool-restricted
+Captain calls, first released together in `@sublang/cligent` 0.15.0;
 merely using a range that could admit a later compatible version shall
 not satisfy this requirement.
 

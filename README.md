@@ -231,29 +231,23 @@ playbook --config ./tmux-play.config.yaml
 
 ### Install (contributors / from source)
 
-Source development currently links a sibling cligent checkout, built
-locally, through the gitignored workspace override:
+The checked-in lockfile resolves every runtime contract required by the
+source tree:
 
 ```sh
 git clone https://github.com/sublang-ai/playbook.git
 cd playbook
-git clone https://github.com/sublang-ai/cligent.git ../cligent
-(cd ../cligent && npm ci && npm run build)
-cp pnpm-workspace.yaml.example pnpm-workspace.yaml
-pnpm install
+pnpm install --frozen-lockfile
 pnpm build
 pnpm test
 ```
 
-Why the override: the current Unreleased branch requires cligent
-contracts beyond any published release — the explicit player-resume and
-pre-close Captain contracts first shipped in cligent 0.14.0, plus the
-isolated Captain control calls still on cligent main. This package's
-dependency range and lockfile meanwhile pin the 0.13.0 registry
-closure; they are updated only in the authorized release sequence under
-[RELEASE-14](specs/dev/release.md#release-14), so no registry-only
-install currently supports source development on main. Do not commit
-the local lockfile rewrite produced by the override.
+To co-develop Playbook with an unreleased cligent checkout, clone
+cligent beside this repository, build it, and copy
+`pnpm-workspace.yaml.example` to the gitignored
+`pnpm-workspace.yaml`. That optional override links the sibling checkout
+in place of the registry version. Do not commit the local lockfile
+rewrite it produces ([RELEASE-11](specs/dev/release.md#release-11)).
 
 Drive a Boss turn against the source tree with the launcher, which
 resolves `tmux-play`, the Playbook Captain shell, and the CODE registry

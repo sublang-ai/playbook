@@ -31,7 +31,10 @@ The test suite shall fail unless `package.json` declares
 override is active, the lockfile records a concrete resolved
 cligent version whose public tmux-play contract declares both the
 pre-close `Captain.prepareDispose()` lifecycle and
-`CallPlayerOptions.resume` selection accepted by `CaptainContext.callPlayer`.
+`CallPlayerOptions.resume` selection accepted by
+`CaptainContext.callPlayer`, plus `CallCaptainOptions.resume` and
+`CallCaptainOptions.allowedTools` accepted by
+`CaptainContext.callCaptain`.
 
 ## Public surfaces
 

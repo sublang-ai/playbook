@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking: the public `@sublang/playbook/runtime` contract now carries causal `PlaybookSession` identity, requires explicit player resume selection, returns structured run state, and adds `callCaptain`, `callPlaybook`, and `resumePlaybookCall`.** Hosts must implement the six-port boundary and nested-call start/resume protocol. Trace payloads advance to schema version 2 with visible Captain, nested-call, and session-causal pairs ([PBRT-34](specs/dev/playbook-runtime.md#pbrt-34), [PBRT-42](specs/dev/playbook-runtime.md#pbrt-42), [RELEASE-15](specs/dev/release.md#release-15)).
+- **Raise the registry dependency closure to cligent 0.15.** `@sublang/cligent` moves from `^0.13.0` to `^0.15.0`, and Playbook's direct `@anthropic-ai/claude-agent-sdk` floor moves from `^0.3.143` to `^0.3.154` to satisfy cligent 0.15's `>=0.3.154` peer requirement. The lockfile now installs the published pre-close lifecycle, explicit player resume, and fresh tool-free Captain-call contracts used by the source tree, so clean CI and contributor installs exercise the same surface as optional sibling-checkout development ([RELEASE-14](specs/dev/release.md#release-14)).
 
 ### Fixed
 

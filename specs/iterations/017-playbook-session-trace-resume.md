@@ -30,13 +30,14 @@ Give every linked runtime session an immutable id, emit a boundary-complete orde
    Add sequenced trace emission and resolved-player token maps to CODE and DISCUSS.
 5. **Wire the Captain shell.** _[done]_
    Generate collision-free UUIDs, keep them stable while parked, and bridge explicit host resume calls.
-6. **Verify and publish artifacts.**
+6. **Verify and publish artifacts.** _[in progress]_
    Add contract/runtime/shell/real-host tests, rebuild committed JavaScript and declarations, and update user and release documentation.
 
-The source and generated artifacts are complete. Release coordination remains:
-publish the first cligent version containing explicit player resume and
-`Captain.prepareDispose`, then raise this package's cligent dependency floor
-and lockfile pin to that release and verify a clean frozen install.
+The source and generated artifacts are complete. cligent 0.15 publishes
+explicit player resume, `Captain.prepareDispose`, and the isolated Captain-call
+surface also required by the current shell; this package's dependency floor and
+lockfile pin now select that release for clean frozen installs. Publishing the
+updated Playbook package remains the final release step.
 
 ## Acceptance criteria
 

@@ -69,21 +69,42 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     ).toBe(true);
   });
 
-  it('pins cligent pre-close and explicit player resume contracts', () => {
+  it('pins cligent lifecycle and isolated call contracts', () => {
     const script = `
       import { readFileSync } from 'node:fs';
       import { dirname, join } from 'node:path';
       import { fileURLToPath } from 'node:url';
       const entry = fileURLToPath(import.meta.resolve('@sublang/cligent/tmux-play'));
       const contract = readFileSync(join(dirname(entry), 'contract.d.ts'), 'utf8');
+      const captainOptionsStart = contract.indexOf('export interface CallCaptainOptions {');
+      const playerOptionsStart = contract.indexOf('export interface CallPlayerOptions {');
+      const captainContextStart = contract.indexOf('export interface CaptainContext {');
+      if (
+        captainOptionsStart < 0 ||
+        playerOptionsStart <= captainOptionsStart ||
+        captainContextStart <= playerOptionsStart
+      ) {
+        throw new Error('cligent tmux-play call option contracts are missing');
+      }
+      const captainOptions = contract.slice(captainOptionsStart, playerOptionsStart);
+      const playerOptions = contract.slice(playerOptionsStart, captainContextStart);
       if (!/prepareDispose\\?\\(\\): Promise<void>/.test(contract)) {
         throw new Error('cligent Captain contract lacks prepareDispose');
       }
-      if (!contract.includes('readonly resume?: string | false;')) {
+      if (!captainOptions.includes('readonly resume?: string | false;')) {
+        throw new Error('cligent CallCaptainOptions lacks explicit resume selection');
+      }
+      if (!captainOptions.includes('readonly allowedTools?: readonly string[];')) {
+        throw new Error('cligent CallCaptainOptions lacks an explicit tool allowlist');
+      }
+      if (!playerOptions.includes('readonly resume?: string | false;')) {
         throw new Error('cligent CallPlayerOptions lacks explicit resume selection');
       }
       if (!contract.includes('callPlayer(playerId: string, prompt: string, options?: CallPlayerOptions): Promise<PlayerRunResult>;')) {
         throw new Error('cligent CaptainContext.callPlayer does not accept CallPlayerOptions');
+      }
+      if (!contract.includes('callCaptain(prompt: string, options?: CallCaptainOptions): Promise<CaptainRunResult>;')) {
+        throw new Error('cligent CaptainContext.callCaptain does not accept CallCaptainOptions');
       }
       process.stdout.write('OK');
     `;

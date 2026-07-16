@@ -27,19 +27,17 @@ IR-020 supersedes this iteration's initial direct-answer routing and shared-agen
    Extend SLC's dynamic-call verification and child coverage, compile through `slc playbook`, review the artifacts, and resolve generated-test portability.
 4. **Host the internal root.** _[done]_
    Inject the sanitized catalog, route idle ordinary text into the lazy Captain, preserve explicit idle commands, and retain deterministic leaf routing and LIFO return.
-5. **Close immutable dependencies.** _[pending release gate]_
+5. **Close immutable dependencies.** _[in progress]_
    Release the required cligent surface, release Playbook's breaking composed contract, then atomically refresh SLC's dependency, definitions, reviewed meta artifacts, provenance profile, and pins.
 6. **Verify and finalize.** _[in progress]_
    Run focused stack/compiler tests, clean-install package closure, both full suites, generated-drift checks, licensing checks, and an adversarial audit.
 
 The local runtime, compiler, shell, generated artifacts, and behavioral suites
-are complete. Immutable closure remains release-coordinated: publish the
-required cligent 0.14 surface and Playbook 1.0 composed contract, then refresh
-SLC's dependency, definitions, reviewed artifacts, provenance profile, and
-pins atomically. Until that authorized sequence, package versions, registry
-locks, and SLC pins remain unchanged and clean registry installation is an
-intentional open gate rather than evidence that the local implementation is
-incomplete.
+are complete. cligent 0.15 now publishes the required host surface, and this
+package's dependency range and registry lock select it for clean installs.
+Immutable closure still requires the Playbook 1.0 release followed by an
+atomic refresh of SLC's dependency, definitions, reviewed artifacts,
+provenance profile, and pins.
 
 ## Acceptance criteria
 
