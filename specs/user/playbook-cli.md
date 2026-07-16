@@ -149,11 +149,21 @@ including the `resume` form — and exit `0`.
 Where `playbook run` binds agents, every required role and the captain
 shall default to adapter `claude`.
 `--player <role>=<agent>` shall bind a required role and `--captain
-<agent>` shall set the captain agent, where `<agent>` is an adapter
-shorthand such as `claude` or `codex`, or `<adapter>:<model>`.
+<agent>` shall set the captain agent, where `<agent>` is
+`<adapter>[:<model>[:<effort>]]` — an adapter shorthand such as
+`claude` or `codex`, optionally followed by a model and an
+adapter-scoped reasoning effort; an empty model segment
+(`claude::xhigh`) shall select the adapter's default model while still
+setting effort.
 `--option <key>=<value>` shall supply the playbook's option slice (such
 as CODE's `committer=coder`), and `--cwd <dir>` shall set the agents'
 working directory, defaulting to the process working directory.
+The command shall validate every supplied effort against the adapter's
+supported values before running any agent; an unsupported effort shall
+exit `1` with a diagnostic naming the supported values.
+A parked session shall store each agent spec as bound — adapter,
+optional model, optional effort — and a resume shall rebuild that exact
+lineup ([PBCLI-22](#pbcli-22)).
 A `--player` role that the entry does not require, or an unresolvable
 adapter, shall exit `1` with a path-named diagnostic.
 
@@ -179,3 +189,25 @@ a persisted session the current module can no longer resume, or a
 `--player`, `--captain`, `--option`, or `--cwd` flag on `resume` —
 bindings are stored with the session — shall print a diagnostic and
 exit `1`.
+
+## Config overlays
+
+### PBCLI-25
+
+Where the user invokes `playbook` without `--config`, when the
+invocation carries one or more `--with <path>` flags, the command shall
+load each file as a YAML fragment in the top-level generic-config
+format ([PBCLI-4](#pbcli-4)), merge the fragments over the resolved —
+and, when absent, freshly seeded ([PBCLI-3](#pbcli-3)) — top-level
+config in argument order, and use the merged config for composition,
+`--list`, and the readiness gate.
+Merging shall be recursive for maps and replacement for every other
+value (scalars, sequences, and `null`), so a later fragment or the
+fragment side of any non-map collision wins.
+`--with` and its value are launcher-owned, extending the launcher-owned
+argument set of [PBCLI-1](#pbcli-1): the command shall consume them and
+shall not forward them to tmux-play.
+An overlaid launch shall leave the global config file unchanged.
+A `--with` flag combined with `--config`, a missing or unreadable
+fragment, an unparseable fragment, or a fragment that is not a YAML map
+shall print a diagnostic and exit `1` without launching tmux-play.
