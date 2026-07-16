@@ -657,7 +657,14 @@ function fakeAgents(scripts: Record<string, PortRun>) {
   const calls: any[] = [];
   const createAgent = (spec: any) => ({
     run: async (prompt: string, opts: any) => {
-      calls.push({ role: spec.role, adapter: spec.adapter, model: spec.model, prompt, opts });
+      calls.push({
+        role: spec.role,
+        adapter: spec.adapter,
+        model: spec.model,
+        effort: spec.effort,
+        prompt,
+        opts,
+      });
       const script = scripts[spec.role] ?? (async () => ({ status: 'ok', finalText: 'ok' }));
       return script(prompt, opts);
     },
@@ -1503,3 +1510,272 @@ function writer() {
     text: () => chunks.join(''),
   };
 }
+
+// PBCLI-27: per-run agent tuning — effort in the run agent spec and
+// `--with` top-level config overlays on the interactive launch (DR-015).
+
+function recordingAgents() {
+  const created: any[] = [];
+  const createAgent = (spec: any) => {
+    created.push(spec);
+    return { run: async () => ({ status: 'ok', finalText: 'ok' }) };
+  };
+  return { createAgent, created };
+}
+
+describe('playbook run — per-run effort (PBCLI-27)', () => {
+  it('binds model and effort per role and forwards effort to the agent factory', async () => {
+    const { createAgent, calls } = fakeAgents({});
+    const entry = runEntry(async (ports, turn) => {
+      await ports.callPlayer('coder', 'work', turn.signal, { resume: false });
+      await ports.callCaptain('route', turn.signal, {
+        visibility: 'hidden',
+        resume: false,
+        allowedTools: [],
+      });
+      return { outcome: 'terminal', state: {}, output: 'ok' };
+    });
+
+    const out = await runCli(
+      [
+        'run', 'mod://code', 'x',
+        '--player', 'coder=codex:gpt-5.5:xhigh',
+        '--captain', 'claude::high',
+      ],
+      { 'mod://code': { default: entry } },
+      createAgent,
+    );
+
+    expect(out.code).toBe(0);
+    const coder = calls.find((c) => c.role === 'coder');
+    expect(coder).toMatchObject({ adapter: 'codex', model: 'gpt-5.5', effort: 'xhigh' });
+    const captain = calls.find((c) => c.role === 'captain');
+    // `claude::high` keeps the default model while setting effort.
+    expect(captain).toMatchObject({ adapter: 'claude', effort: 'high' });
+    expect(captain.model).toBeUndefined();
+  });
+
+  it('rejects an unsupported effort naming the supported values before any agent call', async () => {
+    const { createAgent, calls } = fakeAgents({});
+    const entry = runEntry(async () => ({ outcome: 'terminal', state: {}, output: 'ok' }));
+    const out = await runCli(
+      ['run', 'mod://code', 'x', '--player', 'coder=claude:m:turbo'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+    );
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('does not support effort "turbo"');
+    expect(out.stderr).toContain('supported:');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('stores bound efforts with a parked session and rebuilds them on resume', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      { result: { outcome: 'terminal', state: {}, output: 'ok' } },
+    ]);
+    const modules = { 'mod://code': { default: entry } };
+    const first = recordingAgents();
+
+    await runCli(
+      ['run', 'mod://code', 'x', '--player', 'coder=claude:m-coder:xhigh'],
+      modules,
+      first.createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    const sessionId = record.inits[0].sessionId;
+    const stored = JSON.parse(
+      await readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'),
+    );
+    expect(stored.players.coder).toEqual({
+      adapter: 'claude',
+      model: 'm-coder',
+      effort: 'xhigh',
+    });
+
+    const resumed = recordingAgents();
+    const out = await runCli(
+      ['run', 'resume', sessionId, 'answer'],
+      modules,
+      resumed.createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(out.code).toBe(0);
+    const coder = resumed.created.find((spec) => spec.role === 'coder');
+    expect(coder).toMatchObject({
+      adapter: 'claude',
+      model: 'm-coder',
+      effort: 'xhigh',
+    });
+  });
+});
+
+describe('playbook --with overlays (PBCLI-27)', () => {
+  const GLOBAL_CONFIG = [
+    'captain: claude',
+    'playbooks:',
+    '  code:',
+    '    from: "mod://code"',
+    '    players:',
+    '      coder: claude',
+    '      reviewer: codex',
+    '    committer: coder',
+    '',
+  ].join('\n');
+
+  async function withHarness() {
+    const home = await makeTempHome();
+    const configPath = resolveUserConfigPath({}, home);
+    await mkdir(join(home, '.config', 'playbook'), { recursive: true });
+    await writeFile(configPath, GLOBAL_CONFIG, 'utf8');
+    const overlayDir = await mkdtemp(join(tmpdir(), 'playbook-with-'));
+    tempDirs.push(overlayDir);
+    return { home, configPath, overlayDir };
+  }
+
+  function launch(
+    argv: string[],
+    home: string,
+    spawn: ReturnType<typeof fakeSpawn>,
+    modules: Record<string, unknown> = { 'mod://code': { default: fakeEntry } },
+  ) {
+    const stdout = writer();
+    const stderr = writer();
+    return runPlaybookCli({
+      argv,
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      loadModule: loader(modules),
+      stdout: stdout as never,
+      stderr: stderr as never,
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    }).then((result: any) => ({
+      code: result.code,
+      stdout: stdout.text(),
+      stderr: stderr.text(),
+    }));
+  }
+
+  it('merges a fragment over the global config without touching it or forwarding --with', async () => {
+    const { home, configPath, overlayDir } = await withHarness();
+    const overlay = join(overlayDir, 'tune.yaml');
+    await writeFile(
+      overlay,
+      [
+        'profiles:',
+        '  turbo: { adapter: codex, model: m-turbo, reasoningEffort: xhigh }',
+        'playbooks:',
+        '  code:',
+        '    players:',
+        '      coder: turbo',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const spawn = fakeSpawn();
+
+    const out = await launch(['--with', overlay], home, spawn);
+
+    expect(out.code).toBe(0);
+    const composed = parseYaml(spawn.configs[0].content);
+    expect(composed.players).toEqual([
+      { id: 'code-coder', adapter: 'codex', model: 'm-turbo', reasoningEffort: 'xhigh' },
+      { id: 'code-reviewer', adapter: 'codex' },
+    ]);
+    // The global config is byte-identical after the overlaid launch.
+    await expect(readFile(configPath, 'utf8')).resolves.toBe(GLOBAL_CONFIG);
+    // The consumed flag is not forwarded to tmux-play.
+    expect(spawn.calls[0].args.join(' ')).not.toContain('--with');
+    expect(spawn.calls[0].args.join(' ')).not.toContain(overlay);
+  });
+
+  it('applies fragments in argument order, later files winning', async () => {
+    const { home, overlayDir } = await withHarness();
+    const first = join(overlayDir, 'first.yaml');
+    const second = join(overlayDir, 'second.yaml');
+    await writeFile(
+      first,
+      'playbooks: { code: { players: { coder: { adapter: codex, model: m-one } } } }\n',
+      'utf8',
+    );
+    await writeFile(
+      second,
+      'playbooks: { code: { players: { coder: { adapter: codex, model: m-two } } } }\n',
+      'utf8',
+    );
+    const spawn = fakeSpawn();
+
+    const out = await launch(['--with', first, '--with', second], home, spawn);
+
+    expect(out.code).toBe(0);
+    const composed = parseYaml(spawn.configs[0].content);
+    expect(composed.players[0]).toMatchObject({ id: 'code-coder', model: 'm-two' });
+  });
+
+  it('reflects an overlay-enabled playbook in --list', async () => {
+    const { home, overlayDir } = await withHarness();
+    const overlay = join(overlayDir, 'discuss.yaml');
+    await writeFile(
+      overlay,
+      [
+        'playbooks:',
+        '  discuss:',
+        '    from: "mod://discuss"',
+        '    players: { host: claude, participant: codex }',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const discussEntry = {
+      ...fakeEntry,
+      id: 'discuss',
+      command: 'discuss',
+      intent: 'two agents converge',
+      requiredRoleIds: ['host', 'participant'],
+    };
+    const spawn = fakeSpawn();
+
+    const out = await launch(['--list', '--with', overlay], home, spawn, {
+      'mod://code': { default: fakeEntry },
+      'mod://discuss': { default: discussEntry },
+    });
+
+    expect(out.code).toBe(0);
+    expect(out.stdout).toContain('/code');
+    expect(out.stdout).toContain('/discuss');
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  it('rejects --with combined with --config, missing fragments, and non-map fragments', async () => {
+    const { home, overlayDir } = await withHarness();
+    const spawn = fakeSpawn();
+
+    const conflict = await launch(
+      ['--with', join(overlayDir, 'x.yaml'), '--config', '/tmp/raw.yaml'],
+      home,
+      spawn,
+    );
+    expect(conflict.code).toBe(1);
+    expect(conflict.stderr).toContain('cannot combine');
+
+    const missing = await launch(
+      ['--with', join(overlayDir, 'absent.yaml')],
+      home,
+      spawn,
+    );
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain('cannot read --with overlay');
+
+    const listFile = join(overlayDir, 'list.yaml');
+    await writeFile(listFile, '- a\n- b\n', 'utf8');
+    const nonMap = await launch(['--with', listFile], home, spawn);
+    expect(nonMap.code).toBe(1);
+    expect(nonMap.stderr).toContain('must be a YAML map');
+
+    expect(spawn.calls).toHaveLength(0);
+  });
+});

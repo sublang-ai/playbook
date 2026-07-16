@@ -72,6 +72,25 @@ export async function runPlaybookCli(options = {}) {
     return { code: 0 };
   }
 
+  // PBCLI-25/26: `--with <path>` overlays are launcher-owned — consumed
+  // here, never forwarded to tmux-play, and incompatible with a raw
+  // `--config` launch, which bypasses the composition they target.
+  let withPaths;
+  let forwardArgv;
+  try {
+    ({ withPaths, rest: forwardArgv } = extractWithFlags(argv));
+  } catch (error) {
+    stderr.write(`playbook: ${errorMessage(error)}\n`);
+    return { code: COMPOSITION_FAILURE_EXIT_CODE };
+  }
+  if (withPaths.length > 0 && hasExplicitConfig(argv)) {
+    stderr.write(
+      'playbook: --with overlays the top-level config and cannot combine ' +
+        'with a raw --config launch\n',
+    );
+    return { code: COMPOSITION_FAILURE_EXIT_CODE };
+  }
+
   // PBCLI-1: explicit `--config <path>` launches that raw tmux-play config
   // directly, bypassing seeding, composition, and the readiness gate.
   if (hasExplicitConfig(argv)) {
@@ -82,10 +101,11 @@ export async function runPlaybookCli(options = {}) {
 
   let composed;
   try {
-    composed = await composeGenericConfig(
-      parseYaml(readFileSync(userConfigPath, 'utf8')) ?? {},
-      loadModule,
-    );
+    let top = parseYaml(readFileSync(userConfigPath, 'utf8')) ?? {};
+    for (const overlayPath of withPaths) {
+      top = mergeConfigs(top, loadOverlayFragment(overlayPath));
+    }
+    composed = await composeGenericConfig(top, loadModule);
   } catch (error) {
     stderr.write(`playbook: ${errorMessage(error)}\n`);
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
@@ -124,12 +144,80 @@ export async function runPlaybookCli(options = {}) {
   try {
     return await launchTmuxPlay(
       spawnFn,
-      [tmuxPlayBin, '--config', composedPath, ...argv],
+      [tmuxPlayBin, '--config', composedPath, ...forwardArgv],
       stderr,
     );
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+// PBCLI-26: split `--with <path>` pairs out of the argument vector so
+// they are consumed by the launcher rather than forwarded to tmux-play.
+function extractWithFlags(argv) {
+  const withPaths = [];
+  const rest = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (arg === '--with') {
+      const value = argv[i + 1];
+      if (value === undefined) throw new Error('--with needs a value');
+      withPaths.push(value);
+      i += 1;
+    } else if (arg.startsWith('--with=')) {
+      const value = arg.slice('--with='.length);
+      if (!value) throw new Error('--with needs a value');
+      withPaths.push(value);
+    } else {
+      rest.push(arg);
+    }
+  }
+  return { withPaths, rest };
+}
+
+// PBCLI-25: an overlay fragment is a top-level-format YAML map.
+function loadOverlayFragment(overlayPath) {
+  const resolved = resolve(overlayPath);
+  let text;
+  try {
+    text = readFileSync(resolved, 'utf8');
+  } catch (error) {
+    throw new Error(
+      `cannot read --with overlay ${overlayPath}: ${errorMessage(error)}`,
+    );
+  }
+  const fragment = parseYaml(text);
+  if (!isObject(fragment)) {
+    throw new Error(`--with overlay ${overlayPath} must be a YAML map`);
+  }
+  return fragment;
+}
+
+// PBCLI-25/26: recursive merge for plain maps, replacement for every
+// other value; neither input is mutated. Own data properties only, so
+// a hostile fragment key such as __proto__ cannot reach the prototype.
+export function mergeConfigs(base, overlay) {
+  const merged = {};
+  for (const key of Object.keys(base)) {
+    defineOwnProperty(merged, key, base[key]);
+  }
+  for (const key of Object.keys(overlay)) {
+    const value =
+      isObject(merged[key]) && isObject(overlay[key])
+        ? mergeConfigs(merged[key], overlay[key])
+        : overlay[key];
+    defineOwnProperty(merged, key, value);
+  }
+  return merged;
+}
+
+function defineOwnProperty(target, key, value) {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
 }
 
 export function resolveConfigHome(env = process.env, home = homedir()) {
@@ -392,12 +480,17 @@ function helpText({ userConfigPath, failingAdapters = [] }) {
   return [
     ...failures,
     'Usage:',
-    '  playbook [--list] [--config <path>] [tmux-play options]',
+    '  playbook [--list] [--with <path>]... [--config <path>] [tmux-play options]',
     '  playbook run <from> [task] [options]   # non-interactive one-shot',
     '  playbook run resume <session-id> [reply]   # answer a parked run',
     '  playbook --help',
     '',
     `Default config: ${userConfigPath}`,
+    '',
+    '  --with <path> overlays a top-level config fragment (same format as',
+    '  the default config) over the default config for this launch only —',
+    '  maps merge recursively, other values replace, later files win. The',
+    '  default config file is never modified.',
     '',
     'Adapter setup:',
     '  claude: run Claude Code once or set ANTHROPIC_API_KEY.',
