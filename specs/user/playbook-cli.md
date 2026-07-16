@@ -150,11 +150,12 @@ Where `playbook run` binds agents, every required role and the captain
 shall default to adapter `claude`.
 `--player <role>=<agent>` shall bind a required role and `--captain
 <agent>` shall set the captain agent, where `<agent>` is
-`<adapter>[:<model>[:<effort>]]` — an adapter shorthand such as
-`claude` or `codex`, optionally followed by a model and an
-adapter-scoped reasoning effort; an empty model segment
-(`claude::xhigh`) shall select the adapter's default model while still
-setting effort.
+`<adapter>[:<model>][@<effort>]` — an adapter shorthand such as
+`claude` or `codex`, optionally followed by a colon and a model (which
+may itself contain colons), optionally followed by `@` and an
+adapter-scoped reasoning effort; `claude@high` shall select the
+adapter's default model while still setting effort, and an `@` with an
+empty effort shall be rejected.
 `--option <key>=<value>` shall supply the playbook's option slice (such
 as CODE's `committer=coder`), and `--cwd <dir>` shall set the agents'
 working directory, defaulting to the process working directory.

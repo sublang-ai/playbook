@@ -156,11 +156,12 @@ nothing.
 Verifies: [PBCLI-19](../user/playbook-cli.md#pbcli-19), [PBCLI-25](../user/playbook-cli.md#pbcli-25), [PBCLI-26](../dev/playbook-cli.md#pbcli-26)
 
 When the test suite exercises per-run agent tuning, the test suite
-shall fail unless: `playbook run --player <role>=<adapter>:<model>:<effort>`
+shall fail unless: `playbook run --player <role>=<adapter>:<model>@<effort>`
 reaches the injected agent factory with that model and effort;
-`<adapter>::<effort>` sets effort with no model; an effort the adapter
-does not support exits `1` naming the supported values before any
-agent factory call; a parked session stores the bound efforts and a
+`<adapter>@<effort>` sets effort with no model; a model containing
+colons binds intact with and without a trailing `@<effort>`; an effort
+the adapter does not support exits `1` naming the supported values
+before any agent factory call; a parked session stores the bound efforts and a
 resumed run rebuilds them; `playbook --with <path>` composes with the
 fragment merged over the global config — a fragment retuning one
 player's profile changes only that binding, two fragments merge in

@@ -655,8 +655,11 @@ runEntry.lastSession = undefined as any;
 
 function fakeAgents(scripts: Record<string, PortRun>) {
   const calls: any[] = [];
-  const createAgent = (spec: any) => ({
-    run: async (prompt: string, opts: any) => {
+  const created: any[] = [];
+  const createAgent = (spec: any) => {
+    created.push(spec);
+    return {
+      run: async (prompt: string, opts: any) => {
       calls.push({
         role: spec.role,
         adapter: spec.adapter,
@@ -665,11 +668,13 @@ function fakeAgents(scripts: Record<string, PortRun>) {
         prompt,
         opts,
       });
-      const script = scripts[spec.role] ?? (async () => ({ status: 'ok', finalText: 'ok' }));
-      return script(prompt, opts);
-    },
-  });
-  return { createAgent, calls };
+        const script =
+          scripts[spec.role] ?? (async () => ({ status: 'ok', finalText: 'ok' }));
+        return script(prompt, opts);
+      },
+    };
+  };
+  return { createAgent, calls, created };
 }
 
 async function runCli(
@@ -1514,15 +1519,6 @@ function writer() {
 // PBCLI-27: per-run agent tuning — effort in the run agent spec and
 // `--with` top-level config overlays on the interactive launch (DR-015).
 
-function recordingAgents() {
-  const created: any[] = [];
-  const createAgent = (spec: any) => {
-    created.push(spec);
-    return { run: async () => ({ status: 'ok', finalText: 'ok' }) };
-  };
-  return { createAgent, created };
-}
-
 describe('playbook run — per-run effort (PBCLI-27)', () => {
   it('binds model and effort per role and forwards effort to the agent factory', async () => {
     const { createAgent, calls } = fakeAgents({});
@@ -1539,8 +1535,8 @@ describe('playbook run — per-run effort (PBCLI-27)', () => {
     const out = await runCli(
       [
         'run', 'mod://code', 'x',
-        '--player', 'coder=codex:gpt-5.5:xhigh',
-        '--captain', 'claude::high',
+        '--player', 'coder=codex:gpt-5.5@xhigh',
+        '--captain', 'claude@high',
       ],
       { 'mod://code': { default: entry } },
       createAgent,
@@ -1550,23 +1546,47 @@ describe('playbook run — per-run effort (PBCLI-27)', () => {
     const coder = calls.find((c) => c.role === 'coder');
     expect(coder).toMatchObject({ adapter: 'codex', model: 'gpt-5.5', effort: 'xhigh' });
     const captain = calls.find((c) => c.role === 'captain');
-    // `claude::high` keeps the default model while setting effort.
+    // `claude@high` keeps the default model while setting effort.
     expect(captain).toMatchObject({ adapter: 'claude', effort: 'high' });
     expect(captain.model).toBeUndefined();
   });
 
-  it('rejects an unsupported effort naming the supported values before any agent call', async () => {
-    const { createAgent, calls } = fakeAgents({});
+  it('rejects an unsupported effort naming the supported values before any agent factory call', async () => {
+    const { createAgent, calls, created } = fakeAgents({});
     const entry = runEntry(async () => ({ outcome: 'terminal', state: {}, output: 'ok' }));
     const out = await runCli(
-      ['run', 'mod://code', 'x', '--player', 'coder=claude:m:turbo'],
+      ['run', 'mod://code', 'x', '--player', 'coder=claude:m@turbo'],
       { 'mod://code': { default: entry } },
       createAgent,
     );
     expect(out.code).toBe(1);
     expect(out.stderr).toContain('does not support effort "turbo"');
     expect(out.stderr).toContain('supported:');
+    expect(created).toHaveLength(0);
     expect(calls).toHaveLength(0);
+  });
+
+  it('keeps every colon of a model name; only a trailing @ marks effort', async () => {
+    const { createAgent, created } = fakeAgents({});
+    const entry = runEntry(async () => ({ outcome: 'terminal', state: {}, output: 'ok' }));
+    const out = await runCli(
+      [
+        'run', 'mod://code', 'x',
+        '--player', 'coder=opencode:ollama/llama3:8b@max',
+        '--player', 'reviewer=opencode:ollama/llama3:8b',
+      ],
+      { 'mod://code': { default: entry } },
+      createAgent,
+    );
+    expect(out.code).toBe(0);
+    expect(created.find((spec: any) => spec.role === 'coder')).toMatchObject({
+      adapter: 'opencode',
+      model: 'ollama/llama3:8b',
+      effort: 'max',
+    });
+    const reviewer = created.find((spec: any) => spec.role === 'reviewer');
+    expect(reviewer).toMatchObject({ adapter: 'opencode', model: 'ollama/llama3:8b' });
+    expect(reviewer.effort).toBeUndefined();
   });
 
   it('stores bound efforts with a parked session and rebuilds them on resume', async () => {
@@ -1576,10 +1596,10 @@ describe('playbook run — per-run effort (PBCLI-27)', () => {
       { result: { outcome: 'terminal', state: {}, output: 'ok' } },
     ]);
     const modules = { 'mod://code': { default: entry } };
-    const first = recordingAgents();
+    const first = fakeAgents({});
 
     await runCli(
-      ['run', 'mod://code', 'x', '--player', 'coder=claude:m-coder:xhigh'],
+      ['run', 'mod://code', 'x', '--player', 'coder=claude:m-coder@xhigh'],
       modules,
       first.createAgent,
       undefined,
@@ -1595,7 +1615,7 @@ describe('playbook run — per-run effort (PBCLI-27)', () => {
       effort: 'xhigh',
     });
 
-    const resumed = recordingAgents();
+    const resumed = fakeAgents({});
     const out = await runCli(
       ['run', 'resume', sessionId, 'answer'],
       modules,

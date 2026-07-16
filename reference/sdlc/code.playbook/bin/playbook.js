@@ -102,6 +102,11 @@ export async function runPlaybookCli(options = {}) {
   let composed;
   try {
     let top = parseYaml(readFileSync(userConfigPath, 'utf8')) ?? {};
+    if (withPaths.length > 0 && !isObject(top)) {
+      throw new Error(
+        `the top-level config at ${userConfigPath} must be a YAML map before --with can overlay it`,
+      );
+    }
     for (const overlayPath of withPaths) {
       top = mergeConfigs(top, loadOverlayFragment(overlayPath));
     }
@@ -161,7 +166,9 @@ function extractWithFlags(argv) {
     const arg = argv[i];
     if (arg === '--with') {
       const value = argv[i + 1];
-      if (value === undefined) throw new Error('--with needs a value');
+      if (value === undefined || value === '') {
+        throw new Error('--with needs a value');
+      }
       withPaths.push(value);
       i += 1;
     } else if (arg.startsWith('--with=')) {
@@ -186,7 +193,14 @@ function loadOverlayFragment(overlayPath) {
       `cannot read --with overlay ${overlayPath}: ${errorMessage(error)}`,
     );
   }
-  const fragment = parseYaml(text);
+  let fragment;
+  try {
+    fragment = parseYaml(text);
+  } catch (error) {
+    throw new Error(
+      `cannot parse --with overlay ${overlayPath}: ${errorMessage(error)}`,
+    );
+  }
   if (!isObject(fragment)) {
     throw new Error(`--with overlay ${overlayPath} must be a YAML map`);
   }
@@ -194,30 +208,19 @@ function loadOverlayFragment(overlayPath) {
 }
 
 // PBCLI-25/26: recursive merge for plain maps, replacement for every
-// other value; neither input is mutated. Own data properties only, so
-// a hostile fragment key such as __proto__ cannot reach the prototype.
-export function mergeConfigs(base, overlay) {
-  const merged = {};
-  for (const key of Object.keys(base)) {
-    defineOwnProperty(merged, key, base[key]);
-  }
-  for (const key of Object.keys(overlay)) {
-    const value =
-      isObject(merged[key]) && isObject(overlay[key])
-        ? mergeConfigs(merged[key], overlay[key])
-        : overlay[key];
-    defineOwnProperty(merged, key, value);
-  }
-  return merged;
-}
-
-function defineOwnProperty(target, key, value) {
-  Object.defineProperty(target, key, {
-    value,
-    enumerable: true,
-    configurable: true,
-    writable: true,
-  });
+// other value; neither input is mutated. Object.fromEntries defines own
+// data properties, so a hostile fragment key such as __proto__ cannot
+// reach the prototype.
+function mergeConfigs(base, overlay) {
+  return Object.fromEntries([
+    ...Object.entries(base),
+    ...Object.entries(overlay).map(([key, value]) => [
+      key,
+      isObject(base[key]) && isObject(value)
+        ? mergeConfigs(base[key], value)
+        : value,
+    ]),
+  ]);
 }
 
 export function resolveConfigHome(env = process.env, home = homedir()) {

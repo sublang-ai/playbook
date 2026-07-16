@@ -284,12 +284,12 @@ top-level config with a merge that recurses only into plain maps on
 both sides, replaces every other collision with the fragment's value,
 and never mutates the parsed global config or the fragment objects.
 Where `playbook run` binds efforts
-([PBCLI-19](../user/playbook-cli.md#pbcli-19)), the command shall parse
-the third colon-delimited `<agent>` segment as the effort, treat an
-empty middle segment as no model, validate each spec's effort through
-cligent's adapter-scoped effort support metadata for the spec's adapter
-shorthand, and name the adapter's supported values in the rejection
-diagnostic.
+([PBCLI-19](../user/playbook-cli.md#pbcli-19)), the command shall split
+the effort at the last `@` of the `<agent>` value and the adapter at
+the first colon of the remainder — so the model keeps every interior
+colon — validate each spec's effort through cligent's adapter-scoped
+effort support metadata for the spec's adapter shorthand, and name the
+adapter's supported values in the rejection diagnostic.
 The default agent shall pass a bound effort to its `Cligent` as the
 `effort` option alongside the model; the injected agent-run function
 ([PBCLI-20](#pbcli-20)) shall receive the effort in its spec so tests
