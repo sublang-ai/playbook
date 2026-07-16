@@ -151,3 +151,22 @@ differs from the stored playbook id, a stored runtime without
 `resume` exits `1` while a parked turn over a runtime without
 `exportSnapshot` keeps the diagnostic exit-`3` path and persists
 nothing.
+
+### PBCLI-27
+Verifies: [PBCLI-19](../user/playbook-cli.md#pbcli-19), [PBCLI-25](../user/playbook-cli.md#pbcli-25), [PBCLI-26](../dev/playbook-cli.md#pbcli-26)
+
+When the test suite exercises per-run agent tuning, the test suite
+shall fail unless: `playbook run --player <role>=<adapter>:<model>:<effort>`
+reaches the injected agent factory with that model and effort;
+`<adapter>::<effort>` sets effort with no model; an effort the adapter
+does not support exits `1` naming the supported values before any
+agent factory call; a parked session stores the bound efforts and a
+resumed run rebuilds them; `playbook --with <path>` composes with the
+fragment merged over the global config — a fragment retuning one
+player's profile changes only that binding, two fragments merge in
+argument order, and non-map collisions take the fragment value — while
+the global config file stays byte-identical and the spawned tmux-play
+argument vector carries no `--with`; `--list` reflects a fragment that
+enables another playbook; and `--with` combined with `--config`, a
+missing fragment, and a non-map fragment each exit `1` without
+launching.

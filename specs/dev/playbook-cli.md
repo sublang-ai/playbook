@@ -272,3 +272,28 @@ nothing.
 The session store location shall honor `XDG_STATE_HOME` at invocation
 time, and the `run` subcommand shall accept an injected store directory
 so tests can drive the full park/resume lifecycle in isolation.
+
+### PBCLI-26
+
+Where the `playbook` launcher handles `--with`
+([PBCLI-25](../user/playbook-cli.md#pbcli-25)), the command shall parse
+and remove each `--with <path>` pair from the argument vector before
+any arguments are forwarded to tmux-play, resolve each path against the
+process working directory, and apply the fragments to the parsed
+top-level config with a merge that recurses only into plain maps on
+both sides, replaces every other collision with the fragment's value,
+and never mutates the parsed global config or the fragment objects.
+Where `playbook run` binds efforts
+([PBCLI-19](../user/playbook-cli.md#pbcli-19)), the command shall parse
+the third colon-delimited `<agent>` segment as the effort, treat an
+empty middle segment as no model, validate each spec's effort through
+cligent's adapter-scoped effort support metadata for the spec's adapter
+shorthand, and name the adapter's supported values in the rejection
+diagnostic.
+The default agent shall pass a bound effort to its `Cligent` as the
+`effort` option alongside the model; the injected agent-run function
+([PBCLI-20](#pbcli-20)) shall receive the effort in its spec so tests
+can observe it.
+Session records ([PBCLI-23](#pbcli-23)) shall carry each spec's
+optional `effort` and resume validation shall accept and re-validate
+it.
