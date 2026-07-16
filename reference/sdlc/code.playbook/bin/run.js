@@ -22,7 +22,11 @@ import {
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { Cligent } from '@sublang/cligent';
+import {
+  Cligent,
+  isEffortSupported,
+  supportedEffortValues,
+} from '@sublang/cligent';
 
 // PBCLI-19: adapter shorthands the run host can construct.
 const ADAPTER_LOADERS = {
@@ -113,9 +117,9 @@ async function runFirst(args, ctx) {
     roleSpecs.set(role, spec);
   }
   const captainSpec = args.captain ?? { adapter: DEFAULT_ADAPTER };
-  const specError = firstUnknownAdapter([...roleSpecs.values(), captainSpec]);
+  const specError = specsDiagnostic([...roleSpecs.values(), captainSpec]);
   if (specError !== undefined) {
-    stderr.write(`playbook run: unknown adapter "${specError}"\n`);
+    stderr.write(`playbook run: ${specError}\n`);
     return { code: EXIT.arg };
   }
 
@@ -239,12 +243,9 @@ async function runResume(args, ctx) {
     );
     return { code: EXIT.arg };
   }
-  const specError = firstUnknownAdapter([
-    ...roleSpecs.values(),
-    record.captain,
-  ]);
+  const specError = specsDiagnostic([...roleSpecs.values(), record.captain]);
   if (specError !== undefined) {
-    stderr.write(`playbook run: unknown adapter "${specError}"\n`);
+    stderr.write(`playbook run: ${specError}\n`);
     return { code: EXIT.arg };
   }
 
@@ -548,16 +549,27 @@ function playersFromSpecs(roleSpecs) {
   }));
 }
 
-// Returns the first invalid or unknown adapter name, or undefined when
-// every spec resolves. The caller must compare against undefined — an
-// empty adapter string is a reportable error, not a pass.
-function firstUnknownAdapter(specs) {
+// PBCLI-19/26: returns a diagnostic for the first invalid spec — an
+// unknown adapter or an effort the adapter does not support — or
+// undefined when every spec resolves. The caller must compare against
+// undefined.
+function specsDiagnostic(specs) {
   for (const spec of specs) {
     if (
       !isAgentSpec(spec) ||
       !Object.prototype.hasOwnProperty.call(ADAPTER_LOADERS, spec.adapter)
     ) {
-      return isAgentSpec(spec) ? spec.adapter : String(spec?.adapter);
+      const adapter = isAgentSpec(spec)
+        ? spec.adapter
+        : String(spec?.adapter);
+      return `unknown adapter "${adapter}"`;
+    }
+    if (spec.effort !== undefined && !isEffortSupported(spec.adapter, spec.effort)) {
+      const supported = supportedEffortValues(spec.adapter);
+      return (
+        `adapter "${spec.adapter}" does not support effort "${spec.effort}"` +
+        (supported ? ` (supported: ${supported.join(', ')})` : '')
+      );
     }
   }
   return undefined;
@@ -569,7 +581,9 @@ function isAgentSpec(spec) {
     spec !== null &&
     typeof spec.adapter === 'string' &&
     spec.adapter.length > 0 &&
-    (spec.model === undefined || typeof spec.model === 'string')
+    (spec.model === undefined || typeof spec.model === 'string') &&
+    (spec.effort === undefined ||
+      (typeof spec.effort === 'string' && spec.effort.length > 0))
   );
 }
 
@@ -639,7 +653,7 @@ function isValidSessionRecord(record) {
 
 // PBCLI-20: default agent — one lazily-built Cligent per role, run through
 // the same event drain as tmux-play's host.
-function defaultCreateAgent({ adapter, model, cwd, role }) {
+function defaultCreateAgent({ adapter, model, effort, cwd, role }) {
   let cligent;
   return {
     async run(prompt, callOptions) {
@@ -652,6 +666,7 @@ function defaultCreateAgent({ adapter, model, cwd, role }) {
           role,
           permissions: { mode: 'auto' },
           ...(model ? { model } : {}),
+          ...(effort ? { effort } : {}),
         });
       }
       return runCligentCall(cligent, prompt, callOptions);
@@ -773,11 +788,20 @@ export function parseRunArgs(argv) {
   return args;
 }
 
-// PBCLI-19: `<agent>` is an adapter shorthand or `<adapter>:<model>`.
+// PBCLI-19: `<agent>` is `<adapter>[:<model>[:<effort>]]`; an empty
+// segment leaves that field unset (`claude::xhigh` keeps the default
+// model while setting effort).
 function parseAgent(value) {
-  const colon = value.indexOf(':');
-  if (colon === -1) return { adapter: value };
-  return { adapter: value.slice(0, colon), model: value.slice(colon + 1) };
+  const segments = value.split(':');
+  if (segments.length > 3) {
+    throw new Error(`agent "${value}" has too many ':' segments`);
+  }
+  const [adapter, model, effort] = segments;
+  return {
+    adapter,
+    ...(model ? { model } : {}),
+    ...(effort ? { effort } : {}),
+  };
 }
 
 function takeValue(argv, index, flag) {
@@ -846,8 +870,10 @@ function runHelpText() {
     '  --verbose                 forward telemetry topics to stderr',
     '  -h, --help                print this help',
     '',
-    '  <agent> is an adapter shorthand (claude, codex, gemini, opencode)',
-    '  or <adapter>:<model>. Every role and the captain default to claude.',
+    '  <agent> is <adapter>[:<model>[:<effort>]] over the shorthands',
+    '  claude, codex, gemini, opencode — e.g. codex:gpt-5.5:xhigh, or',
+    '  claude::high for the default model at high effort. Every role and',
+    '  the captain default to claude.',
     '',
     '  When a playbook needs a Boss reply, the run prints the question,',
     '  parks the session under',

@@ -70,7 +70,8 @@ the [slc](https://github.com/sublang-ai/slc) compiler pipeline's
 > the CODE reference end to end, but the compiled default Captain,
 > DISCUSS, nested playbook calls, the six-port runtime contract
 > (see [docs/embedding.md](docs/embedding.md)), and the non-interactive
-> `playbook run` with parked-session resume are unreleased; see the
+> `playbook run` with parked-session resume and per-run agent tuning
+> (`--with` overlays, effort in the run agent spec) are unreleased; see the
 > [CHANGELOG](CHANGELOG.md).
 
 ### Requirements
@@ -147,8 +148,11 @@ playbook run @sublang/playbook/code/registry "add a test for parseArgs" \
 `[task]` is read from stdin when omitted — pipe long or multi-line
 intents the same way you would to `claude -p` or `codex exec`. Roles
 and the captain default to `claude`; bind them with
-`--player <role>=<agent>` and `--captain <agent>` (an adapter shorthand
-or `<adapter>:<model>`), pass a playbook option with
+`--player <role>=<agent>` and `--captain <agent>`, where `<agent>` is
+`<adapter>[:<model>[:<effort>]]` — say `codex:gpt-5.5:xhigh`, or
+`claude::high` for the default model at high reasoning effort, with
+unsupported efforts rejected up front naming the adapter's supported
+values. Pass a playbook option with
 `--option <key>=<value>`, and add `--json` to print one JSON envelope
 (`outcome`, `sessionId`, and the output or pending questions) instead
 of plain text. It exits `0` on a terminal outcome, `2` on failure, `3`
@@ -182,6 +186,27 @@ Edit the seeded user config when you want different coding agents:
 ```sh
 $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml"
 ```
+
+To retune a single launch without editing that file, overlay a
+fragment in the same format with `--with` (repeatable, later files
+win; maps merge recursively, other values replace):
+
+```sh
+playbook --with fast-lineup.yaml
+```
+
+```yaml
+# fast-lineup.yaml — swap the Coder for one run; nothing is written back.
+profiles:
+  codex-fast: { adapter: codex, model: gpt-5.5, reasoningEffort: medium }
+playbooks:
+  code:
+    players:
+      coder: codex-fast
+```
+
+See [PBCLI-25](specs/user/playbook-cli.md#pbcli-25) and
+[DR-015](specs/decisions/015-per-run-agent-tuning.md).
 
 The config is top-level (no `config:` wrapper): a `profiles` map of
 reusable agent settings, a `captain` agent (it runs both visible

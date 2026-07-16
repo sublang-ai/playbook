@@ -9,22 +9,22 @@ Implement DR-015: reasoning effort in the `playbook run` agent spec and repeatab
 
 ## Deliverables
 
-- [ ] `playbook run` accepts `<adapter>[:<model>[:<effort>]]` for `--player`/`--captain`, validates efforts against cligent's adapter-scoped support, forwards them to each `Cligent`, and stores/honors them across park and resume.
-- [ ] `playbook --with <path>` merges top-level config fragments over the resolved global config for composition, `--list`, and readiness, without forwarding the flag to tmux-play or touching the global file.
-- [ ] Acceptance tests pin the grammar, validation, resume round trip, overlay merge order, argv consumption, and conflict/error paths.
-- [ ] README, CHANGELOG, and `specs/map.md` document the feature.
+- [x] `playbook run` accepts `<adapter>[:<model>[:<effort>]]` for `--player`/`--captain`, validates efforts against cligent's adapter-scoped support, forwards them to each `Cligent`, and stores/honors them across park and resume.
+- [x] `playbook --with <path>` merges top-level config fragments over the resolved global config for composition, `--list`, and readiness, without forwarding the flag to tmux-play or touching the global file.
+- [x] Acceptance tests pin the grammar, validation, resume round trip, overlay merge order, argv consumption, and conflict/error paths.
+- [x] README, CHANGELOG, and `specs/map.md` document the feature.
 
 ## Tasks
 
 1. **Author DR-015 and the spec surface.** _[done]_
    DR-015, this iteration, amended PBCLI-19, and new PBCLI-25/PBCLI-26/PBCLI-27 precede code changes.
-2. **Extend the run host with effort.** _[pending]_
+2. **Extend the run host with effort.** _[done]_
    Three-part agent grammar in `bin/run.js`, adapter-scoped validation via cligent's effort metadata, `effort` on the default `Cligent` construction, and effort-bearing session records.
-3. **Add `--with` overlays to the launcher.** _[pending]_
+3. **Add `--with` overlays to the launcher.** _[done]_
    Flag parsing and argv consumption in `bin/playbook.js`, YAML fragment loading, recursive plain-map merge, and the `--config` conflict diagnostic.
-4. **Pin acceptance tests.** _[pending]_
+4. **Pin acceptance tests.** _[done]_
    PBCLI-27 clauses in `playbook.test.ts` over the injected agent factory, session store, and fake spawn.
-5. **Document for fresh users.** _[pending]_
+5. **Document for fresh users.** _[done]_
    README run/launch sections, CHANGELOG entry, and `specs/map.md` rows.
 
 ## Acceptance criteria
