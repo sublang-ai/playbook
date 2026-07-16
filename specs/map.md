@@ -38,7 +38,7 @@ meta.md     The spec of specs
 | DR-012 | [012-default-captain-playbook.md](decisions/012-default-captain-playbook.md) | Compiled default Captain policy, first-class Captain calls, dynamic sequential child plans, and deterministic host-owned stack routing |
 | DR-013 | [013-routing-only-captain-control.md](decisions/013-routing-only-captain-control.md) | Routing-only Captain policy with exact Boss input, isolated control calls, out-of-prompt machine contracts, and exact visible-response ownership |
 | DR-014 | [014-durable-one-shot-run-sessions.md](decisions/014-durable-one-shot-run-sessions.md) | Durable one-shot run sessions: optional parked-session `exportSnapshot`/`restore` on linked runtimes, an XDG session store, and `playbook run resume` |
-| DR-015 | [015-per-run-agent-tuning.md](decisions/015-per-run-agent-tuning.md) | Per-run agent tuning: `<adapter>[:<model>[:<effort>]]` in the `playbook run` agent spec and repeatable `--with <path>` top-level config overlays for the interactive launch |
+| DR-015 | [015-per-run-agent-tuning.md](decisions/015-per-run-agent-tuning.md) | Per-run agent tuning: `<adapter>[:<model>][@<effort>]` in the `playbook run` agent spec and repeatable `--with <path>` top-level config overlays for the interactive launch |
 
 ## Iterations
 
@@ -100,7 +100,7 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-cli.md](user/playbook-cli.md) | Generic `playbook` command: top-level `profiles`/`playbooks` config model (no `config:` wrapper, no top-level `players`), starter-config seeding that enables CODE via explicit `from`, `--config` raw pass-through, `--list`, `--help`, launcher-owned adapter readiness gate, exit/signal behavior, launch under the Playbook Captain shell on tmux-play, the non-interactive `run <from> [task]` one-shot with parked-session `run resume <session-id>`/`--last` continuation and per-run `<adapter>[:<model>[:<effort>]]` bindings, and repeatable `--with <path>` top-level config overlays |
+| user | [playbook-cli.md](user/playbook-cli.md) | Generic `playbook` command: top-level `profiles`/`playbooks` config model (no `config:` wrapper, no top-level `players`), starter-config seeding that enables CODE via explicit `from`, `--config` raw pass-through, `--list`, `--help`, launcher-owned adapter readiness gate, exit/signal behavior, launch under the Playbook Captain shell on tmux-play, the non-interactive `run <from> [task]` one-shot with parked-session `run resume <session-id>`/`--last` continuation and per-run `<adapter>[:<model>][@<effort>]` bindings, and repeatable `--with <path>` top-level config overlays |
 | dev | [playbook-cli.md](dev/playbook-cli.md) | Generic `playbook` launcher: tmux-play resolution, config normalization, namespaced roster generation, pre-launch manifest checks including reserved `captain` id/command/role rejection, launcher-owned initial visibility, seeded protected-auto lineup, adapter readiness, the headless `run` host over cligent `Cligent` with its exit-code map, XDG parked-session store, and resume flow, plus `--with` overlay merging and adapter-scoped effort validation |
 | test | [playbook-cli.md](test/playbook-cli.md) | Integration tests for seeding, composition, namespaced visibility, reserved `captain` id/command/role rejection, readiness, the `--list`/`--help`/`--config`/exit-code surface, the `run` subcommand over an injected agent runner including the park/resume lifecycle over an injected session store, and per-run tuning (effort grammar, `--with` overlays) |
 

@@ -19,8 +19,8 @@ Trying a stronger reviewer model, dropping the Coder's effort for a cheap smoke 
 
 ### 1. Effort in the `playbook run` agent spec
 
-The `<agent>` grammar of `playbook run` extends from `<adapter>[:<model>]` to `<adapter>[:<model>[:<effort>]]`.
-An empty model segment (`claude::xhigh`) selects the adapter's default model while still setting effort.
+The `<agent>` grammar of `playbook run` extends from `<adapter>[:<model>]` to `<adapter>[:<model>][@<effort>]`.
+The effort rides after the last `@`, not a colon, because model names may themselves contain colons (`opencode:ollama/llama3:8b@max`); `claude@high` selects the adapter's default model while still setting effort.
 The one-shot host resolves each bound agent's effort into the per-role `Cligent` it constructs, and validates every supplied effort against cligent's adapter-scoped support metadata up front, failing with a diagnostic that names the adapter's supported values rather than surfacing a mid-run adapter error.
 Parked sessions store each agent spec as bound — adapter, optional model, optional effort — so a resumed run rebuilds the identical lineup ([DR-014 §3](014-durable-one-shot-run-sessions.md#3-one-shot-session-store)).
 
@@ -41,7 +41,7 @@ The global config file is never modified by an overlaid launch, and `--with` com
 
 ## Consequences
 
-- A one-shot run can pin model and effort per role — `--player reviewer=codex:gpt-5.5:xhigh --captain claude::high` — with unsupported efforts rejected before any agent runs.
+- A one-shot run can pin model and effort per role — `--player reviewer=codex:gpt-5.5@xhigh --captain claude@high` — with unsupported efforts rejected before any agent runs.
 - An interactive launch can be retuned with a small committed-nowhere YAML fragment: `playbook --with fast-lineup.yaml`.
 - The global config keeps its role as the single durable lineup; overlays leave no trace after the process exits.
-- The agent-spec grammar stays colon-delimited and backward compatible; existing `<adapter>` and `<adapter>:<model>` forms are unchanged.
+- The agent-spec grammar is backward compatible: existing `<adapter>` and `<adapter>:<model>` forms — including models that contain colons — parse exactly as before, and only a trailing `@` segment is new.

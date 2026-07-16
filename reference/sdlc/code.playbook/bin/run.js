@@ -565,11 +565,8 @@ function specsDiagnostic(specs) {
       return `unknown adapter "${adapter}"`;
     }
     if (spec.effort !== undefined && !isEffortSupported(spec.adapter, spec.effort)) {
-      const supported = supportedEffortValues(spec.adapter);
-      return (
-        `adapter "${spec.adapter}" does not support effort "${spec.effort}"` +
-        (supported ? ` (supported: ${supported.join(', ')})` : '')
-      );
+      const supported = supportedEffortValues(spec.adapter).join(', ');
+      return `adapter "${spec.adapter}" does not support effort "${spec.effort}" (supported: ${supported})`;
     }
   }
   return undefined;
@@ -788,15 +785,20 @@ export function parseRunArgs(argv) {
   return args;
 }
 
-// PBCLI-19: `<agent>` is `<adapter>[:<model>[:<effort>]]`; an empty
-// segment leaves that field unset (`claude::xhigh` keeps the default
-// model while setting effort).
+// PBCLI-19: `<agent>` is `<adapter>[:<model>][@<effort>]`. The effort
+// rides after the last `@` so a model name may itself contain colons
+// (`opencode:ollama/llama3:8b@max`); `claude@high` keeps the default
+// model while setting effort.
 function parseAgent(value) {
-  const segments = value.split(':');
-  if (segments.length > 3) {
-    throw new Error(`agent "${value}" has too many ':' segments`);
+  const at = value.lastIndexOf('@');
+  const spec = at === -1 ? value : value.slice(0, at);
+  const effort = at === -1 ? undefined : value.slice(at + 1);
+  if (at !== -1 && !effort) {
+    throw new Error(`agent "${value}" has an empty effort after '@'`);
   }
-  const [adapter, model, effort] = segments;
+  const colon = spec.indexOf(':');
+  const adapter = colon === -1 ? spec : spec.slice(0, colon);
+  const model = colon === -1 ? undefined : spec.slice(colon + 1);
   return {
     adapter,
     ...(model ? { model } : {}),
@@ -870,9 +872,9 @@ function runHelpText() {
     '  --verbose                 forward telemetry topics to stderr',
     '  -h, --help                print this help',
     '',
-    '  <agent> is <adapter>[:<model>[:<effort>]] over the shorthands',
-    '  claude, codex, gemini, opencode — e.g. codex:gpt-5.5:xhigh, or',
-    '  claude::high for the default model at high effort. Every role and',
+    '  <agent> is <adapter>[:<model>][@<effort>] over the shorthands',
+    '  claude, codex, gemini, opencode — e.g. codex:gpt-5.5@xhigh, or',
+    '  claude@high for the default model at high effort. Every role and',
     '  the captain default to claude.',
     '',
     '  When a playbook needs a Boss reply, the run prints the question,',

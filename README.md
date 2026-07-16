@@ -149,10 +149,11 @@ playbook run @sublang/playbook/code/registry "add a test for parseArgs" \
 intents the same way you would to `claude -p` or `codex exec`. Roles
 and the captain default to `claude`; bind them with
 `--player <role>=<agent>` and `--captain <agent>`, where `<agent>` is
-`<adapter>[:<model>[:<effort>]]` — say `codex:gpt-5.5:xhigh`, or
-`claude::high` for the default model at high reasoning effort, with
-unsupported efforts rejected up front naming the adapter's supported
-values. Pass a playbook option with
+`<adapter>[:<model>][@<effort>]` — say `codex:gpt-5.5@xhigh`, or
+`claude@high` for the default model at high reasoning effort; the
+model keeps every interior colon (`opencode:ollama/llama3:8b@max`),
+and unsupported efforts are rejected up front naming the adapter's
+supported values. Pass a playbook option with
 `--option <key>=<value>`, and add `--json` to print one JSON envelope
 (`outcome`, `sessionId`, and the output or pending questions) instead
 of plain text. It exits `0` on a terminal outcome, `2` on failure, `3`
