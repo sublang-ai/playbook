@@ -4980,3 +4980,184 @@ describe('Multi-stage Boss turn (DR-004 §7 + §9)', () => {
     expect(runtime._getActor()?.getSnapshot().status).toBe('done');
   });
 });
+
+// PBRT-46 (DR-014): parked-session snapshot export/restore round trip over
+// the real CODE linked runtime.
+describe('parked-session snapshot (PBRT-46)', () => {
+  const SNAPSHOT_QUESTION = 'Which scope should I use?';
+  const SNAPSHOT_SESSION_ID = 'code-snapshot-session';
+
+  async function parkRuntime() {
+    const traces: PlaybookTraceEvent[] = [];
+    const playerCalls: Array<{ playerId: string; resume: string | false }> = [];
+    let midTurnExport: unknown = 'unset';
+    let runtime: ReturnType<typeof makeRuntimeWithInternals> | undefined;
+    const ports = makeFakePorts({
+      callPlayer: async (playerId, _prompt, _signal, playerOptions) => {
+        midTurnExport = runtime?.exportSnapshot?.();
+        playerCalls.push({ playerId, resume: playerOptions.resume });
+        return {
+          status: 'ok',
+          finalText: 'I need Boss to choose the scope.',
+          resumeToken: 'tok-coder-1',
+        };
+      },
+      callJudge: judgeSequence([
+        { guard: 'needsBossReply', question: SNAPSHOT_QUESTION },
+      ]),
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          traces.push(event.payload as PlaybookTraceEvent);
+        }
+      },
+    });
+    runtime = makeRuntimeWithInternals();
+    await runtime.init(makePlaybookSession(ports, SNAPSHOT_SESSION_ID));
+    const parkedResult = await runtime.handleBossInput({
+      text: '/start ambiguous task',
+      signal: sig(),
+    });
+    return { runtime, traces, playerCalls, midTurnExport, parkedResult };
+  }
+
+  it('round-trips a parked CODE session through export and restore', async () => {
+    const { runtime, traces, playerCalls, midTurnExport, parkedResult } =
+      await parkRuntime();
+    expect(parkedResult.outcome).toBe('quiescent');
+    expect(parkedResult.state.stateId).toBe('awaitBossReply');
+    // Mid-turn capture is refused (PBRT-45 safe capture point).
+    expect(midTurnExport).toBeUndefined();
+    expect(playerCalls).toEqual([{ playerId: 'coder', resume: false }]);
+
+    const exported = runtime.exportSnapshot!();
+    expect(exported).toBeDefined();
+    expect(exported!).toMatchObject({
+      schemaVersion: 1,
+      playbookId: 'code',
+      playerResumeTokens: { coder: 'tok-coder-1' },
+      state: { stateId: 'awaitBossReply', status: 'active', quiescent: true },
+      pendingBossQuestions: [
+        {
+          questionId: 'planAndImplement',
+          player: 'Coder',
+          question: SNAPSHOT_QUESTION,
+          sourceItem: 'CODE-1',
+        },
+      ],
+    });
+    expect(exported!.sequences.trace).toBe(traces[traces.length - 1].sequence);
+    expect(exported!.sequences.turn).toBe(1);
+
+    // The snapshot must survive a JSON round trip — that is how the
+    // one-shot host persists it (PBCLI-23).
+    const rehydrated = JSON.parse(JSON.stringify(exported)) as NonNullable<
+      typeof exported
+    >;
+
+    // "New process": a fresh runtime instance from the same factory.
+    const traces2: PlaybookTraceEvent[] = [];
+    const statuses2: string[] = [];
+    const playerCalls2: Array<{
+      playerId: string;
+      prompt: string;
+      resume: string | false;
+    }> = [];
+    const ports2 = makeFakePorts({
+      callPlayer: async (playerId, prompt, _signal, playerOptions) => {
+        playerCalls2.push({ playerId, prompt, resume: playerOptions.resume });
+        return { status: 'ok', finalText: 'done', resumeToken: 'tok-coder-2' };
+      },
+      callJudge: async (prompt) => {
+        if (isClassifierPrompt(prompt)) {
+          return JSON.stringify(classifierReplyForTestPrompt(prompt));
+        }
+        return prompt.includes('singleCommitReady')
+          ? JSON.stringify({ guard: 'singleCommitReady' })
+          : JSON.stringify({ guard: 'needsBossInput' });
+      },
+      emitStatus: async (message) => {
+        statuses2.push(message);
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          traces2.push(event.payload as PlaybookTraceEvent);
+        }
+      },
+    });
+    const restored = makeRuntimeWithInternals();
+    await restored.restore!(
+      makePlaybookSession(ports2, SNAPSHOT_SESSION_ID),
+      rehydrated,
+    );
+    // Rehydration emits no session.started, transition trace, or status.
+    expect(traces2).toEqual([]);
+    expect(statuses2).toEqual([]);
+    expect(restored._getActor()?.getSnapshot().value).toBe('awaitBossReply');
+
+    const resumed = await restored.handleBossInput({
+      text: 'Use the small scope.',
+      signal: sig(),
+    });
+
+    // The reply re-enters the recorded resume state with the pre-park
+    // resume token and the labelled Q+A continuation.
+    expect(playerCalls2.length).toBeGreaterThan(0);
+    expect(playerCalls2[0].playerId).toBe('coder');
+    expect(playerCalls2[0].resume).toBe('tok-coder-1');
+    expect(playerCalls2[0].prompt).toContain(SNAPSHOT_QUESTION);
+    expect(playerCalls2[0].prompt).toContain('Use the small scope.');
+    expect(resumed.outcome).toBe('quiescent');
+    expect(restored._getActor()?.getSnapshot().value).toBe('ready');
+
+    // The trace continues the same session contiguously with no second
+    // session.started.
+    expect(traces2.every((event) => event.type !== 'session.started')).toBe(
+      true,
+    );
+    expect(traces2[0].type).toBe('boss.input.received');
+    expect(traces2[0].sequence).toBe(rehydrated.sequences.trace + 1);
+    expect(traces2[0].turnId).toBe(rehydrated.sequences.turn + 1);
+    traces2.forEach((event, index) => {
+      expect(event.sequence).toBe(rehydrated.sequences.trace + 1 + index);
+      expect(event.sessionId).toBe(SNAPSHOT_SESSION_ID);
+    });
+
+    // Disposal ends the capability on both instances.
+    await runtime.dispose();
+    expect(runtime.exportSnapshot!()).toBeUndefined();
+    await restored.dispose();
+    expect(restored.exportSnapshot!()).toBeUndefined();
+  });
+
+  it('restore rejects schema mismatches, playbook-id mismatches, and reuse', async () => {
+    const { runtime } = await parkRuntime();
+    const exported = runtime.exportSnapshot!()!;
+    await runtime.dispose();
+
+    const wrongSchema = { ...exported, schemaVersion: 2 };
+    await expect(
+      makeRuntimeWithInternals().restore!(
+        makePlaybookSession(makeFakePorts(), SNAPSHOT_SESSION_ID),
+        wrongSchema as never,
+      ),
+    ).rejects.toThrow(/schemaVersion/);
+
+    const wrongPlaybook = { ...exported, playbookId: 'discuss' };
+    await expect(
+      makeRuntimeWithInternals().restore!(
+        makePlaybookSession(makeFakePorts(), SNAPSHOT_SESSION_ID),
+        wrongPlaybook as never,
+      ),
+    ).rejects.toThrow(/playbookId|playbook/);
+
+    const initialized = makeRuntimeWithInternals();
+    await initialized.init(makePlaybookSession(makeFakePorts()));
+    await expect(
+      initialized.restore!(
+        makePlaybookSession(makeFakePorts(), SNAPSHOT_SESSION_ID),
+        exported,
+      ),
+    ).rejects.toThrow(/already initialized/);
+    await initialized.dispose();
+  });
+});

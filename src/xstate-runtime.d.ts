@@ -1,5 +1,5 @@
 import { type AnyActorRef, type PromiseActorLogic, type SnapshotFrom } from 'xstate';
-import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
 /**
  * Compose invocation-lifetime and imperative-boundary cancellation without
  * installing a second forwarding listener in each generated runtime.
@@ -28,6 +28,8 @@ export interface SnapshotNormalizationOptions {
     pendingCall?: PlaybookPendingCall;
 }
 export declare function normalizePlaybookSnapshot(snapshot: unknown, options?: SnapshotNormalizationOptions): PlaybookState;
+export declare function detachPersistedMachineSnapshot(persisted: unknown): JsonValue;
+export declare function assertPlaybookRuntimeSnapshot(value: unknown, expectedPlaybookId: string): PlaybookRuntimeSnapshot;
 export interface NestedPlaybookInput {
     stateId: string;
     playbookId: string;

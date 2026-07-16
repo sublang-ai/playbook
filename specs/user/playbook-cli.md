@@ -125,16 +125,24 @@ when the argument is omitted.
 The command shall load the registry entry, bind its required roles and
 a captain agent ([PBCLI-19](#pbcli-19)), drive one Boss turn to a
 terminal outcome, print that outcome to stdout, and exit `0`.
-It shall print progress to stderr and, with `--json`, print the
-terminal output as JSON rather than its final text.
+It shall print progress to stderr and, with `--json`, print one JSON
+envelope to stdout carrying the `outcome`, the playbook `sessionId`,
+and the outcome's payload — the terminal `output`, or the pending
+`questions` on a parked run ([PBCLI-22](#pbcli-22)) — rather than the
+plain text.
 On a failed or aborted turn the command shall print the error to stderr
-and exit `2`; when the playbook instead suspends for a Boss reply or a
-nested playbook call — which a one-shot run cannot answer — it shall
-print a diagnostic and exit `3`.
+and exit `2`.
+When the playbook parks awaiting a Boss reply and the runtime supports
+durable sessions, the command shall print each pending question's text
+to stdout, persist the parked session, print one stderr hint naming the
+session id and the exact resume command, and exit `3`
+([PBCLI-22](#pbcli-22)); when the playbook suspends for a nested
+playbook call — which a one-shot run cannot answer — or parks without a
+persistable session, it shall print a diagnostic and exit `3`.
 An invalid `<from>`, a module exposing no valid registry entry, or a
 malformed argument shall print a diagnostic and exit `1`.
-`playbook run --help` and `playbook run -h` shall print `run` usage and
-exit `0`.
+`playbook run --help` and `playbook run -h` shall print `run` usage —
+including the `resume` form — and exit `0`.
 
 ### PBCLI-19
 
@@ -148,3 +156,26 @@ as CODE's `committer=coder`), and `--cwd <dir>` shall set the agents'
 working directory, defaulting to the process working directory.
 A `--player` role that the entry does not require, or an unresolvable
 adapter, shall exit `1` with a path-named diagnostic.
+
+### PBCLI-22
+
+Where a `playbook run` turn parked awaiting a Boss reply and persisted
+its session ([PBCLI-18](#pbcli-18)), when the user invokes
+`playbook run resume <session-id> [reply]`, the command shall continue
+that session with the reply as the next Boss turn, using the agent
+bindings, option slice, and working directory stored with the session.
+`playbook run resume --last [reply]` shall select the most recently
+updated persisted session instead of naming one; `[reply]` is read from
+stdin when the argument is omitted, like `[task]`.
+A terminal outcome shall print the output to stdout, remove the
+persisted session, and exit `0`; a turn that parks again for another
+Boss reply shall update the persisted session, print the new question(s)
+and hint per [PBCLI-18](#pbcli-18), and exit `3`; a failed or aborted
+turn shall keep the persisted session, print the error to stderr, and
+exit `2`.
+`--json` and `--verbose` apply as on a first run.
+An unknown or malformed session id, `--last` with no persisted session,
+a persisted session the current module can no longer resume, or a
+`--player`, `--captain`, `--option`, or `--cwd` flag on `resume` —
+bindings are stored with the session — shall print a diagnostic and
+exit `1`.

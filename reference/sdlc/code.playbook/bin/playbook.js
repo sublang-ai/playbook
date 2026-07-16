@@ -56,6 +56,7 @@ export async function runPlaybookCli(options = {}) {
       ...(options.loadModule ? { loadModule: options.loadModule } : {}),
       ...(options.createAgent ? { createAgent: options.createAgent } : {}),
       ...(options.readStdin ? { readStdin: options.readStdin } : {}),
+      ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
     });
   }
 
@@ -393,6 +394,7 @@ function helpText({ userConfigPath, failingAdapters = [] }) {
     'Usage:',
     '  playbook [--list] [--config <path>] [tmux-play options]',
     '  playbook run <from> [task] [options]   # non-interactive one-shot',
+    '  playbook run resume <session-id> [reply]   # answer a parked run',
     '  playbook --help',
     '',
     `Default config: ${userConfigPath}`,

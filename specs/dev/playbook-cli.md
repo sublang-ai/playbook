@@ -198,10 +198,13 @@ that the one-shot host cannot answer; `emitStatus` shall write to stderr
 and `emitTelemetry` shall be dropped unless `--verbose`.
 The command shall initialize a depth-zero `PlaybookSession` whose
 `sessionId` and `rootSessionId` are the same fresh UUID, run one
-`handleBossInput` turn under an abort signal, `dispose` the runtime,
-and map the `PlaybookRunResult` outcome to an exit status: `terminal`
+`handleBossInput` turn under an abort signal, and map the
+`PlaybookRunResult` outcome to an exit status: `terminal`
 → `0` (printing `output`), `failed` or
 `aborted` → `2`, `suspended` and `quiescent`/`no-action` → `3`.
+The command shall `dispose` the runtime on every path except a parked
+turn it persists per [PBCLI-23](#pbcli-23), which hands the session off
+without disposal ([DR-014 §2](../decisions/014-durable-one-shot-run-sessions.md#2-a-session-may-park-across-processes)).
 The default agent shall run each `Cligent` in protected auto mode
 (`permissions.mode: auto`, as the seeded lineup uses per
 [PBCLI-11](#pbcli-11)) so a one-shot run does not block on routine
@@ -213,3 +216,59 @@ own properties whose value is `undefined`.
 The `run` subcommand shall accept an injected agent-run function so
 tests can drive it without real adapters, defaulting to cligent's
 `Cligent`.
+
+### PBCLI-23
+
+Where a `playbook run` turn settles `quiescent` and the runtime's
+`exportSnapshot` ([PBRT-45](playbook-runtime.md#pbrt-45)) returns a
+snapshot with at least one pending Boss question, the command shall
+write one session file at
+`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/<sessionId>.json`
+with file mode `0600` (parent directories mode `0700`), skip runtime
+disposal, print each pending question's text to stdout, and print one
+stderr hint naming the session id and the resume command
+([PBCLI-18](../user/playbook-cli.md#pbcli-18)).
+The session file shall be written through a same-directory temporary
+file and rename, so an interrupted write can never truncate the only
+durable copy; when persisting fails, the command shall print the error,
+dispose the runtime, and exit `2` — an unpersisted park is not a
+hand-off.
+The session file shall carry a schema version, the session and playbook
+ids, the resolved `<from>` specifier, the captain and per-role agent
+specs, the `--option` slice, the agents' working directory resolved to
+an absolute path, creation and update timestamps, and the exported
+runtime snapshot; the snapshot embeds player resume tokens, which is
+why the file is user-only.
+Where the user invokes `playbook run resume`
+([PBCLI-22](../user/playbook-cli.md#pbcli-22)), the command shall
+reject with exit `1` a `<session-id>` argument that is not a bare
+file-name-safe id (no path separators — the id joins the store path),
+then load the named session file (`--last` selects the readable record
+with the newest stored update timestamp), rejecting with exit `1` a
+missing or unreadable file, a schema version it does not understand,
+malformed stored agent specs, a stored module whose registry entry no
+longer validates, a reloaded entry whose `id` differs from the stored
+playbook id — a different playbook cannot rehydrate the snapshot — or a
+runtime that lacks `restore`; otherwise it shall rebuild the agents and
+headless ports from the stored specs exactly as a first run does, call
+`entry.createRuntime` with the stored option slice and players, call
+`runtime.restore` with the stored session identity and snapshot, and
+drive the reply through one `handleBossInput` turn.
+A terminal outcome shall delete the session file and dispose the
+runtime, and a deletion failure shall warn on stderr without masking
+the terminal output or exit `0`; a turn that parks again with pending
+questions shall rewrite the session file (updating its timestamp and
+snapshot) and again skip disposal; failed, aborted, and
+nested-`suspended` outcomes shall leave the session file unchanged and
+dispose the runtime.
+The `--json` envelope shall be one stdout JSON object with `outcome`
+and `sessionId` fields, plus `output` on `terminal` and a `questions`
+array of `{ questionId, player, question }` on a parked run; failed and
+aborted turns keep their stderr-only reporting.
+Where the runtime does not implement `exportSnapshot`, or the snapshot
+carries no pending question, the parked turn shall keep the pre-DR-014
+diagnostic path — dispose, stderr diagnostic, exit `3` — and persist
+nothing.
+The session store location shall honor `XDG_STATE_HOME` at invocation
+time, and the `run` subcommand shall accept an injected store directory
+so tests can drive the full park/resume lifecycle in isolation.

@@ -107,7 +107,8 @@ Verifies: [PBCLI-18](../user/playbook-cli.md#pbcli-18), [PBCLI-19](../user/playb
 When the test suite exercises `playbook run` with an injected
 agent-run function over a fake registry entry, the test suite shall
 fail unless: a terminal turn prints its output to stdout and exits `0`;
-`--json` prints that output as JSON; `callPlayer` routes to the agent
+`--json` prints one stdout envelope object carrying `outcome`,
+`sessionId`, and that output; `callPlayer` routes to the agent
 bound for each required role and threads the returned resume token into
 the next call; the depth-zero session uses one fresh UUID as both its
 session and root-session id; a relative `<from>` file path resolves from
@@ -119,3 +120,34 @@ preserves `text` and `text_delta` output when terminal `done` omits a
 failed or aborted turn exits `2`; a suspended, quiescent, or nested-call
 outcome exits `3`; and a missing `<from>`, an invalid registry entry, or
 an unrequired `--player` role exits `1`.
+
+### PBCLI-24
+Verifies: [PBCLI-18](../user/playbook-cli.md#pbcli-18), [PBCLI-22](../user/playbook-cli.md#pbcli-22), [PBCLI-23](../dev/playbook-cli.md#pbcli-23)
+
+When the test suite exercises the `playbook run` park/resume lifecycle
+with an injected agent-run function, an injected session-store
+directory, and a fake registry entry whose runtime implements
+`exportSnapshot` and `restore`, the test suite shall fail unless: a
+turn that parks with a pending Boss question writes
+`<sessionId>.json` mode `0600` under the injected store, prints the
+question text to stdout, prints a stderr hint naming the session id,
+exits `3`, and does not dispose the runtime; `--json` prints one
+stdout envelope with `outcome`, `sessionId`, and a `questions` array;
+`run resume <session-id> "answer"` recreates the runtime with the
+stored option slice and players, calls `restore` with the stored
+session identity and snapshot, feeds the reply to `handleBossInput`,
+and on a terminal outcome prints the output, deletes the session file,
+disposes the runtime, and exits `0`; a resumed turn that parks again
+rewrites the session file and exits `3`; a failed resumed turn keeps
+the session file and exits `2`; `resume --last` selects the most
+recently updated stored session by its stored update timestamp even
+when another session file carries a newer filesystem mtime; a reply
+arrives from stdin when the argument is omitted; a park whose
+session-file write fails exits `2` and still disposes the runtime; and
+an unknown session id, a path-shaped session id, a schema-version
+mismatch, malformed stored agent specs, a reloaded entry whose `id`
+differs from the stored playbook id, a stored runtime without
+`restore`, or a `--player`, `--captain`, `--option`, or `--cwd` flag on
+`resume` exits `1` while a parked turn over a runtime without
+`exportSnapshot` keeps the diagnostic exit-`3` path and persists
+nothing.

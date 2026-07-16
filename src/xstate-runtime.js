@@ -439,6 +439,112 @@ export function normalizePlaybookSnapshot(snapshot, options = {}) {
         ...(activeStateIds.length === 1 ? { stateId: activeStateIds[0] } : {}),
     };
 }
+// DR-014 §1: deep-detach an XState persisted actor snapshot into strict
+// JSON for a PlaybookRuntimeSnapshot, normalizing any raw Error value
+// (for example FSM context `lastError`) instead of rejecting it.
+export function detachPersistedMachineSnapshot(persisted) {
+    return snapshotJsonValue(withErrorsNormalized(persisted, new Set()), 'persisted machine snapshot');
+}
+function withErrorsNormalized(value, ancestors) {
+    if (value instanceof Error)
+        return normalizeError(value);
+    if (Array.isArray(value)) {
+        if (ancestors.has(value))
+            return value;
+        const nextAncestors = new Set(ancestors).add(value);
+        return value.map((entry) => withErrorsNormalized(entry, nextAncestors));
+    }
+    if (isRecord(value)) {
+        if (ancestors.has(value))
+            return value;
+        const nextAncestors = new Set(ancestors).add(value);
+        const normalized = {};
+        for (const key of Object.keys(value)) {
+            // XState persisted snapshots carry `output: undefined` (and similar)
+            // on non-final states; JSON serialization drops those members, so the
+            // detached snapshot drops them too instead of rejecting.
+            if (value[key] === undefined)
+                continue;
+            defineEnumerableDataProperty(normalized, key, withErrorsNormalized(value[key], nextAncestors));
+        }
+        return normalized;
+    }
+    return value;
+}
+const SNAPSHOT_SEQUENCE_KEYS = [
+    'trace',
+    'turn',
+    'judgeCall',
+    'playerCall',
+    'playbookCall',
+];
+// DR-014 §1: validate and detach a host-supplied runtime snapshot before
+// restore touches any state. Rejects a schema-version or playbook-id
+// mismatch with a path-named error.
+export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId) {
+    if (!isRecord(value)) {
+        throw new TypeError('runtime snapshot must be an object');
+    }
+    if (value.schemaVersion !== 1) {
+        throw new TypeError(`runtime snapshot schemaVersion ${String(value.schemaVersion)} is not supported (expected 1)`);
+    }
+    const playbookId = requireNonEmptyString(value.playbookId, 'runtime snapshot playbookId');
+    if (playbookId !== expectedPlaybookId) {
+        throw new TypeError(`runtime snapshot playbookId ${playbookId} does not match runtime playbook ${expectedPlaybookId}`);
+    }
+    if (!isRecord(value.machine)) {
+        throw new TypeError('runtime snapshot machine must be an object');
+    }
+    const machine = snapshotJsonValue(value.machine, 'runtime snapshot machine');
+    if (!isRecord(value.playerResumeTokens)) {
+        throw new TypeError('runtime snapshot playerResumeTokens must be an object');
+    }
+    const playerResumeTokens = {};
+    for (const [playerId, token] of Object.entries(value.playerResumeTokens)) {
+        defineEnumerableDataProperty(playerResumeTokens, playerId, requireNonEmptyString(token, `runtime snapshot playerResumeTokens.${playerId}`));
+    }
+    if (!isRecord(value.sequences)) {
+        throw new TypeError('runtime snapshot sequences must be an object');
+    }
+    const sequences = {};
+    for (const key of SNAPSHOT_SEQUENCE_KEYS) {
+        const sequence = value.sequences[key];
+        if (!Number.isSafeInteger(sequence) || sequence < 0) {
+            throw new TypeError(`runtime snapshot sequences.${key} must be a non-negative integer`);
+        }
+        sequences[key] = sequence;
+    }
+    validateState(value.state, 'runtime snapshot state');
+    const state = snapshotJsonValue(value.state, 'runtime snapshot state');
+    if (!Array.isArray(value.pendingBossQuestions)) {
+        throw new TypeError('runtime snapshot pendingBossQuestions must be an array');
+    }
+    const pendingBossQuestions = value.pendingBossQuestions.map((entry, index) => {
+        const path = `runtime snapshot pendingBossQuestions[${index}]`;
+        if (!isRecord(entry))
+            throw new TypeError(`${path} must be an object`);
+        const question = {
+            questionId: requireNonEmptyString(entry.questionId, `${path}.questionId`),
+            player: requireNonEmptyString(entry.player, `${path}.player`),
+            question: requireNonEmptyString(entry.question, `${path}.question`),
+            ...(entry.sourceItem === undefined
+                ? {}
+                : {
+                    sourceItem: requireNonEmptyString(entry.sourceItem, `${path}.sourceItem`),
+                }),
+        };
+        return Object.freeze(question);
+    });
+    return Object.freeze({
+        schemaVersion: 1,
+        playbookId,
+        machine,
+        playerResumeTokens: Object.freeze(playerResumeTokens),
+        sequences: Object.freeze(sequences),
+        state,
+        pendingBossQuestions: Object.freeze(pendingBossQuestions),
+    });
+}
 export class NestedPlaybookCallError extends Error {
     result;
     constructor(result) {

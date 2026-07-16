@@ -20,8 +20,10 @@ import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
 import type { InspectionEvent, SnapshotFrom } from 'xstate';
 import {
+  assertPlaybookRuntimeSnapshot,
   combineAbortSignals,
   createNestedPlaybookBridge,
+  detachPersistedMachineSnapshot,
   normalizeError,
   normalizePlaybookSnapshot,
   snapshotJsonValue,
@@ -52,6 +54,7 @@ import type {
   PlaybookCallStart,
   PlaybookPendingCall,
   PlaybookRunResult,
+  PlaybookRuntimeSnapshot,
   PlaybookSession,
   PlaybookState,
   PlaybookStateValue,
@@ -90,6 +93,7 @@ export type {
   PlaybookTraceType,
   PlaybookRuntime,
   PlaybookRuntimeFactory,
+  PlaybookRuntimeSnapshot,
 };
 
 export type CodePlaybookOptions = CodingInput;
@@ -1704,7 +1708,10 @@ export default function createPlaybookRuntime(
     else emissionFailure ??= error;
   }
 
-  function buildActor(ports: PlaybookPorts): ReturnType<typeof createActor> {
+  function buildActor(
+    ports: PlaybookPorts,
+    machineSnapshot?: JsonValue,
+  ): ReturnType<typeof createActor> {
     priorState = undefined;
     let builtActor: ReturnType<typeof createActor>;
     builtActor = createActor(
@@ -1722,6 +1729,15 @@ export default function createPlaybookRuntime(
       }),
       {
         input: boundOptions,
+        // DR-014 §1: a restore rehydrates the persisted machine snapshot;
+        // XState derives context/value from it and ignores `input` then.
+        ...(machineSnapshot === undefined
+          ? {}
+          : {
+              snapshot: machineSnapshot as unknown as SnapshotFrom<
+                typeof codingMachine
+              >,
+            }),
         inspect: (inspectionEvent: InspectionEvent) => {
           if (inspectionEvent.type !== '@xstate.snapshot') return;
           if (inspectionEvent.actorRef !== builtActor) return;
@@ -1861,6 +1877,82 @@ export default function createPlaybookRuntime(
     };
   }
 
+  // Shared failed-start cleanup for init and restore: stop the actor,
+  // abort/drain nested and host work, optionally emit one best-effort
+  // session.disposed boundary, and unbind every closure field so dispose
+  // stays callable. The caller rethrows its original failure. A restore
+  // failure skips the disposal trace — the parked session was never
+  // re-bound in this process, so its persisted snapshot stays
+  // authoritative (DR-014 §2).
+  async function cleanupFailedStart(
+    cause: unknown,
+    options: { emitDisposal: boolean },
+  ): Promise<void> {
+    let finalState: PlaybookState | undefined;
+    if (options.emitDisposal && actor) {
+      try {
+        finalState = currentState();
+      } catch {
+        // A state that cannot even normalize has no disposal descriptor.
+      }
+    }
+    suppressInspectionEmissions = true;
+    try {
+      actor?.stop();
+    } catch {
+      // Preserve the original startup failure.
+    }
+    try {
+      await nestedBridge.abortPending(cause);
+    } catch {
+      // Preserve the original startup failure.
+    }
+    try {
+      await judgeQueue.onIdle();
+      await drainEmissions();
+    } catch {
+      // Preserve the original startup failure.
+    }
+    if (options.emitDisposal) {
+      try {
+        await emitTrace(
+          'session.disposed',
+          finalState === undefined
+            ? {}
+            : {
+                state: finalState,
+                ...stateIdentity(finalState.stateId),
+              },
+        );
+        await drainEmissions();
+      } catch {
+        // The session-start error remains authoritative.
+      }
+    }
+    playerResumeTokens.clear();
+    activePlayerIds.clear();
+    playbookCallTurnIds.clear();
+    activeEmissionCalls.clear();
+    emissionQueue.clear();
+    judgeQueue.clear();
+    actor = undefined;
+    session = undefined;
+    savedPorts = undefined;
+    runtimePorts = undefined;
+    activeSignal = undefined;
+    activeTurnId = undefined;
+    controlPlaneError = undefined;
+    emissionFailure = undefined;
+    priorState = undefined;
+    suppressInspectionEmissions = false;
+    initialized = false;
+    traceSequence = 0;
+    turnSequence = 0;
+    judgeCallSequence = 0;
+    playerCallSequence = 0;
+    playbookCallSequence = 0;
+  }
+
   const runtime = {
     async init(nextSession: PlaybookSession): Promise<void> {
       if (initialized || disposed || disposalPromise !== undefined) {
@@ -1886,60 +1978,114 @@ export default function createPlaybookRuntime(
       try {
         await initTask;
       } catch (error) {
-        const finalState = actor ? currentState() : undefined;
-        suppressInspectionEmissions = true;
-        try {
-          actor?.stop();
-        } catch {
-          // Preserve the original initialization failure.
-        }
-        try {
-          await nestedBridge.abortPending(error);
-        } catch {
-          // Preserve the original initialization failure.
-        }
-        try {
-          await judgeQueue.onIdle();
-          await drainEmissions();
-        } catch {
-          // Preserve the original initialization failure.
-        }
-        try {
-          await emitTrace(
-            'session.disposed',
-            finalState === undefined
-              ? {}
-              : {
-                  state: finalState,
-                  ...stateIdentity(finalState.stateId),
+        await cleanupFailedStart(error, { emitDisposal: true });
+        throw error;
+      } finally {
+        finishInitialization();
+        if (initInFlight === initialization) initInFlight = undefined;
+      }
+    },
+
+    // DR-014 §1 / PBRT-45: JSON-safe capture of a parked session.
+    // Defined only at a safe capture point — initialized, not disposing
+    // or disposed, no active public boundary, no pending nested call,
+    // and the actor quiescent with status `active`.
+    exportSnapshot(): PlaybookRuntimeSnapshot | undefined {
+      if (!actor || !session || disposed || disposalPromise !== undefined) {
+        return undefined;
+      }
+      if (activeSignal !== undefined) return undefined;
+      if (nestedBridge.getPendingCall()) return undefined;
+      const state = currentState();
+      if (state.status !== 'active' || !state.quiescent) return undefined;
+      const machine = detachPersistedMachineSnapshot(
+        actor.getPersistedSnapshot(),
+      );
+      const context = (actor.getSnapshot() as { context?: unknown })
+        .context as Record<string, unknown>;
+      const pending = pendingBossQuestionFromContext(context ?? {});
+      return {
+        schemaVersion: 1,
+        playbookId: session.playbookId,
+        machine,
+        playerResumeTokens: Object.fromEntries(playerResumeTokens),
+        sequences: {
+          trace: traceSequence,
+          turn: turnSequence,
+          judgeCall: judgeCallSequence,
+          playerCall: playerCallSequence,
+          playbookCall: playbookCallSequence,
+        },
+        state,
+        pendingBossQuestions:
+          pending === undefined
+            ? []
+            : [
+                {
+                  questionId: pending.questionId,
+                  player: pending.player,
+                  question: pending.question,
+                  sourceItem: pending.sourceItem,
                 },
-          );
-          await drainEmissions();
-        } catch {
-          // The session-start error remains authoritative.
-        }
+              ],
+      };
+    },
+
+    // DR-014 §1 / PBRT-45: alternative to `init` that rehydrates an
+    // exported snapshot under the same immutable session identity.
+    // Emits no `session.started`, transition trace, or human status —
+    // the session already started; the next public boundary continues
+    // the contiguous trace sequence.
+    async restore(
+      nextSession: PlaybookSession,
+      snapshot: PlaybookRuntimeSnapshot,
+    ): Promise<void> {
+      if (initialized || disposed || disposalPromise !== undefined) {
+        throw new Error('createPlaybookRuntime.restore: already initialized');
+      }
+      const boundSession = snapshotPlaybookSession(nextSession);
+      const boundSnapshot = assertPlaybookRuntimeSnapshot(
+        snapshot,
+        boundSession.playbookId,
+      );
+      initialized = true;
+      let finishInitialization!: () => void;
+      const initialization = new Promise<void>((resolve) => {
+        finishInitialization = resolve;
+      });
+      initInFlight = initialization;
+      const initTask = (async () => {
+        session = boundSession;
+        savedPorts = boundSession.ports;
+        runtimePorts = createRuntimePorts(boundSession.ports);
+        traceSequence = boundSnapshot.sequences.trace;
+        turnSequence = boundSnapshot.sequences.turn;
+        judgeCallSequence = boundSnapshot.sequences.judgeCall;
+        playerCallSequence = boundSnapshot.sequences.playerCall;
+        playbookCallSequence = boundSnapshot.sequences.playbookCall;
         playerResumeTokens.clear();
-        activePlayerIds.clear();
-        playbookCallTurnIds.clear();
-        activeEmissionCalls.clear();
-        emissionQueue.clear();
-        judgeQueue.clear();
-        actor = undefined;
-        session = undefined;
-        savedPorts = undefined;
-        runtimePorts = undefined;
-        activeSignal = undefined;
-        activeTurnId = undefined;
-        controlPlaneError = undefined;
-        emissionFailure = undefined;
-        priorState = undefined;
+        for (const [playerId, token] of Object.entries(
+          boundSnapshot.playerResumeTokens,
+        )) {
+          playerResumeTokens.set(playerId, token);
+        }
+        suppressInspectionEmissions = true;
+        actor = buildActor(runtimePorts, boundSnapshot.machine);
+        actor.start();
+        const restoredState = currentState();
+        if (restoredState.status !== 'active') {
+          throw new Error(
+            `createPlaybookRuntime.restore: restored actor status is ${restoredState.status}, expected active`,
+          );
+        }
         suppressInspectionEmissions = false;
-        initialized = false;
-        traceSequence = 0;
-        turnSequence = 0;
-        judgeCallSequence = 0;
-        playerCallSequence = 0;
-        playbookCallSequence = 0;
+        priorState = restoredState;
+        await drainEmissions();
+      })();
+      try {
+        await initTask;
+      } catch (error) {
+        await cleanupFailedStart(error, { emitDisposal: false });
         throw error;
       } finally {
         finishInitialization();

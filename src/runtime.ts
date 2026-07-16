@@ -178,8 +178,45 @@ export interface PlaybookTraceEvent {
   payload: JsonValue;
 }
 
+export interface PlaybookPendingBossQuestion {
+  questionId: string;
+  player: string;
+  question: string;
+  sourceItem?: string;
+}
+
+// DR-014 §1: JSON-safe capture of a parked session. `machine` is the
+// XState persisted snapshot and is opaque to hosts; the pending Boss
+// questions are first-class so a host can surface what was asked
+// without parsing status lines or telemetry.
+export interface PlaybookRuntimeSnapshot {
+  schemaVersion: 1;
+  playbookId: string;
+  machine: JsonValue;
+  playerResumeTokens: { readonly [playerId: string]: string };
+  sequences: {
+    trace: number;
+    turn: number;
+    judgeCall: number;
+    playerCall: number;
+    playbookCall: number;
+  };
+  state: PlaybookState;
+  pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
+}
+
 export interface PlaybookRuntime {
   init(session: PlaybookSession): Promise<void>;
+  // DR-014 §1 optional durable-session capability: a runtime implements
+  // both members or neither. `exportSnapshot` returns undefined outside
+  // a safe capture point (parked quiescence between public boundaries);
+  // `restore` is an alternative to `init` that rehydrates the exported
+  // snapshot under the same immutable session identity.
+  exportSnapshot?(): PlaybookRuntimeSnapshot | undefined;
+  restore?(
+    session: PlaybookSession,
+    snapshot: PlaybookRuntimeSnapshot,
+  ): Promise<void>;
   handleBossInput(turn: {
     text: string;
     signal: AbortSignal;

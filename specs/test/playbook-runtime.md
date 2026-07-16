@@ -456,3 +456,26 @@ share one outcome, while disposal requested during a live public boundary
 shall reject without starting teardown.
 Suspended-child abort cleanup failure shall still emit the matching error
 finish and shall reject disposal with the original cleanup error.
+
+### PBRT-46
+
+Verifies: [PBRT-45](../dev/playbook-runtime.md#pbrt-45)
+
+Where the integration suite drives the real CODE linked runtime through
+scripted ports to `awaitBossReply` and calls `exportSnapshot`, the test
+suite shall fail unless the snapshot is JSON-round-trip safe and carries
+schema version `1`, the playbook id, the parked state descriptor, the
+recorded player resume token, the live sequence counters, and one
+pending Boss question with the asking player and verbatim question
+text.
+The test suite shall fail unless a fresh runtime instance created by
+the same factory `restore`s that snapshot under the original session
+identity without emitting `session.started`, and a following Boss reply
+re-enters the recorded resume state, passes the pre-park resume token
+to the resumed player call, and continues the trace with contiguous
+sequence numbers across the export/restore boundary.
+It shall fail unless `exportSnapshot` returns `undefined` during an
+active turn and after disposal; unless `restore` rejects a
+schema-version mismatch, a playbook-id mismatch, and an already
+initialized instance; and unless the DISCUSS linked runtime round-trips
+a parked branch question through the same export/restore surface.

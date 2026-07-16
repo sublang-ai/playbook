@@ -3,7 +3,16 @@
 
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { loadTmuxPlayConfig } from '@sublang/cligent/tmux-play';
@@ -656,7 +665,13 @@ function fakeAgents(scripts: Record<string, PortRun>) {
   return { createAgent, calls };
 }
 
-async function runCli(argv: string[], modules: Record<string, unknown>, createAgent: any, readStdin?: () => Promise<string>) {
+async function runCli(
+  argv: string[],
+  modules: Record<string, unknown>,
+  createAgent: any,
+  readStdin?: () => Promise<string>,
+  extra: Record<string, unknown> = {},
+) {
   const stdout = writer();
   const stderr = writer();
   const result = await runPlaybookCli({
@@ -664,6 +679,7 @@ async function runCli(argv: string[], modules: Record<string, unknown>, createAg
     loadModule: loader(modules),
     createAgent,
     ...(readStdin ? { readStdin } : {}),
+    ...extra,
     stdout: stdout as never,
     stderr: stderr as never,
   });
@@ -773,7 +789,8 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
     expect(out).toMatchObject({ code: 0, stdout: 'validated\n' });
   });
 
-  it('prints JSON output under --json', async () => {
+  it('prints a JSON envelope with outcome, sessionId, and output under --json', async () => {
+    runEntry.lastSession = undefined;
     const { createAgent } = fakeAgents({});
     const entry = runEntry(async () => ({
       outcome: 'terminal',
@@ -786,7 +803,11 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
       createAgent,
     );
     expect(out.code).toBe(0);
-    expect(JSON.parse(out.stdout)).toEqual({ response: 'hi' });
+    expect(JSON.parse(out.stdout)).toEqual({
+      outcome: 'terminal',
+      sessionId: runEntry.lastSession.sessionId,
+      output: { response: 'hi' },
+    });
   });
 
   it('reads the task from stdin when omitted', async () => {
@@ -922,6 +943,553 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
     );
     expect(badRole.code).toBe(1);
     expect(badRole.stderr).toContain('wizard');
+  });
+});
+
+// PBCLI-24: park/resume lifecycle over an injected session store and a fake
+// registry entry whose runtime implements exportSnapshot/restore (DR-014).
+
+function parkSnapshot(question = 'Which scope should I use?') {
+  return {
+    schemaVersion: 1,
+    playbookId: 'code',
+    machine: { value: 'awaitBossReply', context: {} },
+    playerResumeTokens: { coder: 'tok-1' },
+    sequences: { trace: 5, turn: 1, judgeCall: 1, playerCall: 1, playbookCall: 0 },
+    state: {
+      value: 'awaitBossReply',
+      activeStateIds: ['awaitBossReply'],
+      tags: ['playbook.parked'],
+      status: 'active',
+      quiescent: true,
+      stateId: 'awaitBossReply',
+    },
+    pendingBossQuestions: [
+      { questionId: 'q1', player: 'Coder', question },
+    ],
+  };
+}
+
+interface ParkableTurn {
+  result: any;
+  snapshot?: any;
+}
+
+function parkableEntry(
+  turns: ParkableTurn[],
+  shape: { restore?: false; export?: false; id?: string } = {},
+) {
+  const record = {
+    creates: [] as any[],
+    inits: [] as any[],
+    restores: [] as Array<{ session: any; snapshot: any }>,
+    turnTexts: [] as string[],
+    disposals: 0,
+  };
+  const entry = {
+    id: shape.id ?? 'code',
+    command: 'code',
+    intent: 'x',
+    requiredRoleIds: ['coder', 'reviewer'],
+    validateOptions: (o: unknown) => o,
+    createRuntime(created: any) {
+      record.creates.push(created);
+      let turnIndex = -1;
+      const runtime: any = {
+        async init(session: any) {
+          record.inits.push(session);
+        },
+        async handleBossInput(turn: any) {
+          turnIndex = record.turnTexts.length;
+          record.turnTexts.push(turn.text);
+          return (
+            turns[turnIndex]?.result ?? {
+              outcome: 'terminal',
+              state: {},
+              output: 'done',
+            }
+          );
+        },
+        async resumePlaybookCall() {
+          return { outcome: 'no-action', state: {} };
+        },
+        async dispose() {
+          record.disposals += 1;
+        },
+      };
+      if (shape.export !== false) {
+        runtime.exportSnapshot = () => turns[turnIndex]?.snapshot;
+      }
+      if (shape.restore !== false) {
+        runtime.restore = async (session: any, snapshot: any) => {
+          record.restores.push({ session, snapshot });
+        };
+      }
+      return runtime;
+    },
+  };
+  return { entry, record };
+}
+
+async function sessionStoreDir() {
+  const dir = await mkdtemp(join(tmpdir(), 'playbook-run-sessions-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
+describe('playbook run — park/resume lifecycle (PBCLI-24)', () => {
+  const QUESTION = 'Which scope should I use?';
+
+  it('parks: persists 0600 session file, prints the question, hints resume, skips dispose', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+    ]);
+    const { createAgent } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'do something ambiguous', '--option', 'committer=coder'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+
+    expect(out.code).toBe(3);
+    expect(out.stdout.trim()).toBe(QUESTION);
+    const sessionId = record.inits[0].sessionId;
+    expect(out.stderr).toContain(sessionId);
+    expect(out.stderr).toContain(`playbook run resume ${sessionId}`);
+    expect(record.disposals).toBe(0);
+
+    const file = join(sessionsDir, `${sessionId}.json`);
+    const mode = (await stat(file)).mode & 0o777;
+    expect(mode).toBe(0o600);
+    const stored = JSON.parse(await readFile(file, 'utf8'));
+    expect(stored).toMatchObject({
+      schemaVersion: 1,
+      sessionId,
+      playbookId: 'code',
+      from: 'mod://code',
+      option: { committer: 'coder' },
+      players: {
+        coder: { adapter: 'claude' },
+        reviewer: { adapter: 'claude' },
+      },
+      captain: { adapter: 'claude' },
+    });
+    expect(stored.snapshot).toEqual(parkSnapshot());
+    expect(typeof stored.createdAt).toBe('string');
+    expect(typeof stored.updatedAt).toBe('string');
+  });
+
+  it('parks with a --json envelope carrying outcome, sessionId, and questions', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+    ]);
+    const { createAgent } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x', '--json'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+
+    expect(out.code).toBe(3);
+    expect(JSON.parse(out.stdout)).toEqual({
+      outcome: 'awaiting-reply',
+      sessionId: record.inits[0].sessionId,
+      questions: [{ questionId: 'q1', player: 'Coder', question: QUESTION }],
+    });
+  });
+
+  it('resume: restores stored bindings and snapshot, prints output, deletes the file, disposes', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      { result: { outcome: 'terminal', state: {}, output: 'shipped' } },
+    ]);
+    const { createAgent, calls } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    const first = await runCli(
+      ['run', 'mod://code', 'x', '--option', 'committer=coder'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(first.code).toBe(3);
+    const sessionId = record.inits[0].sessionId;
+
+    const resumed = await runCli(
+      ['run', 'resume', sessionId, 'use the small scope'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+
+    expect(resumed.code).toBe(0);
+    expect(resumed.stdout.trim()).toBe('shipped');
+    // The runtime was recreated with the stored option slice and players.
+    expect(record.creates[1]).toEqual({
+      captainOptions: { committer: 'coder' },
+      players: [
+        { id: 'coder', adapter: 'claude' },
+        { id: 'reviewer', adapter: 'claude' },
+      ],
+    });
+    // restore received the original session identity and snapshot, not init.
+    expect(record.inits).toHaveLength(1);
+    expect(record.restores).toHaveLength(1);
+    expect(record.restores[0].session.sessionId).toBe(sessionId);
+    expect(record.restores[0].session.rootSessionId).toBe(sessionId);
+    expect(record.restores[0].snapshot).toEqual(parkSnapshot());
+    expect(record.turnTexts[1]).toBe('use the small scope');
+    expect(record.disposals).toBe(1);
+    await expect(readdir(sessionsDir)).resolves.toEqual([]);
+    expect(calls.length).toBe(0);
+  });
+
+  it('resume that parks again rewrites the session file and exits 3', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const followUp = 'Should I update docs too?';
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      {
+        result: { outcome: 'quiescent', state: {} },
+        snapshot: parkSnapshot(followUp),
+      },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    await runCli(['run', 'mod://code', 'x'], modules, createAgent, undefined, {
+      sessionsDir,
+    });
+    const sessionId = record.inits[0].sessionId;
+    const file = join(sessionsDir, `${sessionId}.json`);
+    const before = JSON.parse(await readFile(file, 'utf8'));
+
+    const resumed = await runCli(
+      ['run', 'resume', sessionId, 'answer one'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+
+    expect(resumed.code).toBe(3);
+    expect(resumed.stdout.trim()).toBe(followUp);
+    const after = JSON.parse(await readFile(file, 'utf8'));
+    expect(after.snapshot.pendingBossQuestions[0].question).toBe(followUp);
+    expect(after.createdAt).toBe(before.createdAt);
+    expect(record.disposals).toBe(0);
+  });
+
+  it('failed resume keeps the session file and exits 2', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      {
+        result: {
+          outcome: 'failed',
+          state: {},
+          error: { name: 'E', message: 'boom' },
+        },
+      },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    await runCli(['run', 'mod://code', 'x'], modules, createAgent, undefined, {
+      sessionsDir,
+    });
+    const sessionId = record.inits[0].sessionId;
+
+    const resumed = await runCli(
+      ['run', 'resume', sessionId, 'answer'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+
+    expect(resumed.code).toBe(2);
+    expect(resumed.stderr).toContain('boom');
+    await expect(
+      readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'),
+    ).resolves.toBeTruthy();
+    expect(record.disposals).toBe(1);
+  });
+
+  it('resume --last picks the most recently updated session and reads the reply from stdin', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      { result: { outcome: 'terminal', state: {}, output: 'ok' } },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    await runCli(['run', 'mod://code', 'first'], modules, createAgent, undefined, {
+      sessionsDir,
+    });
+    // Ensure a distinguishable mtime for the second parked session.
+    await new Promise((resolveSleep) => setTimeout(resolveSleep, 20));
+    await runCli(['run', 'mod://code', 'second'], modules, createAgent, undefined, {
+      sessionsDir,
+    });
+    const newestId = record.inits[1].sessionId;
+
+    const resumed = await runCli(
+      ['run', 'resume', '--last'],
+      modules,
+      createAgent,
+      async () => '  piped answer  ',
+      { sessionsDir },
+    );
+
+    expect(resumed.code).toBe(0);
+    expect(record.restores[0].session.sessionId).toBe(newestId);
+    expect(record.turnTexts[2]).toBe('piped answer');
+  });
+
+  it('rejects unknown session ids, schema mismatches, missing restore, and binding flags', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry(
+      [
+        { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      ],
+      {},
+    );
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    const unknown = await runCli(
+      ['run', 'resume', 'no-such-session', 'x'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(unknown.code).toBe(1);
+    expect(unknown.stderr).toContain('cannot read session');
+
+    await runCli(['run', 'mod://code', 'x'], modules, createAgent, undefined, {
+      sessionsDir,
+    });
+    const sessionId = record.inits[0].sessionId;
+    const file = join(sessionsDir, `${sessionId}.json`);
+
+    const flagged = await runCli(
+      ['run', 'resume', sessionId, 'x', '--player', 'coder=codex'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(flagged.code).toBe(1);
+    expect(flagged.stderr).toContain('stored with the session');
+
+    const stored = JSON.parse(await readFile(file, 'utf8'));
+    await writeFile(
+      file,
+      JSON.stringify({ ...stored, schemaVersion: 99 }),
+      'utf8',
+    );
+    const mismatched = await runCli(
+      ['run', 'resume', sessionId, 'x'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(mismatched.code).toBe(1);
+    expect(mismatched.stderr).toContain('schema-version');
+    await writeFile(file, JSON.stringify(stored), 'utf8');
+
+    const { entry: bareEntry } = parkableEntry([], { restore: false });
+    const noRestore = await runCli(
+      ['run', 'resume', sessionId, 'x'],
+      { 'mod://code': { default: bareEntry } },
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(noRestore.code).toBe(1);
+    expect(noRestore.stderr).toContain('does not support resume');
+  });
+
+  it('rejects a path-shaped session id before touching the store', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { createAgent } = fakeAgents({});
+    const out = await runCli(
+      ['run', 'resume', '../../outside/path', 'x'],
+      {},
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('is not a session id');
+  });
+
+  it('rejects a reloaded entry whose id differs from the stored playbook id', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+    ]);
+    const { createAgent } = fakeAgents({});
+    await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    const sessionId = record.inits[0].sessionId;
+
+    const { entry: swapped } = parkableEntry([], { id: 'discuss' });
+    const out = await runCli(
+      ['run', 'resume', sessionId, 'x'],
+      { 'mod://code': { default: swapped } },
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('now exposes playbook "discuss"');
+    // The stale session file survives for a corrected module.
+    await expect(
+      readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'),
+    ).resolves.toBeTruthy();
+  });
+
+  it('rejects malformed stored agent specs instead of crashing', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+    await runCli(['run', 'mod://code', 'x'], modules, createAgent, undefined, {
+      sessionsDir,
+    });
+    const sessionId = record.inits[0].sessionId;
+    const file = join(sessionsDir, `${sessionId}.json`);
+    const stored = JSON.parse(await readFile(file, 'utf8'));
+    await writeFile(
+      file,
+      JSON.stringify({
+        ...stored,
+        players: { ...stored.players, coder: null },
+      }),
+      'utf8',
+    );
+
+    const out = await runCli(
+      ['run', 'resume', sessionId, 'x'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('schema-version');
+  });
+
+  it('disposes the runtime and exits 2 when the park cannot be persisted', async () => {
+    const blocker = await mkdtemp(join(tmpdir(), 'playbook-run-blocked-'));
+    tempDirs.push(blocker);
+    const blockingFile = join(blocker, 'not-a-dir');
+    await writeFile(blockingFile, 'x', 'utf8');
+    const sessionsDir = join(blockingFile, 'sessions');
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+    ]);
+    const { createAgent } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+
+    expect(out.code).toBe(2);
+    expect(out.stderr).toContain('cannot persist session');
+    expect(record.disposals).toBe(1);
+  });
+
+  it('resume --last trusts the stored update timestamp over filesystem mtime', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      { result: { outcome: 'terminal', state: {}, output: 'ok' } },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    await runCli(['run', 'mod://code', 'first'], modules, createAgent, undefined, {
+      sessionsDir,
+    });
+    await runCli(['run', 'mod://code', 'second'], modules, createAgent, undefined, {
+      sessionsDir,
+    });
+    // Push the FIRST session's stored timestamp into the future, then age
+    // its mtime so mtime-based selection would pick the second session.
+    const firstId = record.inits[0].sessionId;
+    const firstFile = join(sessionsDir, `${firstId}.json`);
+    const stored = JSON.parse(await readFile(firstFile, 'utf8'));
+    await writeFile(
+      firstFile,
+      JSON.stringify({ ...stored, updatedAt: '2999-01-01T00:00:00.000Z' }),
+      'utf8',
+    );
+    const past = new Date(Date.now() - 60_000);
+    await utimes(firstFile, past, past);
+
+    const resumed = await runCli(
+      ['run', 'resume', '--last', 'answer'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+
+    expect(resumed.code).toBe(0);
+    expect(record.restores[0].session.sessionId).toBe(firstId);
+  });
+
+  it('keeps the diagnostic exit-3 path for a parked runtime without exportSnapshot', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry(
+      [{ result: { outcome: 'quiescent', state: {} } }],
+      { export: false },
+    );
+    const { createAgent } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+      undefined,
+      { sessionsDir },
+    );
+
+    expect(out.code).toBe(3);
+    expect(out.stdout).toBe('');
+    expect(out.stderr).toContain('awaiting Boss input');
+    expect(record.disposals).toBe(1);
+    await expect(readdir(sessionsDir)).resolves.toEqual([]);
   });
 });
 

@@ -124,8 +124,33 @@ export interface PlaybookTraceEvent {
     callId?: string;
     payload: JsonValue;
 }
+export interface PlaybookPendingBossQuestion {
+    questionId: string;
+    player: string;
+    question: string;
+    sourceItem?: string;
+}
+export interface PlaybookRuntimeSnapshot {
+    schemaVersion: 1;
+    playbookId: string;
+    machine: JsonValue;
+    playerResumeTokens: {
+        readonly [playerId: string]: string;
+    };
+    sequences: {
+        trace: number;
+        turn: number;
+        judgeCall: number;
+        playerCall: number;
+        playbookCall: number;
+    };
+    state: PlaybookState;
+    pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
+}
 export interface PlaybookRuntime {
     init(session: PlaybookSession): Promise<void>;
+    exportSnapshot?(): PlaybookRuntimeSnapshot | undefined;
+    restore?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>;
     handleBossInput(turn: {
         text: string;
         signal: AbortSignal;

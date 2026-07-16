@@ -2955,3 +2955,143 @@ describe('session trace and player continuation (PBRT-37/38/39)', () => {
     await runtime.dispose();
   });
 });
+
+// PBRT-46 (DR-014): parked-session snapshot export/restore round trip over
+// the real DISCUSS linked runtime with a sole parked branch question.
+describe('parked-session snapshot (PBRT-46)', () => {
+  it('round-trips a parked branch question through export and restore', async () => {
+    const firstResumeSelections: Array<{
+      playerId: string;
+      resume: string | false;
+    }> = [];
+    const ports: PlaybookPorts = {
+      callPlayer: async (playerId, _prompt, _signal, options) => {
+        firstResumeSelections.push({ playerId, resume: options.resume });
+        return {
+          status: 'ok',
+          finalText: `${playerId} initial`,
+          resumeToken: `tok-${playerId}-1`,
+        };
+      },
+      callCaptain: async () => {
+        throw new Error('unexpected direct captain call');
+      },
+      callPlaybook: async () => {
+        throw new Error('unexpected nested playbook call');
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Boss-input classifier')) {
+          return JSON.stringify({
+            event: 'START_DISCUSSION',
+            topic: 'One branch question.',
+          });
+        }
+        return prompt.includes('host initial')
+          ? JSON.stringify({
+              guard: 'needsBossReply',
+              question: 'Host-only question?',
+            })
+          : JSON.stringify({
+              guard: 'proposalMade',
+              proposal: 'participant v1',
+            });
+      },
+      emitStatus: async () => {},
+      emitTelemetry: async () => {},
+    };
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(playbookSession(ports, 'discuss-snapshot-session'));
+    const parked = await runtime.handleBossInput({
+      text: 'Start.',
+      signal: signal(),
+    });
+    expect(parked.outcome).toBe('quiescent');
+    expect(parked.state.activeStateIds).toContain('waitHostInitialReply');
+
+    const exported = runtime.exportSnapshot!();
+    expect(exported).toBeDefined();
+    expect(exported!).toMatchObject({
+      schemaVersion: 1,
+      playbookId: 'discuss',
+      playerResumeTokens: {
+        host: 'tok-host-1',
+        participant: 'tok-participant-1',
+      },
+      pendingBossQuestions: [
+        {
+          questionId: 'askHostInitial',
+          player: 'Host',
+          question: 'Host-only question?',
+        },
+      ],
+    });
+    const rehydrated = JSON.parse(JSON.stringify(exported)) as NonNullable<
+      typeof exported
+    >;
+
+    // "New process": a fresh runtime instance from the same factory.
+    const traces2: Array<{ type?: string; sequence?: number }> = [];
+    const resumedSelections: Array<{
+      playerId: string;
+      prompt: string;
+      resume: string | false;
+    }> = [];
+    const ports2: PlaybookPorts = {
+      callPlayer: async (playerId, prompt, _signal, options) => {
+        resumedSelections.push({ playerId, prompt, resume: options.resume });
+        return { status: 'error', error: 'stop after sole branch resumed' };
+      },
+      callCaptain: async () => {
+        throw new Error('unexpected direct captain call');
+      },
+      callPlaybook: async () => {
+        throw new Error('unexpected nested playbook call');
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Boss-input classifier')) {
+          return JSON.stringify({
+            event: 'BOSS_REPLY',
+            answer: 'Implicit Host answer.',
+          });
+        }
+        throw new Error(`unexpected judge prompt: ${prompt}`);
+      },
+      emitStatus: async () => {},
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          traces2.push(event.payload as { type?: string; sequence?: number });
+        }
+      },
+    };
+    const restored = createPlaybookRuntime({});
+    await restored.restore!(
+      playbookSession(ports2, 'discuss-snapshot-session'),
+      rehydrated,
+    );
+    // Rehydration emits no session.started or transition trace.
+    expect(traces2).toEqual([]);
+
+    const resumed = await restored.handleBossInput({
+      text: 'Answer the only question.',
+      signal: signal(),
+    });
+
+    // The sole parked branch resumes its player with the pre-park token
+    // and the labelled Q+A continuation; the scripted branch error then
+    // fails the round.
+    expect(resumedSelections).toHaveLength(1);
+    expect(resumedSelections[0].playerId).toBe('host');
+    expect(resumedSelections[0].resume).toBe('tok-host-1');
+    expect(resumedSelections[0].prompt).toContain('Host-only question?');
+    // The continuation block carries the classifier's extracted answer.
+    expect(resumedSelections[0].prompt).toContain('Implicit Host answer.');
+    expect(resumed.outcome).toBe('failed');
+    expect(traces2.every((event) => event.type !== 'session.started')).toBe(
+      true,
+    );
+    expect(traces2[0]?.sequence).toBe(rehydrated.sequences.trace + 1);
+
+    await runtime.dispose();
+    await restored.dispose();
+  });
+});

@@ -68,8 +68,9 @@ the [slc](https://github.com/sublang-ai/slc) compiler pipeline's
 > breaking, 1.0-oriented release. The latest published release is
 > [0.9.0](https://www.npmjs.com/package/@sublang/playbook) — it runs
 > the CODE reference end to end, but the compiled default Captain,
-> DISCUSS, nested playbook calls, and the six-port runtime contract
-> (see [docs/embedding.md](docs/embedding.md)) are unreleased; see the
+> DISCUSS, nested playbook calls, the six-port runtime contract
+> (see [docs/embedding.md](docs/embedding.md)), and the non-interactive
+> `playbook run` with parked-session resume are unreleased; see the
 > [CHANGELOG](CHANGELOG.md).
 
 ### Requirements
@@ -143,14 +144,36 @@ playbook run @sublang/playbook/code/registry "add a test for parseArgs" \
   --player coder=claude --player reviewer=codex --cwd ./my-repo
 ```
 
-`[task]` is read from stdin when omitted. Roles and the captain default
-to `claude`; bind them with `--player <role>=<agent>` and `--captain
-<agent>` (an adapter shorthand or `<adapter>:<model>`), pass a
-playbook option with `--option <key>=<value>`, and add `--json` to print
-the terminal output as JSON. It exits `0` on a terminal outcome, `2` on
-failure, `3` when the playbook needs a Boss reply a one-shot cannot give,
-and `1` on a bad argument or module. See
-[PBCLI-18](specs/user/playbook-cli.md#pbcli-18).
+`[task]` is read from stdin when omitted — pipe long or multi-line
+intents the same way you would to `claude -p` or `codex exec`. Roles
+and the captain default to `claude`; bind them with
+`--player <role>=<agent>` and `--captain <agent>` (an adapter shorthand
+or `<adapter>:<model>`), pass a playbook option with
+`--option <key>=<value>`, and add `--json` to print one JSON envelope
+(`outcome`, `sessionId`, and the output or pending questions) instead
+of plain text. It exits `0` on a terminal outcome, `2` on failure, `3`
+when the playbook needs a Boss reply, and `1` on a bad argument or
+module. See [PBCLI-18](specs/user/playbook-cli.md#pbcli-18).
+
+When the playbook stops to ask the Boss something, the run is parked,
+not lost: the question prints to stdout, the session is saved under
+`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/`, and stderr
+names the exact command that continues it. Answer with `resume`:
+
+```sh
+playbook run resume 4f2c…9ab1 "keep the scope small; skip the docs"
+playbook run resume --last   # most recently parked session; reply on stdin
+```
+
+A resumed run picks the playbook up exactly where it parked — same
+session id, same workflow state, and each agent continues its own
+conversation — then prints the final output and exits `0`, or parks
+again with the next question and exits `3`. The agent lineup, options,
+and working directory are stored with the session, so `resume` takes no
+binding flags. In scripts, capture the session id from the `--json`
+envelope, like Claude Code's `session_id` or `codex exec resume`. See
+[PBCLI-22](specs/user/playbook-cli.md#pbcli-22) and
+[DR-014](specs/decisions/014-durable-one-shot-run-sessions.md).
 
 ### Configure agents
 

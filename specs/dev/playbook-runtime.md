@@ -596,3 +596,39 @@ evidence.
 If child abort cleanup rejects while the call is suspended, the bridge shall
 emit the paired error finish and reject parent disposal with the original
 cleanup error rather than swallowing it as an ordinary nested-call rejection.
+
+## Parked-session snapshot
+
+### PBRT-45
+
+Where a linked runtime implements the optional durable-session
+capability of `@sublang/playbook/runtime`
+([DR-014 §1](../decisions/014-durable-one-shot-run-sessions.md#1-parked-session-snapshot-capability)),
+the runtime shall implement `exportSnapshot` and `restore` together.
+When `exportSnapshot` is called at a safe capture point — initialized,
+not disposing or disposed, no active public boundary, no pending nested
+playbook call, and the root actor quiescent with actor status `active` —
+it shall return a JSON-safe `PlaybookRuntimeSnapshot` carrying schema
+version `1`, the session's playbook id, the persisted machine snapshot
+with any raw `Error` context value normalized to `{ name, message,
+stack? }`, the player resume-token map, the trace/turn/judge-call/
+player-call/playbook-call sequence counters, the current normalized
+state descriptor, and the pending Boss questions as
+`{ questionId, player, question, sourceItem? }` entries; at any other
+point it shall return `undefined`.
+When `restore` is called on an unused runtime instance with the same
+immutable session identity the snapshot was exported under, the runtime
+shall validate the snapshot's schema version and that its playbook id
+equals `session.playbookId` — module identity stays a host check
+([PBCLI-23](playbook-cli.md#pbcli-23)) — bind the session, restore the
+resume-token map,
+sequence counters, and prior-state descriptor, reconstruct the actor
+from the persisted machine snapshot, and start it without emitting
+`session.started`, transition traces, or human status, so the next
+public boundary continues the session's contiguous trace sequence.
+`restore` shall reject a schema or playbook-id mismatch, a snapshot
+whose restored actor is not `active`, and reuse of an initialized,
+disposing, or disposed runtime, following the same failed-start cleanup
+as `init` so `dispose` remains callable.
+The compiled default Captain runtime shall not expose the capability
+([DR-014 §5](../decisions/014-durable-one-shot-run-sessions.md#5-preserved-scope)).

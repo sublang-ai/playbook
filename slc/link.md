@@ -1046,6 +1046,61 @@ metadata from the start boundary. It shall then follow the same latched
 control-error, FSM settlement, and ordered-drain path as any other call-start
 failure; the synthetic finish must not replace the original sink error.
 
+## Parked-session snapshot (optional)
+
+A linked runtime may implement the optional durable-session capability of
+`@sublang/playbook/runtime` — `exportSnapshot()` and
+`restore(session, snapshot)` — so a host can persist a parked session and
+rehydrate it in a later process (DR-014). A runtime that implements either
+member shall implement both. When generated for a runtime whose host needs
+durability, the pair shall behave as follows.
+
+`exportSnapshot()` shall return `undefined` unless the runtime is at a safe
+capture point: initialized, not disposing or disposed, no active
+`handleBossInput`/`resumePlaybookCall` boundary, no pending nested playbook
+call, and the root actor at a quiescent state with actor status `active`.
+At a safe capture point it shall return a JSON-safe
+`PlaybookRuntimeSnapshot` carrying:
+
+- `schemaVersion`: literal `1`.
+- `playbookId`: the bound session's playbook id.
+- `machine`: the root actor's `getPersistedSnapshot()` result, passed
+  through the shared JSON detachment with any raw `Error` context value
+  (for example FSM `lastError`) normalized to `{ name, message, stack? }`
+  first. The value is opaque to hosts.
+- `playerResumeTokens`: the resume-token map as a plain object
+  (§PlaybookPorts contract).
+- `sequences`: the live `trace`, `turn`, `judgeCall`, `playerCall`, and
+  `playbookCall` counters.
+- `state`: the current normalized state descriptor.
+- `pendingBossQuestions`: the pending Boss question(s) from FSM context as
+  a list of `{ questionId, player, question, sourceItem? }`, empty when the
+  parked state awaits no reply. This list exists so hosts can surface the
+  question without parsing status lines or telemetry.
+
+`restore(session, snapshot)` is an alternative to `init` under the same
+lifecycle guards (§Session lifecycle): it shall reject when already
+initialized, disposing, or disposed, and shall validate
+`snapshot.schemaVersion` and that `snapshot.playbookId` equals
+`session.playbookId` before touching state.
+The host supplies the same immutable `PlaybookSession` identity the
+snapshot was exported under and recreates the runtime through the same
+factory with equivalent options; the runtime does not diff options, and
+module identity — that the factory constructing this runtime still
+belongs to the snapshot's playbook — is likewise the host's check to
+make before calling `restore`.
+`restore` shall bind the session, restore the resume-token map, the
+sequence counters, and the prior-state descriptor from the snapshot,
+construct the actor with the persisted `machine` snapshot, and start it
+with root inspection emissions suppressed so rehydration emits no
+`session.started` trace, no transition trace, and no human status — the
+session already started, and the next public boundary continues the
+contiguous trace sequence. After start, a restored actor whose status is
+not `active` or whose state descriptor cannot be normalized shall fail
+`restore` through the same failed-start cleanup path as `init`.
+A restore failure shall leave the runtime unbound so `dispose` remains
+callable and terminal.
+
 ## Abort
 
 `handleBossInput.signal` is the abort surface.
@@ -1231,11 +1286,13 @@ This spec is silent on the choice; the contract is the same in any location.
   layouts — where these live is a per-project decision (see
   §Host adaptation); this spec only constrains the `PlaybookPorts`
   contract they satisfy.
-- Persisting FSM context or the trace across sessions, multiple
-  Boss-selected root engagements, recursive playbook calls, multi-Boss
-  orchestration, or visualizer rendering — separate hosts/observers may add
-  them without changing this spec. A host may persist the emitted trace, but
-  the runtime does not rehydrate a disposed actor from it.
+- Trace persistence, multiple Boss-selected root engagements, recursive
+  playbook calls, multi-Boss orchestration, or visualizer rendering —
+  separate hosts/observers may add them without changing this spec. A host
+  may persist the emitted trace, but the runtime does not rehydrate a
+  disposed actor from it. Parked-session durability is in scope only
+  through the optional snapshot surface of §Parked-session snapshot
+  (DR-014); everything beyond it remains out of scope.
 
 New behavior in any of these areas requires a separate slc spec.
 
