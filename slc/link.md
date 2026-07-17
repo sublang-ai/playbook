@@ -243,9 +243,15 @@ The runtime treats `status !== 'ok'` as a player failure and routes it through t
 
 `callCaptain` runs a direct-Captain FSM actor against the host's Captain
 agent. The linked runtime shall pass
-`{ visibility: 'visible', resume: false, allowedTools: [] }` for authored
-workflow calls so XState context, rather than an agent conversation, owns
-workflow continuity and the acting Captain cannot investigate through tools.
+`{ visibility: 'visible', resume: false }` for authored workflow calls so
+XState context, rather than an agent conversation, owns workflow continuity.
+The tool restriction is source-owned: the runtime shall additionally pass
+`allowedTools: []` exactly when the GEARS source itself restricts the acting
+Captain from tools (a routing-only Captain policy such as the default generic
+Captain). A transformation-performing Captain — e.g. a compiler phase compiled
+from a transformation-spec source, whose behavior writes a declared target
+artifact — works through the host Captain's own tools, so its calls shall
+carry no `allowedTools` restriction.
 `CaptainResult` carries no resume token or player-continuation selection.
 A non-`ok`
 result, or an `ok` result without `finalText`, shall reject the actor through
@@ -547,8 +553,9 @@ being silently repaired or discarded.
 When a direct Captain task resumes from its own Boss question, the composer
 shall prepend the same continuation preamble and labelled Q&A blocks defined in
 §Player prompt composition. The runtime shall pass the complete composed prompt
-once to `callCaptain` with
-`{ visibility: 'visible', resume: false, allowedTools: [] }`; it shall not expose the
+once to `callCaptain` with `{ visibility: 'visible', resume: false }` and the
+same source-owned tool restriction as the originating call; it shall not
+expose the
 subsequent adjudicator prompt or structured judge reply through that visible
 call.
 The composed prompt shall contain only the GEARS blockquote, typed runtime
