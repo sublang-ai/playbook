@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-17
+
 ### Added
 
 - **Compiled playbooks can run deterministic steps without an agent.** GEARS gains an optimizer-introduced script item (`Captain shall run:` with a static POSIX blockquote and exactly two exit-status guards), `gears2fsm` compiles it to a runtime-internal `script` actor, and linked runtimes execute it via `sh -c` in the runtime working directory — no port call, no adjudication, observable through the `playbook.script` telemetry topic and an `Executed script for <stateId> (exit <status>).` status line. The new format-preserving `slc/optimize.md` pass definition rewrites eligible mechanical items (canonically Git repository setup) into script items, ships beside the other definitions via `./slc/*`, and leaves unoptimized compiles byte-identical ([DR-016](specs/decisions/016-script-actors-and-optimize-pass.md), [IR-023](specs/iterations/023-script-actors-and-optimize-pass.md)).
@@ -198,7 +200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/sublang-ai/playbook/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/sublang-ai/playbook/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/sublang-ai/playbook/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/sublang-ai/playbook/compare/v0.6.0...v0.7.0
