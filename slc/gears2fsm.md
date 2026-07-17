@@ -150,6 +150,17 @@ Every declared guard name shall match `[A-Za-z_$][A-Za-z0-9_$]*`.
 It shall preserve every guard name, order, and description verbatim, reject a
 missing, duplicate, blank, or malformed declaration, and shall not infer a
 result contract from acting-prompt prose or transition implementation.
+
+An acting item that declares no `Results:` label has exactly one outcome
+(text2gears emits result contracts only for behaviors with more than one).
+The compiler shall give such a state the **default single-outcome contract**:
+one result `done` with the fixed description
+`The acting agent completed the behavior.`, plus the universal
+`needsBossReply` below.
+The `done` transition is self-driving per §Transitions: it targets the next
+workflow obligation, or a `final` state when the item is the last one.
+The default never applies to an item carrying a `Results:` label, and it does
+not license inferring any richer contract from prose.
 The item's blockquote alone becomes `invoke.input.prompt`; the `Results:`
 label and bullets shall never enter that prompt.
 Each result description shall name every additional output field its accepting

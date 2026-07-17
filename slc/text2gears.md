@@ -143,6 +143,10 @@ Where Source restricts an initial Captain to routing, text2gears shall preserve
 only the authored question and delegation outcomes and shall not infer a
 direct-answer or terminal result merely because Captain is the acting agent.
 
+A single-outcome behavior carries no `Results:` label; downstream,
+[gears2fsm](gears2fsm.md#setup) gives its state the default single-outcome
+contract, so text2gears shall not invent a one-bullet `Results:` block for it.
+
 ### Boss-reply continuation
 
 Where a direct-Captain or delegated-player behavior may ask Boss a question
