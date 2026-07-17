@@ -129,6 +129,16 @@ The bullet order is authoritative, guard names are unique within the item, and
 the description shall name every required output property with its exact
 case-sensitive identifier.
 
+A produced value consumed later shall have a declared producer: where any
+later item's blockquote reads a value through a `<placeholder>`, the item
+whose behavior produces that value shall declare the `Results:` contract
+whose relevant description names the produced output property, using the
+placeholder's exact identifier — this is what lets the FSM thread the value
+through typed context.
+A single-outcome producer then declares exactly one bullet naming the
+property; this consumed-output case is the sole one in which a
+single-outcome behavior carries a `Results:` label.
+
 Result metadata is compiler control data, not part of the acting agent's
 prompt.
 text2gears shall not put guard names, result-property schema, JSON control
@@ -143,9 +153,12 @@ Where Source restricts an initial Captain to routing, text2gears shall preserve
 only the authored question and delegation outcomes and shall not infer a
 direct-answer or terminal result merely because Captain is the acting agent.
 
-A single-outcome behavior carries no `Results:` label; downstream,
+A single-outcome behavior whose output no later item consumes carries no
+`Results:` label; downstream,
 [gears2fsm](gears2fsm.md#setup) gives its state the default single-outcome
 contract, so text2gears shall not invent a one-bullet `Results:` block for it.
+When a later item does consume its output, the produced-value rule above
+applies instead.
 
 ### Boss-reply continuation
 
