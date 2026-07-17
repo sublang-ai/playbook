@@ -34,6 +34,7 @@
     "slc/link.md",
     "slc/gears2fsm.md",
     "slc/text2gears.md",
+    "slc/optimize.md",
     "reference/sdlc/captain.md",
     "reference/sdlc/captain.playbook/captain.gears.md",
     "reference/sdlc/captain.playbook/captain.fsm.ts",

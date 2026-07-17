@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url));
-const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md'];
+const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md', 'optimize.md'];
 const CLIGENT_DEP = '@sublang/cligent';
 const LOCAL_OVERRIDE = new URL('../pnpm-workspace.yaml', import.meta.url);
 const CAPTAIN_BASE = 'reference/sdlc/captain.playbook/';
@@ -123,7 +123,7 @@ describe('public slc/* surface (RELEASE-17)', () => {
   // a function`), so exercise the real Node API in a subprocess whose
   // package scope is this package — resolving each spec through the
   // published `./slc/*` export exactly as a consumer would.
-  it('resolves all three slc specs via import.meta.resolve', () => {
+  it('resolves every published slc spec via import.meta.resolve', () => {
     const script = `
       import { readFileSync } from 'node:fs';
       import { fileURLToPath } from 'node:url';

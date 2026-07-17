@@ -176,7 +176,8 @@ breaking 1.0 contract boundary.
 ### RELEASE-16
 
 The published package shall ship the authored compiler-phase specs
-`slc/link.md`, `slc/gears2fsm.md`, and `slc/text2gears.md` as package
+`slc/link.md`, `slc/gears2fsm.md`, `slc/text2gears.md`, and
+`slc/optimize.md` as package
 files and expose them through a public, semver-stable `exports['./slc/*']`
 mapping (`'./slc/*': './slc/*'`).
 A consumer shall be able to locate a spec by resolving

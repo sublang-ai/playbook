@@ -39,6 +39,7 @@ meta.md     The spec of specs
 | DR-013 | [013-routing-only-captain-control.md](decisions/013-routing-only-captain-control.md) | Routing-only Captain policy with exact Boss input, isolated control calls, out-of-prompt machine contracts, and exact visible-response ownership |
 | DR-014 | [014-durable-one-shot-run-sessions.md](decisions/014-durable-one-shot-run-sessions.md) | Durable one-shot run sessions: optional parked-session `exportSnapshot`/`restore` on linked runtimes, an XDG session store, and `playbook run resume` |
 | DR-015 | [015-per-run-agent-tuning.md](decisions/015-per-run-agent-tuning.md) | Per-run agent tuning: `<adapter>[:<model>][@<effort>]` in the `playbook run` agent spec and repeatable `--with <path>` top-level config overlays for the interactive launch |
+| DR-016 | [016-script-actors-and-optimize-pass.md](decisions/016-script-actors-and-optimize-pass.md) | Script actors and the GEARS optimize pass: optimizer-introduced `Captain shall run:` items, the runtime-internal `script` actor with mechanical exit-status guards and `playbook.script` telemetry, and the format-preserving `slc/optimize.md` definition |
 
 ## Iterations
 
@@ -64,6 +65,7 @@ meta.md     The spec of specs
 | IR-020 | [020-routing-only-captain-control.md](iterations/020-routing-only-captain-control.md) | Prevent Captain self-execution through exact input provenance, tool-free fresh calls, clarify-or-delegate routing, and meaningful terminal prose |
 | IR-021 | [021-durable-one-shot-run-sessions.md](iterations/021-durable-one-shot-run-sessions.md) | Implement DR-014: parked-session snapshot export/restore, the one-shot session store, `playbook run resume`, and their acceptance tests |
 | IR-022 | [022-per-run-agent-tuning.md](iterations/022-per-run-agent-tuning.md) | Implement DR-015: effort in the `playbook run` agent grammar and `--with` config overlays, with acceptance tests |
+| IR-023 | [023-script-actors-and-optimize-pass.md](iterations/023-script-actors-and-optimize-pass.md) | Codify DR-016 in the maintained definitions: script behaviors in `text2gears.md`, the `script` actor in `gears2fsm.md`, script execution in `link.md`, and the new `optimize.md` pass shipped via `./slc/*` |
 
 ## Packages
 

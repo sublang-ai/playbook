@@ -237,6 +237,39 @@ The dynamic form shall not use a slash command, module specifier, opaque
 expression, or prose from which a downstream compiler would have to infer
 either field.
 
+### Script behaviors (optimizer-introduced)
+
+A GEARS package may also contain deterministic script behaviors, written
+`Captain shall run:` followed by a blockquote whose lines are the exact POSIX
+shell script to execute.
+text2gears shall never emit this kind: script items enter a GEARS package only
+through the separate [optimize](optimize.md) pass, which rewrites eligible
+compiled items.
+The kind is defined here so every consumer of the GEARS format shares one
+item-syntax contract.
+
+A script item's blockquote is static shell text: it shall contain no
+`<placeholder>`, and Markdown escapes resolve exactly as in acting prompts.
+A script item shall carry a `Results:` label with exactly two bullets in this
+fixed interpretation: the first guard reports the script exiting with status
+zero, the second reports a nonzero exit status.
+No other result, and no `needsBossReply`, applies to a script item — a script
+has no agent to surface questions.
+
+Example:
+
+```markdown
+### CODE-1
+
+When the workflow starts, Captain shall run:
+
+> git rev-parse --is-inside-work-tree 2>/dev/null || git init
+
+Results:
+- `ok`: The command exited with status zero.
+- `failed`: The command exited with a nonzero status.
+```
+
 Target should be written in the same language as Source.
 
 ## Transformation-spec sources

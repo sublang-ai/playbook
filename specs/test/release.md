@@ -44,7 +44,8 @@ Verifies: [RELEASE-16](../dev/release.md#release-16)
 
 The test suite shall fail unless each of
 `@sublang/playbook/slc/link.md`, `@sublang/playbook/slc/gears2fsm.md`,
-and `@sublang/playbook/slc/text2gears.md` resolves via
+`@sublang/playbook/slc/text2gears.md`, and
+`@sublang/playbook/slc/optimize.md` resolves via
 `import.meta.resolve` to an existing file whose contents are readable.
 
 ### RELEASE-18

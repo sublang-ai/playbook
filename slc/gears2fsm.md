@@ -36,8 +36,11 @@ map for every actor kind the GEARS artifact uses, using typed actor logic such
 as `fromPromise<Output, Input>(...)` [[11]]:
 
 - `captain` for direct work performed by Captain;
-- `player` for work Captain delegates to a named player; and
-- `playbook` for a nested playbook call.
+- `player` for work Captain delegates to a named player;
+- `playbook` for a nested playbook call; and
+- `script` for a deterministic shell script an
+  [optimizer-introduced script item](text2gears.md#script-behaviors-optimizer-introduced)
+  runs without any agent.
 
 Do not declare, register, export, or import an actor kind the GEARS artifact
 does not use. A playbook with direct Captain work and nested calls but no
@@ -74,6 +77,20 @@ comment delimiters into a TypeScript target.
 - `sourceItem`: the GEARS item ID this state realizes;
 - `prompt`: the source item's full final prompt, verbatim;
 - `result`: a record whose keys are the valid guard names this invocation may return.
+
+`ScriptInput` shall be a typed object with at least:
+
+- `stateId`: the stable id of the invoking working leaf;
+- `sourceItem`: the GEARS item ID this state realizes;
+- `command`: the script item's blockquote text, verbatim after Markdown
+  unescaping;
+- `result`: a record whose keys are the item's two declared guard names, first
+  the zero-exit guard, then the nonzero-exit guard.
+
+`ScriptOutput` shall be a discriminated union with one literal `guard` member
+per declared result key and a required `exitStatus: number` property.
+The script contract carries no prose output: downstream prompts shall not
+depend on text a script produces.
 
 `CaptainOutput` and `PlayerOutput` shall each be a discriminated union with one
 literal `guard` member per authored result key and every payload field required
@@ -174,7 +191,10 @@ Each state shall declare:
 - if it invokes the direct `captain` actor: `invoke.input` carrying
   `sourceItem`, `prompt`, and `result` (per [Setup](#setup));
 - if it invokes the delegated `player` actor: `invoke.input` additionally
-  carrying `player`.
+  carrying `player`;
+- if it invokes the `script` actor: `invoke.input` carrying `stateId`,
+  `sourceItem`, `command`, and `result` (per [Setup](#setup)) — no `prompt`
+  and no `player`.
 
 The source item ID shall live in `invoke.input.sourceItem`, not in a comment — this keeps the GEARS-to-state mapping machine-readable.
 A delegated state's `invoke.input.player` shall match its source item's named
@@ -223,8 +243,17 @@ A state's `invoke.input.sourceItem` shall be that item's ID, and `invoke.input.p
 An item written as direct Captain work shall map to exactly one `captain`
 invocation. An item that prompts or relays to a named player shall map to
 exactly one `player` invocation. A nested-call item shall map to exactly one
-`playbook` invocation. The compiler shall not infer one actor kind from a
+`playbook` invocation. A script item (`Captain shall run:`) shall map to
+exactly one `script` invocation whose `input.command` carries the blockquote
+verbatim and whose `result` preserves the item's two guards in declared order.
+The compiler shall not infer one actor kind from a
 runtime player name or encode Captain as a player.
+A script state is not agent-invoking: the compiler shall not add
+`needsBossReply` to a script state's result map and shall not register it with
+`resumableStates(ids)`.
+A script state's success guard shall target the next workflow step and its
+failure guard shall route to `failed` unless the source items define a
+different recovery.
 
 Per text2gears [composition](text2gears.md#composition), each spec item already carries the full final prompt for one state behavior, with no duplicate lines.
 The FSM compiler shall not concatenate prompts across items, re-compose them, or silently dedupe.

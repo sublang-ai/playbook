@@ -9,6 +9,7 @@ Compiles the [gears2fsm](gears2fsm.md) artifact into a **`PlaybookRuntime`**: a 
 - Drives the FSM.
 - Classifies Boss input into typed events.
 - Runs direct-Captain, delegated-player, and nested-playbook actors.
+- Executes deterministic script actors locally, without any agent.
 - Adjudicates Captain and player output into FSM guards.
 - Surfaces transitions as status/telemetry.
 
@@ -762,6 +763,42 @@ second finish and do not let the sink failure replace the earlier control
 error returned by the public boundary; retain the sink failure only as
 independent cleanup evidence.
 
+## Script execution
+
+Where the FSM declares the typed `script` actor from
+[gears2fsm "Setup"](gears2fsm.md#setup), the linker shall provide its
+implementation inside the emitted module.
+A script invocation is the one actor kind that runs without any agent:
+it makes no `callPlayer`, `callCaptain`, or `callJudge` call and needs no
+adjudication.
+
+The provided actor shall:
+
+- Execute `input.command` verbatim through the platform's POSIX shell
+  (`sh -c`), with the working directory taken from the emitted
+  `PlaybookRuntimeOptions.cwd` when the caller supplies it, else the process
+  working directory. The linker shall declare the optional `cwd` option on the
+  emitted options interface whenever the FSM contains a script state.
+- Resolve deterministically from the child's exit status: status zero resolves
+  `{ guard: <first declared guard>, exitStatus: 0 }`; any nonzero status
+  resolves the second declared guard with that status. Guard selection is
+  mechanical; the runtime shall not route script output through the judge.
+- Reject only when the command cannot be spawned at all, routing through the
+  state's ordinary `onError` path.
+- Honor the active turn's abort signal by terminating the child process and
+  rejecting per §Abort.
+- Emit, after the child settles and before the invocation resolves, one status
+  line `Executed script for <stateId> (exit <status>).` and one telemetry
+  event under topic `playbook.script` with payload
+  `{ stateId, sourceItem, exitStatus }`, through the ordinary serialized
+  emission channel.
+
+Script execution emits no `*.call.*` trace pair: the surrounding FSM
+transition trace and the `playbook.script` telemetry are its record, so trace
+schema consumers see no new event types.
+Script stdout and stderr are not workflow data: the runtime shall not place
+them in machine context, prompts, or trace payloads.
+
 ## Nested playbook bridge
 
 Where the FSM declares the typed `playbook` actor from
@@ -985,7 +1022,8 @@ The `PlaybookRuntime` shall:
      adjudicate, and resolve the invoke. For `captain`, build a direct Captain
      prompt, call `callCaptain` visibly, adjudicate through the shared hidden
      judge path, and resolve the invoke. For `playbook`, use §Nested playbook
-     bridge. Parallel regions may run distinct resolved players independently;
+     bridge. For `script`, use §Script execution — no port call and no
+     adjudication. Parallel regions may run distinct resolved players independently;
      Captain and judge work remains serialized by the shared host queue. Use
      XState `waitFor` over public tags/status until no `playbook.busy` state is
      active, a registered child call is suspended, or the actor is
@@ -1213,7 +1251,10 @@ The link compiler emits **one** TypeScript module that:
   (`composePlayerPrompt` and `composeCaptainPrompt`) — so
   compilation-correctness tests can exercise composition without a host.
 - Holds no host-specific types and no host primitive calls. The runtime
-  speaks only `PlaybookPorts`.
+  speaks only `PlaybookPorts` for every agent and host concern; the sole
+  exception is `node:child_process`, imported only when the FSM declares a
+  `script` actor, so §Script execution can run its deterministic commands
+  locally.
 - Records the linker inputs (FSM path, player binding, strategies) in a
   top-of-file header comment so the file is reproducible from the same
   inputs.
