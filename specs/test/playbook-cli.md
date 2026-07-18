@@ -172,3 +172,21 @@ argument vector carries no `--with`; `--list` reflects a fragment that
 enables another playbook; and `--with` combined with `--config`, a
 missing fragment, and a non-map fragment each exit `1` without
 launching.
+
+### PBCLI-30
+Verifies: [PBCLI-28](../user/playbook-cli.md#pbcli-28), [PBCLI-29](../dev/playbook-cli.md#pbcli-29)
+
+When the test suite exercises `playbook run` config defaults over an
+injected agent factory and an injected user-config path, the test
+suite shall fail unless: a config-only `run` block reaches the agent
+factory with its adapter, model, and effort; a `run.player` catch-all
+binds every required role without a `run.players.<role>` entry; a
+`--player` or `--captain` flag beats the config default for its role
+or the captain; `run.players.<role>` beats `run.player`; a
+`run.players` role the entry does not require is ignored; an
+unsupported config effort exits `1` naming the supported values
+before any agent factory call; an unparseable config file, a non-map
+`run` or `run.players` value, and a non-string agent value each exit
+`1`; a resumed session rebuilds its stored lineup even when the
+injected config binds different agents; and an absent config file
+keeps the `claude` defaults.

@@ -298,3 +298,23 @@ can observe it.
 Session records ([PBCLI-23](#pbcli-23)) shall carry each spec's
 optional `effort` and resume validation shall accept and re-validate
 it.
+
+### PBCLI-29
+
+Where `playbook run` resolves config defaults
+([PBCLI-28](../user/playbook-cli.md#pbcli-28)), the command shall read
+the user config from the same resolved path as the interactive
+launcher ([PBCLI-3](../user/playbook-cli.md#pbcli-3)), treat a missing
+file as an empty default set, parse each `run.captain`, `run.player`,
+and `run.players.<role>` string through the same agent-spec parser as
+`--player`/`--captain`, and validate the specs it binds through the
+same adapter and effort path as flag-bound specs
+([PBCLI-26](#pbcli-26)); a structural fault — a non-map `run` or
+`run.players`, a non-string agent value, or an unparseable agent
+string — shall name the faulty config key in its diagnostic.
+The `playbook` launcher shall forward its resolved — or injected —
+user-config path to the `run` subcommand, so both surfaces read one
+file under the same environment and home overrides.
+The `run` subcommand shall accept an injected user-config path so
+tests can drive config defaults in isolation, like the injected
+session store ([PBCLI-23](#pbcli-23)).

@@ -147,7 +147,8 @@ including the `resume` form — and exit `0`.
 ### PBCLI-19
 
 Where `playbook run` binds agents, every required role and the captain
-shall default to adapter `claude`.
+shall default to adapter `claude`, unless the user config supplies a
+run default for it ([PBCLI-28](#pbcli-28)).
 `--player <role>=<agent>` shall bind a required role and `--captain
 <agent>` shall set the captain agent, where `<agent>` is
 `<adapter>[:<model>][@<effort>]` — an adapter shorthand such as
@@ -190,6 +191,33 @@ a persisted session the current module can no longer resume, or a
 `--player`, `--captain`, `--option`, or `--cwd` flag on `resume` —
 bindings are stored with the session — shall print a diagnostic and
 exit `1`.
+
+### PBCLI-28
+
+Where the config file at the resolved top-level path
+([PBCLI-3](#pbcli-3)) carries a top-level `run` map, when
+`playbook run` binds agents for a first run, the command shall default
+each required role to the agent named by `run.players.<role>`, falling
+back to the `run.player` catch-all when that key is absent, and shall
+default the captain to `run.captain`; a role or captain that no `run`
+key covers shall keep the built-in `claude` default, and a `--player`
+or `--captain` flag ([PBCLI-19](#pbcli-19)) shall override the config
+default for its role or the captain.
+Each `run.captain`, `run.player`, and `run.players.<role>` value shall
+be an `<adapter>[:<model>][@<effort>]` agent string with the exact
+[PBCLI-19](#pbcli-19) grammar and validation.
+A `run.players` key naming a role the loaded entry does not require
+shall be ignored without a diagnostic — the config is global across
+playbooks — unlike an unrequired `--player` flag, which stays an
+error.
+When the config file is absent or carries no `run` map, the command
+shall keep the built-in `claude` defaults.
+An unparseable config file, a `run` or `run.players` value that is not
+a map, a non-string agent value, an invalid agent string, or an
+unsupported effort shall print a diagnostic and exit `1` before any
+agent runs.
+`playbook run resume` shall not read the `run` map: a resumed session
+rebuilds the lineup stored with it ([PBCLI-22](#pbcli-22)).
 
 ## Config overlays
 
