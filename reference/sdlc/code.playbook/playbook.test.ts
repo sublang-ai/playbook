@@ -767,6 +767,9 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
     expect(coderCalls.map((c) => c.opts.resume)).toEqual([false, 'r1']);
     const captainCalls = calls.filter((c) => c.role === 'captain');
     expect(
+      captainCalls.map(({ opts }) => Object.hasOwn(opts, 'allowedTools')),
+    ).toEqual([false, true, true]);
+    expect(
       captainCalls.map(({ opts }) => ({
         resume: opts.resume,
         ...(Object.hasOwn(opts, 'allowedTools')
