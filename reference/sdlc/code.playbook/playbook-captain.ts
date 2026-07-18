@@ -650,7 +650,9 @@ export function createPlaybookCaptainShell(
         {
           visibility: options.visibility,
           resume: options.resume,
-          allowedTools: options.allowedTools,
+          ...(options.allowedTools === undefined
+            ? {}
+            : { allowedTools: options.allowedTools }),
         },
         signal,
       );

@@ -60,8 +60,10 @@ the TypeScript projection of
 `PlayerResult` shall expose optional `resumeToken`, `PlayerCallOptions`
 shall require `resume: string | false`, `CaptainResult.status` shall be the
 same union without a resume token, `CaptainCallOptions` shall require
-`visibility: 'visible' | 'hidden'`, `resume: string | false`, and
-`allowedTools: readonly string[]`, `PlaybookRuntime.init` shall
+`visibility: 'visible' | 'hidden'` and `resume: string | false`, and shall
+expose optional `allowedTools?: readonly string[]` so an explicit empty list
+requests tool isolation while omission preserves the host Captain's configured
+tools. `PlaybookRuntime.init` shall
 accept a `PlaybookSession`, and `PlaybookPorts` shall declare exactly
 the members `callPlayer`,
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and

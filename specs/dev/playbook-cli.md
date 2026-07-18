@@ -191,7 +191,8 @@ bound role's agent through a per-role `Cligent`, threading each call's
 `resumeToken` into the next `resume`; `callJudge` and `callCaptain` run
 the captain agent, `callJudge` always starts a fresh session with an
 explicit empty tool allowlist, and `callCaptain` forwards its requested
-resume and tool-allowlist options exactly; `callPlaybook`
+resume and tool-allowlist options exactly, preserving omission rather than
+creating an own `allowedTools: undefined` property; `callPlaybook`
 shall return a suspended start with a fresh synthetic child-session id
 without launching a child, so the linked runtime reports the nested pause
 that the one-shot host cannot answer; `emitStatus` shall write to stderr

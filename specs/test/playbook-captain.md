@@ -96,7 +96,8 @@ valid CODE options do not construct a runtime until engagement;
 `code-reviewer`; CODE judge calls reach `context.callCaptain` with
 their requested hidden visibility and isolation options; a runtime
 `callCaptain` reaches `context.callCaptain` with its exact prompt and
-requested visibility, resume, and tool-allowlist options and
+requested visibility and resume, preserving either an explicit tool allowlist
+or its omission, and
 returns Captain status, final text, or error without a player resume token;
 and compiled Captain work, lifecycle classification, shell-owned visible
 calls, and sub-runtime judge calls use the same Captain configuration and

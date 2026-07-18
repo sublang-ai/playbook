@@ -382,7 +382,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             const result = await callCaptainQueued(frame, activeContext, prompt, {
                 visibility: options.visibility,
                 resume: options.resume,
-                allowedTools: options.allowedTools,
+                ...(options.allowedTools === undefined
+                    ? {}
+                    : { allowedTools: options.allowedTools }),
             }, signal);
             return {
                 status: result.status,

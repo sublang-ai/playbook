@@ -133,10 +133,10 @@ to host players `code-coder` and `code-reviewer`.
 The wrapper shall route a sub-runtime `callPlayer(localRole, …,
 { resume })` to `context.callPlayer(<id>-<localRole>, …,
 { resume })`, return the host result's `resumeToken`, route sub-runtime
-`callCaptain(prompt, signal, { visibility, resume, allowedTools })` through
-the shared Captain queue to
-`context.callCaptain(prompt, { visibility, resume, allowedTools })`,
-preserving the requested options and returning Playbook's Captain status,
+`callCaptain(prompt, signal, options)` through the shared Captain queue to
+`context.callCaptain(prompt, options)`, preserving the required `visibility`
+and `resume` selections and whether optional `allowedTools` was supplied or
+omitted, and return Playbook's Captain status,
 final text, and error without player or resume-token fields, route
 sub-runtime `callJudge` through that same queue to hidden
 `context.callCaptain`, route `callPlaybook` through the stack protocol

@@ -22,7 +22,7 @@ export interface PlayerCallOptions {
 export interface CaptainCallOptions {
   visibility: 'visible' | 'hidden';
   resume: string | false;
-  allowedTools: readonly string[];
+  allowedTools?: readonly string[];
 }
 
 export interface CaptainResult {

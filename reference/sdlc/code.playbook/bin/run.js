@@ -321,7 +321,9 @@ async function driveTurn({ ctx, runtime, store, text, json, verbose, restoreFrom
     async callCaptain(prompt, signal, callOptions) {
       const result = await captainAgent.run(prompt, {
         resume: callOptions?.resume,
-        allowedTools: callOptions?.allowedTools,
+        ...(callOptions?.allowedTools === undefined
+          ? {}
+          : { allowedTools: callOptions.allowedTools }),
         signal,
       });
       return {

@@ -188,7 +188,7 @@ interface PlayerCallOptions {
 interface CaptainCallOptions {
   visibility: 'visible' | 'hidden';
   resume: string | false;
-  allowedTools: readonly string[];
+  allowedTools?: readonly string[];
 }
 
 interface PlayerResult {
@@ -252,6 +252,9 @@ Captain). A transformation-performing Captain — e.g. a compiler phase compiled
 from a transformation-spec source, whose behavior writes a declared target
 artifact — works through the host Captain's own tools, so its calls shall
 carry no `allowedTools` restriction.
+Accordingly, `CaptainCallOptions.allowedTools` is optional: an explicit empty
+array requests a tool-free call, while omission preserves the host Captain's
+configured tools.
 `CaptainResult` carries no resume token or player-continuation selection.
 A non-`ok`
 result, or an `ok` result without `finalText`, shall reject the actor through
@@ -368,6 +371,9 @@ The trace types are `session.started`, `boss.input.received`,
 `boss.input.settled`, and `session.disposed`.
 Call pairs carry exact prompts and replies, normalized failures, actor and state
 identity, and their boundary-specific options.
+Direct-Captain start and finish payloads shall carry `allowedTools` exactly when
+the originating `CaptainCallOptions` selects it and shall omit the member when
+the call preserves the host Captain's configured tools.
 `session.started` and `session.disposed` carry their descriptor as top-level
 `state` and its singular `stateId` when present. Every judge start and finish
 carries the working snapshot's singular `stateId` when one exists;

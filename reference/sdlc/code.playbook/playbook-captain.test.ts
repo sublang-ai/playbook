@@ -1526,6 +1526,16 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
         }),
       );
       observed.push(
+        await runtime.ports.callCaptain(
+          'unrestricted captain prompt',
+          runtimeTurn.signal,
+          {
+            visibility: 'visible',
+            resume: false,
+          },
+        ),
+      );
+      observed.push(
         await runtime.ports.callJudge('judge prompt', runtimeTurn.signal),
       );
     });
@@ -1555,14 +1565,33 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
         },
       },
       {
+        prompt: 'unrestricted captain prompt',
+        options: {
+          visibility: 'visible',
+          resume: false,
+        },
+      },
+      {
         prompt: 'judge prompt',
         options: ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
       },
     ]);
+    const unrestrictedCaptainCall = context.captainCalls.find(
+      ({ prompt }) => prompt === 'unrestricted captain prompt',
+    );
+    expect(
+      unrestrictedCaptainCall?.options === undefined
+        ? undefined
+        : Object.hasOwn(unrestrictedCaptainCall.options, 'allowedTools'),
+    ).toBe(false);
     expect(observed).toEqual([
       {
         status: 'ok',
         finalText: 'player code-coder done',
+      },
+      {
+        status: 'ok',
+        finalText: 'captain done',
       },
       {
         status: 'ok',

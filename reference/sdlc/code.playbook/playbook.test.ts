@@ -732,6 +732,10 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
     const entry = runEntry(async (ports, turn) => {
       const a = await ports.callPlayer('coder', 'p1', turn.signal, { resume: false });
       const b = await ports.callPlayer('coder', 'p2', turn.signal, { resume: a.resumeToken });
+      await ports.callCaptain('transform', turn.signal, {
+        visibility: 'visible',
+        resume: false,
+      });
       await ports.callCaptain('route', turn.signal, {
         visibility: 'hidden',
         resume: false,
@@ -765,9 +769,12 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
     expect(
       captainCalls.map(({ opts }) => ({
         resume: opts.resume,
-        allowedTools: opts.allowedTools,
+        ...(Object.hasOwn(opts, 'allowedTools')
+          ? { allowedTools: opts.allowedTools }
+          : {}),
       })),
     ).toEqual([
+      { resume: false },
       { resume: false, allowedTools: [] },
       { resume: false, allowedTools: [] },
     ]);

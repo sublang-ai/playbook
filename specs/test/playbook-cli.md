@@ -113,7 +113,8 @@ bound for each required role and threads the returned resume token into
 the next call; the depth-zero session uses one fresh UUID as both its
 session and root-session id; a relative `<from>` file path resolves from
 the caller's process working directory; `callCaptain` requesting
-isolation and every `callJudge` run fresh and tool-free; player and
+isolation and every `callJudge` run fresh and tool-free, while a
+`callCaptain` that omits `allowedTools` preserves that omission; player and
 Captain failures omit absent optional text fields; the default Cligent drain
 preserves `text` and `text_delta` output when terminal `done` omits a
 `result`; the `--option` slice reaches the entry's `validateOptions`; a
