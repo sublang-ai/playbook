@@ -44,6 +44,9 @@ export async function runPlaybookCli(options = {}) {
   const stdout = options.stdout ?? process.stdout;
   const stderr = options.stderr ?? process.stderr;
   const loadModule = options.loadModule ?? ((specifier) => import(specifier));
+  const home = options.homeDir ?? env.HOME ?? homedir();
+  const userConfigPath =
+    options.userConfigPath ?? resolveUserConfigPath(env, home);
 
   // PBCLI-18: `playbook run ...` is the non-interactive one-shot path; it
   // never seeds, composes, resolves tmux-play, or launches it.
@@ -53,6 +56,9 @@ export async function runPlaybookCli(options = {}) {
       argv: argv.slice(1),
       stdout,
       stderr,
+      // PBCLI-29: the run host reads the same user config as the launcher,
+      // honoring any injected env, home, or explicit path.
+      userConfigPath,
       ...(options.loadModule ? { loadModule: options.loadModule } : {}),
       ...(options.createAgent ? { createAgent: options.createAgent } : {}),
       ...(options.readStdin ? { readStdin: options.readStdin } : {}),
@@ -62,8 +68,6 @@ export async function runPlaybookCli(options = {}) {
 
   const spawnFn = options.spawn ?? spawn;
   const tmuxPlayBin = options.tmuxPlayBin ?? resolveTmuxPlayBin();
-  const home = options.homeDir ?? env.HOME ?? homedir();
-  const userConfigPath = resolveUserConfigPath(env, home);
 
   // PBCLI-6: `--help` / `-h` print help and exit 0 without seeding,
   // composing, or launching.

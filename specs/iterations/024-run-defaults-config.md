@@ -9,18 +9,18 @@ Implement DR-017: `playbook run` takes default player and captain agent specs fr
 
 ## Deliverables
 
-- [ ] `playbook run` resolves each required role as `--player` > `run.players.<role>` > `run.player` > `claude` and the captain as `--captain` > `run.captain` > `claude`, ignoring unrequired `run.players` roles and failing closed on a malformed `run` block, while `resume` keeps the stored lineup.
-- [ ] The launcher forwards its resolved or injected user-config path to the run host, and the config template documents a commented `run` block.
-- [ ] Acceptance tests pin the precedence chain, catch-all, ignore-unrequired, fail-closed, resume-immunity, and absent-file paths over a hermetic injected user-config path.
-- [ ] README, CHANGELOG, and `specs/map.md` document the feature.
+- [x] `playbook run` resolves each required role as `--player` > `run.players.<role>` > `run.player` > `claude` and the captain as `--captain` > `run.captain` > `claude`, ignoring unrequired `run.players` roles and failing closed on a malformed `run` block, while `resume` keeps the stored lineup.
+- [x] The launcher forwards its resolved or injected user-config path to the run host, and the config template documents a commented `run` block.
+- [x] Acceptance tests pin the precedence chain, catch-all, ignore-unrequired, fail-closed, resume-immunity, and absent-file paths over a hermetic injected user-config path.
+- [x] README, CHANGELOG, and `specs/map.md` document the feature.
 
 ## Tasks
 
 1. **Author DR-017 and the spec surface.** _[done]_
    DR-017, this iteration, amended PBCLI-19, and new PBCLI-28/PBCLI-29/PBCLI-30 precede code changes.
-2. **Load run defaults in the one-shot host.** _[pending]_
+2. **Load run defaults in the one-shot host.** _[done]_
    `loadRunDefaults` over the resolved user config in `bin/run.js`, the per-role and captain precedence chains in the first-run bind, launcher forwarding of the injected config path in `bin/playbook.js`, the amended run help text, and the template's commented `run` block.
-3. **Pin acceptance tests.** _[pending]_
+3. **Pin acceptance tests.** _[done]_
    PBCLI-30 clauses in `playbook.test.ts` over the injected agent factory and a hermetic injected user-config path, made standard for every run-path invocation so no test reads a developer's real config.
 
 ## Acceptance criteria

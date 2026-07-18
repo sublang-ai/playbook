@@ -66,3 +66,14 @@ playbooks:
 #      host: claude-opus
 #      participant: codex-gpt
 #    committer: host
+
+# Non-interactive `playbook run` defaults (optional). Each value is an
+# agent string <adapter>[:<model>][@<effort>]; `player` is the catch-all
+# for any required role without its own `players.<role>` entry, across
+# every playbook. Flags override per role (--player / --captain), and
+# `playbook run resume` keeps the lineup stored with the parked session.
+#run:
+#  captain: claude:claude-opus-4-8@high
+#  player: claude:claude-opus-4-8@high
+#  players:
+#    coder: claude:claude-opus-4-8[1m]@xhigh

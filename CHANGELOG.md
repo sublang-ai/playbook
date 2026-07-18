@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`playbook run` can take its default lineup from the user config.** A top-level `run:` block in `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` supplies default `<adapter>[:<model>][@<effort>]` agent strings — `run.captain`, per-role `run.players.<role>`, and a `run.player` catch-all for any required role not bound below — so a tuned one-shot lineup no longer needs retyping on every invocation. Flags still win per role, a `run.players` role the loaded playbook does not require is ignored (one global config serves every playbook), a malformed `run` block fails the run closed with a diagnostic, and `playbook run resume` keeps the lineup stored with the parked session ([DR-017](specs/decisions/017-run-defaults-config.md), [PBCLI-28](specs/user/playbook-cli.md#pbcli-28)).
+
 ## [1.0.0] - 2026-07-18
 
 ### Added

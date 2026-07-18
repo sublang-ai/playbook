@@ -149,7 +149,14 @@ and the captain default to `claude`; bind them with
 `claude@high` for the default model at high reasoning effort; the
 model keeps every interior colon (`opencode:ollama/llama3:8b@max`),
 and unsupported efforts are rejected up front naming the adapter's
-supported values. Pass a playbook option with
+supported values. To stop retyping those flags, set durable defaults
+once in the user config's top-level `run:` block — `run.captain`,
+`run.players.<role>`, and a `run.player` catch-all for any other
+required role, each the same agent string; flags keep winning per
+role, and `resume` always keeps the lineup stored with the parked
+session ([PBCLI-28](specs/user/playbook-cli.md#pbcli-28),
+[DR-017](specs/decisions/017-run-defaults-config.md)). Pass a
+playbook option with
 `--option <key>=<value>`, and add `--json` to print one JSON envelope
 (`outcome`, `sessionId`, and the output or pending questions) instead
 of plain text. It exits `0` on a terminal outcome, `2` on failure, `3`

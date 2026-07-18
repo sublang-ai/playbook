@@ -677,6 +677,16 @@ function fakeAgents(scripts: Record<string, PortRun>) {
   return { createAgent, calls, created };
 }
 
+// PBCLI-29/30: every run-path invocation injects a hermetic user-config
+// path by default — a real `${XDG_CONFIG_HOME}/playbook/playbook.config.yaml`
+// on the developer machine must never leak its `run` defaults into the
+// suite. The path stays absent unless a test overrides it via `extra`.
+const ABSENT_USER_CONFIG = join(
+  tmpdir(),
+  'playbook-cli-test-no-user-config',
+  'playbook.config.yaml',
+);
+
 async function runCli(
   argv: string[],
   modules: Record<string, unknown>,
@@ -691,6 +701,7 @@ async function runCli(
     loadModule: loader(modules),
     createAgent,
     ...(readStdin ? { readStdin } : {}),
+    userConfigPath: ABSENT_USER_CONFIG,
     ...extra,
     stdout: stdout as never,
     stderr: stderr as never,
@@ -889,6 +900,7 @@ describe('playbook run — non-interactive (PBCLI-21)', () => {
     const result = await runPlaybookCli({
       argv: ['run', from, 'x'],
       createAgent,
+      userConfigPath: ABSENT_USER_CONFIG,
       stdout: stdout as never,
       stderr: stderr as never,
     });
@@ -1640,6 +1652,315 @@ describe('playbook run — per-run effort (PBCLI-27)', () => {
       model: 'm-coder',
       effort: 'xhigh',
     });
+  });
+});
+
+// PBCLI-30: config-driven run defaults (DR-017) — the user config's
+// top-level `run` block over an injected hermetic user-config path.
+
+describe('playbook run — config defaults (PBCLI-30)', () => {
+  async function writeRunConfig(lines: string[]): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-run-config-'));
+    tempDirs.push(dir);
+    const path = join(dir, 'playbook.config.yaml');
+    await writeFile(path, `${lines.join('\n')}\n`, 'utf8');
+    return path;
+  }
+
+  function terminalEntry() {
+    return runEntry(async () => ({ outcome: 'terminal', state: {}, output: 'ok' }));
+  }
+
+  function byRole(created: any[], role: string) {
+    return created.find((spec: any) => spec.role === role);
+  }
+
+  it('binds captain and per-role defaults from the config run block', async () => {
+    const userConfigPath = await writeRunConfig([
+      'run:',
+      '  captain: claude:m-cap@high',
+      '  players:',
+      '    coder: codex:gpt-5.5@xhigh',
+    ]);
+    const { createAgent, created } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: terminalEntry() } },
+      createAgent,
+      undefined,
+      { userConfigPath },
+    );
+
+    expect(out.code).toBe(0);
+    expect(byRole(created, 'captain')).toMatchObject({
+      adapter: 'claude',
+      model: 'm-cap',
+      effort: 'high',
+    });
+    expect(byRole(created, 'coder')).toMatchObject({
+      adapter: 'codex',
+      model: 'gpt-5.5',
+      effort: 'xhigh',
+    });
+    // A role no run key covers keeps the built-in claude default.
+    const reviewer = byRole(created, 'reviewer');
+    expect(reviewer).toMatchObject({ adapter: 'claude' });
+    expect(reviewer.model).toBeUndefined();
+    expect(reviewer.effort).toBeUndefined();
+  });
+
+  it('applies the run.player catch-all to every role without its own entry', async () => {
+    const userConfigPath = await writeRunConfig([
+      'run:',
+      '  player: codex:m-all@xhigh',
+    ]);
+    const { createAgent, created } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: terminalEntry() } },
+      createAgent,
+      undefined,
+      { userConfigPath },
+    );
+
+    expect(out.code).toBe(0);
+    for (const role of ['coder', 'reviewer']) {
+      expect(byRole(created, role)).toMatchObject({
+        adapter: 'codex',
+        model: 'm-all',
+        effort: 'xhigh',
+      });
+    }
+    // The catch-all covers players only, not the captain.
+    const captain = byRole(created, 'captain');
+    expect(captain).toMatchObject({ adapter: 'claude' });
+    expect(captain.model).toBeUndefined();
+  });
+
+  it('lets a flag beat the config default for its role and the captain', async () => {
+    const userConfigPath = await writeRunConfig([
+      'run:',
+      '  captain: claude:m-cfg-cap@high',
+      '  players:',
+      '    coder: codex:m-cfg@xhigh',
+    ]);
+    const { createAgent, created } = fakeAgents({});
+
+    const out = await runCli(
+      [
+        'run', 'mod://code', 'x',
+        '--player', 'coder=claude:m-flag',
+        '--captain', 'codex:m-flag-cap@xhigh',
+      ],
+      { 'mod://code': { default: terminalEntry() } },
+      createAgent,
+      undefined,
+      { userConfigPath },
+    );
+
+    expect(out.code).toBe(0);
+    const coder = byRole(created, 'coder');
+    expect(coder).toMatchObject({ adapter: 'claude', model: 'm-flag' });
+    expect(coder.effort).toBeUndefined();
+    expect(byRole(created, 'captain')).toMatchObject({
+      adapter: 'codex',
+      model: 'm-flag-cap',
+      effort: 'xhigh',
+    });
+  });
+
+  it('prefers run.players.<role> over the run.player catch-all', async () => {
+    const userConfigPath = await writeRunConfig([
+      'run:',
+      '  player: claude:m-catch@high',
+      '  players:',
+      '    coder: codex:m-role@xhigh',
+    ]);
+    const { createAgent, created } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: terminalEntry() } },
+      createAgent,
+      undefined,
+      { userConfigPath },
+    );
+
+    expect(out.code).toBe(0);
+    expect(byRole(created, 'coder')).toMatchObject({
+      adapter: 'codex',
+      model: 'm-role',
+      effort: 'xhigh',
+    });
+    expect(byRole(created, 'reviewer')).toMatchObject({
+      adapter: 'claude',
+      model: 'm-catch',
+      effort: 'high',
+    });
+  });
+
+  it('ignores a run.players role the entry does not require', async () => {
+    const userConfigPath = await writeRunConfig([
+      'run:',
+      '  players:',
+      '    wizard: codex:m-wizard@xhigh',
+    ]);
+    const { createAgent, created } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: terminalEntry() } },
+      createAgent,
+      undefined,
+      { userConfigPath },
+    );
+
+    expect(out.code).toBe(0);
+    expect(out.stderr).not.toContain('wizard');
+    expect(byRole(created, 'coder')).toMatchObject({ adapter: 'claude' });
+    expect(byRole(created, 'reviewer')).toMatchObject({ adapter: 'claude' });
+    expect(created.some((spec: any) => spec.model === 'm-wizard')).toBe(false);
+  });
+
+  it('rejects an unsupported config effort naming the supported values before any factory call', async () => {
+    const userConfigPath = await writeRunConfig([
+      'run:',
+      '  players:',
+      '    coder: claude:m@turbo',
+    ]);
+    const { createAgent, created } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: terminalEntry() } },
+      createAgent,
+      undefined,
+      { userConfigPath },
+    );
+
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('does not support effort "turbo"');
+    expect(out.stderr).toContain('supported:');
+    expect(created).toHaveLength(0);
+  });
+
+  it('fails closed on a malformed config, non-map blocks, and non-string values', async () => {
+    const { createAgent, created } = fakeAgents({});
+    const modules = { 'mod://code': { default: terminalEntry() } };
+    const run = (userConfigPath: string) =>
+      runCli(['run', 'mod://code', 'x'], modules, createAgent, undefined, {
+        userConfigPath,
+      });
+
+    const unparseable = await run(await writeRunConfig(['run: [unclosed']));
+    expect(unparseable.code).toBe(1);
+    expect(unparseable.stderr).toContain('cannot parse config');
+
+    const scalarRun = await run(await writeRunConfig(['run: fast']));
+    expect(scalarRun.code).toBe(1);
+    expect(scalarRun.stderr).toContain('run must be a map');
+
+    const scalarPlayers = await run(
+      await writeRunConfig(['run:', '  players: coder']),
+    );
+    expect(scalarPlayers.code).toBe(1);
+    expect(scalarPlayers.stderr).toContain('run.players must be a map');
+
+    const nonString = await run(
+      await writeRunConfig(['run:', '  captain:', '    adapter: claude']),
+    );
+    expect(nonString.code).toBe(1);
+    expect(nonString.stderr).toContain('run.captain');
+
+    const emptyEffort = await run(
+      await writeRunConfig(['run:', '  player: "claude@"']),
+    );
+    expect(emptyEffort.code).toBe(1);
+    expect(emptyEffort.stderr).toContain('run.player');
+    expect(emptyEffort.stderr).toContain('empty effort');
+
+    expect(created).toHaveLength(0);
+  });
+
+  it('resume rebuilds the stored lineup and ignores the current config', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const parkedConfig = await writeRunConfig([
+      'run:',
+      '  players:',
+      '    coder: claude:m-parked@xhigh',
+    ]);
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      { result: { outcome: 'terminal', state: {}, output: 'ok' } },
+    ]);
+    const modules = { 'mod://code': { default: entry } };
+    const first = fakeAgents({});
+
+    await runCli(['run', 'mod://code', 'x'], modules, first.createAgent, undefined, {
+      sessionsDir,
+      userConfigPath: parkedConfig,
+    });
+    const sessionId = record.inits[0].sessionId;
+    // The parked record stores the config-sourced spec like a flag-bound one.
+    const stored = JSON.parse(
+      await readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'),
+    );
+    expect(stored.players.coder).toEqual({
+      adapter: 'claude',
+      model: 'm-parked',
+      effort: 'xhigh',
+    });
+
+    const changedConfig = await writeRunConfig([
+      'run:',
+      '  captain: codex:m-changed@xhigh',
+      '  player: codex:m-changed@xhigh',
+    ]);
+    const resumed = fakeAgents({});
+    const out = await runCli(
+      ['run', 'resume', sessionId, 'answer'],
+      modules,
+      resumed.createAgent,
+      undefined,
+      { sessionsDir, userConfigPath: changedConfig },
+    );
+
+    expect(out.code).toBe(0);
+    expect(byRole(resumed.created, 'coder')).toMatchObject({
+      adapter: 'claude',
+      model: 'm-parked',
+      effort: 'xhigh',
+    });
+    const captain = byRole(resumed.created, 'captain');
+    expect(captain).toMatchObject({ adapter: 'claude' });
+    expect(captain.model).toBeUndefined();
+    expect(
+      resumed.created.some((spec: any) => spec.model === 'm-changed'),
+    ).toBe(false);
+  });
+
+  it('keeps the claude defaults when the config file is absent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-run-config-'));
+    tempDirs.push(dir);
+    const { createAgent, created } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: terminalEntry() } },
+      createAgent,
+      undefined,
+      { userConfigPath: join(dir, 'playbook.config.yaml') },
+    );
+
+    expect(out.code).toBe(0);
+    for (const role of ['coder', 'reviewer', 'captain']) {
+      const spec = byRole(created, role);
+      expect(spec).toMatchObject({ adapter: 'claude' });
+      expect(spec.model).toBeUndefined();
+      expect(spec.effort).toBeUndefined();
+    }
   });
 });
 

@@ -27,6 +27,7 @@ import {
   isEffortSupported,
   supportedEffortValues,
 } from '@sublang/cligent';
+import { parse as parseYaml } from 'yaml';
 
 // PBCLI-19: adapter shorthands the run host can construct.
 const ADAPTER_LOADERS = {
@@ -61,6 +62,10 @@ export async function runPlaybookRun(options = {}) {
   const createAgent = options.createAgent ?? defaultCreateAgent;
   const readStdin = options.readStdin ?? readAllStdin;
   const sessionsDir = options.sessionsDir ?? defaultSessionsDir(process.env);
+  // PBCLI-28/29: config defaults come from the same user config file the
+  // interactive launcher resolves; tests inject a hermetic path.
+  const userConfigPath =
+    options.userConfigPath ?? (await defaultUserConfigPath());
   const ctx = {
     stdout,
     stderr,
@@ -69,6 +74,7 @@ export async function runPlaybookRun(options = {}) {
     createAgent,
     readStdin,
     sessionsDir,
+    userConfigPath,
   };
 
   let args;
@@ -105,9 +111,28 @@ async function runFirst(args, ctx) {
     return { code: EXIT.arg };
   }
 
-  // PBCLI-19: bind every required role, then the captain; defaults to claude.
+  // PBCLI-28 (DR-017): config-supplied defaults bind only a first run;
+  // runResume rebuilds the lineup stored with the session.
+  let runDefaults;
+  try {
+    runDefaults = await loadRunDefaults(ctx.userConfigPath);
+  } catch (error) {
+    stderr.write(`playbook run: ${message(error)}\n`);
+    return { code: EXIT.arg };
+  }
+
+  // PBCLI-19/28: bind every required role, then the captain — flag over
+  // config default over built-in claude. An unrequired run.players role is
+  // ignored (the config is global across playbooks); an unrequired
+  // --player flag stays an error below.
   const roleSpecs = new Map(
-    entry.requiredRoleIds.map((role) => [role, { adapter: DEFAULT_ADAPTER }]),
+    entry.requiredRoleIds.map((role) => [
+      role,
+      {
+        ...(runDefaults.players.get(role) ??
+          runDefaults.player ?? { adapter: DEFAULT_ADAPTER }),
+      },
+    ]),
   );
   for (const [role, spec] of args.players) {
     if (!roleSpecs.has(role)) {
@@ -116,7 +141,8 @@ async function runFirst(args, ctx) {
     }
     roleSpecs.set(role, spec);
   }
-  const captainSpec = args.captain ?? { adapter: DEFAULT_ADAPTER };
+  const captainSpec =
+    args.captain ?? runDefaults.captain ?? { adapter: DEFAULT_ADAPTER };
   const specError = specsDiagnostic([...roleSpecs.values(), captainSpec]);
   if (specError !== undefined) {
     stderr.write(`playbook run: ${specError}\n`);
@@ -586,6 +612,83 @@ function isAgentSpec(spec) {
   );
 }
 
+// PBCLI-29: the run host reads the same user config file the interactive
+// launcher resolves. The resolver is imported lazily: a static import of
+// ./playbook.js would deadlock the CLI entry — playbook.js is still
+// mid-evaluation of its own top-level await when it dynamically imports
+// this module, and a circular static edge back to it can never settle.
+// The launcher always injects userConfigPath, so this default runs only
+// for direct runPlaybookRun callers, where playbook.js is not evaluating.
+async function defaultUserConfigPath() {
+  const { resolveUserConfigPath } = await import('./playbook.js');
+  return resolveUserConfigPath(process.env, process.env.HOME ?? homedir());
+}
+
+// PBCLI-28/29 (DR-017): default agent specs for a first run, read from the
+// user config's top-level `run` map. An absent file or absent map is an
+// empty default set; a malformed file or block fails closed — the run must
+// never silently bind different agents than the user configured. Adapter
+// and effort support of the specs actually bound flow through the shared
+// specsDiagnostic path.
+async function loadRunDefaults(userConfigPath) {
+  const defaults = { players: new Map() };
+  let text;
+  try {
+    text = await readFile(userConfigPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return defaults;
+    throw new Error(`cannot read config ${userConfigPath}: ${message(error)}`);
+  }
+  let config;
+  try {
+    config = parseYaml(text);
+  } catch (error) {
+    throw new Error(`cannot parse config ${userConfigPath}: ${message(error)}`);
+  }
+  const run = isPlainMap(config) ? config.run : undefined;
+  if (run === undefined || run === null) return defaults;
+  if (!isPlainMap(run)) {
+    throw new Error(`${userConfigPath}: run must be a map of agent defaults`);
+  }
+  if (run.captain !== undefined) {
+    defaults.captain = parseAgentDefault(run.captain, 'run.captain', userConfigPath);
+  }
+  if (run.player !== undefined) {
+    defaults.player = parseAgentDefault(run.player, 'run.player', userConfigPath);
+  }
+  if (run.players !== undefined && run.players !== null) {
+    if (!isPlainMap(run.players)) {
+      throw new Error(
+        `${userConfigPath}: run.players must be a map of <role>: <agent>`,
+      );
+    }
+    for (const [role, value] of Object.entries(run.players)) {
+      defaults.players.set(
+        role,
+        parseAgentDefault(value, `run.players.${role}`, userConfigPath),
+      );
+    }
+  }
+  return defaults;
+}
+
+function parseAgentDefault(value, key, userConfigPath) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(
+      `${userConfigPath}: ${key} must be an <adapter>[:<model>][@<effort>] string`,
+    );
+  }
+  try {
+    return parseAgent(value);
+  } catch (error) {
+    throw new Error(`${userConfigPath}: ${key}: ${message(error)}`);
+  }
+}
+
+function isPlainMap(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 // PBCLI-23: the session store honors XDG_STATE_HOME at invocation time.
 export function defaultSessionsDir(env = process.env) {
   const stateHome =
@@ -877,7 +980,10 @@ function runHelpText() {
     '  <agent> is <adapter>[:<model>][@<effort>] over the shorthands',
     '  claude, codex, gemini, opencode — e.g. codex:gpt-5.5@xhigh, or',
     '  claude@high for the default model at high effort. Every role and',
-    '  the captain default to claude.',
+    '  the captain default to claude, unless a top-level run: block in',
+    '  ${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml',
+    '  supplies defaults — run.captain, run.players.<role>, or the',
+    '  run.player catch-all for other roles; flags override per role.',
     '',
     '  When a playbook needs a Boss reply, the run prints the question,',
     '  parks the session under',
