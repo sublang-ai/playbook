@@ -64,15 +64,11 @@ The compiled artifacts live under
 the [slc](https://github.com/sublang-ai/slc) compiler pipeline's
 `<basename>.<pipeline>/` output directory.
 
-> **Release status:** this README tracks `main`, which is heading to a
-> breaking, 1.0-oriented release. The latest published release is
-> [0.9.0](https://www.npmjs.com/package/@sublang/playbook) — it runs
-> the CODE reference end to end, but the compiled default Captain,
-> DISCUSS, nested playbook calls, the six-port runtime contract
-> (see [docs/embedding.md](docs/embedding.md)), and the non-interactive
-> `playbook run` with parked-session resume and per-run agent tuning
-> (`--with` overlays, effort in the run agent spec) are unreleased; see the
-> [CHANGELOG](CHANGELOG.md).
+> **Release status:** 1.0.0 is the first release of the composed system: the
+> compiled default Captain, CODE and DISCUSS, nested playbook calls, the
+> semver-stable six-port runtime contract (see
+> [docs/embedding.md](docs/embedding.md)), and non-interactive `playbook run`
+> with parked-session resume and per-run agent tuning.
 
 ### Requirements
 
@@ -315,9 +311,8 @@ globally.
 ### Running a Boss turn
 
 The Boss pane starts at the Playbook Captain shell. Use `/code <task>`
-to explicitly select the CODE playbook — on the published 0.9.0 this is
-the way in — or, on `main`, use ordinary text and let the compiled
-default Captain ask a material routing question or plan one or more
+to explicitly select the CODE playbook, or use ordinary text and let the
+compiled default Captain ask a material routing question or plan one or more
 enabled playbook calls. It cannot answer the initial intent directly;
 calls run sequentially so Captain can reassess after every child result
 and then return a concrete result or actionable conclusion. Once a turn

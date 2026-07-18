@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.10.0] - 2026-07-17
+## [1.0.0] - 2026-07-18
 
 ### Added
 
@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Breaking: the public `@sublang/playbook/runtime` contract now carries causal `PlaybookSession` identity, requires explicit player resume selection, returns structured run state, and adds `callCaptain`, `callPlaybook`, and `resumePlaybookCall`.** Hosts must implement the six-port boundary and nested-call start/resume protocol. Trace payloads advance to schema version 2 with visible Captain, nested-call, and session-causal pairs ([PBRT-34](specs/dev/playbook-runtime.md#pbrt-34), [PBRT-42](specs/dev/playbook-runtime.md#pbrt-42), [RELEASE-15](specs/dev/release.md#release-15)).
+- **Harden the public `slc/*` compiler contracts.** Transformation specs are now authoritative compiler sources; generated FSMs use loadable imports, quiescent initial states, lowercase default player bindings, erasable TypeScript, explicit `playbook.busy` tags, and a deterministic single-outcome default. Placeholder consumers require typed producers, generated bundles retain a loadable verification surface, and the optional public Captain tool allowlist follows the authored GEARS source so routing policies stay tool-free while transformation policies retain the tools needed to write their artifacts.
 - **Raise the registry dependency closure to cligent 0.15.** `@sublang/cligent` moves from `^0.13.0` to `^0.15.0`, and Playbook's direct `@anthropic-ai/claude-agent-sdk` floor moves from `^0.3.143` to `^0.3.154` to satisfy cligent 0.15's `>=0.3.154` peer requirement. The lockfile now installs the published pre-close lifecycle, explicit player resume, and fresh tool-free Captain-call contracts used by the source tree, so clean CI and contributor installs exercise the same surface as optional sibling-checkout development ([RELEASE-14](specs/dev/release.md#release-14)).
 
 ### Fixed
@@ -200,8 +201,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v0.10.0...HEAD
-[0.10.0]: https://github.com/sublang-ai/playbook/compare/v0.9.0...v0.10.0
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/sublang-ai/playbook/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/sublang-ai/playbook/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/sublang-ai/playbook/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/sublang-ai/playbook/compare/v0.6.0...v0.7.0

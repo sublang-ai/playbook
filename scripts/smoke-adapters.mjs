@@ -6,8 +6,8 @@ import { ClaudeCodeAdapter } from '@sublang/cligent/adapters/claude-code';
 import { CodexAdapter } from '@sublang/cligent/adapters/codex';
 
 const checks = [
-  ['claude (Captain + Coder in tmux-play.production.config.yaml)', new ClaudeCodeAdapter()],
-  ['codex (Reviewer in tmux-play.production.config.yaml)', new CodexAdapter()],
+  ['claude adapter SDK', new ClaudeCodeAdapter()],
+  ['codex adapter SDK', new CodexAdapter()],
 ];
 
 let failed = 0;

@@ -8,10 +8,8 @@ one host, and [spex](https://github.com/sublang-ai/spex) (the desktop
 app) is another. This guide shows how to wire a playbook runtime into
 your own host.
 
-> **Release note:** this guide tracks the `main` branch's composed
-> six-port contract. The latest published release, 0.9.0, still ships
-> the earlier four-port contract without `callCaptain` /
-> `callPlaybook`; see the [CHANGELOG](../CHANGELOG.md).
+> **Release note:** this guide targets the semver-stable 1.0 six-port
+> contract; see the [CHANGELOG](../CHANGELOG.md) for migration details.
 
 ## The runtime contract
 
@@ -50,7 +48,7 @@ declare const captainAdapter: {
       signal: AbortSignal;
       visibility: 'visible' | 'hidden';
       resume: string | false;
-      allowedTools: readonly string[];
+      allowedTools?: readonly string[];
     },
   ): Promise<CaptainResult>;
 };
@@ -76,18 +74,11 @@ const ports: PlaybookPorts = {
     // prior backend conversation. Return the adapter's next token.
     return { status: 'ok', finalText: 'done', resumeToken: 'next-token' };
   },
-  callCaptain: async (
-    prompt,
-    signal,
-    { visibility, resume, allowedTools },
-  ) => {
-    // Forward every option exactly. In particular, an adapter that cannot
-    // enforce visibility or an explicit empty allowlist must reject the call.
-    return await runCaptain(prompt, signal, {
-      visibility,
-      resume,
-      allowedTools,
-    });
+  callCaptain: async (prompt, signal, options) => {
+    // Forward every option exactly: omission preserves configured tools, while
+    // an explicit empty allowlist requests a tool-free call and must fail closed
+    // when the adapter cannot enforce it.
+    return await runCaptain(prompt, signal, options);
   },
   callJudge: async (prompt, signal) => {
     // Judge work is hidden control work: run it fresh and tool-free.
@@ -163,7 +154,8 @@ const url = import.meta.resolve('@sublang/playbook/slc/link.md');
 const link = await readFile(fileURLToPath(url), 'utf8');
 ```
 
-The three specs are [`slc/text2gears.md`](../slc/text2gears.md),
-[`slc/gears2fsm.md`](../slc/gears2fsm.md), and
+The four specs are [`slc/text2gears.md`](../slc/text2gears.md),
+[`slc/gears2fsm.md`](../slc/gears2fsm.md),
 [`slc/link.md`](../slc/link.md) — the FSM-to-runtime contract that
-`@sublang/playbook/runtime` projects into TypeScript.
+`@sublang/playbook/runtime` projects into TypeScript — and
+[`slc/optimize.md`](../slc/optimize.md).

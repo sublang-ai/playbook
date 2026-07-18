@@ -54,7 +54,7 @@ Verifies: [RELEASE-15](../dev/release.md#release-15), [RELEASE-16](../dev/releas
 
 The test suite shall fail unless `npm pack --dry-run` lists the
 `@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` `.js` and
-`.d.ts` artifacts and all three
+`.d.ts` artifacts and all four
 `slc/*.md` files among the packed contents, plus
 `reference/sdlc/captain.md`, `captain.gears.md`, and the Captain FSM and
 linked-runtime `.ts`, `.js`, and `.d.ts` artifacts under
