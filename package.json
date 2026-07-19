@@ -1,6 +1,6 @@
 {
   "name": "@sublang/playbook",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, and DISCUSS workflows driven by GEARS specs.",
   "license": "Apache-2.0",
@@ -124,6 +124,7 @@
     "@anthropic-ai/claude-agent-sdk": "^0.3.154",
     "@openai/codex-sdk": "^0.139.0",
     "@sublang/cligent": "^0.15.0",
+    "@sublang/spex": "^0.3.0",
     "p-queue": "^9.3.1",
     "xstate": "^5.19.4",
     "yaml": "^2.9.0"

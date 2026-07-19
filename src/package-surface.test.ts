@@ -117,6 +117,44 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
   });
 });
 
+describe('GEARS grammar provenance (RELEASE-23)', () => {
+  const SPEX_DEP = '@sublang/spex';
+  const GRAMMAR_SPECS = [
+    '@sublang/spex/scaffold/specs/meta.md',
+    '@sublang/spex/scaffold/i18n/zh/specs/meta.md',
+  ];
+
+  it('declares @sublang/spex on a caret range no lower than 0.3.0', () => {
+    const specifier = pkg.dependencies[SPEX_DEP];
+    const lockEntry = lockfile.importers['.'].dependencies[SPEX_DEP];
+
+    expect(specifier).toMatch(/^\^\d+\.\d+\.\d+$/);
+    const [major, minor] = specifier.slice(1).split('.').map(Number);
+    expect(major > 0 || (major === 0 && minor >= 3)).toBe(true);
+    expect(lockEntry.specifier).toBe(specifier);
+  });
+
+  it('resolves both GEARS definition localizations from the repo root', () => {
+    const script = `
+      import { readFileSync } from 'node:fs';
+      import { fileURLToPath } from 'node:url';
+      for (const name of ${JSON.stringify(GRAMMAR_SPECS)}) {
+        const url = import.meta.resolve(name);
+        if (readFileSync(fileURLToPath(url), 'utf8').length === 0) {
+          throw new Error('empty GEARS definition: ' + name);
+        }
+      }
+      process.stdout.write('OK');
+    `;
+    const out = execFileSync(
+      process.execPath,
+      ['--input-type=module', '-e', script],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    expect(out).toBe('OK');
+  });
+});
+
 describe('public slc/* surface (RELEASE-17)', () => {
   // RELEASE-17 and the README name `import.meta.resolve` specifically.
   // vitest does not provide it (`__vite_ssr_import_meta__.resolve is not

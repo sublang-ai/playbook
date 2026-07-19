@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`playbook run` can take its default lineup from the user config.** A top-level `run:` block in `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` supplies default `<adapter>[:<model>][@<effort>]` agent strings — `run.captain`, per-role `run.players.<role>`, and a `run.player` catch-all for any required role not bound below — so a tuned one-shot lineup no longer needs retyping on every invocation. Flags still win per role, a `run.players` role the loaded playbook does not require is ignored (one global config serves every playbook), a malformed `run` block fails the run closed with a diagnostic, and `playbook run resume` keeps the lineup stored with the parked session ([DR-017](specs/decisions/017-run-defaults-config.md), [PBCLI-28](specs/user/playbook-cli.md#pbcli-28)).
 
+### Changed
+
+- **The GEARS grammar authority now ships with the package.** `slc/text2gears.md` cites the GEARS definition from the installed `@sublang/spex` dependency — `@sublang/spex/scaffold/specs/meta.md` (English) and `@sublang/spex/scaffold/i18n/zh/specs/meta.md` (Chinese), with the canonical sublang.ai renditions — instead of a root-relative `/specs/meta.md` link that rebound to whichever repo hosted a copy, and now states the unified language rule: an item's condition prose, prompts, and result descriptions follow the Source language while the four `Captain shall` clause forms, guard names, and the `Players:`/`Results:` labels stay fixed English machine syntax. `slc/optimize.md`'s script-clause note cites the same authority, and `@sublang/spex@^0.3.0` joins the runtime dependencies ([DR-018](specs/decisions/018-gears-grammar-provenance-from-spex.md), [RELEASE-22](specs/dev/release.md#release-22)).
+
 ## [1.0.0] - 2026-07-18
 
 ### Added

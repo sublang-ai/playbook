@@ -17,6 +17,9 @@ importers:
       '@sublang/cligent':
         specifier: ^0.15.0
         version: 0.15.0(@anthropic-ai/claude-agent-sdk@0.3.154(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.139.0)
+      '@sublang/spex':
+        specifier: ^0.3.0
+        version: 0.3.0
       p-queue:
         specifier: ^9.3.1
         version: 9.3.1
@@ -480,6 +483,11 @@ packages:
         optional: true
       '@opencode-ai/sdk':
         optional: true
+
+  '@sublang/spex@0.3.0':
+    resolution: {integrity: sha512-JtvPaMWJBDERWxP+Kl7JhKbGcZH6aOHIoAS0b4AXFeXMeP35nkFEoTcW1sCtqxqBQ4DrDLBSo8n/kuWXHxayVQ==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   '@types/chai@5.2.3':
     resolution: {integrity: sha512-Mw558oeA9fFbv65/y4mHtXDs9bPnFMZAL/jxdPFUpOHHIXX91mcgEHbS5Lahr+pwZFR8A7GQleRWeI6cGFC2UA==}
@@ -1391,6 +1399,8 @@ snapshots:
     optionalDependencies:
       '@anthropic-ai/claude-agent-sdk': 0.3.154(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@openai/codex-sdk': 0.139.0
+
+  '@sublang/spex@0.3.0': {}
 
   '@types/chai@5.2.3':
     dependencies:

@@ -56,9 +56,9 @@ For each eligible item, the pass shall:
 
 - Keep the item's ID, heading form, and condition text unchanged.
 - Replace the acting clause with the literal script form `Captain shall run:`.
-  Like guard names, the script clause is fixed machine syntax and stays in
-  this exact English form even when the surrounding item text is in another
-  language.
+  Like guard names, the script clause is fixed machine syntax [[1]] and
+  stays in this exact English form even when the surrounding item text is
+  in another language.
 - Replace the blockquoted prompt with the exact POSIX shell script that
   performs the behavior, static text only.
 - Emit exactly two `Results:` bullets per
@@ -86,3 +86,7 @@ with no `## Optimizations` section.
 - Reordering, merging, splitting, or deleting items.
 - Any change to prompts, conditions, or result contracts of items the pass
   does not rewrite.
+
+## References
+
+[1]: GEARS definition shipped by the installed `@sublang/spex` package: `@sublang/spex/scaffold/specs/meta.md` (English) and `@sublang/spex/scaffold/i18n/zh/specs/meta.md` (Chinese); canonical renditions [GEARS: AI-Ready Spec Syntax](https://sublang.ai/ref/gears-ai-ready-spec-syntax) (en) and [GEARS：面向 AI 的规约语法](https://sublang.ai/zh/ref/gears-ai-ready-spec-syntax) (zh)
