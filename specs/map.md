@@ -41,6 +41,7 @@ meta.md     The spec of specs
 | DR-015 | [015-per-run-agent-tuning.md](decisions/015-per-run-agent-tuning.md) | Per-run agent tuning: `<adapter>[:<model>][@<effort>]` in the `playbook run` agent spec and repeatable `--with <path>` top-level config overlays for the interactive launch |
 | DR-016 | [016-script-actors-and-optimize-pass.md](decisions/016-script-actors-and-optimize-pass.md) | Script actors and the GEARS optimize pass: optimizer-introduced `Captain shall run:` items, the runtime-internal `script` actor with mechanical exit-status guards and `playbook.script` telemetry, and the format-preserving `slc/optimize.md` definition |
 | DR-017 | [017-run-defaults-config.md](decisions/017-run-defaults-config.md) | Config-driven `playbook run` defaults: a top-level `run` block (`captain`, per-role `players`, `player` catch-all) in the user config with flag-over-config precedence, ignored unrequired roles, fail-closed malformed handling, and untouched resume |
+| DR-018 | [018-gears-grammar-provenance-from-spex.md](decisions/018-gears-grammar-provenance-from-spex.md) | GEARS grammar authority moves to the installed `@sublang/spex` scaffold definitions (English and Chinese, with the canonical URLs), with a unified Source-language rule, fixed-English machine syntax, and `@sublang/spex` in the runtime dependency closure |
 
 ## Iterations
 
@@ -68,6 +69,7 @@ meta.md     The spec of specs
 | IR-022 | [022-per-run-agent-tuning.md](iterations/022-per-run-agent-tuning.md) | Implement DR-015: effort in the `playbook run` agent grammar and `--with` config overlays, with acceptance tests |
 | IR-023 | [023-script-actors-and-optimize-pass.md](iterations/023-script-actors-and-optimize-pass.md) | Codify DR-016 in the maintained definitions: script behaviors in `text2gears.md`, the `script` actor in `gears2fsm.md`, script execution in `link.md`, and the new `optimize.md` pass shipped via `./slc/*` |
 | IR-024 | [024-run-defaults-config.md](iterations/024-run-defaults-config.md) | Implement DR-017: `run` block defaults for `playbook run` with per-role precedence, the `player` catch-all, fail-closed validation, resume immunity, and acceptance tests |
+| IR-025 | [025-gears-grammar-provenance.md](iterations/025-gears-grammar-provenance.md) | Implement DR-018: cite the GEARS grammar from the installed `@sublang/spex` package, codify the unified language rule, and pin the dependency and its resolution |
 
 ## Packages
 
@@ -127,8 +129,8 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [release.md](dev/release.md) | npm/GitHub release workflow, install closure, and semver-stable runtime, SLC, CLI, CODE/DISCUSS registry, and default `captain/playbook` package surfaces, including packed Captain source and compiled artifacts with no Captain registry export |
-| test | [release.md](test/release.md) | Integration tests for install closure, dependency/lock agreement, SLC resolution, packed runtime and Captain artifacts, and CLI/registry/`captain/playbook` exports with retired and internal-only surfaces absent |
+| dev | [release.md](dev/release.md) | npm/GitHub release workflow, install closure including the `@sublang/spex` GEARS-grammar dependency, and semver-stable runtime, SLC, CLI, CODE/DISCUSS registry, and default `captain/playbook` package surfaces, including packed Captain source and compiled artifacts with no Captain registry export |
+| test | [release.md](test/release.md) | Integration tests for install closure, dependency/lock agreement, SLC and `@sublang/spex` GEARS-definition resolution, packed runtime and Captain artifacts, and CLI/registry/`captain/playbook` exports with retired and internal-only surfaces absent |
 
 ### SKETCH
 

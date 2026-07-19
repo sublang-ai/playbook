@@ -148,6 +148,18 @@ Captain calls, first released together in `@sublang/cligent` 0.15.0;
 merely using a range that could admit a later compatible version shall
 not satisfy this requirement.
 
+### RELEASE-22
+
+The published `@sublang/playbook` package shall declare
+`@sublang/spex` as a regular runtime dependency with a caret SemVer
+range, so the GEARS definition files cited by the shipped `slc/*`
+specs ([RELEASE-16](#release-16)) —
+`@sublang/spex/scaffold/specs/meta.md` (English) and
+`@sublang/spex/scaffold/i18n/zh/specs/meta.md` (Chinese) — resolve
+from the installed module tree of every production install.
+The declared range's floor shall be at least `@sublang/spex` 0.3.0,
+the first release whose scaffold ships both localizations.
+
 ## Public surfaces
 
 ### RELEASE-15

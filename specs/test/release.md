@@ -36,6 +36,17 @@ pre-close `Captain.prepareDispose()` lifecycle and
 `CallCaptainOptions.allowedTools` accepted by
 `CaptainContext.callCaptain`.
 
+### RELEASE-23
+
+Verifies: [RELEASE-22](../dev/release.md#release-22)
+
+The test suite shall fail unless `package.json` declares
+`@sublang/spex` with a caret SemVer range whose floor is at least
+0.3.0, the root importer in `pnpm-lock.yaml` records the same
+specifier, and both `@sublang/spex/scaffold/specs/meta.md` and
+`@sublang/spex/scaffold/i18n/zh/specs/meta.md` resolve from the repo
+root to non-empty files.
+
 ## Public surfaces
 
 ### RELEASE-17
