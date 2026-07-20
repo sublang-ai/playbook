@@ -973,7 +973,7 @@ describe('direct-Captain actor over the shared factory', () => {
 
   it('preserves a direct-Captain result failure when its finish sink rejects', async () => {
     let finishAttempts = 0;
-    const { ports } = makeRecordingPorts({
+    const { ports, statuses } = makeRecordingPorts({
       callCaptain: async () => ({
         status: 'error',
         error: 'captain unavailable',
@@ -992,6 +992,13 @@ describe('direct-Captain actor over the shared factory', () => {
       runtime.handleBossInput(turn('release timing')),
     ).rejects.toThrow('captain unavailable');
     expect(finishAttempts).toBe(1);
+    expect(
+      statuses.find(({ message }) =>
+        message.startsWith('Workflow failed;'),
+      ),
+    ).toMatchObject({
+      data: { lastError: { message: 'captain unavailable' } },
+    });
     await runtime.dispose();
   });
 

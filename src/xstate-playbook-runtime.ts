@@ -1831,22 +1831,30 @@ export function createXStatePlaybookRuntime<TOptions>(
             // emission fails or triggers a coincident boundary abort.
             controlPlaneError ??= resultFailure;
           }
-          await emitTrace(
-            'captain.call.finished',
-            {
-              ...identity,
-              status: result.status,
-              ...(result.finalText !== undefined
-                ? { finalText: result.finalText }
-                : {}),
-              ...(result.error !== undefined
-                ? { error: normalizeError(result.error) }
-                : resultFailure !== undefined
-                  ? { error: normalizeError(resultFailure) }
+          try {
+            await emitTrace(
+              'captain.call.finished',
+              {
+                ...identity,
+                status: result.status,
+                ...(result.finalText !== undefined
+                  ? { finalText: result.finalText }
                   : {}),
-            },
-            position,
-          );
+                ...(result.error !== undefined
+                  ? { error: normalizeError(result.error) }
+                  : resultFailure !== undefined
+                    ? { error: normalizeError(resultFailure) }
+                    : {}),
+              },
+              position,
+            );
+          } catch (error) {
+            // Keep the finish-sink failure in the emission queue for public
+            // cleanup evidence, but do not replace an authoritative result
+            // failure on the invoked actor's XState onError path.
+            if (resultFailure !== undefined) throw resultFailure;
+            throw error;
+          }
           if (resultFailure !== undefined) {
             throw resultFailure;
           }
