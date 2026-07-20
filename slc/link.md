@@ -779,8 +779,9 @@ independent cleanup evidence.
 ## Script execution
 
 Where the FSM declares the typed `script` actor from
-[gears2fsm "Setup"](gears2fsm.md#setup), the linker shall provide its
-implementation inside the emitted module.
+[gears2fsm "Setup"](gears2fsm.md#setup), the linked runtime shall provide
+its implementation through the shared factory (§Output); the linker shall
+not regenerate a script executor inside each emitted module.
 A script invocation is the one actor kind that runs without any agent:
 it makes no `callPlayer`, `callCaptain`, or `callJudge` call and needs no
 adjudication.
@@ -791,7 +792,8 @@ The provided actor shall:
   (`sh -c`), with the working directory taken from the emitted
   `PlaybookRuntimeOptions.cwd` when the caller supplies it, else the process
   working directory. The linker shall declare the optional `cwd` option on the
-  emitted options interface whenever the FSM contains a script state.
+  emitted options interface whenever the FSM contains a script state; the
+  validated option reaches the shared script actor through the spec.
 - Resolve deterministically from the child's exit status: status zero resolves
   `{ guard: <first declared guard>, exitStatus: 0 }`; any nonzero status
   resolves the second declared guard with that status. Guard selection is
@@ -816,9 +818,9 @@ them in machine context, prompts, or trace payloads.
 
 Where the FSM declares the typed `playbook` actor from
 [gears2fsm](gears2fsm.md#nested-playbook-calls), the linked runtime shall provide
-it with the shared `createNestedPlaybookBridge(...).actorLogic`; it shall not
-regenerate a second pending-call, identity-validation, or abort-cleanup
-substrate inside each linked artifact.
+it with the shared `createNestedPlaybookBridge(...).actorLogic` — wired by the
+shared factory per §Output — and shall not regenerate a second pending-call,
+identity-validation, or abort-cleanup substrate inside each linked artifact.
 Instantiate the generic bridge with the FSM-exported `PlaybookInput` type so
 XState `.provide(...)` receives the exact declared actor input rather than a
 structurally similar local type.
@@ -1227,7 +1229,19 @@ The `playbook.trace` copies are the host-agnostic runtime-boundary record requir
 
 ## Output
 
-The link compiler emits **one** TypeScript module that:
+The link compiler emits **one thin** TypeScript module per playbook.
+The FSM-interpreter machinery — actor wiring, boundary tracing, Boss-event
+mapping, adjudication, script execution, nested-playbook bridging, session
+lifecycle, abort handling, and the optional parked-session snapshot
+capability — is not regenerated per artifact: it ships once as the shared
+`createXStatePlaybookRuntime(machine, spec)` factory exported by
+`@sublang/playbook/xstate-runtime`, and the emitted module hands its FSM and
+a small per-playbook `spec` to that factory. Every behavioral section of
+this definition still binds the emitted module's runtime; the shared factory
+is how the emitted module satisfies them, so a runtime fix ships as a
+package release instead of a re-link of every artifact.
+
+The emitted module:
 
 - Imports the FSM artifact by relative path with an extension-bearing
   runtime specifier. When the linked TypeScript is part of a package that
@@ -1240,34 +1254,46 @@ The link compiler emits **one** TypeScript module that:
   that strip cleanly, no constructor parameter properties, `enum`s, or
   namespaces — so a host running under type stripping loads it
   directly.
-- Imports XState's actor primitives (`createActor`, `fromPromise`,
-  `setup`'s `.provide`).
-- Imports `PQueue` from `p-queue` for its single serialized emission channel.
-- Imports the FSM's exported machine/actor input and output types and uses
-  those exact types in `.provide(...)`; it shall not redeclare look-alike
-  Captain, player, playbook, question, or output contracts beside the linked
-  runtime.
-- Imports the applicable shared helpers from the extension-bearing
-  `xstate-runtime.js` sibling of the resolved shared `--link` contract module,
-  with that sibling path relativized from the emitted artifact exactly as the
-  contract import is. Every runtime uses `assertJsonSafe`, `snapshotJsonValue`,
-  `snapshotPlaybookSession`, `normalizeError`,
-  `normalizePlaybookSnapshot`, and `waitForPlaybookQuiescence`; it additionally
-  imports `combineAbortSignals`, result validators, and
-  `createNestedPlaybookBridge` only when its actor and composition paths need
-  them. It shall use those helpers instead of emitting weaker local JSON,
-  error, snapshot, nested-call, or imperative-wait implementations.
-- Exports `createPlaybookRuntime` and the typed `PlaybookRuntimeOptions`
-  interface for that playbook.
+- Imports `createXStatePlaybookRuntime` (plus any shared strategy defaults
+  its `_internal` surface re-exports) from the shared engine module through
+  its bare package specifier `@sublang/playbook/xstate-runtime`, and the
+  contract types through `@sublang/playbook/runtime`. It shall not copy,
+  inline, or re-derive interpreter machinery — actor bridges, trace
+  emission, judge-JSON recovery, lifecycle guards — beside the factory
+  call, and shall not import `xstate`, `p-queue`, or `node:child_process`
+  itself; those are the shared engine's dependencies.
+- Declares and exports the typed `PlaybookRuntimeOptions` interface for that
+  playbook, derived from every required FSM input field that is not supplied
+  by `PlaybookSession` or another linker-owned source (§PlaybookRuntime
+  contract), plus the optional `cwd` option whenever the FSM contains a
+  `script` state (§Script execution).
+- Supplies the spec's `snapshotOptions` with the same options-validation
+  semantics previously generated inline: validate and JSON-snapshot the
+  caller's options, rejecting undeclared keys and non-conforming values, so
+  the factory binds an immutable options record before constructing any
+  actor.
+- Supplies in `spec` only what the factory cannot read from the FSM
+  artifact's own data: the deterministic textual entry event where
+  §Boss-event mapping prescribes deterministic entry, the transition-event
+  payload fields the FSM's Boss union declares, a non-default player binding
+  where the linker inputs supplied one, and any per-playbook strategy
+  override (classifier, prompt composers, required-field extraction,
+  status formatting) an earlier section of this definition requires for that
+  playbook. Everything else — player/script/captain/nested actor
+  provisioning, prompt composition, classification, adjudication, statuses,
+  resumable-state derivation — comes from the factory's generic defaults,
+  which implement the behavioral sections of this definition.
+- Default-exports the factory call as `createPlaybookRuntime`, typed
+  `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`.
 - Exposes, under an `_internal` export, the pure helpers verification
   needs — at least the player-prompt and Captain-prompt composers
-  (`composePlayerPrompt` and `composeCaptainPrompt`) — so
+  (`composePlayerPrompt` and `composeCaptainPrompt`), which may re-export
+  the shared defaults when the spec does not override composition — so
   compilation-correctness tests can exercise composition without a host.
 - Holds no host-specific types and no host primitive calls. The runtime
-  speaks only `PlaybookPorts` for every agent and host concern; the sole
-  exception is `node:child_process`, imported only when the FSM declares a
-  `script` actor, so §Script execution can run its deterministic commands
-  locally.
+  speaks only `PlaybookPorts` for every agent and host concern; the
+  `node:child_process` dependency of §Script execution lives in the shared
+  factory, not in the emitted module.
 - Records the linker inputs (FSM path, player binding, strategies) in a
   top-of-file header comment so the file is reproducible from the same
   inputs.
@@ -1276,12 +1302,12 @@ The link compiler emits **one** TypeScript module that:
   `PlaybookTraceEvent`,
   `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
   `PlaybookStateValue`, `PlaybookState`, `PlaybookRunResult`,
-  `PlaybookRuntime`, `PlaybookRuntimeFactory`) from a single shared
+  `PlaybookRuntime`, `PlaybookRuntimeFactory`) from the single shared
   type-only module instead of redefining them, and re-exports the names
   its consumers import, so every linked playbook shares one contract
-  definition. The shared module imports no FSM or host types, so the
+  definition. The shared modules import no FSM or host types, so the
   dependency runs one way — from each linked module to the shared
-  contract, never the reverse.
+  engine and contract, never the reverse.
 
 When a co-located integration test for the linked runtime already exists, the
 link compiler shall run it before reporting success and treat any failure as a
