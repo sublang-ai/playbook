@@ -469,6 +469,11 @@ schema version `1`, the playbook id, the parked state descriptor, the
 recorded player resume token, the live sequence counters, and one
 pending Boss question with the asking player and verbatim question
 text.
+For a direct-Captain-capable runtime, the suite shall fail unless the
+snapshot persists the live `captainCall` sequence; it shall also fail unless
+restore accepts a schema-version-`1` snapshot that omits `captainCall` and
+uses the persisted global `trace` counter as a collision-safe floor, with the
+next direct-Captain call producing an id distinct from every pre-snapshot id.
 The test suite shall fail unless a fresh runtime instance created by
 the same factory `restore`s that snapshot under the original session
 identity without emitting `session.started`, and a following Boss reply

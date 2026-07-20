@@ -21,6 +21,7 @@ import type {
 } from './runtime.js';
 import {
   createXStatePlaybookRuntime,
+  defaultComposeCaptainPrompt,
   defaultComposePlayerPrompt,
   defaultExtractRequiredFields,
   resumableStateIdsFromMachine,
@@ -117,6 +118,20 @@ const workflowMachine = createMachine({
     lastError: undefined as unknown,
   }),
   initial: 'ready',
+  on: {
+    BOSS_INTERRUPT: {
+      guard: ({ event }) =>
+        (event as { targetId?: string }).targetId === 'implement',
+      target: '#implement',
+      reenter: true,
+      actions: assign({
+        task: ({ event }) =>
+          (event as { bossIntent?: string }).bossIntent,
+        pendingBossQuestion: () => undefined,
+        bossReply: () => undefined,
+      }),
+    },
+  },
   states: {
     ready: {
       meta: meta('ready'),
@@ -132,6 +147,7 @@ const workflowMachine = createMachine({
       },
     },
     implement: {
+      id: 'implement',
       meta: meta('implement'),
       tags: ['playbook.busy'],
       invoke: {
@@ -197,6 +213,14 @@ const workflowMachine = createMachine({
           target: 'implement',
           actions: assign({
             bossReply: ({ event }) => (event as { answer: string }).answer,
+          }),
+        },
+        START: {
+          target: 'implement',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+            pendingBossQuestion: () => undefined,
+            bossReply: () => undefined,
           }),
         },
       },
@@ -271,6 +295,27 @@ const createWorkflowRuntime = createXStatePlaybookRuntime(
   workflowSpec,
 );
 
+const createWorkflowRuntimeWithBossEvents = createXStatePlaybookRuntime(
+  workflowMachine,
+  {
+    ...workflowSpec,
+    bossEvents: [
+      {
+        type: 'BOSS_INTERRUPT',
+        fields: {
+          targetId: {
+            source: 'judge',
+            required: true,
+            values: ['implement'],
+          },
+          bossIntent: { source: 'text', required: true },
+          mode: { source: 'judge', values: ['resume', 'restart'] },
+        },
+      },
+    ],
+  },
+);
+
 describe('generic strategy defaults', () => {
   it('defaultComposePlayerPrompt substitutes <field> placeholders and keeps unmatched ones', () => {
     const prompt = defaultComposePlayerPrompt({
@@ -304,6 +349,59 @@ describe('generic strategy defaults', () => {
     );
   });
 
+  it('maps canonical kebab and special placeholders to typed input fields in one pass', () => {
+    const playerPrompt = defaultComposePlayerPrompt({
+      stateId: 'review',
+      player: 'Reviewer',
+      sourceItem: 'WF-3',
+      prompt: 'Compare <participant-proposal> for IR-<#>; literal <model>.',
+      result: { ok: 'fine' },
+      ...({
+        participantProposal: 'Use <participant-proposal> literally.',
+        irNumber: '42',
+      } as object),
+    });
+    expect(playerPrompt).toBe(
+      'Compare Use <participant-proposal> literally. for IR-42; literal <model>.',
+    );
+
+    const captainPrompt = defaultComposeCaptainPrompt({
+      stateId: 'routing',
+      sourceItem: 'CAP-1',
+      prompt:
+        '<boss-intent>\n<enabled-playbooks>\n<remaining-plan>\n<completed-call-results>',
+      result: { routed: 'done' },
+      ...({
+        bossIntent: 'Ship safely.',
+        enabledPlaybooks: [{ intent: 'Code', command: '/code', id: 'code' }],
+        remainingPlan: [{ task: 'review', step: 2 }],
+        completedCallResults: [{ output: { z: 1, a: 2 }, id: 'code' }],
+      } as object),
+    });
+    expect(captainPrompt).toBe(
+      [
+        'Ship safely.',
+        '[{"command":"/code","id":"code","intent":"Code"}]',
+        '[{"step":2,"task":"review"}]',
+        '[{"id":"code","output":{"a":2,"z":1}}]',
+      ].join('\n'),
+    );
+
+    expect(
+      defaultComposePlayerPrompt(
+        {
+          stateId: 'commit',
+          player: 'Committer',
+          sourceItem: 'WF-4',
+          prompt: 'Coder is <coder-llm>.',
+          result: { ok: 'fine' },
+          ...({ coderPlayer: 'gpt-5.5' } as object),
+        },
+        { 'coder-llm': 'coderPlayer' },
+      ),
+    ).toBe('Coder is gpt-5.5.');
+  });
+
   it('defaultExtractRequiredFields reads only the Output-shall-include clause, in either language', () => {
     expect(
       defaultExtractRequiredFields(
@@ -320,6 +418,36 @@ describe('generic strategy defaults', () => {
     expect([...resumableStateIdsFromMachine(workflowMachine)]).toEqual([
       'implement',
     ]);
+  });
+
+  it.each([
+    [
+      'entry text ownership',
+      {
+        type: 'START',
+        fields: { task: { source: 'judge' as const } },
+      },
+    ],
+    [
+      'derived interrupt targets',
+      {
+        type: 'BOSS_INTERRUPT',
+        fields: {
+          targetId: {
+            source: 'judge' as const,
+            required: true,
+            values: ['other'],
+          },
+        },
+      },
+    ],
+  ])('rejects bossEvents metadata that conflicts with %s', (_label, event) => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        bossEvents: [event],
+      }),
+    ).toThrow(/conflicts with the runtime-derived contract/);
   });
 });
 
@@ -418,7 +546,7 @@ describe('player + script workflow over the shared factory', () => {
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
           expect(prompt).toContain('Pending Boss question: Which database?');
-          return '{"event":"BOSS_REPLY","payload":{"questionId":"q-1"}}';
+          return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerCalls === 1
           ? '{"guard":"needsBossReply","question":"Which database?"}'
@@ -444,11 +572,125 @@ describe('player + script workflow over the shared factory', () => {
     await runtime.dispose();
   });
 
+  it('accepts a fresh exact entry directive while parked and rejects injected text fields', async () => {
+    let playerCalls = 0;
+    let classifierCalls = 0;
+    const playerPrompts: string[] = [];
+    const { ports, statuses } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerCalls += 1;
+        playerPrompts.push(prompt);
+        return playerCalls === 1
+          ? { status: 'ok', finalText: 'Which database?' }
+          : { status: 'ok', finalText: 'Done.' };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          classifierCalls += 1;
+          return classifierCalls === 1
+            ? '{"type":"BOSS_REPLY","questionId":"q-1","answer":"injected"}'
+            : '{"type":"START"}';
+        }
+        return playerCalls === 1
+          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          : '{"guard":"implemented","summary":"restarted"}';
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('old task'));
+
+    const rejected = await runtime.handleBossInput(turn('malicious answer'));
+    expect(rejected.outcome).toBe('no-action');
+    expect(rejected.state.stateId).toBe('awaitBossReply');
+    expect(statuses.map(({ message }) => message)).toContain(
+      'Classifier supplied undeclared field for BOSS_REPLY: answer',
+    );
+
+    const restarted = await runtime.handleBossInput(turn('new task'));
+    expect(restarted.outcome).toBe('terminal');
+    expect(playerPrompts[1]).toBe('Implement this task: new task');
+    await runtime.dispose();
+  });
+
+  it('derives and validates a root BOSS_INTERRUPT target while parked', async () => {
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'ok', finalText: 'Need a decision.' }
+          : { status: 'ok', finalText: 'Done.' };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          return '{"type":"BOSS_INTERRUPT","targetId":"implement"}';
+        }
+        return playerCalls === 1
+          ? '{"guard":"needsBossReply","question":"Need a decision."}'
+          : '{"guard":"implemented","summary":"interrupted"}';
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('original task'));
+
+    const interrupted = await runtime.handleBossInput(turn('continue now'));
+    expect(interrupted.outcome).toBe('terminal');
+    expect(playerCalls).toBe(2);
+    await runtime.dispose();
+  });
+
+  it('merges bossEvents without weakening exact text, optional fields, or closed values', async () => {
+    let playerCalls = 0;
+    const playerPrompts: string[] = [];
+    const classifierPrompts: string[] = [];
+    const classifierReplies = [
+      '{"type":"BOSS_INTERRUPT","targetId":"implement","mode":"invalid"}',
+      '{"type":"BOSS_INTERRUPT","targetId":"implement"}',
+    ];
+    const { ports, statuses } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerCalls += 1;
+        playerPrompts.push(prompt);
+        return playerCalls === 1
+          ? { status: 'ok', finalText: 'Need a decision.' }
+          : { status: 'ok', finalText: 'Done.' };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          classifierPrompts.push(prompt);
+          return classifierReplies.shift() ?? '{"type":"NO_ACTION"}';
+        }
+        return playerCalls === 1
+          ? '{"guard":"needsBossReply","question":"Need a decision."}'
+          : '{"guard":"implemented","summary":"interrupted"}';
+      },
+    });
+    const runtime = createWorkflowRuntimeWithBossEvents({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('original task'));
+
+    const invalid = await runtime.handleBossInput(turn('invalid route'));
+    expect(invalid.outcome).toBe('no-action');
+    expect(statuses.map(({ message }) => message)).toContain(
+      'Classifier supplied unknown mode for BOSS_INTERRUPT: invalid',
+    );
+
+    const interrupted = await runtime.handleBossInput(turn('continue exactly'));
+    expect(interrupted.outcome).toBe('terminal');
+    expect(playerPrompts[1]).toBe('Implement this task: continue exactly');
+    expect(classifierPrompts[0]).toContain('"targetId": "implement"');
+    expect(classifierPrompts[0]).toContain('"mode": "resume"');
+    expect(classifierPrompts[0]).not.toContain('"bossIntent"');
+    await runtime.dispose();
+  });
+
   it('restarts from failed through the classifier and reports an unrecoverable reply as one status', async () => {
     let playerCalls = 0;
     const classifierReplies: string[] = [
       'not json at all',
-      '{"event":"START","payload":{}}',
+      '{"type":"START"}',
     ];
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async () => {
@@ -459,7 +701,7 @@ describe('player + script workflow over the shared factory', () => {
       },
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
-          return classifierReplies.shift() ?? '{"event":"NO_ACTION","payload":{}}';
+          return classifierReplies.shift() ?? '{"type":"NO_ACTION"}';
         }
         return '{"guard":"implemented","summary":"recovered"}';
       },
@@ -480,14 +722,64 @@ describe('player + script workflow over the shared factory', () => {
     expect(restarted.outcome).toBe('terminal');
     await runtime.dispose();
   });
+
+  it('does not send a classified event when abort fires during its finish trace', async () => {
+    const controller = new AbortController();
+    const abortReason = new Error('stop after classification');
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'error', error: 'agent unavailable' };
+      },
+      callJudge: async () => '{"type":"START"}',
+      emitTelemetry: async (event) => {
+        const trace = event.payload as { type?: string };
+        if (
+          event.topic === 'playbook.trace' &&
+          trace.type === 'judge.call.finished'
+        ) {
+          controller.abort(abortReason);
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const failed = await runtime.handleBossInput(turn('first try'));
+    expect(failed.state.stateId).toBe('failed');
+
+    const aborted = await runtime.handleBossInput({
+      text: 'try again',
+      signal: controller.signal,
+    });
+    expect(aborted.outcome).toBe('aborted');
+    expect(aborted.state.stateId).toBe('failed');
+    expect(playerCalls).toBe(1);
+    await runtime.dispose();
+  });
 });
 
-// Synthetic direct-Captain workflow: ready → decide (captain) → done.
+interface CaptainOptions {
+  toolFree?: boolean;
+}
+
+// Synthetic direct-Captain workflow with an optional Boss-reply park.
 const captainMachine = createMachine({
   id: 'cap',
-  context: () => ({
+  context: ({ input }: { input: CaptainOptions | undefined }) => ({
     topic: undefined as string | undefined,
     response: undefined as string | undefined,
+    toolFree: input?.toolFree === true,
+    pendingBossQuestion: undefined as
+      | {
+          questionId: string;
+          resumeStateId: string;
+          sourceItem: string;
+          player: string;
+          question: string;
+        }
+      | undefined,
+    bossReply: undefined as string | undefined,
     lastError: undefined as unknown,
   }),
   initial: 'ready',
@@ -514,22 +806,61 @@ const captainMachine = createMachine({
           sourceItem: 'CAP-1',
           prompt: 'Decide about <topic>.',
           topic: context.topic,
-          allowedTools: [],
+          ...(context.toolFree ? { allowedTools: [] } : {}),
+          ...(context.pendingBossQuestion !== undefined &&
+          context.bossReply !== undefined
+            ? {
+                pendingBossQuestion: context.pendingBossQuestion,
+                bossReply: context.bossReply,
+              }
+            : {}),
           result: {
             final:
               'The Captain answered. Output shall include `response: <verbatim response>`.',
+            needsBossReply:
+              'The Captain asked Boss a question. Output shall include `question: <verbatim question>`.',
           },
         }),
-        onDone: {
-          target: 'done',
-          actions: assign({
-            response: ({ event }) =>
-              (event.output as { response: string }).response,
-          }),
-        },
+        onDone: [
+          {
+            guard: ({ event }) =>
+              (event.output as { guard: string }).guard === 'needsBossReply',
+            target: 'awaitBossReply',
+            actions: assign({
+              pendingBossQuestion: ({ event }) => ({
+                questionId: 'captain-q-1',
+                resumeStateId: 'decide',
+                sourceItem: 'CAP-1',
+                player: 'Captain',
+                question: (event.output as { question: string }).question,
+              }),
+            }),
+          },
+          {
+            target: 'done',
+            actions: assign({
+              response: ({ event }) =>
+                (event.output as { response: string }).response,
+              pendingBossQuestion: () => undefined,
+              bossReply: () => undefined,
+            }),
+          },
+        ],
         onError: {
           target: 'failed',
           actions: assign({ lastError: ({ event }) => event.error }),
+        },
+      },
+    },
+    awaitBossReply: {
+      meta: meta('awaitBossReply'),
+      tags: ['playbook.parked'],
+      on: {
+        BOSS_REPLY: {
+          target: 'decide',
+          actions: assign({
+            bossReply: ({ event }) => (event as { answer: string }).answer,
+          }),
         },
       },
     },
@@ -544,8 +875,8 @@ const captainMachine = createMachine({
 });
 
 const createCaptainRuntime = createXStatePlaybookRuntime(captainMachine, {
-  snapshotOptions: () => ({}),
-  machineInput: () => ({}),
+  snapshotOptions: (value) => (value ?? {}) as CaptainOptions,
+  machineInput: (options) => options,
   entryEvent: { type: 'GO', textField: 'topic' },
 });
 
@@ -569,7 +900,7 @@ describe('direct-Captain actor over the shared factory', () => {
         return '{"guard":"final"}';
       },
     });
-    const runtime = createCaptainRuntime({});
+    const runtime = createCaptainRuntime({ toolFree: true });
     await runtime.init(makeSession(ports));
     const result = await runtime.handleBossInput(turn('release timing'));
 
@@ -611,6 +942,186 @@ describe('direct-Captain actor over the shared factory', () => {
       runtime.handleBossInput(turn('release timing')),
     ).rejects.toThrow(/undeclared field "response"/);
     await runtime.dispose();
+  });
+
+  it.each([
+    [
+      'non-ok result',
+      { status: 'error' as const, error: 'captain unavailable' },
+      /captain unavailable/,
+    ],
+    ['missing finalText', { status: 'ok' as const }, /no finalText/],
+    ['empty finalText', { status: 'ok' as const, finalText: '' }, /no finalText/],
+  ])('rejects a %s as a control-plane failure', async (_label, captainResult, error) => {
+    const { ports, telemetry } = makeRecordingPorts({
+      callCaptain: async () => captainResult,
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    await expect(
+      runtime.handleBossInput(turn('release timing')),
+    ).rejects.toThrow(error);
+    const finish = telemetry
+      .map(({ payload }) => payload as { type?: string; payload?: unknown })
+      .find((event) => event.type === 'captain.call.finished');
+    expect(finish?.payload).toMatchObject({
+      status: captainResult.status,
+      error: { name: 'Error' },
+    });
+    await runtime.dispose();
+  });
+
+  it('preserves a direct-Captain result failure when its finish sink rejects', async () => {
+    let finishAttempts = 0;
+    const { ports } = makeRecordingPorts({
+      callCaptain: async () => ({
+        status: 'error',
+        error: 'captain unavailable',
+      }),
+      emitTelemetry: async (event) => {
+        const trace = event.payload as { type?: string };
+        if (trace.type === 'captain.call.finished') {
+          finishAttempts += 1;
+          throw new Error('finish sink failed');
+        }
+      },
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    await expect(
+      runtime.handleBossInput(turn('release timing')),
+    ).rejects.toThrow('captain unavailable');
+    expect(finishAttempts).toBe(1);
+    await runtime.dispose();
+  });
+
+  it('preserves a direct-Captain result failure over a finish-time abort', async () => {
+    const controller = new AbortController();
+    const { ports } = makeRecordingPorts({
+      callCaptain: async () => ({
+        status: 'error',
+        error: 'captain unavailable',
+      }),
+      emitTelemetry: async (event) => {
+        const trace = event.payload as { type?: string };
+        if (trace.type === 'captain.call.finished') {
+          controller.abort(new Error('finish-time abort'));
+        }
+      },
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    await expect(
+      runtime.handleBossInput({
+        text: 'release timing',
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('captain unavailable');
+    await runtime.dispose();
+  });
+
+  it('omits allowedTools from the host call and trace when the source does not restrict tools', async () => {
+    let optionsSeen: Record<string, unknown> | undefined;
+    const { ports, telemetry } = makeRecordingPorts({
+      callCaptain: async (_prompt, _signal, options) => {
+        optionsSeen = options as unknown as Record<string, unknown>;
+        return { status: 'ok', finalText: 'Use the configured tools.' };
+      },
+      callJudge: async () => '{"guard":"final"}',
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('tool policy'));
+
+    expect(optionsSeen).toEqual({ visibility: 'visible', resume: false });
+    const start = telemetry
+      .map(({ payload }) => payload as { type?: string; payload?: unknown })
+      .find((event) => event.type === 'captain.call.started');
+    expect(start?.payload).not.toHaveProperty('allowedTools');
+    await runtime.dispose();
+  });
+
+  it('preserves unique Captain call ids across parked snapshot restore', async () => {
+    let captainCalls = 0;
+    const { ports, telemetry } = makeRecordingPorts({
+      callCaptain: async () => {
+        captainCalls += 1;
+        return {
+          status: 'ok',
+          finalText:
+            captainCalls === 1 ? 'Which release day?' : 'Release Tuesday.',
+        };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          return '{"type":"BOSS_REPLY","questionId":"captain-q-1"}';
+        }
+        return captainCalls === 1
+          ? '{"guard":"needsBossReply"}'
+          : '{"guard":"final"}';
+      },
+    });
+    const session = makeSession(ports);
+    const first = createCaptainRuntime({});
+    await first.init(session);
+    const parked = await first.handleBossInput(turn('release timing'));
+    expect(parked.state.stateId).toBe('awaitBossReply');
+    const snapshot = first.exportSnapshot?.();
+    expect(snapshot?.sequences.captainCall).toBe(1);
+
+    const restored = createCaptainRuntime({});
+    await restored.restore?.(session, snapshot!);
+    const result = await restored.handleBossInput(turn('Tuesday'));
+    expect(result.outcome).toBe('terminal');
+    const callIds = telemetry
+      .map(({ payload }) => payload as { type?: string; callId?: string })
+      .filter((event) => event.type === 'captain.call.started')
+      .map(({ callId }) => callId);
+    expect(callIds).toEqual(['captain-1', 'captain-2']);
+    await restored.dispose();
+  });
+
+  it('uses the trace sequence as a collision-safe legacy Captain id floor', async () => {
+    let captainCalls = 0;
+    const { ports, telemetry } = makeRecordingPorts({
+      callCaptain: async () => {
+        captainCalls += 1;
+        return {
+          status: 'ok',
+          finalText:
+            captainCalls === 1 ? 'Which release day?' : 'Release Tuesday.',
+        };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          return '{"type":"BOSS_REPLY","questionId":"captain-q-1"}';
+        }
+        return captainCalls === 1
+          ? '{"guard":"needsBossReply"}'
+          : '{"guard":"final"}';
+      },
+    });
+    const session = makeSession(ports);
+    const first = createCaptainRuntime({});
+    await first.init(session);
+    await first.handleBossInput(turn('release timing'));
+    const legacySnapshot = structuredClone(first.exportSnapshot!());
+    delete legacySnapshot.sequences.captainCall;
+
+    const restored = createCaptainRuntime({});
+    await restored.restore!(session, legacySnapshot);
+    const result = await restored.handleBossInput(turn('Tuesday'));
+    expect(result.outcome).toBe('terminal');
+    const callIds = telemetry
+      .map(({ payload }) => payload as { type?: string; callId?: string })
+      .filter((event) => event.type === 'captain.call.started')
+      .map(({ callId }) => callId);
+    expect(callIds).toEqual([
+      'captain-1',
+      `captain-${legacySnapshot.sequences.trace + 1}`,
+    ]);
+    await restored.dispose();
+    await first.dispose();
   });
 });
 
@@ -753,7 +1264,7 @@ describe('parked-session snapshot over the shared factory', () => {
       },
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
-          return '{"event":"BOSS_REPLY","payload":{"questionId":"q-1"}}';
+          return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
         return playerCalls === 1
           ? '{"guard":"needsBossReply","question":"Which database?"}'
@@ -768,6 +1279,7 @@ describe('parked-session snapshot over the shared factory', () => {
 
     const snapshot = first.exportSnapshot?.();
     expect(snapshot).toBeDefined();
+    expect(snapshot?.sequences).not.toHaveProperty('captainCall');
     expect(snapshot?.pendingBossQuestions).toEqual([
       {
         questionId: 'q-1',

@@ -37,10 +37,11 @@ The shared runtime contract gains an optional, paired capability:
 A safe capture point is between public boundaries: initialized, not disposing or disposed, no active turn, no pending nested playbook call, and the actor parked at a quiescent active state.
 A runtime suspended on a nested call shall never export.
 
-The snapshot carries a `schemaVersion`, the `playbookId`, the XState persisted machine snapshot as an opaque JSON-safe value (raw `Error` values such as FSM `lastError` normalized to `{ name, message, stack? }` on the way out), the player resume-token map, the trace/turn/judge-call/player-call/playbook-call sequence counters, the current normalized state descriptor, and the pending Boss questions as a host-readable list of `{ questionId, player, question, sourceItem? }`.
+The snapshot carries a `schemaVersion`, the `playbookId`, the XState persisted machine snapshot as an opaque JSON-safe value (raw `Error` values such as FSM `lastError` normalized to `{ name, message, stack? }` on the way out), the player resume-token map, the trace/turn/judge-call/player-call/playbook-call sequence counters, the direct-Captain-call counter where the runtime supports direct Captain calls, the current normalized state descriptor, and the pending Boss questions as a host-readable list of `{ questionId, player, question, sourceItem? }`.
+The `captainCall` sequence member is optional for schema-version-`1` compatibility: direct-Captain-capable runtimes shall persist it, while restore shall use the persisted global `trace` counter as a collision-safe floor when an older snapshot omits it.
 The pending-question list is first-class in the snapshot precisely so a host can show the Boss what was asked without parsing status lines or subscribing to telemetry.
 
-`restore` binds the same `PlaybookSession` identity the session was exported under, reconstructs the actor from the persisted machine snapshot, restores the resume-token map and sequence counters, and emits no `session.started` trace — the session already started.
+`restore` binds the same `PlaybookSession` identity the session was exported under, reconstructs the actor from the persisted machine snapshot, restores the resume-token map and sequence counters (using the persisted `trace` counter as the floor for an absent legacy `captainCall` counter), and emits no `session.started` trace — the session already started.
 The next public boundary continues the session's contiguous trace sequence.
 The host is responsible for recreating the runtime through the same factory with equivalent options and ports; the runtime validates the snapshot's schema version and `playbookId` and rejects a snapshot it cannot rehydrate.
 

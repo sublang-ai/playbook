@@ -200,6 +200,7 @@ export interface PlaybookRuntimeSnapshot {
     judgeCall: number;
     playerCall: number;
     playbookCall: number;
+    captainCall?: number;
   };
   state: PlaybookState;
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];

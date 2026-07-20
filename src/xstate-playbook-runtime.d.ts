@@ -54,6 +54,18 @@ export interface ScheduledStatus {
     message: string;
     data?: JsonValue;
 }
+export interface XStateBossEventFieldSpec {
+    /** The judge supplies routing data; the runtime supplies exact Boss text. */
+    source: 'judge' | 'text';
+    /** Judge-authored fields are optional unless explicitly required. */
+    required?: boolean;
+    /** Optional closed set for a string-valued judge field. */
+    values?: readonly string[];
+}
+export interface XStateBossEventSpec {
+    type: string;
+    fields?: Readonly<Record<string, XStateBossEventFieldSpec>>;
+}
 export declare const BOSS_REPLY_ERRORS: {
     readonly missingQuestion: "needsBossReply outcome missing 'question' field";
     readonly unregisteredState: (stateId: string) => string;
@@ -75,6 +87,14 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
         type: string;
         textField: string;
     };
+    /**
+     * Exact flat Boss-event contracts whose non-text fields the judge may
+     * select. `entryEvent` and scalar `BOSS_REPLY` contracts are supplied by
+     * the factory; linkers emit entries here for additional typed events such
+     * as `BOSS_INTERRUPT` when their erased payload cannot be recovered from
+     * the XState machine alone.
+     */
+    bossEvents?: readonly XStateBossEventSpec[];
     /** Boss-input classifier override; default: generic parked-state classifier. */
     classifyBossText?: (text: string, ports: PlaybookPorts, signal: AbortSignal, snapshotOrState: unknown, boundary?: RuntimeBoundaryCalls) => Promise<EventObject | undefined>;
     /** Status line emitted after classification names an event. Default: none. */
@@ -85,6 +105,8 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
     composePlayerPrompt?: (input: PlaybookPlayerInput) => string;
     /** Compose the direct-Captain prompt. Default: continuation blocks + placeholder substitution with deterministic JSON rendering. */
     composeCaptainPrompt?: (input: PlaybookCaptainInput) => string;
+    /** Linker-known exceptions to the default kebab-token → camel-field mapping. */
+    placeholderFields?: Readonly<Record<string, string>>;
     /** Adjudicator prompt for delegated players. Default: generic guard menu. */
     buildJudgePrompt?: (input: PlaybookPlayerInput, finalText: string) => string;
     /** Required-payload-field extraction from a `result` description. Default: bilingual `Output shall include` clause scan. */
@@ -124,14 +146,14 @@ export declare function pendingBossQuestionFromContext(context: Record<string, u
  * placeholder-looking text inside a value is never re-substituted. The
  * continuation preamble and Q/A blocks precede the domain body on resume.
  */
-export declare function defaultComposePlayerPrompt(input: PlaybookPlayerInput): string;
+export declare function defaultComposePlayerPrompt(input: PlaybookPlayerInput, placeholderFields?: Readonly<Record<string, string>>): string;
 /**
  * Default direct-Captain prompt composer (slc/link.md §Captain prompt
  * composition). Placeholder substitution is presence-based: string fields
  * substitute verbatim; JSON-safe arrays/objects render as deterministic JSON
  * with lexicographically sorted keys at every depth.
  */
-export declare function defaultComposeCaptainPrompt(input: PlaybookCaptainInput): string;
+export declare function defaultComposeCaptainPrompt(input: PlaybookCaptainInput, placeholderFields?: Readonly<Record<string, string>>): string;
 /** Default player binding: each player to its lowercased name. */
 export declare function defaultResolvePlayerId(input: PlaybookPlayerInput): string;
 /**

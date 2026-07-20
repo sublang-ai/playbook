@@ -1124,7 +1124,9 @@ At a safe capture point it shall return a JSON-safe
 - `playerResumeTokens`: the resume-token map as a plain object
   (§PlaybookPorts contract).
 - `sequences`: the live `trace`, `turn`, `judgeCall`, `playerCall`, and
-  `playbookCall` counters.
+  `playbookCall` counters, plus `captainCall` when the runtime supports direct
+  Captain calls. `captainCall` remains optional under schema version `1` for
+  backward compatibility; a direct-Captain-capable runtime shall persist it.
 - `state`: the current normalized state descriptor.
 - `pendingBossQuestions`: the pending Boss question(s) from FSM context as
   a list of `{ questionId, player, question, sourceItem? }`, empty when the
@@ -1143,7 +1145,9 @@ module identity — that the factory constructing this runtime still
 belongs to the snapshot's playbook — is likewise the host's check to
 make before calling `restore`.
 `restore` shall bind the session, restore the resume-token map, the
-sequence counters, and the prior-state descriptor from the snapshot,
+sequence counters (using the persisted global `trace` counter as a
+collision-safe floor for an absent legacy `captainCall`), and the
+prior-state descriptor from the snapshot,
 construct the actor with the persisted `machine` snapshot, and start it
 with root inspection emissions suppressed so rehydration emits no
 `session.started` trace, no transition trace, and no human status — the
@@ -1274,15 +1278,44 @@ The emitted module:
   actor.
 - Supplies in `spec` only what the factory cannot read from the FSM
   artifact's own data: the deterministic textual entry event where
-  §Boss-event mapping prescribes deterministic entry, the transition-event
-  payload fields the FSM's Boss union declares, a non-default player binding
-  where the linker inputs supplied one, and any per-playbook strategy
-  override (classifier, prompt composers, required-field extraction,
-  status formatting) an earlier section of this definition requires for that
-  playbook. Everything else — player/script/captain/nested actor
+  §Boss-event mapping prescribes deterministic entry; compact `bossEvents`
+  metadata for each additional Boss-union arm whose exact required/optional
+  judge fields, runtime-owned text fields, or closed string values disappear
+  under TypeScript erasure; `placeholderFields` only for authored token/field
+  exceptions not covered by the canonical kebab-token-to-camel-field mapping
+  and the canonical `<#>` → `irNumber` special case; the
+  transition-event payload fields the FSM's Boss union declares; a
+  non-default player binding where the linker inputs supplied one; and any
+  per-playbook strategy override (classifier, prompt composers,
+  required-field extraction, status formatting) an earlier section of this
+  definition requires for that playbook. The metadata shall keep the shared
+  classifier's reply contract exactly flat `{ type, ...declaredFields }` and
+  distinguish judge-authored routing fields from exact-text fields the
+  runtime attaches itself. Everything else — player/script/captain/nested actor
   provisioning, prompt composition, classification, adjudication, statuses,
   resumable-state derivation — comes from the factory's generic defaults,
   which implement the behavioral sections of this definition.
+
+  ```ts
+  interface XStateBossEventFieldSpec {
+    source: 'judge' | 'text';
+    required?: boolean;
+    values?: readonly string[];
+  }
+
+  interface XStateBossEventSpec {
+    type: string;
+    fields?: Readonly<Record<string, XStateBossEventFieldSpec>>;
+  }
+
+  bossEvents?: readonly XStateBossEventSpec[];
+  placeholderFields?: Readonly<Record<string, string>>;
+  ```
+
+  Supplied `bossEvents` metadata shall merge with, and shall not replace or
+  weaken, runtime-derived entry text ownership or closed interrupt targets.
+  A conflicting duplicate field contract is a linker/runtime construction
+  error.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
   `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`.
 - Exposes, under an `_internal` export, the pure helpers verification

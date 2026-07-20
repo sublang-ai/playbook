@@ -518,6 +518,13 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId) {
         }
         sequences[key] = sequence;
     }
+    const captainCall = value.sequences.captainCall;
+    if (captainCall !== undefined) {
+        if (!Number.isSafeInteger(captainCall) || captainCall < 0) {
+            throw new TypeError('runtime snapshot sequences.captainCall must be a non-negative integer');
+        }
+        sequences.captainCall = captainCall;
+    }
     validateState(value.state, 'runtime snapshot state');
     const state = snapshotJsonValue(value.state, 'runtime snapshot state');
     if (!Array.isArray(value.pendingBossQuestions)) {

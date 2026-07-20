@@ -132,6 +132,20 @@ export interface ScheduledStatus {
   data?: JsonValue;
 }
 
+export interface XStateBossEventFieldSpec {
+  /** The judge supplies routing data; the runtime supplies exact Boss text. */
+  source: 'judge' | 'text';
+  /** Judge-authored fields are optional unless explicitly required. */
+  required?: boolean;
+  /** Optional closed set for a string-valued judge field. */
+  values?: readonly string[];
+}
+
+export interface XStateBossEventSpec {
+  type: string;
+  fields?: Readonly<Record<string, XStateBossEventFieldSpec>>;
+}
+
 export const BOSS_REPLY_ERRORS = {
   missingQuestion: "needsBossReply outcome missing 'question' field",
   unregisteredState: (stateId: string) =>
@@ -141,9 +155,10 @@ export const BOSS_REPLY_ERRORS = {
 // ---------------------------------------------------------------------------
 // The per-workflow spec. Every strategy member has a generic default derived
 // from the FSM artifact's own data, so a linker-emitted thin module normally
-// supplies only `snapshotOptions` and, where applicable, `entryEvent` and
-// `transitionEventFields`. Hand-maintained artifacts may override any member
-// to preserve their existing observable behavior exactly.
+// supplies only `snapshotOptions` and, where applicable, `entryEvent`, erased
+// Boss-event field metadata, placeholder exceptions, and transition-event
+// fields. Hand-maintained artifacts may override any member to preserve their
+// existing observable behavior exactly.
 // ---------------------------------------------------------------------------
 
 export interface XStatePlaybookRuntimeSpec<TOptions> {
@@ -160,6 +175,14 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
    * exact Boss text in `textField`. Absent: every non-empty turn classifies.
    */
   entryEvent?: { type: string; textField: string };
+  /**
+   * Exact flat Boss-event contracts whose non-text fields the judge may
+   * select. `entryEvent` and scalar `BOSS_REPLY` contracts are supplied by
+   * the factory; linkers emit entries here for additional typed events such
+   * as `BOSS_INTERRUPT` when their erased payload cannot be recovered from
+   * the XState machine alone.
+   */
+  bossEvents?: readonly XStateBossEventSpec[];
   /** Boss-input classifier override; default: generic parked-state classifier. */
   classifyBossText?: (
     text: string,
@@ -176,6 +199,8 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
   composePlayerPrompt?: (input: PlaybookPlayerInput) => string;
   /** Compose the direct-Captain prompt. Default: continuation blocks + placeholder substitution with deterministic JSON rendering. */
   composeCaptainPrompt?: (input: PlaybookCaptainInput) => string;
+  /** Linker-known exceptions to the default kebab-token → camel-field mapping. */
+  placeholderFields?: Readonly<Record<string, string>>;
   /** Adjudicator prompt for delegated players. Default: generic guard menu. */
   buildJudgePrompt?: (input: PlaybookPlayerInput, finalText: string) => string;
   /** Required-payload-field extraction from a `result` description. Default: bilingual `Output shall include` clause scan. */
@@ -384,7 +409,19 @@ function continuationBlocks(input: {
   ];
 }
 
-const PLACEHOLDER_PATTERN = /<([A-Za-z_$][A-Za-z0-9_$]*)>/g;
+const PLACEHOLDER_PATTERN = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
+
+function placeholderFieldName(
+  token: string,
+  fields: Readonly<Record<string, string>>,
+): string {
+  const explicit = fields[token];
+  if (explicit !== undefined) return explicit;
+  if (token === '#') return 'irNumber';
+  return token.replace(/-([A-Za-z0-9])/g, (_match, next: string) =>
+    next.toUpperCase(),
+  );
+}
 
 /**
  * Default player-prompt composer (slc/link.md §Player prompt composition).
@@ -393,11 +430,15 @@ const PLACEHOLDER_PATTERN = /<([A-Za-z_$][A-Za-z0-9_$]*)>/g;
  * placeholder-looking text inside a value is never re-substituted. The
  * continuation preamble and Q/A blocks precede the domain body on resume.
  */
-export function defaultComposePlayerPrompt(input: PlaybookPlayerInput): string {
+export function defaultComposePlayerPrompt(
+  input: PlaybookPlayerInput,
+  placeholderFields: Readonly<Record<string, string>> = {},
+): string {
   const blocks = continuationBlocks(input);
   const fields = input as unknown as Record<string, unknown>;
-  const body = input.prompt.replace(PLACEHOLDER_PATTERN, (match, field) => {
-    const value = fields[field as string];
+  const body = input.prompt.replace(PLACEHOLDER_PATTERN, (match, token) => {
+    const value =
+      fields[placeholderFieldName(token as string, placeholderFields)];
     return typeof value === 'string' ? value : match;
   });
   blocks.push(body);
@@ -429,14 +470,16 @@ function stableJson(value: unknown, path: string): string {
  */
 export function defaultComposeCaptainPrompt(
   input: PlaybookCaptainInput,
+  placeholderFields: Readonly<Record<string, string>> = {},
 ): string {
   const blocks = continuationBlocks(input);
   const fields = input as unknown as Record<string, unknown>;
-  const body = input.prompt.replace(PLACEHOLDER_PATTERN, (match, field) => {
-    const value = fields[field as string];
+  const body = input.prompt.replace(PLACEHOLDER_PATTERN, (match, token) => {
+    const field = placeholderFieldName(token as string, placeholderFields);
+    const value = fields[field];
     if (typeof value === 'string') return value;
     if (value !== null && typeof value === 'object') {
-      return stableJson(value, `CaptainInput.${field as string}`);
+      return stableJson(value, `CaptainInput.${field}`);
     }
     return match;
   });
@@ -878,8 +921,181 @@ function classifierState(snapshotOrState: unknown): ClassifierState {
   return { value: snapshotOrState, context: {} };
 }
 
-function makeDefaultClassifyBossText(
+function configuredEventTypesForState(
+  machine: AnyStateMachine,
+  stateId: string | undefined,
+): ReadonlySet<string> {
+  const configured = new Set<string>();
+  const config = (machine as unknown as { config?: unknown }).config;
+  if (!isPlainObject(config)) return configured;
+  if (isPlainObject(config.on)) {
+    for (const type of Object.keys(config.on)) configured.add(type);
+  }
+  if (stateId !== undefined && isPlainObject(config.states)) {
+    const state = config.states[stateId];
+    if (isPlainObject(state) && isPlainObject(state.on)) {
+      for (const type of Object.keys(state.on)) configured.add(type);
+    }
+  }
+  return configured;
+}
+
+function defaultBossEventSpecs(
+  machine: AnyStateMachine,
   entryEvent: { type: string; textField: string } | undefined,
+  supplied: readonly XStateBossEventSpec[],
+): ReadonlyMap<string, XStateBossEventSpec> {
+  const contracts = new Map<string, XStateBossEventSpec>();
+  if (entryEvent !== undefined) {
+    contracts.set(entryEvent.type, {
+      type: entryEvent.type,
+      fields: { [entryEvent.textField]: { source: 'text', required: true } },
+    });
+  }
+
+  const config = (machine as unknown as { config?: unknown }).config;
+  const rootInterrupt =
+    isPlainObject(config) && isPlainObject(config.on)
+      ? config.on.BOSS_INTERRUPT
+      : undefined;
+  const interruptTargets =
+    rootInterrupt === undefined ? [] : transitionTargets(rootInterrupt);
+  if (interruptTargets.length > 0) {
+    contracts.set('BOSS_INTERRUPT', {
+      type: 'BOSS_INTERRUPT',
+      fields: {
+        targetId: {
+          source: 'judge',
+          required: true,
+          values: [...new Set(interruptTargets)],
+        },
+      },
+    });
+  }
+
+  for (const contract of supplied) {
+    if (
+      typeof contract.type !== 'string' ||
+      contract.type.trim().length === 0
+    ) {
+      throw new TypeError(
+        'Boss event contract type must be a non-empty string',
+      );
+    }
+    if (contract.type === 'NO_ACTION' || contract.type === 'BOSS_REPLY') {
+      throw new TypeError(
+        `Boss event contract ${contract.type} is runtime-owned`,
+      );
+    }
+    const existing = contracts.get(contract.type);
+    const fields: Record<string, XStateBossEventFieldSpec> = {
+      ...(existing?.fields ?? {}),
+    };
+    for (const [field, fieldSpec] of Object.entries(contract.fields ?? {})) {
+      if (field.length === 0 || field === 'type') {
+        throw new TypeError(
+          `Boss event contract ${contract.type} has invalid field ${JSON.stringify(field)}`,
+        );
+      }
+      if (fieldSpec.source !== 'judge' && fieldSpec.source !== 'text') {
+        throw new TypeError(
+          `Boss event contract ${contract.type}.${field} has invalid source`,
+        );
+      }
+      if (fieldSpec.values !== undefined) {
+        if (
+          fieldSpec.source !== 'judge' ||
+          fieldSpec.values.length === 0 ||
+          fieldSpec.values.some(
+            (value) => typeof value !== 'string' || value.length === 0,
+          )
+        ) {
+          throw new TypeError(
+            `Boss event contract ${contract.type}.${field} has invalid values`,
+          );
+        }
+      }
+      const normalized: XStateBossEventFieldSpec = {
+        source: fieldSpec.source,
+        ...(fieldSpec.required === true ? { required: true } : {}),
+        ...(fieldSpec.values === undefined
+          ? {}
+          : { values: [...new Set(fieldSpec.values)] }),
+      };
+      const derived = fields[field];
+      if (derived !== undefined) {
+        const derivedValues =
+          derived.values === undefined
+            ? undefined
+            : new Set(derived.values);
+        const normalizedValues =
+          normalized.values === undefined
+            ? undefined
+            : new Set(normalized.values);
+        const sameValues =
+          derivedValues === undefined || normalizedValues === undefined
+            ? derivedValues === normalizedValues
+            : derivedValues.size === normalizedValues.size &&
+              [...derivedValues].every((value) =>
+                normalizedValues.has(value),
+              );
+        if (
+          derived.source !== normalized.source ||
+          (derived.required === true) !== (normalized.required === true) ||
+          !sameValues
+        ) {
+          throw new TypeError(
+            `Boss event contract ${contract.type}.${field} conflicts with the runtime-derived contract`,
+          );
+        }
+        continue;
+      }
+      fields[field] = normalized;
+    }
+    contracts.set(contract.type, { type: contract.type, fields });
+  }
+
+  contracts.set('BOSS_REPLY', {
+    type: 'BOSS_REPLY',
+    fields: {
+      questionId: { source: 'judge' },
+      answer: { source: 'text', required: true },
+    },
+  });
+  return contracts;
+}
+
+function eventContractPrompt(contract: XStateBossEventSpec): string {
+  const fields = Object.entries(contract.fields ?? {}).filter(
+    ([, field]) => field.source === 'judge',
+  );
+  const members = [
+    `"type": ${JSON.stringify(contract.type)}`,
+    ...fields.map(([name, field]) =>
+      `${JSON.stringify(name)}: ${JSON.stringify(
+        field.values?.[0] ?? '<string>',
+      )}`,
+    ),
+  ];
+  const notes = fields.flatMap(([name, field]) => [
+    ...(field.required === true ? [] : [`${name} optional`]),
+    ...(field.values === undefined
+      ? []
+      : [
+          `${name} one of ${field.values
+            .map((value) => JSON.stringify(value))
+            .join(', ')}`,
+        ]),
+  ]);
+  return `{ ${members.join(', ')} }${
+    notes.length === 0 ? '' : ` (${notes.join('; ')})`
+  }`;
+}
+
+function makeDefaultClassifyBossText(
+  machine: AnyStateMachine,
+  entryEvent: { type: string; textField: string } | undefined,
+  bossEvents: readonly XStateBossEventSpec[],
 ): (
   text: string,
   ports: PlaybookPorts,
@@ -887,45 +1103,38 @@ function makeDefaultClassifyBossText(
   snapshotOrState: unknown,
   boundary?: RuntimeBoundaryCalls,
 ) => Promise<EventObject | undefined> {
+  const contracts = defaultBossEventSpecs(machine, entryEvent, bossEvents);
   return async (text, ports, signal, snapshotOrState, boundary) => {
     const trimmed = text.trim();
     if (trimmed === '') return undefined;
     const state = classifierState(snapshotOrState);
     const stateId = typeof state.value === 'string' ? state.value : undefined;
-    const currentState =
-      stateId ?? JSON.stringify(state.value ?? null);
+    const currentState = stateId ?? JSON.stringify(state.value ?? null);
     const pending = pendingBossQuestionFromContext(state.context);
+    const configuredTypes = configuredEventTypesForState(machine, stateId);
+    const applicable = [...contracts.values()].filter(
+      (contract) =>
+        configuredTypes.has(contract.type) &&
+        (contract.type !== 'BOSS_REPLY' || pending !== undefined),
+    );
 
     const lines = [
-      'Classify the following Boss message into exactly one of these events.',
-      'Respond with JSON: { "event": "<TYPE>", "payload": { ...fields } }.',
-      'Use { "event": "NO_ACTION", "payload": {} } when no FSM action should be taken.',
+      'Classify the following Boss message into exactly one event.',
+      'Respond with one exact flat JSON object. Do not add fields that are not shown.',
+      'The runtime, not the judge, attaches the exact Boss text to textual event fields.',
       '',
       `Current state: ${currentState}`,
     ];
-    if (currentState === 'awaitBossReply') {
-      if (pending !== undefined) {
-        lines.push(
-          `Pending question id: ${pending.questionId}`,
-          `Pending asking player: ${pending.player}`,
-          `Pending Boss question: ${pending.question}`,
-        );
-      }
+    if (pending !== undefined) {
       lines.push(
-        '',
-        'Events:',
-        '- BOSS_REPLY: payload { questionId?: "<pending question id>" } — the acting agent is waiting for Boss to answer its question.',
-        '- NO_ACTION: payload {}',
+        `Pending question id: ${pending.questionId}`,
+        `Pending asking player: ${pending.player}`,
+        `Pending Boss question: ${pending.question}`,
       );
-    } else if (currentState === 'failed' && entryEvent !== undefined) {
-      lines.push(
-        '',
-        'Events:',
-        `- ${entryEvent.type}: payload {} — restart the workflow from the beginning with this message as the task.`,
-        '- NO_ACTION: payload {}',
-      );
-    } else {
-      lines.push('', 'Events:', '- NO_ACTION: payload {}');
+    }
+    lines.push('', 'Allowed JSON objects:', '- { "type": "NO_ACTION" }');
+    for (const contract of applicable) {
+      lines.push(`- ${eventContractPrompt(contract)}`);
     }
     lines.push('', 'Boss message:', '```', text, '```');
     const prompt = lines.join('\n');
@@ -954,69 +1163,96 @@ function makeDefaultClassifyBossText(
       return undefined;
     }
     const obj = parsed as Record<string, unknown>;
-    const eventType = obj.event;
+    const eventType = obj.type;
     if (typeof eventType !== 'string') {
       await ports.emitStatus('Classifier did not name an event type');
       return undefined;
     }
-    const payload =
-      typeof obj.payload === 'object' &&
-      obj.payload !== null &&
-      !Array.isArray(obj.payload)
-        ? (obj.payload as Record<string, unknown>)
-        : {};
-
-    if (eventType === 'NO_ACTION') return undefined;
-    if (entryEvent !== undefined && eventType === entryEvent.type) {
-      if (state.value !== 'failed') {
-        await ports.emitStatus(
-          `Classifier returned ${entryEvent.type} outside a restartable state`,
-        );
+    if (eventType === 'NO_ACTION') {
+      if (Object.keys(obj).length !== 1) {
+        await ports.emitStatus('Classifier supplied extra fields for NO_ACTION');
         return undefined;
       }
-      return { type: entryEvent.type, [entryEvent.textField]: text };
+      return undefined;
     }
-    if (eventType === 'BOSS_REPLY') {
-      if (state.value !== 'awaitBossReply') {
+    const contract = applicable.find(
+      (candidate) => candidate.type === eventType,
+    );
+    if (contract === undefined) {
+      await ports.emitStatus(
+        `Classifier returned unknown or inapplicable event type: ${eventType}`,
+      );
+      return undefined;
+    }
+    const fields = contract.fields ?? {};
+    const judgeFields = new Set(
+      Object.entries(fields)
+        .filter(([, field]) => field.source === 'judge')
+        .map(([field]) => field),
+    );
+    const extras = Object.keys(obj).filter(
+      (field) => field !== 'type' && !judgeFields.has(field),
+    );
+    if (extras.length > 0) {
+      await ports.emitStatus(
+        `Classifier supplied undeclared field for ${eventType}: ${extras[0]}`,
+      );
+      return undefined;
+    }
+
+    const event: Record<string, unknown> = { type: eventType };
+    for (const [field, fieldSpec] of Object.entries(fields)) {
+      if (fieldSpec.source === 'text') {
+        event[field] = text;
+        continue;
+      }
+      const value = obj[field];
+      if (value === undefined && fieldSpec.required !== true) continue;
+      if (typeof value !== 'string' || value.length === 0) {
         await ports.emitStatus(
-          'Classifier returned BOSS_REPLY outside awaitBossReply',
+          `Classifier omitted or invalidated ${field} for ${eventType}`,
         );
         return undefined;
       }
+      if (fieldSpec.values !== undefined && !fieldSpec.values.includes(value)) {
+        await ports.emitStatus(
+          `Classifier supplied unknown ${field} for ${eventType}: ${value}`,
+        );
+        return undefined;
+      }
+      event[field] = value;
+    }
+
+    if (eventType === 'BOSS_REPLY') {
       if (pending === undefined) {
         await ports.emitStatus(
           'Classifier returned BOSS_REPLY without a pending question',
         );
         return undefined;
       }
-      if (
-        payload.questionId !== undefined &&
-        typeof payload.questionId !== 'string'
-      ) {
+      const questionId = event.questionId;
+      if (questionId !== undefined && questionId !== pending.questionId) {
         await ports.emitStatus(
-          'Classifier supplied a non-string questionId for BOSS_REPLY',
+          `Classifier supplied unknown questionId for BOSS_REPLY: ${String(questionId)}`,
         );
         return undefined;
       }
-      if (
-        typeof payload.questionId === 'string' &&
-        payload.questionId !== pending.questionId
-      ) {
-        await ports.emitStatus(
-          `Classifier supplied unknown questionId for BOSS_REPLY: ${payload.questionId}`,
-        );
-        return undefined;
-      }
-      return {
-        type: 'BOSS_REPLY',
-        answer: text,
-        questionId: pending.questionId,
-      };
+      event.questionId = pending.questionId;
     }
-    await ports.emitStatus(
-      `Classifier returned unknown event type: ${eventType}`,
-    );
-    return undefined;
+    const can = (snapshotOrState as { can?: unknown } | null)?.can;
+    if (
+      typeof can === 'function' &&
+      !(can as (candidate: EventObject) => boolean).call(
+        snapshotOrState,
+        event as EventObject,
+      )
+    ) {
+      await ports.emitStatus(
+        `Classifier selected ${eventType}, but its state guards rejected the event`,
+      );
+      return undefined;
+    }
+    return event as EventObject;
   };
 }
 
@@ -1057,9 +1293,13 @@ export function createXStatePlaybookRuntime<TOptions>(
     spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
   const resolvePlayerIdSpec = spec.resolvePlayerId;
   const composePlayerPrompt =
-    spec.composePlayerPrompt ?? defaultComposePlayerPrompt;
+    spec.composePlayerPrompt ??
+    ((input: PlaybookPlayerInput) =>
+      defaultComposePlayerPrompt(input, spec.placeholderFields));
   const composeCaptainPrompt =
-    spec.composeCaptainPrompt ?? defaultComposeCaptainPrompt;
+    spec.composeCaptainPrompt ??
+    ((input: PlaybookCaptainInput) =>
+      defaultComposeCaptainPrompt(input, spec.placeholderFields));
   const adjudication: PlayerAdjudicationSpec = {
     ...(spec.buildJudgePrompt !== undefined
       ? { buildJudgePrompt: spec.buildJudgePrompt }
@@ -1074,7 +1314,8 @@ export function createXStatePlaybookRuntime<TOptions>(
   const extractFields =
     spec.extractRequiredFields ?? defaultExtractRequiredFields;
   const classifyBossText =
-    spec.classifyBossText ?? makeDefaultClassifyBossText(spec.entryEvent);
+    spec.classifyBossText ??
+    makeDefaultClassifyBossText(machine, spec.entryEvent, spec.bossEvents ?? []);
   const normalizeTransitionEvent =
     spec.normalizeTransitionEvent ??
     makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
@@ -1504,6 +1745,10 @@ export function createXStatePlaybookRuntime<TOptions>(
             { ...identity, status: 'ok', reply },
             position,
           );
+          // The finish sink is part of the classifier boundary. A signal may
+          // abort while that ordered emission drains; never let the already
+          // classified event mutate the machine afterward.
+          signal.throwIfAborted();
           return reply;
         }) as Promise<string>;
       },
@@ -1520,7 +1765,9 @@ export function createXStatePlaybookRuntime<TOptions>(
             sourceItem: input.sourceItem,
             visibility: 'visible' as const,
             resume: false as const,
-            allowedTools: [...(input.allowedTools ?? [])],
+            ...(input.allowedTools === undefined
+              ? {}
+              : { allowedTools: [...input.allowedTools] }),
           };
           const position: TracePosition = {
             ...(turnId !== undefined ? { turnId } : {}),
@@ -1568,6 +1815,22 @@ export function createXStatePlaybookRuntime<TOptions>(
             );
             throw error;
           }
+          let resultFailure: Error | undefined;
+          if (result.status !== 'ok') {
+            resultFailure = new Error(
+              result.error ??
+                `captainActor: callCaptain status "${result.status}"`,
+            );
+          } else if (result.finalText === undefined || result.finalText === '') {
+            resultFailure = new Error(
+              'captainActor: callCaptain returned status=ok with no finalText',
+            );
+          }
+          if (resultFailure !== undefined) {
+            // The host result is authoritative even when the required finish
+            // emission fails or triggers a coincident boundary abort.
+            controlPlaneError ??= resultFailure;
+          }
           await emitTrace(
             'captain.call.finished',
             {
@@ -1578,10 +1841,15 @@ export function createXStatePlaybookRuntime<TOptions>(
                 : {}),
               ...(result.error !== undefined
                 ? { error: normalizeError(result.error) }
-                : {}),
+                : resultFailure !== undefined
+                  ? { error: normalizeError(resultFailure) }
+                  : {}),
             },
             position,
           );
+          if (resultFailure !== undefined) {
+            throw resultFailure;
+          }
           return result;
         }) as Promise<CaptainResult>;
       },
@@ -1622,22 +1890,22 @@ export function createXStatePlaybookRuntime<TOptions>(
     > {
       return fromPromise<PlaybookActorOutput, PlaybookCaptainInput>(
         async ({ input, signal }) => {
-          await drainEmissions();
           const active = combineAbortSignals(signal, activeSignal);
-          const prompt = composeCaptainPrompt(input);
-          const result = await boundary.callCaptain!(input, prompt, active);
-          if (result.status !== 'ok') {
-            throw new Error(
-              result.error ??
-                `captainActor: callCaptain status "${result.status}"`,
-            );
-          }
-          if (result.finalText === undefined || result.finalText === '') {
-            throw new Error(
-              'captainActor: callCaptain returned status=ok with no finalText',
-            );
-          }
           try {
+            await drainEmissions();
+            const prompt = composeCaptainPrompt(input);
+            const result = await boundary.callCaptain!(input, prompt, active);
+            if (result.status !== 'ok') {
+              throw new Error(
+                result.error ??
+                  `captainActor: callCaptain status "${result.status}"`,
+              );
+            }
+            if (result.finalText === undefined || result.finalText === '') {
+              throw new Error(
+                'captainActor: callCaptain returned status=ok with no finalText',
+              );
+            }
             const judgePrompt = buildCaptainJudgePrompt(
               input,
               result.finalText,
@@ -2135,6 +2403,9 @@ export function createXStatePlaybookRuntime<TOptions>(
             judgeCall: judgeCallSequence,
             playerCall: playerCallSequence,
             playbookCall: playbookCallSequence,
+            ...(declaredActors.has('captain')
+              ? { captainCall: captainCallSequence }
+              : {}),
           },
           state,
           pendingBossQuestions:
@@ -2183,6 +2454,12 @@ export function createXStatePlaybookRuntime<TOptions>(
           judgeCallSequence = boundSnapshot.sequences.judgeCall;
           playerCallSequence = boundSnapshot.sequences.playerCall;
           playbookCallSequence = boundSnapshot.sequences.playbookCall;
+          captainCallSequence =
+            boundSnapshot.sequences.captainCall ??
+            // Legacy schema-v1 snapshots predate this dedicated counter.
+            // Every Captain call already consumed at least one trace number,
+            // so the global trace counter is a collision-safe id floor.
+            boundSnapshot.sequences.trace;
           playerResumeTokens.clear();
           for (const [playerId, token] of Object.entries(
             boundSnapshot.playerResumeTokens,
@@ -2269,6 +2546,7 @@ export function createXStatePlaybookRuntime<TOptions>(
                 boundary,
               );
             }
+            signal.throwIfAborted();
           }
           // Empty input, no-action classifier output, or invalid classifier
           // output — nothing to send.
@@ -2281,6 +2559,7 @@ export function createXStatePlaybookRuntime<TOptions>(
             if (statusLine !== undefined) {
               await runtimePorts!.emitStatus(statusLine);
             }
+            signal.throwIfAborted();
             // 3. A final actor cannot accept new events; reconstruct only
             //    after classification produced a real event.
             if (actor.getSnapshot().status === 'done') {
