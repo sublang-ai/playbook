@@ -1956,19 +1956,13 @@ export function createXStatePlaybookRuntime<TOptions>(
             await drainEmissions();
             const prompt = composeCaptainPrompt(input);
             const result = await boundary.callCaptain!(input, prompt, active);
-            if (result.status !== 'ok') {
-              throw markFsmResultFailure(
-                new Error(
-                  result.error ??
-                    `captainActor: callCaptain status "${result.status}"`,
-                ),
-              );
-            }
-            if (result.finalText === undefined || result.finalText === '') {
-              throw markFsmResultFailure(
-                new Error(
-                  'captainActor: callCaptain returned status=ok with no finalText',
-                ),
+            // The boundary owns result validation (PBRT-47) and throws the
+            // authoritative failure itself, so a returned result is always
+            // `ok` with visible text. Assert that invariant rather than
+            // restating the failure semantics, which would drift.
+            if (result.status !== 'ok' || !result.finalText) {
+              throw new Error(
+                'captainActor: boundary returned an unvalidated Captain result',
               );
             }
             const judgePrompt = buildCaptainJudgePrompt(
