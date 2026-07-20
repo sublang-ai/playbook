@@ -153,6 +153,31 @@ export const BOSS_REPLY_ERRORS = {
 } as const;
 
 // ---------------------------------------------------------------------------
+// A host agent result that is not `ok` (or is `ok` with no final text) is a
+// recoverable FSM failure, not a control-plane error: it travels the invoked
+// actor's XState error path to the failure state and the public boundary
+// resolves `failed` (PBRT-47, matching the player boundary's PBRT-9). The
+// direct-Captain boundary has to emit its paired finish trace before
+// rethrowing, so it needs to tell that failure apart from the control-plane
+// errors it does latch — a thrown port, a malformed result, a rejecting sink.
+// ---------------------------------------------------------------------------
+
+const fsmResultFailures = new WeakSet<object>();
+
+function markFsmResultFailure(error: Error): Error {
+  fsmResultFailures.add(error);
+  return error;
+}
+
+function isFsmResultFailure(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    fsmResultFailures.has(error as object)
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The per-workflow spec. Every strategy member has a generic default derived
 // from the FSM artifact's own data, so a linker-emitted thin module normally
 // supplies only `snapshotOptions` and, where applicable, `entryEvent`, erased
@@ -940,6 +965,20 @@ function configuredEventTypesForState(
   return configured;
 }
 
+// Derived contracts merge into whatever the machine already yielded for the
+// same type, so a deterministic entry event that shares a type with another
+// derived contract keeps its exact-text ownership instead of being replaced.
+function mergeDerivedContract(
+  contracts: Map<string, XStateBossEventSpec>,
+  contract: XStateBossEventSpec,
+): void {
+  const existing = contracts.get(contract.type);
+  contracts.set(contract.type, {
+    type: contract.type,
+    fields: { ...(existing?.fields ?? {}), ...(contract.fields ?? {}) },
+  });
+}
+
 function defaultBossEventSpecs(
   machine: AnyStateMachine,
   entryEvent: { type: string; textField: string } | undefined,
@@ -947,7 +986,7 @@ function defaultBossEventSpecs(
 ): ReadonlyMap<string, XStateBossEventSpec> {
   const contracts = new Map<string, XStateBossEventSpec>();
   if (entryEvent !== undefined) {
-    contracts.set(entryEvent.type, {
+    mergeDerivedContract(contracts, {
       type: entryEvent.type,
       fields: { [entryEvent.textField]: { source: 'text', required: true } },
     });
@@ -961,7 +1000,7 @@ function defaultBossEventSpecs(
   const interruptTargets =
     rootInterrupt === undefined ? [] : transitionTargets(rootInterrupt);
   if (interruptTargets.length > 0) {
-    contracts.set('BOSS_INTERRUPT', {
+    mergeDerivedContract(contracts, {
       type: 'BOSS_INTERRUPT',
       fields: {
         targetId: {
@@ -969,6 +1008,10 @@ function defaultBossEventSpecs(
           required: true,
           values: [...new Set(interruptTargets)],
         },
+        // slc/link.md §Boss-event mapping: for BOSS_INTENT and
+        // BOSS_INTERRUPT the runtime, never the judge, attaches the exact
+        // original Boss text as `bossIntent`.
+        bossIntent: { source: 'text', required: true },
       },
     });
   }
@@ -1313,9 +1356,16 @@ export function createXStatePlaybookRuntime<TOptions>(
   };
   const extractFields =
     spec.extractRequiredFields ?? defaultExtractRequiredFields;
-  const classifyBossText =
-    spec.classifyBossText ??
-    makeDefaultClassifyBossText(machine, spec.entryEvent, spec.bossEvents ?? []);
+  // Build the derived classifier unconditionally: it is the sole validator of
+  // supplied `bossEvents`, and DR-019 §2 requires a conflicting duplicate to
+  // fail factory construction whether or not this spec overrides the
+  // classifier that would have consumed the contracts.
+  const derivedClassifyBossText = makeDefaultClassifyBossText(
+    machine,
+    spec.entryEvent,
+    spec.bossEvents ?? [],
+  );
+  const classifyBossText = spec.classifyBossText ?? derivedClassifyBossText;
   const normalizeTransitionEvent =
     spec.normalizeTransitionEvent ??
     makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
@@ -1815,21 +1865,24 @@ export function createXStatePlaybookRuntime<TOptions>(
             );
             throw error;
           }
+          // A non-`ok` host result is a recoverable FSM failure (PBRT-47), so
+          // it is never latched as a control-plane error; it is still
+          // authoritative for the actor's error path even when the required
+          // finish emission fails or a coincident boundary abort lands.
           let resultFailure: Error | undefined;
           if (result.status !== 'ok') {
-            resultFailure = new Error(
-              result.error ??
-                `captainActor: callCaptain status "${result.status}"`,
+            resultFailure = markFsmResultFailure(
+              new Error(
+                result.error ??
+                  `captainActor: callCaptain status "${result.status}"`,
+              ),
             );
           } else if (result.finalText === undefined || result.finalText === '') {
-            resultFailure = new Error(
-              'captainActor: callCaptain returned status=ok with no finalText',
+            resultFailure = markFsmResultFailure(
+              new Error(
+                'captainActor: callCaptain returned status=ok with no finalText',
+              ),
             );
-          }
-          if (resultFailure !== undefined) {
-            // The host result is authoritative even when the required finish
-            // emission fails or triggers a coincident boundary abort.
-            controlPlaneError ??= resultFailure;
           }
           try {
             await emitTrace(
@@ -1904,14 +1957,18 @@ export function createXStatePlaybookRuntime<TOptions>(
             const prompt = composeCaptainPrompt(input);
             const result = await boundary.callCaptain!(input, prompt, active);
             if (result.status !== 'ok') {
-              throw new Error(
-                result.error ??
-                  `captainActor: callCaptain status "${result.status}"`,
+              throw markFsmResultFailure(
+                new Error(
+                  result.error ??
+                    `captainActor: callCaptain status "${result.status}"`,
+                ),
               );
             }
             if (result.finalText === undefined || result.finalText === '') {
-              throw new Error(
-                'captainActor: callCaptain returned status=ok with no finalText',
+              throw markFsmResultFailure(
+                new Error(
+                  'captainActor: callCaptain returned status=ok with no finalText',
+                ),
               );
             }
             const judgePrompt = buildCaptainJudgePrompt(
@@ -1933,7 +1990,13 @@ export function createXStatePlaybookRuntime<TOptions>(
             validateBossReplyOutput(input, output, resumableStateIds);
             return output;
           } catch (error) {
-            if (!active.aborted) controlPlaneError ??= error;
+            // A host-reported Captain result failure routes to the FSM's
+            // failure state (PBRT-47); everything else here — a drained
+            // emission failure, prompt composition, the port itself,
+            // adjudication — is control plane.
+            if (!active.aborted && !isFsmResultFailure(error)) {
+              controlPlaneError ??= error;
+            }
             throw error;
           }
         },

@@ -449,6 +449,27 @@ describe('generic strategy defaults', () => {
       }),
     ).toThrow(/conflicts with the runtime-derived contract/);
   });
+
+  it('validates bossEvents even when the spec overrides classifyBossText', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        classifyBossText: async () => undefined,
+        bossEvents: [
+          {
+            type: 'BOSS_INTERRUPT',
+            fields: {
+              targetId: {
+                source: 'judge',
+                required: true,
+                values: ['other'],
+              },
+            },
+          },
+        ],
+      }),
+    ).toThrow(/conflicts with the runtime-derived contract/);
+  });
 });
 
 describe('player + script workflow over the shared factory', () => {
@@ -615,15 +636,19 @@ describe('player + script workflow over the shared factory', () => {
 
   it('derives and validates a root BOSS_INTERRUPT target while parked', async () => {
     let playerCalls = 0;
+    const playerPrompts: string[] = [];
+    const classifierPrompts: string[] = [];
     const { ports } = makeRecordingPorts({
-      callPlayer: async () => {
+      callPlayer: async (_playerId, prompt) => {
         playerCalls += 1;
+        playerPrompts.push(prompt);
         return playerCalls === 1
           ? { status: 'ok', finalText: 'Need a decision.' }
           : { status: 'ok', finalText: 'Done.' };
       },
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
+          classifierPrompts.push(prompt);
           return '{"type":"BOSS_INTERRUPT","targetId":"implement"}';
         }
         return playerCalls === 1
@@ -638,6 +663,11 @@ describe('player + script workflow over the shared factory', () => {
     const interrupted = await runtime.handleBossInput(turn('continue now'));
     expect(interrupted.outcome).toBe('terminal');
     expect(playerCalls).toBe(2);
+    // slc/link.md §Boss-event mapping: the derived BOSS_INTERRUPT contract
+    // carries the runtime-owned `bossIntent` text field without the linker
+    // supplying `bossEvents`, and the judge is never offered it.
+    expect(playerPrompts[1]).toBe('Implement this task: continue now');
+    expect(classifierPrompts[0]).not.toContain('"bossIntent"');
     await runtime.dispose();
   });
 
@@ -944,31 +974,81 @@ describe('direct-Captain actor over the shared factory', () => {
     await runtime.dispose();
   });
 
+  // PBRT-47: a host-reported Captain result failure is a recoverable FSM
+  // failure, not a control-plane error. It routes through the invoked actor's
+  // XState error path to the failure state and resolves `failed`, exactly as
+  // the delegated-player boundary does for the same class of host failure.
   it.each([
     [
       'non-ok result',
       { status: 'error' as const, error: 'captain unavailable' },
       /captain unavailable/,
     ],
+    [
+      'aborted result',
+      { status: 'aborted' as const },
+      /callCaptain status "aborted"/,
+    ],
     ['missing finalText', { status: 'ok' as const }, /no finalText/],
     ['empty finalText', { status: 'ok' as const, finalText: '' }, /no finalText/],
-  ])('rejects a %s as a control-plane failure', async (_label, captainResult, error) => {
-    const { ports, telemetry } = makeRecordingPorts({
-      callCaptain: async () => captainResult,
+  ])(
+    'routes a %s to the FSM failure state instead of rejecting',
+    async (_label, captainResult, error) => {
+      const { ports, telemetry } = makeRecordingPorts({
+        callCaptain: async () => captainResult,
+      });
+      const runtime = createCaptainRuntime({});
+      await runtime.init(makeSession(ports));
+      const result = await runtime.handleBossInput(turn('release timing'));
+
+      expect(result.outcome).toBe('failed');
+      expect(result.state.stateId).toBe('failed');
+      expect('error' in result ? result.error : undefined).toMatchObject({
+        name: 'Error',
+        message: expect.stringMatching(error) as unknown as string,
+      });
+      const finish = telemetry
+        .map(({ payload }) => payload as { type?: string; payload?: unknown })
+        .find((event) => event.type === 'captain.call.finished');
+      expect(finish?.payload).toMatchObject({
+        status: captainResult.status,
+        error: { name: 'Error' },
+      });
+      await runtime.dispose();
+    },
+  );
+
+  it('agrees with the player boundary on a host result failure', async () => {
+    const { ports: captainPorts } = makeRecordingPorts({
+      callCaptain: async () => ({ status: 'error', error: 'agent crashed' }),
     });
-    const runtime = createCaptainRuntime({});
-    await runtime.init(makeSession(ports));
-    await expect(
-      runtime.handleBossInput(turn('release timing')),
-    ).rejects.toThrow(error);
-    const finish = telemetry
-      .map(({ payload }) => payload as { type?: string; payload?: unknown })
-      .find((event) => event.type === 'captain.call.finished');
-    expect(finish?.payload).toMatchObject({
-      status: captainResult.status,
-      error: { name: 'Error' },
+    const captainRuntime = createCaptainRuntime({});
+    await captainRuntime.init(makeSession(captainPorts));
+    const captainResult = await captainRuntime.handleBossInput(
+      turn('release timing'),
+    );
+    await captainRuntime.dispose();
+
+    const { ports: playerPorts } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'error', error: 'agent crashed' }),
     });
-    await runtime.dispose();
+    const playerRuntime = createWorkflowRuntime({});
+    await playerRuntime.init(makeSession(playerPorts));
+    const playerResult = await playerRuntime.handleBossInput(
+      turn('do the work'),
+    );
+    await playerRuntime.dispose();
+
+    expect(captainResult.outcome).toBe(playerResult.outcome);
+    expect(captainResult.outcome).toBe('failed');
+    expect(captainResult.state.stateId).toBe('failed');
+    expect(playerResult.state.stateId).toBe('failed');
+    expect(
+      'error' in captainResult ? captainResult.error?.message : undefined,
+    ).toBe('agent crashed');
+    expect(
+      'error' in playerResult ? playerResult.error?.message : undefined,
+    ).toBe('agent crashed');
   });
 
   it('preserves a direct-Captain result failure when its finish sink rejects', async () => {
@@ -988,14 +1068,14 @@ describe('direct-Captain actor over the shared factory', () => {
     });
     const runtime = createCaptainRuntime({});
     await runtime.init(makeSession(ports));
+    // The rejecting sink is the control-plane error the public boundary
+    // surfaces; the host result stays the failure state's own evidence.
     await expect(
       runtime.handleBossInput(turn('release timing')),
-    ).rejects.toThrow('captain unavailable');
+    ).rejects.toThrow('finish sink failed');
     expect(finishAttempts).toBe(1);
     expect(
-      statuses.find(({ message }) =>
-        message.startsWith('Workflow failed;'),
-      ),
+      statuses.find(({ message }) => message.startsWith('Workflow failed;')),
     ).toMatchObject({
       data: { lastError: { message: 'captain unavailable' } },
     });
@@ -1004,7 +1084,7 @@ describe('direct-Captain actor over the shared factory', () => {
 
   it('preserves a direct-Captain result failure over a finish-time abort', async () => {
     const controller = new AbortController();
-    const { ports } = makeRecordingPorts({
+    const { ports, statuses } = makeRecordingPorts({
       callCaptain: async () => ({
         status: 'error',
         error: 'captain unavailable',
@@ -1018,12 +1098,18 @@ describe('direct-Captain actor over the shared factory', () => {
     });
     const runtime = createCaptainRuntime({});
     await runtime.init(makeSession(ports));
-    await expect(
-      runtime.handleBossInput({
-        text: 'release timing',
-        signal: controller.signal,
-      }),
-    ).rejects.toThrow('captain unavailable');
+    const result = await runtime.handleBossInput({
+      text: 'release timing',
+      signal: controller.signal,
+    });
+
+    expect(result.outcome).toBe('aborted');
+    expect(result.state.stateId).toBe('failed');
+    expect(
+      statuses.find(({ message }) => message.startsWith('Workflow failed;')),
+    ).toMatchObject({
+      data: { lastError: { message: 'captain unavailable' } },
+    });
     await runtime.dispose();
   });
 

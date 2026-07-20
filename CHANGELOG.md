@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Parked one-shot sessions now persist the direct-Captain call counter.** `PlaybookRuntimeSnapshot.sequences` gains an optional `captainCall` member under the unchanged schema version `1`: a direct-Captain-capable linked runtime records it on `exportSnapshot`, and `restore` still accepts a snapshot that omits it, using the persisted global `trace` counter as a collision-safe floor so a resumed run cannot reissue a pre-snapshot Captain call id. Snapshots written by earlier versions keep restoring unchanged ([PBRT-45](specs/dev/playbook-runtime.md#pbrt-45), [DR-014](specs/decisions/014-durable-one-shot-run-sessions.md)).
+
+### Changed
+
+- **`slc/link.md` now names the Boss-event types a linker must never emit.** The `bossEvents` contract paragraph states that `NO_ACTION` and `BOSS_REPLY` are runtime-owned — the shared factory supplies `NO_ACTION` as exactly `{ type: 'NO_ACTION' }` and `BOSS_REPLY` as an optional judge-selected `questionId` plus the runtime-attached exact-text `answer` — so a linker that reads the erasure rule literally no longer emits a `BOSS_REPLY` entry that the factory rejects at construction, which would leave the emitted module dead on import ([DR-019](specs/decisions/019-shared-linked-runtime-factory.md), [IR-027](specs/iterations/027-linked-runtime-boundary-fixes.md)).
+
+### Fixed
+
+- **A failing host Captain reply no longer crashes the Boss turn.** A direct-Captain `callCaptain` that returns `status: 'error'` or `'aborted'`, or `ok` with no `finalText`, is a recoverable FSM failure: it now routes through the invoked actor's XState error path to the failure state and `handleBossInput` resolves the structured `failed` outcome carrying that error, instead of rejecting the public boundary. This restores parity with the delegated-player boundary, which already resolved `failed` for the identical class of host failure. A thrown port, a malformed host result, and a rejecting `captain.call.finished` sink remain control-plane errors that reject, and a rejecting finish sink still leaves the host result as the failure state's own evidence ([PBRT-47](specs/dev/playbook-runtime.md#pbrt-47), [PBRT-9](specs/dev/playbook-runtime.md#pbrt-9), [PBRT-41](specs/dev/playbook-runtime.md#pbrt-41)).
+- **A derived `BOSS_INTERRUPT` no longer drops the Boss's exact directive.** The shared factory derives that event's contract from the machine's root transition; it supplied the judge-selected `targetId` but not the runtime-owned `bossIntent` text field, so an FSM reading `event.bossIntent` on interrupt silently received `undefined` unless the linker also emitted explicit `bossEvents`. The derived contract now carries `bossIntent` — still runtime-attached, still withheld from the classifier prompt — and a derived contract sharing its type with the deterministic entry event merges with it rather than replacing it ([slc/link.md](slc/link.md), [IR-027](specs/iterations/027-linked-runtime-boundary-fixes.md)).
+- **Conflicting `bossEvents` metadata fails construction even with a custom classifier.** Supplying `classifyBossText` short-circuited the derived-contract build that is the only enforcement of the non-weakening merge rule, so a playbook with its own classifier could ship metadata contradicting the machine's own entry text ownership or closed interrupt targets undetected ([DR-019](specs/decisions/019-shared-linked-runtime-factory.md)).
+
 ## [1.3.0] - 2026-07-20
 
 ### Added
