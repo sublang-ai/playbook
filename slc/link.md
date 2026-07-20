@@ -1316,6 +1316,13 @@ The emitted module:
   weaken, runtime-derived entry text ownership or closed interrupt targets.
   A conflicting duplicate field contract is a linker/runtime construction
   error.
+  `NO_ACTION` and `BOSS_REPLY` are runtime-owned event types the factory
+  supplies itself — `NO_ACTION` as exactly `{ type: 'NO_ACTION' }`, and
+  `BOSS_REPLY` as an optional judge-selected `questionId` plus the exact-text
+  `answer` the runtime attaches. `bossEvents` shall carry no entry for either
+  type; supplying one is a construction error, so a linker that judges a
+  runtime-owned arm to have lost payload detail under erasure shall report
+  that gap rather than emit the entry.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
   `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`.
 - Exposes, under an `_internal` export, the pure helpers verification

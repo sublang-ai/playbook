@@ -72,6 +72,7 @@ meta.md     The spec of specs
 | IR-024 | [024-run-defaults-config.md](iterations/024-run-defaults-config.md) | Implement DR-017: `run` block defaults for `playbook run` with per-role precedence, the `player` catch-all, fail-closed validation, resume immunity, and acceptance tests |
 | IR-025 | [025-gears-grammar-provenance.md](iterations/025-gears-grammar-provenance.md) | Implement DR-018: cite the GEARS grammar from the installed `@sublang/spex` package, codify the unified language rule, and pin the dependency and its resolution |
 | IR-026 | [026-shared-linked-runtime-factory.md](iterations/026-shared-linked-runtime-factory.md) | Implement DR-019: the shared linked-runtime factory with generic strategy defaults and unit tests, the thin CODE artifact under its unchanged suites, the rewritten `slc/link.md` §Output, and the 1.3.0 bump |
+| IR-027 | [027-linked-runtime-boundary-fixes.md](iterations/027-linked-runtime-boundary-fixes.md) | Route host-reported direct-Captain result failures to the FSM failure state, derive the `bossIntent` interrupt field, name the runtime-owned `bossEvents` exclusions in `slc/link.md`, validate `bossEvents` under an overridden classifier, and retire PBRT-46's unit-only clause |
 
 ## Packages
 

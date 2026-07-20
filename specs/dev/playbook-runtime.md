@@ -190,6 +190,26 @@ so the FSM advances. When the result status is not `ok`, or
 `finalText` is absent, the runtime shall throw so the FSM routes
 through its error path to the failure state.
 
+### PBRT-47
+
+While driving a Boss turn, for each FSM direct-Captain invocation, when
+`callCaptain` returns a host result whose status is not `ok` or whose
+`finalText` is absent or empty, the runtime shall record that failure on the
+call's single `captain.call.finished` trace and throw it from the invoked
+actor so the FSM routes through its error path to the failure state, and
+shall not treat it as a control-plane error.
+`handleBossInput` shall therefore resolve the structured `failed` outcome
+carrying that failure as the state's error, exactly as it does for the
+equivalent delegated-player result ([PBRT-9](#pbrt-9)), rather than reject
+([PBRT-41](#pbrt-41)).
+A thrown `callCaptain` port, a malformed host result, and a rejecting trace
+sink remain control-plane errors ([PBRT-41](#pbrt-41)).
+
+Where the required `captain.call.finished` emission itself rejects, the
+runtime shall keep the host-result failure as the invoked actor's error so
+the failure state records it, while the emission failure remains the
+control-plane error the turn's drain surfaces ([PBRT-41](#pbrt-41)).
+
 ## Adjudication
 
 ### PBRT-10
