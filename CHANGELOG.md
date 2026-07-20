@@ -10,13 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-20
+
 ### Added
 
 - **`playbook run` can take its default lineup from the user config.** A top-level `run:` block in `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml` supplies default `<adapter>[:<model>][@<effort>]` agent strings — `run.captain`, per-role `run.players.<role>`, and a `run.player` catch-all for any required role not bound below — so a tuned one-shot lineup no longer needs retyping on every invocation. Flags still win per role, a `run.players` role the loaded playbook does not require is ignored (one global config serves every playbook), a malformed `run` block fails the run closed with a diagnostic, and `playbook run resume` keeps the lineup stored with the parked session ([DR-017](specs/decisions/017-run-defaults-config.md), [PBCLI-28](specs/user/playbook-cli.md#pbcli-28)).
 
 ### Changed
 
-- **The generic FSM-interpreter machinery now ships once as a shared factory.** `@sublang/playbook/xstate-runtime` gains `createXStatePlaybookRuntime(machine, spec)` — the actor wiring, port boundary tracing, judge classification/adjudication, `sh -c` script execution, direct-Captain and nested-playbook actors, Boss-reply suspension, parked-session snapshot/restore, and disposal that every linked `<name>.playbook.ts` previously regenerated (~1600 generic lines per artifact). `slc/link.md` §Output now emits a thin module — the FSM import, a derived options interface (plus `cwd` for script states), the shared-contract type re-exports, and the default-exported factory call — so a runtime fix ships as a package release instead of a re-link of every artifact. The reference CODE runtime is ported to the thin form under its unchanged behavior suites; every pre-existing `./runtime` and `./xstate-runtime` export keeps working, so previously linked fat artifacts continue to run ([DR-019](specs/decisions/019-shared-linked-runtime-factory.md), [RELEASE-15](specs/dev/release.md#release-15), [PBRT-5](specs/dev/playbook-runtime.md#pbrt-5)).
+- **The generic FSM-interpreter machinery now ships once as a shared factory.** `@sublang/playbook/xstate-runtime` gains `createXStatePlaybookRuntime(machine, spec)` — the actor wiring, port boundary tracing, judge classification/adjudication, `sh -c` script execution, direct-Captain and nested-playbook actors, Boss-reply suspension, parked-session snapshot/restore, and disposal that every linked `<name>.playbook.ts` previously regenerated (~1600 generic lines per artifact). Its defaults preserve canonical kebab-case prompt placeholders, the exact flat Boss-event contract and runtime-owned text, direct-Captain control failures and tool policy, abort-before-transition ordering, and unique call ids across durable restore. `slc/link.md` §Output now emits a thin module — the FSM import, a derived options interface (plus `cwd` for script states), the shared-contract type re-exports, and the default-exported factory call — so a runtime fix ships as a package release instead of a re-link of every artifact. The reference CODE runtime is ported to the thin form under its unchanged behavior suites; every pre-existing `./runtime` and `./xstate-runtime` export keeps working, so previously linked fat artifacts continue to run ([DR-019](specs/decisions/019-shared-linked-runtime-factory.md), [RELEASE-15](specs/dev/release.md#release-15), [PBRT-5](specs/dev/playbook-runtime.md#pbrt-5)).
 - **The GEARS grammar authority now ships with the package.** `slc/text2gears.md` cites the GEARS definition from the installed `@sublang/spex` dependency — `@sublang/spex/scaffold/specs/meta.md` (English) and `@sublang/spex/scaffold/i18n/zh/specs/meta.md` (Chinese), with the canonical sublang.ai renditions — instead of a root-relative `/specs/meta.md` link that rebound to whichever repo hosted a copy, and now states the unified language rule: an item's condition prose, prompts, and result descriptions follow the Source language while the four `Captain shall` clause forms, guard names, and the `Players:`/`Results:` labels stay fixed English machine syntax. `slc/optimize.md`'s script-clause note cites the same authority, and `@sublang/spex@^0.3.0` joins the runtime dependencies ([DR-018](specs/decisions/018-gears-grammar-provenance-from-spex.md), [RELEASE-22](specs/dev/release.md#release-22)).
 
 ## [1.0.0] - 2026-07-18
@@ -210,7 +212,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/sublang-ai/playbook/compare/v1.0.0...v1.3.0
 [1.0.0]: https://github.com/sublang-ai/playbook/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/sublang-ai/playbook/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/sublang-ai/playbook/compare/v0.7.0...v0.8.0
