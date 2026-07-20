@@ -41,6 +41,14 @@ typed `PlaybookRuntimeFactory<CodePlaybookOptions>`. The options shall
 carry only per-run identity strings; the mapping from FSM players to
 player-id strings shall be fixed in the runtime, not supplied at run
 time.
+The module shall obtain that runtime by passing the FSM machine and the
+CODE-specific spec — options validation, player binding, prompt
+composition, Boss-event classification, adjudication strategy, and
+Captain-pane status formatting — to the shared
+`createXStatePlaybookRuntime` factory of
+`@sublang/playbook/xstate-runtime`
+([DR-019](../decisions/019-shared-linked-runtime-factory.md)); it shall
+not carry a per-artifact copy of the generic FSM-interpreter machinery.
 
 ### PBRT-34
 

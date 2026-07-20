@@ -42,6 +42,7 @@ meta.md     The spec of specs
 | DR-016 | [016-script-actors-and-optimize-pass.md](decisions/016-script-actors-and-optimize-pass.md) | Script actors and the GEARS optimize pass: optimizer-introduced `Captain shall run:` items, the runtime-internal `script` actor with mechanical exit-status guards and `playbook.script` telemetry, and the format-preserving `slc/optimize.md` definition |
 | DR-017 | [017-run-defaults-config.md](decisions/017-run-defaults-config.md) | Config-driven `playbook run` defaults: a top-level `run` block (`captain`, per-role `players`, `player` catch-all) in the user config with flag-over-config precedence, ignored unrequired roles, fail-closed malformed handling, and untouched resume |
 | DR-018 | [018-gears-grammar-provenance-from-spex.md](decisions/018-gears-grammar-provenance-from-spex.md) | GEARS grammar authority moves to the installed `@sublang/spex` scaffold definitions (English and Chinese, with the canonical URLs), with a unified Source-language rule, fixed-English machine syntax, and `@sublang/spex` in the runtime dependency closure |
+| DR-019 | [019-shared-linked-runtime-factory.md](decisions/019-shared-linked-runtime-factory.md) | The generic FSM-interpreter machinery ships once as the shared `createXStatePlaybookRuntime(machine, spec)` factory on `@sublang/playbook/xstate-runtime`; `slc/link.md` emits thin modules, CODE is ported as the equivalence proof, and fat artifacts stay compatible |
 
 ## Iterations
 
@@ -70,6 +71,7 @@ meta.md     The spec of specs
 | IR-023 | [023-script-actors-and-optimize-pass.md](iterations/023-script-actors-and-optimize-pass.md) | Codify DR-016 in the maintained definitions: script behaviors in `text2gears.md`, the `script` actor in `gears2fsm.md`, script execution in `link.md`, and the new `optimize.md` pass shipped via `./slc/*` |
 | IR-024 | [024-run-defaults-config.md](iterations/024-run-defaults-config.md) | Implement DR-017: `run` block defaults for `playbook run` with per-role precedence, the `player` catch-all, fail-closed validation, resume immunity, and acceptance tests |
 | IR-025 | [025-gears-grammar-provenance.md](iterations/025-gears-grammar-provenance.md) | Implement DR-018: cite the GEARS grammar from the installed `@sublang/spex` package, codify the unified language rule, and pin the dependency and its resolution |
+| IR-026 | [026-shared-linked-runtime-factory.md](iterations/026-shared-linked-runtime-factory.md) | Implement DR-019: the shared linked-runtime factory with generic strategy defaults and unit tests, the thin CODE artifact under its unchanged suites, the rewritten `slc/link.md` §Output, and the 1.3.0 bump |
 
 ## Packages
 
