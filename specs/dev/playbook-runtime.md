@@ -622,10 +622,16 @@ it shall return a JSON-safe `PlaybookRuntimeSnapshot` carrying schema
 version `1`, the session's playbook id, the persisted machine snapshot
 with any raw `Error` context value normalized to `{ name, message,
 stack? }`, the player resume-token map, the trace/turn/judge-call/
-player-call/playbook-call sequence counters, the current normalized
+player-call/playbook-call sequence counters, the direct-Captain-call
+counter when the runtime supports direct Captain calls, the current normalized
 state descriptor, and the pending Boss questions as
 `{ questionId, player, question, sourceItem? }` entries; at any other
 point it shall return `undefined`.
+The `captainCall` member of `sequences` shall remain optional under
+schema version `1`: a direct-Captain-capable runtime shall persist it, and
+`restore` shall accept an older snapshot that omits it and use the persisted
+global `trace` counter as a collision-safe floor for subsequent Captain call
+ids.
 When `restore` is called on an unused runtime instance with the same
 immutable session identity the snapshot was exported under, the runtime
 shall validate the snapshot's schema version and that its playbook id

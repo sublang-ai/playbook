@@ -25,7 +25,7 @@ Implement [DR-019](../decisions/019-shared-linked-runtime-factory.md): move the 
 
 ## Acceptance criteria
 
-- The shared factory provides every actor kind a linked FSM declares — player, script, captain, nested playbook (literal and dynamic) — with the DR-019 generic defaults, verified by `src/xstate-playbook-runtime.test.ts`.
+- The shared factory provides every actor kind a linked FSM declares — player, script, captain, nested playbook (literal and dynamic) — with the DR-019 generic defaults, verified by `src/xstate-playbook-runtime.test.ts`, including canonical placeholder mapping, exact flat Boss-event classification with parked fresh directives and non-weakening metadata merges, direct-Captain first-error propagation and tool-policy trace fidelity, abort-before-transition behavior, and unique Captain call ids across current and legacy snapshot restore.
 - `code.playbook.ts` delegates to the shared factory; `code.playbook.test.ts`, `code.prompt-contract.test.ts`, and `code.playbook.contract.test.ts` pass without any expectation change.
 - Every pre-existing export of `@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` still resolves (package-surface suite), so fat artifacts keep running.
 - `npm pack` ships the new factory siblings and `pnpm build` leaves every committed `.js`/`.d.ts` shipping artifact unchanged.
