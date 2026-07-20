@@ -266,7 +266,7 @@ export declare const discussMachine: import("xstate").StateMachine<DiscussContex
 } | {
     type: "mixedReview";
     params: unknown;
-}, never, "done" | "failed" | "ready" | "awaitBossReply" | "hostWritesAgreement" | "commitInitialChanges" | "reviewSpecInitialCommit" | "reviewSpecHostChanges" | "reviewDrInitialCommit" | "reviewDrHostChanges" | "reviewMixedInitialCommit" | "reviewMixedHostChanges" | "hostAddressesFindings" | "participantAddressesRebuttals" | "commitReviewedChanges" | {
+}, never, "done" | "failed" | "awaitBossReply" | "ready" | "hostWritesAgreement" | "commitInitialChanges" | "reviewSpecInitialCommit" | "reviewSpecHostChanges" | "reviewDrInitialCommit" | "reviewDrHostChanges" | "reviewMixedInitialCommit" | "reviewMixedHostChanges" | "hostAddressesFindings" | "participantAddressesRebuttals" | "commitReviewedChanges" | {
     initialProposalRound: {
         host: "working" | "waiting" | "complete";
         participant: "working" | "waiting" | "complete";

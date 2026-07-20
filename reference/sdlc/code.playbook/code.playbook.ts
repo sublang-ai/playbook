@@ -15,21 +15,26 @@
 //                PlaybookRuntime imported and re-exported from
 //                @sublang/playbook/runtime
 //                (slc/link.md §Output, DR-004 Addendum A4)
+// Runtime:       the shared createXStatePlaybookRuntime factory from
+//                @sublang/playbook/xstate-runtime interprets the FSM
+//                (slc/link.md §Output, DR-019); this module carries only
+//                the CODE-specific spec — options validation, player
+//                binding, prompt composition, Boss-event classification,
+//                and Captain-pane status formatting.
 
-import PQueue from 'p-queue';
-import { createActor, fromPromise } from 'xstate';
-import type { InspectionEvent, SnapshotFrom } from 'xstate';
 import {
-  assertPlaybookRuntimeSnapshot,
-  combineAbortSignals,
-  createNestedPlaybookBridge,
-  detachPersistedMachineSnapshot,
+  createPlayerBridge,
+  createXStatePlaybookRuntime,
+  adjudicatePlayerOutput,
   normalizeError,
-  normalizePlaybookSnapshot,
+  normalizeErrorCompact,
+  normalizeErrorFull,
+  parseJudgeJson,
   snapshotJsonValue,
-  snapshotPlaybookSession,
-  validatePlayerResult,
-  waitForPlaybookQuiescence,
+  type PlaybookPlayerInput,
+  type RuntimeBoundaryCalls,
+  type ScheduledStatus,
+  type XStatePlaybookRuntimeSpec,
 } from '../../../src/xstate-runtime.js';
 import {
   codingMachine,
@@ -126,12 +131,6 @@ function snapshotCodePlaybookOptions(value: unknown): CodePlaybookOptions {
   return captured as unknown as CodePlaybookOptions;
 }
 
-const BOSS_REPLY_ERRORS = {
-  missingQuestion: "needsBossReply outcome missing 'question' field",
-  unregisteredState: (stateId: string) =>
-    `state ${stateId} declared needsBossReply but is not registered as resumable`,
-} as const;
-
 // Required-payload fields whose value is the player's verbatim long-form
 // prose. The runtime carries `finalText.trim()` into these fields rather
 // than asking the judge to round-trip the text through JSON. Short
@@ -141,34 +140,6 @@ const VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
   'reviews',
   'challenges',
 ]);
-
-// Normalize an unknown error value to the compact `{ name, message }`
-// shape used by Captain-pane / status emissions. Returns `undefined`
-// for nullish input so callers can omit absent errors.
-function normalizeErrorCompact(
-  err: unknown,
-): { name: string; message: string } | undefined {
-  if (err === undefined || err === null) return undefined;
-  const normalized = normalizeError(err);
-  return { name: normalized.name, message: normalized.message };
-}
-
-// Normalize an unknown error value to the full `{ name, message, stack }`
-// shape used by telemetry emissions. Returns `undefined` for nullish
-// input. `stack` is omitted when not available on the source value.
-function normalizeErrorFull(
-  err: unknown,
-): { name: string; message: string; stack?: string } | undefined {
-  if (err === undefined || err === null) return undefined;
-  return normalizeError(err);
-}
-
-function isAbortFailure(error: unknown, signal: AbortSignal): boolean {
-  return (
-    signal.aborted &&
-    (error === signal.reason || normalizeError(error).name === 'AbortError')
-  );
-}
 
 // Normalize any `error` field inside a telemetry event so failed
 // transitions don't leak raw Error instances through the channel.
@@ -219,10 +190,6 @@ function normalizeEventValue(
   }
   return snapshotJsonValue(normalized, path);
 }
-
-// Internal capabilities (DR-004 §10). Each ships with its final
-// signature; behavior lands in the per-capability task noted by the
-// TODO marker.
 
 // Player-prompt composer — DR-004 §6.
 // Substitutes the three placeholder tokens in `input.prompt` (literal
@@ -312,89 +279,6 @@ function resolvePlayerId(input: PlayerInput): string {
   }
 }
 
-type JudgePurpose = 'boss-input-classification' | 'player-output-adjudication';
-
-interface RuntimeBoundaryCalls {
-  callPlayer(
-    input: PlayerInput,
-    playerId: string,
-    prompt: string,
-    signal: AbortSignal,
-  ): Promise<PlayerResult>;
-  callJudge(
-    purpose: JudgePurpose,
-    stateId: string | undefined,
-    prompt: string,
-    signal: AbortSignal,
-  ): Promise<string>;
-}
-
-// LLM judge — DR-004 §4. Builds a prompt that lists each declared
-// outcome verbatim, asks ports.callJudge for a JSON
-// `{ guard, …payloadFields }` response, and returns the parsed
-// object once the chosen guard is one of the input.result keys.
-// Adjudicator failures (malformed JSON, missing/unknown guard) are
-// control-plane errors and propagate via throw per slc/link.md.
-async function adjudicate(
-  input: PlayerInput,
-  finalText: string,
-  ports: PlaybookPorts,
-  signal: AbortSignal,
-  boundary?: RuntimeBoundaryCalls,
-): Promise<PlayerOutput> {
-  const prompt = buildJudgePrompt(input, finalText);
-  const raw = boundary
-    ? await boundary.callJudge(
-        'player-output-adjudication',
-        input.stateId,
-        prompt,
-        signal,
-      )
-    : await ports.callJudge(prompt, signal);
-  const parsed = parseJudgeJson(raw);
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('adjudicate: judge response is not a JSON object');
-  }
-  const obj = parsed as Record<string, unknown>;
-  const guard = obj.guard;
-  if (typeof guard !== 'string') {
-    throw new Error('adjudicate: judge response missing string "guard" field');
-  }
-  if (!Object.prototype.hasOwnProperty.call(input.result, guard)) {
-    throw new Error(
-      `adjudicate: unknown guard "${guard}" — declared guards: ${Object.keys(
-        input.result,
-      ).join(', ')}`,
-    );
-  }
-  // Per slc/link.md, a missing payload field the state's `result`
-  // description requires is a control-plane error. The FSM names
-  // required fields with the literal phrase
-  //   Output shall include `<fieldName>: <...>`
-  // so we extract those tokens and require each to be a string in
-  // the judge response — except for VERBATIM_PAYLOAD_FIELDS
-  // (`reviews`, `challenges`), where the runtime substitutes
-  // `finalText.trim()` so the long-form prose is not round-tripped
-  // through judge JSON. Short extracted fields like `question` and
-  // `taskDescription` keep the existing extract-and-validate path.
-  const verbatim = finalText.trim();
-  for (const field of extractRequiredFields(input.result[guard])) {
-    if (VERBATIM_PAYLOAD_FIELDS.has(field)) {
-      obj[field] = verbatim;
-      continue;
-    }
-    if (typeof obj[field] !== 'string') {
-      if (guard === 'needsBossReply' && field === 'question') {
-        throw new Error(BOSS_REPLY_ERRORS.missingQuestion);
-      }
-      throw new Error(
-        `adjudicate: judge response missing required field "${field}" for guard "${guard}"`,
-      );
-    }
-  }
-  return obj as PlayerOutput;
-}
-
 function extractRequiredFields(description: string): string[] {
   const fields: string[] = [];
   const re = /Output shall include `([A-Za-z_][A-Za-z0-9_]*):/g;
@@ -427,137 +311,38 @@ function buildJudgePrompt(input: PlayerInput, finalText: string): string {
   return lines.join('\n');
 }
 
-// Judge replies are meant to be a single JSON object, but LLMs
-// routinely wrap them in prose ("Here is the result: …"), Markdown
-// code fences, or trailing commentary, and occasionally emit a
-// trailing comma or truncate the tail (a dropped closing brace, an
-// unterminated string). parseJudgeJson is deliberately lenient: it
-// first tries a strict parse of the (optionally fenced) body, then
-// scans every `{`/`[` as a possible start in document order and
-// returns the first recoverable object. At each start it prefers a
-// strict balanced span and falls back to a repaired (trailing-comma /
-// truncation) span, so a damaged object earlier in the prose is not
-// overridden by a cleaner one later. Scanning every start (not just
-// the first bracket) keeps a bracketed fragment in surrounding prose —
-// e.g. an aside like `see [1]` or `{n/a}` before the real object —
-// from masking a later, genuinely valid object. Both callers
-// (classification and adjudication) expect an object, so plain objects
-// win over arrays/scalars; the first value of any shape is remembered
-// so a legitimately array/scalar reply still surfaces to the caller's
-// own object check. Only a reply from which no JSON value can be
-// recovered is treated as malformed and throws, preserving the
-// control-plane error contract (PBRT-7, PBRT-10).
-function parseJudgeJson(raw: string): unknown {
-  const fenced = stripCodeFence(raw.trim());
-  // Fast path: a well-formed (optionally fenced) JSON body.
-  try {
-    return JSON.parse(fenced);
-  } catch {
-    // Fall through to lenient extraction + repair.
-  }
-  const starts: number[] = [];
-  for (let i = 0; i < fenced.length; i++) {
-    const ch = fenced[i];
-    if (ch === '{' || ch === '[') starts.push(i);
-  }
-  // Walk starts in document order. At each start prefer a strict
-  // balanced span (most trustworthy) and fall back to a repaired one
-  // for a trailing-comma / truncated tail, so the earliest intended
-  // object wins even when it needs repair. Return the first plain
-  // object; remember the first value of any shape so a legitimately
-  // array/scalar reply still surfaces to the caller's own object check.
-  let firstValue: { value: unknown } | undefined;
-  for (const start of starts) {
-    let parsedHere: { value: unknown } | undefined;
-    for (const repair of [false, true]) {
-      const candidate = extractJsonValue(fenced, start, repair);
-      if (candidate === undefined) continue;
-      try {
-        parsedHere = { value: JSON.parse(candidate) };
-      } catch {
-        continue; // not parseable this way — try repair, then next start
-      }
-      break; // prefer the strict span at this start over its repair
-    }
-    if (parsedHere === undefined) continue;
-    if (isPlainObject(parsedHere.value)) return parsedHere.value;
-    if (firstValue === undefined) firstValue = parsedHere;
-  }
-  if (firstValue !== undefined) return firstValue.value;
-  throw new Error('adjudicate: judge response is not valid JSON');
-}
+// CODE-specific adjudication strategy: the CODE judge prompt above, the
+// DR-004 `Output shall include` required-field extraction, and the
+// verbatim long-form payload fields.
+const CODE_ADJUDICATION = {
+  buildJudgePrompt: (input: PlaybookPlayerInput, finalText: string) =>
+    buildJudgePrompt(input as unknown as PlayerInput, finalText),
+  extractRequiredFields,
+  verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
+};
 
-function isPlainObject(value: unknown): boolean {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-// Strip a single Markdown code fence that wraps the whole string.
-function stripCodeFence(text: string): string {
-  const fence = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/);
-  return fence ? fence[1].trim() : text;
-}
-
-// Scan from `start` (a `{`/`[` index), tracking string and
-// bracket-nesting state, and emit the balanced JSON value rooted
-// there. Anything after the top-level value closes is ignored (so a
-// trailing code fence or commentary does not matter). With
-// `repair === false` the span is returned only if it actually closes,
-// and trailing commas are left intact — so the caller can prefer a
-// cleanly-balanced span before attempting repair; if input ends
-// before the value closes, undefined is returned. With
-// `repair === true` common damage is fixed: a trailing comma before a
-// close is removed, an unterminated string is closed, and any
-// brackets still open at end-of-input are closed in order.
-function extractJsonValue(
-  text: string,
-  start: number,
-  repair: boolean,
-): string | undefined {
-  const stack: string[] = [];
-  let out = '';
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i++) {
-    const ch = text[i];
-    if (inString) {
-      out += ch;
-      if (escaped) escaped = false;
-      else if (ch === '\\') escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      out += ch;
-      continue;
-    }
-    if (ch === '{' || ch === '[') {
-      stack.push(ch === '{' ? '}' : ']');
-      out += ch;
-      continue;
-    }
-    if (ch === '}' || ch === ']') {
-      if (repair) out = dropTrailingComma(out);
-      out += ch;
-      stack.pop();
-      if (stack.length === 0) return out; // top-level value complete
-      continue;
-    }
-    out += ch;
-  }
-  // End of input before the top-level value closed.
-  if (!repair) return undefined; // strict pass: no balanced span here
-  if (inString) out += '"';
-  out = dropTrailingComma(out);
-  while (stack.length > 0) out += stack.pop();
-  return out;
-}
-
-// Remove a trailing comma (and any whitespace after it) at the end of
-// the accumulated output, so `{"a":1,}` / `[1,2,]` and truncated
-// `{"a":1,` repair to valid JSON.
-function dropTrailingComma(out: string): string {
-  return out.replace(/,(\s*)$/, '$1');
+// LLM judge — DR-004 §4. Delegates to the shared adjudicator with the
+// CODE strategy: it lists each declared outcome verbatim, asks
+// ports.callJudge for a JSON `{ guard, …payloadFields }` response, and
+// returns the parsed object once the chosen guard is one of the
+// input.result keys. Adjudicator failures (malformed JSON,
+// missing/unknown guard) are control-plane errors and propagate via
+// throw per slc/link.md.
+async function adjudicate(
+  input: PlayerInput,
+  finalText: string,
+  ports: PlaybookPorts,
+  signal: AbortSignal,
+  boundary?: RuntimeBoundaryCalls,
+): Promise<PlayerOutput> {
+  return (await adjudicatePlayerOutput(
+    CODE_ADJUDICATION,
+    input,
+    finalText,
+    ports,
+    signal,
+    boundary,
+  )) as unknown as PlayerOutput;
 }
 
 // Boss-event classifier — DR-004 §3.
@@ -811,11 +596,12 @@ function buildClassifierPrompt(text: string, state: ClassifierState): string {
 }
 
 // Delegated-player actor bridge — DR-004 §7. One PromiseActorLogic that the
-// codingMachine invokes from every player-invoking state. Per turn:
-// resolve playerId, compose the player prompt, await
-// ports.callPlayer, adjudicate the finalText. PlayerResult status of
-// 'aborted' or 'error' throws so XState routes via onError → #failed
-// (the single fail-stop sink for both Captain errors and player
+// codingMachine invokes from every player-invoking state, built by the
+// shared createPlayerBridge with the CODE binding, composer, and
+// adjudication strategy. Per turn: resolve playerId, compose the player
+// prompt, await ports.callPlayer, adjudicate the finalText. PlayerResult
+// status of 'aborted' or 'error' throws so XState routes via onError →
+// #failed (the single fail-stop sink for both Captain errors and player
 // failures). Captain remains the orchestrator and adjudicator; it is not
 // encoded as the delegated FSM actor.
 //
@@ -830,40 +616,20 @@ function captainBridge(
   boundary?: RuntimeBoundaryCalls,
   onControlPlaneError?: (error: unknown) => void,
 ) {
-  return fromPromise<PlayerOutput, PlayerInput>(async ({ input, signal }) => {
-    const activeSignal = combineAbortSignals(signal, getActiveSignal?.());
-    const playerId = resolvePlayerId(input);
-    const prompt = composePlayerPrompt(input);
-    const result = boundary
-      ? await boundary.callPlayer(input, playerId, prompt, activeSignal)
-      : await ports.callPlayer(playerId, prompt, activeSignal, {
-          resume: false,
-        });
-    if (result.status !== 'ok') {
-      throw new Error(
-        result.error ?? `captainBridge: callPlayer status "${result.status}"`,
-      );
-    }
-    if (result.finalText === undefined) {
-      throw new Error(
-        'captainBridge: callPlayer returned status=ok with no finalText',
-      );
-    }
-    try {
-      const output = await adjudicate(
-        input,
-        result.finalText,
-        ports,
-        activeSignal,
-        boundary,
-      );
-      validateBossReplyOutput(input, output);
-      return output;
-    } catch (error) {
-      onControlPlaneError?.(error);
-      throw error;
-    }
-  });
+  return createPlayerBridge(
+    {
+      resolvePlayerId: (input) =>
+        resolvePlayerId(input as unknown as PlayerInput),
+      composePlayerPrompt: (input) =>
+        composePlayerPrompt(input as unknown as PlayerInput),
+      adjudication: CODE_ADJUDICATION,
+      resumableStateIds: registeredResumableStateIds,
+    },
+    ports,
+    getActiveSignal,
+    boundary,
+    onControlPlaneError,
+  );
 }
 
 // Captain pane display — PBRT-3 / PBRT-14.
@@ -936,20 +702,6 @@ const registeredResumableStateIds: ReadonlySet<string> = new Set(
     (transition) => transition.target,
   ),
 );
-
-function validateBossReplyOutput(
-  input: PlayerInput,
-  output: PlayerOutput,
-): void {
-  if (output.guard !== 'needsBossReply') return;
-  if (typeof output.question !== 'string') {
-    throw new Error(BOSS_REPLY_ERRORS.missingQuestion);
-  }
-  const stateId = input.stateId;
-  if (!registeredResumableStateIds.has(stateId)) {
-    throw new Error(BOSS_REPLY_ERRORS.unregisteredState(stateId));
-  }
-}
 
 const QUIESCENT_STATES: ReadonlySet<string> = new Set([
   'ready',
@@ -1100,36 +852,47 @@ function stateTelemetryPayload(
   return payload;
 }
 
-function structuredStateTelemetryPayload(
-  previousState: PlaybookState | undefined,
+// Captain-pane status lines for a root transition (PBRT-3 / PBRT-14):
+// the `→ guard` outcome line for the settling transition, then either
+// the awaitBossReply question + rider-less marker pair or the state's
+// entry line (with `lastError` data on `failed`).
+function statusesForState(
   state: PlaybookState,
-  event: unknown,
   context: Record<string, unknown>,
-): JsonValue {
-  const payload: Record<string, unknown> = {
-    from: previousState?.value ?? null,
-    to: state.value,
-    event: normalizeEventForTelemetry(event) ?? null,
-    previousState: previousState ?? null,
-    state,
-  };
-  if (state.stateId === 'awaitBossReply') {
-    const pendingBossQuestion = pendingBossQuestionFromContext(context);
-    if (pendingBossQuestion !== undefined) {
-      payload.pendingBossQuestion = pendingBossQuestion;
+  event: unknown,
+): ScheduledStatus[] {
+  const to = state.stateId;
+  if (to === undefined || !CAPTAIN_PANE_STATES.has(to)) return [];
+  const statuses: ScheduledStatus[] = [];
+  const transitionLine = formatTransition(event);
+  if (transitionLine !== undefined) {
+    statuses.push({ message: transitionLine });
+  }
+  if (to === 'awaitBossReply') {
+    statuses.push(
+      { message: formatAwaitBossReplyQuestion(context) },
+      { message: formatAwaitBossReplyMarker(context) },
+    );
+  } else {
+    const entryLine = formatStateEntry(to);
+    if (entryLine !== undefined) {
+      const lastError =
+        to === 'failed' ? normalizeErrorCompact(context.lastError) : undefined;
+      statuses.push({
+        message: entryLine,
+        ...(lastError === undefined
+          ? {}
+          : {
+              data: snapshotJsonValue({ lastError }, 'failed status data'),
+            }),
+      });
     }
   }
-  if (state.stateId === 'failed') {
-    const lastError = normalizeErrorFull(context.lastError);
-    if (lastError !== undefined) payload.lastError = lastError;
-  }
-  return snapshotJsonValue(payload, 'FSM telemetry payload');
+  return statuses;
 }
 
 // Internal export surface for tests. Not part of the stable public API;
-// the leading underscore signals "subject to change." Each member is
-// referenced here so `noUnusedLocals` stays clean while later tasks
-// wire the factory body to use them.
+// the leading underscore signals "subject to change."
 export const _internal = {
   composePlayerPrompt,
   resolvePlayerId,
@@ -1151,1214 +914,31 @@ export const _internal = {
   VERBATIM_PAYLOAD_FIELDS,
 };
 
-type BossSettlementOutcome =
-  | 'no-action'
-  | 'quiescent'
-  | 'failed'
-  | 'terminal'
-  | 'aborted'
-  | 'suspended';
+// The CODE-specific spec handed to the shared runtime factory
+// (slc/link.md §Output, DR-019). The generic machinery — actor wiring,
+// boundary tracing, Boss-turn lifecycle, nested-playbook bridge, and the
+// DR-014 parked-session snapshot capability — lives in
+// @sublang/playbook/xstate-runtime; this spec carries only what is
+// CODE-specific.
+const runtimeSpec: XStatePlaybookRuntimeSpec<CodePlaybookOptions> = {
+  label: 'CODE',
+  snapshotOptions: snapshotCodePlaybookOptions,
+  resolvePlayerId: (input) => resolvePlayerId(input as unknown as PlayerInput),
+  composePlayerPrompt: (input) =>
+    composePlayerPrompt(input as unknown as PlayerInput),
+  buildJudgePrompt: CODE_ADJUDICATION.buildJudgePrompt,
+  extractRequiredFields,
+  verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
+  resumableStateIds: registeredResumableStateIds,
+  classifyBossText: (text, ports, signal, snapshotOrState, boundary) =>
+    classifyBossText(text, ports, signal, snapshotOrState, boundary),
+  classificationStatus: (event) => formatClassification(event.type),
+  statusesForState,
+  normalizeTransitionEvent: (event) =>
+    normalizeEventForTelemetry(event) as JsonValue | undefined,
+};
 
-interface TracePosition {
-  turnId?: number;
-  callId?: string;
-}
+const createPlaybookRuntime: PlaybookRuntimeFactory<CodePlaybookOptions> =
+  createXStatePlaybookRuntime(codingMachine, runtimeSpec);
 
-export default function createPlaybookRuntime(
-  options: CodePlaybookOptions,
-): PlaybookRuntime {
-  const boundOptions = snapshotCodePlaybookOptions(options);
-  let actor: ReturnType<typeof createActor> | undefined;
-  let session: PlaybookSession | undefined;
-  let initialized = false;
-  let initInFlight: Promise<void> | undefined;
-  let disposalPromise: Promise<void> | undefined;
-  let disposed = false;
-  let savedPorts: PlaybookPorts | undefined;
-  let runtimePorts: PlaybookPorts | undefined;
-  // The Boss's per-turn AbortSignal, surfaced to captainBridge so
-  // ports.callPlayer / callJudge see the right cancellation source.
-  // null between turns; set by handleBossInput.
-  let activeSignal: AbortSignal | undefined;
-  let activeTurnId: number | undefined;
-  let controlPlaneError: unknown;
-  // Previous root-machine state for the inspect-driven telemetry /
-  // status emitter. undefined before the first inspect firing.
-  let priorState: PlaybookState | undefined;
-  let suppressInspectionEmissions = false;
-
-  let traceSequence = 0;
-  let turnSequence = 0;
-  let judgeCallSequence = 0;
-  let playerCallSequence = 0;
-  let playbookCallSequence = 0;
-  const playerResumeTokens = new Map<string, string>();
-  const activePlayerIds = new Set<string>();
-  const playbookCallTurnIds = new Map<string, number | undefined>();
-  const judgeQueue = new PQueue({ concurrency: 1 });
-  const emissionQueue = new PQueue({ concurrency: 1 });
-  const activeEmissionCalls = new Set<Promise<void>>();
-
-  // All trace, state-telemetry, and status work shares this one queue.
-  // Inspection callbacks enqueue a complete ordered batch synchronously;
-  // imperative boundaries await their queued work directly.
-  let emissionFailure: unknown;
-
-  function enqueueEmission(fn: () => Promise<void>): Promise<void> {
-    const queued = emissionQueue.add(fn).then(() => undefined);
-    activeEmissionCalls.add(queued);
-    void queued.then(
-      () => activeEmissionCalls.delete(queued),
-      (error: unknown) => {
-        activeEmissionCalls.delete(queued);
-        emissionFailure ??= error;
-      },
-    );
-    return queued;
-  }
-
-  async function drainEmissions(): Promise<void> {
-    while (true) {
-      const active = [...activeEmissionCalls];
-      if (active.length > 0) await Promise.allSettled(active);
-      await emissionQueue.onIdle();
-      if (
-        activeEmissionCalls.size === 0 &&
-        emissionQueue.size === 0 &&
-        emissionQueue.pending === 0
-      ) {
-        break;
-      }
-    }
-    if (emissionFailure !== undefined) {
-      const error = emissionFailure;
-      emissionFailure = undefined;
-      throw error;
-    }
-  }
-
-  function requireSession(): PlaybookSession {
-    if (!session) {
-      throw new Error('createPlaybookRuntime: init must be called first');
-    }
-    return session;
-  }
-
-  function requireHostPorts(): PlaybookPorts {
-    if (!savedPorts) {
-      throw new Error('createPlaybookRuntime: init must be called first');
-    }
-    return savedPorts;
-  }
-
-  function createTraceEvent(
-    type: PlaybookTraceType,
-    payload: unknown,
-    position: TracePosition = {},
-  ): PlaybookTraceEvent {
-    const currentSession = requireSession();
-    const safePayload = snapshotJsonValue(payload, `trace ${type} payload`);
-    return {
-      schemaVersion: 2,
-      sessionId: currentSession.sessionId,
-      playbookId: currentSession.playbookId,
-      rootSessionId: currentSession.rootSessionId,
-      ...(currentSession.parentSessionId !== undefined
-        ? { parentSessionId: currentSession.parentSessionId }
-        : {}),
-      ...(currentSession.parentCallId !== undefined
-        ? { parentCallId: currentSession.parentCallId }
-        : {}),
-      depth: currentSession.depth,
-      sequence: ++traceSequence,
-      timestamp: Date.now(),
-      type,
-      ...(position.turnId !== undefined ? { turnId: position.turnId } : {}),
-      ...(position.callId !== undefined ? { callId: position.callId } : {}),
-      payload: safePayload,
-    };
-  }
-
-  function emitTrace(
-    type: PlaybookTraceType,
-    payload: unknown,
-    position: TracePosition = {},
-  ): Promise<void> {
-    const currentSession = requireSession();
-    const event = createTraceEvent(type, payload, position);
-    return enqueueEmission(() =>
-      currentSession.ports.emitTelemetry({
-        topic: 'playbook.trace',
-        payload: event,
-      }),
-    );
-  }
-
-  function stateIdentity(stateId: string | undefined): { stateId?: string } {
-    return stateId === undefined ? {} : { stateId };
-  }
-
-  function currentState(): PlaybookState {
-    if (!actor) {
-      throw new Error('createPlaybookRuntime: actor is not initialized');
-    }
-    return normalizePlaybookSnapshot(actor.getSnapshot(), {
-      pendingCall: nestedBridge.getPendingCall(),
-    });
-  }
-
-  function stateTracePayload(state = currentState()): Record<string, unknown> {
-    return {
-      state,
-      ...stateIdentity(state.stateId),
-    };
-  }
-
-  function createRuntimePorts(hostPorts: PlaybookPorts): PlaybookPorts {
-    return {
-      callPlayer: (playerId, prompt, signal, callOptions) =>
-        hostPorts.callPlayer(playerId, prompt, signal, callOptions),
-      callCaptain: (prompt, signal, callOptions) =>
-        hostPorts.callCaptain(prompt, signal, callOptions),
-      callJudge: (prompt, signal) => hostPorts.callJudge(prompt, signal),
-      callPlaybook: (request, signal) =>
-        hostPorts.callPlaybook(request, signal),
-      emitStatus: (message, data) => {
-        const descriptor = actor ? currentState() : undefined;
-        const safeData =
-          data === undefined
-            ? undefined
-            : snapshotJsonValue(data, 'status data');
-        const trace = createTraceEvent(
-          'status.emitted',
-          {
-            message,
-            ...(safeData !== undefined ? { data: safeData } : {}),
-            ...(descriptor !== undefined
-              ? {
-                  state: descriptor,
-                  ...stateIdentity(descriptor.stateId),
-                }
-              : {}),
-          },
-          activeTurnId !== undefined ? { turnId: activeTurnId } : {},
-        );
-        return enqueueEmission(async () => {
-          await hostPorts.emitTelemetry({
-            topic: 'playbook.trace',
-            payload: trace,
-          });
-          await hostPorts.emitStatus(message, safeData);
-        });
-      },
-      emitTelemetry: (event) => {
-        if (typeof event.topic !== 'string' || event.topic.length === 0) {
-          throw new TypeError('telemetry topic must be a non-empty string');
-        }
-        const payload = snapshotJsonValue(event.payload, 'telemetry payload');
-        return enqueueEmission(() =>
-          hostPorts.emitTelemetry({ topic: event.topic, payload }),
-        );
-      },
-    };
-  }
-
-  async function emitCallStarted(
-    startedType: 'player.call.started' | 'judge.call.started',
-    finishedType: 'player.call.finished' | 'judge.call.finished',
-    identity: Record<string, unknown>,
-    position: TracePosition,
-  ): Promise<void> {
-    try {
-      await emitTrace(startedType, identity, position);
-    } catch (error) {
-      controlPlaneError ??= error;
-      try {
-        await emitTrace(
-          finishedType,
-          { ...identity, status: 'error', error: normalizeError(error) },
-          position,
-        );
-      } catch {
-        // Preserve the start failure after one best-effort finish attempt.
-      }
-      throw error;
-    }
-  }
-
-  const boundary: RuntimeBoundaryCalls = {
-    async callPlayer(input, playerId, prompt, signal): Promise<PlayerResult> {
-      // State-entry telemetry/status must precede the call they describe.
-      await drainEmissions();
-      const turnId = activeTurnId;
-      const callId = `player-${++playerCallSequence}`;
-      const stateId = input.stateId;
-      const resume = playerResumeTokens.get(playerId) ?? false;
-      const identity = {
-        purpose: 'captain' as const,
-        ...stateIdentity(stateId),
-        sourceItem: input.sourceItem,
-        playerId,
-        resume,
-      };
-
-      if (activePlayerIds.has(playerId)) {
-        const error = new Error(
-          `simultaneous calls to resolved player ${playerId} are not allowed`,
-        );
-        await emitCallStarted(
-          'player.call.started',
-          'player.call.finished',
-          { ...identity, prompt },
-          {
-            ...(turnId !== undefined ? { turnId } : {}),
-            callId,
-          },
-        );
-        await emitTrace(
-          'player.call.finished',
-          { ...identity, status: 'error', error: normalizeError(error) },
-          {
-            ...(turnId !== undefined ? { turnId } : {}),
-            callId,
-          },
-        );
-        throw error;
-      }
-      activePlayerIds.add(playerId);
-
-      try {
-        await emitTrace(
-          'player.call.started',
-          { ...identity, prompt },
-          {
-            ...(turnId !== undefined ? { turnId } : {}),
-            callId,
-          },
-        );
-
-        let rawResult: unknown;
-        try {
-          rawResult = await requireHostPorts().callPlayer(
-            playerId,
-            prompt,
-            signal,
-            { resume },
-          );
-          // A host promise is not required to honor cancellation. Do not let
-          // a late result mutate continuity or publish a successful finish.
-          signal.throwIfAborted();
-        } catch (error) {
-          if (!signal.aborted) controlPlaneError ??= error;
-          try {
-            await emitTrace(
-              'player.call.finished',
-              {
-                ...identity,
-                status: signal.aborted ? 'aborted' : 'error',
-                error: normalizeError(error),
-              },
-              {
-                ...(turnId !== undefined ? { turnId } : {}),
-                callId,
-              },
-            );
-          } catch {
-            // The original non-abort port rejection remains authoritative.
-          }
-          // A thrown port call carries no authoritative result, so the
-          // prior token remains available for a later explicit resume.
-          throw error;
-        }
-
-        let result: PlayerResult;
-        try {
-          result = validatePlayerResult(rawResult);
-        } catch (error) {
-          if (!signal.aborted) controlPlaneError ??= error;
-          try {
-            await emitTrace(
-              'player.call.finished',
-              { ...identity, status: 'error', error: normalizeError(error) },
-              {
-                ...(turnId !== undefined ? { turnId } : {}),
-                callId,
-              },
-            );
-          } catch {
-            // The malformed host result remains authoritative.
-          }
-          throw error;
-        }
-
-        if (
-          typeof result.resumeToken === 'string' &&
-          result.resumeToken.trim().length > 0
-        ) {
-          playerResumeTokens.set(playerId, result.resumeToken);
-        } else {
-          playerResumeTokens.delete(playerId);
-        }
-
-        await emitTrace(
-          'player.call.finished',
-          {
-            ...identity,
-            status: result.status,
-            ...(result.finalText !== undefined
-              ? { finalText: result.finalText }
-              : {}),
-            ...(result.error !== undefined
-              ? { error: normalizeError(result.error) }
-              : {}),
-            ...(result.resumeToken !== undefined
-              ? { resumeToken: result.resumeToken }
-              : {}),
-          },
-          {
-            ...(turnId !== undefined ? { turnId } : {}),
-            callId,
-          },
-        );
-        return result;
-      } finally {
-        activePlayerIds.delete(playerId);
-      }
-    },
-
-    async callJudge(purpose, stateId, prompt, signal): Promise<string> {
-      return judgeQueue.add(async () => {
-        signal.throwIfAborted();
-        // A transition/status queued synchronously by XState must reach
-        // the host before the judge call that follows it.
-        await drainEmissions();
-        signal.throwIfAborted();
-        const turnId = activeTurnId;
-        const callId = `judge-${++judgeCallSequence}`;
-        const identity = { purpose, ...stateIdentity(stateId) };
-
-        await emitCallStarted(
-          'judge.call.started',
-          'judge.call.finished',
-          { ...identity, prompt },
-          {
-            ...(turnId !== undefined ? { turnId } : {}),
-            callId,
-          },
-        );
-        let reply: unknown;
-        try {
-          reply = await requireHostPorts().callJudge(prompt, signal);
-          signal.throwIfAborted();
-        } catch (error) {
-          if (!isAbortFailure(error, signal)) {
-            controlPlaneError ??= error;
-          }
-          await emitTrace(
-            'judge.call.finished',
-            {
-              ...identity,
-              status: signal.aborted ? 'aborted' : 'error',
-              error: normalizeError(error),
-            },
-            {
-              ...(turnId !== undefined ? { turnId } : {}),
-              callId,
-            },
-          );
-          throw error;
-        }
-        if (typeof reply !== 'string') {
-          const error = new TypeError('judge reply must be a string');
-          controlPlaneError ??= error;
-          await emitTrace(
-            'judge.call.finished',
-            { ...identity, status: 'error', error: normalizeError(error) },
-            {
-              ...(turnId !== undefined ? { turnId } : {}),
-              callId,
-            },
-          );
-          throw error;
-        }
-        // Keep the success finish outside the port-call catch. If a
-        // telemetry sink records this boundary and then rejects, that sink
-        // failure must not synthesize a second, contradictory finish.
-        await emitTrace(
-          'judge.call.finished',
-          { ...identity, status: 'ok', reply },
-          {
-            ...(turnId !== undefined ? { turnId } : {}),
-            callId,
-          },
-        );
-        return reply;
-      });
-    },
-  };
-
-  const nestedBridge = createNestedPlaybookBridge({
-    nextCallId: () => `playbook-${++playbookCallSequence}`,
-    getBoundarySignal: () => activeSignal,
-    callPlaybook: (request, signal) =>
-      requireHostPorts().callPlaybook(request, signal),
-    emitStarted: async (event) => {
-      playbookCallTurnIds.set(event.callId, activeTurnId);
-      await emitTrace(
-        'playbook.call.started',
-        {
-          stateId: event.stateId,
-          playbookId: event.playbookId,
-          text: event.text,
-        },
-        {
-          ...(activeTurnId !== undefined ? { turnId: activeTurnId } : {}),
-          callId: event.callId,
-        },
-      );
-    },
-    emitFinished: async (event) => {
-      const turnId = playbookCallTurnIds.get(event.callId);
-      try {
-        await emitTrace(
-          'playbook.call.finished',
-          {
-            stateId: event.stateId,
-            playbookId: event.playbookId,
-            text: event.text,
-            result: event.result,
-          },
-          {
-            ...(turnId !== undefined ? { turnId } : {}),
-            callId: event.callId,
-          },
-        );
-      } finally {
-        playbookCallTurnIds.delete(event.callId);
-      }
-    },
-    drain: drainEmissions,
-    bindResumeSignal: (signal) => {
-      activeSignal = signal;
-    },
-    onControlPlaneError: (error) => {
-      if (!activeSignal?.aborted) controlPlaneError ??= error;
-    },
-    onBackgroundError: (error) => {
-      emissionFailure ??= error;
-    },
-  });
-
-  function tracePositionForActiveTurn(): TracePosition {
-    return activeTurnId === undefined ? {} : { turnId: activeTurnId };
-  }
-
-  interface ScheduledStatus {
-    message: string;
-    data?: JsonValue;
-  }
-
-  function enqueueTransitionEmission(
-    payload: JsonValue,
-    state: PlaybookState,
-    statuses: readonly ScheduledStatus[],
-    position: TracePosition,
-  ): void {
-    const currentSession = requireSession();
-    const transitionTrace = createTraceEvent(
-      'fsm.transition',
-      payload,
-      position,
-    );
-    const statusEmissions = statuses.map(({ message, data }) => ({
-      message,
-      data,
-      trace: createTraceEvent(
-        'status.emitted',
-        {
-          message,
-          ...(data === undefined ? {} : { data }),
-          state,
-          ...stateIdentity(state.stateId),
-        },
-        position,
-      ),
-    }));
-    void enqueueEmission(async () => {
-      await currentSession.ports.emitTelemetry({
-        topic: 'playbook.trace',
-        payload: transitionTrace,
-      });
-      await currentSession.ports.emitTelemetry({
-        topic: 'playbook.fsm.state',
-        payload,
-      });
-      for (const status of statusEmissions) {
-        await currentSession.ports.emitTelemetry({
-          topic: 'playbook.trace',
-          payload: status.trace,
-        });
-        await currentSession.ports.emitStatus(status.message, status.data);
-      }
-    }).catch(() => undefined);
-  }
-
-  function latchInspectionError(error: unknown): void {
-    if (activeSignal !== undefined) controlPlaneError ??= error;
-    else emissionFailure ??= error;
-  }
-
-  function buildActor(
-    ports: PlaybookPorts,
-    machineSnapshot?: JsonValue,
-  ): ReturnType<typeof createActor> {
-    priorState = undefined;
-    let builtActor: ReturnType<typeof createActor>;
-    builtActor = createActor(
-      codingMachine.provide({
-        actors: {
-          player: captainBridge(
-            ports,
-            () => activeSignal,
-            boundary,
-            (error) => {
-              if (!activeSignal?.aborted) controlPlaneError ??= error;
-            },
-          ),
-        },
-      }),
-      {
-        input: boundOptions,
-        // DR-014 §1: a restore rehydrates the persisted machine snapshot;
-        // XState derives context/value from it and ignores `input` then.
-        ...(machineSnapshot === undefined
-          ? {}
-          : {
-              snapshot: machineSnapshot as unknown as SnapshotFrom<
-                typeof codingMachine
-              >,
-            }),
-        inspect: (inspectionEvent: InspectionEvent) => {
-          if (inspectionEvent.type !== '@xstate.snapshot') return;
-          if (inspectionEvent.actorRef !== builtActor) return;
-          if (suppressInspectionEmissions) return;
-          try {
-            const snap = inspectionEvent.snapshot as SnapshotFrom<
-              typeof codingMachine
-            >;
-            const state = normalizePlaybookSnapshot(snap);
-            const to = state.stateId;
-            if (to === undefined) {
-              throw new Error(
-                'CODE root snapshot must expose exactly one playbook state id',
-              );
-            }
-            const previousState = priorState;
-            const context = snap.context as Record<string, unknown>;
-            const payload = structuredStateTelemetryPayload(
-              previousState,
-              state,
-              inspectionEvent.event,
-              context,
-            );
-            const statuses: ScheduledStatus[] = [];
-            if (CAPTAIN_PANE_STATES.has(to)) {
-              const transitionLine = formatTransition(inspectionEvent.event);
-              if (transitionLine !== undefined) {
-                statuses.push({ message: transitionLine });
-              }
-              if (to === 'awaitBossReply') {
-                statuses.push(
-                  { message: formatAwaitBossReplyQuestion(context) },
-                  { message: formatAwaitBossReplyMarker(context) },
-                );
-              } else {
-                const entryLine = formatStateEntry(to);
-                if (entryLine !== undefined) {
-                  const lastError =
-                    to === 'failed'
-                      ? normalizeErrorCompact(
-                          (snap.context as { lastError?: unknown }).lastError,
-                        )
-                      : undefined;
-                  statuses.push({
-                    message: entryLine,
-                    ...(lastError === undefined
-                      ? {}
-                      : {
-                          data: snapshotJsonValue(
-                            { lastError },
-                            'failed status data',
-                          ),
-                        }),
-                  });
-                }
-              }
-            }
-            enqueueTransitionEmission(
-              payload,
-              state,
-              statuses,
-              tracePositionForActiveTurn(),
-            );
-            priorState = state;
-          } catch (error) {
-            latchInspectionError(error);
-          }
-        },
-      },
-    );
-    return builtActor;
-  }
-
-  function runResultFor(
-    outcome: BossSettlementOutcome,
-    error?: unknown,
-  ): PlaybookRunResult {
-    const state = currentState();
-    if (outcome === 'quiescent' || outcome === 'no-action') {
-      return { outcome, state };
-    }
-    if (outcome === 'suspended') {
-      const pendingCall = nestedBridge.getPendingCall();
-      if (!pendingCall) {
-        throw new Error('suspended runtime has no pending playbook call');
-      }
-      return { outcome, state, pendingCall };
-    }
-    if (outcome === 'terminal') {
-      const output = (actor?.getSnapshot() as { output?: unknown } | undefined)
-        ?.output;
-      if (output !== undefined) {
-        return {
-          outcome,
-          state,
-          output: snapshotJsonValue(output, 'terminal playbook output'),
-        };
-      }
-      return { outcome, state };
-    }
-    const failure =
-      error ??
-      (outcome === 'failed'
-        ? (actor?.getSnapshot() as { context?: { lastError?: unknown } })
-            ?.context?.lastError
-        : outcome === 'aborted'
-          ? activeSignal?.reason
-          : undefined);
-    return {
-      outcome,
-      state,
-      ...(failure !== undefined ? { error: normalizeError(failure) } : {}),
-    };
-  }
-
-  function settledOutcome(signal: AbortSignal): BossSettlementOutcome {
-    if (nestedBridge.getPendingCall()) return 'suspended';
-    if (signal.aborted) return 'aborted';
-    const state = currentState();
-    if (state.status === 'error') {
-      const actorError = (
-        actor?.getSnapshot() as { error?: unknown } | undefined
-      )?.error;
-      throw actorError ?? new Error('CODE actor entered error status');
-    }
-    if (state.status === 'done') return 'terminal';
-    if (state.stateId === 'failed') return 'failed';
-    return 'quiescent';
-  }
-
-  function settlementTracePayload(
-    result: PlaybookRunResult,
-  ): Record<string, unknown> {
-    return {
-      ...result,
-      ...stateIdentity(result.state.stateId),
-    };
-  }
-
-  // Shared failed-start cleanup for init and restore: stop the actor,
-  // abort/drain nested and host work, optionally emit one best-effort
-  // session.disposed boundary, and unbind every closure field so dispose
-  // stays callable. The caller rethrows its original failure. A restore
-  // failure skips the disposal trace — the parked session was never
-  // re-bound in this process, so its persisted snapshot stays
-  // authoritative (DR-014 §2).
-  async function cleanupFailedStart(
-    cause: unknown,
-    options: { emitDisposal: boolean },
-  ): Promise<void> {
-    let finalState: PlaybookState | undefined;
-    if (options.emitDisposal && actor) {
-      try {
-        finalState = currentState();
-      } catch {
-        // A state that cannot even normalize has no disposal descriptor.
-      }
-    }
-    suppressInspectionEmissions = true;
-    try {
-      actor?.stop();
-    } catch {
-      // Preserve the original startup failure.
-    }
-    try {
-      await nestedBridge.abortPending(cause);
-    } catch {
-      // Preserve the original startup failure.
-    }
-    try {
-      await judgeQueue.onIdle();
-      await drainEmissions();
-    } catch {
-      // Preserve the original startup failure.
-    }
-    if (options.emitDisposal) {
-      try {
-        await emitTrace(
-          'session.disposed',
-          finalState === undefined
-            ? {}
-            : {
-                state: finalState,
-                ...stateIdentity(finalState.stateId),
-              },
-        );
-        await drainEmissions();
-      } catch {
-        // The session-start error remains authoritative.
-      }
-    }
-    playerResumeTokens.clear();
-    activePlayerIds.clear();
-    playbookCallTurnIds.clear();
-    activeEmissionCalls.clear();
-    emissionQueue.clear();
-    judgeQueue.clear();
-    actor = undefined;
-    session = undefined;
-    savedPorts = undefined;
-    runtimePorts = undefined;
-    activeSignal = undefined;
-    activeTurnId = undefined;
-    controlPlaneError = undefined;
-    emissionFailure = undefined;
-    priorState = undefined;
-    suppressInspectionEmissions = false;
-    initialized = false;
-    traceSequence = 0;
-    turnSequence = 0;
-    judgeCallSequence = 0;
-    playerCallSequence = 0;
-    playbookCallSequence = 0;
-  }
-
-  const runtime = {
-    async init(nextSession: PlaybookSession): Promise<void> {
-      if (initialized || disposed || disposalPromise !== undefined) {
-        throw new Error('createPlaybookRuntime.init: already initialized');
-      }
-      const boundSession = snapshotPlaybookSession(nextSession);
-      initialized = true;
-      let finishInitialization!: () => void;
-      const initialization = new Promise<void>((resolve) => {
-        finishInitialization = resolve;
-      });
-      initInFlight = initialization;
-      const initTask = (async () => {
-        session = boundSession;
-        savedPorts = boundSession.ports;
-        runtimePorts = createRuntimePorts(boundSession.ports);
-        suppressInspectionEmissions = false;
-        actor = buildActor(runtimePorts);
-        await emitTrace('session.started', stateTracePayload());
-        actor.start();
-        await drainEmissions();
-      })();
-      try {
-        await initTask;
-      } catch (error) {
-        await cleanupFailedStart(error, { emitDisposal: true });
-        throw error;
-      } finally {
-        finishInitialization();
-        if (initInFlight === initialization) initInFlight = undefined;
-      }
-    },
-
-    // DR-014 §1 / PBRT-45: JSON-safe capture of a parked session.
-    // Defined only at a safe capture point — initialized, not disposing
-    // or disposed, no active public boundary, no pending nested call,
-    // and the actor quiescent with status `active`.
-    exportSnapshot(): PlaybookRuntimeSnapshot | undefined {
-      if (!actor || !session || disposed || disposalPromise !== undefined) {
-        return undefined;
-      }
-      if (activeSignal !== undefined) return undefined;
-      if (nestedBridge.getPendingCall()) return undefined;
-      const state = currentState();
-      if (state.status !== 'active' || !state.quiescent) return undefined;
-      const machine = detachPersistedMachineSnapshot(
-        actor.getPersistedSnapshot(),
-      );
-      const context = (actor.getSnapshot() as { context?: unknown })
-        .context as Record<string, unknown>;
-      const pending = pendingBossQuestionFromContext(context ?? {});
-      return {
-        schemaVersion: 1,
-        playbookId: session.playbookId,
-        machine,
-        playerResumeTokens: Object.fromEntries(playerResumeTokens),
-        sequences: {
-          trace: traceSequence,
-          turn: turnSequence,
-          judgeCall: judgeCallSequence,
-          playerCall: playerCallSequence,
-          playbookCall: playbookCallSequence,
-        },
-        state,
-        pendingBossQuestions:
-          pending === undefined
-            ? []
-            : [
-                {
-                  questionId: pending.questionId,
-                  player: pending.player,
-                  question: pending.question,
-                  sourceItem: pending.sourceItem,
-                },
-              ],
-      };
-    },
-
-    // DR-014 §1 / PBRT-45: alternative to `init` that rehydrates an
-    // exported snapshot under the same immutable session identity.
-    // Emits no `session.started`, transition trace, or human status —
-    // the session already started; the next public boundary continues
-    // the contiguous trace sequence.
-    async restore(
-      nextSession: PlaybookSession,
-      snapshot: PlaybookRuntimeSnapshot,
-    ): Promise<void> {
-      if (initialized || disposed || disposalPromise !== undefined) {
-        throw new Error('createPlaybookRuntime.restore: already initialized');
-      }
-      const boundSession = snapshotPlaybookSession(nextSession);
-      const boundSnapshot = assertPlaybookRuntimeSnapshot(
-        snapshot,
-        boundSession.playbookId,
-      );
-      initialized = true;
-      let finishInitialization!: () => void;
-      const initialization = new Promise<void>((resolve) => {
-        finishInitialization = resolve;
-      });
-      initInFlight = initialization;
-      const initTask = (async () => {
-        session = boundSession;
-        savedPorts = boundSession.ports;
-        runtimePorts = createRuntimePorts(boundSession.ports);
-        traceSequence = boundSnapshot.sequences.trace;
-        turnSequence = boundSnapshot.sequences.turn;
-        judgeCallSequence = boundSnapshot.sequences.judgeCall;
-        playerCallSequence = boundSnapshot.sequences.playerCall;
-        playbookCallSequence = boundSnapshot.sequences.playbookCall;
-        playerResumeTokens.clear();
-        for (const [playerId, token] of Object.entries(
-          boundSnapshot.playerResumeTokens,
-        )) {
-          playerResumeTokens.set(playerId, token);
-        }
-        suppressInspectionEmissions = true;
-        actor = buildActor(runtimePorts, boundSnapshot.machine);
-        actor.start();
-        const restoredState = currentState();
-        if (restoredState.status !== 'active') {
-          throw new Error(
-            `createPlaybookRuntime.restore: restored actor status is ${restoredState.status}, expected active`,
-          );
-        }
-        suppressInspectionEmissions = false;
-        priorState = restoredState;
-        await drainEmissions();
-      })();
-      try {
-        await initTask;
-      } catch (error) {
-        await cleanupFailedStart(error, { emitDisposal: false });
-        throw error;
-      } finally {
-        finishInitialization();
-        if (initInFlight === initialization) initInFlight = undefined;
-      }
-    },
-
-    async handleBossInput({
-      text,
-      signal,
-    }: {
-      text: string;
-      signal: AbortSignal;
-    }): Promise<PlaybookRunResult> {
-      if (!actor || !savedPorts) {
-        throw new Error(
-          'createPlaybookRuntime.handleBossInput: init must be called first',
-        );
-      }
-      if (disposed || disposalPromise !== undefined) {
-        throw new Error(
-          'createPlaybookRuntime.handleBossInput: runtime is disposing or disposed',
-        );
-      }
-      if (activeSignal !== undefined) {
-        throw new Error(
-          'createPlaybookRuntime.handleBossInput: another runtime turn is active',
-        );
-      }
-      const turnId = ++turnSequence;
-      activeTurnId = turnId;
-      activeSignal = signal;
-      controlPlaneError = undefined;
-      let result: PlaybookRunResult | undefined;
-      let operationError: unknown;
-      try {
-        await emitTrace('boss.input.received', { text }, { turnId });
-        // 1. Classify non-empty text into an FSM event through the judge.
-        const event = await classifyBossText(
-          text,
-          runtimePorts!,
-          signal,
-          actor.getSnapshot(),
-          boundary,
-        );
-        // Empty input, no-action classifier output, or invalid classifier
-        // output — nothing to send.
-        if (event === undefined) {
-          result = runResultFor('no-action');
-        } else {
-          // 2. Captain-pane classification line (PBRT-14): the bare
-          //    FSM event type, emitted before the FSM advances.
-          await runtimePorts!.emitStatus(formatClassification(event.type));
-          // 3. A final actor cannot accept new events; reconstruct only after
-          //    classification produced a real event.
-          if (actor.getSnapshot().status === 'done') {
-            actor.stop();
-            actor = buildActor(runtimePorts!);
-            actor.start();
-          }
-          actor.send(event);
-          await waitForPlaybookQuiescence(actor, {
-            pendingCalls: nestedBridge,
-          });
-          if (controlPlaneError !== undefined) throw controlPlaneError;
-          result = runResultFor(settledOutcome(signal));
-        }
-      } catch (error) {
-        operationError = error;
-      }
-
-      let drainError: unknown;
-      try {
-        await drainEmissions();
-      } catch (error) {
-        drainError = error;
-      }
-      const latchedControlError = controlPlaneError;
-      const primaryError = latchedControlError ?? drainError ?? operationError;
-      const abortError =
-        latchedControlError === undefined &&
-        drainError === undefined &&
-        operationError !== undefined &&
-        isAbortFailure(operationError, signal);
-      const settlementResult =
-        primaryError === undefined
-          ? (result ?? runResultFor('no-action'))
-          : runResultFor(abortError ? 'aborted' : 'failed', primaryError);
-
-      let settlementEmissionError: unknown;
-      try {
-        await emitTrace(
-          'boss.input.settled',
-          settlementTracePayload(settlementResult),
-          { turnId },
-        );
-      } catch (error) {
-        settlementEmissionError = error;
-      }
-      try {
-        await drainEmissions();
-      } catch (error) {
-        settlementEmissionError ??= error;
-      }
-      const failure =
-        controlPlaneError ??
-        latchedControlError ??
-        drainError ??
-        (abortError
-          ? (settlementEmissionError ?? operationError)
-          : (operationError ?? settlementEmissionError));
-      activeSignal = undefined;
-      activeTurnId = undefined;
-      controlPlaneError = undefined;
-
-      if (
-        failure !== undefined &&
-        !(abortError && settlementEmissionError === undefined)
-      ) {
-        throw failure;
-      }
-      return settlementResult;
-    },
-
-    async resumePlaybookCall(input: {
-      callId: string;
-      result: PlaybookCallResult;
-      signal: AbortSignal;
-    }): Promise<PlaybookRunResult> {
-      if (!actor || !savedPorts) {
-        throw new Error(
-          'createPlaybookRuntime.resumePlaybookCall: init must be called first',
-        );
-      }
-      if (disposed || disposalPromise !== undefined) {
-        throw new Error(
-          'createPlaybookRuntime.resumePlaybookCall: runtime is disposing or disposed',
-        );
-      }
-      if (activeSignal !== undefined) {
-        throw new Error(
-          'createPlaybookRuntime.resumePlaybookCall: another runtime turn is active',
-        );
-      }
-      activeTurnId = playbookCallTurnIds.get(input.callId);
-      activeSignal = input.signal;
-      controlPlaneError = undefined;
-      let result: PlaybookRunResult | undefined;
-      let operationError: unknown;
-      try {
-        await nestedBridge.resume(input);
-      } catch (error) {
-        operationError = error;
-      }
-      try {
-        await waitForPlaybookQuiescence(actor, {
-          pendingCalls: nestedBridge,
-        });
-        result = runResultFor(settledOutcome(input.signal));
-      } catch (error) {
-        operationError ??= error;
-      }
-      let drainError: unknown;
-      try {
-        await drainEmissions();
-      } catch (error) {
-        drainError = error;
-      }
-      const failure = controlPlaneError ?? drainError ?? operationError;
-      activeSignal = undefined;
-      activeTurnId = undefined;
-      controlPlaneError = undefined;
-      if (failure !== undefined) throw failure;
-      if (result === undefined) {
-        throw new Error('playbook resume produced no runtime result');
-      }
-      return result;
-    },
-
-    dispose(): Promise<void> {
-      if (disposalPromise !== undefined) return disposalPromise;
-      if (disposed) return Promise.resolve();
-      if (activeSignal !== undefined) {
-        return Promise.reject(
-          new Error(
-            'createPlaybookRuntime.dispose: cannot dispose during an active runtime boundary',
-          ),
-        );
-      }
-      const task = (async (): Promise<void> => {
-        const failures: unknown[] = [];
-        try {
-          if (initInFlight !== undefined) {
-            try {
-              await initInFlight;
-            } catch {
-              // Dispose still releases whatever an unsuccessful init bound.
-            }
-          }
-          const finalState = actor ? currentState() : undefined;
-          // Stop the root before settling a suspended child. Its rejection
-          // must not re-enter CODE and start fresh work during disposal.
-          if (actor) actor.stop();
-          try {
-            await nestedBridge.dispose();
-          } catch (error) {
-            failures.push(error);
-          }
-          try {
-            await drainEmissions();
-          } catch (error) {
-            failures.push(error);
-          }
-          if (session !== undefined) {
-            try {
-              await emitTrace(
-                'session.disposed',
-                finalState === undefined
-                  ? {}
-                  : {
-                      state: finalState,
-                      ...stateIdentity(finalState.stateId),
-                    },
-              );
-              await drainEmissions();
-            } catch (error) {
-              failures.push(error);
-            }
-          }
-        } finally {
-          playerResumeTokens.clear();
-          activePlayerIds.clear();
-          playbookCallTurnIds.clear();
-          activeEmissionCalls.clear();
-          emissionQueue.clear();
-          judgeQueue.clear();
-          actor = undefined;
-          activeSignal = undefined;
-          activeTurnId = undefined;
-          controlPlaneError = undefined;
-          emissionFailure = undefined;
-          savedPorts = undefined;
-          runtimePorts = undefined;
-          session = undefined;
-          disposed = true;
-        }
-        if (failures.length === 1) throw failures[0];
-        if (failures.length > 1) {
-          throw new AggregateError(
-            failures,
-            'playbook runtime disposal failed',
-          );
-        }
-      })();
-      disposalPromise = task;
-      return task;
-    },
-
-    // @internal — test-only escape hatch for inspecting the
-    // underlying actor's snapshot. Most state assertions are now
-    // expressible via the recorded emitStatus / emitTelemetry
-    // calls (DR-004 §9); the hatch stays for the few cases where
-    // direct context inspection is clearer (e.g., the dispose
-    // teardown test).
-    _getActor() {
-      return actor;
-    },
-    _getBoundary() {
-      return boundary;
-    },
-    _getNestedBridge() {
-      return nestedBridge;
-    },
-  };
-  return runtime as PlaybookRuntime;
-}
+export default createPlaybookRuntime;

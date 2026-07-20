@@ -67,7 +67,9 @@ jobs:
             'src/runtime.js' \
             'src/runtime.d.ts' \
             'src/xstate-runtime.js' \
-            'src/xstate-runtime.d.ts'
+            'src/xstate-runtime.d.ts' \
+            'src/xstate-playbook-runtime.js' \
+            'src/xstate-playbook-runtime.d.ts'
           if [ -n "$(git status --porcelain -- \
             'reference/sdlc/captain.playbook' \
             'reference/sdlc/code.playbook' \
@@ -75,7 +77,9 @@ jobs:
             'src/runtime.js' \
             'src/runtime.d.ts' \
             'src/xstate-runtime.js' \
-            'src/xstate-runtime.d.ts')" ]; then
+            'src/xstate-runtime.d.ts' \
+            'src/xstate-playbook-runtime.js' \
+            'src/xstate-playbook-runtime.d.ts')" ]; then
             git status --short -- \
               'reference/sdlc/captain.playbook' \
               'reference/sdlc/code.playbook' \
@@ -83,7 +87,9 @@ jobs:
               'src/runtime.js' \
               'src/runtime.d.ts' \
               'src/xstate-runtime.js' \
-              'src/xstate-runtime.d.ts'
+              'src/xstate-runtime.d.ts' \
+              'src/xstate-playbook-runtime.js' \
+              'src/xstate-playbook-runtime.d.ts'
             exit 1
           fi
 

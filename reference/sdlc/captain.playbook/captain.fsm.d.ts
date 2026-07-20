@@ -198,7 +198,7 @@ export declare const captainMachine: import("xstate").StateMachine<Context, Boss
 } | {
     type: "isAuthoredChildError";
     params: unknown;
-}, never, "done" | "failed" | "callPlaybook" | "routing" | "reassessing" | "ready" | "awaitBossReply", string, CaptainMachineInput, CaptainMachineOutput, import("xstate").EventObject, import("xstate").MetaObject, {
+}, never, "done" | "failed" | "callPlaybook" | "awaitBossReply" | "ready" | "routing" | "reassessing", string, CaptainMachineInput, CaptainMachineOutput, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "captain";
     states: {
         readonly ready: {

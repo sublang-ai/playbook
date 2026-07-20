@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 import { fromPromise, waitFor, } from 'xstate';
+// DR-019: the generic linked-runtime factory and its strategy helpers live
+// in the sibling module and are re-exported here so linked artifacts import
+// one shared engine surface.
+export * from './xstate-playbook-runtime.js';
 const BUSY_TAG = 'playbook.busy';
 const SUSPENDED_TAG = 'playbook.suspended';
 function deferred() {

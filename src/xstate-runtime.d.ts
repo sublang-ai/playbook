@@ -1,5 +1,6 @@
 import { type AnyActorRef, type PromiseActorLogic, type SnapshotFrom } from 'xstate';
 import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+export * from './xstate-playbook-runtime.js';
 /**
  * Compose invocation-lifetime and imperative-boundary cancellation without
  * installing a second forwarding listener in each generated runtime.
