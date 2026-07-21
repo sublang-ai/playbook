@@ -1007,13 +1007,45 @@ describe('direct-Captain actor over the shared factory', () => {
         name: 'Error',
         message: expect.stringMatching(error) as unknown as string,
       });
-      const finish = telemetry
+      const finishes = telemetry
         .map(({ payload }) => payload as { type?: string; payload?: unknown })
-        .find((event) => event.type === 'captain.call.finished');
-      expect(finish?.payload).toMatchObject({
+        .filter((event) => event.type === 'captain.call.finished');
+      expect(finishes).toHaveLength(1);
+      expect(finishes[0]?.payload).toMatchObject({
         status: captainResult.status,
         error: { name: 'Error' },
       });
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    [
+      'thrown port',
+      async () => {
+        throw new Error('captain transport failed');
+      },
+      /captain transport failed/,
+    ],
+    [
+      'malformed result',
+      async () => ({ status: 'ok', unexpected: true }) as never,
+      /not a declared property/,
+    ],
+  ])(
+    'keeps a %s as a control-plane rejection',
+    async (_label, callCaptain, error) => {
+      const { ports, telemetry } = makeRecordingPorts({ callCaptain });
+      const runtime = createCaptainRuntime({});
+      await runtime.init(makeSession(ports));
+
+      await expect(
+        runtime.handleBossInput(turn('release timing')),
+      ).rejects.toThrow(error);
+      const finishes = telemetry
+        .map(({ payload }) => payload as { type?: string })
+        .filter((event) => event.type === 'captain.call.finished');
+      expect(finishes).toHaveLength(1);
       await runtime.dispose();
     },
   );

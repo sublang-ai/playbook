@@ -257,15 +257,21 @@ array requests a tool-free call, while omission preserves the host Captain's
 configured tools.
 `CaptainResult` carries no resume token or player-continuation selection.
 A non-`ok`
-result, or an `ok` result without `finalText`, shall reject the actor through
-the FSM's error path.
-Outside a signal-driven abort, those invalid direct-Captain results are
-latched control-plane failures. The runtime shall let the actor take `onError`,
-drive it to quiescence, and drain ordered emissions before the public method
-rejects with the original failure. It shall never translate either case into
-a recoverable workflow `{ outcome: 'failed' }` result. If the combined signal
-has aborted, an aborted host result follows the ordinary abort settlement
-instead of being promoted to a control-plane failure.
+result, or an `ok` result without non-empty `finalText`, shall record that
+failure on the call's single finish trace and reject the actor through the
+FSM's error path. These structured host-result failures are recoverable
+workflow failures, not control-plane failures: the runtime shall let the actor
+take `onError`, drive it to quiescence, drain ordered emissions, and resolve
+the public method with `{ outcome: 'failed' }` carrying the failure state's
+error. This matches the delegated-player result boundary.
+A non-abort thrown `callCaptain` port, a malformed host result, and a rejecting
+trace sink remain control-plane failures that reject the public method. If the
+required finish sink rejects after a structured host-result failure, the
+actor's error and failure-state evidence shall remain the host-result failure,
+while the public method rejects with the sink failure surfaced by the turn's
+emission drain. Absent such a control-plane failure, if the combined signal
+has aborted, ordinary abort settlement remains authoritative after the actor
+reaches its error path.
 
 Every linked runtime owns a map from resolved player id to its latest non-empty `resumeToken`.
 Before reading a resolved direct-Captain or delegated-player result, the
@@ -753,8 +759,11 @@ Adjudicator failures are control-plane errors.
 The runtime shall propagate them by throwing out of `handleBossInput` after attempting cleanup.
 The host adapter surfaces the throw on its control-plane channel (cligent surfaces such throws as `runtime_error` per [TMUX-025](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-025)).
 The host's player-result channels (`player_finished` and equivalents) are reserved for failures the player itself produced; the host emits them when `callPlayer` resolves with `status !== 'ok'`.
-Captain call failures stay on the Captain/control boundary and shall not be
-reported as player failures.
+Direct-Captain host-result failures stay on the Captain actor boundary and
+shall not be reported as player failures; they follow the recoverable FSM
+failure path specified above. Captain transport, result-shape, trace-sink, and
+adjudication failures remain control-plane errors unless the transport failure
+is causally identical to the active abort signal.
 Because XState still needs the invoked promise to settle, the linked runtime
 shall latch an adjudicator, actor-output JSON-validation, or nested-boundary
 control error outside machine context, allow the invocation's `onError` path to

@@ -202,8 +202,10 @@ shall not treat it as a control-plane error.
 carrying that failure as the state's error, exactly as it does for the
 equivalent delegated-player result ([PBRT-9](#pbrt-9)), rather than reject
 ([PBRT-41](#pbrt-41)).
-A thrown `callCaptain` port, a malformed host result, and a rejecting trace
-sink remain control-plane errors ([PBRT-41](#pbrt-41)).
+A non-abort thrown `callCaptain` port, a malformed host result, and a rejecting
+trace sink remain control-plane errors ([PBRT-41](#pbrt-41)); a transport
+failure causally identical to the active signal remains ordinary abort
+settlement ([PBRT-13](#pbrt-13)).
 
 Where the required `captain.call.finished` emission itself rejects, the
 runtime shall keep the host-result failure as the invoked actor's error so
