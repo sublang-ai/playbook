@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-20
+
 ### Changed
 
 - **Breaking: a failing host Captain reply now resolves the Boss turn as a workflow failure.** A direct-Captain `callCaptain` that returns `status: 'error'` or `'aborted'`, or `ok` with no `finalText`, now routes through the invoked actor's XState error path to the failure state and makes `handleBossInput` resolve the structured `failed` outcome carrying that error; prior releases rejected the public boundary. This establishes parity with the delegated-player boundary, which already resolved `failed` for the identical class of host failure, but callers that handled the former rejection must now inspect the resolved outcome. A non-abort thrown port, a malformed host result, and a rejecting `captain.call.finished` sink remain control-plane errors that reject, and a rejecting finish sink still leaves the host result as the failure state's own evidence ([PBRT-47](specs/dev/playbook-runtime.md#pbrt-47), [PBRT-13](specs/dev/playbook-runtime.md#pbrt-13), [PBRT-41](specs/dev/playbook-runtime.md#pbrt-41)).
@@ -223,7 +225,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/sublang-ai/playbook/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/sublang-ai/playbook/compare/v1.0.0...v1.3.0
 [1.0.0]: https://github.com/sublang-ai/playbook/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/sublang-ai/playbook/compare/v0.8.0...v0.9.0
