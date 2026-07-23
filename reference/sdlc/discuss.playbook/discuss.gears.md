@@ -89,16 +89,18 @@ In the first step of each review round, Participant reviews the latest changes, 
 In the second step of each review round, Host addresses any findings.
 Rounds continue until Participant raises no findings.
 
+Spec item files are the files under @specs/ that hold spec items — @specs/packages/ and @specs/compositions/ in the current layout, or @specs/user/, @specs/dev/, and @specs/test/ in the legacy one; decision and iteration records, @specs/map.md, and @specs/meta.md are not spec item files.
+
 ### DISCUSS-6
 
-While new or updated spec items under @specs/user, @specs/dev, or @specs/test are under review and no new or updated DR is under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
+While new or updated spec items (in spec item files) are under review and no new or updated DR is under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
 
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
 > Verify any new or updated spec items are:
 > Complete & coherent: sufficient for you to reimplement code.
-> Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > Minimal: essential and concise; every item earns its place; also check with other items.
 > Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 > Flag anything missing, redundant, over-specified, or under-specified.
@@ -110,14 +112,14 @@ While new or updated spec items under @specs/user, @specs/dev, or @specs/test ar
 
 ### DISCUSS-7
 
-While new or updated spec items under @specs/user, @specs/dev, or @specs/test are under review and no new or updated DR is under review, when Host addresses findings with changes, Captain shall prompt Participant:
+While new or updated spec items (in spec item files) are under review and no new or updated DR is under review, when Host addresses findings with changes, Captain shall prompt Participant:
 
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
 > Verify any new or updated spec items are:
 > Complete & coherent: sufficient for you to reimplement code.
-> Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > Minimal: essential and concise; every item earns its place; also check with other items.
 > Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 > Flag anything missing, redundant, over-specified, or under-specified.
@@ -129,7 +131,7 @@ While new or updated spec items under @specs/user, @specs/dev, or @specs/test ar
 
 ### DISCUSS-8
 
-While new or updated DRs are under review and no new or updated spec item under @specs/user, @specs/dev, or @specs/test is under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
+While new or updated DRs are under review and no new or updated spec item (in spec item files) is under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
 
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
@@ -147,7 +149,7 @@ While new or updated DRs are under review and no new or updated spec item under 
 
 ### DISCUSS-9
 
-While new or updated DRs are under review and no new or updated spec item under @specs/user, @specs/dev, or @specs/test is under review, when Host addresses findings with changes, Captain shall prompt Participant:
+While new or updated DRs are under review and no new or updated spec item (in spec item files) is under review, when Host addresses findings with changes, Captain shall prompt Participant:
 
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
@@ -165,14 +167,14 @@ While new or updated DRs are under review and no new or updated spec item under 
 
 ### DISCUSS-10
 
-While new or updated spec items under @specs/user, @specs/dev, or @specs/test are under review and new or updated DRs are under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
+While new or updated spec items (in spec item files) are under review and new or updated DRs are under review, when Committer commits at the end of the initial discussion, Captain shall prompt Participant:
 
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
 > Verify any new or updated spec items are:
 > Complete & coherent: sufficient for you to reimplement code.
-> Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > Minimal: essential and concise; every item earns its place; also check with other items.
 > Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 > Flag anything missing, redundant, over-specified, or under-specified.
@@ -189,14 +191,14 @@ While new or updated spec items under @specs/user, @specs/dev, or @specs/test ar
 
 ### DISCUSS-11
 
-While new or updated spec items under @specs/user, @specs/dev, or @specs/test are under review and new or updated DRs are under review, when Host addresses findings with changes, Captain shall prompt Participant:
+While new or updated spec items (in spec item files) are under review and new or updated DRs are under review, when Host addresses findings with changes, Captain shall prompt Participant:
 
 > Latest changes: <changes>
 > Rebuttals to address, if any: <rebuttals>
 > Review the latest spec changes, address any rebuttals, and raise any findings.
 > Verify any new or updated spec items are:
 > Complete & coherent: sufficient for you to reimplement code.
-> Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > Minimal: essential and concise; every item earns its place; also check with other items.
 > Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 > Flag anything missing, redundant, over-specified, or under-specified.
@@ -234,7 +236,8 @@ Model ID formatting examples: `claude-opus-4-7` becomes `Claude-Opus-4.7`; `gpt-
 
 When the spec items or DRs are written at the end of the initial discussion, Captain shall prompt Committer:
 
-> Then make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Then make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).
+> If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.
 > Write the commit message concisely.
 > Host is <host-llm>.
 > Participant is <participant-llm>.
@@ -244,7 +247,8 @@ When the spec items or DRs are written at the end of the initial discussion, Cap
 
 When Participant raises no findings on uncommitted changes, Captain shall prompt Committer:
 
-> Then make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).
+> Then make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).
+> If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.
 > Write the commit message concisely.
 > Host is <host-llm>.
 > Participant is <participant-llm>.

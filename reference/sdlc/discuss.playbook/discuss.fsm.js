@@ -51,7 +51,7 @@ const DISCUSS_6_PROMPT = [
     'Review the latest spec changes, address any rebuttals, and raise any findings.',
     'Verify any new or updated spec items are:',
     'Complete & coherent: sufficient for you to reimplement code.',
-    'Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+    'Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
     'Minimal: essential and concise; every item earns its place; also check with other items.',
     'Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
     'Flag anything missing, redundant, over-specified, or under-specified.',
@@ -84,7 +84,7 @@ const DISCUSS_10_PROMPT = [
     'Review the latest spec changes, address any rebuttals, and raise any findings.',
     'Verify any new or updated spec items are:',
     'Complete & coherent: sufficient for you to reimplement code.',
-    'Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+    'Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
     'Minimal: essential and concise; every item earns its place; also check with other items.',
     'Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
     'Flag anything missing, redundant, over-specified, or under-specified.',
@@ -110,7 +110,8 @@ const DISCUSS_13_PROMPT = [
     'For each rebuttal below, challenge or accept it, with strong reasoning, solid evidence, and comprehensive thinking.',
 ].join('\n');
 const DISCUSS_14_PROMPT = [
-    'Then make a commit of the changes that belong in the repo, following @specs/dev/git.md (reread if necessary).',
+    'Then make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).',
+    "If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.",
     'Write the commit message concisely.',
     'Host is <host-llm>.',
     'Participant is <participant-llm>.',

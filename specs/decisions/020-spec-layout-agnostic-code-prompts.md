@@ -28,4 +28,4 @@ Accepted
 - CODE routes reviews and classifies commits correctly on packages-layout and legacy trees alike, with one compiled playbook.
 - The judge decides commit scope from an explicit inline definition rather than a folder glob that may not exist in the target repo.
 - Reviewer semantics are unchanged in substance; only the location vocabulary generalizes.
-- The DISCUSS playbook still carries the legacy folder references and checklist line; it needs the same treatment in a follow-up.
+- The DISCUSS playbook and the draft DOC source carried the same legacy folder references and git-spec citation; both were ported to this decision's wording in the same unreleased cycle.
