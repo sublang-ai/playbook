@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The CODE Committer prompt now cites the packages-layout git spec.** The commit prompt in [`reference/sdlc/code.md`](reference/sdlc/code.md) (CODE-18/CODE-19) pointed at the legacy `specs/dev/git.md`; current packages-layout specs trees keep git conventions at `specs/packages/git.md`, so committer agents wasted turns hunting for a nonexistent file — sometimes searching outside the project. The prompt now cites the current path and falls back gracefully: when no git-conventions spec exists, follow the repository's existing commit conventions without searching elsewhere. The GEARS and FSM artifacts are recompiled in lockstep.
+
 ## [2.0.0] - 2026-07-20
 
 ### Changed
