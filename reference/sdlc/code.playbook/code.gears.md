@@ -42,9 +42,9 @@ When an IR is done, Captain shall prompt Coder:
 > Read IR-<#> and corresponding commits.
 > According to @specs/meta.md, add or update spec items to fully capture:
 >
-> - the user requirements in @specs/user,
-> - the system behavior in @specs/dev, and
-> - the integration/system test cases in @specs/test.
+> - the external behavior users rely on,
+> - the internal system behavior, and
+> - the integration/system test cases.
 >
 > The spec items should be the *minimal* set needed to reimplement code without the IR.
 > The set should be complete and coherent.
@@ -58,15 +58,17 @@ For each finding in a review round, Coder either addresses it with changes or ch
 Any code change to address findings starts a new round of review, even if some findings are also rebutted.
 Rounds continue until Reviewer raises no findings.
 
+Spec item files are the files under @specs/ that hold spec items — @specs/packages/ and @specs/compositions/ in the current layout, or @specs/user/, @specs/dev/, and @specs/test/ in the legacy one; decision and iteration records, @specs/map.md, and @specs/meta.md are not spec item files.
+
 ### CODE-5
 
-When Committer commits Initial Changes from a Boss coding intent involving changes only in @specs/user/, @specs/dev/, or @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
+When Committer commits Initial Changes from a Boss coding intent involving changes only in spec item files, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
@@ -78,7 +80,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 
 ### CODE-6
 
-When Committer commits Initial Changes from a Boss coding intent involving changes only outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
+When Committer commits Initial Changes from a Boss coding intent involving changes only outside spec item files, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
@@ -90,7 +92,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 
 ### CODE-7
 
-When Committer commits Initial Changes from a Boss coding intent involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
+When Committer commits Initial Changes from a Boss coding intent involving changes both in and outside spec item files, Captain shall relay the Boss's coding intent to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
@@ -98,7 +100,7 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
@@ -110,13 +112,13 @@ When Committer commits Initial Changes from a Boss coding intent involving chang
 
 ### CODE-8
 
-When Committer commits Initial Changes from an IR task involving changes only in @specs/user/, @specs/dev/, or @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
+When Committer commits Initial Changes from an IR task involving changes only in spec item files, Captain shall relay the IR's task description to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
@@ -128,7 +130,7 @@ When Committer commits Initial Changes from an IR task involving changes only in
 
 ### CODE-9
 
-When Committer commits Initial Changes from an IR task involving changes only outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
+When Committer commits Initial Changes from an IR task involving changes only outside spec item files, Captain shall relay the IR's task description to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
@@ -140,7 +142,7 @@ When Committer commits Initial Changes from an IR task involving changes only ou
 
 ### CODE-10
 
-When Committer commits Initial Changes from an IR task involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/, Captain shall relay the IR's task description to Reviewer along with the following prompt:
+When Committer commits Initial Changes from an IR task involving changes both in and outside spec item files, Captain shall relay the IR's task description to Reviewer along with the following prompt:
 > Review the latest commit.
 > Refer to the commit message.
 > Flag any issues or improvements (numbered; no duplication).
@@ -148,7 +150,7 @@ When Committer commits Initial Changes from an IR task involving changes both in
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
@@ -160,13 +162,13 @@ When Committer commits Initial Changes from an IR task involving changes both in
 
 ### CODE-11
 
-When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only in @specs/user/, @specs/dev/, or @specs/test/ without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only in spec item files without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
 > Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
@@ -178,7 +180,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 
 ### CODE-12
 
-When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only outside @specs/user/, @specs/dev/, and @specs/test/ without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only outside spec item files without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
 > Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
@@ -190,7 +192,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 
 ### CODE-13
 
-When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/ without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside spec item files without raising rebuttals, Captain shall prompt Reviewer to begin a review round:
 > Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
@@ -198,7 +200,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
@@ -216,13 +218,13 @@ When Coder raises rebuttals without making code changes, Captain shall relay the
 
 ### CODE-15
 
-When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only in @specs/user/, @specs/dev/, or @specs/test/ and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only in spec item files and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
 > Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >
@@ -235,7 +237,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 
 ### CODE-16
 
-When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only outside @specs/user/, @specs/dev/, and @specs/test/ and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes only outside spec item files and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
 > Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
@@ -248,7 +250,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 
 ### CODE-17
 
-When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside @specs/user/, @specs/dev/, and @specs/test/ and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
+When Coder makes unreviewed changes (outside of any Initial Changes) involving changes both in and outside spec item files and also raises rebuttals, Captain shall prompt Reviewer to begin a review round and relay the rebuttals along with the following prompt:
 > Review the unstaged and untracked changes in the context of the staged changes.
 > Understand the intent.
 > Flag any issues or improvements (numbered; no duplication).
@@ -256,7 +258,7 @@ When Coder makes unreviewed changes (outside of any Initial Changes) involving c
 > Verify any affected spec items are:
 >
 > - Complete & coherent: sufficient for you to reimplement code.
-> - Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.
+> - Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.
 > - Minimal: essential and concise; every item earns its place; also check with other items.
 > - Well organized: spec packages are finely scoped, with high cohesion and low coupling.
 >

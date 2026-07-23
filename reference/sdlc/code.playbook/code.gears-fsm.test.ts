@@ -146,11 +146,13 @@ const fsmBySourceItem = new Map(states.map((s) => [s.sourceItem, s]));
 const reviewerReadOnlyInstruction =
   'Do not edit files or commit; report findings only.';
 const specReviewChecklistMarker = 'Verify any affected spec items are:';
-const legacySpecReviewLevelLine =
-  '- Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.';
+const legacySpecReviewLevelLines = [
+  '- Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+  '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+] as const;
 const specReviewChecklistLines = [
   '- Complete & coherent: sufficient for you to reimplement code.',
-  '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+  '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
   '- Minimal: essential and concise; every item earns its place; also check with other items.',
   '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
 ] as const;
@@ -319,9 +321,11 @@ describe('GEARS ↔ FSM conformance — assertions (a)–(l)', () => {
       const lines = promptBody.split('\n');
       if (!lines.includes(specReviewChecklistMarker)) return;
 
-      expect(lines, `${label}: legacy spec checklist wording`).not.toContain(
-        legacySpecReviewLevelLine,
-      );
+      for (const legacyLine of legacySpecReviewLevelLines) {
+        expect(lines, `${label}: legacy spec checklist wording`).not.toContain(
+          legacyLine,
+        );
+      }
       for (const line of specReviewChecklistLines) {
         expect(lines, `${label}: missing spec checklist line`).toContain(line);
       }

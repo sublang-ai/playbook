@@ -191,29 +191,29 @@ const stateDescriptions = {
   summarizeSpecs:
     'CODE-4: Coder summarizes a completed IR into minimal spec items.',
   reviewBossCommitSpecs:
-    'CODE-5: Reviewer reviews a Boss-intent commit whose changes are only in @specs/{user,dev,test}/.',
+    'CODE-5: Reviewer reviews a Boss-intent commit whose changes are only in spec item files.',
   reviewBossCommitCode:
-    'CODE-6: Reviewer reviews a Boss-intent commit whose changes are only outside @specs/{user,dev,test}/.',
+    'CODE-6: Reviewer reviews a Boss-intent commit whose changes are only outside spec item files.',
   reviewBossCommitMixed:
-    'CODE-7: Reviewer reviews a Boss-intent commit whose changes span both @specs/{user,dev,test}/ and other files.',
+    'CODE-7: Reviewer reviews a Boss-intent commit whose changes span both spec item files and other files.',
   reviewIrTaskCommitSpecs:
-    'CODE-8: Reviewer reviews an IR-task commit whose changes are only in @specs/{user,dev,test}/.',
+    'CODE-8: Reviewer reviews an IR-task commit whose changes are only in spec item files.',
   reviewIrTaskCommitCode:
-    'CODE-9: Reviewer reviews an IR-task commit whose changes are only outside @specs/{user,dev,test}/.',
+    'CODE-9: Reviewer reviews an IR-task commit whose changes are only outside spec item files.',
   reviewIrTaskCommitMixed:
-    'CODE-10: Reviewer reviews an IR-task commit whose changes span both @specs/{user,dev,test}/ and other files.',
+    'CODE-10: Reviewer reviews an IR-task commit whose changes span both spec item files and other files.',
   reviewChangesSpecs:
-    'CODE-11: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ with no accompanying rebuttals.',
+    'CODE-11: Reviewer reviews uncommitted Coder changes that touch only spec item files with no accompanying rebuttals.',
   reviewChangesCode:
-    'CODE-12: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ with no accompanying rebuttals.',
+    'CODE-12: Reviewer reviews uncommitted Coder changes that touch only files outside spec item files with no accompanying rebuttals.',
   reviewChangesMixed:
-    'CODE-13: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files with no accompanying rebuttals.',
+    'CODE-13: Reviewer reviews uncommitted Coder changes that touch both spec item files and other files with no accompanying rebuttals.',
   reviewChangesAndChallengesSpecs:
-    'CODE-15: Reviewer reviews uncommitted Coder changes that touch only @specs/{user,dev,test}/ and adjudicates accompanying rebuttals in one round.',
+    'CODE-15: Reviewer reviews uncommitted Coder changes that touch only spec item files and adjudicates accompanying rebuttals in one round.',
   reviewChangesAndChallengesCode:
-    'CODE-16: Reviewer reviews uncommitted Coder changes that touch only files outside @specs/{user,dev,test}/ and adjudicates accompanying rebuttals in one round.',
+    'CODE-16: Reviewer reviews uncommitted Coder changes that touch only files outside spec item files and adjudicates accompanying rebuttals in one round.',
   reviewChangesAndChallengesMixed:
-    'CODE-17: Reviewer reviews uncommitted Coder changes that touch both @specs/{user,dev,test}/ and other files and adjudicates accompanying rebuttals in one round.',
+    'CODE-17: Reviewer reviews uncommitted Coder changes that touch both spec item files and other files and adjudicates accompanying rebuttals in one round.',
   adjudicateChallenges:
     'CODE-14: Reviewer adjudicates Coder rebuttals against the prior review when Coder produced no code edits this round.',
   commitCoderInitial:
@@ -396,9 +396,9 @@ const summarizeSpecsInput: PlayerInputFactory = (context) => ({
     'Read IR-<#> and corresponding commits.',
     'According to @specs/meta.md, add or update spec items to fully capture:',
     '',
-    '- the user requirements in @specs/user,',
-    '- the system behavior in @specs/dev, and',
-    '- the integration/system test cases in @specs/test.',
+    '- the external behavior users rely on,',
+    '- the internal system behavior, and',
+    '- the integration/system test cases.',
     '',
     'The spec items should be the *minimal* set needed to reimplement code without the IR.',
     'The set should be complete and coherent.',
@@ -656,17 +656,17 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             changesMadeSpecs:
-              'Coder accepted items and produced unstaged/untracked edits in @specs/{user,dev,test}/ only, without raising any rebuttals.',
+              'Coder accepted items and produced unstaged/untracked edits only in spec item files (@specs/packages/, @specs/compositions/, or legacy @specs/{user,dev,test}/), without raising any rebuttals.',
             changesMadeCode:
-              'Coder accepted items and produced unstaged/untracked edits outside @specs/{user,dev,test}/ only, without raising any rebuttals.',
+              'Coder accepted items and produced unstaged/untracked edits only outside spec item files (any other files, including @specs/ decision/iteration records, @specs/map.md, and @specs/meta.md), without raising any rebuttals.',
             changesMadeMixed:
-              'Coder accepted items and produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files, without raising any rebuttals.',
+              'Coder accepted items and produced unstaged/untracked edits spanning both spec item files and other files, without raising any rebuttals.',
             changesMadeSpecsAndChallenged:
-              'Coder produced unstaged/untracked edits in @specs/{user,dev,test}/ only AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
+              'Coder produced unstaged/untracked edits only in spec item files (@specs/packages/, @specs/compositions/, or legacy @specs/{user,dev,test}/) AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
             changesMadeCodeAndChallenged:
-              'Coder produced unstaged/untracked edits outside @specs/{user,dev,test}/ only AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
+              'Coder produced unstaged/untracked edits only outside spec item files AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
             changesMadeMixedAndChallenged:
-              'Coder produced unstaged/untracked edits spanning both @specs/{user,dev,test}/ and other files AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
+              'Coder produced unstaged/untracked edits spanning both spec item files and other files AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
             challengesRaised:
               'Coder challenged one or more review items without producing any code edits. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
             accepted:
@@ -831,7 +831,7 @@ export const codingMachine = setup({
             'Verify any affected spec items are:',
             '',
             '- Complete & coherent: sufficient for you to reimplement code.',
-            '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
             '',
@@ -957,7 +957,7 @@ export const codingMachine = setup({
             'Verify any affected spec items are:',
             '',
             '- Complete & coherent: sufficient for you to reimplement code.',
-            '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
             '',
@@ -1023,7 +1023,7 @@ export const codingMachine = setup({
             'Verify any affected spec items are:',
             '',
             '- Complete & coherent: sufficient for you to reimplement code.',
-            '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
             '',
@@ -1151,7 +1151,7 @@ export const codingMachine = setup({
             'Verify any affected spec items are:',
             '',
             '- Complete & coherent: sufficient for you to reimplement code.',
-            '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
             '',
@@ -1215,7 +1215,7 @@ export const codingMachine = setup({
             'Verify any affected spec items are:',
             '',
             '- Complete & coherent: sufficient for you to reimplement code.',
-            '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
             '',
@@ -1321,7 +1321,7 @@ export const codingMachine = setup({
             'Verify any affected spec items are:',
             '',
             '- Complete & coherent: sufficient for you to reimplement code.',
-            '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
             '',
@@ -1377,7 +1377,7 @@ export const codingMachine = setup({
             'Verify any affected spec items are:',
             '',
             '- Complete & coherent: sufficient for you to reimplement code.',
-            '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
             '',
@@ -1492,7 +1492,7 @@ export const codingMachine = setup({
             'Verify any affected spec items are:',
             '',
             '- Complete & coherent: sufficient for you to reimplement code.',
-            '- Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.',
+            '- Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.',
             '- Minimal: essential and concise; every item earns its place; also check with other items.',
             '- Well organized: spec packages are finely scoped, with high cohesion and low coupling.',
             '',
@@ -1629,11 +1629,11 @@ export const codingMachine = setup({
           ].join('\n'),
           result: {
             committedSpecs:
-              'Committed changes that touch only @specs/{user,dev,test}/.',
+              'Committed changes that touch only spec item files (@specs/packages/, @specs/compositions/, or legacy @specs/{user,dev,test}/).',
             committedCode:
-              'Committed changes that touch only files outside @specs/{user,dev,test}/.',
+              'Committed changes that touch only files that are not spec item files (any other files, including @specs/ decision/iteration records, @specs/map.md, and @specs/meta.md).',
             committedMixed:
-              'Committed changes that span both @specs/{user,dev,test}/ and other files.',
+              'Committed changes that span both spec item files and other files.',
             noRelevantChanges: 'There are no relevant changes to commit.',
             needsBossInput: 'Committing requires additional Boss input.',
             needsBossReply: needsBossReplyDescription,

@@ -43,6 +43,7 @@ meta.md     The spec of specs
 | DR-017 | [017-run-defaults-config.md](decisions/017-run-defaults-config.md) | Config-driven `playbook run` defaults: a top-level `run` block (`captain`, per-role `players`, `player` catch-all) in the user config with flag-over-config precedence, ignored unrequired roles, fail-closed malformed handling, and untouched resume |
 | DR-018 | [018-gears-grammar-provenance-from-spex.md](decisions/018-gears-grammar-provenance-from-spex.md) | GEARS grammar authority moves to the installed `@sublang/spex` scaffold definitions (English and Chinese, with the canonical URLs), with a unified Source-language rule, fixed-English machine syntax, and `@sublang/spex` in the runtime dependency closure |
 | DR-019 | [019-shared-linked-runtime-factory.md](decisions/019-shared-linked-runtime-factory.md) | The generic FSM-interpreter machinery ships once as the shared `createXStatePlaybookRuntime(machine, spec)` factory on `@sublang/playbook/xstate-runtime`; `slc/link.md` emits thin modules, CODE is ported as the equivalence proof, and fat artifacts stay compatible |
+| DR-020 | [020-spec-layout-agnostic-code-prompts.md](decisions/020-spec-layout-agnostic-code-prompts.md) | CODE prompts and review routing classify by "spec item files" (defined for both the packages and legacy specs layouts) instead of hardcoding `specs/{user,dev,test}`; judge descriptions stay self-contained, player prompts defer placement to `meta.md` |
 
 ## Iterations
 

@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CODE's prompts and review routing no longer assume the legacy three-folder specs layout.** The Coder IR-done prompt filed spec items into `@specs/user`, `@specs/dev`, and `@specs/test`; the Reviewer "Right level" checklist line named the same folders; and the Captain routed review rounds and classified commits by whether changes touched `@specs/{user,dev,test}/` — misrouting on current packages-layout specs trees (`specs/packages/` + `specs/compositions/`), where those folders do not exist. The playbook now classifies by *spec item files*, a term `code.md` defines for both layouts; judge-facing result descriptions carry the definition inline because the adjudicator has no filesystem access, and player prompts name spec levels layout-neutrally, deferring placement to the already-cited `@specs/meta.md`. The GEARS and FSM artifacts are recompiled in lockstep, and the conformance contract pins the new checklist wording, retiring both prior "Right level" lines ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md), [PLAYBOOK-18](specs/dev/playbook.md#playbook-18)).
+
 ### Fixed
 
 - **The CODE Committer prompt now cites the packages-layout git spec.** The commit prompt in [`reference/sdlc/code.md`](reference/sdlc/code.md) (CODE-18/CODE-19) pointed at the legacy `specs/dev/git.md`; current packages-layout specs trees keep git conventions at `specs/packages/git.md`, so committer agents wasted turns hunting for a nonexistent file — sometimes searching outside the project. The prompt now cites the current path and falls back gracefully: when no git-conventions spec exists, follow the repository's existing commit conventions without searching elsewhere. The GEARS and FSM artifacts are recompiled in lockstep.

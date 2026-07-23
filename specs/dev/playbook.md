@@ -89,12 +89,14 @@ Where a Reviewer player-invoking prompt in `code.gears.md` or
 the prompt shall include the complete spec-review checklist:
 
 - `Complete & coherent: sufficient for you to reimplement code.`
-- `Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.`
+- `Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.`
 - `Minimal: essential and concise; every item earns its place; also check with other items.`
 - `Well organized: spec packages are finely scoped, with high cohesion and low coupling.`
 
-The prompt shall not include the legacy line
-`Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.`.
+The prompt shall not include either legacy line
+`Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.` or
+`Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.`
+([DR-020](../decisions/020-spec-layout-agnostic-code-prompts.md)).
 
 ## Boss-reply suspension
 
