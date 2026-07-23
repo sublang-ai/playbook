@@ -39,6 +39,8 @@
     "slc/text2gears.md",
     "slc/optimize.md",
     "reference/sdlc/captain.md",
+    "reference/sdlc/code.md",
+    "reference/sdlc/discuss.md",
     "reference/sdlc/captain.playbook/captain.gears.md",
     "reference/sdlc/captain.playbook/captain.fsm.ts",
     "reference/sdlc/captain.playbook/captain.fsm.js",
