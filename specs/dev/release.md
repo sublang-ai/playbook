@@ -214,6 +214,10 @@ The package shall also ship `reference/sdlc/captain.md` and the default
 Captain's GEARS, FSM, and linked-runtime TypeScript, JavaScript, and declaration
 artifacts, and shall expose the compiled runtime through the public semver-stable
 `exports['./captain/playbook']` subpath.
+The package shall also ship the authored CODE and DISCUSS playbook sources
+`reference/sdlc/code.md` and `reference/sdlc/discuss.md` as package files
+beside their compiled artifacts, so a host can display or recompile the
+bundled playbooks from source.
 The internal Captain shall have no `exports['./captain/registry']` subpath
 because it is not an enabled registry entry.
 Removing or renaming the `playbook` bin or a

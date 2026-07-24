@@ -68,8 +68,9 @@ The test suite shall fail unless `npm pack --dry-run` lists the
 `.d.ts` artifacts — including the `xstate-playbook-runtime` factory
 siblings backing the engine subpath — and all four
 `slc/*.md` files among the packed contents, plus
-`reference/sdlc/captain.md`, `captain.gears.md`, and the Captain FSM and
-linked-runtime `.ts`, `.js`, and `.d.ts` artifacts under
+`reference/sdlc/captain.md`, the authored `reference/sdlc/code.md` and
+`reference/sdlc/discuss.md` playbook sources, `captain.gears.md`, and the
+Captain FSM and linked-runtime `.ts`, `.js`, and `.d.ts` artifacts under
 `reference/sdlc/captain.playbook/`; the complete generated Captain verification
 bundle, including its `.slc-verify` support modules, shall remain canonical
 repository artifacts, but those verification files need not be packed.

@@ -133,8 +133,8 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [release.md](dev/release.md) | npm/GitHub release workflow, install closure including the `@sublang/spex` GEARS-grammar dependency, and semver-stable runtime, SLC, CLI, CODE/DISCUSS registry, and default `captain/playbook` package surfaces, including packed Captain source and compiled artifacts with no Captain registry export |
-| test | [release.md](test/release.md) | Integration tests for install closure, dependency/lock agreement, SLC and `@sublang/spex` GEARS-definition resolution, packed runtime and Captain artifacts, and CLI/registry/`captain/playbook` exports with retired and internal-only surfaces absent |
+| dev | [release.md](dev/release.md) | npm/GitHub release workflow, install closure including the `@sublang/spex` GEARS-grammar dependency, and semver-stable runtime, SLC, CLI, CODE/DISCUSS registry, and default `captain/playbook` package surfaces, including packed Captain, CODE, and DISCUSS sources and compiled artifacts with no Captain registry export |
+| test | [release.md](test/release.md) | Integration tests for install closure, dependency/lock agreement, SLC and `@sublang/spex` GEARS-definition resolution, packed runtime, Captain, and CODE/DISCUSS source artifacts, and CLI/registry/`captain/playbook` exports with retired and internal-only surfaces absent |
 
 ### SKETCH
 

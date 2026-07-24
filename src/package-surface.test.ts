@@ -260,6 +260,8 @@ describe('packed tarball contents (RELEASE-18)', () => {
       'src/xstate-playbook-runtime.js',
       'src/xstate-playbook-runtime.d.ts',
       'reference/sdlc/captain.md',
+      'reference/sdlc/code.md',
+      'reference/sdlc/discuss.md',
       `${CAPTAIN_BASE}captain.gears.md`,
       `${CAPTAIN_BASE}captain.fsm.ts`,
       `${CAPTAIN_BASE}captain.fsm.js`,
