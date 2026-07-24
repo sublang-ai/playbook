@@ -288,7 +288,7 @@ const DISCUSS_13_PROMPT = [
 
 const DISCUSS_14_PROMPT = [
   'Then make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).',
-  "If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.",
+  "If that spec is absent, follow the legacy @specs/dev/git.md; if neither exists, follow the repository's existing commit conventions and do not search elsewhere.",
   'Write the commit message concisely.',
   'Host is <host-llm>.',
   'Participant is <participant-llm>.',

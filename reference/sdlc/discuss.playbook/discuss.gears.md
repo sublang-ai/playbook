@@ -237,7 +237,7 @@ Model ID formatting examples: `claude-opus-4-7` becomes `Claude-Opus-4.7`; `gpt-
 When the spec items or DRs are written at the end of the initial discussion, Captain shall prompt Committer:
 
 > Then make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).
-> If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.
+> If that spec is absent, follow the legacy @specs/dev/git.md; if neither exists, follow the repository's existing commit conventions and do not search elsewhere.
 > Write the commit message concisely.
 > Host is <host-llm>.
 > Participant is <participant-llm>.
@@ -248,7 +248,7 @@ When the spec items or DRs are written at the end of the initial discussion, Cap
 When Participant raises no findings on uncommitted changes, Captain shall prompt Committer:
 
 > Then make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).
-> If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.
+> If that spec is absent, follow the legacy @specs/dev/git.md; if neither exists, follow the repository's existing commit conventions and do not search elsewhere.
 > Write the commit message concisely.
 > Host is <host-llm>.
 > Participant is <participant-llm>.

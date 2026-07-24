@@ -92,7 +92,7 @@ When Coder raises any rebuttals, Captain shall relay them to Reviewer along with
 
 When Coder makes any Initial Changes or Reviewer raises no findings on uncommitted changes, Captain shall prompt Committer:
 > Make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).
-> If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.
+> If that spec is absent, follow the legacy @specs/dev/git.md; if neither exists, follow the repository's existing commit conventions and do not search elsewhere.
 > Write the commit message concisely.
 
 When Captain prompts Committer and only Coder has played since the last commit, Captain shall also append:

@@ -1307,7 +1307,7 @@ export const codingMachine = setup({
                     committerPlayer: context.committerPlayer,
                     prompt: [
                         'Make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).',
-                        "If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.",
+                        "If that spec is absent, follow the legacy @specs/dev/git.md; if neither exists, follow the repository's existing commit conventions and do not search elsewhere.",
                         'Write the commit message concisely.',
                         'Coder is <coder-llm>.',
                         'Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
@@ -1383,7 +1383,7 @@ export const codingMachine = setup({
                     committerPlayer: context.committerPlayer,
                     prompt: [
                         'Make a commit of the changes that belong in the repo, following @specs/packages/git.md (reread if necessary).',
-                        "If that spec is absent, follow the repository's existing commit conventions instead; do not search elsewhere for it.",
+                        "If that spec is absent, follow the legacy @specs/dev/git.md; if neither exists, follow the repository's existing commit conventions and do not search elsewhere.",
                         'Write the commit message concisely.',
                         'Coder is <coder-llm>; Reviewer is <reviewer-llm>.',
                         'Format the `Co-authored-by` `<model>` token as the conventional human form of the substituted id (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).',
