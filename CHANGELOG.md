@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The seeded config and docs use cligent's canonical `effort` key.** Agent blocks wrote the deprecated `reasoningEffort`, which cligent's tmux-play loader accepts only as a compatibility path for the first release carrying the canonical name — and which it rewrites in the user's file on load. The starter template, README, live acceptance fixture, and the PBCLI-11 seeded-lineup contract now write `effort` directly, so a fresh config never depends on that path. Existing configs keep working: cligent still migrates the legacy key ([PBCLI-11](specs/dev/playbook-cli.md#pbcli-11)).
+
+### Fixed
+
+- **README refresh.** The release-status note still described 1.0.0 as current, the `slc/optimize.md` pass shipped in 2.1.0 was undocumented, and the gears/FSM contract cited a `PLAYBOOK-1..6` range the package outgrew.
+
 ### Removed
 
 - **Breaking: the top-level `profiles` map and the agent-block `profile` key are gone.** Every `captain` and `players.<role>` value is now either an adapter shorthand or a block carrying its own `adapter`, `model`, `reasoningEffort`, and `permissions`. Reuse was the wrong default for how the config is edited: tuning is per player, so sharing a profile meant either silently retuning every player that referenced it or minting a single-use id, and a reader had to dereference an id in another block to learn an agent's real settings. Two validation rules retire with the feature — the unresolvable `profile` reference and the profile-id/adapter-shorthand collision. The seeded config ships the same lineup written inline. Existing configs need no hand-editing: the launcher migrates a `profiles`-bearing config in place on the next launch — inlining each profile's settings into the agent that named it, with a `profile`-bearing block's own fields winning — writes the pre-migration file to `<config>.bak` (never overwriting an existing backup), preserves the user's comments by editing the YAML document, and says so on stderr. Migration runs once per config; a `profile` key introduced by a `--with` overlay is still rejected, since overlays are authored against the current model ([DR-021](specs/decisions/021-inline-agent-settings.md), [PBCLI-4](specs/user/playbook-cli.md#pbcli-4), [PBCLI-8](specs/dev/playbook-cli.md#pbcli-8), [PBCLI-33](specs/dev/playbook-cli.md#pbcli-33)).

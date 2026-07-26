@@ -22,7 +22,7 @@
 captain:
   adapter: claude
   model: claude-opus-4-8
-  reasoningEffort: high
+  effort: high
   permissions:
     mode: auto
 
@@ -42,13 +42,13 @@ playbooks:
       coder:
         adapter: claude
         model: claude-opus-4-8[1m]
-        reasoningEffort: xhigh
+        effort: xhigh
         permissions:
           mode: auto
       reviewer:
         adapter: codex
         model: gpt-5.5
-        reasoningEffort: xhigh
+        effort: xhigh
         permissions:
           mode: auto
           writablePaths: ['.git']

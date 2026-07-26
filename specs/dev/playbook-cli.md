@@ -147,7 +147,7 @@ Codex player can write git metadata under the codex sandbox; seeded
 `claude` agents need no writablePaths grant under their auto mode.
 The starter config shall set top-level
 `notifications: { player_finished: bell, turn_finished: desktop }`;
-these `adapter` / `model` / `reasoningEffort` values are defaults and
+these `adapter` / `model` / `effort` values are defaults and
 remain user-tunable in place per
 [PBCLI-6](../user/playbook-cli.md#pbcli-6).
 

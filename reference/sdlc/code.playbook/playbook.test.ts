@@ -114,7 +114,7 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
 
   it('applies a command override and a full inline captain block', async () => {
     const top = {
-      captain: { adapter: 'claude', model: 'm', reasoningEffort: 'high' },
+      captain: { adapter: 'claude', model: 'm', effort: 'high' },
       playbooks: {
         code: {
           from: 'mod://code',
@@ -131,7 +131,7 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
     expect(config.captain).toMatchObject({
       adapter: 'claude',
       model: 'm',
-      reasoningEffort: 'high',
+      effort: 'high',
     });
     expect(config.captain).not.toHaveProperty('profile');
     expect(config.captain.options.playbooks.code.command).toBe('dev');
@@ -264,7 +264,7 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
         '  code:',
         '    from: "@sublang/playbook/code/registry"',
         '    players:',
-        '      coder: { profile: base, reasoningEffort: xhigh }',
+        '      coder: { profile: base, effort: xhigh }',
         '      reviewer: codex',
         '',
       ].join('\n'),
@@ -565,20 +565,20 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seededParsed.captain).toMatchObject({
       adapter: 'claude',
       model: 'claude-opus-4-8',
-      reasoningEffort: 'high',
+      effort: 'high',
       permissions: { mode: 'auto' },
     });
     expect(seededParsed.playbooks.code.players).toEqual({
       coder: {
         adapter: 'claude',
         model: 'claude-opus-4-8[1m]',
-        reasoningEffort: 'xhigh',
+        effort: 'xhigh',
         permissions: { mode: 'auto' },
       },
       reviewer: {
         adapter: 'codex',
         model: 'gpt-5.5',
-        reasoningEffort: 'xhigh',
+        effort: 'xhigh',
         permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
     });
@@ -589,7 +589,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(composed.captain).toMatchObject({
       adapter: 'claude',
       model: 'claude-opus-4-8',
-      reasoningEffort: 'high',
+      effort: 'high',
       // PBCLI-11: every seeded agent, including the claude Captain, runs in
       // cligent's protected auto mode.
       permissions: { mode: 'auto' },
@@ -599,7 +599,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         id: 'code-coder',
         adapter: 'claude',
         model: 'claude-opus-4-8[1m]',
-        reasoningEffort: 'xhigh',
+        effort: 'xhigh',
         // PBCLI-11: seeded claude roles get auto mode, no writablePaths.
         permissions: { mode: 'auto' },
       },
@@ -607,7 +607,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         id: 'code-reviewer',
         adapter: 'codex',
         model: 'gpt-5.5',
-        reasoningEffort: 'xhigh',
+        effort: 'xhigh',
         permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
     ]);
@@ -2340,7 +2340,7 @@ describe('playbook --with overlays (PBCLI-27)', () => {
         'playbooks:',
         '  code:',
         '    players:',
-        '      coder: { adapter: codex, model: m-turbo, reasoningEffort: xhigh }',
+        '      coder: { adapter: codex, model: m-turbo, effort: xhigh }',
         '',
       ].join('\n'),
       'utf8',
@@ -2352,7 +2352,7 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     expect(out.code).toBe(0);
     const composed = parseYaml(spawn.configs[0].content);
     expect(composed.players).toEqual([
-      { id: 'code-coder', adapter: 'codex', model: 'm-turbo', reasoningEffort: 'xhigh' },
+      { id: 'code-coder', adapter: 'codex', model: 'm-turbo', effort: 'xhigh' },
       { id: 'code-reviewer', adapter: 'codex' },
     ]);
     // The global config is byte-identical after the overlaid launch.

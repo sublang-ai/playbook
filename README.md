@@ -27,7 +27,7 @@ inside a *host* built on
 drives coding-agent CLIs; cligent's `tmux-play` terminal app is the
 reference host.
 
-Three phases take prose to runtime:
+Three phases take prose to runtime, plus an optional optimizer:
 
 1. **text → GEARS** ([slc/text2gears.md](slc/text2gears.md)) — GEARS is
    the intermediate representation: normative spec items, one per state
@@ -40,6 +40,12 @@ Three phases take prose to runtime:
 3. **FSM → runtime** ([slc/link.md](slc/link.md)) — a host-agnostic
    module that drives Boss turns through ports the host wires up
    (cligent's `tmux-play` is one such host).
+
+Between the first two, [slc/optimize.md](slc/optimize.md) may rewrite a
+deterministic mechanical gear — canonically git repository setup — into a
+*script item* the runtime executes directly, with no agent call and two
+exit-status guards. Unoptimized compiles are byte-identical, so the pass
+is opt-in.
 
 The repository contains end-to-end worked examples. The generic default
 Captain is generated from
@@ -64,11 +70,14 @@ The compiled artifacts live under
 the [slc](https://github.com/sublang-ai/slc) compiler pipeline's
 `<basename>.<pipeline>/` output directory.
 
-> **Release status:** 1.0.0 is the first release of the composed system: the
-> compiled default Captain, CODE and DISCUSS, nested playbook calls, the
-> semver-stable six-port runtime contract (see
-> [docs/embedding.md](docs/embedding.md)), and non-interactive `playbook run`
-> with parked-session resume and per-run agent tuning.
+> **Release status:** 3.0.0. The composed system — the compiled default
+> Captain, CODE and DISCUSS, nested playbook calls, the semver-stable
+> six-port runtime contract (see [docs/embedding.md](docs/embedding.md)),
+> and non-interactive `playbook run` with parked-session resume — landed in
+> 1.0.0. Since then: script actors and the GEARS optimize pass, `playbook
+> run` defaults in the user config, and, in 3.0.0, inline agent settings
+> replacing the top-level `profiles` map (existing configs migrate
+> themselves on the next launch). See the [CHANGELOG](CHANGELOG.md).
 
 ### Requirements
 
@@ -212,7 +221,7 @@ playbook --with fast-lineup.yaml
 playbooks:
   code:
     players:
-      coder: { adapter: codex, model: gpt-5.5, reasoningEffort: medium }
+      coder: { adapter: codex, model: gpt-5.5, effort: medium }
 ```
 
 See [PBCLI-25](specs/user/playbook-cli.md#pbcli-25) and
@@ -223,7 +232,7 @@ runs both visible Captain work and hidden judge calls), optional
 `layout` / `notifications` / `theme`, and a `playbooks` map of enabled
 playbooks. Each `captain` or `players.<role>` value is either an
 adapter shorthand (`claude`, `codex`) or a block carrying that agent's
-own `adapter`, `model`, `reasoningEffort`, and `permissions`; other
+own `adapter`, `model`, `effort`, and `permissions`; other
 adapter ids are passed through to `tmux-play` with a warning because
 `playbook` cannot preflight their auth. Settings are inline per agent,
 so tuning one player never changes another
@@ -241,7 +250,7 @@ the Reviewer on GPT-5.5:
 captain:
   adapter: claude
   model: claude-opus-4-8
-  reasoningEffort: high
+  effort: high
   permissions:
     mode: auto # protected auto mode for the Claude Captain
 
@@ -252,13 +261,13 @@ playbooks:
       coder:
         adapter: claude
         model: claude-opus-4-8[1m]
-        reasoningEffort: xhigh
+        effort: xhigh
         permissions:
           mode: auto # protected auto mode for the Claude Coder
       reviewer:
         adapter: codex
         model: gpt-5.5
-        reasoningEffort: xhigh
+        effort: xhigh
         permissions:
           mode: auto
           writablePaths:
@@ -359,7 +368,8 @@ loop:
    [`reference/sdlc/code.md`](reference/sdlc/code.md) and the generic
    [`reference/sdlc/captain.md`](reference/sdlc/captain.md).
 2. **Recompile gears** per [`slc/text2gears.md`](slc/text2gears.md) into
-   the source's `<name>.playbook/<name>.gears.md`.
+   the source's `<name>.playbook/<name>.gears.md`, optionally running
+   [`slc/optimize.md`](slc/optimize.md) over the result.
 3. **Recompile FSM and runtime** per
    [`slc/gears2fsm.md`](slc/gears2fsm.md) and
    [`slc/link.md`](slc/link.md) into that playbook artifact directory.
@@ -370,7 +380,7 @@ loop:
    [`specs/dev/git.md`](specs/dev/git.md).
 
 The behavioral contract between gears and FSM
-([PLAYBOOK-1..6](specs/dev/playbook.md)) and the runtime contract that
+([the PLAYBOOK dev items](specs/dev/playbook.md)) and the runtime contract that
 ports satisfy ([the PBRT dev items](specs/dev/playbook-runtime.md)) are
 pinned in [`specs/dev/`](specs/dev/) and verified by tests under the
 reference package.

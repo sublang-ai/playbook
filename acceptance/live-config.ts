@@ -17,14 +17,14 @@ export function liveConfig(): string {
   const claudePlayer = (effort: string): string[] => [
     '        adapter: claude',
     `        model: ${JSON.stringify(claudeModel)}`,
-    `        reasoningEffort: ${effort}`,
+    `        effort: ${effort}`,
     '        permissions:',
     '          mode: auto',
   ];
   const codexPlayer = (effort: string): string[] => [
     '        adapter: codex',
     `        model: ${JSON.stringify(codexModel)}`,
-    `        reasoningEffort: ${effort}`,
+    `        effort: ${effort}`,
     '        permissions:',
     '          mode: auto',
     "          writablePaths: ['.git']",
@@ -33,7 +33,7 @@ export function liveConfig(): string {
     'captain:',
     '  adapter: claude',
     `  model: ${JSON.stringify(claudeModel)}`,
-    '  reasoningEffort: high',
+    '  effort: high',
     '  permissions:',
     '    mode: auto',
     'notifications:',
