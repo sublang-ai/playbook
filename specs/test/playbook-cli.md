@@ -201,3 +201,9 @@ adapter without a provider-enforced tool-restriction surface issues its
 `callJudge` calls with no `allowedTools` property, and unless a run whose
 captain binds an enforcing adapter issues them with `allowedTools: []`;
 both shall still request `resume: false`.
+The test suite shall further fail unless every headless judge prompt,
+whatever the adapter, reaches the captain agent inside the hidden-control
+envelope — forbidding tool use, delimiting the runtime prompt, and refusing
+instructions found in quoted actor output — since that envelope is the
+prompt-level isolation [DR-013 A1](../decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement)
+substitutes when the allowlist is omitted.

@@ -18,6 +18,7 @@ export declare function assertJsonSafe(value: unknown, path?: string, ancestors?
 export declare function snapshotJsonValue(value: unknown, path?: string): JsonValue;
 /** Validate session causality and detach its immutable identity from the host. */
 export declare function snapshotPlaybookSession(session: PlaybookSession): PlaybookSession;
+export declare function hiddenControlEnvelope(prompt: string): string;
 export declare function normalizeError(error: unknown): NormalizedError;
 export interface PlaybookStateMetadata {
     stateId: string;

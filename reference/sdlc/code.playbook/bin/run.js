@@ -28,6 +28,7 @@ import {
   supportedEffortValues,
 } from '@sublang/cligent';
 import { parse as parseYaml } from 'yaml';
+import { hiddenControlEnvelope } from '../../../../src/xstate-runtime.js';
 
 // PBCLI-19: adapter shorthands the run host can construct.
 const ADAPTER_LOADERS = {
@@ -361,12 +362,18 @@ async function driveTurn({ ctx, runtime, store, text, json, verbose, restoreFrom
       };
     },
     async callJudge(prompt, signal) {
-      const result = await captainAgent.run(prompt, {
+      // CAPTAIN-9 / DR-013 A1: wrap every judge prompt in the shared
+      // hidden-control envelope. Runtime judge prompts embed raw Boss text
+      // and quoted player output, so the envelope is what makes them
+      // delimited evidence rather than instructions — and it is the
+      // prompt-level isolation that stands in for provider enforcement
+      // when the tool allowlist below has to be omitted.
+      const result = await captainAgent.run(hiddenControlEnvelope(prompt), {
         resume: false,
-        // DR-013 A1: an empty allowlist means "no tools" and is distinct
-        // from omission, which grants the adapter's full tool surface. Send
-        // it only where the adapter can enforce it; codex rejects any tool
-        // list outright, so requesting one would fail every judge call.
+        // An empty allowlist means "no tools" and is distinct from omission,
+        // which grants the adapter's full tool surface. Send it only where
+        // the adapter can enforce it; codex rejects any tool list outright,
+        // so requesting one would fail every judge call.
         ...controlCallToolOptions(store.captain.adapter),
         signal,
       });

@@ -13,6 +13,7 @@ Implement [DR-013 Addendum A1](../decisions/013-routing-only-captain-control.md#
 - [x] The launcher passes the resolved captain adapter to the shell as `captain.options.captainAdapter`.
 - [x] The shell omits `allowedTools` on its own control calls, and on a runtime-requested empty allowlist it forwards, for adapters without provider-enforced tool restriction; a non-empty request stays fail-closed.
 - [x] `playbook run`'s `callJudge` applies the same rule from its bound captain spec.
+- [x] Both hosts wrap runtime judge prompts in one shared hidden-control envelope, so the prompt-level isolation A1 substitutes is present wherever the allowlist is omitted.
 - [x] Acceptance tests pin both hosts across enforcing, non-enforcing, unknown, and absent adapters.
 - [x] README, the seeded config template, CHANGELOG, and `specs/map.md` state the isolation trade for a Codex captain.
 
@@ -34,6 +35,7 @@ Implement [DR-013 Addendum A1](../decisions/013-routing-only-captain-control.md#
 - A shell built with `captainAdapter: 'codex'` issues every visible routing and hidden adjudication call with no `allowedTools` property while still requesting `resume: false` and the hidden-control envelope.
 - A shell built with `claude`, an unrecognized adapter, or no `captainAdapter` requests `allowedTools: []` on those calls.
 - A runtime-requested non-empty allowlist is forwarded unchanged, so a real restriction still fails closed on an adapter that cannot enforce it.
+- Every headless judge prompt, on any adapter, reaches the captain agent inside the hidden-control envelope with the runtime prompt verbatim between its delimiters.
 - `playbook run --captain codex` issues `callJudge` with no `allowedTools`; `claude`, `gemini`, and `opencode` captains issue it with `[]`.
 - The composed tmux-play config carries `captain.options.captainAdapter`.
 - `pnpm test` and `pnpm build` pass.
