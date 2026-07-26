@@ -237,15 +237,23 @@ of `CHANGELOG.md` per [RELEASE-4](#release-4) and
 
 Before tagging a release, the developer/agent shall run
 `pnpm test:acceptance` locally. This live acceptance suite shall pack and
-install the candidate package, create isolated fresh git repositories, launch
-the installed `playbook` executable through a real attached tmux-play session,
-and complete both `/code` and `/discuss` using the locally authenticated real
-Claude and Codex adapters.
+install the candidate package once and create isolated fresh git repositories.
+It shall launch the installed `playbook` executable through real attached
+tmux-play sessions and complete both `/code` and `/discuss` using the locally
+authenticated real Claude and Codex adapters.
+It shall also run the installed executable's non-interactive
+`playbook run` path over a small fixture playbook that makes one real Claude
+player call and one real Codex-Captain judge call, using `--json` and no
+tmux-play session.
 
 The suite shall fail unless `/code` implements and commits its fixture
 requirement with a clean worktree, and `/discuss` adds and commits its fixture
-spec item without implementing it, also with a clean worktree. Missing local
-authentication or required executables shall be a clear failure, not a skip.
+spec item without implementing it, also with a clean worktree.
+The non-interactive case shall fail unless it returns a terminal JSON envelope
+with the expected verified player and judge results, leaves the fixture
+repository and `HEAD` unchanged and clean, and creates no tmux session.
+Missing local authentication or required executables shall be a clear failure,
+not a skip.
 Because these checks spend real model calls and require local credentials and
 tmux, they shall remain excluded from `pnpm test` and GitHub CI and shall run
 only as a local pre-release verification.
@@ -259,7 +267,8 @@ the release until corrected.
 Before tagging a release, the developer/agent shall verify:
 
 - [ ] All tests pass (`pnpm test` from the repo root).
-- [ ] The real-agent, real-tmux local acceptance suite passes
+- [ ] The local real-agent acceptance suite passes, covering both attached
+      tmux workflows and non-interactive `playbook run`
       (`pnpm test:acceptance`; [RELEASE-24](#release-24)).
 - [ ] If the release changes the interactive CLI presentation or layout, or
       changes the declared or locked `@sublang/cligent` version, the

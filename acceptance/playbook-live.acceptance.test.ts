@@ -20,7 +20,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { liveConfig } from './live-config.js';
+import { liveConfig, liveModels } from './live-config.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const liveTimeoutMs = positiveIntegerEnv(
@@ -32,6 +32,8 @@ const pollIntervalMs = 1_000;
 const bossHistoryLines = 400;
 const launcherTailCharacters = 16 * 1024;
 const diagnosticTailCharacters = 8 * 1024;
+const liveCommandMaxBufferBytes = 20 * 1024 * 1024;
+const liveTerminationGraceMs = 5_000;
 const failureSnapshotName = 'acceptance-failure.txt';
 // One scenario spends at most five startup-length waits — new session,
 // attached client, `boss>`, the started marker, and the pane shape — plus
@@ -56,6 +58,8 @@ const discussCommand =
   'This run is documentation-only: do not create the implementation file. ' +
   'The specs/map.md index already lists the file, so leave it untouched. ' +
   'Converge quickly and commit only the agreed spec item file.';
+const headlessTask = 'Run the installed non-interactive acceptance probe.';
+const headlessToken = 'HEADLESS_ACCEPTANCE_OK';
 
 let suiteRoot = '';
 // The gate runs its tmux-play sessions on a private tmux server so it can
@@ -68,7 +72,7 @@ let tmuxSocketDir = '';
 let candidateBin = '';
 let preserveArtifacts = false;
 
-describe.sequential('installed playbook live tmux acceptance', () => {
+describe.sequential('installed playbook live acceptance', () => {
   beforeAll(async () => {
     assertLocalPrerequisites();
     suiteRoot = mkdtempSync(join(tmpdir(), 'playbook-live-acceptance-'));
@@ -92,6 +96,75 @@ describe.sequential('installed playbook live tmux acceptance', () => {
       rmSync(tmuxSocketDir, { recursive: true, force: true });
     }
   });
+
+  it(
+    'runs playbook run with a real Claude player and Codex judge',
+    async () => {
+      const scenario = createScenario('headless');
+      let commandOutput = '';
+      try {
+        const sessionsBefore = [...listTmuxSessions()].sort();
+        const models = liveModels();
+        const result = await execLiveTextAsync(
+          candidateBin,
+          [
+            'run',
+            './headless.registry.mjs',
+            headlessTask,
+            '--player',
+            `worker=claude:${models.claude}@low`,
+            '--captain',
+            `codex:${models.codex}@low`,
+            '--cwd',
+            scenario.repo,
+            '--json',
+          ],
+          scenario.repo,
+          privateTmuxEnv({
+            XDG_CONFIG_HOME: scenario.configHome,
+            XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
+          }),
+        );
+        commandOutput =
+          `stdout:\n${diagnosticTail(result.stdout)}\n` +
+          `stderr:\n${diagnosticTail(result.stderr)}`;
+
+        const envelope = JSON.parse(result.stdout);
+        expect(envelope).toEqual({
+          outcome: 'terminal',
+          sessionId: expect.stringMatching(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+          ),
+          output: {
+            playerToken: headlessToken,
+            judge: { accepted: true, token: headlessToken },
+          },
+        });
+        expect(result.stderr).toContain('◇ headless smoke started');
+        expect(result.stderr).toContain('◇ headless smoke finished');
+        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
+        expect(headRevision(scenario.repo)).toBe(scenario.baselineCommit);
+        expect(changedPaths(scenario)).toEqual([]);
+        expect(gitStatus(scenario.repo)).toBe('');
+        expect(ignoredUntracked(scenario.repo)).toBe('');
+      } catch (error) {
+        preserveArtifacts = true;
+        const detailed =
+          commandOutput === ''
+            ? error
+            : new Error(`${errorMessage(error)}\n${commandOutput}`);
+        writeFailureSnapshot(
+          scenario.root,
+          undefined,
+          undefined,
+          detailed,
+          scenario,
+        );
+        throw withArtifactPath(detailed, scenario.root);
+      }
+    },
+    liveTimeoutMs + 60_000,
+  );
 
   it(
     'runs /code with real Claude and Codex agents in a fresh repository',
@@ -295,7 +368,7 @@ async function packAndInstallCandidate(root: string): Promise<string> {
   return installedBin;
 }
 
-function createScenario(name: 'code' | 'discuss'): Scenario {
+function createScenario(name: 'headless' | 'code' | 'discuss'): Scenario {
   // Every fixture path derives from `suiteRoot`. A relative value here would
   // silently build the fixture tree inside the real repository instead.
   if (!isAbsolute(suiteRoot)) {
@@ -380,6 +453,16 @@ function createScenario(name: 'code' | 'discuss'): Scenario {
     join(configHome, 'playbook/playbook.config.yaml'),
     liveConfig(),
   );
+  if (name === 'headless') {
+    writeFileSync(
+      join(repo, 'acceptance-headless-token.txt'),
+      `${headlessToken}\n`,
+    );
+    writeFileSync(
+      join(repo, 'headless.registry.mjs'),
+      headlessRegistrySource(),
+    );
+  }
 
   execText('git', ['init', '-b', 'main'], repo);
   execText('git', ['config', 'user.name', 'Playbook Acceptance'], repo);
@@ -690,7 +773,9 @@ function listTmuxSessions(): string[] {
     const message = errorMessage(error);
     if (
       message.includes('no server running') ||
-      message.includes('failed to connect to server')
+      message.includes('failed to connect to server') ||
+      (message.includes('error connecting to') &&
+        message.includes('No such file or directory'))
     ) {
       return [];
     }
@@ -817,6 +902,183 @@ function execTextAsync(
       },
     );
   });
+}
+
+function execLiveTextAsync(
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ stdout: string; stderr: string }> {
+  return new Promise((resolveCommand, rejectCommand) => {
+    // A detached child is a new POSIX process group. That lets timeout
+    // cleanup reach adapter subprocesses as well as the installed CLI.
+    const child = spawn(command, [...args], {
+      cwd,
+      env,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let outputBytes = 0;
+    let settled = false;
+    let stopReason: string | undefined;
+    let killTimer: NodeJS.Timeout | undefined;
+
+    const signalGroup = (signal: NodeJS.Signals): void => {
+      if (child.pid === undefined) return;
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        // The group may already be gone; fall back to the direct child for
+        // spawn failures and platforms that reject negative process ids.
+        child.kill(signal);
+      }
+    };
+    const clearTimers = (): void => {
+      clearTimeout(timeoutTimer);
+      if (killTimer !== undefined) clearTimeout(killTimer);
+    };
+    const failure = (reason: string): Error =>
+      new Error(
+        `installed playbook run failed: ${reason}\n` +
+          `stdout:\n${diagnosticTail(stdout)}\n` +
+          `stderr:\n${diagnosticTail(stderr)}`,
+      );
+    const rejectOnce = (reason: string): void => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      rejectCommand(failure(reason));
+    };
+    const stop = (reason: string): void => {
+      if (settled || stopReason !== undefined) return;
+      stopReason = reason;
+      signalGroup('SIGTERM');
+      killTimer = setTimeout(() => {
+        signalGroup('SIGKILL');
+        rejectOnce(reason);
+      }, liveTerminationGraceMs);
+    };
+    const collect = (stream: 'stdout' | 'stderr', chunk: string): void => {
+      outputBytes += Buffer.byteLength(chunk);
+      if (stream === 'stdout') stdout += chunk;
+      else stderr += chunk;
+      if (outputBytes > liveCommandMaxBufferBytes) {
+        stop(`output exceeded ${liveCommandMaxBufferBytes} bytes`);
+      }
+    };
+    const timeoutTimer = setTimeout(
+      () => stop(`timed out after ${liveTimeoutMs}ms`),
+      liveTimeoutMs,
+    );
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => collect('stdout', chunk));
+    child.stderr.on('data', (chunk: string) => collect('stderr', chunk));
+    child.once('error', (error) => rejectOnce(error.message));
+    child.once('close', (code, signal) => {
+      // Once the CLI closes, nothing it started should outlive this smoke
+      // case. This is a no-op when the process group drained normally.
+      signalGroup('SIGKILL');
+      if (stopReason !== undefined) {
+        rejectOnce(stopReason);
+        return;
+      }
+      if (code !== 0) {
+        rejectOnce(
+          `exited with code ${String(code)} and signal ${String(signal)}`,
+        );
+        return;
+      }
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      resolveCommand({ stdout, stderr });
+    });
+  });
+}
+
+function headlessRegistrySource(): string {
+  return [
+    `const expectedTask = ${JSON.stringify(headlessTask)};`,
+    `const expectedToken = ${JSON.stringify(headlessToken)};`,
+    '',
+    'export default {',
+    "  id: 'headless-smoke',",
+    "  command: 'headless-smoke',",
+    "  intent: 'verify the installed non-interactive host with real agents',",
+    "  requiredRoleIds: ['worker'],",
+    '  validateOptions(options) {',
+    '    return options ?? {};',
+    '  },',
+    '  createRuntime() {',
+    '    let ports;',
+    '    return {',
+    '      async init(session) {',
+    '        ports = session.ports;',
+    '      },',
+    '      async handleBossInput({ text, signal }) {',
+    '        if (text !== expectedTask) throw new Error("headless task changed");',
+    "        await ports.emitStatus('headless smoke started');",
+    '        const player = await ports.callPlayer(',
+    "          'worker',",
+    '          [',
+    "            'Read acceptance-headless-token.txt from the working directory using your tools.',",
+    "            'Do not modify any file.',",
+    "            'Return exactly the file token with no prose or Markdown.',",
+    "          ].join('\\n'),",
+    '          signal,',
+    '          { resume: false },',
+    '        );',
+    "        if (player.status !== 'ok' || typeof player.finalText !== 'string') {",
+    "          throw new Error(player.error ?? 'headless player call failed');",
+    '        }',
+    '        const playerToken = player.finalText.trim();',
+    '        if (playerToken !== expectedToken) {',
+    '          throw new Error(`unexpected player token: ${JSON.stringify(playerToken)}`);',
+    '        }',
+    '        const judged = await ports.callJudge(',
+    '          [',
+    "            'Return exactly one JSON object with keys accepted and token.',",
+    "            'Set accepted to true and token to the expected token only when the player output matches it exactly.',",
+    '            `Expected token: ${JSON.stringify(expectedToken)}`,',
+    '            `Player output: ${JSON.stringify(playerToken)}`,',
+    "          ].join('\\n'),",
+    '          signal,',
+    '        );',
+    '        const decision = JSON.parse(judged);',
+    '        if (',
+    '          decision.accepted !== true ||',
+    '          decision.token !== expectedToken ||',
+    "          Object.keys(decision).sort().join(',') !== 'accepted,token'",
+    '        ) {',
+    '          throw new Error(`unexpected judge decision: ${judged}`);',
+    '        }',
+    "        await ports.emitStatus('headless smoke finished');",
+    '        return {',
+    "          outcome: 'terminal',",
+    '          state: {',
+    "            value: 'done',",
+    '            activeStateIds: [],',
+    '            tags: [],',
+    "            status: 'done',",
+    '            quiescent: true,',
+    '          },',
+    '          output: { playerToken, judge: decision },',
+    '        };',
+    '      },',
+    '      async resumePlaybookCall() {',
+    '        throw new Error("headless smoke cannot resume a nested call");',
+    '      },',
+    '      async dispose() {},',
+    '    };',
+    '  },',
+    '};',
+    '',
+  ].join('\n');
 }
 
 function positiveIntegerEnv(name: string, fallback: number): number {

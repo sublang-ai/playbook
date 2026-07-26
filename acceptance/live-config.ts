@@ -7,11 +7,16 @@
 // `pnpm test` and CI, so a config-model change would otherwise break the
 // release gate silently and only surface during a manual pre-tag run.
 
+export function liveModels(): { claude: string; codex: string } {
+  return {
+    claude:
+      process.env.PLAYBOOK_ACCEPTANCE_CLAUDE_MODEL ?? 'claude-opus-4-8',
+    codex: process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-5.5',
+  };
+}
+
 export function liveConfig(): string {
-  const claudeModel =
-    process.env.PLAYBOOK_ACCEPTANCE_CLAUDE_MODEL ?? 'claude-opus-4-8';
-  const codexModel =
-    process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-5.5';
+  const { claude: claudeModel, codex: codexModel } = liveModels();
   // DR-021: agent settings are inline per captain and player; a config
   // carrying a `profiles` map is rejected by the launcher.
   const claudePlayer = (effort: string): string[] => [

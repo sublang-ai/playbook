@@ -96,19 +96,24 @@ among the packed contents.
 Verifies: [RELEASE-24](../dev/release.md#release-24)
 
 The opt-in local `pnpm test:acceptance` suite shall pack and install the
-candidate package once, then exercise two independent fresh git repositories
-through the installed npm `playbook` command shim and a real attached
-tmux-play session.
-One case shall submit `/code` to real Claude and Codex agents and fail unless
-the start and finish lifecycle markers appear, only the requested file changes,
-its exact content is present in `HEAD`, and the worktree is clean. The
-other shall submit `/discuss` to real Claude and Codex agents and fail unless
-the start and finish lifecycle markers appear, only the requested spec item
-file changes, its content is present in `HEAD`, its deliberately unimplemented
-file is absent from both `HEAD` and the worktree, and the worktree is clean.
-Each case shall also fail unless the selected playbook leaves exactly the
-Captain and its two namespaced role panes visible with their expected adapters
-and the Boss/Captain pane focused.
+candidate package once, then exercise three independent fresh git repositories
+through the installed npm `playbook` command shim.
+The first case shall invoke `playbook run` with `--json` over a small fixture
+playbook using one real Claude player and a real Codex captain for one hidden
+judge call. It shall fail unless the installed headless host returns the exact
+terminal JSON result, emits its start and finish statuses, creates no tmux
+session, leaves `HEAD` unchanged, and leaves the repository clean with no
+ignored or untracked artifacts.
+The second case shall submit `/code` to real Claude and Codex agents and fail
+unless the start and finish lifecycle markers appear, only the requested file
+changes, its exact content is present in `HEAD`, and the worktree is clean.
+The third, independent `/discuss` case shall fail unless the start and finish
+lifecycle markers appear, only the requested spec item file changes, its
+content is present in `HEAD`, its deliberately unimplemented file is absent
+from both `HEAD` and the worktree, and the worktree is clean.
+Each interactive case shall also fail unless the selected playbook leaves
+exactly the Captain and its two namespaced role panes visible with their
+expected adapters and the Boss/Captain pane focused.
 
 The acceptance suite shall require local adapter authentication, tmux, glow,
 Expect, git, and npm. It shall not be selected by the normal `pnpm test`
@@ -137,4 +142,5 @@ repository and verify:
 
 This human presentation check is conditional and does not replace
 [RELEASE-25](#release-25); the real-model functional workflows shall not be
-repeated manually merely to duplicate the automatic gate.
+repeated manually — interactively or through `playbook run` — merely to
+duplicate the automatic gate.

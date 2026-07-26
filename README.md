@@ -70,14 +70,15 @@ The compiled artifacts live under
 the [slc](https://github.com/sublang-ai/slc) compiler pipeline's
 `<basename>.<pipeline>/` output directory.
 
-> **Release status:** 3.0.0. The composed system — the compiled default
-> Captain, CODE and DISCUSS, nested playbook calls, the semver-stable
-> six-port runtime contract (see [docs/embedding.md](docs/embedding.md)),
-> and non-interactive `playbook run` with parked-session resume — landed in
-> 1.0.0. Since then: script actors and the GEARS optimize pass, `playbook
-> run` defaults in the user config, and, in 3.0.0, inline agent settings
-> replacing the top-level `profiles` map (existing configs migrate
-> themselves on the next launch). See the [CHANGELOG](CHANGELOG.md).
+> **Next release:** 3.0.0. The composed system — the compiled default
+> Captain, CODE and DISCUSS, nested playbook calls, script actors and the
+> GEARS optimize pass, the semver-stable six-port runtime contract (see
+> [docs/embedding.md](docs/embedding.md)), and non-interactive `playbook run`
+> with parked-session resume — landed in 1.0.0. Since then, `playbook run`
+> gained defaults in the user config, and the unreleased 3.0.0 line replaces
+> the top-level `profiles` map with inline agent settings (existing
+> profiles-based configs migrate themselves on the next launch). See the
+> [CHANGELOG](CHANGELOG.md).
 
 ### Requirements
 
