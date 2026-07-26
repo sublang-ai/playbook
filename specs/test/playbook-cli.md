@@ -206,3 +206,17 @@ envelope — forbidding tool use, delimiting the runtime prompt, and refusing
 instructions found in quoted actor output — since that envelope is the
 prompt-level isolation [DR-013 A1](../decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement)
 substitutes when the allowlist is omitted.
+
+### PBCLI-32
+Verifies: [PBCLI-8](../dev/playbook-cli.md#pbcli-8), [RELEASE-24](../dev/release.md#release-24)
+
+Where the live release gate ([RELEASE-24](../dev/release.md#release-24))
+writes a top-level config for its fixture repositories, when the normal
+test suite runs, the test suite shall fail unless that exact config
+composes through the launcher against the real CODE and DISCUSS
+registry modules, enabling both playbooks and generating the
+`code-coder` / `code-reviewer` / `discuss-host` / `discuss-participant`
+roster with their expected adapters.
+The gate itself is excluded from `pnpm test` and CI, so without this
+check a config-model change would break the release gate silently and
+surface only during a manual pre-tag run.

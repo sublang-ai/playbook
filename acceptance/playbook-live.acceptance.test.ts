@@ -20,6 +20,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { liveConfig } from './live-config.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const liveTimeoutMs = positiveIntegerEnv(
@@ -392,54 +393,6 @@ function createScenario(name: 'code' | 'discuss'): Scenario {
   execText('git', ['commit', '-m', 'Initialize acceptance fixture'], repo);
   const baselineCommit = headRevision(repo);
   return { root, repo, configHome, baselineCommit };
-}
-
-function liveConfig(): string {
-  const claudeModel =
-    process.env.PLAYBOOK_ACCEPTANCE_CLAUDE_MODEL ?? 'claude-opus-4-8';
-  const codexModel =
-    process.env.PLAYBOOK_ACCEPTANCE_CODEX_MODEL ?? 'gpt-5.5';
-  return [
-    'profiles:',
-    '  acceptance-captain:',
-    '    adapter: claude',
-    `    model: ${JSON.stringify(claudeModel)}`,
-    '    reasoningEffort: high',
-    '    permissions:',
-    '      mode: auto',
-    '  acceptance-claude:',
-    '    adapter: claude',
-    `    model: ${JSON.stringify(claudeModel)}`,
-    '    reasoningEffort: xhigh',
-    '    permissions:',
-    '      mode: auto',
-    '  acceptance-codex:',
-    '    adapter: codex',
-    `    model: ${JSON.stringify(codexModel)}`,
-    '    reasoningEffort: xhigh',
-    '    permissions:',
-    '      mode: auto',
-    "      writablePaths: ['.git']",
-    'captain: acceptance-captain',
-    'notifications:',
-    '  player_finished: off',
-    '  turn_finished: off',
-    '  turn_aborted: off',
-    'playbooks:',
-    '  code:',
-    '    from: "@sublang/playbook/code/registry"',
-    '    players:',
-    '      coder: acceptance-claude',
-    '      reviewer: acceptance-codex',
-    '    committer: coder',
-    '  discuss:',
-    '    from: "@sublang/playbook/discuss/registry"',
-    '    players:',
-    '      host: acceptance-claude',
-    '      participant: acceptance-codex',
-    '    committer: host',
-    '',
-  ].join('\n');
 }
 
 async function drivePlaybookTurn(

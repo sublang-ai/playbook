@@ -139,6 +139,33 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
   });
 });
 
+// PBCLI-32: the live release gate (RELEASE-24) is excluded from `pnpm test`
+// and CI, so a config-model change can break its fixture and only surface
+// during a manual pre-tag run. Compose that exact fixture here.
+describe('live acceptance gate config (PBCLI-32)', () => {
+  it('composes through the real launcher with the real registries', async () => {
+    const { liveConfig } = await import(
+      new URL('../../../acceptance/live-config.ts', import.meta.url).href
+    );
+    const top = parseYaml(liveConfig());
+    const { config, playbooks } = await composeGenericConfig(
+      top,
+      (specifier: string) => import(specifier),
+    );
+
+    expect(playbooks.map((p: any) => p.id).sort()).toEqual(['code', 'discuss']);
+    expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
+    expect(config.captain.adapter).toBe('claude');
+    // The pane titles the gate asserts derive from these generated ids.
+    expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
+      'code-coder claude',
+      'code-reviewer codex',
+      'discuss-host claude',
+      'discuss-participant codex',
+    ]);
+  });
+});
+
 describe('playbook launcher — validation (PBCLI-15)', () => {
   // A compiler-phase playbook whose linked runtime binds its sole player as
   // `captain` — the reserved-role fault of PBCLI-9.
