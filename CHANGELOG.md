@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CODE and DISCUSS adopt the intent-records vocabulary.** Downstream scaffolds rename `specs/iterations/` to `specs/intents/` — intent records, with the IR acronym and ids unchanged (spex DR-017) — so the Coder decomposition prompt now files a new IR under `@specs/intents` (or `@specs/iterations` in older scaffolds), the "spec item files" definition says decision and intent records with the legacy name kept for un-migrated trees, and the judge-facing record descriptions name decision, intent, or legacy iteration records. The GEARS and FSM artifacts are recompiled in lockstep ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md)).
+
 ### Fixed
 
 - **A Codex captain no longer fails every Boss turn.** The Captain shell and `playbook run` requested an explicit empty tool allowlist on every routing, adjudication, and judge call; cligent's Codex adapter rejects any tool list fail-closed, so a `captain:` on `codex` aborted at its first routing call. Each host now omits `allowedTools` for a captain adapter with no provider-enforced tool-restriction surface, and the launcher passes the resolved adapter through as `captain.options.captainAdapter` because the shell cannot read it from the tmux-play context. Claude captains are unchanged and keep provider-enforced tool-free isolation; a Codex captain degrades to the authored prompt-level restriction, and an unknown adapter still requests the empty allowlist and fails closed ([DR-013 A1](specs/decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement), [CAPTAIN-31](specs/dev/playbook-captain.md#captain-31), [PBCLI-20](specs/dev/playbook-cli.md#pbcli-20)).

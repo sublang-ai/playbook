@@ -151,7 +151,7 @@ const planAndImplementInput = (context) => ({
     ...bossReplyInputFields(context),
     prompt: [
         'Assess whether this can be completed in a single commit, following best practices.',
-        'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/iterations and stop without implementing any IR task.',
+        'If yes, implement and test, updating both code and specs; otherwise, decompose into tasks as a new IR under @specs/intents (or @specs/iterations in older scaffolds) and stop without implementing any IR task.',
         'For context discovery, @specs/map.md indexes all spec files and @specs/meta.md describes the spec format.',
         'Ensure @specs/map.md reflects the changes.',
         'Do not commit.',
@@ -200,7 +200,7 @@ const summarizeSpecsInput = (context) => ({
     ].join('\n'),
     result: withNeedsBossReply({
         specsReady: 'Coder produced uncommitted spec updates (Initial Changes).',
-        noSpecChanges: 'Existing specs already capture the iteration.',
+        noSpecChanges: 'Existing specs already capture the realized intent.',
     }),
 });
 const setPendingBossQuestion = (resumeStateId) => assign({
@@ -397,7 +397,7 @@ export const codingMachine = setup({
                     ].join('\n'),
                     result: {
                         changesMadeSpecs: 'Coder accepted items and produced unstaged/untracked edits only in spec item files (@specs/packages/, @specs/compositions/, or legacy @specs/{user,dev,test}/), without raising any rebuttals.',
-                        changesMadeCode: 'Coder accepted items and produced unstaged/untracked edits only outside spec item files (any other files, including @specs/ decision/iteration records, @specs/map.md, and @specs/meta.md), without raising any rebuttals.',
+                        changesMadeCode: 'Coder accepted items and produced unstaged/untracked edits only outside spec item files (any other files, including @specs/ decision, intent, or legacy iteration records, @specs/map.md, and @specs/meta.md), without raising any rebuttals.',
                         changesMadeMixed: 'Coder accepted items and produced unstaged/untracked edits spanning both spec item files and other files, without raising any rebuttals.',
                         changesMadeSpecsAndChallenged: 'Coder produced unstaged/untracked edits only in spec item files (@specs/packages/, @specs/compositions/, or legacy @specs/{user,dev,test}/) AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
                         changesMadeCodeAndChallenged: 'Coder produced unstaged/untracked edits only outside spec item files AND challenged one or more review items. Output shall include `challenges: <numbered rebuttals, one per challenged item>`.',
@@ -1314,7 +1314,7 @@ export const codingMachine = setup({
                     ].join('\n'),
                     result: {
                         committedSpecs: 'Committed changes that touch only spec item files (@specs/packages/, @specs/compositions/, or legacy @specs/{user,dev,test}/).',
-                        committedCode: 'Committed changes that touch only files that are not spec item files (any other files, including @specs/ decision/iteration records, @specs/map.md, and @specs/meta.md).',
+                        committedCode: 'Committed changes that touch only files that are not spec item files (any other files, including @specs/ decision, intent, or legacy iteration records, @specs/map.md, and @specs/meta.md).',
                         committedMixed: 'Committed changes that span both spec item files and other files.',
                         noRelevantChanges: 'There are no relevant changes to commit.',
                         needsBossInput: 'Committing requires additional Boss input.',
