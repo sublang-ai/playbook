@@ -178,17 +178,85 @@ function isFsmResultFailure(error: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// DR-022: the engine's compatibility self-report. A linked thin module
+// records the values current at link time in `spec.compat`; the factory
+// checks that declaration against this very module — the engine instance
+// that will interpret the FSM, so the check can never consult a different
+// engine copy than the one executing — and fails construction on a mismatch
+// instead of misbehaving deep in a session. Raising RUNTIME_ABI or removing
+// a member of SUPPORTED_ARTIFACT_SCHEMAS is a breaking change (RELEASE-15).
+// ---------------------------------------------------------------------------
+
+/** The runtime ABI this engine implements (DR-022). */
+export const RUNTIME_ABI = 1;
+
+/** The linked-artifact schema versions this engine accepts (DR-022). */
+export const SUPPORTED_ARTIFACT_SCHEMAS: readonly number[] = Object.freeze([
+  1,
+]);
+
+/** A linked artifact's declared link-time compatibility values (DR-022). */
+export interface XStatePlaybookRuntimeCompat {
+  /** The artifact schema version the linker emitted. */
+  artifactSchema: number;
+  /** The engine ABI the artifact was linked against. */
+  runtimeAbi: number;
+}
+
+// PBRT-50: validate a declaration against the loaded engine, schema first,
+// so one clear diagnostic covers a fully skewed artifact. Absent means a
+// legacy artifact emitted before the DR-022 contract; those must keep
+// loading unchanged (DR-019 §4), so there is nothing to check.
+function assertRuntimeCompat(
+  compat: XStatePlaybookRuntimeCompat | undefined,
+  label: string,
+): void {
+  if (compat === undefined) return;
+  if (compat === null || typeof compat !== 'object') {
+    throw new TypeError(`${label} spec.compat must be an object`);
+  }
+  const { artifactSchema, runtimeAbi } = compat;
+  if (!Number.isSafeInteger(artifactSchema)) {
+    throw new TypeError(
+      `${label} spec.compat.artifactSchema must be an integer`,
+    );
+  }
+  if (!Number.isSafeInteger(runtimeAbi)) {
+    throw new TypeError(`${label} spec.compat.runtimeAbi must be an integer`);
+  }
+  if (!SUPPORTED_ARTIFACT_SCHEMAS.includes(artifactSchema)) {
+    throw new TypeError(
+      `${label} artifact declares schema ${artifactSchema}, but this ` +
+        `@sublang/playbook/xstate-runtime engine supports ` +
+        `[${SUPPORTED_ARTIFACT_SCHEMAS.join(', ')}]`,
+    );
+  }
+  if (runtimeAbi !== RUNTIME_ABI) {
+    throw new TypeError(
+      `${label} artifact declares runtime ABI ${runtimeAbi}, but this ` +
+        `@sublang/playbook/xstate-runtime engine implements ${RUNTIME_ABI}`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The per-workflow spec. Every strategy member has a generic default derived
 // from the FSM artifact's own data, so a linker-emitted thin module normally
-// supplies only `snapshotOptions` and, where applicable, `entryEvent`, erased
-// Boss-event field metadata, placeholder exceptions, and transition-event
-// fields. Hand-maintained artifacts may override any member to preserve their
-// existing observable behavior exactly.
+// supplies only `snapshotOptions` and, where applicable, `compat`,
+// `entryEvent`, erased Boss-event field metadata, placeholder exceptions, and
+// transition-event fields. Hand-maintained artifacts may override any member
+// to preserve their existing observable behavior exactly.
 // ---------------------------------------------------------------------------
 
 export interface XStatePlaybookRuntimeSpec<TOptions> {
   /** Diagnostic label used in internal invariant errors. Default 'playbook'. */
   label?: string;
+  /**
+   * Link-time compatibility declaration checked at construction against the
+   * loaded engine's self-report (DR-022). Absent: a legacy artifact emitted
+   * before the contract — constructed with no compatibility check.
+   */
+  compat?: XStatePlaybookRuntimeCompat;
   /** Validate and JSON-snapshot the caller's per-run options. */
   snapshotOptions: (value: unknown) => TOptions;
   /** Derive the FSM machine input from validated options. Default: identity. */
@@ -1337,6 +1405,9 @@ export function createXStatePlaybookRuntime<TOptions>(
   spec: XStatePlaybookRuntimeSpec<TOptions>,
 ): PlaybookRuntimeFactory<TOptions> {
   const label = spec.label ?? 'playbook';
+  // DR-022 / PBRT-50: reject an incompatible artifact declaration before any
+  // machine interpretation, against this loaded engine's own self-report.
+  assertRuntimeCompat(spec.compat, label);
   const declaredActors = collectInvokeSources(machine);
   const resumableStateIds =
     spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);

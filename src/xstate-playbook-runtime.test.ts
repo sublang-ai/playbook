@@ -25,6 +25,8 @@ import {
   defaultComposePlayerPrompt,
   defaultExtractRequiredFields,
   resumableStateIdsFromMachine,
+  RUNTIME_ABI,
+  SUPPORTED_ARTIFACT_SCHEMAS,
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
 
@@ -1466,5 +1468,94 @@ describe('boundary hygiene', () => {
       /already initialized/,
     );
     await runtime.dispose();
+  });
+});
+
+describe('runtime compatibility declaration (DR-022)', () => {
+  it('reports an integer ABI and a supported-schema set that admits it', () => {
+    expect(Number.isSafeInteger(RUNTIME_ABI)).toBe(true);
+    expect(SUPPORTED_ARTIFACT_SCHEMAS.length).toBeGreaterThan(0);
+    expect(
+      SUPPORTED_ARTIFACT_SCHEMAS.every((schema) =>
+        Number.isSafeInteger(schema),
+      ),
+    ).toBe(true);
+    expect(Object.isFrozen(SUPPORTED_ARTIFACT_SCHEMAS)).toBe(true);
+  });
+
+  it('constructs and runs under a matching link-time declaration', async () => {
+    const runtime = createXStatePlaybookRuntime(workflowMachine, {
+      ...workflowSpec,
+      compat: {
+        artifactSchema: SUPPORTED_ARTIFACT_SCHEMAS[0],
+        runtimeAbi: RUNTIME_ABI,
+      },
+    })({});
+    const { ports } = makeRecordingPorts();
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('   '));
+    expect(result.outcome).toBe('no-action');
+    await runtime.dispose();
+  });
+
+  it('constructs a declaration-free legacy artifact without any check', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, workflowSpec),
+    ).not.toThrow();
+  });
+
+  it('rejects an unsupported artifact schema naming the supported set', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        compat: { artifactSchema: 99, runtimeAbi: RUNTIME_ABI },
+      }),
+    ).toThrow(
+      new TypeError(
+        'workflow artifact declares schema 99, but this ' +
+          '@sublang/playbook/xstate-runtime engine supports [1]',
+      ),
+    );
+  });
+
+  it('rejects a mismatched runtime ABI naming both values', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI + 1 },
+      }),
+    ).toThrow(
+      new TypeError(
+        'workflow artifact declares runtime ABI 2, but this ' +
+          '@sublang/playbook/xstate-runtime engine implements 1',
+      ),
+    );
+  });
+
+  it('raises the schema error alone when both values are wrong', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        compat: { artifactSchema: 99, runtimeAbi: RUNTIME_ABI + 1 },
+      }),
+    ).toThrow(/declares schema 99.*supports \[1\]/);
+  });
+
+  it('rejects a malformed declaration naming the offending member', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        compat: { artifactSchema: 1.5, runtimeAbi: RUNTIME_ABI },
+      }),
+    ).toThrow(/spec\.compat\.artifactSchema must be an integer/);
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        compat: {
+          artifactSchema: 1,
+          runtimeAbi: 'latest',
+        } as unknown as { artifactSchema: number; runtimeAbi: number },
+      }),
+    ).toThrow(/spec\.compat\.runtimeAbi must be an integer/);
   });
 });

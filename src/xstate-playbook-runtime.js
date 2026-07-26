@@ -42,6 +42,48 @@ function isFsmResultFailure(error) {
         fsmResultFailures.has(error));
 }
 // ---------------------------------------------------------------------------
+// DR-022: the engine's compatibility self-report. A linked thin module
+// records the values current at link time in `spec.compat`; the factory
+// checks that declaration against this very module — the engine instance
+// that will interpret the FSM, so the check can never consult a different
+// engine copy than the one executing — and fails construction on a mismatch
+// instead of misbehaving deep in a session. Raising RUNTIME_ABI or removing
+// a member of SUPPORTED_ARTIFACT_SCHEMAS is a breaking change (RELEASE-15).
+// ---------------------------------------------------------------------------
+/** The runtime ABI this engine implements (DR-022). */
+export const RUNTIME_ABI = 1;
+/** The linked-artifact schema versions this engine accepts (DR-022). */
+export const SUPPORTED_ARTIFACT_SCHEMAS = Object.freeze([
+    1,
+]);
+// PBRT-50: validate a declaration against the loaded engine, schema first,
+// so one clear diagnostic covers a fully skewed artifact. Absent means a
+// legacy artifact emitted before the DR-022 contract; those must keep
+// loading unchanged (DR-019 §4), so there is nothing to check.
+function assertRuntimeCompat(compat, label) {
+    if (compat === undefined)
+        return;
+    if (compat === null || typeof compat !== 'object') {
+        throw new TypeError(`${label} spec.compat must be an object`);
+    }
+    const { artifactSchema, runtimeAbi } = compat;
+    if (!Number.isSafeInteger(artifactSchema)) {
+        throw new TypeError(`${label} spec.compat.artifactSchema must be an integer`);
+    }
+    if (!Number.isSafeInteger(runtimeAbi)) {
+        throw new TypeError(`${label} spec.compat.runtimeAbi must be an integer`);
+    }
+    if (!SUPPORTED_ARTIFACT_SCHEMAS.includes(artifactSchema)) {
+        throw new TypeError(`${label} artifact declares schema ${artifactSchema}, but this ` +
+            `@sublang/playbook/xstate-runtime engine supports ` +
+            `[${SUPPORTED_ARTIFACT_SCHEMAS.join(', ')}]`);
+    }
+    if (runtimeAbi !== RUNTIME_ABI) {
+        throw new TypeError(`${label} artifact declares runtime ABI ${runtimeAbi}, but this ` +
+            `@sublang/playbook/xstate-runtime engine implements ${RUNTIME_ABI}`);
+    }
+}
+// ---------------------------------------------------------------------------
 // Tolerant judge-JSON recovery (slc/link.md §Boss-event mapping).
 // ---------------------------------------------------------------------------
 function isPlainObject(value) {
@@ -857,6 +899,9 @@ function makeDefaultClassifyBossText(machine, entryEvent, bossEvents) {
  */
 export function createXStatePlaybookRuntime(machine, spec) {
     const label = spec.label ?? 'playbook';
+    // DR-022 / PBRT-50: reject an incompatible artifact declaration before any
+    // machine interpretation, against this loaded engine's own self-report.
+    assertRuntimeCompat(spec.compat, label);
     const declaredActors = collectInvokeSources(machine);
     const resumableStateIds = spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
     const resolvePlayerIdSpec = spec.resolvePlayerId;

@@ -197,6 +197,8 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         validateCaptainResult,
         validatePlayerResult,
         waitForPlaybookQuiescence,
+        RUNTIME_ABI,
+        SUPPORTED_ARTIFACT_SCHEMAS,
       } from '@sublang/playbook/xstate-runtime';
       for (const value of [
         assertJsonSafe,
@@ -212,6 +214,18 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         waitForPlaybookQuiescence,
       ]) {
         if (typeof value !== 'function') throw new Error('missing helper');
+      }
+      // DR-022: the engine compatibility self-report ships on the same
+      // public engine subpath the factory does.
+      if (!Number.isSafeInteger(RUNTIME_ABI)) {
+        throw new Error('missing RUNTIME_ABI');
+      }
+      if (
+        !Array.isArray(SUPPORTED_ARTIFACT_SCHEMAS) ||
+        SUPPORTED_ARTIFACT_SCHEMAS.length === 0 ||
+        !SUPPORTED_ARTIFACT_SCHEMAS.every(Number.isSafeInteger)
+      ) {
+        throw new Error('missing SUPPORTED_ARTIFACT_SCHEMAS');
       }
       process.stdout.write('OK');
     `;

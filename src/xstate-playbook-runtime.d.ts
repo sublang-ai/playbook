@@ -70,9 +70,26 @@ export declare const BOSS_REPLY_ERRORS: {
     readonly missingQuestion: "needsBossReply outcome missing 'question' field";
     readonly unregisteredState: (stateId: string) => string;
 };
+/** The runtime ABI this engine implements (DR-022). */
+export declare const RUNTIME_ABI = 1;
+/** The linked-artifact schema versions this engine accepts (DR-022). */
+export declare const SUPPORTED_ARTIFACT_SCHEMAS: readonly number[];
+/** A linked artifact's declared link-time compatibility values (DR-022). */
+export interface XStatePlaybookRuntimeCompat {
+    /** The artifact schema version the linker emitted. */
+    artifactSchema: number;
+    /** The engine ABI the artifact was linked against. */
+    runtimeAbi: number;
+}
 export interface XStatePlaybookRuntimeSpec<TOptions> {
     /** Diagnostic label used in internal invariant errors. Default 'playbook'. */
     label?: string;
+    /**
+     * Link-time compatibility declaration checked at construction against the
+     * loaded engine's self-report (DR-022). Absent: a legacy artifact emitted
+     * before the contract — constructed with no compatibility check.
+     */
+    compat?: XStatePlaybookRuntimeCompat;
     /** Validate and JSON-snapshot the caller's per-run options. */
     snapshotOptions: (value: unknown) => TOptions;
     /** Derive the FSM machine input from validated options. Default: identity. */

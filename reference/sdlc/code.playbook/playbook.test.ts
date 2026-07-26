@@ -17,7 +17,12 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { loadTmuxPlayConfig } from '@sublang/cligent/tmux-play';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createMachine } from 'xstate';
 import { parse as parseYaml } from 'yaml';
+import {
+  createXStatePlaybookRuntime,
+  RUNTIME_ABI,
+} from '../../../src/xstate-runtime.js';
 
 const playbook = await import(
   new URL('./bin/playbook.js', import.meta.url).href
@@ -1389,6 +1394,53 @@ describe('playbook run — captain tool isolation (PBCLI-31)', () => {
       expect(opts.resume).toBe(false);
     },
   );
+});
+
+describe('playbook run — incompatible linked artifact (PBCLI-35)', () => {
+  // A thin linked module hands the shared factory the compat values
+  // recorded at link time (slc/link.md §Output); an engine that does not
+  // support them rejects construction (DR-022 / PBRT-50). The synthetic
+  // entry constructs inside createRuntime so the throw travels the run
+  // host's standard diagnostic path.
+  const compatMachine = createMachine({
+    id: 'compat',
+    initial: 'ready',
+    states: {
+      ready: {
+        meta: { playbook: { stateId: 'ready', description: 'ready state' } },
+        tags: ['playbook.parked'],
+      },
+    },
+  });
+
+  it('prints the compat diagnostic and exits 1 without any agent call', async () => {
+    const { createAgent, calls } = fakeAgents({});
+    const entry = {
+      id: 'skewed',
+      command: 'skewed',
+      intent: 'x',
+      requiredRoleIds: [],
+      validateOptions: (o: unknown) => o,
+      createRuntime: () =>
+        createXStatePlaybookRuntime(compatMachine, {
+          snapshotOptions: () => ({}),
+          compat: { artifactSchema: 99, runtimeAbi: RUNTIME_ABI },
+        })({}),
+    };
+
+    const out = await runCli(
+      ['run', 'mod://skewed', 'go'],
+      { 'mod://skewed': { default: entry } },
+      createAgent,
+    );
+
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain(
+      'playbook run: playbook artifact declares schema 99, but this ' +
+        '@sublang/playbook/xstate-runtime engine supports [1]',
+    );
+    expect(calls).toEqual([]);
+  });
 });
 
 describe('playbook run — park/resume lifecycle (PBCLI-24)', () => {
