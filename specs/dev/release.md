@@ -175,10 +175,14 @@ be released under [RELEASE-1](#release-1) SemVer.
 The package shall additionally expose `@sublang/playbook/xstate-runtime` with
 JavaScript and declaration artifacts for the shared XState snapshot,
 quiescence, strict JSON, error-normalization, and nested-call bridge helpers
-used by linked runtimes, and for the generic linked-runtime factory
+used by linked runtimes, for the generic linked-runtime factory
 `createXStatePlaybookRuntime` with its strategy defaults
 ([DR-019](../decisions/019-shared-linked-runtime-factory.md)) that
-interprets a linked FSM under the `slc/link.md` contract.
+interprets a linked FSM under the `slc/link.md` contract, and for the
+engine's compatibility self-report `RUNTIME_ABI` and
+`SUPPORTED_ARTIFACT_SCHEMAS` checked at factory construction
+([DR-022](../decisions/022-runtime-compatibility-contract.md),
+[PBRT-50](playbook-runtime.md#pbrt-50)).
 This engine subpath shall depend one-way on the
 type-only runtime contract and shall import no generated FSM or host adapter.
 The `PlaybookSession`, player-resume, and trace shapes introduced by

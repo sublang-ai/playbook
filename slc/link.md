@@ -1335,6 +1335,15 @@ The emitted module:
   type; supplying one is a construction error, so a linker that judges a
   runtime-owned arm to have lost payload detail under erasure shall report
   that gap rather than emit the entry.
+- Supplies `spec.compat` with the compatibility values current at link time,
+  read from the installed shared engine's self-report:
+  `{ artifactSchema, runtimeAbi }`, where `artifactSchema` is the highest
+  member of the engine's `SUPPORTED_ARTIFACT_SCHEMAS` and `runtimeAbi` is its
+  `RUNTIME_ABI`. The factory checks the declaration against the engine
+  instance that actually loads the emitted module and fails construction on a
+  mismatch, so an artifact linked under one engine cannot run silently skewed
+  under another. Modules emitted before this contract carry no `compat`
+  member and remain loadable.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
   `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`.
 - Exposes, under an `_internal` export, the pure helpers verification

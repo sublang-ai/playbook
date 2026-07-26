@@ -201,6 +201,11 @@ shall return a suspended start with a fresh synthetic child-session id
 without launching a child, so the linked runtime reports the nested pause
 that the one-shot host cannot answer; `emitStatus` shall write to stderr
 and `emitTelemetry` shall be dropped unless `--verbose`.
+When `entry.createRuntime` throws — including the shared factory's
+construction-time rejection of an incompatible linked artifact
+([PBRT-50](playbook-runtime.md#pbrt-50)) — the command shall print
+`playbook run: <message>` to stderr and exit `1` without calling any
+agent.
 The command shall initialize a depth-zero `PlaybookSession` whose
 `sessionId` and `rootSessionId` are the same fresh UUID, run one
 `handleBossInput` turn under an abort signal, and map the

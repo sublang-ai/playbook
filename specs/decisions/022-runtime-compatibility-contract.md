@@ -1,0 +1,46 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# DR-022: Versioned Runtime Compatibility Contract
+
+## Status
+
+Accepted.
+
+## Context
+
+A linked thin module is compiled once against the `slc/link.md` contract and the `@sublang/playbook/xstate-runtime` engine installed at link time, then executed by whatever engine instance its host resolves at run time.
+Nothing bound those two moments: an artifact linked under engine major N could be interpreted by engine major M, and a changed strategy default, actor-input contract, or Boss-event semantics would surface as misbehavior deep in a session rather than as a load-time error.
+Consumers that vendor and pin the `slc/link.md` text and adopt playbook releases atomically narrow the window but do not close it: globally installed engines and hand-carried artifacts still skew.
+[DR-019 §2](019-shared-linked-runtime-factory.md#2-the-spec-parameter-surface) already fails factory construction on conflicting `bossEvents` metadata; there was no equivalent declaration for artifact/engine version agreement.
+
+## Decision
+
+### 1. The engine exports a self-report
+
+- The `@sublang/playbook/xstate-runtime` engine surface exports `RUNTIME_ABI` (an integer, starting at 1) and `SUPPORTED_ARTIFACT_SCHEMAS` (a read-only integer array, starting `[1]`).
+- Raising `RUNTIME_ABI` or removing a member of `SUPPORTED_ARTIFACT_SCHEMAS` is a breaking change under [RELEASE-1](../dev/release.md#release-1); adding a newly supported schema is additive.
+
+### 2. Artifacts declare, the factory checks
+
+- `createXStatePlaybookRuntime(machine, spec)` accepts an optional `spec.compat: { artifactSchema: number; runtimeAbi: number }`.
+- The declaration is checked against the self-report of the engine instance actually loaded — by construction the same module that will interpret the FSM, so the check can never consult a different engine copy than the one executing.
+- The check is fail-fast at factory construction, before any machine interpretation:
+  - an `artifactSchema` outside `SUPPORTED_ARTIFACT_SCHEMAS` throws a `TypeError` naming the declared schema and the supported set;
+  - otherwise a `runtimeAbi` different from `RUNTIME_ABI` throws a `TypeError` naming the declared and the implemented value;
+  - when both disagree, the schema error alone is raised — one clear diagnostic suffices;
+  - a malformed `compat` value throws a `TypeError` naming the offending member.
+- An absent `spec.compat` is a legacy artifact emitted before this contract: the factory constructs exactly as before, because [DR-019 §4](019-shared-linked-runtime-factory.md#4-additive-compatibility) keeps previously linked artifacts loadable.
+- `slc/link.md` §Output binds newly emitted thin modules to supply `compat` with the values current at link time.
+
+### 3. Scope
+
+- No entry-registry-level compatibility fields are added in this iteration: the factory call is on every execution path — `playbook run`, test suites, embedding hosts — so the factory check already covers them all; a registry-level advertisement can be layered on later without changing this contract.
+- `playbook run` gains no flags: a construction-time throw from an entry's `createRuntime` surfaces through the existing `playbook run: <message>` diagnostic and exit `1` path ([PBCLI-20](../dev/playbook-cli.md#pbcli-20)).
+- Runtimes that do not use the shared factory (the DISCUSS parallel-region runtime, the compiled default Captain) carry no declaration and are out of scope until they converge on the factory under their own record.
+
+## Consequences
+
+- A skew-linked artifact fails loudly at load with a diagnostic naming both sides, instead of running under semantics it was not linked against.
+- The metadata is additive: every existing artifact, host, and export keeps working, so this ships as a minor release.
+- Future format changes have a signal: a new artifact schema or engine ABI is declared by number, checked by the loaded engine, and rejected by name ([DR-023](023-data-only-machine-ir.md) stages the first planned use).

@@ -207,6 +207,17 @@ instructions found in quoted actor output — since that envelope is the
 prompt-level isolation [DR-013 A1](../decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement)
 substitutes when the allowlist is omitted.
 
+### PBCLI-35
+Verifies: [PBCLI-20](../dev/playbook-cli.md#pbcli-20), [PBRT-50](../dev/playbook-runtime.md#pbrt-50)
+
+When the test suite exercises `playbook run` with an injected agent-run
+function over a synthetic registry entry whose `createRuntime` invokes
+the shared `createXStatePlaybookRuntime` factory with a `spec.compat`
+declaration the loaded engine does not support, the test suite shall
+fail unless the command prints one `playbook run:` stderr diagnostic
+naming the declared and supported compatibility values and exits `1`
+without any agent call.
+
 ### PBCLI-32
 Verifies: [PBCLI-8](../dev/playbook-cli.md#pbcli-8), [RELEASE-24](../dev/release.md#release-24)
 

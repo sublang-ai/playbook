@@ -83,6 +83,31 @@ the dependency runs one way, from `code.playbook` to this module
 The module shall carry only type declarations and shall add no runtime
 engine, linker, or host primitives.
 
+## Runtime compatibility
+
+### PBRT-50
+
+The shared `@sublang/playbook/xstate-runtime` engine surface shall
+export its compatibility self-report
+([DR-022](../decisions/022-runtime-compatibility-contract.md)): the
+integer `RUNTIME_ABI` it implements and the read-only integer array
+`SUPPORTED_ARTIFACT_SCHEMAS` it accepts.
+When `createXStatePlaybookRuntime(machine, spec)` is called with a
+`spec.compat` declaration `{ artifactSchema, runtimeAbi }`, the factory
+shall check that declaration against the self-report of the engine
+instance actually loaded, before any machine interpretation: when
+`artifactSchema` is not a member of `SUPPORTED_ARTIFACT_SCHEMAS`,
+construction shall throw a `TypeError` naming the declared schema and
+the supported set, also when `runtimeAbi` simultaneously disagrees;
+when the schema is supported but `runtimeAbi` differs from
+`RUNTIME_ABI`, construction shall throw a `TypeError` naming the
+declared and the implemented value; when `compat` is present but not an
+object carrying integer `artifactSchema` and `runtimeAbi` members,
+construction shall throw a `TypeError` naming the offending member.
+When `spec.compat` is absent, the factory shall construct the runtime
+with no compatibility check, so linked modules emitted before the
+contract stay loadable.
+
 ## Session lifecycle
 
 ### PBRT-6
