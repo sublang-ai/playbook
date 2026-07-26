@@ -218,6 +218,9 @@ The package shall also ship the authored CODE and DISCUSS playbook sources
 `reference/sdlc/code.md` and `reference/sdlc/discuss.md` as package files
 beside their compiled artifacts, so a host can display or recompile the
 bundled playbooks from source.
+The package shall also ship the `docs/` guides the README delegates to, so
+an installed copy resolves its own links to the version it shipped with
+rather than to whatever the repository currently documents.
 The internal Captain shall have no `exports['./captain/registry']` subpath
 because it is not an enabled registry entry.
 Removing or renaming the `playbook` bin or a

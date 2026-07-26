@@ -101,8 +101,23 @@ playbook --with fast-lineup.yaml
 playbooks:
   code:
     players:
-      coder: { adapter: codex, model: gpt-5.5, effort: medium }
+      coder:
+        adapter: codex
+        model: gpt-5.5
+        effort: medium
+        permissions:
+          mode: auto
+          # The seeded `committer` is `coder`, so this role runs the commit
+          # turn; a Codex agent needs the `.git` grant to write git metadata.
+          writablePaths:
+            - .git
 ```
+
+Fragments merge into the agent block rather than replacing it, so
+settings the base defines and the fragment omits — here `mode: auto` —
+survive. Anything the adapter itself requires must still be stated: a
+role switched to `codex` needs its own `writablePaths` grant, because
+the base Claude block had no reason to carry one.
 
 The global file is never modified, and `--with` is not forwarded to
 `tmux-play` ([PBCLI-25](../specs/user/playbook-cli.md#pbcli-25)).

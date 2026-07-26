@@ -76,7 +76,8 @@
     "reference/sdlc/discuss.playbook/discuss.playbook.d.ts",
     "reference/sdlc/discuss.playbook/discuss.registry.ts",
     "reference/sdlc/discuss.playbook/discuss.registry.js",
-    "reference/sdlc/discuss.playbook/discuss.registry.d.ts"
+    "reference/sdlc/discuss.playbook/discuss.registry.d.ts",
+    "docs"
   ],
   "bin": {
     "playbook": "reference/sdlc/code.playbook/bin/playbook.js"

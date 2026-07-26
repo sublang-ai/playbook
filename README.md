@@ -52,7 +52,7 @@ playbooks:
   code:
     from: '@sublang/playbook/code/registry'
     players:
-      coder: { adapter: claude, model: claude-opus-4-8[1m], effort: xhigh }
+      coder: { adapter: claude, model: 'claude-opus-4-8[1m]', effort: xhigh }
       reviewer: { adapter: codex, model: gpt-5.5, effort: xhigh }
 ```
 

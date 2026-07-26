@@ -272,6 +272,26 @@ describe('packed tarball contents (RELEASE-18)', () => {
     ]) {
       expect(packed, `tarball missing ${artifact}`).toContain(artifact);
     }
+    // RELEASE-18/20: the README delegates usage to docs/, so an installed
+    // copy must carry every guide it links to — otherwise those links point
+    // at content the tarball does not have.
+    const readme = readFileSync(
+      new URL('../README.md', import.meta.url),
+      'utf8',
+    );
+    const linkedDocs = [
+      ...new Set(
+        [...readme.matchAll(/\]\((docs\/[^)#]+\.md)[^)]*\)/g)].map(
+          (match) => match[1],
+        ),
+      ),
+    ];
+    expect(linkedDocs.length).toBeGreaterThan(0);
+    for (const doc of linkedDocs) {
+      expect(packed, `tarball missing ${doc} linked from README`).toContain(
+        doc,
+      );
+    }
     for (const name of SLC_SPECS) {
       expect(packed, `tarball missing slc/${name}`).toContain(`slc/${name}`);
     }
