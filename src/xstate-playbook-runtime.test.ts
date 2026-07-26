@@ -494,6 +494,12 @@ describe('player + script workflow over the shared factory', () => {
     // Deterministic entry: no classifier call; the single judge call is the
     // adjudication.
     expect(judgePrompts).toHaveLength(1);
+    expect(judgePrompts[0]).toContain(
+      'Do not call tools, inspect files, or seek external evidence.',
+    );
+    expect(judgePrompts[0]).toContain(
+      'Reply with exactly one JSON object and no prose.',
+    );
     expect(judgePrompts[0]).toContain('The Coder just produced this output:');
     // Default composer substituted the machine-carried field.
     expect(playerPrompts).toEqual(['Implement this task: build the widget']);

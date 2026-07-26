@@ -88,3 +88,53 @@ subpaths, declares `exports['./captain/playbook']`, declares neither
 `npm pack --dry-run` lists the `playbook` launcher entry and the
 `code.registry` and `discuss.registry` `.js` and `.d.ts` artifacts
 among the packed contents.
+
+## Live pre-release acceptance
+
+### RELEASE-25
+
+Verifies: [RELEASE-24](../dev/release.md#release-24)
+
+The opt-in local `pnpm test:acceptance` suite shall pack and install the
+candidate package once, then exercise two independent fresh git repositories
+through the installed npm `playbook` command shim and a real attached
+tmux-play session.
+One case shall submit `/code` to real Claude and Codex agents and fail unless
+the start and finish lifecycle markers appear, only the requested file changes,
+its exact content is present in `HEAD`, and the worktree is clean. The
+other shall submit `/discuss` to real Claude and Codex agents and fail unless
+the start and finish lifecycle markers appear, only the requested spec item
+file changes, its content is present in `HEAD`, its deliberately unimplemented
+file is absent from both `HEAD` and the worktree, and the worktree is clean.
+Each case shall also fail unless the selected playbook leaves exactly the
+Captain and its two namespaced role panes visible with their expected adapters
+and the Boss/Captain pane focused.
+
+The acceptance suite shall require local adapter authentication, tmux, glow,
+Expect, git, and npm. It shall not be selected by the normal `pnpm test`
+configuration or by GitHub CI.
+It shall stop after the first failed scenario rather than spend more model
+calls, preserve the failed scenario artifacts, and report a bounded
+terminal-control-stripped diagnostic snapshot outside the fixture repository.
+
+## Conditional manual tmux UX smoke
+
+### RELEASE-26
+
+When a release changes the interactive CLI presentation or layout, or changes
+the declared or locked `@sublang/cligent` version, a developer shall manually
+launch the packed candidate's installed `playbook` command in a fresh
+repository and verify:
+
+- pane content, titles, colors, borders, and proportions are readable at the
+  normal terminal size;
+- narrowing, widening, and vertically resizing the terminal preserve usable
+  wrapping and do not collapse or overlap the Boss pane;
+- keyboard entry, pane switching, scrolling, selection, and copy behave
+  naturally with both keyboard and mouse; and
+- Ctrl-C exits cleanly, restores the parent terminal, and leaves no tmux-play
+  session behind.
+
+This human presentation check is conditional and does not replace
+[RELEASE-25](#release-25); the real-model functional workflows shall not be
+repeated manually merely to duplicate the automatic gate.

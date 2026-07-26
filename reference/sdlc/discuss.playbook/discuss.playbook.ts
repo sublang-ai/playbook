@@ -619,6 +619,11 @@ function buildAdjudicatorPrompt(
   const lines: string[] = [];
   lines.push('You are the guard adjudicator for a playbook state machine.');
   lines.push(
+    'This is hidden control work. Do not call tools, inspect files, or ' +
+      'seek external evidence. Decide only from the supplied player output ' +
+      'and guard descriptions. Reply with exactly one JSON object and no prose.',
+  );
+  lines.push(
     `The player "${input.player}" produced the output below for source item ${input.sourceItem}.`,
   );
   lines.push('Choose exactly one guard whose description matches that output.');

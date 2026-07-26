@@ -233,11 +233,38 @@ of `CHANGELOG.md` per [RELEASE-4](#release-4) and
 
 ## Pre-release Checklist
 
+### RELEASE-24
+
+Before tagging a release, the developer/agent shall run
+`pnpm test:acceptance` locally. This live acceptance suite shall pack and
+install the candidate package, create isolated fresh git repositories, launch
+the installed `playbook` executable through a real attached tmux-play session,
+and complete both `/code` and `/discuss` using the locally authenticated real
+Claude and Codex adapters.
+
+The suite shall fail unless `/code` implements and commits its fixture
+requirement with a clean worktree, and `/discuss` adds and commits its fixture
+spec item without implementing it, also with a clean worktree. Missing local
+authentication or required executables shall be a clear failure, not a skip.
+Because these checks spend real model calls and require local credentials and
+tmux, they shall remain excluded from `pnpm test` and GitHub CI and shall run
+only as a local pre-release verification.
+The suite shall not retry model calls automatically. One explicit rerun is
+permitted only after the developer diagnoses a transient provider or network
+failure; a lifecycle, tmux, package, or repository assertion failure blocks
+the release until corrected.
+
 ### RELEASE-10
 
 Before tagging a release, the developer/agent shall verify:
 
 - [ ] All tests pass (`pnpm test` from the repo root).
+- [ ] The real-agent, real-tmux local acceptance suite passes
+      (`pnpm test:acceptance`; [RELEASE-24](#release-24)).
+- [ ] If the release changes the interactive CLI presentation or layout, or
+      changes the declared or locked `@sublang/cligent` version, the
+      conditional manual tmux UX smoke passes
+      ([RELEASE-26](../test/release.md#release-26)).
 - [ ] The compiled `.js` / `.d.ts` siblings are in sync with their
       `.ts` sources (the CI drift check from
       [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)).

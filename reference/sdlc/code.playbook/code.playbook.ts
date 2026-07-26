@@ -290,6 +290,12 @@ function extractRequiredFields(description: string): string[] {
 
 function buildJudgePrompt(input: PlayerInput, finalText: string): string {
   const lines: string[] = [];
+  lines.push(
+    'This is hidden control work. Do not call tools, inspect files, or ' +
+      'seek external evidence. Decide only from the supplied player output ' +
+      'and outcome descriptions. Reply with exactly one JSON object and no prose.',
+  );
+  lines.push('');
   lines.push(`The ${input.player} just produced this output:`);
   lines.push('');
   lines.push('```');

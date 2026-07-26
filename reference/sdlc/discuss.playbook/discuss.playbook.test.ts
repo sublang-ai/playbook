@@ -16,6 +16,7 @@ import createPlaybookRuntime, {
 const {
   requiredFieldsFor,
   extractJson,
+  buildAdjudicatorPrompt,
   parseAdjudication,
   parseClassification,
   combineSignals,
@@ -271,7 +272,7 @@ describe('requiredFieldsFor (slc/link.md §Captain adjudication)', () => {
   it('requires nothing from a "may include" description', () => {
     expect(
       requiredFieldsFor(
-        'Committer made the initial-discussion commit. Output may include `latestChanges` and `reviewScope`.',
+        'Committer made the initial-discussion commit. Output may include `latestChanges: <summary>` and `reviewScope: "specItems" | "decisionRecords" | "mixed"`.',
       ),
     ).toEqual([]);
   });
@@ -351,9 +352,32 @@ describe('parseAdjudication (slc/link.md §Captain adjudication)', () => {
     prompt: 'commit',
     result: {
       committed:
-        'Committer made the initial-discussion commit. Output may include `latestChanges` and `reviewScope`.',
+        'Committer made the initial-discussion commit. Output may include `latestChanges: <summary>` and `reviewScope: "specItems" | "decisionRecords" | "mixed"`.',
     },
   };
+
+  it('gives the adjudicator the exact optional reviewScope domain', () => {
+    const prompt = buildAdjudicatorPrompt(
+      commitInput,
+      'Only the spec file was committed; the worktree is clean.',
+    );
+    expect(prompt).toContain(
+      '`reviewScope: "specItems" | "decisionRecords" | "mixed"`',
+    );
+  });
+
+  it('keeps the hidden adjudicator on JSON-only control work', () => {
+    const prompt = buildAdjudicatorPrompt(
+      commitInput,
+      'Committed spec change abc123.',
+    );
+    expect(prompt).toContain(
+      'Do not call tools, inspect files, or seek external evidence.',
+    );
+    expect(prompt).toContain(
+      'Reply with exactly one JSON object and no prose.',
+    );
+  });
 
   it('carries non-required payload fields through to the output', () => {
     // Regression: only required fields used to be copied, so the judge's
@@ -375,6 +399,18 @@ describe('parseAdjudication (slc/link.md §Captain adjudication)', () => {
       reviewScope: 'mixed',
     });
   });
+
+  it.each(['specItems', 'decisionRecords', 'mixed'] as const)(
+    'accepts the declared %s reviewScope',
+    (reviewScope) => {
+      expect(
+        parseAdjudication(
+          JSON.stringify({ guard: 'committed', reviewScope }),
+          commitInput,
+        ),
+      ).toMatchObject({ guard: 'committed', reviewScope });
+    },
+  );
 
   it('rejects an invalid passthrough reviewScope loudly', () => {
     expect(() =>

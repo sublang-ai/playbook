@@ -87,3 +87,7 @@ When the spec items or DRs are written at the end of the initial discussion, or 
 > Participant is \<participant-llm\>.
 
 `<*-llm>` shall be the conventional human form of the substituted ID (e.g., `claude-opus-4-7` → `Claude-Opus-4.7`, `gpt-5.5` → `GPT-5.5`).
+
+For the initial-discussion commit outcome, any adjudicated `reviewScope`
+payload shall be exactly `specItems`, `decisionRecords`, or `mixed`; a prose
+summary is not a review scope.

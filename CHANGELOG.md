@@ -10,7 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-25
+
 ### Added
+
+- **Releases now have an opt-in local live acceptance gate.** `pnpm test:acceptance` packs and installs the candidate, launches its installed `playbook` executable in real tmux-play sessions, and drives real locally authenticated Claude and Codex agents through `/code` and `/discuss` in separate fresh git repositories. It verifies the expected committed repository and spec outcomes with clean worktrees, fails clearly on missing local prerequisites, and stays outside the normal test suite and GitHub CI because it spends real model calls ([RELEASE-24](specs/dev/release.md#release-24), [RELEASE-25](specs/test/release.md#release-25)).
 
 - **The packed tarball now guarantees the CODE and DISCUSS prose sources.** `reference/sdlc/code.md` and `reference/sdlc/discuss.md` ship as package files beside their compiled artifacts, so a host can display or recompile the bundled playbooks from source; the release contract and the packed-tarball test now pin both files ([RELEASE-20](specs/dev/release.md#release-20), [RELEASE-18](specs/test/release.md#release-18)).
 
@@ -18,9 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CODE's prompts and review routing no longer assume the legacy three-folder specs layout.** The Coder IR-done prompt filed spec items into `@specs/user`, `@specs/dev`, and `@specs/test`; the Reviewer "Right level" checklist line named the same folders; and the Captain routed review rounds and classified commits by whether changes touched `@specs/{user,dev,test}/` — misrouting on current packages-layout specs trees (`specs/packages/` + `specs/compositions/`), where those folders do not exist. The playbook now classifies by *spec item files*, a term `code.md` defines for both layouts; judge-facing result descriptions carry the definition inline because the adjudicator has no filesystem access, and player prompts name spec levels layout-neutrally, deferring placement to the already-cited `@specs/meta.md`. The GEARS and FSM artifacts are recompiled in lockstep, and the conformance contract pins the new checklist wording, retiring both prior "Right level" lines ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md), [PLAYBOOK-18](specs/dev/playbook.md#playbook-18)).
 
-- **DISCUSS and DOC follow CODE onto the layout-agnostic prompts.** The DISCUSS review conditions and Participant spec checklist named the legacy `@specs/{user,dev,test}` folders, and its Committer prompt cited `specs/dev/git.md`; the draft Chinese DOC source cited the same retired git path. DISCUSS now classifies by the DR-020 "spec item files" term (definition carried in `discuss.md` and its GEARS artifact), carries the layout-neutral "Right level" checklist line, and both playbooks cite `specs/packages/git.md` with the same graceful fallback CODE uses when no git-conventions spec exists ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md)).
+- **DISCUSS and DOC follow CODE onto the layout-agnostic prompts.** The DISCUSS review conditions and Participant spec checklist named the legacy `@specs/{user,dev,test}` folders, and its Committer prompt cited only `specs/dev/git.md`; the draft Chinese DOC source cited the same legacy path. DISCUSS now classifies by the DR-020 "spec item files" term (definition carried in `discuss.md` and its GEARS artifact), carries the layout-neutral "Right level" checklist line, and both playbooks prefer `specs/packages/git.md`, fall back to legacy `specs/dev/git.md`, then use the repository's existing conventions when neither spec exists ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md)).
 
 ### Fixed
+
+- **Hidden adjudicators stay on JSON-only control work.** A live `/code` release smoke reached the correct commit, but its fresh tool-free judge ignored the requested control shape and returned a fabricated Bash transcript with no `guard`, so the runtime correctly failed closed. CODE, DISCUSS, and the shared default adjudicator now explicitly prohibit tool/file inspection and external evidence, require a decision solely from the supplied output and declared outcomes, and demand exactly one JSON object with no prose. The Captain shell additionally preserves that runtime request verbatim inside a hostile-evidence control envelope that forbids real or simulated tool transcripts ([CAPTAIN-9](specs/dev/playbook-captain.md#captain-9), [CAPTAIN-32](specs/test/playbook-captain.md#captain-32), [PBRT-10](specs/dev/playbook-runtime.md#pbrt-10), [PBRT-23](specs/test/playbook-runtime.md#pbrt-23)).
+
+- **DISCUSS initial commits no longer let a prose summary masquerade as `reviewScope`.** The live release smoke exposed a real Committer adjudication failure: its optional `reviewScope` result metadata named the field but not its domain, so the judge returned `"Only the spec/documentation file was committed…"` and the runtime correctly rejected it instead of entering spec review. The source and compiled result contract now give the hidden adjudicator the exact `specItems | decisionRecords | mixed` choices while preserving fail-closed validation ([PBRT-48](specs/dev/playbook-runtime.md#pbrt-48), [PBRT-49](specs/test/playbook-runtime.md#pbrt-49)).
 
 - **The CODE Committer prompt now cites the packages-layout git spec.** The commit prompt in [`reference/sdlc/code.md`](reference/sdlc/code.md) (CODE-18/CODE-19) pointed at the legacy `specs/dev/git.md`; current packages-layout specs trees keep git conventions at `specs/packages/git.md`, so committer agents wasted turns hunting for a nonexistent file — sometimes searching outside the project. The prompt now cites the current path, then the legacy `specs/dev/git.md` — still the layout shipped by supported legacy scaffolds, including the pinned `@sublang/spex` 0.3 line — and only when neither git-conventions spec exists falls back to the repository's existing commit conventions without searching elsewhere. The GEARS and FSM artifacts are recompiled in lockstep.
 
@@ -240,7 +248,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/sublang-ai/playbook/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/sublang-ai/playbook/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/sublang-ai/playbook/compare/v1.0.0...v1.3.0
 [1.0.0]: https://github.com/sublang-ai/playbook/compare/v0.9.0...v1.0.0

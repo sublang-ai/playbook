@@ -82,8 +82,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-captain.md](user/playbook-captain.md) | Playbook Captain host Boss surface: external slash selection, lazy compiled-Captain routing, lifecycle-only fail-open delivery, nested call/return, active-leaf visibility, external lifecycle status, parking, dismissal, and optional summaries |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain host behavior: registry loading, lazy internal root, lifecycle classifier, option-preserving isolated Captain bridge, shared queue, causal UUID stack, external-leaf visibility, trace pass-through, summaries, telemetry, and LIFO lifecycle |
-| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for lazy routing, fail-open lifecycle delivery, registry/reserved-name validation, direct Captain and player bridges, visibility/status privacy, causal nesting, summaries, parking, dismissal, and LIFO disposal |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain host behavior: registry loading, lazy internal root, lifecycle classifier, option-preserving isolated Captain bridge with control-enveloped hidden judges, shared queue, causal UUID stack, external-leaf visibility, trace pass-through, summaries, telemetry, and LIFO lifecycle |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for lazy routing, fail-open lifecycle delivery, registry/reserved-name validation, direct Captain and player bridges, hidden-judge control envelopes, visibility/status privacy, causal nesting, summaries, parking, dismissal, and LIFO disposal |
 
 ### CAPPLAY
 
@@ -119,8 +119,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through `@sublang/playbook/playbook-captain` with host-owned fields such as notifications, namespaced `code-coder`/`code-reviewer` binding, plus CODE options under `captain.options.playbooks.code.options` and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | Linked runtime behavior: six host-agnostic ports including direct Captain, causal sessions, Captain/player/judge/nested traces, continuation, XState parallel joins and structured state, nested call/resume, abort, telemetry, the optional parked-session snapshot capability, and the public contract |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for six-port identity, Captain/player/judge traces and abort, continuation, parallel DISCUSS and branch waits, structured state, nested call/resume, parked-session snapshot round trips, lifecycle, and registry wiring |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | Linked runtime behavior: six host-agnostic ports including direct Captain, causal sessions, Captain/player/judge/nested traces, continuation, constrained DISCUSS review-scope adjudication, XState parallel joins and structured state, nested call/resume, abort, telemetry, the optional parked-session snapshot capability, and the public contract |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for six-port identity, Captain/player/judge traces and abort, continuation, constrained DISCUSS review-scope adjudication, parallel DISCUSS and branch waits, structured state, nested call/resume, parked-session snapshot round trips, lifecycle, and registry wiring |
 
 ### PLAYBOOK
 
@@ -133,8 +133,8 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [release.md](dev/release.md) | npm/GitHub release workflow, install closure including the `@sublang/spex` GEARS-grammar dependency, and semver-stable runtime, SLC, CLI, CODE/DISCUSS registry, and default `captain/playbook` package surfaces, including packed Captain, CODE, and DISCUSS sources and compiled artifacts with no Captain registry export |
-| test | [release.md](test/release.md) | Integration tests for install closure, dependency/lock agreement, SLC and `@sublang/spex` GEARS-definition resolution, packed runtime, Captain, and CODE/DISCUSS source artifacts, and CLI/registry/`captain/playbook` exports with retired and internal-only surfaces absent |
+| dev | [release.md](dev/release.md) | npm/GitHub release workflow, local pre-release real-agent tmux acceptance, install closure including the `@sublang/spex` GEARS-grammar dependency, and semver-stable runtime, SLC, CLI, CODE/DISCUSS registry, and default `captain/playbook` package surfaces, including packed Captain, CODE, and DISCUSS sources and compiled artifacts with no Captain registry export |
+| test | [release.md](test/release.md) | Integration tests for install closure, dependency/lock agreement, SLC and `@sublang/spex` GEARS-definition resolution, packed runtime, Captain, and CODE/DISCUSS source artifacts, CLI/registry/`captain/playbook` exports with retired and internal-only surfaces absent, plus opt-in local real-agent `/code` and `/discuss` tmux acceptance and conditional manual tmux UX smoke |
 
 ### SKETCH
 

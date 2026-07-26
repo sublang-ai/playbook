@@ -722,9 +722,12 @@ Two default adjudication strategies, in selection order:
   lists the `result` keys with their descriptions, and demands a JSON
   `{ guard, …structuralPayloadFields }` answer keyed to exactly one of the
   declared guards, excluding the runtime-owned direct-Captain `question` and
-  `response` fields above. The judge prompt shall not interpret the player's
-  output, paraphrase it, or alter the FSM's `result` text — it carries
-  the description verbatim.
+  `response` fields above. The prompt shall identify hidden control work,
+  prohibit tool use, file inspection, and external evidence, direct the judge
+  to decide only from the supplied actor output and declared outcomes, and
+  require exactly one JSON object with no prose. The judge prompt shall not
+  interpret the player's output, paraphrase it, or alter the FSM's `result`
+  text — it carries the description verbatim.
 - **Marker-parse** (delegated-player alternative): a deterministic parser that
   scans the player output for a terminal control line such as
   `FSM-RESULT: { "guard": "...", ... }`. Useful when player adapters can

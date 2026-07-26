@@ -1612,7 +1612,7 @@ export const discussMachine = setup({
           prompt: DISCUSS_14_PROMPT,
           result: withNeedsBossReply({
             committed:
-              'Committer made the initial-discussion commit. Output may include `latestChanges` and `reviewScope`.',
+              'Committer made the initial-discussion commit. Output may include `latestChanges: <summary>` and `reviewScope: "specItems" | "decisionRecords" | "mixed"`.',
           }),
           latestChanges: context.latestChanges,
           reviewScope: context.reviewScope,

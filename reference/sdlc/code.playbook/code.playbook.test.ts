@@ -348,6 +348,28 @@ describe('adjudicate', () => {
     }
   });
 
+  it('keeps the hidden judge on JSON-only control work', async () => {
+    let prompt = '';
+    const ports = makeFakePorts({
+      callJudge: async (p) => {
+        prompt = p;
+        return JSON.stringify({ guard: 'done' });
+      },
+    });
+    await adjudicate(
+      makeInput({ result: { done: 'The work is complete.' } }),
+      'Committed change abc123.',
+      ports,
+      new AbortController().signal,
+    );
+    expect(prompt).toContain(
+      'Do not call tools, inspect files, or seek external evidence.',
+    );
+    expect(prompt).toContain(
+      'Reply with exactly one JSON object and no prose.',
+    );
+  });
+
   it("includes the player's verbatim output in the prompt", async () => {
     let prompt = '';
     const ports = makeFakePorts({

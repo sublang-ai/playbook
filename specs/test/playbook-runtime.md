@@ -144,6 +144,9 @@ Verifies: [PBRT-9](../dev/playbook-runtime.md#pbrt-9), [PBRT-10](../dev/playbook
 When the runtime's captain bridge is driven as an xstate actor
 under fake ports, the test suite shall fail unless:
 
+- the adjudicator prompt identifies hidden control work, prohibits tool use,
+  file inspection, and external evidence, and requires exactly one JSON object
+  with no prose;
 - `PlayerResult` `status='ok'` with `finalText` advances the FSM
   through `onDone`;
 - `status='ok'` without `finalText`, `status='aborted'`, and
@@ -160,6 +163,15 @@ under fake ports, the test suite shall fail unless:
   substitutes the player's `finalText.trim()` into that field
   and the FSM advances; any judge-supplied value for those
   fields is overwritten by the verbatim text.
+
+### PBRT-49
+
+Verifies: [PBRT-48](../dev/playbook-runtime.md#pbrt-48)
+
+The DISCUSS runtime suite shall fail unless the initial-discussion Committer
+result metadata and resulting adjudicator prompt name all three exact
+`reviewScope` values, each value is accepted when supplied, and a prose or
+otherwise undeclared scope is rejected before it can select a review branch.
 
 ### PBRT-33
 

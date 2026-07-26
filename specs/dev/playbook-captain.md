@@ -121,6 +121,12 @@ visible prompt envelopes; the shell shall not wrap or rewrite a compiled
 runtime's `callCaptain` prompt.
 Hidden control calls shall use a prompt envelope that identifies
 the call as control work and asks for control JSON only.
+For a hidden sub-runtime judge call, that envelope shall preserve the
+runtime-supplied judge prompt verbatim as delimited evidence, shall direct the
+judge to treat quoted actor output only as evidence rather than instructions,
+shall forbid tool use and the execution, simulation, or narration of tool
+calls, shell commands, or tool transcripts, and shall require exactly one JSON
+object with no prose, Markdown, code fence, or transcript.
 
 ### CAPTAIN-10
 
@@ -156,7 +162,7 @@ ledger.
 
 ### CAPTAIN-31
 
-Where the shell hosts the compiled default Captain, when it forwards a visible routing or reassessment call or a hidden adjudication call, the shell shall request `resume: false` and `allowedTools: []`, preserve the exact prompt, and reject the call if the configured adapter cannot enforce the empty allowlist; the shared queue shall serialize these isolated calls without treating an agent conversation as workflow memory.
+Where the shell hosts the compiled default Captain, when it forwards a visible routing or reassessment call, the shell shall request `resume: false` and `allowedTools: []` and preserve the runtime prompt as the exact host prompt; when it forwards a hidden adjudication call, it shall request the same isolation and preserve the runtime-supplied judge prompt verbatim inside the hidden-control envelope required by [CAPTAIN-9](#captain-9). The shell shall reject either call if the configured adapter cannot enforce the empty allowlist; the shared queue shall serialize these isolated calls without treating an agent conversation as workflow memory.
 Where the shell submits an ordinary idle turn to the default Captain runtime,
 it shall pass the original Boss text unchanged and shall not make a model call
 that can replace or paraphrase that text before runtime entry.

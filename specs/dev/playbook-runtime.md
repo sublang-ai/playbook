@@ -230,7 +230,10 @@ long-form prose is not round-tripped through judge JSON.
 Short extracted fields such as `question` and `taskDescription`
 shall stay judge-extracted (the judge supplies the value; the
 runtime validates it is a string). The judge prompt shall direct
-the judge not to populate the verbatim fields.
+the judge not to populate the verbatim fields. It shall identify the call as
+hidden control work, prohibit tool use, file inspection, and external evidence,
+direct the judge to decide only from the supplied player output and declared
+outcomes, and require exactly one JSON object with no prose.
 The runtime shall parse the judge reply tolerantly before
 validating it: it shall recover the intended JSON object even when
 that object is wrapped in surrounding prose or a Markdown code
@@ -248,6 +251,16 @@ can be recovered from it.
 A reply that is malformed, names an undeclared guard, or omits a
 required extracted (non-verbatim) field shall cause the runtime to
 throw.
+
+### PBRT-48
+
+Where DISCUSS adjudicates the Committer result after the initial-discussion
+commit, the `committed` guard description shall constrain an optional
+`reviewScope` payload to exactly `specItems`, `decisionRecords`, or `mixed`.
+The adjudicator prompt shall carry that domain verbatim, and the runtime shall
+continue to reject any other supplied value rather than allowing free-form
+prose to override the valid review scope already established when Host wrote
+the agreed changes.
 
 ## Drive to quiescence
 

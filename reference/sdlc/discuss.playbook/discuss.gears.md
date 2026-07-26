@@ -243,6 +243,9 @@ When the spec items or DRs are written at the end of the initial discussion, Cap
 > Participant is <participant-llm>.
 > Format the Host and Participant model IDs as conventional human forms.
 
+Results:
+- `committed`: Committer made the initial-discussion commit. Output may include `latestChanges: <summary>` and `reviewScope: "specItems" | "decisionRecords" | "mixed"`.
+
 ### DISCUSS-15
 
 When Participant raises no findings on uncommitted changes, Captain shall prompt Committer:
