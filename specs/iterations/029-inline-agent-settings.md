@@ -12,7 +12,7 @@ Implement [DR-021](../decisions/021-inline-agent-settings.md): remove the top-le
 - [x] PBCLI-4 drops `profiles` from the config model; a scalar agent value is an adapter shorthand only.
 - [x] PBCLI-8 drops profile resolution and the collision rejection, and gains the migration rejection.
 - [x] PBCLI-11 seeds the same lineup with inline settings and no `profiles` block.
-- [x] `resolveAgent` takes no profiles map; the launcher rejects `profiles` and `profile` before composing.
+- [x] `resolveAgent` takes no profiles map; the launcher migrates a profiles-bearing user config in place with a backup, and rejects any `profile` that survives (e.g. from a `--with` overlay).
 - [x] Acceptance tests cover inline composition, the migration rejection, and the retired collision rule.
 - [x] Template, README, CHANGELOG, and `specs/map.md` carry the inline model; the major version bumps.
 
@@ -32,7 +32,8 @@ Implement [DR-021](../decisions/021-inline-agent-settings.md): remove the top-le
 ## Acceptance criteria
 
 - A config whose `captain` and `players.<role>` values are adapter shorthands or full inline blocks composes to the same tmux-play config the profile-based equivalent produced.
-- A config carrying a top-level `profiles` map, or an agent block with a `profile` key, exits non-zero without launching and names the config path and the inline replacement.
+- A user config carrying a top-level `profiles` map or a `profile`-bearing block is rewritten in place with settings inlined, comments preserved, the original at `<config>.bak`, and the launch continues; a second launch migrates nothing.
+- A `profile` that survives migration — introduced by a `--with` overlay — still exits non-zero without launching.
 - The seeded starter config contains no `profiles` block and still yields Captain `claude`/`claude-opus-4-8`@`high`, Coder `claude`/`claude-opus-4-8[1m]`@`xhigh`, Reviewer `codex`/`gpt-5.5`@`xhigh`, every agent in `permissions.mode: auto`, and the Codex role's `.git` writable path.
 - The retired profile-id/adapter-shorthand collision and unresolvable-`profile` cases no longer appear in the validation suite.
 - `pnpm test` and `pnpm build` pass.

@@ -142,6 +142,127 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
 // PBCLI-32: the live release gate (RELEASE-24) is excluded from `pnpm test`
 // and CI, so a config-model change can break its fixture and only surface
 // during a manual pre-tag run. Compose that exact fixture here.
+// PBCLI-33 (DR-021 §3): an existing profiles-based config rewrites itself
+// once, keeping the original, so a user launches without hand-editing.
+describe('playbook launcher — config migration (PBCLI-33)', () => {
+  const legacyConfig = [
+    '# SPDX-License-Identifier: Apache-2.0',
+    '',
+    '# Generic `playbook` launcher config.',
+    '',
+    '# Reusable agent settings.',
+    'profiles:',
+    '  claude-opus:',
+    '    adapter: claude',
+    '    model: m-captain',
+    '    permissions:',
+    '      mode: auto',
+    '  codex-gpt:',
+    '    adapter: codex',
+    '    model: m-review',
+    '',
+    '# Host notifications.',
+    'notifications:',
+    '  player_finished: bell',
+    'captain: claude-opus',
+    'playbooks:',
+    '  code:',
+    '    from: "@sublang/playbook/code/registry"',
+    '    players:',
+    '      coder: { profile: claude-opus, model: m-coder }',
+    '      reviewer: codex-gpt',
+    '    committer: coder',
+    '',
+  ].join('\n');
+
+  async function launchWith(config: string) {
+    const home = await makeTempHome();
+    const configPath = resolveUserConfigPath({}, home);
+    await writeUserConfig(home, config);
+    const spawn = fakeSpawn();
+    const stderr = writer();
+    const result = await runPlaybookCli({
+      argv: ['--list'],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stdout: writer() as never,
+      stderr: stderr as never,
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+    return { home, configPath, result, stderr: stderr.text() };
+  }
+
+  it('inlines profiles in place, keeps a backup, and launches', async () => {
+    const { configPath, result, stderr } = await launchWith(legacyConfig);
+
+    expect(result).toEqual({ code: 0 });
+    expect(stderr).toContain('migrated');
+    expect(stderr).toContain(`${configPath}.bak`);
+
+    const migrated = parseYaml(await readFile(configPath, 'utf8'));
+    expect(migrated.profiles).toBeUndefined();
+    expect(migrated.captain).toEqual({
+      adapter: 'claude',
+      model: 'm-captain',
+      permissions: { mode: 'auto' },
+    });
+    // A `profile`-bearing block keeps its own fields over the profile's.
+    expect(migrated.playbooks.code.players.coder).toEqual({
+      adapter: 'claude',
+      model: 'm-coder',
+      permissions: { mode: 'auto' },
+    });
+    expect(migrated.playbooks.code.players.reviewer).toEqual({
+      adapter: 'codex',
+      model: 'm-review',
+    });
+    // Untouched keys and the user's comments survive the rewrite.
+    expect(migrated.notifications).toEqual({ player_finished: 'bell' });
+    const text = await readFile(configPath, 'utf8');
+    expect(text).toContain('# SPDX-License-Identifier: Apache-2.0');
+    expect(text).toContain('# Host notifications.');
+    expect(text).toContain('Migrated by playbook 3.0.0');
+
+    // The backup is the pre-migration file, byte for byte.
+    expect(await readFile(`${configPath}.bak`, 'utf8')).toBe(legacyConfig);
+  });
+
+  it('migrates once and never overwrites an existing backup', async () => {
+    const { home, configPath } = await launchWith(legacyConfig);
+    const afterFirst = await readFile(configPath, 'utf8');
+
+    // A second launch has nothing to migrate.
+    const spawn = fakeSpawn();
+    const stderr = writer();
+    await runPlaybookCli({
+      argv: ['--list'],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stdout: writer() as never,
+      stderr: stderr as never,
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+    expect(stderr.text()).not.toContain('migrated');
+    expect(await readFile(configPath, 'utf8')).toBe(afterFirst);
+
+    // A fresh legacy config beside an existing .bak picks the next free name.
+    await writeUserConfig(home, legacyConfig);
+    const second = fakeSpawn();
+    await runPlaybookCli({
+      argv: ['--list'],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stdout: writer() as never,
+      stderr: writer() as never,
+      spawn: second.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+    });
+    expect(await readFile(`${configPath}.bak.2`, 'utf8')).toBe(legacyConfig);
+  });
+});
+
 describe('live acceptance gate config (PBCLI-32)', () => {
   it('composes through the real launcher with the real registries', async () => {
     const { liveConfig } = await import(
@@ -229,9 +350,10 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
         ld,
       ),
     ).rejects.toThrow(/no visible local role/);
-    // DR-021: a config written for the retired profiles model is rejected
-    // with a migration diagnostic rather than silently misread — a scalar
-    // that named a profile now reads as an adapter shorthand.
+    // DR-021: the user's own config migrates (PBCLI-33); anything that still
+    // carries the retired model here — a --with overlay, say — is rejected
+    // rather than silently misread, since a scalar that named a profile now
+    // reads as an adapter shorthand.
     await expect(
       composeGenericConfig(
         {
@@ -240,11 +362,8 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
           playbooks: { code: { from: 'mod://code', players } },
         },
         ld,
-        '/tmp/playbook.config.yaml',
       ),
-    ).rejects.toThrow(
-      /top-level "profiles" was removed in \/tmp\/playbook\.config\.yaml: write each agent's settings inline/,
-    );
+    ).rejects.toThrow(/top-level "profiles" was removed/);
     await expect(
       composeGenericConfig(
         {

@@ -220,3 +220,20 @@ roster with their expected adapters.
 The gate itself is excluded from `pnpm test` and CI, so without this
 check a config-model change would break the release gate silently and
 surface only during a manual pre-tag run.
+
+### PBCLI-34
+Verifies: [PBCLI-33](../dev/playbook-cli.md#pbcli-33)
+
+Where the test suite launches `playbook` against a config carrying a
+top-level `profiles` map, a scalar agent naming a profile, and a
+`profile`-bearing agent block, the test suite shall fail unless the
+command rewrites that config in place with each agent's settings
+inlined and the block's own fields winning over its named profile's,
+removes the `profiles` map, leaves every untouched key and the user's
+comments intact, records the migration at the top of the file, writes
+the pre-migration text unchanged to `<config>.bak`, names both paths on
+stderr, and launches.
+It shall further fail unless a second launch migrates nothing and
+leaves the file byte-identical, and unless a fresh legacy config beside
+an existing backup is backed up to the next free `<config>.bak.<n>`
+rather than overwriting it.

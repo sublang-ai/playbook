@@ -51,11 +51,12 @@ as an adapter shorthand, and a full block as a self-contained tmux-play
 agent block carried through as authored
 ([DR-021](../decisions/021-inline-agent-settings.md)).
 Before composing, the command shall reject — with a path-named
-diagnostic naming the resolved config path, the offending key, and the
-inline replacement, and without launching — a top-level `profiles` map
-or any `captain` / `players.<role>` block carrying a `profile` key,
-because a scalar that formerly named a profile now reads as an adapter
-shorthand and would otherwise fail far downstream as an unknown
+diagnostic naming the offending key and the inline replacement, and
+without launching — a top-level `profiles` map or any `captain` /
+`players.<role>` block carrying a `profile` key that survives the
+[PBCLI-33](#pbcli-33) migration, such as one introduced by a `--with`
+overlay, because a scalar that formerly named a profile now reads as an
+adapter shorthand and would otherwise fail far downstream as an unknown
 adapter.
 
 ### PBCLI-9
@@ -321,3 +322,26 @@ file under the same environment and home overrides.
 The `run` subcommand shall accept an injected user-config path so
 tests can drive config defaults in isolation, like the injected
 session store ([PBCLI-23](#pbcli-23)).
+
+### PBCLI-33
+
+Where `playbook` resolves its top-level config for a launch and that
+file still carries a top-level `profiles` map or an agent-block
+`profile` key, the command shall migrate it in place before composing
+([DR-021 §3](../decisions/021-inline-agent-settings.md#3-an-existing-config-migrates-itself-once)):
+replace each agent value that named a profile with that profile's
+settings, merge a `profile`-bearing block over its named profile with
+the block's own fields winning, remove the `profiles` map, and continue
+the launch with the migrated config.
+The command shall write the pre-migration text to `<config>.bak`, or to
+the first free `<config>.bak.<n>` when that path exists, before
+rewriting the config, so no prior backup is lost.
+The rewrite shall preserve the user's comments by editing the YAML
+document rather than re-serializing a parsed value, shall carry the
+file's leading comment block — its SPDX header and overview — past the
+removed `profiles` section, and shall prepend a note recording the
+migration and naming the backup.
+The command shall print one stderr line naming the config path and the
+backup path, and shall exit non-zero with a diagnostic naming the
+config path when the migration itself fails.
+A migrated config shall present nothing to migrate on the next launch.

@@ -35,12 +35,14 @@ A scalar therefore has exactly one meaning — an adapter shorthand — and an a
 The starter config ships the same three agents with their settings written out under `captain` and each `playbooks.<id>.players.<role>`.
 The seeded lineup, models, efforts, and permissions are unchanged; only the indirection is gone.
 
-### 3. A profiles-bearing config fails with a migration diagnostic
+### 3. An existing config migrates itself once
 
-An existing config keeps working only if the user rewrites it, because a scalar that used to name a profile now reads as an adapter shorthand.
-Silently treating `claude-opus` as an adapter would surface far downstream as an unknown-adapter warning and a tmux-play launch failure.
-The launcher shall therefore reject a config that still carries a top-level `profiles` map or an agent-block `profile` key, naming the config path and how to inline the settings, and shall not launch.
-This is a one-time, clearly explained break rather than a compatibility shim that would keep the removed model alive in code.
+Every user who has ever launched `playbook` has a profiles-based config, because the seeded default used one; requiring each of them to hand-edit before the tool runs again is friction the change does not need to impose.
+The launcher shall therefore migrate a config that still carries a top-level `profiles` map or an agent-block `profile` key: inline each referenced profile's settings into the agent that named it, with the agent block's own fields staying authoritative over the profile's, drop the `profiles` map, write the pre-migration file beside the config as a `.bak` that never overwrites an existing file, rewrite the config in place, name both paths on stderr, and continue the launch.
+The rewrite shall go through a YAML document edit so the user's own comments survive, and shall leave a short note at the top of the file recording the migration and pointing at the backup.
+Migration is on the user's config only.
+A `profile` key introduced by a `--with` overlay, or a config the launcher cannot migrate, shall still be rejected with a diagnostic naming the path and the inline replacement, since overlays are authored against the current model.
+Migration is idempotent: a migrated config carries nothing to migrate on the next launch, so the shim runs once per config and can be retired once configs have turned over.
 
 ### 4. Preserved scope
 
@@ -53,4 +55,4 @@ This is a one-time, clearly explained break rather than a compatibility shim tha
 - Per-player tuning — the common edit — touches exactly one block and cannot affect another agent.
 - The config gains some duplication across agents that share a model; at the seeded size of three agents this is smaller than the indirection it replaces.
 - Two validation rules disappear with the feature: the unresolvable `profile` reference and the profile-id/adapter-shorthand collision.
-- Existing configs must inline their profiles once, guided by a launcher diagnostic; this is a breaking config change and takes a major version.
+- Existing configs are rewritten in place on the next launch, with the original kept as a `.bak`; the config format still changes incompatibly, so this takes a major version.

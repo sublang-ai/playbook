@@ -88,8 +88,9 @@ schema and shall carry its own settings — `adapter`, and as needed
 `model`, `effort`, and `permissions` — so each agent is tunable
 without affecting another.
 A config that still carries a top-level `profiles` map or an agent-block
-`profile` key shall be rejected with a migration diagnostic
-([PBCLI-8](../dev/playbook-cli.md#pbcli-8)) rather than launched.
+`profile` key shall be migrated in place on the next launch, with the
+pre-migration file kept beside it as a `.bak`
+([PBCLI-33](../dev/playbook-cli.md#pbcli-33)).
 
 ### PBCLI-5
 

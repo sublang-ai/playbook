@@ -17,7 +17,11 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
+import {
+  parse as parseYaml,
+  parseDocument as parseYamlDocument,
+  stringify as stringifyYaml,
+} from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const templatePath = resolve(here, '..', 'playbook.config.template.yaml');
@@ -102,6 +106,15 @@ export async function runPlaybookCli(options = {}) {
   }
 
   seedUserConfigIfMissing(userConfigPath, stderr);
+
+  // DR-021 §3: an existing profiles-based config is rewritten in place once,
+  // with the original kept beside it, so the user launches without editing.
+  try {
+    migrateUserConfigIfRetired(userConfigPath, stderr);
+  } catch (error) {
+    stderr.write(`playbook: ${errorMessage(error)}\n`);
+    return { code: COMPOSITION_FAILURE_EXIT_CODE };
+  }
 
   let composed;
   try {
@@ -245,9 +258,145 @@ export function resolveAgent(value, path) {
   throw new Error(`${path} must be an adapter shorthand or an agent block`);
 }
 
-// DR-021 §3: a config written for the retired profiles model would otherwise
-// fail far downstream — a scalar that named a profile now reads as an adapter
-// shorthand — so reject it here and say exactly how to migrate.
+// DR-021 §3: migrate the user's config on disk, once, keeping the original.
+// The backup is written before the rewrite and never overwrites an existing
+// file, so a prior backup — or a user's own .bak — cannot be lost.
+function migrateUserConfigIfRetired(userConfigPath, stderr) {
+  let text;
+  try {
+    text = readFileSync(userConfigPath, 'utf8');
+  } catch {
+    return;
+  }
+  let migrated;
+  try {
+    migrated = migrateRetiredProfiles(text);
+  } catch (error) {
+    throw new Error(
+      `cannot migrate the retired profiles config at ${userConfigPath}: ` +
+        `${errorMessage(error)} — edit it by hand: each agent takes its own ` +
+        'adapter, model, effort, and permissions',
+    );
+  }
+  if (migrated === undefined) return;
+  const backupPath = freeBackupPath(userConfigPath);
+  writeFileSync(backupPath, text, { mode: 0o600 });
+  writeFileSync(userConfigPath, migrated);
+  stderr.write(
+    `playbook: migrated ${userConfigPath} to inline agent settings ` +
+      `(the top-level "profiles" map was removed in 3.0.0); ` +
+      `the original is at ${backupPath}\n`,
+  );
+}
+
+function freeBackupPath(userConfigPath) {
+  const first = `${userConfigPath}.bak`;
+  if (!existsSync(first)) return first;
+  for (let n = 2; ; n += 1) {
+    const candidate = `${userConfigPath}.bak.${n}`;
+    if (!existsSync(candidate)) return candidate;
+  }
+}
+
+// DR-021 §3: rewrite a config written for the retired profiles model in
+// place, inlining each agent's settings and keeping the original beside it.
+// Edits go through the YAML Document API so the user's comments survive;
+// only the profiles block and its own commentary are removed. Returns the
+// migrated text, or undefined when there is nothing to migrate.
+export function migrateRetiredProfiles(text) {
+  const doc = parseYamlDocument(text);
+  const contents = doc.contents;
+  if (!contents || !Array.isArray(contents.items)) return undefined;
+  const profiles = doc.get('profiles');
+  const agentPaths = [['captain']];
+  const playbooks = doc.get('playbooks');
+  if (playbooks && Array.isArray(playbooks.items)) {
+    for (const entry of playbooks.items) {
+      const id = String(entry.key);
+      const players = doc.getIn(['playbooks', id, 'players']);
+      if (!players || !Array.isArray(players.items)) continue;
+      for (const player of players.items) {
+        agentPaths.push(['playbooks', id, 'players', String(player.key)]);
+      }
+    }
+  }
+
+  const profileSettings = (name) =>
+    profiles && typeof profiles.get === 'function'
+      ? profiles.get(name)
+      : undefined;
+
+  let changed = false;
+  for (const path of agentPaths) {
+    const value = doc.getIn(path);
+    if (typeof value === 'string') {
+      // A scalar that named a profile; a bare adapter shorthand stays.
+      const settings = profileSettings(value);
+      if (settings === undefined) continue;
+      doc.setIn(path, settings.clone());
+      changed = true;
+    } else if (value && Array.isArray(value.items)) {
+      const named = value.get?.('profile');
+      if (named === undefined) continue;
+      const settings = profileSettings(named);
+      const merged = settings === undefined ? undefined : settings.clone();
+      // The block's own fields stay authoritative over the profile's.
+      for (const item of value.items) {
+        const key = String(item.key);
+        if (key === 'profile') continue;
+        if (merged === undefined) continue;
+        merged.set(key, item.value);
+      }
+      if (merged === undefined) value.delete('profile');
+      else doc.setIn(path, merged);
+      changed = true;
+    }
+  }
+
+  if (profiles !== undefined) {
+    // The comment block above `profiles` usually carries the file's own
+    // header, which must outlive the removed section: keep every paragraph
+    // except the last, which documents profiles themselves.
+    const index = contents.items.findIndex(
+      (item) => String(item.key) === 'profiles',
+    );
+    const lead = index === -1 ? undefined : contents.items[index]?.key
+      ?.commentBefore;
+    doc.delete('profiles');
+    const header = keptHeaderComment(lead);
+    const next = contents.items[0];
+    if (header !== undefined && next?.key) {
+      next.key.commentBefore =
+        next.key.commentBefore === undefined
+          ? header
+          : `${header}\n\n${next.key.commentBefore}`;
+    }
+    changed = true;
+  }
+  if (!changed) return undefined;
+  // Say what happened at the top of the file the user will open next:
+  // some of their remaining comments describe the retired model.
+  doc.commentBefore = MIGRATION_NOTE;
+  return doc.toString();
+}
+
+const MIGRATION_NOTE =
+  ' Migrated by playbook 3.0.0: the top-level `profiles` map was removed and\n' +
+  ' each agent now carries its settings inline. The pre-migration file is\n' +
+  ' kept beside this one as a .bak. Comments below may still describe the\n' +
+  ' retired profiles model.';
+
+// Drop the trailing paragraph — the one describing the profiles block —
+// and keep the rest of the leading comment (SPDX header, file overview).
+function keptHeaderComment(comment) {
+  if (typeof comment !== 'string' || comment.trim() === '') return undefined;
+  const paragraphs = comment.split('\n\n');
+  const kept = paragraphs.slice(0, -1).join('\n\n');
+  return kept.trim() === '' ? undefined : kept;
+}
+
+// A `profile` key that survives migration — introduced by a `--with`
+// overlay rather than the user's own config — is still rejected.
 function assertNoRetiredProfiles(top, configPath) {
   const where = configPath ? ` in ${configPath}` : '';
   if (top.profiles !== undefined) {
