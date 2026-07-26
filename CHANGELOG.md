@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking: the top-level `profiles` map and the agent-block `profile` key are gone.** Every `captain` and `players.<role>` value is now either an adapter shorthand or a block carrying its own `adapter`, `model`, `reasoningEffort`, and `permissions`. Reuse was the wrong default for how the config is edited: tuning is per player, so sharing a profile meant either silently retuning every player that referenced it or minting a single-use id, and a reader had to dereference an id in another block to learn an agent's real settings. Two validation rules retire with the feature — the unresolvable `profile` reference and the profile-id/adapter-shorthand collision. The seeded config ships the same lineup written inline. An existing config keeps working only once rewritten, so the launcher rejects a `profiles` map or a `profile` key with a diagnostic naming the config path and the inline replacement, rather than misreading a former profile id as an adapter shorthand ([DR-021](specs/decisions/021-inline-agent-settings.md), [PBCLI-4](specs/user/playbook-cli.md#pbcli-4), [PBCLI-8](specs/dev/playbook-cli.md#pbcli-8)).
+
 ### Changed
 
 - **CODE and DISCUSS adopt the intent-records vocabulary.** Downstream scaffolds rename `specs/iterations/` to `specs/intents/` — intent records, with the IR acronym and ids unchanged (spex DR-017) — so the Coder decomposition prompt now files a new IR under `@specs/intents` (or `@specs/iterations` in older scaffolds), the "spec item files" definition says decision and intent records with the legacy name kept for un-migrated trees, and the judge-facing record descriptions name decision, intent, or legacy iteration records. The GEARS and FSM artifacts are recompiled in lockstep ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md)).

@@ -209,27 +209,26 @@ playbook --with fast-lineup.yaml
 
 ```yaml
 # fast-lineup.yaml — swap the Coder for one run; nothing is written back.
-profiles:
-  codex-fast: { adapter: codex, model: gpt-5.5, reasoningEffort: medium }
 playbooks:
   code:
     players:
-      coder: codex-fast
+      coder: { adapter: codex, model: gpt-5.5, reasoningEffort: medium }
 ```
 
 See [PBCLI-25](specs/user/playbook-cli.md#pbcli-25) and
 [DR-015](specs/decisions/015-per-run-agent-tuning.md).
 
-The config is top-level (no `config:` wrapper): a `profiles` map of
-reusable agent settings, a `captain` agent (it runs both visible
-Captain work and hidden judge calls), optional `layout` /
-`notifications` / `theme`, and a `playbooks` map of enabled playbooks.
-Each `captain` or `players.<role>` value is a profile id or an adapter
-shorthand (`claude`, `codex`); other adapter ids are passed through to
-`tmux-play` with a warning because `playbook` cannot preflight their
-auth. Name profiles by their underlying agent/model (e.g. `claude-opus`,
-`codex-gpt`) so the profile ids read distinctly from the player roles
-that reference them. Within a `playbooks.<id>` block, `from` (the
+The config is top-level (no `config:` wrapper): a `captain` agent (it
+runs both visible Captain work and hidden judge calls), optional
+`layout` / `notifications` / `theme`, and a `playbooks` map of enabled
+playbooks. Each `captain` or `players.<role>` value is either an
+adapter shorthand (`claude`, `codex`) or a block carrying that agent's
+own `adapter`, `model`, `reasoningEffort`, and `permissions`; other
+adapter ids are passed through to `tmux-play` with a warning because
+`playbook` cannot preflight their auth. Settings are inline per agent,
+so tuning one player never changes another
+([DR-021](specs/decisions/021-inline-agent-settings.md)). Within a
+`playbooks.<id>` block, `from` (the
 registry module), `command` (an optional slash-command override), and
 `players` are launcher-owned; every other key is that playbook's option
 slice. The launcher injects the rest — you do not write host wiring by
@@ -239,36 +238,31 @@ For example, the seeded config runs the Coder on Claude Opus 4.8 1m and
 the Reviewer on GPT-5.5:
 
 ```yaml
-profiles:
-  claude-opus:
-    adapter: claude
-    model: claude-opus-4-8
-    reasoningEffort: high
-    permissions:
-      mode: auto # protected auto mode for the Claude Captain
-  claude-opus-1m:
-    adapter: claude
-    model: claude-opus-4-8[1m]
-    reasoningEffort: xhigh
-    permissions:
-      mode: auto # protected auto mode for the Claude Coder
-  codex-gpt:
-    adapter: codex
-    model: gpt-5.5
-    reasoningEffort: xhigh
-    permissions:
-      mode: auto
-      writablePaths:
-        - .git # allow git metadata writes under Codex auto mode
-
-captain: claude-opus
+captain:
+  adapter: claude
+  model: claude-opus-4-8
+  reasoningEffort: high
+  permissions:
+    mode: auto # protected auto mode for the Claude Captain
 
 playbooks:
   code:
     from: '@sublang/playbook/code/registry'
     players:
-      coder: claude-opus-1m
-      reviewer: codex-gpt
+      coder:
+        adapter: claude
+        model: claude-opus-4-8[1m]
+        reasoningEffort: xhigh
+        permissions:
+          mode: auto # protected auto mode for the Claude Coder
+      reviewer:
+        adapter: codex
+        model: gpt-5.5
+        reasoningEffort: xhigh
+        permissions:
+          mode: auto
+          writablePaths:
+            - .git # allow git metadata writes under Codex auto mode
     committer: coder # which role commits — `coder` or `reviewer`
 ```
 

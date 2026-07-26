@@ -67,12 +67,12 @@ shall use it unchanged and shall not reseed or overwrite it.
 
 Where the user authors the top-level generic config, the config shall
 keep tmux-play host fields at the top level and shall not wrap
-`profiles`, `playbooks`, `captain`, `layout`, `notifications`, or
-`theme` in a `config:` key.
+`playbooks`, `captain`, `layout`, `notifications`, or `theme` in a
+`config:` key.
 The config shall declare enabled playbooks under a top-level
-`playbooks` map and reusable agent settings under an optional
-top-level `profiles` map, and shall not declare a top-level `players`
-roster.
+`playbooks` map, and shall declare neither a top-level `players`
+roster nor a top-level `profiles` map
+([DR-021](../decisions/021-inline-agent-settings.md)).
 Within a `playbooks.<id>` block, `from`, `command`, and `players` are
 launcher-owned keys and every other key (such as CODE's `committer`)
 is that playbook's option slice; `from` is the explicit registry
@@ -82,11 +82,14 @@ playbook's own id, matching the registry module's manifest `id`.
 The enabled playbook id and effective command shall not equal the reserved
 internal name `captain`.
 A scalar `captain` value or a scalar `players.<role>` value shall name
-either a profile id from `profiles` or an adapter shorthand such as
-`claude` or `codex`; a full `captain` or `players.<role>` block shall
-follow the host tmux-play agent-block schema and may carry an optional
-`profile` key naming a `profiles` entry, whose settings the launcher
-applies beneath the block's own explicit fields.
+an adapter shorthand such as `claude` or `codex`; a full `captain` or
+`players.<role>` block shall follow the host tmux-play agent-block
+schema and shall carry its own settings — `adapter`, and as needed
+`model`, `effort`, and `permissions` — so each agent is tunable
+without affecting another.
+A config that still carries a top-level `profiles` map or an agent-block
+`profile` key shall be rejected with a migration diagnostic
+([PBCLI-8](../dev/playbook-cli.md#pbcli-8)) rather than launched.
 
 ### PBCLI-5
 
@@ -105,8 +108,8 @@ shall not seed config, compose, run readiness checks, or launch
 tmux-play.
 The help text shall include the resolved top-level config path, the
 auth or CLI setup pointers for known adapters, and an agent-swap
-recipe showing that users may retune `profiles`, the top-level
-`captain`, and each `playbooks.<id>.players` map.
+recipe showing that users may retune the top-level `captain` and each
+`playbooks.<id>.players` map in place.
 When the readiness gate ([PBCLI-12](../dev/playbook-cli.md#pbcli-12))
 blocks a launch, the command shall print the same help content to
 stderr, additionally name every failing adapter id, exit non-zero with

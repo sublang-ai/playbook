@@ -58,20 +58,19 @@ function loader(modules: Record<string, unknown>) {
 }
 
 describe('playbook launcher — composition (PBCLI-14)', () => {
-  it('normalizes profiles/playbooks into a composed tmux-play config', async () => {
+  it('normalizes inline agents/playbooks into a composed tmux-play config', async () => {
     const top = {
-      profiles: {
-        judge: { adapter: 'claude', model: 'm-judge' },
-        agent: { adapter: 'codex', model: 'm-agent' },
-      },
-      captain: 'judge',
+      captain: { adapter: 'claude', model: 'm-judge' },
       layout: { window: { width: 100, height: 40 } },
       notifications: { player_finished: 'bell', turn_finished: 'desktop' },
       theme: { accent: 'cyan' },
       playbooks: {
         code: {
           from: 'mod://code',
-          players: { coder: 'agent', reviewer: { adapter: 'claude' } },
+          players: {
+            coder: { adapter: 'codex', model: 'm-agent' },
+            reviewer: { adapter: 'claude' },
+          },
           committer: 'coder',
         },
       },
@@ -113,10 +112,9 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
     ]);
   });
 
-  it('applies a command override and a full-block profile reference', async () => {
+  it('applies a command override and a full inline captain block', async () => {
     const top = {
-      profiles: { base: { adapter: 'claude', model: 'm' } },
-      captain: { profile: 'base', reasoningEffort: 'high' },
+      captain: { adapter: 'claude', model: 'm', reasoningEffort: 'high' },
       playbooks: {
         code: {
           from: 'mod://code',
@@ -204,16 +202,45 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
         ld,
       ),
     ).rejects.toThrow(/no visible local role/);
+    // DR-021: a config written for the retired profiles model is rejected
+    // with a migration diagnostic rather than silently misread — a scalar
+    // that named a profile now reads as an adapter shorthand.
     await expect(
       composeGenericConfig(
         {
-          profiles: { claude: { adapter: 'claude' } },
+          profiles: { 'claude-opus': { adapter: 'claude' } },
           captain: 'claude',
           playbooks: { code: { from: 'mod://code', players } },
         },
         ld,
+        '/tmp/playbook.config.yaml',
       ),
-    ).rejects.toThrow(/collides with the "claude" adapter shorthand/);
+    ).rejects.toThrow(
+      /top-level "profiles" was removed in \/tmp\/playbook\.config\.yaml: write each agent's settings inline/,
+    );
+    await expect(
+      composeGenericConfig(
+        {
+          captain: { profile: 'base' },
+          playbooks: { code: { from: 'mod://code', players } },
+        },
+        ld,
+      ),
+    ).rejects.toThrow(/captain\.profile was removed/);
+    await expect(
+      composeGenericConfig(
+        {
+          captain: 'claude',
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              players: { coder: { profile: 'base' }, reviewer: 'codex' },
+            },
+          },
+        },
+        ld,
+      ),
+    ).rejects.toThrow(/playbooks\.code\.players\.coder\.profile was removed/);
   });
 
   it('rejects the reserved captain role with a diagnostic naming it', async () => {
@@ -312,19 +339,29 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('.git');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
-    // PBCLI-11/13: the seed names profiles by agent/model and wires the
-    // captain / roles to those ids, not to role-named profiles. A revert to
-    // judge / coder / reviewer profile ids would fail here.
+    // PBCLI-11/13 (DR-021): the seed writes each agent's settings inline
+    // and ships no profiles map, so retuning one player cannot move another.
     const seededParsed = parseYaml(seeded);
-    expect(seededParsed.profiles).toMatchObject({
-      'claude-opus': { adapter: 'claude' },
-      'claude-opus-1m': { adapter: 'claude' },
-      'codex-gpt': { adapter: 'codex' },
+    expect(seededParsed.profiles).toBeUndefined();
+    expect(seededParsed.captain).toMatchObject({
+      adapter: 'claude',
+      model: 'claude-opus-4-8',
+      reasoningEffort: 'high',
+      permissions: { mode: 'auto' },
     });
-    expect(seededParsed.captain).toBe('claude-opus');
     expect(seededParsed.playbooks.code.players).toEqual({
-      coder: 'claude-opus-1m',
-      reviewer: 'codex-gpt',
+      coder: {
+        adapter: 'claude',
+        model: 'claude-opus-4-8[1m]',
+        reasoningEffort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
+      reviewer: {
+        adapter: 'codex',
+        model: 'gpt-5.5',
+        reasoningEffort: 'xhigh',
+        permissions: { mode: 'auto', writablePaths: ['.git'] },
+      },
     });
 
     expect(spawn.calls).toHaveLength(1);
@@ -564,18 +601,13 @@ async function loadComposedConfig(content: string) {
 
 function minimalConfig(): string {
   return [
-    'profiles:',
-    '  claude-agent:',
-    '    adapter: claude',
-    '  codex-agent:',
-    '    adapter: codex',
-    'captain: claude-agent',
+    'captain: claude',
     'playbooks:',
     '  code:',
     '    from: "@sublang/playbook/code/registry"',
     '    players:',
-    '      coder: claude-agent',
-    '      reviewer: codex-agent',
+    '      coder: claude',
+    '      reviewer: codex',
     '    committer: coder',
     '',
   ].join('\n');
@@ -2086,12 +2118,10 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     await writeFile(
       overlay,
       [
-        'profiles:',
-        '  turbo: { adapter: codex, model: m-turbo, reasoningEffort: xhigh }',
         'playbooks:',
         '  code:',
         '    players:',
-        '      coder: turbo',
+        '      coder: { adapter: codex, model: m-turbo, reasoningEffort: xhigh }',
         '',
       ].join('\n'),
       'utf8',

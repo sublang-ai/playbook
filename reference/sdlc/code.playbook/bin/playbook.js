@@ -25,8 +25,8 @@ const templatePath = resolve(here, '..', 'playbook.config.template.yaml');
 // PBCLI-1/8: the launcher composes a tmux-play config whose Captain is the
 // Playbook Captain shell adapter module.
 export const PLAYBOOK_CAPTAIN_MODULE = '@sublang/playbook/playbook-captain';
-// PBCLI-8/12: known adapter shorthands. A `profiles` id may not collide
-// with one of these, and these are the adapters with readiness predicates.
+// PBCLI-12: known adapter shorthands — the adapters with readiness
+// predicates.
 const ADAPTER_SHORTHANDS = ['claude', 'codex'];
 // PBCLI-8: launcher-owned keys inside a `playbooks.<id>` block; every other
 // key belongs to that playbook's option slice.
@@ -114,7 +114,7 @@ export async function runPlaybookCli(options = {}) {
     for (const overlayPath of withPaths) {
       top = mergeConfigs(top, loadOverlayFragment(overlayPath));
     }
-    composed = await composeGenericConfig(top, loadModule);
+    composed = await composeGenericConfig(top, loadModule, userConfigPath);
   } catch (error) {
     stderr.write(`playbook: ${errorMessage(error)}\n`);
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
@@ -235,29 +235,46 @@ export function resolveUserConfigPath(env = process.env, home = homedir()) {
   return join(resolveConfigHome(env, home), 'playbook', 'playbook.config.yaml');
 }
 
-// PBCLI-8: resolve a scalar `captain` / `players.<role>` value as a profile
-// id or adapter shorthand, or a full agent block whose optional `profile`
-// key names a `profiles` entry whose settings are the base under the block's
-// own explicit fields. The composed block carries no `profile` key.
-export function resolveAgent(value, profiles, path) {
-  if (typeof value === 'string') {
-    if (hasOwn(profiles, value)) return { ...profiles[value] };
-    return { adapter: value };
+// PBCLI-8 (DR-021): a scalar `captain` / `players.<role>` value is an
+// adapter shorthand; a full block is a self-contained tmux-play agent block
+// carrying its own adapter/model/effort/permissions. There is no profile
+// indirection, so retuning one agent cannot change another.
+export function resolveAgent(value, path) {
+  if (typeof value === 'string') return { adapter: value };
+  if (isObject(value)) return { ...value };
+  throw new Error(`${path} must be an adapter shorthand or an agent block`);
+}
+
+// DR-021 §3: a config written for the retired profiles model would otherwise
+// fail far downstream — a scalar that named a profile now reads as an adapter
+// shorthand — so reject it here and say exactly how to migrate.
+function assertNoRetiredProfiles(top, configPath) {
+  const where = configPath ? ` in ${configPath}` : '';
+  if (top.profiles !== undefined) {
+    throw new Error(
+      `top-level "profiles" was removed${where}: write each agent's settings ` +
+        'inline under captain and each playbooks.<id>.players.<role> ' +
+        '(adapter, model, effort, permissions)',
+    );
   }
-  if (isObject(value)) {
-    const { profile, ...rest } = value;
-    let base = {};
-    if (profile !== undefined) {
-      if (typeof profile !== 'string' || !hasOwn(profiles, profile)) {
-        throw new Error(`${path}.profile must name a profiles entry`);
-      }
-      base = { ...profiles[profile] };
+  const blocks = [['captain', top.captain]];
+  const playbooksCfg = isObject(top.playbooks) ? top.playbooks : {};
+  for (const [id, block] of Object.entries(playbooksCfg)) {
+    const playersMap = isObject(block) && isObject(block.players)
+      ? block.players
+      : {};
+    for (const [role, agent] of Object.entries(playersMap)) {
+      blocks.push([`playbooks.${id}.players.${role}`, agent]);
     }
-    return { ...base, ...rest };
   }
-  throw new Error(
-    `${path} must be a profile id, an adapter shorthand, or an agent block`,
-  );
+  for (const [path, block] of blocks) {
+    if (isObject(block) && block.profile !== undefined) {
+      throw new Error(
+        `${path}.profile was removed${where}: write the agent's settings ` +
+          'inline in that block (adapter, model, effort, permissions)',
+      );
+    }
+  }
 }
 
 function isValidRegistryEntry(value) {
@@ -272,19 +289,12 @@ function isValidRegistryEntry(value) {
   );
 }
 
-// PBCLI-8/9/10: normalize the top-level `profiles` / `playbooks` config into
+// PBCLI-8/9/10: normalize the top-level `playbooks` config into
 // a tmux-play config (Captain = the shell adapter; `captain.options.playbooks`
 // the normalized enablement; a launch-time namespaced `<id>-<role>` roster;
 // launcher-owned `layout.initialVisible`).
-export async function composeGenericConfig(top, loadModule) {
-  const profiles = isObject(top.profiles) ? top.profiles : {};
-  for (const id of Object.keys(profiles)) {
-    if (ADAPTER_SHORTHANDS.includes(id)) {
-      throw new Error(
-        `profiles.${id} collides with the "${id}" adapter shorthand`,
-      );
-    }
-  }
+export async function composeGenericConfig(top, loadModule, configPath) {
+  assertNoRetiredProfiles(top, configPath);
 
   const playbooksCfg = requireObject(top.playbooks, 'playbooks');
   const ids = Object.keys(playbooksCfg);
@@ -294,7 +304,7 @@ export async function composeGenericConfig(top, loadModule) {
 
   const captain = {
     from: PLAYBOOK_CAPTAIN_MODULE,
-    ...resolveAgent(top.captain, profiles, 'captain'),
+    ...resolveAgent(top.captain, 'captain'),
   };
   if (captain.adapter === undefined) {
     throw new Error('captain must resolve an adapter');
@@ -389,7 +399,6 @@ export async function composeGenericConfig(top, loadModule) {
     for (const role of roles) {
       const agent = resolveAgent(
         playersMap[role],
-        profiles,
         `playbooks.${id}.players.${role}`,
       );
       if (agent.adapter === undefined) {
@@ -513,9 +522,9 @@ function helpText({ userConfigPath, failingAdapters = [] }) {
     '  codex: run Codex CLI once or set OPENAI_API_KEY.',
     '',
     'Agent swap recipe:',
-    '  - reuse agent settings under top-level profiles',
-    '  - point each playbooks.<id>.captain / players.<role> at a profile id',
-    '    or an adapter shorthand (claude, codex)',
+    '  - set each agent inline: the top-level captain and every',
+    '    playbooks.<id>.players.<role> takes an adapter shorthand',
+    '    (claude, codex) or a block with adapter/model/effort/permissions',
     '  - the launcher injects captain.from and the namespaced <id>-<role>',
     '    host players',
     '',

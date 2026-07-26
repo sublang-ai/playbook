@@ -24,9 +24,9 @@ file enables CODE through `playbooks.code.from`
 `@sublang/playbook/code/registry` with the
 [PBCLI-11](../dev/playbook-cli.md#pbcli-11) lineup (Captain
 `claude` / `claude-opus-4-8`, Coder `claude` / `claude-opus-4-8[1m]`,
-Reviewer `codex` / `gpt-5.5`, the agent/model-named profile ids
-`claude-opus` / `claude-opus-1m` / `codex-gpt` referenced by the
-`captain` and `coder` / `reviewer` roles, `committer: coder`,
+Reviewer `codex` / `gpt-5.5`, each written inline under `captain` and
+the `coder` / `reviewer` roles with no `profiles` map,
+`committer: coder`,
 `permissions.mode: auto` on every seeded agent with the Codex
 Reviewer's additional `.git` writable path, and the notification
 defaults).
@@ -45,12 +45,11 @@ carries one `captain.options.playbooks.<id>` entry per playbook with
 that block's `from`, optional `command`, and an `options` slice built
 from the block's non-launcher keys (CODE's `committer` among them and
 no `from` / `command` / `players` in the slice); resolves scalar
-`captain` and `players.<role>` values as profile ids or adapter
-shorthands and a full block's `profile` key as a `profiles` entry
-only, applying the profile beneath the block's own explicit fields and
-emitting no `profile` key in the composed config; generates the
+`captain` and `players.<role>` values as adapter shorthands and
+carries a full inline agent block through as authored; generates the
 top-level roster as the union of each playbook's `<id>-<role>` host
-players with separate instances when two playbooks share a profile;
+players with separate instances when two playbooks name the same
+adapter and model;
 sets `layout.initialVisible` to the first enabled playbook's
 generated player ids while carrying through the window and
 column-weight fields; sets `captain.options.captainAdapter` to the
@@ -66,9 +65,9 @@ When the test suite composes top-level configs that each carry one
 fault — a missing `from`, a `from` whose import fails, a module
 exposing no valid registry entry, a `playbooks.<id>` key not equal to
 the imported manifest's `id`, two playbooks sharing an `id`, two
-playbooks resolving to the same effective command, a `profiles` id
-colliding with the `claude` or `codex` adapter shorthand, a full block
-`profile` key naming no known profile, a manifest `requiredRoleIds`
+playbooks resolving to the same effective command, a top-level
+`profiles` map, an agent block carrying a `profile` key, a manifest
+`requiredRoleIds`
 naming the reserved `captain` role, a `playbooks.<id>.players` map
 binding the reserved `captain` role, a configured playbook id equal to
 `captain`, an effective command equal to `captain`, a manifest required role with no
@@ -166,7 +165,7 @@ the adapter does not support exits `1` naming the supported values
 before any agent factory call; a parked session stores the bound efforts and a
 resumed run rebuilds them; `playbook --with <path>` composes with the
 fragment merged over the global config — a fragment retuning one
-player's profile changes only that binding, two fragments merge in
+player's agent block changes only that binding, two fragments merge in
 argument order, and non-map collisions take the fragment value — while
 the global config file stays byte-identical and the spawned tmux-play
 argument vector carries no `--with`; `--list` reflects a fragment that

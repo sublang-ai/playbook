@@ -6,42 +6,25 @@
 # The launcher injects captain.from and the namespaced <id>-<role> host
 # players, then launches cligent's tmux-play under the Playbook Captain shell.
 
-# Reusable agent settings. A profile id must not be an adapter shorthand
-# (claude, codex). Reference a profile by id from captain / players below.
-# Profile ids name the underlying agent/model (e.g. claude-opus,
-# codex-gpt) so they read distinctly from the captain / coder / reviewer
-# player roles that reference them.
+# Every agent — the Captain and each playbook role — carries its own
+# settings inline: an adapter shorthand (claude, codex) or a block with
+# adapter/model/effort/permissions. Retuning one agent never changes
+# another.
 # Every seeded agent runs in cligent's protected auto mode
 # (permissions.mode: auto): claude maps it to permissionMode auto, codex to
 # on-request + auto_review. Codex roles also grant writablePaths: ['.git']
 # so commit turns can write git metadata under the codex sandbox.
-profiles:
-  claude-opus:
-    adapter: claude
-    model: claude-opus-4-8
-    reasoningEffort: high
-    permissions:
-      mode: auto
-  claude-opus-1m:
-    adapter: claude
-    model: claude-opus-4-8[1m]
-    reasoningEffort: xhigh
-    permissions:
-      mode: auto
-  codex-gpt:
-    adapter: codex
-    model: gpt-5.5
-    reasoningEffort: xhigh
-    permissions:
-      mode: auto
-      writablePaths: ['.git']
 
-# The Captain/Judge agent: a profile id, an adapter shorthand, or a full
-# tmux-play agent block (which may carry a `profile:` key).
+# The Captain/Judge agent.
 # Captain routing/adjudication calls run tool-free. Claude enforces that at
 # the provider level; the codex adapter cannot enforce a tool list, so a
 # codex captain degrades to a prompt-level restriction (DR-013 A1).
-captain: claude-opus
+captain:
+  adapter: claude
+  model: claude-opus-4-8
+  reasoningEffort: high
+  permissions:
+    mode: auto
 
 # Host notifications. Omitting turn_aborted resolves it to off.
 notifications:
@@ -56,8 +39,19 @@ playbooks:
   code:
     from: "@sublang/playbook/code/registry"
     players:
-      coder: claude-opus-1m
-      reviewer: codex-gpt
+      coder:
+        adapter: claude
+        model: claude-opus-4-8[1m]
+        reasoningEffort: xhigh
+        permissions:
+          mode: auto
+      reviewer:
+        adapter: codex
+        model: gpt-5.5
+        reasoningEffort: xhigh
+        permissions:
+          mode: auto
+          writablePaths: ['.git']
     committer: coder
 
 # The DISCUSS playbook: two agents converge on spec items or decision
@@ -66,8 +60,17 @@ playbooks:
 #  discuss:
 #    from: "@sublang/playbook/discuss/registry"
 #    players:
-#      host: claude-opus
-#      participant: codex-gpt
+#      host:
+#        adapter: claude
+#        model: claude-opus-4-8
+#        permissions:
+#          mode: auto
+#      participant:
+#        adapter: codex
+#        model: gpt-5.5
+#        permissions:
+#          mode: auto
+#          writablePaths: ['.git']
 #    committer: host
 
 # Non-interactive `playbook run` defaults (optional). Each value is an

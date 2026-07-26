@@ -31,7 +31,7 @@ change.
 
 Where `playbook` composes the runtime config
 ([PBCLI-1](../user/playbook-cli.md#pbcli-1)), the command shall
-normalize the top-level `profiles` and `playbooks` maps into a
+normalize the top-level `playbooks` map into a
 tmux-play config whose `captain.from` is
 `@sublang/playbook/playbook-captain` and whose
 `captain.options.playbooks` holds one normalized entry per enabled
@@ -47,20 +47,16 @@ Each normalized `captain.options.playbooks.<id>` entry shall carry the
 as CODE's `committer`); `from`, `command`, and `players` shall not
 appear in the option slice.
 The command shall resolve a scalar `captain` or `players.<role>` value
-as a profile id from `profiles` or as an adapter shorthand.
-A full `captain` or `players.<role>` block's optional `profile` key
-shall name a `profiles` entry only — not an adapter shorthand — and the
-block shall set any adapter through the agent block's own `adapter`
-field; the command shall reject a `profile` value that names no known
-profile with a path-named error.
-When an agent block references a profile, the command shall compose the
-resolved tmux-play agent block from the profile's settings as the base
-and the block's own explicit fields as overrides, and shall emit no
-`profile` key in the composed config, since the tmux-play agent-block
-schema does not define one.
-The command shall reject a `profiles` id that collides with a known
-adapter shorthand id such as `claude` or `codex` with a path-named
-error, rather than let a profile silently shadow an adapter shorthand.
+as an adapter shorthand, and a full block as a self-contained tmux-play
+agent block carried through as authored
+([DR-021](../decisions/021-inline-agent-settings.md)).
+Before composing, the command shall reject — with a path-named
+diagnostic naming the resolved config path, the offending key, and the
+inline replacement, and without launching — a top-level `profiles` map
+or any `captain` / `players.<role>` block carrying a `profile` key,
+because a scalar that formerly named a profile now reads as an adapter
+shorthand and would otherwise fail far downstream as an unknown
+adapter.
 
 ### PBCLI-9
 
@@ -69,8 +65,8 @@ generate the top-level tmux-play `players` roster as the launch-time
 union of every enabled playbook's players, binding local role
 `<role>` of playbook `<id>` to a host player whose `id` is
 `<id>-<role>`, where `<id>` is the `playbooks.<id>` config key.
-When two playbooks reference the same profile, the command shall still
-emit separate playbook-scoped host players.
+When two playbooks bind agents with identical settings, the command
+shall still emit separate playbook-scoped host players.
 The generated config shall not bind a playbook's role to a player from
 another playbook or to a shared top-level host player.
 The command shall import each enabled playbook's `from` module to read
@@ -134,13 +130,11 @@ The seeded lineup shall configure Captain with adapter `claude`, model
 `claude`, model `claude-opus-4-8[1m]`, and reasoning effort `xhigh`;
 and Reviewer with adapter `codex`, model `gpt-5.5`, and reasoning
 effort `xhigh`.
-The seeded `profiles` shall be `claude-opus` (Captain),
-`claude-opus-1m` (Coder), and `codex-gpt` (Reviewer): profile ids that
-name the underlying agent/model rather than a player role.
-The seeded `captain` shall reference `claude-opus`, `players.coder`
-shall reference `claude-opus-1m`, and `players.reviewer` shall
-reference `codex-gpt`, so the profile ids stay distinct from the
-`captain` / `coder` / `reviewer` roles that reference them.
+The starter config shall carry no `profiles` map: each agent's
+settings are written inline under the top-level `captain` and each
+`playbooks.code.players.<role>` block
+([DR-021](../decisions/021-inline-agent-settings.md)), so retuning one
+player cannot change another.
 Every seeded agent — the Captain and both roles — shall set
 `permissions.mode: auto`, so each runs in cligent's profile-scoped
 protected auto mode (claude maps `auto` to `permissionMode: auto`,
@@ -152,8 +146,8 @@ Codex player can write git metadata under the codex sandbox; seeded
 `claude` agents need no writablePaths grant under their auto mode.
 The starter config shall set top-level
 `notifications: { player_finished: bell, turn_finished: desktop }`;
-these profile ids and their `adapter` / `model` / `reasoningEffort`
-values are defaults and remain user-tunable per
+these `adapter` / `model` / `reasoningEffort` values are defaults and
+remain user-tunable in place per
 [PBCLI-6](../user/playbook-cli.md#pbcli-6).
 
 ### PBCLI-12
