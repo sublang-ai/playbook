@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -32,8 +32,13 @@ const bossHistoryLines = 400;
 const launcherTailCharacters = 16 * 1024;
 const diagnosticTailCharacters = 8 * 1024;
 const failureSnapshotName = 'acceptance-failure.txt';
-const scenarioTimeoutMs =
-  liveTimeoutMs + 3 * startupTimeoutMs + 60_000;
+// One scenario spends at most five startup-length waits — new session,
+// attached client, `boss>`, the started marker, and the pane shape — plus
+// the live turn itself. Under-budgeting here is worse than a slow failure:
+// vitest's own timeout fires outside the try/finally, so teardown never
+// runs and `afterAll` would delete the artifacts while the agents are
+// still live.
+const scenarioTimeoutMs = liveTimeoutMs + 5 * startupTimeoutMs + 60_000;
 const turnFailureMarkers = [
   '[turn aborted]',
   '[runtime error]',
@@ -48,9 +53,17 @@ const discussCommand =
   'It shall require the repository-root file acceptance-discuss.txt to ' +
   'contain exactly DISCUSS_ACCEPTANCE_OK followed by a newline. ' +
   'This run is documentation-only: do not create the implementation file. ' +
-  'Converge quickly, update specs/map.md if needed, and commit the agreed changes.';
+  'The specs/map.md index already lists the file, so leave it untouched. ' +
+  'Converge quickly and commit only the agreed spec item file.';
 
 let suiteRoot = '';
+// The gate runs its tmux-play sessions on a private tmux server so it can
+// never bind to, drive, or kill a session the maintainer is using. Both the
+// launcher and every tmux command below share this socket directory. It is
+// deliberately short and rooted directly at the system temp dir: tmux socket
+// paths are bounded by `sockaddr_un` (104 bytes on macOS), which a nested
+// path under `suiteRoot` would blow past.
+let tmuxSocketDir = '';
 let candidateBin = '';
 let preserveArtifacts = false;
 
@@ -58,6 +71,7 @@ describe.sequential('installed playbook live tmux acceptance', () => {
   beforeAll(async () => {
     assertLocalPrerequisites();
     suiteRoot = mkdtempSync(join(tmpdir(), 'playbook-live-acceptance-'));
+    tmuxSocketDir = mkdtempSync(join(tmpdir(), 'pb-tmux-'));
     try {
       candidateBin = await packAndInstallCandidate(suiteRoot);
     } catch (error) {
@@ -70,6 +84,11 @@ describe.sequential('installed playbook live tmux acceptance', () => {
   afterAll(() => {
     if (suiteRoot && !preserveArtifacts) {
       rmSync(suiteRoot, { recursive: true, force: true });
+    }
+    // Keep the socket directory when artifacts are preserved: a surviving
+    // session is still reachable there for diagnosis.
+    if (tmuxSocketDir && !preserveArtifacts) {
+      rmSync(tmuxSocketDir, { recursive: true, force: true });
     }
   });
 
@@ -276,6 +295,13 @@ async function packAndInstallCandidate(root: string): Promise<string> {
 }
 
 function createScenario(name: 'code' | 'discuss'): Scenario {
+  // Every fixture path derives from `suiteRoot`. A relative value here would
+  // silently build the fixture tree inside the real repository instead.
+  if (!isAbsolute(suiteRoot)) {
+    throw new Error(
+      `live acceptance suite root must be an absolute path, got "${suiteRoot}"`,
+    );
+  }
   const root = join(suiteRoot, name);
   const repo = join(root, 'repo');
   const configHome = join(root, 'xdg');
@@ -430,8 +456,8 @@ async function drivePlaybookTurn(
     await waitForAttachedClient(sessionName, startupTimeoutMs, launcher);
     await waitForPaneText(target, 'boss>', startupTimeoutMs, launcher);
     console.info(`[acceptance] ${scenario.root.split('/').at(-1)}: ${command}`);
-    execText('tmux', ['send-keys', '-t', target, '-l', command]);
-    execText('tmux', ['send-keys', '-t', target, 'Enter']);
+    tmuxText(['send-keys', '-t', target, '-l', command]);
+    tmuxText(['send-keys', '-t', target, 'Enter']);
     await waitForPaneText(
       target,
       expectation.started,
@@ -467,7 +493,7 @@ async function drivePlaybookTurn(
   } finally {
     if (sessionName && listTmuxSessions().includes(sessionName)) {
       try {
-        execText('tmux', ['kill-session', '-t', sessionName]);
+        tmuxText(['kill-session', '-t', sessionName]);
       } catch {
         // Preserve the original test failure; launcher termination below is
         // the remaining best-effort cleanup.
@@ -483,6 +509,9 @@ function spawnLauncher(scenario: Scenario): Launcher {
     XDG_CONFIG_HOME: scenario.configHome,
     PLAYBOOK_ACCEPTANCE_BIN: candidateBin,
     PLAYBOOK_ACCEPTANCE_REPO: scenario.repo,
+    // Keep the launched session on the gate's private tmux server, so it
+    // is the only session this run can see, drive, or kill.
+    TMUX_TMPDIR: tmuxSocketDir,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
   };
@@ -562,7 +591,7 @@ async function waitForAttachedClient(
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const clients = execText('tmux', [
+      const clients = tmuxText([
         'list-clients',
         '-t',
         sessionName,
@@ -652,7 +681,7 @@ async function waitForPaneShape(
   let lastShape = '';
   while (Date.now() < deadline) {
     try {
-      lastShape = execText('tmux', [
+      lastShape = tmuxText([
         'list-panes',
         '-t',
         `${sessionName}:0`,
@@ -705,7 +734,7 @@ async function stopLauncher(launcher: Launcher): Promise<void> {
 
 function listTmuxSessions(): string[] {
   try {
-    return execText('tmux', ['list-sessions', '-F', '#{session_name}'])
+    return tmuxText(['list-sessions', '-F', '#{session_name}'])
       .split('\n')
       .filter(Boolean);
   } catch (error) {
@@ -760,6 +789,17 @@ function headHasPath(repo: string, path: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Every tmux command the gate issues must reach the private server created
+// under `tmuxSocketDir`, not the maintainer's default server.
+function tmuxText(args: readonly string[]): string {
+  return execFileSync('tmux', [...args], {
+    env: { ...process.env, TMUX_TMPDIR: tmuxSocketDir },
+    encoding: 'utf8',
+    maxBuffer: 20 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }).trimEnd();
 }
 
 function execText(
@@ -866,7 +906,7 @@ function paneContains(pane: string, expected: string): boolean {
 }
 
 function capturePane(target: string): string {
-  return execText('tmux', [
+  return tmuxText([
     'capture-pane',
     '-p',
     '-S',
@@ -913,7 +953,7 @@ function writeFailureSnapshot(
     }
     try {
       sections.push(
-        `Pane shape:\n${execText('tmux', [
+        `Pane shape:\n${tmuxText([
           'list-panes',
           '-t',
           `${sessionName}:0`,
