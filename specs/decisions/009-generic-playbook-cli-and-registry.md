@@ -7,6 +7,7 @@
 
 Accepted.
 [DR-012](012-default-captain-playbook.md) amends this record by routing ordinary idle intent through a compiled non-registry Captain, reserving `captain` as a playbook id and effective command, and exempting that internal root from player visibility.
+[DR-021](021-inline-agent-settings.md) supersedes the top-level `profiles` map, the profile-id scalar, and the agent-block `profile` key below: every captain and player now carries its own settings inline.
 The registry, CLI, role-binding, enabled-external-playbook visibility, and summary-policy constraints remain in force where later decisions have not amended them.
 
 ## Context
@@ -66,6 +67,8 @@ Registry `from` modules reuse that executable local-configuration trust boundary
 ### 3. Enablement normalizes into `captain.options.playbooks`
 
 The generic launcher shall compile its top-level config into a tmux-play config whose Captain is `@sublang/playbook/playbook-captain`.
+
+> Superseded by [DR-021](021-inline-agent-settings.md): the `profiles` map and every profile reference in this section and its example are retired; agent settings are inline per captain and player.
 
 Users shall configure reusable agent settings with a top-level `profiles` map and enabled playbooks with a top-level `playbooks` map.
 The launcher shall normalize those user-facing maps into the shell's internal `captain.options.playbooks` map.
