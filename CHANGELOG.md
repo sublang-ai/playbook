@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-07-26
+
+### Added
+
+- **Linked artifacts now declare — and the engine now checks — runtime compatibility.** `@sublang/playbook/xstate-runtime` exports its self-report, `RUNTIME_ABI` (currently `1`) and `SUPPORTED_ARTIFACT_SCHEMAS` (currently `[1]`), and `createXStatePlaybookRuntime` accepts an optional `spec.compat: { artifactSchema, runtimeAbi }` that it validates fail-fast at construction against the engine instance actually loaded: an unsupported schema throws a `TypeError` naming the declared schema and the supported set, and a mismatched ABI names the declared and implemented values, instead of an artifact linked under one engine misbehaving deep in a session under another. `slc/link.md` §Output now has emitted thin modules record the values current at link time; artifacts emitted before this contract carry no declaration and keep loading unchanged, and an incompatible artifact handed to `playbook run` surfaces the standard `playbook run:` diagnostic and exits `1` ([DR-022](specs/decisions/022-runtime-compatibility-contract.md), [PBRT-50](specs/dev/playbook-runtime.md#pbrt-50), [PBCLI-35](specs/test/playbook-cli.md#pbcli-35), [RELEASE-15](specs/dev/release.md#release-15)).
+
+- **The data-only machine-IR direction is on record.** DR-023 accepts, for a future Playbook 4 major, emitting validated data-only machine specifications with no external package imports that the host materializes with its own playbook and xstate — gated on a closed IR vocabulary covering all executable machine semantics and a passing hermetic global-only install acceptance test — and records the rejected resolution-hook bridge with its reasons; until that gate passes, the documented consumption model remains a project-local install plus `npx` ([DR-023](specs/decisions/023-data-only-machine-ir.md)).
+
 ## [3.0.0] - 2026-07-26
 
 ### Added
@@ -267,7 +275,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v3.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v3.1.0...HEAD
+[3.1.0]: https://github.com/sublang-ai/playbook/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/sublang-ai/playbook/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/sublang-ai/playbook/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/sublang-ai/playbook/compare/v1.0.0...v1.3.0
