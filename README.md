@@ -9,382 +9,106 @@
 
 _Skills made reliable through state machines and visualization._
 
-playbook is a compiler stack and reference implementation for turning a
-natural-language procedure into a runnable, inspectable state-machine
-agent — a _playbook_ — that orchestrates other AI agents per a spec
-written in plain prose. Instead of a free-form LLM deciding what to do
-next, an explicit finite state machine drives the workflow, every
-Captain-, player-, and nested-playbook-invoking state pinned 1:1 to a
-human-readable spec item and contract-tested.
+playbook turns a natural-language procedure into a runnable,
+inspectable state-machine agent — a _playbook_ — that orchestrates other
+AI agents per a spec written in plain prose. Instead of a free-form LLM
+deciding what to do next, an explicit finite state machine drives the
+workflow, every agent-invoking state pinned 1:1 to a human-readable spec
+item and contract-tested.
 
-A quick vocabulary, used throughout: the **Boss** is you, the human in
-charge; the **Captain** is the agent pane the Boss talks to;
-**players** are the coding agents a playbook delegates work to; and a
-hidden **judge** classifies free-text Boss input into state-machine
-events, so playbooks need no slash commands of their own. Playbooks run
-inside a *host* built on
+Vocabulary: the **Boss** is you; the **Captain** is the agent pane you
+talk to; **players** are the coding agents a playbook delegates to; a
+hidden **judge** classifies your free text into state-machine events.
+Playbooks run inside a *host* built on
 [cligent](https://github.com/sublang-ai/cligent), the sibling SDK that
-drives coding-agent CLIs; cligent's `tmux-play` terminal app is the
-reference host.
+drives coding-agent CLIs; its `tmux-play` terminal app is the reference
+host.
 
-Three phases take prose to runtime, plus an optional optimizer:
+## Quick start
 
-1. **text → GEARS** ([slc/text2gears.md](slc/text2gears.md)) — GEARS is
-   the intermediate representation: normative spec items, one per state
-   behavior, partitioned by trigger and prompt content.
-2. **GEARS → FSM** ([slc/gears2fsm.md](slc/gears2fsm.md)) — an XState v5
-   finite state machine; each gear maps to one direct-Captain,
-   delegated-player, or nested-playbook state with a typed actor
-   contract. The compiled FSM can be visualized and simulated with the
-   bundled [XState sketch visualizer](views/sketch).
-3. **FSM → runtime** ([slc/link.md](slc/link.md)) — a host-agnostic
-   module that drives Boss turns through ports the host wires up
-   (cligent's `tmux-play` is one such host).
-
-Between the first two, [slc/optimize.md](slc/optimize.md) may rewrite a
-deterministic mechanical gear — canonically git repository setup — into a
-*script item* the runtime executes directly, with no agent call and two
-exit-status guards. Unoptimized compiles are byte-identical, so the pass
-is opt-in.
-
-The repository contains end-to-end worked examples. The generic default
-Captain is generated from
-[`reference/sdlc/captain.md`](reference/sdlc/captain.md), CODE — a
-coder / reviewer / committer development loop — from
-[`reference/sdlc/code.md`](reference/sdlc/code.md), and DISCUSS — two
-agents converging on spec items — from
-[`reference/sdlc/discuss.md`](reference/sdlc/discuss.md). Together they
-show direct Captain work, sequential nested playbook calls, and
-parallel players.
-
-## Getting started — the reference CODE playbook
-
-The reference is the canonical worked example —
-[CODE source](reference/sdlc/code.md) →
-[gears](reference/sdlc/code.playbook/code.gears.md) →
-[FSM](reference/sdlc/code.playbook/code.fsm.ts) → runtime — with
-the runtime registered behind the built-in Playbook Captain shell for
-cligent's `tmux-play` host out of the box.
-The compiled artifacts live under
-[`reference/sdlc/code.playbook/`](reference/sdlc/code.playbook),
-the [slc](https://github.com/sublang-ai/slc) compiler pipeline's
-`<basename>.<pipeline>/` output directory.
-
-> **Next release:** 3.0.0. The composed system — the compiled default
-> Captain, CODE and DISCUSS, nested playbook calls, script actors and the
-> GEARS optimize pass, the semver-stable six-port runtime contract (see
-> [docs/embedding.md](docs/embedding.md)), and non-interactive `playbook run`
-> with parked-session resume — landed in 1.0.0. Since then, `playbook run`
-> gained defaults in the user config, and the unreleased 3.0.0 line replaces
-> the top-level `profiles` map with inline agent settings (existing
-> profiles-based configs migrate themselves on the next launch). See the
-> [CHANGELOG](CHANGELOG.md).
-
-### Requirements
-
-- Node.js >= 20.6.0.
-- `tmux` and [`glow`](https://github.com/charmbracelet/glow#installation)
-  on `PATH` — the `tmux-play` host renders Markdown pane output with
-  glow and fails fast without it.
-- Auth for the seeded agents: a signed-in
-  [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
-  (`~/.claude`) or `ANTHROPIC_API_KEY`, and a signed-in
-  [Codex CLI](https://github.com/openai/codex) (`~/.codex`) or
-  `OPENAI_API_KEY`.
-
-### Install (users)
-
-Install the package globally. `@sublang/cligent`, the Claude and
-Codex adapter SDKs, and `xstate` are direct dependencies, so a single
-install pulls in the reference CODE playbook and its host:
+Requires Node.js >= 20.6.0, `tmux` and
+[`glow`](https://github.com/charmbracelet/glow#installation) on `PATH`,
+and auth for the seeded agents — signed-in
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview)
+or `ANTHROPIC_API_KEY`, and signed-in
+[Codex CLI](https://github.com/openai/codex) or `OPENAI_API_KEY`.
 
 ```sh
 npm install -g @sublang/playbook
-```
-
-Then launch the reference playbook in a `tmux-play` session:
-
-```sh
 playbook
 ```
 
-For a one-shot run without a global install, invoke the scoped
-package through npx (it runs the package's `playbook` bin):
+The first launch seeds a commented config at
+`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`,
+composes a `tmux-play` config, checks the declared adapters, and opens
+the session. Then type a task, or `/code <task>` to select the CODE
+playbook directly.
 
-```sh
-npx @sublang/playbook
-```
-
-On first run, `playbook` creates a commented user config at
-`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`
-from the bundled starter, prints that path to stderr, then composes a
-`tmux-play` config and checks the declared adapters before launching.
-Later runs reuse that file and do not overwrite it.
-
-Known adapter readiness is intentionally light: `claude` is ready when
-local Claude Code auth exists or `ANTHROPIC_API_KEY` is set; `codex` is
-ready when local Codex CLI auth exists or `OPENAI_API_KEY` is set. If a
-known adapter is not ready, `playbook` prints its own help text with the
-config path, auth pointers, and agent-swap recipe, then exits without
-launching. You can view the same recovery text at any time:
-
-```sh
-playbook --help
-```
-
-A note on the Captain agent: playbook runs its hidden routing and
-adjudication calls tool-free, which is what keeps the Captain routing
-instead of doing the work itself. Claude enforces that at the provider
-level. The Codex adapter cannot — it rejects any tool list — so a
-`captain:` on `codex` falls back to a prompt-level restriction instead
-([DR-013 A1](specs/decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement)).
-Codex remains a good choice for *players*, where full tools are wanted.
-
-`playbook --list` prints the configured playbooks with their slash
-commands and intents. Every seeded agent — the Captain and both roles —
-runs in cligent's protected auto mode (`permissions.mode: auto`), so
-routine in-session approval prompts are suppressed without switching to
-bypass permissions. The seeded Codex Reviewer additionally grants
-`permissions.writablePaths: [.git]` so git metadata writes stay
-available under the Codex sandbox; the Claude agents need no such grant
-under their auto mode.
-
-### Run a playbook non-interactively
-
-`playbook run <from> [task]` runs one playbook once, without tmux-play
-and without a config entry — point it straight at a registry module:
-
-```sh
-playbook run @sublang/playbook/code/registry "add a test for parseArgs" \
-  --player coder=claude --player reviewer=codex --cwd ./my-repo
-```
-
-`[task]` is read from stdin when omitted — pipe long or multi-line
-intents the same way you would to `claude -p` or `codex exec`. Roles
-and the captain default to `claude`; bind them with
-`--player <role>=<agent>` and `--captain <agent>`, where `<agent>` is
-`<adapter>[:<model>][@<effort>]` — say `codex:gpt-5.5@xhigh`, or
-`claude@high` for the default model at high reasoning effort; the
-model keeps every interior colon (`opencode:ollama/llama3:8b@max`),
-and unsupported efforts are rejected up front naming the adapter's
-supported values. To stop retyping those flags, set durable defaults
-once in the user config's top-level `run:` block — `run.captain`,
-`run.players.<role>`, and a `run.player` catch-all for any other
-required role, each the same agent string; flags keep winning per
-role, and `resume` always keeps the lineup stored with the parked
-session ([PBCLI-28](specs/user/playbook-cli.md#pbcli-28),
-[DR-017](specs/decisions/017-run-defaults-config.md)). Pass a
-playbook option with
-`--option <key>=<value>`, and add `--json` to print one JSON envelope
-(`outcome`, `sessionId`, and the output or pending questions) instead
-of plain text. It exits `0` on a terminal outcome, `2` on failure, `3`
-when the playbook needs a Boss reply, and `1` on a bad argument or
-module. See [PBCLI-18](specs/user/playbook-cli.md#pbcli-18).
-
-When the playbook stops to ask the Boss something, the run is parked,
-not lost: the question prints to stdout, the session is saved under
-`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/`, and stderr
-names the exact command that continues it. Answer with `resume`:
-
-```sh
-playbook run resume 4f2c…9ab1 "keep the scope small; skip the docs"
-playbook run resume --last   # most recently parked session; reply on stdin
-```
-
-A resumed run picks the playbook up exactly where it parked — same
-session id, same workflow state, and each agent continues its own
-conversation — then prints the final output and exits `0`, or parks
-again with the next question and exits `3`. The agent lineup, options,
-and working directory are stored with the session, so `resume` takes no
-binding flags. In scripts, capture the session id from the `--json`
-envelope, like Claude Code's `session_id` or `codex exec resume`. See
-[PBCLI-22](specs/user/playbook-cli.md#pbcli-22) and
-[DR-014](specs/decisions/014-durable-one-shot-run-sessions.md).
-
-### Configure agents
-
-Edit the seeded user config when you want different coding agents:
-
-```sh
-$EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml"
-```
-
-To retune a single launch without editing that file, overlay a
-fragment in the same format with `--with` (repeatable, later files
-win; maps merge recursively, other values replace):
-
-```sh
-playbook --with fast-lineup.yaml
-```
+Every agent carries its own settings, so retuning one player never
+changes another:
 
 ```yaml
-# fast-lineup.yaml — swap the Coder for one run; nothing is written back.
-playbooks:
-  code:
-    players:
-      coder: { adapter: codex, model: gpt-5.5, effort: medium }
-```
-
-See [PBCLI-25](specs/user/playbook-cli.md#pbcli-25) and
-[DR-015](specs/decisions/015-per-run-agent-tuning.md).
-
-The config is top-level (no `config:` wrapper): a `captain` agent (it
-runs both visible Captain work and hidden judge calls), optional
-`layout` / `notifications` / `theme`, and a `playbooks` map of enabled
-playbooks. Each `captain` or `players.<role>` value is either an
-adapter shorthand (`claude`, `codex`) or a block carrying that agent's
-own `adapter`, `model`, `effort`, and `permissions`; other
-adapter ids are passed through to `tmux-play` with a warning because
-`playbook` cannot preflight their auth. Settings are inline per agent,
-so tuning one player never changes another
-([DR-021](specs/decisions/021-inline-agent-settings.md)). Within a
-`playbooks.<id>` block, `from` (the
-registry module), `command` (an optional slash-command override), and
-`players` are launcher-owned; every other key is that playbook's option
-slice. The launcher injects the rest — you do not write host wiring by
-hand.
-
-For example, the seeded config runs the Coder on Claude Opus 4.8 1m and
-the Reviewer on GPT-5.5:
-
-```yaml
-captain:
-  adapter: claude
-  model: claude-opus-4-8
-  effort: high
-  permissions:
-    mode: auto # protected auto mode for the Claude Captain
-
 playbooks:
   code:
     from: '@sublang/playbook/code/registry'
     players:
-      coder:
-        adapter: claude
-        model: claude-opus-4-8[1m]
-        effort: xhigh
-        permissions:
-          mode: auto # protected auto mode for the Claude Coder
-      reviewer:
-        adapter: codex
-        model: gpt-5.5
-        effort: xhigh
-        permissions:
-          mode: auto
-          writablePaths:
-            - .git # allow git metadata writes under Codex auto mode
-    committer: coder # which role commits — `coder` or `reviewer`
+      coder: { adapter: claude, model: claude-opus-4-8[1m], effort: xhigh }
+      reviewer: { adapter: codex, model: gpt-5.5, effort: xhigh }
 ```
 
-`committer` is CODE's one option: an alias naming which role runs the
-commit turn (fallback semantics:
-[PBRT-8](specs/dev/playbook-runtime.md#pbrt-8)). Each role's per-run
-prompt names its pinned `model`, else its `adapter`
-([PBRT-4](specs/user/playbook-runtime.md#pbrt-4)), so commit trailers
-can credit the concrete model (e.g. `claude-opus-4-8[1m]`) rather than
-the adapter family.
-
-If you need a separate config file for a one-off run, pass a raw
-`tmux-play` config explicitly; this bypasses the seed, composition, and
-readiness gate and forwards the arguments to `tmux-play` verbatim
-([PBCLI-1](specs/user/playbook-cli.md#pbcli-1)):
+To run once without tmux — for scripts and CI — point `run` straight at
+a registry module:
 
 ```sh
-playbook --config ./tmux-play.config.yaml
+playbook run @sublang/playbook/code/registry "add a test for parseArgs" --json
 ```
 
-### Install (contributors / from source)
+- **[docs/cli.md](docs/cli.md)** — both surfaces: Boss turns, flags,
+  exit codes, and resuming a parked `run`.
+- **[docs/configuration.md](docs/configuration.md)** — the config file,
+  per-launch `--with` overlays, and choosing the Captain agent.
+- **[docs/embedding.md](docs/embedding.md)** — the six-port runtime
+  contract for hosts other than `tmux-play`.
 
-The checked-in lockfile resolves every runtime contract required by the
-source tree:
+> **Next release:** 3.0.0. The composed system — the compiled default
+> Captain, CODE and DISCUSS, nested playbook calls, script actors and the
+> GEARS optimize pass, the semver-stable six-port runtime contract, and
+> non-interactive `playbook run` with parked-session resume — landed in
+> 1.0.0. Since then, `playbook run` gained defaults in the user config,
+> and the unreleased 3.0.0 line replaces the top-level `profiles` map with
+> inline agent settings (existing configs migrate themselves on the next
+> launch). See the [CHANGELOG](CHANGELOG.md).
 
-```sh
-git clone https://github.com/sublang-ai/playbook.git
-cd playbook
-pnpm install --frozen-lockfile
-pnpm build
-pnpm test
-```
+## How it compiles
 
-To co-develop Playbook with an unreleased cligent checkout, clone
-cligent beside this repository, build it, and copy
-`pnpm-workspace.yaml.example` to the gitignored
-`pnpm-workspace.yaml`. That optional override links the sibling checkout
-in place of the registry version. Do not commit the local lockfile
-rewrite it produces ([RELEASE-11](specs/dev/release.md#release-11)).
+Three phases take prose to runtime, plus an optional optimizer:
 
-Drive a Boss turn against the source tree with the launcher, which
-resolves `tmux-play`, the Playbook Captain shell, and the CODE registry
-from the local package:
+1. **text → GEARS** ([slc/text2gears.md](slc/text2gears.md)) — normative
+   spec items, one per state behavior, partitioned by trigger and prompt
+   content.
+2. **GEARS → FSM** ([slc/gears2fsm.md](slc/gears2fsm.md)) — an XState v5
+   machine; each gear maps to one direct-Captain, delegated-player, or
+   nested-playbook state with a typed actor contract. The compiled FSM
+   can be visualized and simulated with the bundled
+   [XState sketch visualizer](views/sketch).
+3. **FSM → runtime** ([slc/link.md](slc/link.md)) — a host-agnostic
+   module that drives Boss turns through ports the host wires up.
 
-```sh
-pnpm playbook
-```
+Between the first two, [slc/optimize.md](slc/optimize.md) may rewrite a
+deterministic mechanical gear — canonically git repository setup — into a
+*script item* the runtime executes directly, with no agent call.
+Unoptimized compiles are byte-identical, so the pass is opt-in.
 
-On first run this seeds the generic config at
-`${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`
-(see [Configure agents](#configure-agents)) and launches the composed
-session, so this works whether or not `@sublang/cligent` is installed
-globally.
-
-### Running a Boss turn
-
-The Boss pane starts at the Playbook Captain shell. Use `/code <task>`
-to explicitly select the CODE playbook, or use ordinary text and let the
-compiled default Captain ask a material routing question or plan one or more
-enabled playbook calls. It cannot answer the initial intent directly;
-calls run sequentially so Captain can reassess after every child result
-and then return a concrete result or actionable conclusion. Once a turn
-reaches CODE, the CODE judge classifies it into an FSM event (start a coding
-turn, continue or summarize an iteration, interrupt to a named state, or
-nothing) per
-[PBRT-1](specs/user/playbook-runtime.md#pbrt-1).
-When a player surfaces a clarifying question
-the FSM parks, the pane shows the question, and your
-next turn is normally classified as the reply — or a fresh directive
-abandons it ([PBRT-2](specs/user/playbook-runtime.md#pbrt-2)).
-
-The Captain pane shows `/code` start/stop/finished status with `◇` lines
-and streams CODE progress with captain-speech classification/questions
-per [PBRT-3](specs/user/playbook-runtime.md#pbrt-3), while player
-prompts ride their own panes.
-
-### Embedding the runtime in your own host
-
-The runtime is host-agnostic — the `tmux-play` adapter is one host. The
-port and runtime contracts live in the type-only, semver-stable module
-[`@sublang/playbook/runtime`](src/runtime.ts): a host satisfies the six
-ports once and inherits every playbook. See
-[docs/embedding.md](docs/embedding.md) for the contract surface, a
-complete ports example, session/trace semantics, and how to read the
-published compiler-phase specs from the package.
-
-## Workflow
-
-playbook is itself spec-driven: the compiler phases are specs in `slc/`,
-and the reference playbook is regenerated from its prose source. The
-loop:
-
-1. **Edit source.** The worked examples include
-   [`reference/sdlc/code.md`](reference/sdlc/code.md) and the generic
-   [`reference/sdlc/captain.md`](reference/sdlc/captain.md).
-2. **Recompile gears** per [`slc/text2gears.md`](slc/text2gears.md) into
-   the source's `<name>.playbook/<name>.gears.md`, optionally running
-   [`slc/optimize.md`](slc/optimize.md) over the result.
-3. **Recompile FSM and runtime** per
-   [`slc/gears2fsm.md`](slc/gears2fsm.md) and
-   [`slc/link.md`](slc/link.md) into that playbook artifact directory.
-4. **Sync runtime, tests, and downstream specs** so `pnpm test` stays
-   green and the introspect contract holds 1:1 between gear items and
-   FSM direct-Captain, delegated-player, and nested-playbook states.
-5. **Commit** with co-author trailers per
-   [`specs/dev/git.md`](specs/dev/git.md).
-
-The behavioral contract between gears and FSM
-([the PLAYBOOK dev items](specs/dev/playbook.md)) and the runtime contract that
-ports satisfy ([the PBRT dev items](specs/dev/playbook-runtime.md)) are
-pinned in [`specs/dev/`](specs/dev/) and verified by tests under the
-reference package.
+The repository carries end-to-end worked examples: the generic default
+Captain from [`reference/sdlc/captain.md`](reference/sdlc/captain.md),
+CODE — a coder / reviewer / committer loop — from
+[`reference/sdlc/code.md`](reference/sdlc/code.md), and DISCUSS — two
+agents converging on spec items — from
+[`reference/sdlc/discuss.md`](reference/sdlc/discuss.md). Together they
+show direct Captain work, sequential nested playbook calls, and parallel
+players. Compiled artifacts live beside each source in
+`<basename>.playbook/`, the [slc](https://github.com/sublang-ai/slc)
+pipeline's output directory.
 
 ## Contributing
 
@@ -394,6 +118,32 @@ We welcome contributions of all kinds.
 - [Open an issue](https://github.com/sublang-ai/playbook/issues) for bugs or feature requests.
 - [Open a PR](https://github.com/sublang-ai/playbook/pulls) for fixes or improvements.
 - Discuss on [Discord](https://discord.gg/XxTPjNqy9g) for support or new ideas.
+
+From source:
+
+```sh
+git clone https://github.com/sublang-ai/playbook.git
+cd playbook
+pnpm install --frozen-lockfile
+pnpm build
+pnpm test
+pnpm playbook   # drive a Boss turn against the source tree
+```
+
+To co-develop against an unreleased cligent checkout, clone it beside
+this repository, build it, and copy `pnpm-workspace.yaml.example` to the
+gitignored `pnpm-workspace.yaml`. Do not commit the lockfile rewrite it
+produces ([RELEASE-11](specs/dev/release.md#release-11)).
+
+playbook is itself spec-driven: the compiler phases are specs in
+[`slc/`](slc), and the reference playbooks are regenerated from their
+prose sources. Edit a source, recompile gears then FSM and runtime into
+its artifact directory, sync tests and downstream specs until
+`pnpm test` is green, and commit with co-author trailers per
+[`specs/dev/git.md`](specs/dev/git.md). The gears↔FSM contract
+([the PLAYBOOK dev items](specs/dev/playbook.md)) and the runtime
+contract ([the PBRT dev items](specs/dev/playbook-runtime.md)) are
+pinned in [`specs/dev/`](specs/dev) and verified by the test suite.
 
 ## License
 
