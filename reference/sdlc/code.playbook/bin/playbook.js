@@ -328,27 +328,36 @@ export function migrateRetiredProfiles(text) {
 
   let changed = false;
   for (const path of agentPaths) {
-    const value = doc.getIn(path);
-    if (typeof value === 'string') {
+    const node = doc.getIn(path, true);
+    if (node && typeof node.value === 'string' && !Array.isArray(node.items)) {
       // A scalar that named a profile; a bare adapter shorthand stays.
-      const settings = profileSettings(value);
+      const settings = profileSettings(node.value);
       if (settings === undefined) continue;
-      doc.setIn(path, settings.clone());
+      const inlined = settings.clone();
+      // The scalar carried any comment on that line, and replacing the node
+      // would drop it. Re-attach it above the block that replaces it.
+      carryScalarComment(node, inlined);
+      doc.setIn(path, inlined);
       changed = true;
-    } else if (value && Array.isArray(value.items)) {
-      const named = value.get?.('profile');
+    } else if (node && Array.isArray(node.items)) {
+      const named = node.get?.('profile');
       if (named === undefined) continue;
       const settings = profileSettings(named);
-      const merged = settings === undefined ? undefined : settings.clone();
-      // The block's own fields stay authoritative over the profile's.
-      for (const item of value.items) {
-        const key = String(item.key);
-        if (key === 'profile') continue;
-        if (merged === undefined) continue;
-        merged.set(key, item.value);
+      if (settings === undefined) {
+        throw new Error(
+          `${path.join('.')}.profile names "${String(named)}", which no ` +
+            'profiles entry defines',
+        );
       }
-      if (merged === undefined) value.delete('profile');
-      else doc.setIn(path, merged);
+      // Fill the block from its profile in place — never rebuild it — so
+      // the user's own keys, ordering, and comments survive untouched. The
+      // block's own fields stay authoritative, so only absent keys are added.
+      node.delete('profile');
+      for (const item of settings.items) {
+        const key = String(item.key);
+        if (node.has(key)) continue;
+        node.set(key, item.value.clone ? item.value.clone() : item.value);
+      }
       changed = true;
     }
   }
@@ -385,6 +394,26 @@ const MIGRATION_NOTE =
   ' each agent now carries its settings inline. The pre-migration file is\n' +
   ' kept beside this one as a .bak. Comments below may still describe the\n' +
   ' retired profiles model.';
+
+// Move a scalar agent's own comments onto the block that replaces it, so
+// `captain: base # the judge` keeps its note. The pair's key comments are
+// untouched by the replacement and need no carrying.
+function carryScalarComment(node, inlined) {
+  const parts = [node.commentBefore, node.comment].filter(
+    (part) => typeof part === 'string' && part.trim() !== '',
+  );
+  if (parts.length === 0) return;
+  const first = inlined.items?.[0]?.key;
+  if (!first) return;
+  // A flow map carrying a comment renders as a multi-line brace block; the
+  // ordinary block form is what the rest of the config looks like.
+  inlined.flow = false;
+  const carried = parts.join('\n');
+  first.commentBefore =
+    first.commentBefore === undefined
+      ? carried
+      : `${carried}\n${first.commentBefore}`;
+}
 
 // Drop the trailing paragraph — the one describing the profiles block —
 // and keep the rest of the leading comment (SPDX header, file overview).

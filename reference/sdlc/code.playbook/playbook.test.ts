@@ -228,6 +228,52 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
     expect(await readFile(`${configPath}.bak`, 'utf8')).toBe(legacyConfig);
   });
 
+  it('keeps comments attached to a scalar agent', async () => {
+    const { configPath } = await launchWith(
+      [
+        'profiles:',
+        '  base: { adapter: claude, model: m1 }',
+        '# why this captain',
+        'captain: base # the judge agent',
+        'playbooks:',
+        '  code:',
+        '    from: "@sublang/playbook/code/registry"',
+        '    players:',
+        '      coder: base',
+        '      reviewer: codex',
+        '',
+      ].join('\n'),
+    );
+    const text = await readFile(configPath, 'utf8');
+    // Both the line above the agent and the note on the agent itself.
+    expect(text).toContain('# why this captain');
+    expect(text).toContain('# the judge agent');
+  });
+
+  it('rejects an unresolvable profile without touching the config', async () => {
+    const broken = [
+      'profiles:',
+      '  base: { adapter: claude }',
+      'captain: base',
+      'playbooks:',
+      '  code:',
+      '    from: "@sublang/playbook/code/registry"',
+      '    players:',
+      '      coder: { profile: nope, model: m2 }',
+      '      reviewer: codex',
+      '',
+    ].join('\n');
+    const { configPath, result, stderr } = await launchWith(broken);
+
+    expect(result.code).not.toBe(0);
+    expect(stderr).toContain('nope');
+    expect(stderr).toContain(configPath);
+    // The active config is untouched and no backup was written, so the
+    // user still has exactly one file to fix.
+    expect(await readFile(configPath, 'utf8')).toBe(broken);
+    await expect(readFile(`${configPath}.bak`, 'utf8')).rejects.toThrow();
+  });
+
   it('migrates once and never overwrites an existing backup', async () => {
     const { home, configPath } = await launchWith(legacyConfig);
     const afterFirst = await readFile(configPath, 'utf8');

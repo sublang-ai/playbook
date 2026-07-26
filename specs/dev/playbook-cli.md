@@ -341,7 +341,12 @@ document rather than re-serializing a parsed value, shall carry the
 file's leading comment block — its SPDX header and overview — past the
 removed `profiles` section, and shall prepend a note recording the
 migration and naming the backup.
+Where a `profile` key names no entry the `profiles` map defines, the
+command shall migrate nothing: it shall exit non-zero with a diagnostic
+naming the config path and the unresolvable reference, and shall leave
+the config and any backup untouched, so the user has one file to fix
+rather than a rewritten config missing that agent's settings.
 The command shall print one stderr line naming the config path and the
-backup path, and shall exit non-zero with a diagnostic naming the
-config path when the migration itself fails.
+backup path on a successful migration, and shall exit non-zero with a
+diagnostic naming the config path when the migration otherwise fails.
 A migrated config shall present nothing to migrate on the next launch.
