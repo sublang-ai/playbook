@@ -234,7 +234,9 @@ comments intact, records the migration at the top of the file, writes
 the pre-migration text unchanged to `<config>.bak`, names both paths on
 stderr, and launches.
 It shall further fail unless a comment on a scalar agent's own line
-survives the rewrite, unless a `profile` naming no defined entry exits
+survives the rewrite, unless a comment carried on a profile setting's
+key reaches every agent that profile fills, whether named by a scalar
+or by a `profile`-bearing block, unless a `profile` naming no defined entry exits
 non-zero leaving the config byte-identical and writing no backup, and
 unless a second launch migrates nothing and
 leaves the file byte-identical, and unless a fresh legacy config beside

@@ -354,9 +354,11 @@ export function migrateRetiredProfiles(text) {
       // block's own fields stay authoritative, so only absent keys are added.
       node.delete('profile');
       for (const item of settings.items) {
-        const key = String(item.key);
-        if (node.has(key)) continue;
-        node.set(key, item.value.clone ? item.value.clone() : item.value);
+        if (node.has(String(item.key))) continue;
+        // Append the whole pair, not a rebuilt key/value: a comment above a
+        // setting rides on that setting's key node, so stringifying the key
+        // would drop it.
+        node.add(item.clone());
       }
       changed = true;
     }

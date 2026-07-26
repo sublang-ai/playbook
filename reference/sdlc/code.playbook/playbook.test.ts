@@ -250,6 +250,33 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
     expect(text).toContain('# the judge agent');
   });
 
+  it('carries a profile setting\'s own comments into every agent', async () => {
+    const { configPath } = await launchWith(
+      [
+        'profiles:',
+        '  base:',
+        '    adapter: claude',
+        '    # the codex sandbox needs git metadata',
+        '    permissions:',
+        '      mode: auto',
+        'captain: base',
+        'playbooks:',
+        '  code:',
+        '    from: "@sublang/playbook/code/registry"',
+        '    players:',
+        '      coder: { profile: base, reasoningEffort: xhigh }',
+        '      reviewer: codex',
+        '',
+      ].join('\n'),
+    );
+    const text = await readFile(configPath, 'utf8');
+    // Once for the scalar captain, once for the profile-bearing block: both
+    // paths carry the comment that rode on the setting's key.
+    expect(
+      text.split('# the codex sandbox needs git metadata').length - 1,
+    ).toBe(2);
+  });
+
   it('rejects an unresolvable profile without touching the config', async () => {
     const broken = [
       'profiles:',
