@@ -38,6 +38,9 @@ profiles:
 
 # The Captain/Judge agent: a profile id, an adapter shorthand, or a full
 # tmux-play agent block (which may carry a `profile:` key).
+# Captain routing/adjudication calls run tool-free. Claude enforces that at
+# the provider level; the codex adapter cannot enforce a tool list, so a
+# codex captain degrades to a prompt-level restriction (DR-013 A1).
 captain: claude-opus
 
 # Host notifications. Omitting turn_aborted resolves it to off.

@@ -154,6 +154,54 @@ function visibleChatEnvelope(message: string): string {
   ].join('\n\n');
 }
 
+// DR-013 A1: adapters with no provider-enforced tool-restriction surface.
+// Cligent's Codex adapter rejects any `allowedTools` value — including the
+// empty list that expresses tool-free — because the supported Codex SDK
+// cannot enforce one, so requesting it fails every control call before the
+// model is reached. Omitting the option is the only way such an adapter can
+// run a control call at all; its isolation then rests on the authored
+// hidden-judge envelope below rather than on provider enforcement.
+const ADAPTERS_WITHOUT_TOOL_ENFORCEMENT: ReadonlySet<string> = new Set([
+  'codex',
+]);
+
+// The tool half of a control call's options. An empty allowlist means "no
+// tools available" and is distinct from omission, which grants the adapter's
+// full native tool surface — so omit only where the empty list would be
+// refused, and keep requesting enforcement whenever the adapter is unknown.
+function controlCallToolOptions(
+  captainAdapter: string | undefined,
+): { allowedTools?: readonly string[] } {
+  if (
+    captainAdapter !== undefined &&
+    ADAPTERS_WITHOUT_TOOL_ENFORCEMENT.has(captainAdapter)
+  ) {
+    return {};
+  }
+  return { allowedTools: [] };
+}
+
+// A runtime-requested allowlist forwarded to the captain agent. The empty
+// list is the runtime's way of saying "tool-free", so it is the only value
+// the host substitutes; a non-empty list is a real restriction and stays
+// fail-closed on an adapter that cannot enforce it.
+function forwardedToolOptions(
+  requested: readonly string[] | undefined,
+  captainAdapter: string | undefined,
+): { allowedTools?: readonly string[] } {
+  if (requested === undefined) return {};
+  if (requested.length === 0) return controlCallToolOptions(captainAdapter);
+  return { allowedTools: requested };
+}
+
+function readCaptainAdapter(options: unknown): string | undefined {
+  if (typeof options !== 'object' || options === null) return undefined;
+  const adapter = (options as Record<string, unknown>).captainAdapter;
+  return typeof adapter === 'string' && adapter.length > 0
+    ? adapter
+    : undefined;
+}
+
 function hiddenJudgeEnvelope(prompt: string): string {
   return [
     'You are the Playbook Captain shell hidden-control judge.',
@@ -382,6 +430,10 @@ export function createPlaybookCaptainShell(
   const createCaptainRuntime: NonNullable<
     PlaybookCaptainDeps['createCaptainRuntime']
   > = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
+  // DR-013 A1: the launcher passes the resolved captain adapter through
+  // `captain.options`; a raw `--config` launch leaves it undefined, which
+  // keeps the enforced empty allowlist and its fail-closed behavior.
+  const captainAdapter = readCaptainAdapter(options);
   let entries: readonly PlaybookCaptainRegistryEntry[] = [];
   let byCommand = new Map<string, PlaybookCaptainRegistryEntry>();
   let byId = new Map<string, PlaybookCaptainRegistryEntry>();
@@ -664,9 +716,7 @@ export function createPlaybookCaptainShell(
         {
           visibility: options.visibility,
           resume: options.resume,
-          ...(options.allowedTools === undefined
-            ? {}
-            : { allowedTools: options.allowedTools }),
+          ...forwardedToolOptions(options.allowedTools, captainAdapter),
         },
         signal,
       );
@@ -686,7 +736,11 @@ export function createPlaybookCaptainShell(
         frame,
         activeContext,
         hiddenJudgeEnvelope(prompt),
-        { visibility: 'hidden', resume: false, allowedTools: [] },
+        {
+          visibility: 'hidden',
+          resume: false,
+          ...controlCallToolOptions(captainAdapter),
+        },
         signal,
       );
       if (result.status !== 'ok') {
@@ -1509,7 +1563,11 @@ export function createPlaybookCaptainShell(
       frame,
       context,
       visibleChatEnvelope(message),
-      { visibility: 'visible', resume: false, allowedTools: [] },
+      {
+        visibility: 'visible',
+        resume: false,
+        ...controlCallToolOptions(captainAdapter),
+      },
       context.signal,
     );
     if (result.status !== 'ok') {
@@ -1533,7 +1591,11 @@ export function createPlaybookCaptainShell(
       frame,
       context,
       visibleTurnSummaryEnvelope(input),
-      { visibility: 'visible', resume: false, allowedTools: [] },
+      {
+        visibility: 'visible',
+        resume: false,
+        ...controlCallToolOptions(captainAdapter),
+      },
       context.signal,
     );
     if (result.status !== 'ok') {
@@ -1591,7 +1653,11 @@ export function createPlaybookCaptainShell(
         leaf,
         context,
         hiddenLifecycleEnvelope(turn.prompt),
-        { visibility: 'hidden', resume: false, allowedTools: [] },
+        {
+          visibility: 'hidden',
+          resume: false,
+          ...controlCallToolOptions(captainAdapter),
+        },
         context.signal,
       );
       if (result.status === 'ok' && result.finalText !== undefined) {

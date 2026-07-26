@@ -36,6 +36,11 @@ tmux-play config whose `captain.from` is
 `@sublang/playbook/playbook-captain` and whose
 `captain.options.playbooks` holds one normalized entry per enabled
 playbook.
+The command shall also set `captain.options.captainAdapter` to the resolved
+captain agent's adapter, which the shell cannot otherwise read from the
+tmux-play Captain context and needs to decide whether an explicit empty tool
+allowlist can be enforced
+([DR-013 A1](../decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement)).
 Each normalized `captain.options.playbooks.<id>` entry shall carry the
 `playbooks.<id>` block's `from`, its optional `command`, and an
 `options` slice built from every non-launcher key of the block (such
@@ -189,8 +194,12 @@ The command shall host the runtime through a headless `PlaybookPorts`
 ([PBRT](playbook-runtime.md)) backed by cligent: `callPlayer` runs the
 bound role's agent through a per-role `Cligent`, threading each call's
 `resumeToken` into the next `resume`; `callJudge` and `callCaptain` run
-the captain agent, `callJudge` always starts a fresh session with an
-explicit empty tool allowlist, and `callCaptain` forwards its requested
+the captain agent, `callJudge` always starts a fresh session and requests
+an explicit empty tool allowlist unless the bound captain adapter has no
+provider-enforced tool-restriction surface, in which case it omits
+`allowedTools` per
+[DR-013 A1](../decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement)
+rather than fail every judge call, and `callCaptain` forwards its requested
 resume and tool-allowlist options exactly, preserving omission rather than
 creating an own `allowedTools: undefined` property; `callPlaybook`
 shall return a suspended start with a fresh synthetic child-session id

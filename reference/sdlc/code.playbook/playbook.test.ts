@@ -105,6 +105,9 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
       turn_finished: 'desktop',
     });
     expect(config.theme).toEqual({ accent: 'cyan' });
+    // DR-013 A1: the shell cannot read its captain's adapter from the
+    // tmux-play context, so the launcher passes the resolved one through.
+    expect(config.captain.options.captainAdapter).toBe('claude');
     expect(playbooks).toEqual([
       { id: 'code', command: 'code', intent: fakeEntry.intent },
     ]);
@@ -1070,6 +1073,42 @@ async function sessionStoreDir() {
   tempDirs.push(dir);
   return dir;
 }
+
+// PBCLI-31 (DR-013 A1): the judge call requests the enforced empty tool
+// allowlist only where the bound captain adapter can honor it. An empty list
+// means "no tools"; omission grants the adapter's full tool surface.
+describe('playbook run — captain tool isolation (PBCLI-31)', () => {
+  async function judgeOptionsFor(captain: string) {
+    const { createAgent, calls } = fakeAgents({});
+    const entry = runEntry(async (ports, turn) => {
+      await ports.callJudge('adjudicate', turn.signal);
+      return { outcome: 'terminal', state: {}, output: 'ok' };
+    });
+    const out = await runCli(
+      ['run', 'mod://code', 'x', '--captain', captain],
+      { 'mod://code': { default: entry } },
+      createAgent,
+    );
+    expect(out.code).toBe(0);
+    const judge = calls.find((c: any) => c.role === 'captain');
+    return judge.opts;
+  }
+
+  it('omits allowedTools for a captain adapter that cannot enforce it', async () => {
+    const opts = await judgeOptionsFor('codex');
+    expect(opts).not.toHaveProperty('allowedTools');
+    expect(opts.resume).toBe(false);
+  });
+
+  it.each(['claude', 'gemini', 'opencode'])(
+    'requests the empty tool allowlist for %s',
+    async (captain) => {
+      const opts = await judgeOptionsFor(captain);
+      expect(opts.allowedTools).toEqual([]);
+      expect(opts.resume).toBe(false);
+    },
+  );
+});
 
 describe('playbook run — park/resume lifecycle (PBCLI-24)', () => {
   const QUESTION = 'Which scope should I use?';

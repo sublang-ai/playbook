@@ -268,3 +268,15 @@ literal `Captain` in `◇ /<child> called by Captain`,
 `◇ /<child> returned to Captain`, and
 `◇ /<child> stopped; returning to Captain`, and shall never expose
 `/captain`.
+
+### CAPTAIN-33
+Verifies: [CAPTAIN-31](../dev/playbook-captain.md#captain-31)
+
+When the test suite drives the shell's control calls with a recorded
+captain bridge, the test suite shall fail unless a shell built with
+`captain.options.captainAdapter` naming an adapter without a
+provider-enforced tool-restriction surface omits `allowedTools` from every
+visible routing and hidden adjudication call while still requesting
+`resume: false` and the hidden-control envelope, and unless a shell built
+with an enforcing adapter, with no `captainAdapter`, or with an
+unrecognized one requests `allowedTools: []` on those same calls.

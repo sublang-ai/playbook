@@ -122,6 +122,14 @@ launching. You can view the same recovery text at any time:
 playbook --help
 ```
 
+A note on the Captain agent: playbook runs its hidden routing and
+adjudication calls tool-free, which is what keeps the Captain routing
+instead of doing the work itself. Claude enforces that at the provider
+level. The Codex adapter cannot — it rejects any tool list — so a
+`captain:` on `codex` falls back to a prompt-level restriction instead
+([DR-013 A1](specs/decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement)).
+Codex remains a good choice for *players*, where full tools are wanted.
+
 `playbook --list` prints the configured playbooks with their slash
 commands and intents. Every seeded agent — the Captain and both roles —
 runs in cligent's protected auto mode (`permissions.mode: auto`), so

@@ -363,7 +363,11 @@ async function driveTurn({ ctx, runtime, store, text, json, verbose, restoreFrom
     async callJudge(prompt, signal) {
       const result = await captainAgent.run(prompt, {
         resume: false,
-        allowedTools: [],
+        // DR-013 A1: an empty allowlist means "no tools" and is distinct
+        // from omission, which grants the adapter's full tool surface. Send
+        // it only where the adapter can enforce it; codex rejects any tool
+        // list outright, so requesting one would fail every judge call.
+        ...controlCallToolOptions(store.captain.adapter),
         signal,
       });
       if (result.status !== 'ok' || result.finalText === undefined) {
@@ -575,6 +579,20 @@ function playersFromSpecs(roleSpecs) {
     adapter: spec.adapter,
     ...(spec.model ? { model: spec.model } : {}),
   }));
+}
+
+// DR-013 A1: adapters with no provider-enforced tool-restriction surface.
+// Cligent's codex adapter rejects any allowedTools value — including the
+// empty list that expresses tool-free — so a control call that requests one
+// fails before the model is reached. Omission is the only way such an
+// adapter can run a control call; isolation then rests on the prompt.
+const ADAPTERS_WITHOUT_TOOL_ENFORCEMENT = new Set(['codex']);
+
+// Keep requesting enforcement whenever the adapter is unknown, so the
+// DR-013 guarantee holds by default.
+function controlCallToolOptions(captainAdapter) {
+  if (ADAPTERS_WITHOUT_TOOL_ENFORCEMENT.has(captainAdapter)) return {};
+  return { allowedTools: [] };
 }
 
 // PBCLI-19/26: returns a diagnostic for the first invalid spec — an

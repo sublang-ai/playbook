@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+[Addendum A1](#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement) amends §Isolated control calls: a host shall not request an explicit empty tool allowlist from an adapter it knows cannot enforce one, and shall substitute the authored prompt-level restriction instead.
 
 ## Context
 
@@ -45,6 +46,8 @@ For those outcomes, the runtime shall use the exact final text captured from the
 
 ### Isolated control calls
 
+> Amended by [Addendum A1](#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement): a host shall omit the explicit empty tool allowlist for an adapter with no provider-enforced tool-restriction surface, which degrades that adapter's isolation to the authored prompt-level restriction rather than failing every control call.
+
 Every visible routing or reassessment call and its hidden adjudication call in the default Captain runtime shall start a fresh agent conversation with an explicit empty tool allowlist.
 The host shall serialize those calls through its Captain lane while the XState runtime remains the sole owner of workflow memory.
 An adapter that cannot enforce an explicit empty tool allowlist shall fail closed instead of silently exposing tools.
@@ -60,3 +63,22 @@ The Captain prompt shall explicitly limit its decision evidence to the supplied 
 - Human-visible prose and hidden machine control have distinct contracts.
 - Cligent adapters must honor or reject explicit tool isolation consistently.
 - The maintained Captain source, SLC definitions, generated artifacts, and shell integration require coordinated changes without a package release.
+
+## Addendum A1 (prompt-level isolation for adapters without tool enforcement)
+
+§Isolated control calls requires every control call to carry an explicit empty tool allowlist and requires an adapter that cannot enforce one to fail closed.
+Cligent's Codex adapter implements exactly that contract: it rejects any `allowedTools` or `disallowedTools` value — including the empty list this design uses to *express* tool-free — because the supported Codex SDK exposes no provider-enforced tool-restriction surface.
+
+The two halves compose into a total failure.
+A host configured with a Codex captain fails on its very first routing call, and therefore on every Boss turn, because the empty allowlist is refused before any model call.
+Fail-closed was the right adapter behavior; requesting enforcement from an adapter known to lack it is the host's error.
+
+A host shall therefore treat the empty tool allowlist as a request it only makes where it can be honored:
+
+- Where the host knows the captain agent's adapter has no provider-enforced tool-restriction surface, it shall omit `allowedTools` from control calls rather than send an empty list.
+- Every other control-call guarantee is unchanged: the call still starts a fresh conversation, still carries no resume token, and still runs through the Captain lane.
+- Isolation for such an adapter degrades to the authored prompt-level restriction — the hidden-judge envelope that forbids tool use, delimits the runtime prompt, and refuses instructions found inside quoted actor output. That substitution is a documented reduction in enforcement, not an equivalence.
+- Where the host cannot determine the adapter, it shall keep requesting the empty allowlist, preserving the §Isolated control calls guarantee by default and failing closed as before.
+
+Adapter capability is host knowledge, not runtime knowledge: the linked runtimes keep emitting the same `CaptainCallOptions`, and each host resolves the substitution for the captain agent it owns.
+When cligent publishes discoverable tool-restriction capability metadata, a host shall consult it instead of a maintained adapter list, and that change supersedes this addendum's mechanism without changing its decision.

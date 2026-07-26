@@ -162,7 +162,15 @@ ledger.
 
 ### CAPTAIN-31
 
-Where the shell hosts the compiled default Captain, when it forwards a visible routing or reassessment call, the shell shall request `resume: false` and `allowedTools: []` and preserve the runtime prompt as the exact host prompt; when it forwards a hidden adjudication call, it shall request the same isolation and preserve the runtime-supplied judge prompt verbatim inside the hidden-control envelope required by [CAPTAIN-9](#captain-9). The shell shall reject either call if the configured adapter cannot enforce the empty allowlist; the shared queue shall serialize these isolated calls without treating an agent conversation as workflow memory.
+Where the shell hosts the compiled default Captain, when it forwards a visible routing or reassessment call, the shell shall request `resume: false` and `allowedTools: []` and preserve the runtime prompt as the exact host prompt; when it forwards a hidden adjudication call, it shall request the same isolation and preserve the runtime-supplied judge prompt verbatim inside the hidden-control envelope required by [CAPTAIN-9](#captain-9). Where the launcher has supplied the resolved captain adapter as
+`captain.options.captainAdapter` and that adapter has no provider-enforced
+tool-restriction surface, the shell shall omit `allowedTools` from those calls
+instead of sending the empty list, degrading that adapter's isolation to the
+[CAPTAIN-9](#captain-9) hidden-control envelope per
+[DR-013 A1](../decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement);
+where the adapter is absent or unrecognized it shall keep requesting the empty
+allowlist.
+The shell shall reject either call if the configured adapter is asked for the empty allowlist and cannot enforce it; the shared queue shall serialize these isolated calls without treating an agent conversation as workflow memory.
 Where the shell submits an ordinary idle turn to the default Captain runtime,
 it shall pass the original Boss text unchanged and shall not make a model call
 that can replace or paraphrase that text before runtime entry.

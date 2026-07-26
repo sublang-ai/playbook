@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Codex captain no longer fails every Boss turn.** The Captain shell and `playbook run` requested an explicit empty tool allowlist on every routing, adjudication, and judge call; cligent's Codex adapter rejects any tool list fail-closed, so a `captain:` on `codex` aborted at its first routing call. Each host now omits `allowedTools` for a captain adapter with no provider-enforced tool-restriction surface, and the launcher passes the resolved adapter through as `captain.options.captainAdapter` because the shell cannot read it from the tmux-play context. Claude captains are unchanged and keep provider-enforced tool-free isolation; a Codex captain degrades to the authored prompt-level restriction, and an unknown adapter still requests the empty allowlist and fails closed ([DR-013 A1](specs/decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement), [CAPTAIN-31](specs/dev/playbook-captain.md#captain-31), [PBCLI-20](specs/dev/playbook-cli.md#pbcli-20)).
+
 ## [2.1.0] - 2026-07-25
 
 ### Added

@@ -419,7 +419,16 @@ export async function composeGenericConfig(top, loadModule) {
     listing.push({ id, command, intent: entry.intent });
   }
 
-  captain.options = { playbooks: optionsPlaybooks };
+  // DR-013 A1: the shell cannot see its own captain's adapter through the
+  // tmux-play CaptainContext, so the launcher — which resolved it — passes it
+  // through. The shell needs it to decide whether an explicit empty tool
+  // allowlist can be enforced or must degrade to prompt-level restriction.
+  captain.options = {
+    playbooks: optionsPlaybooks,
+    ...(typeof captain.adapter === 'string' && captain.adapter.length > 0
+      ? { captainAdapter: captain.adapter }
+      : {}),
+  };
   const config = { captain, players: roster };
   // PBCLI-10: carry the user's tmux-play layout window/weight fields through;
   // the launcher owns `layout.initialVisible` (first enabled playbook).

@@ -53,7 +53,8 @@ top-level roster as the union of each playbook's `<id>-<role>` host
 players with separate instances when two playbooks share a profile;
 sets `layout.initialVisible` to the first enabled playbook's
 generated player ids while carrying through the window and
-column-weight fields; and carries the user config's top-level
+column-weight fields; sets `captain.options.captainAdapter` to the
+resolved captain adapter; and carries the user config's top-level
 `notifications` and `theme` fields into the composed config unchanged.
 
 ## Validation
@@ -190,3 +191,13 @@ before any agent factory call; an unparseable config file, a non-map
 `1`; a resumed session rebuilds its stored lineup even when the
 injected config binds different agents; and an absent config file
 keeps the `claude` defaults.
+
+### PBCLI-31
+Verifies: [PBCLI-20](../dev/playbook-cli.md#pbcli-20)
+
+When the test suite exercises `playbook run` with an injected agent-run
+function, the test suite shall fail unless a run whose captain binds an
+adapter without a provider-enforced tool-restriction surface issues its
+`callJudge` calls with no `allowedTools` property, and unless a run whose
+captain binds an enforcing adapter issues them with `allowedTools: []`;
+both shall still request `resume: false`.

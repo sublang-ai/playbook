@@ -414,6 +414,8 @@ function makeShell(
     sessionIds?: string[];
     commands?: Readonly<Record<string, string>>;
     createCaptainRuntime?: PlaybookCaptainDeps['createCaptainRuntime'];
+    // CAPTAIN-33: the launcher-supplied captain adapter (DR-013 A1).
+    captainAdapter?: string;
   } = {},
 ) {
   const list = Array.isArray(entries) ? entries : [entries];
@@ -433,7 +435,12 @@ function makeShell(
   let sessionSequence = 0;
   const sessionIds = opts.sessionIds;
   return createPlaybookCaptainShell(
-    { playbooks },
+    {
+      playbooks,
+      ...(opts.captainAdapter === undefined
+        ? {}
+        : { captainAdapter: opts.captainAdapter }),
+    },
     {
       loadModule: async (specifier: string) => {
         if (specifier in modules) return modules[specifier];
@@ -646,6 +653,74 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(context.captainCalls).toEqual([]);
     expect(session.statuses).toEqual([]);
     expect(session.telemetry).toEqual([]);
+  });
+
+  // CAPTAIN-33 (DR-013 A1): an empty allowlist means "no tools" and is
+  // distinct from omission, which grants the adapter's full tool surface.
+  // Request it only where the adapter can enforce it.
+  it.each([
+    { label: 'no captainAdapter', captainAdapter: undefined },
+    { label: 'an enforcing adapter', captainAdapter: 'claude' },
+    { label: 'an unrecognized adapter', captainAdapter: 'future-agent' },
+  ])(
+    'requests the enforced empty tool allowlist with $label',
+    async ({ captainAdapter }) => {
+      const registry = fakeCodeEntry();
+      const shell = makeShell(registry, {
+        ...(captainAdapter === undefined ? {} : { captainAdapter }),
+      });
+      const session = stubSession();
+      const question = 'Should I route this to the CODE workflow?';
+      const context = stubContext([
+        (_prompt, options) => {
+          expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
+          return { status: 'ok', turnId: 1, finalText: question };
+        },
+        (_prompt, options) => {
+          expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
+          return captainJson({ guard: 'question' });
+        },
+      ]);
+
+      await shell.init!(session.session);
+      await shell.handleBossTurn(turn('route this'), context.context);
+
+      expect(context.captainCalls).toHaveLength(2);
+      for (const { options } of context.captainCalls) {
+        expect(options?.allowedTools).toEqual([]);
+      }
+    },
+  );
+
+  it('omits allowedTools for an adapter that cannot enforce it', async () => {
+    const registry = fakeCodeEntry();
+    // Cligent's codex adapter rejects any tool list outright, so requesting
+    // one would fail every control call before the model is reached.
+    const shell = makeShell(registry, { captainAdapter: 'codex' });
+    const session = stubSession();
+    const question = 'Should I route this to the CODE workflow?';
+    const context = stubContext([
+      (_prompt, options) => {
+        expect(options).toEqual({ visibility: 'visible', resume: false });
+        return { status: 'ok', turnId: 1, finalText: question };
+      },
+      (prompt, options) => {
+        expect(options).toEqual({ visibility: 'hidden', resume: false });
+        // Isolation degrades to the authored prompt-level restriction.
+        expect(prompt).toContain('Do not use tools.');
+        return captainJson({ guard: 'question' });
+      },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('route this'), context.context);
+
+    expect(context.captainCalls).toHaveLength(2);
+    for (const { options } of context.captainCalls) {
+      expect(options).not.toHaveProperty('allowedTools');
+      // Every other isolation guarantee is unchanged.
+      expect(options?.resume).toBe(false);
+    }
   });
 
   it('enters exact Boss text directly and parks on a routing question', async () => {

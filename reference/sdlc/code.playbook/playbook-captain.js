@@ -27,6 +27,46 @@ function visibleChatEnvelope(message) {
         message,
     ].join('\n\n');
 }
+// DR-013 A1: adapters with no provider-enforced tool-restriction surface.
+// Cligent's Codex adapter rejects any `allowedTools` value — including the
+// empty list that expresses tool-free — because the supported Codex SDK
+// cannot enforce one, so requesting it fails every control call before the
+// model is reached. Omitting the option is the only way such an adapter can
+// run a control call at all; its isolation then rests on the authored
+// hidden-judge envelope below rather than on provider enforcement.
+const ADAPTERS_WITHOUT_TOOL_ENFORCEMENT = new Set([
+    'codex',
+]);
+// The tool half of a control call's options. An empty allowlist means "no
+// tools available" and is distinct from omission, which grants the adapter's
+// full native tool surface — so omit only where the empty list would be
+// refused, and keep requesting enforcement whenever the adapter is unknown.
+function controlCallToolOptions(captainAdapter) {
+    if (captainAdapter !== undefined &&
+        ADAPTERS_WITHOUT_TOOL_ENFORCEMENT.has(captainAdapter)) {
+        return {};
+    }
+    return { allowedTools: [] };
+}
+// A runtime-requested allowlist forwarded to the captain agent. The empty
+// list is the runtime's way of saying "tool-free", so it is the only value
+// the host substitutes; a non-empty list is a real restriction and stays
+// fail-closed on an adapter that cannot enforce it.
+function forwardedToolOptions(requested, captainAdapter) {
+    if (requested === undefined)
+        return {};
+    if (requested.length === 0)
+        return controlCallToolOptions(captainAdapter);
+    return { allowedTools: requested };
+}
+function readCaptainAdapter(options) {
+    if (typeof options !== 'object' || options === null)
+        return undefined;
+    const adapter = options.captainAdapter;
+    return typeof adapter === 'string' && adapter.length > 0
+        ? adapter
+        : undefined;
+}
 function hiddenJudgeEnvelope(prompt) {
     return [
         'You are the Playbook Captain shell hidden-control judge.',
@@ -189,6 +229,10 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const loadModule = deps.loadModule ?? ((specifier) => import(specifier));
     const createSessionId = deps.createSessionId ?? randomUUID;
     const createCaptainRuntime = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
+    // DR-013 A1: the launcher passes the resolved captain adapter through
+    // `captain.options`; a raw `--config` launch leaves it undefined, which
+    // keeps the enforced empty allowlist and its fail-closed behavior.
+    const captainAdapter = readCaptainAdapter(options);
     let entries = [];
     let byCommand = new Map();
     let byId = new Map();
@@ -395,9 +439,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             const result = await callCaptainQueued(frame, activeContext, prompt, {
                 visibility: options.visibility,
                 resume: options.resume,
-                ...(options.allowedTools === undefined
-                    ? {}
-                    : { allowedTools: options.allowedTools }),
+                ...forwardedToolOptions(options.allowedTools, captainAdapter),
             }, signal);
             return {
                 status: result.status,
@@ -411,7 +453,11 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (!activeContext) {
                 throw new Error('callJudge invoked outside a Boss turn');
             }
-            const result = await callCaptainQueued(frame, activeContext, hiddenJudgeEnvelope(prompt), { visibility: 'hidden', resume: false, allowedTools: [] }, signal);
+            const result = await callCaptainQueued(frame, activeContext, hiddenJudgeEnvelope(prompt), {
+                visibility: 'hidden',
+                resume: false,
+                ...controlCallToolOptions(captainAdapter),
+            }, signal);
             if (result.status !== 'ok') {
                 throw new Error(result.error ?? `callCaptain status "${result.status}"`);
             }
@@ -1114,13 +1160,21 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
     };
     const callVisibleChat = async (frame, context, message) => {
-        const result = await callCaptainQueued(frame, context, visibleChatEnvelope(message), { visibility: 'visible', resume: false, allowedTools: [] }, context.signal);
+        const result = await callCaptainQueued(frame, context, visibleChatEnvelope(message), {
+            visibility: 'visible',
+            resume: false,
+            ...controlCallToolOptions(captainAdapter),
+        }, context.signal);
         if (result.status !== 'ok') {
             throw new Error(result.error ?? `callCaptain status "${result.status}"`);
         }
     };
     const callVisibleTurnSummary = async (frame, context, input) => {
-        const result = await callCaptainQueued(frame, context, visibleTurnSummaryEnvelope(input), { visibility: 'visible', resume: false, allowedTools: [] }, context.signal);
+        const result = await callCaptainQueued(frame, context, visibleTurnSummaryEnvelope(input), {
+            visibility: 'visible',
+            resume: false,
+            ...controlCallToolOptions(captainAdapter),
+        }, context.signal);
         if (result.status !== 'ok') {
             throw new Error(result.error ?? `callCaptain status "${result.status}"`);
         }
@@ -1164,7 +1218,11 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
         let decision;
         try {
-            const result = await callCaptainQueued(leaf, context, hiddenLifecycleEnvelope(turn.prompt), { visibility: 'hidden', resume: false, allowedTools: [] }, context.signal);
+            const result = await callCaptainQueued(leaf, context, hiddenLifecycleEnvelope(turn.prompt), {
+                visibility: 'hidden',
+                resume: false,
+                ...controlCallToolOptions(captainAdapter),
+            }, context.signal);
             if (result.status === 'ok' && result.finalText !== undefined) {
                 decision = parseLifecycleDecision(result.finalText);
             }
