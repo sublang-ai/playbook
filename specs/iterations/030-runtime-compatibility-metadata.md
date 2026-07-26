@@ -9,16 +9,16 @@ Implement [DR-022](../decisions/022-runtime-compatibility-contract.md): the engi
 
 ## Deliverables
 
-- [ ] DR-022 and DR-023, new [PBRT-50](../dev/playbook-runtime.md#pbrt-50) and [PBCLI-35](../test/playbook-cli.md#pbcli-35), amended [PBCLI-20](../dev/playbook-cli.md#pbcli-20) and [RELEASE-15](../dev/release.md#release-15), the `slc/link.md` §Output `compat` bullet, and the map rows.
-- [ ] `RUNTIME_ABI`, `SUPPORTED_ARTIFACT_SCHEMAS`, and the `spec.compat` construction check in `src/xstate-playbook-runtime.ts` with regenerated committed `.js`/`.d.ts` siblings, pinned on the public engine surface.
-- [ ] Factory unit tests for the compatible, schema-mismatch, ABI-mismatch, both-wrong, and absent-declaration paths, and a `playbook run` integration test over an incompatible synthetic entry, with zero existing expectations changed.
-- [ ] Version 3.1.0 and the dated `[3.1.0]` CHANGELOG section per [RELEASE-4](../dev/release.md#release-4).
+- [x] DR-022 and DR-023, new [PBRT-50](../dev/playbook-runtime.md#pbrt-50) and [PBCLI-35](../test/playbook-cli.md#pbcli-35), amended [PBCLI-20](../dev/playbook-cli.md#pbcli-20) and [RELEASE-15](../dev/release.md#release-15), the `slc/link.md` §Output `compat` bullet, and the map rows.
+- [x] `RUNTIME_ABI`, `SUPPORTED_ARTIFACT_SCHEMAS`, and the `spec.compat` construction check in `src/xstate-playbook-runtime.ts` with regenerated committed `.js`/`.d.ts` siblings, pinned on the public engine surface.
+- [x] Factory unit tests for the compatible, schema-mismatch, ABI-mismatch, both-wrong, and absent-declaration paths, and a `playbook run` integration test over an incompatible synthetic entry, with zero existing expectations changed.
+- [x] Version 3.1.0 and the dated `[3.1.0]` CHANGELOG section per [RELEASE-4](../dev/release.md#release-4).
 
 ## Tasks
 
-1. **Spec surface.** Author DR-022 and DR-023, add PBRT-50 and PBCLI-35, amend PBCLI-20, RELEASE-15, and `slc/link.md` §Output, and add this record and the map rows.
-2. **Engine self-report and factory check with tests.** Add the exports, the `compat` spec member, and the construction-time check to `src/xstate-playbook-runtime.ts`; rebuild the committed siblings; extend the factory unit suite, the run-path suite, and the package-surface engine pin.
-3. **Release preparation.** Bump `package.json` to 3.1.0 and cut the dated `[3.1.0]` CHANGELOG section with updated comparison links; do not tag.
+1. **Spec surface.** _[done]_ Author DR-022 and DR-023, add PBRT-50 and PBCLI-35, amend PBCLI-20, RELEASE-15, and `slc/link.md` §Output, and add this record and the map rows.
+2. **Engine self-report and factory check with tests.** _[done]_ Add the exports, the `compat` spec member, and the construction-time check to `src/xstate-playbook-runtime.ts`; rebuild the committed siblings; extend the factory unit suite, the run-path suite, and the package-surface engine pin.
+3. **Release preparation.** _[done]_ Bump `package.json` to 3.1.0 and cut the dated `[3.1.0]` CHANGELOG section with updated comparison links; do not tag.
 
 ## Acceptance criteria
 
