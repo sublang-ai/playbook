@@ -504,19 +504,15 @@ async function drivePlaybookTurn(
 }
 
 function spawnLauncher(scenario: Scenario): Launcher {
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
+  // Keep the launched session on the gate's private tmux server, so it is
+  // the only session this run can see, drive, or kill.
+  const env = privateTmuxEnv({
     XDG_CONFIG_HOME: scenario.configHome,
     PLAYBOOK_ACCEPTANCE_BIN: candidateBin,
     PLAYBOOK_ACCEPTANCE_REPO: scenario.repo,
-    // Keep the launched session on the gate's private tmux server, so it
-    // is the only session this run can see, drive, or kill.
-    TMUX_TMPDIR: tmuxSocketDir,
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
-  };
-  delete env.TMUX;
-  delete env.TMUX_PANE;
+  });
 
   const expectScript = [
     'set stty_init "rows 49 columns 174"',
@@ -791,11 +787,27 @@ function headHasPath(repo: string, path: string): boolean {
   }
 }
 
-// Every tmux command the gate issues must reach the private server created
-// under `tmuxSocketDir`, not the maintainer's default server.
+// Point a process at the gate's private tmux server under `tmuxSocketDir`.
+// Clearing `TMUX` and `TMUX_PANE` is load-bearing, not hygiene: when the
+// gate itself is run from inside tmux, an inherited `TMUX` names the
+// caller's socket and takes precedence over `TMUX_TMPDIR`, so commands
+// would reach the maintainer's server and could drive or kill their
+// session. Every tmux invocation and the launcher share this one recipe so
+// the two cannot drift apart.
+function privateTmuxEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...overrides,
+    TMUX_TMPDIR: tmuxSocketDir,
+  };
+  delete env.TMUX;
+  delete env.TMUX_PANE;
+  return env;
+}
+
 function tmuxText(args: readonly string[]): string {
   return execFileSync('tmux', [...args], {
-    env: { ...process.env, TMUX_TMPDIR: tmuxSocketDir },
+    env: privateTmuxEnv(),
     encoding: 'utf8',
     maxBuffer: 20 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
