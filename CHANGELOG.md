@@ -10,19 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-07-26
+
 ### Added
 
+- **Releases now have an opt-in local live acceptance gate.** `pnpm test:acceptance` packs and installs the candidate, launches its installed `playbook` executable in real tmux-play sessions, and drives real locally authenticated Claude and Codex agents through `/code` and `/discuss` in separate fresh git repositories. It verifies the expected committed repository and spec outcomes with clean worktrees, fails clearly on missing local prerequisites, and stays outside the normal test suite and GitHub CI because it spends real model calls ([RELEASE-24](specs/dev/release.md#release-24), [RELEASE-25](specs/test/release.md#release-25)).
+
 - **Local release acceptance now covers real non-interactive runs.** The opt-in `pnpm test:acceptance` gate runs the installed `playbook run` command over a small fixture before its interactive cases, making one real Claude player call and one real Codex-Captain judge call. It requires the exact terminal JSON result, an unchanged clean fixture repository, and no tmux session, so the functional headless release smoke no longer requires a separate manual run ([RELEASE-24](specs/dev/release.md#release-24), [RELEASE-25](specs/test/release.md#release-25)).
+
+- **The packed tarball now guarantees the CODE and DISCUSS prose sources.** `reference/sdlc/code.md` and `reference/sdlc/discuss.md` ship as package files beside their compiled artifacts, so a host can display or recompile the bundled playbooks from source; the release contract and the packed-tarball test now pin both files ([RELEASE-20](specs/dev/release.md#release-20), [RELEASE-18](specs/test/release.md#release-18)).
+
+- **The published package now ships its `docs/` guides.** The README delegates usage to `docs/cli.md` and `docs/configuration.md`, but neither was in `files`, so an installed copy linked to content its tarball did not carry. They are packed now, which also means an install resolves its links against the version it shipped with rather than whatever the repository currently documents; the packed-tarball test asserts every `docs/*.md` the README links to is present ([RELEASE-20](specs/dev/release.md#release-20), [RELEASE-18](specs/test/release.md#release-18)).
 
 ### Changed
 
 - **The seeded config and docs use cligent's canonical `effort` key.** Agent blocks wrote the deprecated `reasoningEffort`, which cligent 0.16 still accepts as a compatibility alias. The starter template, README, live acceptance fixture, and the PBCLI-11 seeded-lineup contract now write `effort` directly, so a fresh config never depends on that path. Existing generic configs remain readable through cligent's compatibility parser; because the loader receives the launcher's temporary composed config rather than the original generic config, this change does not claim to rewrite that legacy key in the user's file ([PBCLI-11](specs/dev/playbook-cli.md#pbcli-11)).
 
-- **The published package now ships its `docs/` guides.** The README delegates usage to `docs/cli.md` and `docs/configuration.md`, but neither was in `files`, so an installed copy linked to content its tarball did not carry. They are packed now, which also means an install resolves its links against the version it shipped with rather than whatever the repository currently documents; the packed-tarball test asserts every `docs/*.md` the README links to is present ([RELEASE-20](specs/dev/release.md#release-20), [RELEASE-18](specs/test/release.md#release-18)).
-
 - **The README is a landing page again.** It had grown to 400 lines of reference material — every flag, exit code, and a full config walkthrough — which buried what playbook is and how to start. It now covers the idea, a quick start, and how compilation works, handing the rest to [docs/cli.md](docs/cli.md) (both surfaces, Boss turns, flags, exit codes, resuming a parked run) and [docs/configuration.md](docs/configuration.md) (the config file, `--with` overlays, choosing the Captain agent, migrating from profiles). No content was dropped.
 
 - **CODE and DISCUSS adopt the intent-records vocabulary.** Downstream scaffolds rename `specs/iterations/` to `specs/intents/` — intent records, with the IR acronym and ids unchanged (spex DR-017) — so the Coder decomposition prompt now files a new IR under `@specs/intents` (or `@specs/iterations` in older scaffolds), the "spec item files" definition says decision and intent records with the legacy name kept for un-migrated trees, and the judge-facing record descriptions name decision, intent, or legacy iteration records. The GEARS and FSM artifacts are recompiled in lockstep ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md)).
+
+- **CODE's prompts and review routing no longer assume the legacy three-folder specs layout.** The Coder IR-done prompt filed spec items into `@specs/user`, `@specs/dev`, and `@specs/test`; the Reviewer "Right level" checklist line named the same folders; and the Captain routed review rounds and classified commits by whether changes touched `@specs/{user,dev,test}/` — misrouting on current packages-layout specs trees (`specs/packages/` + `specs/compositions/`), where those folders do not exist. The playbook now classifies by *spec item files*, a term `code.md` defines for both layouts; judge-facing result descriptions carry the definition inline because the adjudicator has no filesystem access, and player prompts name spec levels layout-neutrally, deferring placement to the already-cited `@specs/meta.md`. The GEARS and FSM artifacts are recompiled in lockstep, and the conformance contract pins the new checklist wording, retiring both prior "Right level" lines ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md), [PLAYBOOK-18](specs/dev/playbook.md#playbook-18)).
+
+- **DISCUSS and DOC follow CODE onto the layout-agnostic prompts.** The DISCUSS review conditions and Participant spec checklist named the legacy `@specs/{user,dev,test}` folders, and its Committer prompt cited only `specs/dev/git.md`; the draft Chinese DOC source cited the same legacy path. DISCUSS now classifies by the DR-020 "spec item files" term (definition carried in `discuss.md` and its GEARS artifact), carries the layout-neutral "Right level" checklist line, and both playbooks prefer `specs/packages/git.md`, fall back to legacy `specs/dev/git.md`, then use the repository's existing conventions when neither spec exists ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md)).
 
 ### Removed
 
@@ -30,26 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **README release history is current.** The release note now identifies 3.0.0 as the next release, records script actors and the GEARS optimize pass under the 1.0.0 system they shipped with, and cites the current gears/FSM contract rather than the obsolete `PLAYBOOK-1..6` range.
+- **README release history is current.** The release note now identifies 3.0.0 as the current release, records script actors and the GEARS optimize pass under the 1.0.0 system they shipped with, and cites the current gears/FSM contract rather than the obsolete `PLAYBOOK-1..6` range.
 
 - **A Codex captain no longer fails every Boss turn.** The Captain shell and `playbook run` requested an explicit empty tool allowlist on every routing, adjudication, and judge call; cligent's Codex adapter rejects any tool list fail-closed, so a `captain:` on `codex` aborted at its first routing call. Each host now omits `allowedTools` for a captain adapter with no provider-enforced tool-restriction surface, and the launcher passes the resolved adapter through as `captain.options.captainAdapter` because the shell cannot read it from the tmux-play context. Claude captains are unchanged and keep provider-enforced tool-free isolation; a Codex captain degrades to the authored prompt-level restriction, and an unknown adapter still requests the empty allowlist and fails closed ([DR-013 A1](specs/decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement), [CAPTAIN-31](specs/dev/playbook-captain.md#captain-31), [PBCLI-20](specs/dev/playbook-cli.md#pbcli-20)).
   Headless judge prompts now carry the same hidden-control envelope the shell already applied — previously `playbook run` forwarded the runtime prompt, which embeds raw Boss text and quoted player output, straight to the captain agent — so the prompt-level isolation A1 substitutes for provider enforcement is actually present on both hosts. The envelope text is now authored once on `@sublang/playbook/xstate-runtime` and shared, so the two hosts cannot drift ([CAPTAIN-9](specs/dev/playbook-captain.md#captain-9), [PBCLI-31](specs/test/playbook-cli.md#pbcli-31)).
-
-## [2.1.0] - 2026-07-25
-
-### Added
-
-- **Releases now have an opt-in local live acceptance gate.** `pnpm test:acceptance` packs and installs the candidate, launches its installed `playbook` executable in real tmux-play sessions, and drives real locally authenticated Claude and Codex agents through `/code` and `/discuss` in separate fresh git repositories. It verifies the expected committed repository and spec outcomes with clean worktrees, fails clearly on missing local prerequisites, and stays outside the normal test suite and GitHub CI because it spends real model calls ([RELEASE-24](specs/dev/release.md#release-24), [RELEASE-25](specs/test/release.md#release-25)).
-
-- **The packed tarball now guarantees the CODE and DISCUSS prose sources.** `reference/sdlc/code.md` and `reference/sdlc/discuss.md` ship as package files beside their compiled artifacts, so a host can display or recompile the bundled playbooks from source; the release contract and the packed-tarball test now pin both files ([RELEASE-20](specs/dev/release.md#release-20), [RELEASE-18](specs/test/release.md#release-18)).
-
-### Changed
-
-- **CODE's prompts and review routing no longer assume the legacy three-folder specs layout.** The Coder IR-done prompt filed spec items into `@specs/user`, `@specs/dev`, and `@specs/test`; the Reviewer "Right level" checklist line named the same folders; and the Captain routed review rounds and classified commits by whether changes touched `@specs/{user,dev,test}/` — misrouting on current packages-layout specs trees (`specs/packages/` + `specs/compositions/`), where those folders do not exist. The playbook now classifies by *spec item files*, a term `code.md` defines for both layouts; judge-facing result descriptions carry the definition inline because the adjudicator has no filesystem access, and player prompts name spec levels layout-neutrally, deferring placement to the already-cited `@specs/meta.md`. The GEARS and FSM artifacts are recompiled in lockstep, and the conformance contract pins the new checklist wording, retiring both prior "Right level" lines ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md), [PLAYBOOK-18](specs/dev/playbook.md#playbook-18)).
-
-- **DISCUSS and DOC follow CODE onto the layout-agnostic prompts.** The DISCUSS review conditions and Participant spec checklist named the legacy `@specs/{user,dev,test}` folders, and its Committer prompt cited only `specs/dev/git.md`; the draft Chinese DOC source cited the same legacy path. DISCUSS now classifies by the DR-020 "spec item files" term (definition carried in `discuss.md` and its GEARS artifact), carries the layout-neutral "Right level" checklist line, and both playbooks prefer `specs/packages/git.md`, fall back to legacy `specs/dev/git.md`, then use the repository's existing conventions when neither spec exists ([DR-020](specs/decisions/020-spec-layout-agnostic-code-prompts.md)).
-
-### Fixed
 
 - **Hidden adjudicators stay on JSON-only control work.** A live `/code` release smoke reached the correct commit, but its fresh tool-free judge ignored the requested control shape and returned a fabricated Bash transcript with no `guard`, so the runtime correctly failed closed. CODE, DISCUSS, and the shared default adjudicator now explicitly prohibit tool/file inspection and external evidence, require a decision solely from the supplied output and declared outcomes, and demand exactly one JSON object with no prose. The Captain shell additionally preserves that runtime request verbatim inside a hostile-evidence control envelope that forbids real or simulated tool transcripts ([CAPTAIN-9](specs/dev/playbook-captain.md#captain-9), [CAPTAIN-32](specs/test/playbook-captain.md#captain-32), [PBRT-10](specs/dev/playbook-runtime.md#pbrt-10), [PBRT-23](specs/test/playbook-runtime.md#pbrt-23)).
 
@@ -273,8 +267,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v2.1.0...HEAD
-[2.1.0]: https://github.com/sublang-ai/playbook/compare/v2.0.0...v2.1.0
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/sublang-ai/playbook/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/sublang-ai/playbook/compare/v1.3.0...v2.0.0
 [1.3.0]: https://github.com/sublang-ai/playbook/compare/v1.0.0...v1.3.0
 [1.0.0]: https://github.com/sublang-ai/playbook/compare/v0.9.0...v1.0.0

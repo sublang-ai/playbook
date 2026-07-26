@@ -70,12 +70,12 @@ playbook run @sublang/playbook/code/registry "add a test for parseArgs" --json
 - **[docs/embedding.md](docs/embedding.md)** — the six-port runtime
   contract for hosts other than `tmux-play`.
 
-> **Next release:** 3.0.0. The composed system — the compiled default
+> **Current release:** 3.0.0. The composed system — the compiled default
 > Captain, CODE and DISCUSS, nested playbook calls, script actors and the
 > GEARS optimize pass, the semver-stable six-port runtime contract, and
 > non-interactive `playbook run` with parked-session resume — landed in
 > 1.0.0. Since then, `playbook run` gained defaults in the user config,
-> and the unreleased 3.0.0 line replaces the top-level `profiles` map with
+> and 3.0.0 replaces the top-level `profiles` map with
 > inline agent settings (existing configs migrate themselves on the next
 > launch). See the [CHANGELOG](CHANGELOG.md).
 
