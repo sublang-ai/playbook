@@ -67,6 +67,7 @@ intents the same way you would to `claude -p` or `codex exec`.
 | `--option <key>=<value>` | a playbook option (CODE's `committer`) |
 | `--cwd <dir>` | the agents' working directory |
 | `--json` | one envelope: `outcome`, `sessionId`, output or questions |
+| `--no-provision` | never create engine links beside a filesystem `<from>` |
 
 `<agent>` is `<adapter>[:<model>][@<effort>]` — `codex:gpt-5.5@xhigh`,
 or `claude@high` for the default model at high reasoning effort. The
@@ -78,6 +79,26 @@ config supplies [run defaults](configuration.md#defaults-for-playbook-run).
 Exit codes: `0` terminal, `1` bad argument or module, `2` failure, `3`
 the playbook needs a Boss reply
 ([PBCLI-18](../specs/user/playbook-cli.md#pbcli-18)).
+
+### Engine provisioning
+
+A compiled playbook module imports `xstate` and
+`@sublang/playbook/xstate-runtime` from its own directory. When a
+filesystem `<from>` cannot resolve them — typically under a global
+`npm install -g @sublang/playbook` with no project-local packages —
+`playbook run` provisions them automatically before loading: it creates
+`node_modules/xstate` and `node_modules/@sublang/playbook` beside the
+module as symlinks to the running host's own packages and prints one
+line naming what it linked
+([PBCLI-36](../specs/user/playbook-cli.md#pbcli-36),
+[DR-024](../specs/decisions/024-runtime-engine-provisioning.md)).
+A directory where the imports already resolve is never touched — a
+project-local install always wins — and `--no-provision` disables the
+mechanism entirely.
+
+If the module's directory is a git repository, add `node_modules/` to
+its `.gitignore` so the provisioned links never land in commits made by
+player agents working there.
 
 ### Resuming a parked run
 

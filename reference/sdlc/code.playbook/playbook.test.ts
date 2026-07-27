@@ -1,20 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  readlink,
   rm,
   stat,
+  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadTmuxPlayConfig } from '@sublang/cligent/tmux-play';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMachine } from 'xstate';
@@ -2498,5 +2503,253 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     expect(nonMap.stderr).toContain('must be a YAML map');
 
     expect(spawn.calls).toHaveLength(0);
+  });
+});
+
+// PBCLI-38: engine provisioning over synthetic filesystem registry
+// modules and injected host package roots.
+
+const ENGINE_IMPORTING_REGISTRY = `import 'xstate';
+import '@sublang/playbook/xstate-runtime';
+export default {
+  id: 'fake',
+  command: 'fake',
+  intent: 'provisioning fixture',
+  requiredRoleIds: [],
+  validateOptions(value) { return value; },
+  createRuntime() {
+    return {
+      async init() {},
+      async handleBossInput() {
+        return { outcome: 'terminal', state: {}, output: 'ok' };
+      },
+      async resumePlaybookCall() {
+        return { outcome: 'no-action', state: {} };
+      },
+      async dispose() {},
+    };
+  },
+};
+`;
+
+const SYNTHETIC_XSTATE = {
+  'package.json': `${JSON.stringify({
+    name: 'xstate',
+    version: '0.0.0',
+    main: 'index.js',
+  })}\n`,
+  'index.js': 'module.exports = {};\n',
+};
+
+const SYNTHETIC_PLAYBOOK = {
+  'package.json': `${JSON.stringify({
+    name: '@sublang/playbook',
+    version: '0.0.0',
+    exports: { './xstate-runtime': './xstate-runtime.js' },
+  })}\n`,
+  'xstate-runtime.js': 'export const SYNTHETIC = true;\n',
+};
+
+async function writePackage(dir: string, files: Record<string, string>) {
+  await mkdir(dir, { recursive: true });
+  for (const [name, content] of Object.entries(files)) {
+    await writeFile(join(dir, name), content, 'utf8');
+  }
+}
+
+async function syntheticHostRoots() {
+  const root = await mkdtemp(join(tmpdir(), 'playbook-host-roots-'));
+  tempDirs.push(root);
+  const xstate = join(root, 'xstate');
+  const playbookRoot = join(root, 'playbook');
+  await writePackage(xstate, SYNTHETIC_XSTATE);
+  await writePackage(playbookRoot, SYNTHETIC_PLAYBOOK);
+  return { xstate, '@sublang/playbook': playbookRoot };
+}
+
+async function provisionFixtureDir(source = ENGINE_IMPORTING_REGISTRY) {
+  const dir = await mkdtemp(join(tmpdir(), 'playbook-provision-'));
+  tempDirs.push(dir);
+  const modulePath = join(dir, 'registry.mjs');
+  await writeFile(modulePath, source, 'utf8');
+  return { dir, modulePath };
+}
+
+async function runProvisionCli(
+  argv: string[],
+  hostRoots: Record<string, string>,
+) {
+  const { createAgent, calls } = fakeAgents({});
+  const stdout = writer();
+  const stderr = writer();
+  const result = await runPlaybookCli({
+    argv,
+    createAgent,
+    userConfigPath: ABSENT_USER_CONFIG,
+    hostRoots,
+    stdout: stdout as never,
+    stderr: stderr as never,
+  });
+  return {
+    code: result.code,
+    stdout: stdout.text(),
+    stderr: stderr.text(),
+    agentCalls: calls,
+  };
+}
+
+describe('playbook run — engine provisioning (PBCLI-38)', () => {
+  it('leaves a directory with a resolvable engine byte-identical', async () => {
+    const hostRoots = await syntheticHostRoots();
+    const { dir, modulePath } = await provisionFixtureDir();
+    await writePackage(join(dir, 'node_modules', 'xstate'), SYNTHETIC_XSTATE);
+    await writePackage(
+      join(dir, 'node_modules', '@sublang', 'playbook'),
+      SYNTHETIC_PLAYBOOK,
+    );
+    const out = await runProvisionCli(['run', modulePath, 'x'], hostRoots);
+    expect(out.code).toBe(0);
+    expect(out.stderr).not.toContain('provisioned');
+    const xstateStat = await lstat(join(dir, 'node_modules', 'xstate'));
+    expect(xstateStat.isSymbolicLink()).toBe(false);
+    const playbookStat = await lstat(
+      join(dir, 'node_modules', '@sublang', 'playbook'),
+    );
+    expect(playbookStat.isSymbolicLink()).toBe(false);
+  });
+
+  it('provisions exactly the two engine links in a bare directory, once', async () => {
+    const hostRoots = await syntheticHostRoots();
+    const { dir, modulePath } = await provisionFixtureDir();
+    const out = await runProvisionCli(['run', modulePath, 'x'], hostRoots);
+    expect(out.code).toBe(0);
+    expect(out.stdout.trim()).toBe('ok');
+    const xstateLink = join(dir, 'node_modules', 'xstate');
+    const playbookLink = join(dir, 'node_modules', '@sublang', 'playbook');
+    expect(out.stderr.match(/provisioned/g)).toHaveLength(1);
+    expect(out.stderr).toContain(`${xstateLink} -> ${hostRoots.xstate}`);
+    expect(out.stderr).toContain(
+      `${playbookLink} -> ${hostRoots['@sublang/playbook']}`,
+    );
+    expect((await lstat(xstateLink)).isSymbolicLink()).toBe(true);
+    expect((await lstat(playbookLink)).isSymbolicLink()).toBe(true);
+    expect(await readlink(xstateLink)).toBe(hostRoots.xstate);
+    expect(await readlink(playbookLink)).toBe(hostRoots['@sublang/playbook']);
+
+    const again = await runProvisionCli(['run', modulePath, 'x'], hostRoots);
+    expect(again.code).toBe(0);
+    expect(again.stderr).not.toContain('provisioned');
+  });
+
+  it('--no-provision leaves a bare directory unchanged and fails the load', async () => {
+    // Under vitest, vite-node resolves the fixture's bare `xstate` import
+    // from the project root, so the ordinary load failure only reproduces
+    // under real Node resolution — run the actual CLI in a child process.
+    const { dir, modulePath } = await provisionFixtureDir();
+    const configHome = await mkdtemp(join(tmpdir(), 'playbook-xdg-'));
+    tempDirs.push(configHome);
+    const binPath = fileURLToPath(
+      new URL('./bin/playbook.js', import.meta.url),
+    );
+    const out = await new Promise<{
+      code: number | null;
+      stderr: string;
+    }>((resolvePromise, rejectPromise) => {
+      execFile(
+        process.execPath,
+        [binPath, 'run', modulePath, 'x', '--no-provision'],
+        { env: { ...process.env, XDG_CONFIG_HOME: configHome } },
+        (error, _stdout, stderr) => {
+          if (error && typeof error.code !== 'number') {
+            rejectPromise(error);
+            return;
+          }
+          resolvePromise({ code: error ? (error.code as number) : 0, stderr });
+        },
+      );
+    });
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('failed to import');
+    expect(out.stderr).not.toContain('provisioned');
+    expect(await readdir(dir)).toEqual(['registry.mjs']);
+  });
+
+  it('neither probes nor provisions a bare package specifier', async () => {
+    const hostRoots = await syntheticHostRoots();
+    const { createAgent } = fakeAgents({});
+    const entry = runEntry(async () => ({
+      outcome: 'terminal',
+      state: {},
+      output: 'ok',
+    }));
+    const out = await runCli(
+      ['run', 'mod://code', 'x'],
+      { 'mod://code': { default: entry } },
+      createAgent,
+      undefined,
+      { hostRoots },
+    );
+    expect(out.code).toBe(0);
+    expect(out.stderr).not.toContain('provisioned');
+  });
+
+  it('refuses to shadow a manifest that declares @sublang/playbook', async () => {
+    const hostRoots = await syntheticHostRoots();
+    const { dir, modulePath } = await provisionFixtureDir();
+    await writeFile(
+      join(dir, 'package.json'),
+      `${JSON.stringify({
+        name: 'consumer',
+        private: true,
+        dependencies: { '@sublang/playbook': '^3.0.0' },
+      })}\n`,
+      'utf8',
+    );
+    const out = await runProvisionCli(['run', modulePath, 'x'], hostRoots);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('declares @sublang/playbook');
+    expect(out.stderr).toContain('npm install');
+    expect(out.agentCalls).toHaveLength(0);
+    expect((await readdir(dir)).sort()).toEqual([
+      'package.json',
+      'registry.mjs',
+    ]);
+  });
+
+  it('replaces a dangling link by default and names it under --no-provision', async () => {
+    const hostRoots = await syntheticHostRoots();
+    const { dir, modulePath } = await provisionFixtureDir();
+    const xstateLink = join(dir, 'node_modules', 'xstate');
+    await mkdir(join(dir, 'node_modules'), { recursive: true });
+    await symlink(join(dir, 'gone'), xstateLink, 'dir');
+    const out = await runProvisionCli(['run', modulePath, 'x'], hostRoots);
+    expect(out.code).toBe(0);
+    expect(out.stderr).toContain('provisioned');
+    expect(await readlink(xstateLink)).toBe(hostRoots.xstate);
+
+    const second = await provisionFixtureDir();
+    const staleLink = join(second.dir, 'node_modules', 'xstate');
+    await mkdir(join(second.dir, 'node_modules'), { recursive: true });
+    await symlink(join(second.dir, 'gone'), staleLink, 'dir');
+    const refused = await runProvisionCli(
+      ['run', second.modulePath, 'x', '--no-provision'],
+      hostRoots,
+    );
+    expect(refused.code).toBe(1);
+    expect(refused.stderr).toContain(staleLink);
+    expect(refused.stderr).toContain('stale engine link');
+    expect(refused.stderr).toContain(join(second.dir, 'gone'));
+  });
+
+  it('never overwrites a real directory occupying a link path', async () => {
+    const hostRoots = await syntheticHostRoots();
+    const { dir, modulePath } = await provisionFixtureDir();
+    const occupied = join(dir, 'node_modules', 'xstate');
+    await mkdir(occupied, { recursive: true });
+    const out = await runProvisionCli(['run', modulePath, 'x'], hostRoots);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain(`cannot provision ${occupied}`);
+    expect((await lstat(occupied)).isDirectory()).toBe(true);
+    expect(await readdir(join(dir, 'node_modules'))).toEqual(['xstate']);
   });
 });

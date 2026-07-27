@@ -12,9 +12,11 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
+import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -60,8 +62,11 @@ const discussCommand =
   'Converge quickly and commit only the agreed spec item file.';
 const headlessTask = 'Run the installed non-interactive acceptance probe.';
 const headlessToken = 'HEADLESS_ACCEPTANCE_OK';
+const hermeticTask = 'Echo the hermetic acceptance token.';
+const hermeticToken = 'HERMETIC_ACCEPTANCE_OK';
 
 let suiteRoot = '';
+let candidateTarball = '';
 // The gate runs its tmux-play sessions on a private tmux server so it can
 // never bind to, drive, or kill a session the maintainer is using. Both the
 // launcher and every tmux command below share this socket directory. It is
@@ -164,6 +169,107 @@ describe.sequential('installed playbook live acceptance', () => {
       }
     },
     liveTimeoutMs + 60_000,
+  );
+
+  it(
+    'provisions and runs a thin artifact from a hermetic global-only install',
+    async () => {
+      const scenario = createScenario('hermetic');
+      let commandOutput = '';
+      try {
+        const globalBin = await installGlobalCandidate();
+        // PBCLI-36 / RELEASE-25: neither engine import resolves from the
+        // fixture before the run — the directory is genuinely bare.
+        const probe = createRequire(join(scenario.repo, 'probe.js'));
+        for (const specifier of [
+          'xstate',
+          '@sublang/playbook/xstate-runtime',
+        ]) {
+          expect(() => probe.resolve(specifier)).toThrow();
+        }
+
+        const models = liveModels();
+        const runArgs = [
+          'run',
+          './hermetic.playbook.mjs',
+          hermeticTask,
+          '--player',
+          `worker=claude:${models.claude}@low`,
+          '--captain',
+          `codex:${models.codex}@low`,
+          '--cwd',
+          scenario.repo,
+          '--json',
+        ];
+        const runEnv = privateTmuxEnv({
+          XDG_CONFIG_HOME: scenario.configHome,
+          XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
+        });
+        const first = await execLiveTextAsync(
+          globalBin,
+          runArgs,
+          scenario.repo,
+          runEnv,
+        );
+        commandOutput =
+          `stdout:\n${diagnosticTail(first.stdout)}\n` +
+          `stderr:\n${diagnosticTail(first.stderr)}`;
+
+        const xstateLink = join(scenario.repo, 'node_modules', 'xstate');
+        const playbookLink = join(
+          scenario.repo,
+          'node_modules',
+          '@sublang',
+          'playbook',
+        );
+        expect(first.stderr.match(/provisioned/g)).toHaveLength(1);
+        expect(first.stderr).toContain(xstateLink);
+        expect(first.stderr).toContain(playbookLink);
+        const prefix = join(suiteRoot, 'global');
+        expect(readlinkSync(xstateLink).startsWith(prefix)).toBe(true);
+        expect(readlinkSync(playbookLink).startsWith(prefix)).toBe(true);
+
+        const envelope = JSON.parse(first.stdout);
+        expect(envelope).toEqual({
+          outcome: 'terminal',
+          sessionId: expect.stringMatching(
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+          ),
+          output: { token: hermeticToken },
+        });
+        expect(headRevision(scenario.repo)).toBe(scenario.baselineCommit);
+        // The fixture's .gitignore covers node_modules/, so a clean status
+        // also proves the provisioned links stay out of player commits.
+        expect(gitStatus(scenario.repo)).toBe('');
+
+        const second = await execLiveTextAsync(
+          globalBin,
+          runArgs,
+          scenario.repo,
+          runEnv,
+        );
+        commandOutput +=
+          `\nsecond stdout:\n${diagnosticTail(second.stdout)}\n` +
+          `second stderr:\n${diagnosticTail(second.stderr)}`;
+        expect(second.stderr).not.toContain('provisioned');
+        expect(JSON.parse(second.stdout).outcome).toBe('terminal');
+      } catch (error) {
+        preserveArtifacts = true;
+        const detailed =
+          commandOutput === ''
+            ? error
+            : new Error(`${errorMessage(error)}\n${commandOutput}`);
+        writeFailureSnapshot(
+          scenario.root,
+          undefined,
+          undefined,
+          detailed,
+          scenario,
+        );
+        throw withArtifactPath(detailed, scenario.root);
+      }
+    },
+    2 * liveTimeoutMs + 120_000,
   );
 
   it(
@@ -331,6 +437,7 @@ async function packAndInstallCandidate(root: string): Promise<string> {
     throw new Error(`npm pack did not report a tarball: ${packOutput}`);
   }
   const tarball = join(installRoot, filename);
+  candidateTarball = tarball;
 
   writeFileSync(
     join(installRoot, 'package.json'),
@@ -368,7 +475,58 @@ async function packAndInstallCandidate(root: string): Promise<string> {
   return installedBin;
 }
 
-function createScenario(name: 'headless' | 'code' | 'discuss'): Scenario {
+// RELEASE-25 fourth case: install the same packed candidate globally into
+// an isolated npm prefix. Inherited prefix configuration is neutralized so
+// a version manager's npm_config_prefix cannot leak the maintainer's real
+// global root into the gate, and the nested-cligent guard below fails
+// loudly if a machine-global standalone @sublang/cligent shadows the copy
+// nested under the prefix's @sublang/playbook.
+async function installGlobalCandidate(): Promise<string> {
+  const prefix = join(suiteRoot, 'global');
+  mkdirSync(prefix, { recursive: true });
+  console.info('[acceptance] installing the candidate into a global prefix');
+  const env = { ...process.env };
+  delete env.npm_config_prefix;
+  delete env.NPM_CONFIG_PREFIX;
+  await execTextAsync(
+    'npm',
+    [
+      'install',
+      '-g',
+      '--prefix',
+      prefix,
+      '--ignore-scripts',
+      '--no-audit',
+      '--no-fund',
+      '--prefer-offline',
+      candidateTarball,
+    ],
+    suiteRoot,
+    env,
+  );
+  const installedPlaybook = join(
+    prefix,
+    'lib/node_modules/@sublang/playbook',
+  );
+  const nestedCligent = join(
+    installedPlaybook,
+    'node_modules/@sublang/cligent',
+  );
+  if (!existsSync(nestedCligent)) {
+    throw new Error(
+      `@sublang/cligent did not install nested under ${installedPlaybook}`,
+    );
+  }
+  const globalBin = join(prefix, 'bin/playbook');
+  if (!existsSync(globalBin)) {
+    throw new Error(`global playbook command is missing: ${globalBin}`);
+  }
+  return globalBin;
+}
+
+function createScenario(
+  name: 'headless' | 'code' | 'discuss' | 'hermetic',
+): Scenario {
   // Every fixture path derives from `suiteRoot`. A relative value here would
   // silently build the fixture tree inside the real repository instead.
   if (!isAbsolute(suiteRoot)) {
@@ -376,7 +534,15 @@ function createScenario(name: 'headless' | 'code' | 'discuss'): Scenario {
       `live acceptance suite root must be an absolute path, got "${suiteRoot}"`,
     );
   }
-  const root = join(suiteRoot, name);
+  // PBCLI-36: the headless fixture nests under the candidate consumer tree
+  // so its registry module resolves the engine from an ancestor
+  // node_modules — the project-local-install-wins path — and the run
+  // provisions nothing, keeping the repository byte-clean. The hermetic
+  // fixture stays outside every node_modules ancestry on purpose.
+  const root =
+    name === 'headless'
+      ? join(suiteRoot, 'candidate', 'fixtures', name)
+      : join(suiteRoot, name);
   const repo = join(root, 'repo');
   const configHome = join(root, 'xdg');
   mkdirSync(join(repo, 'specs/packages'), { recursive: true });
@@ -461,6 +627,19 @@ function createScenario(name: 'headless' | 'code' | 'discuss'): Scenario {
     writeFileSync(
       join(repo, 'headless.registry.mjs'),
       headlessRegistrySource(),
+    );
+  }
+  if (name === 'hermetic') {
+    // The documented practice for artifact repositories: ignore the
+    // provisioned engine links so player commits never carry them.
+    writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
+    writeFileSync(
+      join(repo, 'acceptance-hermetic-token.txt'),
+      `${hermeticToken}\n`,
+    );
+    writeFileSync(
+      join(repo, 'hermetic.playbook.mjs'),
+      hermeticArtifactSource(),
     );
   }
 
@@ -882,6 +1061,7 @@ function execTextAsync(
   command: string,
   args: readonly string[],
   cwd?: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<string> {
   return new Promise((resolveCommand, rejectCommand) => {
     execFile(
@@ -889,6 +1069,7 @@ function execTextAsync(
       [...args],
       {
         cwd,
+        ...(env ? { env } : {}),
         encoding: 'utf8',
         maxBuffer: 20 * 1024 * 1024,
       },
@@ -999,6 +1180,128 @@ function execLiveTextAsync(
       resolveCommand({ stdout, stderr });
     });
   });
+}
+
+// RELEASE-25 fourth case: a compiled-style thin artifact whose bare
+// `xstate` and `@sublang/playbook/xstate-runtime` imports resolve only
+// through provisioning. One player state, deterministic START entry (no
+// classifier call), one hidden judge adjudication, machine output in the
+// terminal envelope.
+function hermeticArtifactSource(): string {
+  return `// Hermetic acceptance fixture: a compiled-style thin artifact.
+import { assign, fromPromise, setup } from 'xstate';
+import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+
+const machine = setup({
+  actors: {
+    player: fromPromise(async () => {
+      throw new Error('player actor must be provided by the runner');
+    }),
+  },
+}).createMachine({
+  id: 'hermetic',
+  initial: 'ready',
+  context: {},
+  states: {
+    ready: {
+      id: 'ready',
+      description: 'Waits for the Boss task.',
+      meta: {
+        playbook: { stateId: 'ready', description: 'Waits for the Boss task.' },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({ task: ({ event }) => event.task }),
+        },
+      },
+    },
+    work: {
+      id: 'work',
+      description: 'HERMETIC-1: Worker echoes the fixture token.',
+      meta: {
+        playbook: {
+          stateId: 'work',
+          description: 'HERMETIC-1: Worker echoes the fixture token.',
+        },
+      },
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          player: 'Worker',
+          sourceItem: 'HERMETIC-1',
+          prompt: [
+            'Read acceptance-hermetic-token.txt in the working directory and',
+            'reply with exactly its trimmed content. Do not modify any file.',
+            \`Task context: \${context.task}\`,
+          ].join('\\n'),
+          result: {
+            done: 'Worker replied with the token. Output shall include \`token: <the exact token text>\`.',
+          },
+        }),
+        onDone: {
+          target: 'done',
+          actions: assign({ token: ({ event }) => event.output.token }),
+        },
+        onError: {
+          target: 'failed',
+          actions: assign({
+            lastError: ({ event }) => String(event.error),
+          }),
+        },
+      },
+    },
+    failed: {
+      id: 'failed',
+      description: 'Recoverable failure awaiting a fresh Boss task.',
+      meta: {
+        playbook: {
+          stateId: 'failed',
+          description: 'Recoverable failure awaiting a fresh Boss task.',
+        },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({ task: ({ event }) => event.task }),
+        },
+      },
+    },
+    done: {
+      id: 'done',
+      description: 'The token was echoed.',
+      meta: {
+        playbook: { stateId: 'done', description: 'The token was echoed.' },
+      },
+      type: 'final',
+    },
+  },
+  output: ({ context }) => ({ token: context.token ?? '' }),
+});
+
+const createRuntime = createXStatePlaybookRuntime(machine, {
+  label: 'HERMETIC',
+  snapshotOptions: () => ({}),
+  entryEvent: { type: 'START', textField: 'task' },
+});
+
+export default {
+  id: 'hermetic',
+  command: 'hermetic',
+  intent: 'hermetic global-only acceptance fixture',
+  requiredRoleIds: ['worker'],
+  validateOptions(value) {
+    return value ?? {};
+  },
+  createRuntime() {
+    return createRuntime({});
+  },
+};
+`;
 }
 
 function headlessRegistrySource(): string {

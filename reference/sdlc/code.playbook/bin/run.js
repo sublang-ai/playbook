@@ -21,7 +21,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   Cligent,
   isEffortSupported,
@@ -29,6 +29,7 @@ import {
 } from '@sublang/cligent';
 import { parse as parseYaml } from 'yaml';
 import { hiddenControlEnvelope } from '../../../../src/xstate-runtime.js';
+import { provisionEngine } from './provision.js';
 
 // PBCLI-19: adapter shorthands the run host can construct.
 const ADAPTER_LOADERS = {
@@ -76,6 +77,9 @@ export async function runPlaybookRun(options = {}) {
     readStdin,
     sessionsDir,
     userConfigPath,
+    // PBCLI-37: injected host package roots let tests provision against
+    // synthetic trees, like the injected session store.
+    hostRoots: options.hostRoots,
   };
 
   let args;
@@ -100,6 +104,11 @@ async function runFirst(args, ctx) {
     stderr.write('playbook run: missing <from> registry module\n');
     return { code: EXIT.arg };
   }
+
+  // PBCLI-36/37 (DR-024): provision engine links for a filesystem module
+  // before importing it; a resolvable engine is never touched.
+  const provisioned = await maybeProvision(args.from, args, ctx);
+  if (provisioned.code !== undefined) return provisioned;
 
   const loaded = await loadRegistryEntry(args.from, ctx);
   if (loaded.code !== undefined) return loaded;
@@ -245,6 +254,11 @@ async function runResume(args, ctx) {
     );
     return { code: EXIT.arg };
   }
+
+  // PBCLI-37: a stored filesystem `from` (a file: URL) is probed and
+  // provisioned on resume exactly as on a first run.
+  const provisioned = await maybeProvision(record.from, args, ctx);
+  if (provisioned.code !== undefined) return provisioned;
 
   const loaded = await loadRegistryEntry(record.from, ctx);
   if (loaded.code !== undefined) return loaded;
@@ -876,6 +890,7 @@ export function parseRunArgs(argv) {
     cwd: undefined,
     json: false,
     verbose: false,
+    noProvision: false,
     help: false,
   };
   const positionals = [];
@@ -884,6 +899,7 @@ export function parseRunArgs(argv) {
     if (arg === '--help' || arg === '-h') args.help = true;
     else if (arg === '--json') args.json = true;
     else if (arg === '--verbose') args.verbose = true;
+    else if (arg === '--no-provision') args.noProvision = true;
     else if (arg === '--last') args.last = true;
     else if (arg === '--cwd') args.cwd = takeValue(argv, (i += 1), '--cwd');
     else if (arg === '--captain')
@@ -961,6 +977,36 @@ function registryImportSpecifier(specifier, cwd) {
   return specifier;
 }
 
+// PBCLI-37: the absolute file path of a filesystem `<from>` (path or
+// file: URL), or undefined for a bare package specifier — those resolve
+// from the host's own module tree and are neither probed nor provisioned.
+function moduleFilePath(specifier, cwd) {
+  if (specifier.startsWith('file:')) return fileURLToPath(specifier);
+  if (
+    isAbsolute(specifier) ||
+    specifier.startsWith('./') ||
+    specifier.startsWith('../') ||
+    specifier.startsWith('.\\') ||
+    specifier.startsWith('..\\')
+  ) {
+    return resolve(cwd, specifier);
+  }
+  return undefined;
+}
+
+// PBCLI-36/37: probe-and-provision for a filesystem registry module.
+// Returns {} to proceed or { code } after a reported provisioning fault.
+async function maybeProvision(specifier, args, ctx) {
+  const modulePath = moduleFilePath(specifier, ctx.cwdDefault);
+  if (modulePath === undefined) return {};
+  return provisionEngine({
+    modulePath,
+    stderr: ctx.stderr,
+    enabled: !args.noProvision,
+    hostRoots: ctx.hostRoots,
+  });
+}
+
 function isValidRegistryEntry(value) {
   return (
     typeof value === 'object' &&
@@ -1000,6 +1046,8 @@ function runHelpText() {
     '                            output or questions) instead of plain text',
     '  --last                    resume the most recently parked session',
     '  --verbose                 forward telemetry topics to stderr',
+    '  --no-provision            never create engine links beside a',
+    '                            filesystem <from> module',
     '  -h, --help                print this help',
     '',
     '  <agent> is <adapter>[:<model>][@<effort>] over the shorthands',

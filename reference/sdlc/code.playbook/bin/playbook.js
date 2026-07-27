@@ -67,6 +67,7 @@ export async function runPlaybookCli(options = {}) {
       ...(options.createAgent ? { createAgent: options.createAgent } : {}),
       ...(options.readStdin ? { readStdin: options.readStdin } : {}),
       ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
+      ...(options.hostRoots ? { hostRoots: options.hostRoots } : {}),
     });
   }
 
