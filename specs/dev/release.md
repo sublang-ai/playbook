@@ -252,6 +252,16 @@ It shall also run the installed executable's non-interactive
 `playbook run` path over a small fixture playbook that makes one real Claude
 player call and one real Codex-Captain judge call, using `--json` and no
 tmux-play session.
+It shall additionally run the hermetic global-only case
+([DR-024 §7](../decisions/024-runtime-engine-provisioning.md#7-the-acceptance-gate-moves-here)):
+install the packed candidate globally into an isolated npm prefix and
+drive a compiled thin fixture artifact — one importing `xstate` and
+`@sublang/playbook/xstate-runtime` — from a fresh repository with no
+project-local packages anywhere, asserting automatic engine
+provisioning triggers, the run reaches its terminal JSON outcome, and a
+repeated run provisions nothing further.
+Documentation shall drop the project-local install and `npx`
+consumption story only after this case passes.
 
 The suite shall fail unless `/code` implements and commits its fixture
 requirement with a clean worktree, and `/discuss` adds and commits its fixture

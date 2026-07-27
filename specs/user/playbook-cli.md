@@ -173,6 +173,35 @@ lineup ([PBCLI-22](#pbcli-22)).
 A `--player` role that the entry does not require, or an unresolvable
 adapter, shall exit `1` with a path-named diagnostic.
 
+### PBCLI-36
+
+Where `playbook run` loads a filesystem `<from>` module (a relative or
+absolute path or a `file:` URL) whose engine imports — `xstate` and
+`@sublang/playbook/xstate-runtime` — do not resolve from the module's
+own directory, the command shall provision them before loading
+([DR-024](../decisions/024-runtime-engine-provisioning.md)): it shall
+create `node_modules/xstate` and `node_modules/@sublang/playbook`
+beside the module as symbolic links to the running host's own installed
+packages and print one stderr line naming each created link and its
+target.
+Where both imports already resolve, the command shall create and change
+nothing — an existing project-local installation always wins — and a
+repeated run over a provisioned directory shall likewise create nothing
+further and print no provisioning line.
+`--no-provision` shall disable provisioning on first runs and on
+`resume`; an unresolvable import then surfaces as the ordinary load
+diagnostic with exit `1` ([PBCLI-18](#pbcli-18)).
+Where a `package.json` at or above the module's directory declares
+`@sublang/playbook` among its dependencies while the import does not
+resolve, the command shall not provision: it shall print a diagnostic
+recommending the project's own dependency install and exit `1`.
+Where a previously provisioned link's target no longer exists, the
+command shall replace the dangling link when provisioning is enabled
+and shall otherwise print a diagnostic naming the stale link and its
+missing target; a real (non-symlink) file or directory occupying either
+link path shall never be removed or overwritten — provisioning shall
+instead refuse with a diagnostic naming the occupied path and exit `1`.
+
 ### PBCLI-22
 
 Where a `playbook run` turn parked awaiting a Boss reply and persisted

@@ -328,6 +328,43 @@ The `run` subcommand shall accept an injected user-config path so
 tests can drive config defaults in isolation, like the injected
 session store ([PBCLI-23](#pbcli-23)).
 
+### PBCLI-37
+
+Where `playbook run` imports a filesystem `<from>` module
+([PBCLI-20](#pbcli-20)) — on first runs and on `resume`, whose stored
+`from` is the same resolved `file:` URL — the command shall first probe
+resolution of `xstate` and `@sublang/playbook/xstate-runtime` with the
+module's resolved path as parent, via
+`module.createRequire(<module path>).resolve(...)`, and shall skip
+provisioning entirely when both resolve.
+A bare package `<from>` specifier resolves from the host's own module
+tree and shall be neither probed nor provisioned.
+For each specifier that does not resolve, the command shall create the
+missing `<module dir>/node_modules/` entry — `xstate`, or
+`@sublang/playbook` under a created `@sublang/` scope directory — as a
+symbolic link through direct `node:fs` symlink calls, pointing at the
+running host's own installed package root for that name resolved from
+the host's module scope; it shall never shell out to `npm link` and
+shall never install from the registry
+([DR-024 §2](../decisions/024-runtime-engine-provisioning.md#2-provision-by-direct-symlink-from-the-hosts-own-tree)).
+Before creating links the command shall apply the
+[PBCLI-36](../user/playbook-cli.md#pbcli-36) guard order: a
+`package.json` at or above the module's directory declaring
+`@sublang/playbook` in its `dependencies`, `devDependencies`,
+`peerDependencies`, or `optionalDependencies` refuses provisioning with
+an instructive diagnostic and exit `1`; an existing dangling symlink at
+a link path is replaced; an existing non-symlink entry refuses with a
+diagnostic naming the occupied path and exit `1`.
+The one provisioning stderr line shall name each created link path and
+its target; a run that creates no link shall print no provisioning
+line.
+Provisioning failures are load faults: they shall use the
+`playbook run: <message>` diagnostic form and exit `1` without calling
+any agent.
+The `run` subcommand shall accept injected host package roots so tests
+can drive provisioning against synthetic trees, like the injected
+session store ([PBCLI-23](#pbcli-23)).
+
 ### PBCLI-33
 
 Where `playbook` resolves its top-level config for a launch and that

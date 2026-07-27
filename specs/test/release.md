@@ -97,7 +97,7 @@ among the packed contents.
 Verifies: [RELEASE-24](../dev/release.md#release-24)
 
 The opt-in local `pnpm test:acceptance` suite shall pack and install the
-candidate package once, then exercise three independent fresh git repositories
+candidate package once, then exercise four independent fresh git repositories
 through the installed npm `playbook` command shim.
 The first case shall invoke `playbook run` with `--json` over a small fixture
 playbook using one real Claude player and a real Codex captain for one hidden
@@ -115,6 +115,22 @@ from both `HEAD` and the worktree, and the worktree is clean.
 Each interactive case shall also fail unless the selected playbook leaves
 exactly the Captain and its two namespaced role panes visible with their
 expected adapters and the Boss/Captain pane focused.
+The fourth, hermetic global-only case
+([PBCLI-36](playbook-cli.md#pbcli-36)) shall install the packed
+candidate into an isolated npm global prefix with inherited npm prefix
+configuration neutralized, place a compiled thin fixture playbook —
+importing `xstate` and `@sublang/playbook/xstate-runtime` and making
+one real Claude player call and one real Codex judge call — in a fresh
+git repository containing no `package.json`, lockfile, or
+`node_modules` at any level, and invoke the prefix's `playbook` command
+by absolute path.
+It shall fail unless: neither engine import resolves from the fixture
+before the run; the run prints one provisioning line and creates
+exactly the `node_modules/xstate` and `node_modules/@sublang/playbook`
+links resolving into the isolated prefix; the run returns its terminal
+JSON envelope; a second run creates nothing further and prints no
+provisioning line; and `@sublang/cligent` resolves from beneath the
+prefix's `@sublang/playbook` rather than from any machine-global copy.
 
 The acceptance suite shall require local adapter authentication, tmux, glow,
 Expect, git, and npm. It shall not be selected by the normal `pnpm test`

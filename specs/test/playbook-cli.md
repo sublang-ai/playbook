@@ -253,3 +253,26 @@ unless a second launch migrates nothing and
 leaves the file byte-identical, and unless a fresh legacy config beside
 an existing backup is backed up to the next free `<config>.bak.<n>`
 rather than overwriting it.
+
+### PBCLI-38
+
+Verifies: [PBCLI-36](../user/playbook-cli.md#pbcli-36), [PBCLI-37](../dev/playbook-cli.md#pbcli-37)
+
+When the test suite exercises `playbook run` engine provisioning over
+synthetic filesystem registry modules and injected host package roots,
+the test suite shall fail unless: a module beside a resolvable
+project-local engine runs with its directory byte-identical and no
+provisioning line; a module in a bare directory gains exactly the
+missing `node_modules/xstate` and `node_modules/@sublang/playbook`
+symbolic links pointing at the injected host roots, with one stderr
+line naming each created link and target; a second run over the
+provisioned directory creates nothing further and prints no
+provisioning line; `--no-provision` leaves the bare directory unchanged
+and exits `1` with the ordinary load diagnostic; a bare `<from>`
+package specifier is neither probed nor provisioned; a `package.json`
+above the module declaring `@sublang/playbook` refuses provisioning
+with an instructive diagnostic and exit `1` before any agent call; a
+dangling previously provisioned link is replaced under default
+provisioning and named in a diagnostic under `--no-provision`; and a
+real directory occupying a link path is left untouched while the
+command exits `1` naming the occupied path.
