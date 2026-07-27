@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`playbook run` now provisions the engine for filesystem artifacts.** Before importing a filesystem `<from>` module, the command probes `xstate` and `@sublang/playbook/xstate-runtime` with the module's own path as resolution parent; when a probe fails it creates the missing `node_modules` entries beside the module as symbolic links to the running host's own installed packages, printing one line naming each link — so a globally installed `playbook` runs a compiled artifact from a bare directory with no project-local install and no `npx`. A resolvable project-local engine is never touched, `--no-provision` disables the mechanism, a manifest declaring `@sublang/playbook` refuses with an instructive diagnostic instead of shadowing a broken project install, a dangling provisioned link is replaced (or named in a diagnostic under `--no-provision`), and a real file or directory at a link path is never overwritten. The opt-in acceptance gate gains a hermetic global-only case — an isolated npm global prefix, a thin fixture artifact through the shared factory, provisioning and idempotence assertions, and a nested-cligent guard — which re-scopes the DR-023 documentation gate onto this mechanism ([DR-024](specs/decisions/024-runtime-engine-provisioning.md), [PBCLI-36](specs/user/playbook-cli.md#pbcli-36), [PBCLI-37](specs/dev/playbook-cli.md#pbcli-37), [PBCLI-38](specs/test/playbook-cli.md#pbcli-38), [RELEASE-24](specs/dev/release.md#release-24), [RELEASE-25](specs/test/release.md#release-25)).
+
+### Changed
+
+- **Emitted thin modules stamp their own format's schema.** `slc/link.md` §Output had the linker copy the highest member of the engine's `SUPPORTED_ARTIFACT_SCHEMAS` into `spec.compat.artifactSchema`, which would mislabel a schema-1 TypeScript thin module the moment an engine also supports a newer artifact schema; the linker now stamps the thin-module format's own schema, `1`, and treats an installed engine that does not list it as a link-time error ([DR-022](specs/decisions/022-runtime-compatibility-contract.md)).
+
 ## [3.1.0] - 2026-07-26
 
 ### Added
