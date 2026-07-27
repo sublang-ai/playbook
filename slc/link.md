@@ -1335,15 +1335,20 @@ The emitted module:
   type; supplying one is a construction error, so a linker that judges a
   runtime-owned arm to have lost payload detail under erasure shall report
   that gap rather than emit the entry.
-- Supplies `spec.compat` with the compatibility values current at link time,
-  read from the installed shared engine's self-report:
-  `{ artifactSchema, runtimeAbi }`, where `artifactSchema` is the highest
-  member of the engine's `SUPPORTED_ARTIFACT_SCHEMAS` and `runtimeAbi` is its
-  `RUNTIME_ABI`. The factory checks the declaration against the engine
-  instance that actually loads the emitted module and fails construction on a
-  mismatch, so an artifact linked under one engine cannot run silently skewed
-  under another. Modules emitted before this contract carry no `compat`
-  member and remain loadable.
+- Supplies `spec.compat` with the compatibility values current at link time:
+  `{ artifactSchema, runtimeAbi }`, where `artifactSchema` is `1` — the
+  schema number of the thin-module format this §Output defines — and
+  `runtimeAbi` is the installed shared engine's `RUNTIME_ABI` self-report.
+  The linker shall verify that the installed engine lists the emitted
+  schema in `SUPPORTED_ARTIFACT_SCHEMAS` and treat its absence as a
+  link-time error; it shall not stamp a different member (such as the
+  highest) merely because that engine also supports a newer artifact
+  format — the declaration names the format of the emitted module, not
+  the capability of the emitting engine. The factory checks the
+  declaration against the engine instance that actually loads the emitted
+  module and fails construction on a mismatch, so an artifact linked under
+  one engine cannot run silently skewed under another. Modules emitted
+  before this contract carry no `compat` member and remain loadable.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
   `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`.
 - Exposes, under an `_internal` export, the pure helpers verification
