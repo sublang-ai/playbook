@@ -184,7 +184,10 @@ export async function provisionEngine({
     return { code: 1 };
   }
 
-  const created = [];
+  // PBCLI-37: validate every destination before mutating any, so an
+  // occupied-path refusal leaves the module directory unchanged rather
+  // than half-provisioned.
+  const plans = [];
   for (const name of missing) {
     const linkPath = join(moduleDir, 'node_modules', name);
     const state = linkState(linkPath);
@@ -197,10 +200,28 @@ export async function provisionEngine({
       );
       return { code: 1 };
     }
-    if (state === 'dangling') await unlink(linkPath);
-    await mkdir(dirname(linkPath), { recursive: true });
-    await symlink(roots[name], linkPath, 'dir');
-    created.push(`${linkPath} -> ${roots[name]}`);
+    plans.push({
+      linkPath,
+      target: roots[name],
+      dangling: state === 'dangling',
+    });
+  }
+
+  const created = [];
+  try {
+    for (const { linkPath, target, dangling } of plans) {
+      if (dangling) await unlink(linkPath);
+      await mkdir(dirname(linkPath), { recursive: true });
+      await symlink(target, linkPath, 'dir');
+      created.push(`${linkPath} -> ${target}`);
+    }
+  } catch (error) {
+    // PBCLI-37: a filesystem failure is a load fault, not a raw crash.
+    stderr.write(
+      'playbook run: cannot provision engine links: ' +
+        `${error instanceof Error ? error.message : String(error)}\n`,
+    );
+    return { code: 1 };
   }
   stderr.write(`playbook run: provisioned ${created.join(', ')}\n`);
   return {};

@@ -355,6 +355,9 @@ Before creating links the command shall apply the
 an instructive diagnostic and exit `1`; an existing dangling symlink at
 a link path is replaced; an existing non-symlink entry refuses with a
 diagnostic naming the occupied path and exit `1`.
+The command shall validate every link destination before creating any
+link, so an occupied-path refusal leaves the module directory
+unmutated.
 The one provisioning stderr line shall name each created link path and
 its target; a run that creates no link shall print no provisioning
 line.

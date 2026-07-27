@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { readFileSync } from 'node:fs';
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
@@ -2751,5 +2752,35 @@ describe('playbook run — engine provisioning (PBCLI-38)', () => {
     expect(out.stderr).toContain(`cannot provision ${occupied}`);
     expect((await lstat(occupied)).isDirectory()).toBe(true);
     expect(await readdir(join(dir, 'node_modules'))).toEqual(['xstate']);
+  });
+
+  it('creates no sibling link when the second destination is occupied', async () => {
+    const hostRoots = await syntheticHostRoots();
+    const { dir, modulePath } = await provisionFixtureDir();
+    const occupied = join(dir, 'node_modules', '@sublang', 'playbook');
+    await mkdir(occupied, { recursive: true });
+    const out = await runProvisionCli(['run', modulePath, 'x'], hostRoots);
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain(`cannot provision ${occupied}`);
+    // Validation precedes every mutation: the resolvable-in-isolation
+    // xstate link must not have been created before the refusal.
+    expect(await readdir(join(dir, 'node_modules'))).toEqual(['@sublang']);
+  });
+
+  it('reports a filesystem failure as a load fault, not a raw crash', async () => {
+    const hostRoots = await syntheticHostRoots();
+    const { dir, modulePath } = await provisionFixtureDir();
+    const nodeModules = join(dir, 'node_modules');
+    await mkdir(nodeModules, { recursive: true });
+    await chmod(nodeModules, 0o555);
+    try {
+      const out = await runProvisionCli(['run', modulePath, 'x'], hostRoots);
+      expect(out.code).toBe(1);
+      expect(out.stderr).toContain(
+        'playbook run: cannot provision engine links:',
+      );
+    } finally {
+      await chmod(nodeModules, 0o755);
+    }
   });
 });

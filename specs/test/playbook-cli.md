@@ -273,6 +273,9 @@ package specifier is neither probed nor provisioned; a `package.json`
 above the module declaring `@sublang/playbook` refuses provisioning
 with an instructive diagnostic and exit `1` before any agent call; a
 dangling previously provisioned link is replaced under default
-provisioning and named in a diagnostic under `--no-provision`; and a
-real directory occupying a link path is left untouched while the
-command exits `1` naming the occupied path.
+provisioning and named in a diagnostic under `--no-provision`; a
+real directory occupying either link path is left untouched — with no
+sibling link created — while the command exits `1` naming the occupied
+path; and a filesystem failure while creating links surfaces the
+`playbook run: <message>` diagnostic form with exit `1` rather than a
+raw exception.

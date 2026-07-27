@@ -348,6 +348,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     );
     for (const artifact of [
       `${CODE_BASE}bin/playbook.js`,
+      `${CODE_BASE}bin/run.js`,
+      `${CODE_BASE}bin/provision.js`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
       'reference/sdlc/discuss.playbook/discuss.registry.js',
