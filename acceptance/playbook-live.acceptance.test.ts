@@ -46,6 +46,7 @@ const failureSnapshotName = 'acceptance-failure.txt';
 // still live.
 const scenarioTimeoutMs = liveTimeoutMs + 5 * startupTimeoutMs + 60_000;
 const turnFailureMarkers = [
+  '◆ failed',
   '[turn aborted]',
   '[runtime error]',
   'workflow failed',
