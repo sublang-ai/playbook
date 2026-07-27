@@ -13,12 +13,13 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -225,9 +226,16 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(first.stderr.match(/provisioned/g)).toHaveLength(1);
         expect(first.stderr).toContain(xstateLink);
         expect(first.stderr).toContain(playbookLink);
-        const prefix = join(suiteRoot, 'global');
-        expect(readlinkSync(xstateLink).startsWith(prefix)).toBe(true);
-        expect(readlinkSync(playbookLink).startsWith(prefix)).toBe(true);
+        // macOS aliases /var to /private/var. Compare canonical targets so
+        // that alias does not make a link inside the isolated prefix appear
+        // to escape it; readlinkSync still asserts each entry is a link.
+        const prefix = `${realpathSync(join(suiteRoot, 'global'))}${sep}`;
+        expect(realpathSync(readlinkSync(xstateLink)).startsWith(prefix)).toBe(
+          true,
+        );
+        expect(realpathSync(readlinkSync(playbookLink)).startsWith(prefix)).toBe(
+          true,
+        );
 
         const envelope = JSON.parse(first.stdout);
         expect(envelope).toEqual({
