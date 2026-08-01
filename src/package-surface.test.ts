@@ -190,6 +190,7 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         combineAbortSignals,
         createNestedPlaybookBridge,
         createXStatePlaybookRuntime,
+        defaultBuildCaptainJudgePrompt,
         normalizeError,
         normalizePlaybookSnapshot,
         snapshotJsonValue,
@@ -205,6 +206,7 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         combineAbortSignals,
         createNestedPlaybookBridge,
         createXStatePlaybookRuntime,
+        defaultBuildCaptainJudgePrompt,
         normalizeError,
         normalizePlaybookSnapshot,
         snapshotJsonValue,
@@ -214,6 +216,25 @@ describe('public XState runtime surface (RELEASE-15)', () => {
         waitForPlaybookQuiescence,
       ]) {
         if (typeof value !== 'function') throw new Error('missing helper');
+      }
+      // DR-025: compiled Captain artifacts compose their adjudication
+      // prompts through this builder, so the reply contract cannot drift.
+      const judgePrompt = defaultBuildCaptainJudgePrompt(
+        {
+          stateId: 'routing',
+          sourceItem: 'CAPTAIN-1',
+          result: { question: 'Captain asked the one material routing question.' },
+        },
+        'A visible routing decision.',
+      );
+      if (
+        !judgePrompt.includes('- \`question\` — ') ||
+        !judgePrompt.includes(
+          'Pick exactly one outcome by \`guard\` and return JSON ' +
+            '\`{ guard, …structuralPayloadFields }\`',
+        )
+      ) {
+        throw new Error('missing captain judge prompt contract');
       }
       // DR-022: the engine compatibility self-report ships on the same
       // public engine subpath the factory does.

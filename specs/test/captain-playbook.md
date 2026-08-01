@@ -62,3 +62,20 @@ result-property schema, a classifier-authored paraphrase cannot replace Boss
 text, an adjudicator-authored question or response cannot replace visible
 Captain final text, and a terminal response communicates the child-backed
 result rather than a bare acknowledgement or completion announcement.
+
+### CAPPLAY-19
+
+Verifies: [CAPPLAY-1](../user/captain-playbook.md#capplay-1), [CAPPLAY-18](../dev/captain-playbook.md#capplay-18)
+
+Where the compiled default Captain routes a Boss turn whose visible Captain
+reply is conversational routing prose, the integration suite shall fail unless
+the hidden adjudication prompt states the explicit `{ guard, … }` reply
+contract over the declared result keys, a first reply that omits `guard` or
+names an undeclared guard or field is re-asked exactly once with the rejection
+reason appended, a well-formed second reply settles the turn as the declared
+`question` outcome preserving the visible Captain text, and each judge call
+traces its own paired boundaries.
+The suite shall also fail unless a second malformed reply rejects the turn
+with the machine parked in its recoverable `failed` state after exactly two
+adjudication calls, and a rejected adjudication transport call fails the turn
+without a corrective re-ask.

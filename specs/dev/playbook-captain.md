@@ -433,3 +433,19 @@ That module's default export shall be a tmux-play Captain factory
 for the Playbook Captain shell, which loads its enabled playbooks
 from `captain.options.playbooks` at `init`
 ([CAPTAIN-16](#captain-16)) rather than hardcoding any playbook.
+
+## Failure recovery
+
+### CAPTAIN-35
+
+Where a parentless internal Captain frame's delivered boundary call rejects,
+whether `handleBossInput` or the `resumePlaybookCall` that returns a child,
+the shell shall dispose the complete stack under a `failure` disposal reason
+before the Boss turn settles, shall make no additional visible chat call, and
+shall rethrow a boundary error whose message names a concrete next step and
+carries the original diagnostic as its `cause`; the raw control diagnostic
+shall appear in no Boss-visible chat or status text and shall remain
+available on the runtime's trace telemetry and that `cause`.
+Where a parentless external root's delivered turn rejects, the shell shall
+retain the frame for later Boss recovery and shall propagate the boundary
+error unchanged.

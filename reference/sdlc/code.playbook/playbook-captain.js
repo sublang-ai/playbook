@@ -919,9 +919,30 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (visibilityControlError !== undefined)
             throw visibilityControlError;
     }
+    // CAPTAIN-34/35: a parentless internal Captain frame holds no recoverable
+    // work, so any rejected boundary call disposes the stack instead of
+    // stranding a frame that would refuse every later registered command. A
+    // parentless external root keeps its frame for Boss recovery.
+    async function failParentlessBoundary(frame, error) {
+        if (!frame.internal || !frames.includes(frame))
+            throw error;
+        if (!disposing) {
+            try {
+                await disposeStack('failure');
+            }
+            catch {
+                // The boundary failure wins; disposal detail stays on telemetry.
+            }
+        }
+        const commands = [...enablementById.values()]
+            .map((enablement) => `/${enablement.command} <task>`)
+            .join(' or ');
+        throw new Error('Captain could not finish that turn and the engagement was reset. ' +
+            `Send the request again${commands ? `, or start a playbook directly with ${commands}` : ''}.`, { cause: error });
+    }
     async function returnBoundaryFailure(frame, error, context) {
         if (!frame.parent)
-            throw error;
+            await failParentlessBoundary(frame, error);
         await resumeParent(frame, {
             status: context.signal.aborted ? 'aborted' : 'error',
             playbookId: frame.entry.id,
@@ -1126,7 +1147,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 completed = true;
             }
             else {
-                throw error;
+                await failParentlessBoundary(frame, error);
             }
         }
         finally {

@@ -1054,6 +1054,171 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(rejection?.prompt).not.toContain('/captain');
   });
 
+  // CAPTAIN-34/35/36: a rejecting internal-root turn disposes the stack under
+  // a `failure` reason and rethrows Boss-appropriate prose with the original
+  // diagnostic as `cause`, so the next registered command engages cleanly.
+  it('resets a failed internal root so the next registered command engages cleanly', async () => {
+    const registry = fakeCodeEntry();
+    const rawFailure = new Error(
+      'adjudicator selected undeclared guard undefined',
+    );
+    const internal = fakeInternalCaptain(async () => {
+      throw rawFailure;
+    });
+    const shell = makeShell(registry, {
+      createCaptainRuntime: internal.createCaptainRuntime,
+    });
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    let caught: unknown;
+    try {
+      await shell.handleBossTurn(
+        turn('hello, what can you do?'),
+        context.context,
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toMatch(/send the request again/i);
+    expect(message).toContain('/code');
+    expect(message).not.toMatch(/adjudicator|guard|undeclared|hidden/i);
+    expect((caught as Error).cause).toBe(rawFailure);
+    expect(internal.runtimes[0]?.disposeCount).toBe(1);
+    expect(session.telemetry).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({ to: 'chat', event: 'failure' }),
+      }),
+    );
+    // CAPTAIN-35: the failing turn makes no visible chat call, so the raw
+    // diagnostic reaches no Boss-visible surface.
+    expect(context.captainCalls).toHaveLength(0);
+
+    await shell.handleBossTurn(turn('/code fix the parser', 2), context.context);
+    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
+    expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
+      'fix the parser',
+    ]);
+    expect(
+      context.captainCalls.find((call) =>
+        call.prompt.includes('already running'),
+      ),
+    ).toBeUndefined();
+  });
+
+  // CAPTAIN-35/36: the same reset applies when the rejecting boundary is the
+  // internal root's `resumePlaybookCall` returning a completed child, not just
+  // a directly delivered Boss turn.
+  it('resets a failed internal root when a returning child rejects its resume', async () => {
+    const rawFailure = new Error(
+      'adjudicator selected undeclared guard undefined',
+    );
+    let childStart:
+      | Awaited<ReturnType<PlaybookPorts['callPlaybook']>>
+      | undefined;
+    const internal = fakeInternalCaptain(
+      async (runtime, runtimeTurn) => {
+        if (!runtime.ports) throw new Error('runtime ports missing');
+        childStart = await runtime.ports.callPlaybook(
+          { callId: 'captain:code:1', playbookId: 'code', text: 'do the work' },
+          runtimeTurn.signal,
+        );
+        if (childStart.state !== 'suspended') {
+          throw new Error('expected the child to suspend');
+        }
+        return suspendedResult({
+          callId: 'captain:code:1',
+          playbookId: 'code',
+          childSessionId: childStart.childSessionId,
+        });
+      },
+      async () => {
+        throw rawFailure;
+      },
+    );
+    const registry = fakeCodeEntry(async (_runtime, runtimeTurn) =>
+      runtimeTurn.text === 'do the work'
+        ? quiescentResult('working')
+        : terminalResult('done', { summary: 'work complete' }),
+    );
+    const shell = makeShell(registry, {
+      createCaptainRuntime: internal.createCaptainRuntime,
+    });
+    const session = stubSession();
+    const context = stubContext([captainJson({ decision: 'deliver' })]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('coordinate the work'), context.context);
+    expect(childStart?.state).toBe('suspended');
+
+    let caught: unknown;
+    try {
+      await shell.handleBossTurn(turn('finish it', 2), context.context);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect((caught as Error).message).toMatch(/send the request again/i);
+    expect((caught as Error).message).not.toMatch(
+      /adjudicator|guard|undeclared|hidden/i,
+    );
+    expect((caught as Error).cause).toBe(rawFailure);
+    expect(internal.runtimes[0]?.disposeCount).toBe(1);
+    expect(registry.runtimes[0]?.disposeCount).toBe(1);
+    expect(session.telemetry).toContainEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({ to: 'chat', event: 'failure' }),
+      }),
+    );
+    expect(
+      context.captainCalls.some((call) => call.prompt.includes('adjudicator')),
+    ).toBe(false);
+
+    await shell.handleBossTurn(turn('/code retry it', 3), context.context);
+    expect(registry.createRuntime).toHaveBeenCalledTimes(2);
+    expect(registry.runtimes[1]?.inputs.map(({ text }) => text)).toEqual([
+      'retry it',
+    ]);
+    expect(
+      context.captainCalls.find((call) =>
+        call.prompt.includes('already running'),
+      ),
+    ).toBeUndefined();
+  });
+
+  // CAPTAIN-35/36: an external root's rejected turn keeps its recoverable
+  // frame and propagates the boundary error unchanged.
+  it('retains a failed external root and propagates its boundary error unchanged', async () => {
+    const rawFailure = new Error('code runtime control failure');
+    let failNext = true;
+    const registry = fakeCodeEntry(async () => {
+      if (failNext) {
+        failNext = false;
+        throw rawFailure;
+      }
+      return quiescentResult();
+    });
+    const shell = makeShell(registry);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await expect(
+      shell.handleBossTurn(turn('/code do the work'), context.context),
+    ).rejects.toBe(rawFailure);
+    expect(registry.runtimes[0]?.disposeCount).toBe(0);
+
+    await shell.handleBossTurn(turn('/code try again', 2), context.context);
+    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
+    expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
+      'do the work',
+      'try again',
+    ]);
+  });
+
   it('independently rejects internal-Captain and unknown child targets', async () => {
     const registry = fakeCodeEntry();
     const internal = fakeInternalCaptain(async (runtime, runtimeTurn) => {

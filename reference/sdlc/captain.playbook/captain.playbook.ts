@@ -36,6 +36,7 @@ import {
   assertJsonSafe,
   combineAbortSignals,
   createNestedPlaybookBridge,
+  defaultBuildCaptainJudgePrompt,
   normalizeError,
   normalizePlaybookSnapshot,
   snapshotJsonValue,
@@ -291,19 +292,17 @@ function requiredOutputFields(description: string): readonly string[] {
 }
 
 function makeJudgePrompt(input: CaptainInput, visibleText: string): string {
+  return defaultBuildCaptainJudgePrompt(input, visibleText);
+}
+
+// CAPPLAY-18: a structurally malformed adjudication reply gets exactly one
+// corrective re-ask carrying the rejection reason and the restated shape.
+function makeJudgeRetryPrompt(judgePrompt: string, rejection: unknown): string {
   return [
-    'Adjudicate the direct Captain output for this FSM state.',
-    `State id: ${input.stateId}`,
-    `Source item: ${input.sourceItem}`,
+    judgePrompt,
     '',
-    'Visible Captain output:',
-    visibleText,
-    '',
-    'Result keys and descriptions:',
-    ...Object.entries(input.result).map(([key, description]) => `- ${key}: ${description}`),
-    '',
-    'Return one JSON object with exactly one declared guard.',
-    'For direct Captain question or response guards, do not include question or response; the runtime injects the visible text.',
+    `Your previous control reply was rejected: ${normalizeError(rejection).message}.`,
+    'Reply again with exactly one JSON object naming one declared `guard` key and only its required structural fields, with no prose.',
   ].join('\n');
 }
 
@@ -780,7 +779,16 @@ class CaptainPlaybookRuntime implements PlaybookRuntime {
       }
       const judgePrompt = makeJudgePrompt(input, result.finalText);
       const judgeText = await this.callJudge('captain-output-adjudication', judgePrompt, signal, input.stateId);
-      return adjudicateCaptainOutput(input, result.finalText, judgeText);
+      try {
+        return adjudicateCaptainOutput(input, result.finalText, judgeText);
+      } catch (rejection) {
+        // One corrective re-ask on a malformed control reply (CAPPLAY-18);
+        // a judge transport failure above never reaches this catch.
+        if (signal.aborted) throw signal.reason;
+        const retryPrompt = makeJudgeRetryPrompt(judgePrompt, rejection);
+        const retryText = await this.callJudge('captain-output-adjudication', retryPrompt, signal, input.stateId);
+        return adjudicateCaptainOutput(input, result.finalText, retryText);
+      }
     } catch (error) {
       if (!signal.aborted) this.latchControlError(error);
       throw error;

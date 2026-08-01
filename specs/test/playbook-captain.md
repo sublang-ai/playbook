@@ -280,3 +280,20 @@ visible routing and hidden adjudication call while still requesting
 `resume: false` and the hidden-control envelope, and unless a shell built
 with an enforcing adapter, with no `captainAdapter`, or with an
 unrecognized one requests `allowedTools: []` on those same calls.
+
+### CAPTAIN-36
+Verifies: [CAPTAIN-34](../user/playbook-captain.md#captain-34), [CAPTAIN-35](../dev/playbook-captain.md#captain-35)
+
+Where the internal Captain root's delivered turn rejects with a
+control-plane error, the integration suite shall fail unless the shell
+disposes the stack and returns to idle `chat`, makes no visible chat call
+during the failing turn, a following registered command engages its playbook
+with no already-running refusal, and the rethrown boundary message names a
+concrete next step, contains no `adjudicator`, `guard`, `undeclared`, or
+hidden-control wording, and preserves the original diagnostic as its `cause`.
+The suite shall fail unless the same disposal, message, and clean
+re-engagement hold when the rejecting boundary is instead the internal root's
+`resumePlaybookCall` returning a completed child.
+The suite shall also fail unless a parentless external root's rejected turn
+retains its frame as the active leaf and propagates its boundary error
+unchanged.

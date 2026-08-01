@@ -182,7 +182,11 @@ interprets a linked FSM under the `slc/link.md` contract, and for the
 engine's compatibility self-report `RUNTIME_ABI` and
 `SUPPORTED_ARTIFACT_SCHEMAS` checked at factory construction
 ([DR-022](../decisions/022-runtime-compatibility-contract.md),
-[PBRT-50](playbook-runtime.md#pbrt-50)).
+[PBRT-50](playbook-runtime.md#pbrt-50)), and for the direct-Captain
+adjudication prompt builder `defaultBuildCaptainJudgePrompt` that states the
+judge reply contract shared with compiled Captain artifacts
+([DR-025](../decisions/025-resilient-captain-control-adjudication.md),
+[CAPPLAY-18](captain-playbook.md#capplay-18)).
 This engine subpath shall depend one-way on the
 type-only runtime contract and shall import no generated FSM or host adapter.
 The `PlaybookSession`, player-resume, and trace shapes introduced by
