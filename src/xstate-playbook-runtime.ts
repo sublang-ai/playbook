@@ -799,8 +799,17 @@ export function createPlayerBridge(
 // field as an undeclared extra key.
 // ---------------------------------------------------------------------------
 
-function buildCaptainJudgePrompt(
-  input: PlaybookCaptainInput,
+/**
+ * Default direct-Captain adjudicator prompt (DR-025). The single statement of
+ * the `{ guard, …structuralPayloadFields }` reply contract, shared with the
+ * compiled default Captain artifact so the wording cannot drift.
+ */
+export function defaultBuildCaptainJudgePrompt(
+  input: {
+    readonly stateId: string;
+    readonly sourceItem: string;
+    readonly result: Readonly<Record<string, string>>;
+  },
   finalText: string,
 ): string {
   const lines: string[] = [];
@@ -2042,7 +2051,7 @@ export function createXStatePlaybookRuntime<TOptions>(
                 'captainActor: boundary returned an unvalidated Captain result',
               );
             }
-            const judgePrompt = buildCaptainJudgePrompt(
+            const judgePrompt = defaultBuildCaptainJudgePrompt(
               input,
               result.finalText,
             );

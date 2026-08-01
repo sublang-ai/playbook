@@ -454,7 +454,12 @@ export function createPlayerBridge(spec, ports, getActiveSignal, boundary, onCon
 // `response` and rejects a judge reply that supplies either presentation
 // field as an undeclared extra key.
 // ---------------------------------------------------------------------------
-function buildCaptainJudgePrompt(input, finalText) {
+/**
+ * Default direct-Captain adjudicator prompt (DR-025). The single statement of
+ * the `{ guard, …structuralPayloadFields }` reply contract, shared with the
+ * compiled default Captain artifact so the wording cannot drift.
+ */
+export function defaultBuildCaptainJudgePrompt(input, finalText) {
     const lines = [];
     lines.push('Adjudicate the direct Captain output for this FSM state.');
     lines.push(`State id: ${input.stateId}`);
@@ -1382,7 +1387,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     if (result.status !== 'ok' || !result.finalText) {
                         throw new Error('captainActor: boundary returned an unvalidated Captain result');
                     }
-                    const judgePrompt = buildCaptainJudgePrompt(input, result.finalText);
+                    const judgePrompt = defaultBuildCaptainJudgePrompt(input, result.finalText);
                     const raw = await boundary.callJudge('captain-output-adjudication', input.stateId, judgePrompt, active);
                     const output = adjudicateCaptainOutput(extractFields, input, result.finalText, raw);
                     validateBossReplyOutput(input, output, resumableStateIds);

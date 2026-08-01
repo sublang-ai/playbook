@@ -203,6 +203,16 @@ export interface PlayerBridgeSpec {
     resumableStateIds: ReadonlySet<string>;
 }
 export declare function createPlayerBridge(spec: PlayerBridgeSpec, ports: PlaybookPorts, getActiveSignal?: () => AbortSignal | undefined, boundary?: RuntimeBoundaryCalls, onControlPlaneError?: (error: unknown) => void): PromiseActorLogic<PlaybookActorOutput, PlaybookPlayerInput>;
+/**
+ * Default direct-Captain adjudicator prompt (DR-025). The single statement of
+ * the `{ guard, …structuralPayloadFields }` reply contract, shared with the
+ * compiled default Captain artifact so the wording cannot drift.
+ */
+export declare function defaultBuildCaptainJudgePrompt(input: {
+    readonly stateId: string;
+    readonly sourceItem: string;
+    readonly result: Readonly<Record<string, string>>;
+}, finalText: string): string;
 /** Targets of the FSM's `awaitBossReply` BOSS_REPLY transitions. */
 export declare function resumableStateIdsFromMachine(machine: AnyStateMachine): ReadonlySet<string>;
 /**

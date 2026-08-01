@@ -182,3 +182,17 @@ Where the Boss dismisses the root engagement, the shell shall stop the
 complete nested stack.
 The shell shall not expose playbook session ids, call ids, child output,
 or stack ledger data in those status lines.
+
+## Failure recovery
+
+### CAPTAIN-34
+
+Where the internal default Captain root is the active leaf, when its Boss
+turn fails so that the shell cannot settle it, the Playbook Captain shell
+shall discard that engagement and return to idle `chat`; the Boss's next
+message or registered command shall start cleanly with no already-running
+refusal.
+The surfaced failure text shall name a concrete next step, such as resending
+the request or selecting an enabled playbook command, and shall contain no
+internal control vocabulary such as `adjudicator`, `guard`, `undeclared`, or
+hidden control JSON.

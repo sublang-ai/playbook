@@ -1990,11 +1990,13 @@ describe('compiled default Captain runtime', () => {
       error: /must not supply.*presentation|undeclared field question/i,
     },
   ])(
-    'rejects $name as a control-plane error after quiescence',
+    'rejects $name as a control-plane error after the one corrective re-ask',
     async ({ reply, error }) => {
+      // CAPPLAY-18/19: a malformed reply is re-asked exactly once, so a
+      // persistently malformed judge fails the turn after two calls.
       const harness = makeHarness({
         captains: [{ status: 'ok', finalText: 'A visible routing decision.' }],
-        adjudications: [reply],
+        adjudications: [reply, reply],
       });
       const runtime = await initRuntime(harness);
 
@@ -2011,11 +2013,103 @@ describe('compiled default Captain runtime', () => {
           state: { stateId: 'failed', quiescent: true },
         },
       });
+      expect(
+        harness.judgeCalls.filter(({ purpose }) => purpose === 'adjudication'),
+      ).toHaveLength(2);
       expectPairedCalls(harness.traces, 'captain');
       expectPairedCalls(harness.traces, 'judge');
+      expect(
+        harness.traces.filter((trace) => trace.type === 'judge.call.started'),
+      ).toHaveLength(2);
       await runtime.dispose();
     },
   );
+
+  // CAPPLAY-19: the adjudication prompt states the explicit `{ guard, … }`
+  // contract, and the reply shape observed in issue #13 — the declared
+  // outcome's payload without a `guard` key — recovers through exactly one
+  // corrective re-ask instead of aborting the turn.
+  it('recovers a conversational routing turn after one corrective adjudication re-ask', async () => {
+    const visibleReply =
+      'Hello! I route work to enabled playbooks. What would you like to work on?';
+    const harness = makeHarness({
+      classifications: [{ type: 'BOSS_REPLY' }],
+      captains: [
+        { status: 'ok', finalText: visibleReply },
+        { status: 'ok', finalText: 'I will route this request to CODE.' },
+        { status: 'ok', finalText: 'The JSDoc comment was added.' },
+      ],
+      adjudications: [
+        // The issue #13 reply shape: the declared outcome's payload with no
+        // `guard` key. The decoy text keeps a judge-authored question
+        // distinguishable from the preserved visible Captain prose.
+        { question: 'Spoofed hidden question.' },
+        { guard: 'question' },
+        delegation('code', 'Add a JSDoc block comment to parseArgs.'),
+        finalResponse(),
+      ],
+      children: [
+        settledSuccess(
+          'code',
+          '10000000-0000-4000-8000-000000000042',
+          { summary: 'JSDoc comment added' },
+        ),
+      ],
+    });
+    const runtime = await initRuntime(harness);
+
+    const parked = await runtime.handleBossInput({
+      text: 'hello, what can you do?',
+      signal: signal(),
+    });
+    expect(parked).toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply', quiescent: true },
+    });
+
+    const adjudications = harness.judgeCalls.filter(
+      ({ purpose }) => purpose === 'adjudication',
+    );
+    expect(adjudications).toHaveLength(2);
+    // The whole reply contract, not just its opening clause: the declared
+    // result keys and the exact `{ guard, … }` shape are what a judge needs
+    // in order not to answer with a bare payload.
+    expect(adjudications[0].prompt).toContain('Result keys and descriptions:');
+    for (const guard of ['question', 'delegation', 'needsBossReply']) {
+      expect(adjudications[0].prompt).toContain(`- \`${guard}\` — `);
+    }
+    expect(adjudications[0].prompt).toContain(
+      'Pick exactly one outcome by `guard` and return JSON ' +
+        '`{ guard, …structuralPayloadFields }`. Do not include `question` or ' +
+        '`response`; the runtime injects the visible text.',
+    );
+    expect(adjudications[1].prompt).toContain(adjudications[0].prompt);
+    expect(adjudications[1].prompt).toMatch(
+      /previous control reply was rejected/,
+    );
+    expect(adjudications[1].prompt).toMatch(/undeclared guard/);
+    expectPairedCalls(harness.traces, 'captain');
+    expectPairedCalls(harness.traces, 'judge');
+    expect(
+      harness.traces.filter((trace) => trace.type === 'judge.call.started'),
+    ).toHaveLength(2);
+
+    // The session stays usable: the Boss's answer resumes the same runtime
+    // and delegates as usual, and the resumed prompt carries the Captain's
+    // own visible prose as the parked question — not the rejected reply's.
+    const delegated = await runtime.handleBossInput({
+      text: 'add a JSDoc block comment to parseArgs',
+      signal: signal(),
+    });
+    expect(harness.captainCalls[1].prompt).toContain('Boss question:');
+    expect(harness.captainCalls[1].prompt).toContain(visibleReply);
+    expect(harness.captainCalls[1].prompt).not.toContain(
+      'Spoofed hidden question.',
+    );
+    expectTerminalResponse(delegated, 'The JSDoc comment was added.');
+    expect(harness.childCalls).toHaveLength(1);
+    await runtime.dispose();
+  });
 
   it.each([
     { boundary: 'captain' as const },

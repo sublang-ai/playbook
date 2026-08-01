@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The engine exposes its direct-Captain adjudication prompt builder.** `@sublang/playbook/xstate-runtime` now exports `defaultBuildCaptainJudgePrompt`, the single statement of the hidden judge's `{ guard, …structuralPayloadFields }` reply contract over a state's declared result keys. Compiled Captain artifacts compose their adjudication prompts through it instead of restating the contract, so the wording cannot drift out of agreement with the adjudicator that parses the reply ([DR-025](specs/decisions/025-resilient-captain-control-adjudication.md), [CAPPLAY-18](specs/dev/captain-playbook.md#capplay-18), [RELEASE-15](specs/dev/release.md#release-15)).
+
+### Fixed
+
+- **A conversational first Boss turn no longer crashes the Captain or strands the session.** The compiled default Captain now composes its hidden adjudication prompts through the engine's newly exported `defaultBuildCaptainJudgePrompt`, whose explicit `{ guard, …structuralPayloadFields }` reply contract replaces a private paraphrase that let a judge answer `{"question": …}` with no `guard` key and abort the turn with `adjudicator selected undeclared guard undefined`; a malformed adjudication reply is now re-asked exactly once with the rejection reason appended, a second malformed reply still parks the recoverable `failed` state, and a judge transport failure still fails the turn without a re-ask. When a parentless internal Captain root's boundary does reject — the delivered `handleBossInput` or the `resumePlaybookCall` that returns a completed child — the Playbook Captain shell now disposes the stack under a `failure` reason and returns to idle chat, rethrowing a Boss-appropriate message that names a concrete next step and preserves the original diagnostic as its `cause` — so the next `/code <task>` engages cleanly instead of hitting an already-running refusal, while an external root keeps its recoverable frame ([DR-025](specs/decisions/025-resilient-captain-control-adjudication.md), [CAPPLAY-18](specs/dev/captain-playbook.md#capplay-18), [CAPPLAY-19](specs/test/captain-playbook.md#capplay-19), [CAPTAIN-34](specs/user/playbook-captain.md#captain-34), [CAPTAIN-35](specs/dev/playbook-captain.md#captain-35), [CAPTAIN-36](specs/test/playbook-captain.md#captain-36)).
+
 ## [3.1.0] - 2026-07-27
 
 ### Added

@@ -57,3 +57,23 @@ request. For a question or final outcome, the linked runtime shall preserve
 the corresponding visible Captain call's exact final text as `question` or
 `response`; hidden adjudication may select the guard and structural plan
 fields but shall not replace that human prose.
+
+### CAPPLAY-18
+
+Where the compiled default Captain adjudicates a visible routing or
+reassessment reply, the linked runtime shall compose the hidden
+`captain-output-adjudication` prompt through the engine's exported
+`defaultBuildCaptainJudgePrompt`, which states the explicit
+`{ guard, …structuralPayloadFields }` JSON reply contract over the state's
+declared result keys and instructs the judge to omit `question` and
+`response`.
+When an adjudication reply fails structural validation — no recoverable JSON
+object, a missing or undeclared `guard`, an undeclared field, or a missing or
+malformed required structural field — the runtime shall issue exactly one corrective
+judge call that appends the rejection reason and the restated reply shape to
+the same prompt, and shall adjudicate the second reply; a second malformed
+reply shall latch the control error, park the machine in its recoverable
+`failed` state, and reject the boundary call, and a rejected or aborted judge
+transport call shall not trigger the corrective re-ask.
+Each judge call, initial or corrective, shall trace its own paired
+`judge.call.started` and `judge.call.finished` boundaries.

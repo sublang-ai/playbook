@@ -48,6 +48,7 @@ meta.md     The spec of specs
 | DR-022 | [022-runtime-compatibility-contract.md](decisions/022-runtime-compatibility-contract.md) | Versioned artifact/engine compatibility: the engine's `RUNTIME_ABI` / `SUPPORTED_ARTIFACT_SCHEMAS` self-report, the optional link-time `spec.compat` declaration checked fail-fast at factory construction against the loaded engine, and legacy declaration-free artifacts staying loadable |
 | DR-023 | [023-data-only-machine-ir.md](decisions/023-data-only-machine-ir.md) | Playbook 4 direction: data-only machine IR materialized by the host's own playbook and xstate (resolution-hook bridge rejected), gated on a closed IR vocabulary over all executable machine semantics and a passing global-only acceptance test; no longer gates the install docs per DR-024 |
 | DR-024 | [024-runtime-engine-provisioning.md](decisions/024-runtime-engine-provisioning.md) | Run-time engine provisioning in `playbook run`: probe-first resolution from the artifact, two direct symlinks to the host's own `xstate` and `@sublang/playbook` on failure, `--no-provision`, declared-manifest refusal and dangling-link diagnostics, and the re-scoped hermetic global-only acceptance gate |
+| DR-025 | [025-resilient-captain-control-adjudication.md](decisions/025-resilient-captain-control-adjudication.md) | Resilient Captain control adjudication: the exported explicit `{ guard, … }` judge reply contract reused by the compiled default Captain, one corrective re-ask on a malformed control reply, and shell disposal of a failed internal Captain root with Boss-appropriate failure text |
 
 ## Iterations
 
@@ -82,6 +83,7 @@ meta.md     The spec of specs
 | IR-027 | [027-linked-runtime-boundary-fixes.md](iterations/027-linked-runtime-boundary-fixes.md) | Route host-reported direct-Captain result failures to the FSM failure state, derive the `bossIntent` interrupt field, name the runtime-owned `bossEvents` exclusions in `slc/link.md`, validate `bossEvents` under an overridden classifier, and retire PBRT-46's unit-only clause |
 | IR-030 | [030-runtime-compatibility-metadata.md](iterations/030-runtime-compatibility-metadata.md) | Implement DR-022: the engine compatibility self-report, the `spec.compat` construction check with unit and run-path tests, the `slc/link.md` link-time `compat` emission, and the 3.1.0 release preparation |
 | IR-031 | [031-runtime-engine-provisioning.md](iterations/031-runtime-engine-provisioning.md) | Implement DR-024: probe-first engine provisioning in `playbook run` with `--no-provision`, guard-order diagnostics, injected host roots, PBCLI-38 integration tests, and the fourth hermetic global-only acceptance case |
+| IR-032 | [032-conversational-first-turn-resilience.md](iterations/032-conversational-first-turn-resilience.md) | Implement DR-025: `defaultBuildCaptainJudgePrompt` exported and reused by the compiled Captain, the corrective adjudication re-ask, internal-root failure disposal in the shell, and their integration tests |
 
 ## Packages
 
@@ -89,17 +91,17 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| user | [playbook-captain.md](user/playbook-captain.md) | Playbook Captain host Boss surface: external slash selection, lazy compiled-Captain routing, lifecycle-only fail-open delivery, nested call/return, active-leaf visibility, external lifecycle status, parking, dismissal, and optional summaries |
-| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain host behavior: registry loading, lazy internal root, lifecycle classifier, option-preserving isolated Captain bridge with control-enveloped hidden judges, shared queue, causal UUID stack, external-leaf visibility, trace pass-through, summaries, telemetry, and LIFO lifecycle |
-| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for lazy routing, fail-open lifecycle delivery, registry/reserved-name validation, direct Captain and player bridges, hidden-judge control envelopes, visibility/status privacy, causal nesting, summaries, parking, dismissal, and LIFO disposal |
+| user | [playbook-captain.md](user/playbook-captain.md) | Playbook Captain host Boss surface: external slash selection, lazy compiled-Captain routing, lifecycle-only fail-open delivery, nested call/return, active-leaf visibility, external lifecycle status, parking, dismissal, internal-root failure reset, and optional summaries |
+| dev | [playbook-captain.md](dev/playbook-captain.md) | Playbook Captain host behavior: registry loading, lazy internal root, lifecycle classifier, option-preserving isolated Captain bridge with control-enveloped hidden judges, shared queue, causal UUID stack, external-leaf visibility, trace pass-through, summaries, telemetry, LIFO lifecycle, and internal-root failure disposal |
+| test | [playbook-captain.md](test/playbook-captain.md) | Integration tests for lazy routing, fail-open lifecycle delivery, registry/reserved-name validation, direct Captain and player bridges, hidden-judge control envelopes, visibility/status privacy, causal nesting, summaries, parking, dismissal, LIFO disposal, and internal-root failure reset |
 
 ### CAPPLAY
 
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [captain-playbook.md](user/captain-playbook.md) | Default generic Captain behavior for routing-only clarification, finite sequential delegation plans, meaningful final responses, and active-leaf Boss routing |
-| dev | [captain-playbook.md](dev/captain-playbook.md) | Captain source, canonical compiled/verification bundle, first-class Captain port, sanitized catalog, dynamic child calls, and lazy internal-root hosting |
-| test | [captain-playbook.md](test/captain-playbook.md) | Compilation and shell integration tests for Captain planning, fail-open nested pause/return, direct-call visibility, internal status/visibility suppression, trace completeness, and privacy |
+| dev | [captain-playbook.md](dev/captain-playbook.md) | Captain source, canonical compiled/verification bundle, first-class Captain port, sanitized catalog, dynamic child calls, lazy internal-root hosting, and the explicit adjudication reply contract with one corrective re-ask |
+| test | [captain-playbook.md](test/captain-playbook.md) | Compilation and shell integration tests for Captain planning, fail-open nested pause/return, direct-call visibility, internal status/visibility suppression, trace completeness, privacy, and malformed-adjudication re-ask coverage |
 
 ### GIT
 
