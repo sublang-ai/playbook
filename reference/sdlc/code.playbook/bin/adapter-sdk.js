@@ -139,6 +139,12 @@ export function adapterSdkFailureLines(missingAdapters, options = {}) {
       .map(({ adapter }) => adapter)
       .join(', ')}`,
   ];
+  // External CLIs are found through PATH, which persists across exec trees
+  // and installed prefixes alike, so their global installs are keyed to the
+  // missing adapters only — no alternation risk — and hold in both branches.
+  const cliInstalls = missingAdapters.flatMap(({ clis }) =>
+    (clis ?? []).map((cli) => `npm install -g ${cli}`),
+  );
   if (ephemeralNpx) {
     const sdks = options.requiredSdks ?? missingAdapters.map(({ sdk }) => sdk);
     const args = (options.invocation ?? [])
@@ -146,16 +152,26 @@ export function adapterSdkFailureLines(missingAdapters, options = {}) {
       .join('');
     lines.push(
       '  This npx / npm exec run is ephemeral: no npm install reaches its tree.',
-      '  Re-run with every SDK your config needs named alongside the package:',
+    );
+    if (cliInstalls.length > 0) {
+      // Prerequisites first: the re-run probes the CLI again, so following
+      // the output top-to-bottom must install it before re-running.
+      lines.push(
+        '  First install the required CLI (it persists on PATH):',
+        ...cliInstalls.map((command) => `    ${command}`),
+      );
+    }
+    lines.push(
+      `  ${cliInstalls.length > 0 ? 'Then re-run' : 'Re-run'} with every SDK your config needs named alongside the package:`,
       `    npx -y -p ${selfPackageSpec()}${sdks
         .map((sdk) => ` -p ${sdk}`)
         .join('')} playbook${args}`,
     );
   } else {
-    lines.push(...missingAdapters.map(({ sdk }) => `  npm install -g ${sdk}`));
-  }
-  for (const { clis } of missingAdapters) {
-    lines.push(...(clis ?? []).map((cli) => `  npm install -g ${cli}`));
+    lines.push(
+      ...missingAdapters.map(({ sdk }) => `  npm install -g ${sdk}`),
+      ...cliInstalls.map((command) => `  ${command}`),
+    );
   }
   lines.push('');
   return lines;

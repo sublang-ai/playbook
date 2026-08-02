@@ -921,6 +921,27 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     ).toBe(false);
   });
 
+  it('prints prerequisite CLI installs before the ephemeral re-run', () => {
+    // The re-run probes the CLI again, so following the output
+    // top-to-bottom must install it first — printed after the re-run, the
+    // user's first hop fails and needs another.
+    const lines = adapterSdk.adapterSdkFailureLines(
+      [{ adapter: 'opencode', sdk: '@opencode-ai/sdk', clis: ['opencode-ai'] }],
+      {
+        ephemeralNpx: true,
+        requiredSdks: ['@opencode-ai/sdk'],
+        invocation: ['run', 'mod://x'],
+      },
+    );
+    const cliIndex = lines.findIndex((l: string) =>
+      l.includes('npm install -g opencode-ai'),
+    );
+    const rerunIndex = lines.findIndex((l: string) => l.includes('npx -y'));
+    expect(cliIndex).toBeGreaterThan(-1);
+    expect(rerunIndex).toBeGreaterThan(cliIndex);
+    expect(lines[rerunIndex - 1]).toContain('Then re-run');
+  });
+
   it('dedupes and orders the lineup SDK set canonically', () => {
     // captain and a player sharing an adapter must not produce a repeated
     // -p flag, and unmapped adapters contribute nothing.
@@ -2976,6 +2997,73 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
     expect(out.stderr).not.toContain('npm install -g @openai/codex-sdk');
     expect(runEntry.lastCreate).toBeUndefined();
     expect(calls).toHaveLength(0);
+  });
+
+  it('appends a stdin-supplied task to the ephemeral re-run', async () => {
+    const { createAgent } = fakeAgents({});
+
+    // The task arrives on stdin, which the command consumes before the
+    // gate; the pipe will not exist when the printed command runs, so the
+    // re-run must carry the resolved task as a positional.
+    const out = await runCli(
+      ['run', 'mod://code'],
+      {
+        'mod://code': {
+          default: runEntry(async () => ({
+            outcome: 'terminal',
+            state: {},
+            output: 'x',
+          })),
+        },
+      },
+      createAgent,
+      async () => 'piped task text\n',
+      {
+        probeAdapterSdk: async () => false,
+        ephemeralNpx: true,
+      },
+    );
+
+    expect(out.code).toBe(1);
+    const rerun = out.stderr.split('\n').find((l) => l.includes('npx -y'));
+    expect(rerun).toContain("playbook run mod://code 'piped task text'");
+  });
+
+  it('appends a stdin-supplied reply to the resume re-run', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    const parked = await runCli(
+      ['run', 'mod://code', 'ambiguous'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir, probeAdapterSdk: async () => true },
+    );
+    expect(parked.code).toBe(3);
+    const sessionId = record.inits[0].sessionId;
+
+    const resumed = await runCli(
+      ['run', 'resume', sessionId],
+      modules,
+      createAgent,
+      async () => 'the piped reply\n',
+      {
+        sessionsDir,
+        probeAdapterSdk: async () => false,
+        ephemeralNpx: true,
+      },
+    );
+
+    expect(resumed.code).toBe(1);
+    const rerun = resumed.stderr.split('\n').find((l) => l.includes('npx -y'));
+    expect(rerun).toContain(
+      `playbook run resume ${sessionId} 'the piped reply'`,
+    );
   });
 
   it('gates a resumed session on the stored lineup too', async () => {

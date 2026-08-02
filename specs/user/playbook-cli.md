@@ -283,8 +283,14 @@ where the shell requires it, so the printed command is executable
 exactly as printed and completes in one hop; it shall never carry
 placeholder text such as a literal `...`, which the launch surfaces
 reject as an argument.
+Where `playbook run` consumed its task, or `run resume` its reply,
+from stdin before the gate fired, the re-run shall carry that resolved
+input as an appended quoted positional — the pipe that supplied it
+will not exist when the printed command runs.
 External CLI installs stay global, because the exec tree inherits
-`PATH`.
+`PATH`, and shall be printed **before** the re-run: the re-run probes
+the CLI again, so following the output top-to-bottom must install it
+first.
 
 This check is independent of the credential check
 ([PBCLI-12](../dev/playbook-cli.md#pbcli-12)): a missing SDK and a

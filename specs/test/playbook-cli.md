@@ -306,5 +306,9 @@ that re-run names the SDK of every mapped adapter the lineup requires
 even when only some are missing — the partially supplied exec tree
 case — pins the running package's own version, ends with the original
 invocation's arguments shell-quoted rather than placeholder text, and
-therefore succeeds in one hop; and the lineup SDK set is deduplicated
-when the captain and a player share an adapter.
+therefore succeeds in one hop; the lineup SDK set is deduplicated
+when the captain and a player share an adapter; a task or reply the
+command consumed from stdin is appended to the re-run as a quoted
+positional, on first runs and resumes alike; and a missing adapter's
+external CLI install is printed before the ephemeral re-run rather
+than after it.
