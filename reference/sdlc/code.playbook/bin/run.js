@@ -29,6 +29,11 @@ import {
 } from '@sublang/cligent';
 import { parse as parseYaml } from 'yaml';
 import { hiddenControlEnvelope } from '../../../../src/xstate-runtime.js';
+import {
+  adapterSdkFailureLines,
+  checkAdapterSdks,
+  probeAdapterSdk,
+} from './adapter-sdk.js';
 import { provisionEngine } from './provision.js';
 
 // PBCLI-19: adapter shorthands the run host can construct.
@@ -77,6 +82,9 @@ export async function runPlaybookRun(options = {}) {
     readStdin,
     sessionsDir,
     userConfigPath,
+    // PBCLI-39: the adapter SDK probe, injectable like createAgent so tests
+    // can drive an unavailable SDK without uninstalling one.
+    probeAdapterSdk: options.probeAdapterSdk ?? probeAdapterSdk,
     // PBCLI-37: injected host package roots let tests provision against
     // synthetic trees, like the injected session store.
     hostRoots: options.hostRoots,
@@ -156,6 +164,17 @@ async function runFirst(args, ctx) {
   const specError = specsDiagnostic([...roleSpecs.values(), captainSpec]);
   if (specError !== undefined) {
     stderr.write(`playbook run: ${specError}\n`);
+    return { code: EXIT.arg };
+  }
+
+  // PBCLI-39/40: an optional-peer SDK that is not installed fails here,
+  // before the runtime exists and before any agent call — never mid-turn.
+  const sdkError = await adapterSdksDiagnostic(
+    [...roleSpecs.values(), captainSpec],
+    ctx,
+  );
+  if (sdkError !== undefined) {
+    stderr.write(sdkError);
     return { code: EXIT.arg };
   }
 
@@ -287,6 +306,17 @@ async function runResume(args, ctx) {
   const specError = specsDiagnostic([...roleSpecs.values(), record.captain]);
   if (specError !== undefined) {
     stderr.write(`playbook run: ${specError}\n`);
+    return { code: EXIT.arg };
+  }
+
+  // PBCLI-39: a resume rebuilds the stored lineup, so it needs the same
+  // SDKs — an install that lost one must not resume into a mid-turn error.
+  const sdkError = await adapterSdksDiagnostic(
+    [...roleSpecs.values(), record.captain],
+    ctx,
+  );
+  if (sdkError !== undefined) {
+    stderr.write(sdkError);
     return { code: EXIT.arg };
   }
 
@@ -637,6 +667,26 @@ function specsDiagnostic(specs) {
     }
   }
   return undefined;
+}
+
+// PBCLI-39/40: returns the ready-to-write stderr block naming every bound
+// adapter whose optional-peer SDK is not installed, or undefined when every
+// one of them loads. Runs only after specsDiagnostic has accepted the
+// adapter names, so every spec here carries a known adapter.
+async function adapterSdksDiagnostic(specs, ctx) {
+  const { missingAdapters } = await checkAdapterSdks(
+    specs.map((spec) => spec.adapter),
+    ctx.probeAdapterSdk,
+  );
+  if (missingAdapters.length === 0) return undefined;
+  const [header, ...commands] = adapterSdkFailureLines(missingAdapters).filter(
+    (line) => line !== '',
+  );
+  // Only the header takes the command prefix; the install lines stay
+  // copy-pasteable.
+  return [`playbook run: ${header}`, ...commands]
+    .map((line) => `${line}\n`)
+    .join('');
 }
 
 function isAgentSpec(spec) {

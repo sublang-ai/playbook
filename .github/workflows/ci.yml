@@ -141,15 +141,16 @@ jobs:
         # siblings are committed and pinned by the drift check above.
         run: npm pack --pack-destination /tmp
 
-      - name: Global-install the tarball under a temp prefix
-        # Mirrors the README's `npm install -g @sublang/playbook`.
-        # --prefix points npm at a temp tree instead of the runner's
-        # real global root. Global topology DOES NOT hoist between
-        # separately-named top-level packages, so this is the only
-        # install shape that reflects what users actually get.
+      # RELEASE-13 shape 1 — LEAN: the tarball alone.
+      # --prefix points npm at a temp tree instead of the runner's real
+      # global root. Global topology DOES NOT hoist between separately-named
+      # top-level packages, so only these shapes reflect what users get; an
+      # in-repo or project-local install hoists the SDK flat and passes
+      # regardless, which is why no in-repo test ever caught DR-026's bug.
+      - name: Global-install the tarball alone under a temp prefix
         run: |
-          mkdir -p /tmp/global
-          npm install --prefix /tmp/global -g /tmp/sublang-playbook-*.tgz
+          mkdir -p /tmp/lean
+          npm install --prefix /tmp/lean -g /tmp/sublang-playbook-*.tgz
 
       - name: Verify cligent is bundled under playbook
         # @sublang/cligent must be a regular dependency so it lands
@@ -157,17 +158,47 @@ jobs:
         # from cligent's file location can't reach playbook's deps
         # (the v0.1.0 / v0.1.1 failure mode).
         run: |
-          test -d /tmp/global/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent \
+          test -d /tmp/lean/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent \
             || { echo "::error::cligent did not install transitively under @sublang/playbook"; exit 1; }
 
-      - name: Probe adapter SDKs from cligent's installed location
+      - name: Verify no agent SDK stack ships with a bare install
+        # DR-026: the SDKs are optional peers. A bare install carrying an
+        # agent stack is the 466 MB footprint regression (slc#6).
+        run: |
+          found=$(find /tmp/lean/lib/node_modules \
+            \( -type d -name '@anthropic-ai' -o -type d -name '@openai' \) -print)
+          if [ -n "$found" ]; then
+            echo "::error::a bare install shipped an agent SDK stack:"
+            echo "$found"
+            exit 1
+          fi
+
+      - name: Probe adapters from cligent's installed location — expect none
         # The probe must run from cligent's installed dir so Node's
         # walk-up for the SDK starts at the SAME tree cligent will
         # use at runtime. Probing from anywhere else (or from a
         # hoisted local install) silently passes even when the SDK
         # is unreachable to cligent.
         run: |
-          SMOKE_DIR=/tmp/global/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent
+          SMOKE_DIR=/tmp/lean/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent
           cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
-          cd "$SMOKE_DIR"
-          node ./smoke-adapters.mjs
+          (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs unavailable)
+
+      # RELEASE-13 shape 2 — OPTED-IN: the documented install command.
+      # Each SDK is named as its OWN top-level global root, which places it
+      # on the directory-ancestor walk from the nested cligent. An SDK
+      # nested inside a sibling root's subtree is unreachable instead
+      # (DR-026 §3) — that difference is the whole of slc#1.
+      - name: Global-install the tarball plus both SDKs as sibling roots
+        run: |
+          mkdir -p /tmp/optin
+          npm install --prefix /tmp/optin -g \
+            /tmp/sublang-playbook-*.tgz \
+            @anthropic-ai/claude-agent-sdk \
+            @openai/codex-sdk
+
+      - name: Probe adapters from cligent's installed location — expect both
+        run: |
+          SMOKE_DIR=/tmp/optin/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent
+          cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
+          (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs available)

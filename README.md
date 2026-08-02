@@ -34,9 +34,18 @@ or `ANTHROPIC_API_KEY`, and signed-in
 [Codex CLI](https://github.com/openai/codex) or `OPENAI_API_KEY`.
 
 ```sh
-npm install -g @sublang/playbook
+npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk @openai/codex-sdk
 playbook
 ```
+
+Each agent SDK is an optional peer dependency, so you install only the
+vendors your config names — install one and the package stays around
+14 MB rather than pulling every stack. Name each SDK as its own
+top-level install root, exactly as above: an SDK nested inside another
+package's subtree is not reachable from the adapter that loads it. If
+one is missing, `playbook` says so and prints the install command
+before it launches anything
+([DR-026](specs/decisions/026-optional-adapter-sdks.md)).
 
 The first launch seeds a commented config at
 `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`,

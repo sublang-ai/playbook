@@ -171,6 +171,44 @@ Playbook registry entries shall not define adapter or credential
 readiness predicates; readiness remains launcher-owned
 ([DR-009 §7](../decisions/009-generic-playbook-cli-and-registry.md)).
 
+### PBCLI-39
+
+Where the command determines adapter SDK availability
+([PBCLI-40](../user/playbook-cli.md#pbcli-40)), it shall probe each
+distinct declared adapter by constructing cligent's corresponding
+adapter — `@sublang/cligent/adapters/claude-code` for `claude`,
+`@sublang/cligent/adapters/codex` for `codex` — and awaiting its
+`isAvailable()`.
+The probe shall be the adapter's own loader rather than a resolution
+check: it performs the same dynamic import the adapter performs at run
+time, from the same installed module scope, so a passing probe cannot
+disagree with a failing run
+([DR-026 §4](../decisions/026-optional-adapter-sdks.md#4-missing-sdks-fail-at-the-gate-not-mid-turn)).
+A resolution-based probe shall not be substituted: neither SDK exports
+`./package.json` and `@openai/codex-sdk` is ESM-only, so
+`createRequire(...).resolve()` reports both absent when present.
+
+An adapter whose module cannot be imported at all shall be treated as
+unavailable, not as an internal error.
+An adapter with no known SDK mapping shall be excluded from the result
+and shall reuse the single unknown-adapter warning of
+[PBCLI-12](#pbcli-12) rather than emitting a second one.
+Each probe shall run at most once per distinct adapter per invocation.
+
+Where the interactive launcher runs the gate, the probe shall run over
+the adapters of the composed config, alongside the
+[PBCLI-12](#pbcli-12) credential check, and both results shall be
+reported together before returning the non-`127` readiness exit code.
+Where `playbook run` binds agents ([PBCLI-20](#pbcli-20)), the probe
+shall run over the resolved captain and player adapter values — on a
+first run and on a resumed one alike — after adapter-name and effort
+validation and before the runtime is constructed, so no agent call and
+no turn work precede it.
+The lineup is only known once the `<from>` module has been loaded, so
+the probe necessarily follows that load and any engine provisioning it
+required; a failure shall exit with the argument exit code and the same
+named remedy, leaving the session store untouched.
+
 ## Non-interactive run
 
 ### PBCLI-20

@@ -8,12 +8,6 @@ importers:
 
   .:
     dependencies:
-      '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.3.154
-        version: 0.3.154(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
-      '@openai/codex-sdk':
-        specifier: ^0.139.0
-        version: 0.139.0
       '@sublang/cligent':
         specifier: ^0.16.0
         version: 0.16.0(@anthropic-ai/claude-agent-sdk@0.3.154(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.139.0)
@@ -30,6 +24,12 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
     devDependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.3.154
+        version: 0.3.154(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+      '@openai/codex-sdk':
+        specifier: ^0.139.0
+        version: 0.139.0
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19

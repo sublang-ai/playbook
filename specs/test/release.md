@@ -14,11 +14,31 @@ This spec defines the integration tests for the published
 
 Verifies: [RELEASE-12](../dev/release.md#release-12)
 
-When the publishable tarball (`npm pack`) is installed globally,
-the smoke test shall fail unless `@sublang/cligent` is nested
-inside the installed `@sublang/playbook` module tree and each
-adapter SDK reports available when probed from
-`@sublang/cligent`'s installed location.
+The smoke test shall install the publishable tarball (`npm pack`)
+globally into a throwaway prefix in both documented shapes and
+shall probe each adapter from `@sublang/cligent`'s installed
+location — the module scope the adapter will itself import from at
+run time — rather than from the prefix root or a project-local
+install, either of which passes even when the SDK is unreachable
+to cligent.
+
+The smoke test shall fail unless, with **the tarball alone**:
+
+- `@sublang/cligent` is nested inside the installed
+  `@sublang/playbook` module tree;
+- no `@anthropic-ai` or `@openai` directory exists anywhere in the
+  installed closure; and
+- every adapter reports **unavailable** when probed.
+
+The smoke test shall further fail unless, with **the tarball plus
+each adapter SDK named as its own top-level install root**, every
+adapter reports **available** when probed from that same location.
+
+The lean shape pins the footprint contract; the opted-in shape
+pins the resolution contract behind the documented install command.
+A shape that hoists the SDK flat — an in-repository or
+project-local install — satisfies both probes regardless and shall
+not be substituted for either case.
 
 ### RELEASE-19
 
@@ -35,6 +55,19 @@ pre-close `Captain.prepareDispose()` lifecycle and
 `CaptainContext.callPlayer`, plus `CallCaptainOptions.resume` and
 `CallCaptainOptions.allowedTools` accepted by
 `CaptainContext.callCaptain`.
+
+### RELEASE-27
+
+Verifies: [RELEASE-12](../dev/release.md#release-12)
+
+The test suite shall fail unless, for each adapter SDK wired by the
+bundled production config, `package.json` lists it under
+`peerDependencies` with `peerDependenciesMeta.<name>.optional` set
+to `true`, lists it under neither `dependencies` nor
+`optionalDependencies`, lists it under `devDependencies`, and
+declares a peer range whose floor is no lower than
+`@sublang/cligent`'s own peer floor for that SDK as recorded in the
+installed cligent's `package.json`.
 
 ### RELEASE-23
 

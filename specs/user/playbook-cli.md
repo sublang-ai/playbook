@@ -252,6 +252,30 @@ agent runs.
 `playbook run resume` shall not read the `run` map: a resumed session
 rebuilds the lineup stored with it ([PBCLI-22](#pbcli-22)).
 
+## Adapter SDK availability
+
+### PBCLI-40
+
+The agent SDK backing each adapter is an optional peer dependency
+([RELEASE-12](../dev/release.md#release-12)), so an install carries only
+the agent stacks the user asked for and an unconfigured vendor's stack
+is never downloaded.
+
+Where `playbook` runs the readiness gate ([PBCLI-1](#pbcli-1)) or binds
+agents for `playbook run` ([PBCLI-18](#pbcli-18)), when a declared
+adapter's SDK is not loadable, the command shall block before launching
+tmux-play or making any agent call, print to stderr a line naming every
+such adapter and, for each, the exact `npm install -g <sdk>` command
+that supplies it, and exit non-zero with a status distinct from `127`.
+
+This check is independent of the credential check
+([PBCLI-12](../dev/playbook-cli.md#pbcli-12)): a missing SDK and a
+missing credential are separate failures with separate remedies, and
+where both apply the command shall report both rather than only the
+first.
+A raw `--config <path>` launch bypasses this check along with the rest
+of the gate ([PBCLI-1](#pbcli-1)).
+
 ## Config overlays
 
 ### PBCLI-25

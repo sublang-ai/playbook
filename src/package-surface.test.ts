@@ -38,6 +38,10 @@ const pkg = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as {
   dependencies: Record<string, string>;
+  devDependencies: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
+  peerDependencies?: Record<string, string>;
+  peerDependenciesMeta?: Record<string, { optional?: boolean }>;
 };
 
 const lockfile = parseYaml(
@@ -115,6 +119,66 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     );
     expect(out).toBe('OK');
   });
+});
+
+describe('adapter SDK declarations (RELEASE-27)', () => {
+  // DR-026: the SDKs wired by the bundled production config are the user's
+  // choice of agent vendor, so they are optional peers — declaring them as
+  // dependencies is what made every install carry every stack.
+  const ADAPTER_SDKS = [
+    '@anthropic-ai/claude-agent-sdk',
+    '@openai/codex-sdk',
+  ] as const;
+
+  // cligent exports no `./package.json` subpath and vitest provides no
+  // `import.meta.resolve`, so read the installed manifest through the
+  // node_modules symlink pnpm always creates for a direct dependency.
+  const cligentPeers = (() => {
+    const manifest = join(
+      repoRoot,
+      'node_modules',
+      CLIGENT_DEP,
+      'package.json',
+    );
+    const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as {
+      peerDependencies?: Record<string, string>;
+    };
+    return parsed.peerDependencies ?? {};
+  })();
+
+  it.each(ADAPTER_SDKS)('declares %s as an optional peer', (sdk) => {
+    expect(pkg.peerDependencies?.[sdk]).toBeTypeOf('string');
+    expect(pkg.peerDependenciesMeta?.[sdk]?.optional).toBe(true);
+    expect(pkg.dependencies[sdk]).toBeUndefined();
+    expect(pkg.optionalDependencies?.[sdk]).toBeUndefined();
+    // The repo's own tests, CI, and acceptance runs still need real SDKs.
+    expect(pkg.devDependencies[sdk]).toBeTypeOf('string');
+  });
+
+  it.each(ADAPTER_SDKS)('floors %s no lower than cligent does', (sdk) => {
+    const declared = floorOf(pkg.peerDependencies?.[sdk]);
+    const required = floorOf(cligentPeers[sdk]);
+    expect(
+      compareVersions(declared, required),
+      `${sdk}: declared floor ${declared.join('.')} is below cligent's ${required.join('.')}`,
+    ).toBeGreaterThanOrEqual(0);
+  });
+
+  function floorOf(range: string | undefined): [number, number, number] {
+    const match = /(\d+)\.(\d+)\.(\d+)/.exec(range ?? '');
+    if (!match) throw new Error(`unparseable range: ${String(range)}`);
+    return [Number(match[1]), Number(match[2]), Number(match[3])];
+  }
+
+  function compareVersions(
+    a: readonly number[],
+    b: readonly number[],
+  ): number {
+    for (let i = 0; i < 3; i++) {
+      if (a[i] !== b[i]) return a[i] - b[i];
+    }
+    return 0;
+  }
 });
 
 describe('GEARS grammar provenance (RELEASE-23)', () => {
@@ -371,6 +435,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       `${CODE_BASE}bin/playbook.js`,
       `${CODE_BASE}bin/run.js`,
       `${CODE_BASE}bin/provision.js`,
+      `${CODE_BASE}bin/adapter-sdk.js`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
       'reference/sdlc/discuss.playbook/discuss.registry.js',

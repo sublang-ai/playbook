@@ -22,6 +22,11 @@ import {
   parseDocument as parseYamlDocument,
   stringify as stringifyYaml,
 } from 'yaml';
+import {
+  adapterSdkFailureLines,
+  checkAdapterSdks,
+  probeAdapterSdk,
+} from './adapter-sdk.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const templatePath = resolve(here, '..', 'playbook.config.template.yaml');
@@ -68,6 +73,10 @@ export async function runPlaybookCli(options = {}) {
       ...(options.readStdin ? { readStdin: options.readStdin } : {}),
       ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
       ...(options.hostRoots ? { hostRoots: options.hostRoots } : {}),
+      // PBCLI-39: the run path gates on SDK availability too.
+      ...(options.probeAdapterSdk
+        ? { probeAdapterSdk: options.probeAdapterSdk }
+        : {}),
     });
   }
 
@@ -144,19 +153,27 @@ export async function runPlaybookCli(options = {}) {
   }
 
   // PBCLI-12: readiness reads the adapters of the composed config.
-  const readiness = checkReadiness(
-    adaptersFromComposedConfig(composed.config),
-    env,
-    home,
+  const declaredAdapters = adaptersFromComposedConfig(composed.config);
+  const readiness = checkReadiness(declaredAdapters, env, home);
+  // PBCLI-39/40: SDK availability is an independent check with its own
+  // remedy — a credential and an SDK can be missing at once, and reporting
+  // only the first would send the user round the loop twice.
+  const { missingAdapters } = await checkAdapterSdks(
+    declaredAdapters,
+    options.probeAdapterSdk ?? probeAdapterSdk,
   );
   for (const adapter of readiness.unknownAdapters) {
     stderr.write(
       `playbook: warning: no readiness check for adapter "${adapter}"\n`,
     );
   }
-  if (readiness.failingAdapters.length > 0) {
+  if (readiness.failingAdapters.length > 0 || missingAdapters.length > 0) {
     stderr.write(
-      helpText({ userConfigPath, failingAdapters: readiness.failingAdapters }),
+      helpText({
+        userConfigPath,
+        failingAdapters: readiness.failingAdapters,
+        missingAdapters,
+      }),
     );
     return { code: READINESS_FAILURE_EXIT_CODE };
   }
@@ -678,12 +695,19 @@ function hasExplicitConfig(argv) {
   return argv.some((arg) => arg === '--config' || arg.startsWith('--config='));
 }
 
-function helpText({ userConfigPath, failingAdapters = [] }) {
+function helpText({
+  userConfigPath,
+  failingAdapters = [],
+  missingAdapters = [],
+}) {
   const failures =
     failingAdapters.length > 0
       ? [`Adapters not ready: ${failingAdapters.join(', ')}`, '']
       : [];
   return [
+    // PBCLI-40: the SDK remedy leads, because an unusable adapter cannot be
+    // fixed by the credential advice further down.
+    ...adapterSdkFailureLines(missingAdapters),
     ...failures,
     'Usage:',
     '  playbook [--list] [--with <path>]... [--config <path>] [tmux-play options]',
@@ -699,8 +723,12 @@ function helpText({ userConfigPath, failingAdapters = [] }) {
     '  default config file is never modified.',
     '',
     'Adapter setup:',
-    '  claude: run Claude Code once or set ANTHROPIC_API_KEY.',
-    '  codex: run Codex CLI once or set OPENAI_API_KEY.',
+    '  claude: npm install -g @anthropic-ai/claude-agent-sdk, then run',
+    '    Claude Code once or set ANTHROPIC_API_KEY.',
+    '  codex: npm install -g @openai/codex-sdk, then run Codex CLI once',
+    '    or set OPENAI_API_KEY.',
+    '  Each SDK is an optional peer dependency, so you install only the',
+    '  vendors your config actually names.',
     '',
     'Agent swap recipe:',
     '  - set each agent inline: the top-level captain and every',

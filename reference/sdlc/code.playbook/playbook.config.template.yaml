@@ -10,6 +10,13 @@
 # settings inline: an adapter shorthand (claude, codex) or a block with
 # adapter/model/effort/permissions. Retuning one agent never changes
 # another.
+
+# Each adapter needs its vendor SDK installed as its own top-level
+# install root — they are optional peer dependencies, so you pay only
+# for the vendors named below:
+#   claude -> npm install -g @anthropic-ai/claude-agent-sdk
+#   codex  -> npm install -g @openai/codex-sdk
+# Drop an adapter from this file and you can skip its SDK entirely.
 # Every seeded agent runs in cligent's protected auto mode
 # (permissions.mode: auto): claude maps it to permissionMode auto, codex to
 # on-request + auto_review. Codex roles also grant writablePaths: ['.git']

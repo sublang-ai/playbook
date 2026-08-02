@@ -710,6 +710,151 @@ describe('playbook launcher — readiness (PBCLI-16)', () => {
   });
 });
 
+// PBCLI-41 (DR-026): the adapter SDKs are optional peers, so a launch must
+// name a missing one and its install command instead of letting cligent
+// fail mid-turn.
+describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
+  function fakeProbe(unavailable: string[]) {
+    const probed: string[] = [];
+    return {
+      probed,
+      fn: async (adapter: string) => {
+        probed.push(adapter);
+        return !unavailable.includes(adapter);
+      },
+    };
+  }
+
+  it('launches unchanged when every adapter SDK probes available', async () => {
+    const home = await makeTempHome();
+    await writeUserConfig(home, minimalConfig());
+    const spawn = fakeSpawn();
+    const probe = fakeProbe([]);
+
+    const result = await runPlaybookCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: probe.fn,
+    });
+
+    expect(result).toEqual({ code: 0 });
+    expect(spawn.calls).toHaveLength(1);
+  });
+
+  it('blocks with the adapter id and its exact install command', async () => {
+    const home = await makeTempHome();
+    await writeUserConfig(home, minimalConfig());
+    const spawn = fakeSpawn();
+    const stderr = writer();
+
+    const result = await runPlaybookCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: fakeProbe(['codex']).fn,
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.code).not.toBe(127);
+    expect(stderr.text()).toContain('Adapter SDKs not installed: codex');
+    expect(stderr.text()).toContain('npm install -g @openai/codex-sdk');
+    // The available vendor's SDK is not advertised as a remedy.
+    expect(stderr.text()).not.toContain(
+      'npm install -g @anthropic-ai/claude-agent-sdk\n',
+    );
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  it('reports a missing credential and a missing SDK together', async () => {
+    const home = await makeTempHome();
+    await writeUserConfig(home, minimalConfig());
+    const spawn = fakeSpawn();
+    const stderr = writer();
+
+    // No credentials at all, and claude's SDK absent: two independent
+    // failures with two different remedies — reporting one would send the
+    // user round the loop twice.
+    const result = await runPlaybookCli({
+      argv: [],
+      env: {},
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: fakeProbe(['claude']).fn,
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.code).not.toBe(127);
+    expect(stderr.text()).toContain('Adapter SDKs not installed: claude');
+    expect(stderr.text()).toContain(
+      'npm install -g @anthropic-ai/claude-agent-sdk',
+    );
+    expect(stderr.text()).toContain('Adapters not ready:');
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  it('excludes an adapter with no known SDK and probes each once', async () => {
+    const home = await makeTempHome();
+    await writeUserConfig(home, geminiConfig());
+    const spawn = fakeSpawn();
+    const stderr = writer();
+    const probe = fakeProbe([]);
+
+    const result = await runPlaybookCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'a' },
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: probe.fn,
+    });
+
+    expect(result).toEqual({ code: 0 });
+    // The config declares captain claude plus two gemini players: gemini has
+    // no SDK mapping and claude is probed once, not once per declaration.
+    expect(probe.probed).toEqual(['claude']);
+    // PBCLI-12 already warns about gemini; the SDK check adds no second one.
+    expect(
+      stderr.text().match(/no readiness check for adapter "gemini"/g),
+    ).toHaveLength(1);
+    expect(spawn.calls).toHaveLength(1);
+  });
+
+  it('runs no probe for a raw --config launch', async () => {
+    const home = await makeTempHome();
+    const spawn = fakeSpawn();
+    const probe = fakeProbe(['claude', 'codex']);
+
+    const result = await runPlaybookCli({
+      argv: ['--config', '/tmp/raw.yaml'],
+      env: {},
+      homeDir: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: probe.fn,
+    });
+
+    expect(result).toEqual({ code: 0 });
+    expect(probe.probed).toEqual([]);
+    expect(spawn.calls).toHaveLength(1);
+  });
+});
+
 describe('playbook launcher — CLI surface (PBCLI-17)', () => {
   it('lists configured playbooks without launching', async () => {
     const home = await makeTempHome();
@@ -2598,6 +2743,92 @@ async function runProvisionCli(
     agentCalls: calls,
   };
 }
+
+// PBCLI-41 (DR-026): the non-interactive path gates on the same optional
+// peer SDKs, before the runtime exists and before any agent call.
+describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
+  it('fails before constructing the runtime, naming the install command', async () => {
+    runEntry.lastCreate = undefined;
+    const { createAgent, calls } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'do it'],
+      { 'mod://code': { default: runEntry(async () => ({ outcome: 'terminal', state: {}, output: 'x' })) } },
+      createAgent,
+      undefined,
+      { probeAdapterSdk: async (adapter: string) => adapter !== 'claude' },
+    );
+
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('Adapter SDKs not installed: claude');
+    expect(out.stderr).toContain(
+      'npm install -g @anthropic-ai/claude-agent-sdk',
+    );
+    // Nothing downstream ran: no runtime, no agent call.
+    expect(runEntry.lastCreate).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('runs normally when every bound adapter probes available', async () => {
+    const { createAgent, calls } = fakeAgents({
+      coder: async () => ({ status: 'ok', finalText: 'ok' }),
+    });
+
+    const out = await runCli(
+      ['run', 'mod://code', 'do it'],
+      {
+        'mod://code': {
+          default: runEntry(async () => ({
+            outcome: 'terminal',
+            state: {},
+            output: 'done',
+          })),
+        },
+      },
+      createAgent,
+      undefined,
+      { probeAdapterSdk: async () => true },
+    );
+
+    expect(out.code).toBe(0);
+    expect(out.stdout.trim()).toBe('done');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('gates a resumed session on the stored lineup too', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    // Park a session while both SDKs are present.
+    const parked = await runCli(
+      ['run', 'mod://code', 'ambiguous'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir, probeAdapterSdk: async () => true },
+    );
+    expect(parked.code).toBe(3);
+    const sessionId = record.inits[0].sessionId;
+
+    // The install then loses claude's SDK; resume must not reach a turn.
+    const resumed = await runCli(
+      ['run', 'resume', sessionId, 'the answer'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir, probeAdapterSdk: async () => false },
+    );
+
+    expect(resumed.code).toBe(1);
+    expect(resumed.stderr).toContain('Adapter SDKs not installed: claude');
+    expect(record.restores).toHaveLength(0);
+    expect(record.turnTexts).toEqual(['ambiguous']);
+  });
+});
 
 describe('playbook run — engine provisioning (PBCLI-38)', () => {
   it('leaves a directory with a resolvable engine byte-identical', async () => {
