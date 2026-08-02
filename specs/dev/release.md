@@ -122,9 +122,12 @@ listed under `peerDependencies` with
 `peerDependenciesMeta.<name>.optional` set to `true` — and shall
 declare neither among `dependencies` or `optionalDependencies`
 ([DR-026](../decisions/026-optional-adapter-sdks.md)).
-Each declared peer range shall be satisfied by every version
-satisfying `@sublang/cligent`'s corresponding peer range, so a
-resolution accepted here is accepted there.
+Each declared peer range shall be identical to `@sublang/cligent`'s
+corresponding peer range, so the two packages accept exactly the same
+versions: cligent is the only package that imports the SDK, and a
+range here that is narrower than the loader's rejects
+application-owned SDK versions the loader accepts, while a wider one
+admits versions the loader would warn on.
 Both SDKs shall additionally be `devDependencies`, so this
 repository's own test, CI, and local acceptance runs exercise real
 adapters.
@@ -144,6 +147,11 @@ npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk @openai/codex-sd
 
 A user configuring a single vendor shall be able to install that
 vendor's SDK alone and pay only that stack's footprint.
+The documented ephemeral form shall likewise name each wanted SDK as a
+sibling package of the same invocation —
+`npx -y -p @sublang/playbook -p <sdk> playbook` — because npm's exec
+tree is reached by no install command at all: a global SDK install is
+not on that tree's directory-ancestor walk.
 The absence of a wanted SDK shall never surface as a mid-turn
 adapter failure; it is gated ahead of any agent call by
 [PBCLI-39](playbook-cli.md#pbcli-39).

@@ -17,7 +17,17 @@ its own top-level install root:
 ```sh
 npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk   # claude
 npm install -g @sublang/playbook @openai/codex-sdk                # codex
+npm install -g @sublang/playbook @opencode-ai/sdk opencode-ai     # opencode (SDK + CLI)
 ```
+
+The `gemini` adapter needs no SDK install — its transport ships inside
+cligent — only the `gemini` CLI on `PATH`.
+
+**Upgrading from ≤ 3.1.0:** run the same full line. The old releases
+bundled the SDKs inside `@sublang/playbook`'s own tree, and npm
+removes that bundled copy when it upgrades to a version that no
+longer declares them — an in-place `npm install -g @sublang/playbook`
+alone leaves no SDK behind.
 
 The "own top-level root" part matters. The adapter that imports the SDK
 lives at `@sublang/playbook/node_modules/@sublang/cligent/`, and Node
@@ -29,7 +39,7 @@ the adapter even though it is on disk
 
 Both surfaces check this before doing any work: a declared adapter
 whose SDK is not loadable blocks the launch, names the adapter, and
-prints its exact `npm install -g` line
+prints the exact command that supplies it
 ([PBCLI-40](../specs/user/playbook-cli.md#pbcli-40)).
 
 ## Interactive
@@ -40,7 +50,18 @@ playbook --list     # ids, slash commands, and intents; no launch
 playbook --help     # config path, auth pointers, agent-swap recipe
 ```
 
-Without a global install, `npx @sublang/playbook` runs the same bin.
+Without a global install, `npx` runs the same bin — but name each
+agent SDK as a sibling package of the same invocation:
+
+```sh
+npx -y -p @sublang/playbook -p @anthropic-ai/claude-agent-sdk playbook
+```
+
+A bare `npx @sublang/playbook` cannot be repaired by any install
+command: npx materializes the run in an ephemeral cache tree whose
+ancestor walk touches no global prefix, so an SDK installed with
+`npm install -g` is invisible to it. The preflight detects this case
+and prints the multi-package re-run above instead of an install line.
 
 The command resolves its config (seeding it on first run), composes a
 `tmux-play` config, checks adapter readiness, and launches. It exits

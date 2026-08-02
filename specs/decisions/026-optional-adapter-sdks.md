@@ -48,8 +48,12 @@ longer does.
 `dependencies` to `peerDependencies` with
 `peerDependenciesMeta.<name>.optional = true` [[2]], matching cligent's
 existing declaration exactly.
-Their floors match cligent's own peer floors, so a range satisfied here
-is satisfied there.
+Their ranges are identical to cligent's own peer ranges — not merely
+compatible: cligent is the only package that imports the SDKs, and a
+narrower range here makes npm's resolver reject an application-owned
+SDK version the loader accepts (`peerOptional` conflicts still fail
+`npm install`), while a wider one admits versions the loader would
+warn on.
 `@sublang/cligent` and `@sublang/spex` stay regular `dependencies` —
 this repository's code does import them, and cligent must keep nesting
 inside `@sublang/playbook`'s module tree.
@@ -98,6 +102,21 @@ npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk @openai/codex-sd
 A user who edits the seeded config down to one vendor installs only
 that vendor's SDK and pays only that stack's footprint.
 
+The ephemeral `npx` / `npm exec` form follows the same rule with
+different mechanics. npm materializes the run in a cache tree
+(`…/_npx/<hash>/node_modules`, hoisted flat like a project install)
+whose ancestor walk touches no global prefix, so **no install command
+reaches it** — the only way to supply an SDK there is to name it as a
+sibling package of the same invocation:
+
+```sh
+npx -y -p @sublang/playbook -p @anthropic-ai/claude-agent-sdk playbook
+```
+
+The preflight (§4) detects an exec-tree run and prints this re-run
+form instead of an `npm install -g` line that would install somewhere
+the tree cannot see.
+
 ### 4. Missing SDKs fail at the gate, not mid-turn
 
 Making the SDKs optional is only safe if their absence is diagnosed
@@ -117,9 +136,15 @@ Resolution-only alternatives were rejected — neither SDK exposes
 `createRequire(...).resolve()` reports both as missing when they are
 present.
 
-A blocked launch names each unavailable adapter and the exact
-`npm install -g <sdk>` line that fixes it, so the remedy never requires
-reading this record.
+A blocked launch names each unavailable adapter and the exact command
+that fixes it — `npm install -g <sdk>` for an installed tree, the §3
+multi-package re-run for an exec tree, plus the global install of any
+external CLI the adapter's probe also requires — so the remedy never
+requires reading this record.
+The probe map covers exactly the adapters backed by cligent's optional
+peer SDKs (`claude`, `codex`, `opencode`); `gemini`'s transport SDK is
+a regular dependency of cligent, so it has no missing-SDK failure mode
+to gate.
 
 ### 5. The release gate moves to the shape users actually get
 
@@ -145,9 +170,18 @@ defect.
   install. It yields a *diagnosable* one — the gate names the missing
   SDK and its install line — but the documented command grows, and the
   README, `docs/cli.md`, and the seeded config comment must carry it.
-- Existing installs that upgrade in place keep working: the SDK they
-  already have stays where npm put it, and the new declaration does not
-  remove it.
+- Existing global installs **break on an in-place upgrade** and must
+  re-run the documented install line. Under the old declaration the SDK
+  stacks nest inside `@sublang/playbook`'s own subtree — where the
+  nested cligent could in fact resolve them — and `npm install -g` of
+  the new version re-computes that root's tree against the new
+  manifest and prunes everything the dropped dependencies pulled in
+  (measured: upgrading a global 3.1.0 removed 104 packages, both SDK
+  stacks among them). The upgrade command is therefore the same as the
+  fresh install command: name the wanted SDKs alongside the package.
+  There is no shape in which the old nested copy survives to satisfy
+  the new peer declaration, so documentation must present this as a
+  migration, not a compatibility.
 - An application depending on `@sublang/playbook` must now declare an
   SDK itself. That is the intended transfer of ownership, and it is the
   precondition for fixing [sublang-ai/slc#1][4] in the application layer

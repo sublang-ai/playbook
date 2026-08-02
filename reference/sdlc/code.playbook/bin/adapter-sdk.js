@@ -6,20 +6,37 @@
 // to be a named gate failure rather than a mid-turn adapter error, which is
 // what this probe provides for both the interactive launcher and `run`.
 
-// PBCLI-39: adapter shorthand -> the SDK its cligent adapter demand-loads,
-// and the cligent module that performs that load. Adapters absent from this
-// map have no SDK the launcher knows how to name; they are excluded from
-// the result and stay covered by PBCLI-12's unknown-adapter warning.
+import { sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// PBCLI-39: adapter shorthand -> the optional peer SDK its cligent adapter
+// demand-loads, the cligent module that performs that load, and any external
+// CLI the adapter's own availability probe additionally requires. The map
+// covers exactly the adapters backed by cligent's optional peer SDKs;
+// gemini is excluded by design — its transport SDK is a regular dependency
+// of cligent, so it has no missing-SDK failure mode to gate. Adapters absent
+// from this map are excluded from the result and stay covered by PBCLI-12's
+// unknown-adapter warning.
 export const ADAPTER_SDKS = {
   claude: {
     sdk: '@anthropic-ai/claude-agent-sdk',
     module: '@sublang/cligent/adapters/claude-code',
     export: 'ClaudeCodeAdapter',
+    clis: [],
   },
   codex: {
     sdk: '@openai/codex-sdk',
     module: '@sublang/cligent/adapters/codex',
     export: 'CodexAdapter',
+    clis: [],
+  },
+  opencode: {
+    sdk: '@opencode-ai/sdk',
+    module: '@sublang/cligent/adapters/opencode',
+    export: 'OpenCodeAdapter',
+    // OpenCode's managed default also spawns the `opencode` binary, and its
+    // isAvailable() probes both — so the remedy must name both installs.
+    clis: ['opencode-ai'],
   },
 };
 
@@ -51,19 +68,48 @@ export async function checkAdapterSdks(adapters, probe = probeAdapterSdk) {
   return {
     missingAdapters: known
       .filter((_, i) => !results[i])
-      .map((adapter) => ({ adapter, sdk: ADAPTER_SDKS[adapter].sdk })),
+      .map((adapter) => ({
+        adapter,
+        sdk: ADAPTER_SDKS[adapter].sdk,
+        clis: ADAPTER_SDKS[adapter].clis,
+      })),
   };
 }
 
+// PBCLI-40: a run under `npx` / `npm exec` lives in npm's ephemeral cache
+// tree. No `npm install` invocation reaches that tree — a global SDK install
+// is not on its directory-ancestor walk — so the only honest remedy is to
+// re-run with each SDK named as a sibling package of the same exec.
+export function detectEphemeralNpxInstall(moduleUrl = import.meta.url) {
+  return fileURLToPath(moduleUrl).split(sep).includes('_npx');
+}
+
 // PBCLI-40: name every unavailable adapter and, for each, the exact command
-// that supplies it, so the remedy never requires reading a spec.
-export function adapterSdkFailureLines(missingAdapters) {
+// that supplies it, so the remedy never requires reading a spec. External
+// CLIs are found through PATH, which an exec tree inherits, so their global
+// install lines hold in both cases.
+export function adapterSdkFailureLines(missingAdapters, options = {}) {
   if (missingAdapters.length === 0) return [];
-  return [
+  const ephemeralNpx = options.ephemeralNpx ?? detectEphemeralNpxInstall();
+  const lines = [
     `Adapter SDKs not installed: ${missingAdapters
       .map(({ adapter }) => adapter)
       .join(', ')}`,
-    ...missingAdapters.map(({ sdk }) => `  npm install -g ${sdk}`),
-    '',
   ];
+  if (ephemeralNpx) {
+    lines.push(
+      '  This npx / npm exec run is ephemeral: no npm install reaches its tree.',
+      '  Re-run with each SDK named alongside the package:',
+      `    npx -y -p @sublang/playbook${missingAdapters
+        .map(({ sdk }) => ` -p ${sdk}`)
+        .join('')} playbook ...`,
+    );
+  } else {
+    lines.push(...missingAdapters.map(({ sdk }) => `  npm install -g ${sdk}`));
+  }
+  for (const { clis } of missingAdapters) {
+    lines.push(...(clis ?? []).map((cli) => `  npm install -g ${cli}`));
+  }
+  lines.push('');
+  return lines;
 }

@@ -202,3 +202,29 @@ jobs:
           SMOKE_DIR=/tmp/optin/lib/node_modules/@sublang/playbook/node_modules/@sublang/cligent
           cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
           (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs available)
+
+      # RELEASE-13 shapes 3 and 4 — EPHEMERAL: the npx / npm exec tree.
+      # npm materializes the run in a cache tree whose ancestor walk touches
+      # no global prefix, so no install command reaches it. The bare tree must
+      # therefore probe unavailable, and the documented multi-package form —
+      # each SDK a sibling package of one invocation — must probe available.
+      # In an exec tree npm hoists flat, so cligent sits at the tree root.
+      - name: Probe the bare exec tree — expect none
+        run: |
+          export npm_config_cache=/tmp/npxcache
+          BIN=$(npm exec --yes --package=/tmp/sublang-playbook-*.tgz --call 'command -v playbook')
+          SMOKE_DIR="$(dirname "$(dirname "$BIN")")/@sublang/cligent"
+          cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
+          (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs unavailable)
+
+      - name: Probe the multi-package exec tree — expect both
+        run: |
+          export npm_config_cache=/tmp/npxcache
+          BIN=$(npm exec --yes \
+            --package=/tmp/sublang-playbook-*.tgz \
+            --package=@anthropic-ai/claude-agent-sdk \
+            --package=@openai/codex-sdk \
+            --call 'command -v playbook')
+          SMOKE_DIR="$(dirname "$(dirname "$BIN")")/@sublang/cligent"
+          cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
+          (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs available)

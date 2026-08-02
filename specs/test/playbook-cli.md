@@ -294,7 +294,12 @@ a config that is simultaneously missing a credential and an SDK
 reports both failures rather than only one; an adapter with no known
 SDK mapping is excluded from the probe without emitting a second
 unknown-adapter warning; a `--config <path>` launch runs no probe;
-each distinct adapter is probed at most once per invocation; and
+each distinct adapter is probed at most once per invocation;
 `playbook run` with an unavailable SDK exits non-zero naming the same
 remedy before constructing the runtime, on a first run and on a
-resumed one alike, with no agent call made.
+resumed one alike, with no agent call made; an unavailable `opencode`
+names both its SDK and its external CLI install; the probe map holds
+exactly the adapters backed by cligent's optional peer SDKs (`claude`,
+`codex`, `opencode`); and a run detected inside npm's ephemeral exec
+tree prints one multi-package re-run naming every missing SDK rather
+than any `npm install` command.

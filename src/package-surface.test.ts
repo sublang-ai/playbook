@@ -155,30 +155,13 @@ describe('adapter SDK declarations (RELEASE-27)', () => {
     expect(pkg.devDependencies[sdk]).toBeTypeOf('string');
   });
 
-  it.each(ADAPTER_SDKS)('floors %s no lower than cligent does', (sdk) => {
-    const declared = floorOf(pkg.peerDependencies?.[sdk]);
-    const required = floorOf(cligentPeers[sdk]);
-    expect(
-      compareVersions(declared, required),
-      `${sdk}: declared floor ${declared.join('.')} is below cligent's ${required.join('.')}`,
-    ).toBeGreaterThanOrEqual(0);
+  it.each(ADAPTER_SDKS)('declares the identical peer range cligent declares for %s', (sdk) => {
+    // Identity, not one-directional containment. A floor above cligent's
+    // ERESOLVE-conflicts with an application-owned SDK the loader accepts;
+    // a floor below admits versions the loader would warn on. cligent is the
+    // only package that imports the SDK, so its range is the whole truth.
+    expect(pkg.peerDependencies?.[sdk]).toBe(cligentPeers[sdk]);
   });
-
-  function floorOf(range: string | undefined): [number, number, number] {
-    const match = /(\d+)\.(\d+)\.(\d+)/.exec(range ?? '');
-    if (!match) throw new Error(`unparseable range: ${String(range)}`);
-    return [Number(match[1]), Number(match[2]), Number(match[3])];
-  }
-
-  function compareVersions(
-    a: readonly number[],
-    b: readonly number[],
-  ): number {
-    for (let i = 0; i < 3; i++) {
-      if (a[i] !== b[i]) return a[i] - b[i];
-    }
-    return 0;
-  }
 });
 
 describe('GEARS grammar provenance (RELEASE-23)', () => {

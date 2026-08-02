@@ -265,8 +265,17 @@ Where `playbook` runs the readiness gate ([PBCLI-1](#pbcli-1)) or binds
 agents for `playbook run` ([PBCLI-18](#pbcli-18)), when a declared
 adapter's SDK is not loadable, the command shall block before launching
 tmux-play or making any agent call, print to stderr a line naming every
-such adapter and, for each, the exact `npm install -g <sdk>` command
-that supplies it, and exit non-zero with a status distinct from `127`.
+such adapter and, for each, the exact command that supplies it, and
+exit non-zero with a status distinct from `127`.
+For an installed tree, that command is `npm install -g <sdk>`, plus the
+global install of any external CLI the adapter's availability probe
+also requires.
+Where the running installation is npm's ephemeral exec tree (`npx` /
+`npm exec`), no install command reaches the tree the adapters resolve
+from, so the command shall instead be one multi-package re-run naming
+the package and every missing SDK as sibling `-p` packages of the same
+invocation; external CLI installs stay global, because the exec tree
+inherits `PATH`.
 
 This check is independent of the credential check
 ([PBCLI-12](../dev/playbook-cli.md#pbcli-12)): a missing SDK and a
