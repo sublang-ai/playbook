@@ -126,6 +126,10 @@ tmux-play and without requiring a `playbooks.<id>` config block.
 `<from>` is a registry module specifier (a bare package subpath, a file
 path, or a `file:` URL); `[task]` is the Boss intent, read from stdin
 when the argument is omitted.
+The argument list shall support a `--` end-of-options terminator:
+every argument after `--` is positional, so a task or reply that
+begins with `-` can be passed on the command line, and the `run` help
+text shall name the terminator.
 The command shall load the registry entry, bind its required roles and
 a captain agent ([PBCLI-19](#pbcli-19)), drive one Boss turn to a
 terminal outcome, print that outcome to stdout, and exit `0`.
@@ -285,8 +289,11 @@ placeholder text such as a literal `...`, which the launch surfaces
 reject as an argument.
 Where `playbook run` consumed its task, or `run resume` its reply,
 from stdin before the gate fired, the re-run shall carry that resolved
-input as an appended quoted positional — the pipe that supplied it
-will not exist when the printed command runs.
+input appended behind a `--` end-of-options terminator
+([PBCLI-18](#pbcli-18)), quoted — the pipe that supplied it will not
+exist when the printed command runs, and quoting alone cannot keep a
+flag-shaped value such as `--json`, `--last`, or a `-`-leading bullet
+from being reinterpreted as an option on the replay.
 External CLI installs stay global, because the exec tree inherits
 `PATH`, and shall be printed **before** the re-run: the re-run probes
 the CLI again, so following the output top-to-bottom must install it

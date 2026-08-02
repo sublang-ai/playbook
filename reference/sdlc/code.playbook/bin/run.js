@@ -691,12 +691,15 @@ async function adapterSdksDiagnostic(specs, ctx, stdinArgs = []) {
     // PBCLI-40: the ephemeral re-run carries the lineup's full mapped SDK
     // set and the original arguments, so it completes in one hop and runs
     // exactly as printed. A task or reply consumed from stdin before this
-    // gate is appended as a positional — parse-equivalent, since the
-    // argument parser collects positionals wherever they appear — because
-    // the pipe that supplied it will not exist when the printed command
-    // runs.
+    // gate is appended behind an end-of-options `--`: quoting alone cannot
+    // keep a flag-shaped value (`--json`, `- bullet …`) from being read as
+    // an option, and the pipe that supplied it will not exist when the
+    // printed command runs.
     requiredSdks: mappedSdksFor(adapters),
-    invocation: [...ctx.rawArgv, ...stdinArgs],
+    invocation: [
+      ...ctx.rawArgv,
+      ...(stdinArgs.length > 0 ? ['--', ...stdinArgs] : []),
+    ],
     ...(ctx.ephemeralNpx !== undefined
       ? { ephemeralNpx: ctx.ephemeralNpx }
       : {}),
@@ -965,6 +968,14 @@ export function parseRunArgs(argv) {
   const positionals = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    // PBCLI-40: end-of-options — everything after `--` is positional, so a
+    // flag-shaped task or reply (a stdin-derived `--json`, a `- bullet`
+    // line) survives the ephemeral re-run round trip instead of being
+    // reinterpreted as an option.
+    if (arg === '--') {
+      positionals.push(...argv.slice(i + 1));
+      break;
+    }
     if (arg === '--help' || arg === '-h') args.help = true;
     else if (arg === '--json') args.json = true;
     else if (arg === '--verbose') args.verbose = true;
@@ -1105,6 +1116,7 @@ function runHelpText() {
     '  <from>   registry module specifier (package subpath, path, or file: URL)',
     '  [task]   Boss intent; read from stdin when omitted',
     '  [reply]  Boss reply to a parked session; read from stdin when omitted',
+    '  --       end of options; use before a task or reply that starts with -',
     '',
     'Options:',
     '  --player <role>=<agent>   bind a required role (repeatable)',
