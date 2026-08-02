@@ -29,6 +29,19 @@ at the two install shapes users actually produce.
       RELEASE-27, and the two-shape CI smoke per RELEASE-13.
 - [x] README, `docs/cli.md`, and the seeded config template carrying the
       documented install line.
+- [x] The peer ranges identical to cligent's, so npm never rejects an
+      application-owned SDK version the loader accepts.
+- [x] The probe map covering exactly cligent's optional-peer SDK
+      adapters — `opencode` gated with both its SDK and CLI remedies,
+      `gemini` excluded because its transport SDK is cligent's regular
+      dependency.
+- [x] The ephemeral `npx` / `npm exec` path: a documented and
+      CI-verified multi-package form, and a preflight that detects an
+      exec tree and prints that re-run instead of an install command no
+      tree walk would ever see.
+- [x] Upgrade guidance presenting the in-place upgrade as a migration:
+      npm prunes the previously bundled SDK stacks, so upgraders re-run
+      the full documented line.
 
 ## Tasks
 
@@ -44,6 +57,14 @@ at the two install shapes users actually produce.
 4. **Release gate and docs.** _[done]_ Rewrite `scripts/smoke-adapters.mjs`
    and the CI smoke job for the lean and opted-in shapes; update README,
    `docs/cli.md`, the config template comment, and `CHANGELOG.md`.
+5. **Review-round corrections.** _[done]_ Align the codex peer range to
+   cligent's exact `>=0.138.0` with RELEASE-27 demanding identity; map
+   `opencode` into the preflight with SDK-plus-CLI remedies and narrow
+   `gemini` out explicitly; add the exec-tree smoke shapes and the
+   npx-aware remedy per amended RELEASE-12/13 and PBCLI-39/40/41; and
+   replace the false upgrade-compatibility claim with the measured
+   prune-and-reinstall migration in DR-026, README, `docs/cli.md`, and
+   the changelog.
 
 ## Acceptance criteria
 
@@ -59,4 +80,12 @@ at the two install shapes users actually produce.
   fails the same way before any agent call.
 - With both SDKs present, every pre-existing readiness, launch, and run
   expectation holds unchanged.
+- A bare exec tree (`npm exec` / `npx` with the tarball alone) reports
+  every adapter unavailable and the gate prints the multi-package
+  re-run naming each missing SDK, not an install command; the same exec
+  invocation with the SDKs as sibling packages reports them available.
+- An application depending on the package plus `@openai/codex-sdk`
+  0.138.0 installs without a peer conflict.
+- An `opencode` lineup with its SDK unavailable blocks naming both
+  `@opencode-ai/sdk` and `opencode-ai`.
 - `pnpm test` passes with no pre-existing expectation modified.

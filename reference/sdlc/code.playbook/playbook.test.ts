@@ -33,6 +33,9 @@ import {
 const playbook = await import(
   new URL('./bin/playbook.js', import.meta.url).href
 );
+const adapterSdk = await import(
+  new URL('./bin/adapter-sdk.js', import.meta.url).href
+);
 const { runCligentCall } = await import(
   new URL('./bin/run.js', import.meta.url).href
 );
@@ -852,6 +855,64 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     expect(result).toEqual({ code: 0 });
     expect(probe.probed).toEqual([]);
     expect(spawn.calls).toHaveLength(1);
+  });
+
+  it('maps exactly the adapters backed by cligent optional peer SDKs', () => {
+    // opencode is run-path-supported and its SDK is an optional peer, so
+    // leaving it unmapped restores the mid-turn failure DR-026 §4 removes.
+    // gemini stays out by design: its transport SDK is a regular dependency
+    // of cligent, so there is no missing-SDK failure mode to gate.
+    expect(Object.keys(adapterSdk.ADAPTER_SDKS).sort()).toEqual([
+      'claude',
+      'codex',
+      'opencode',
+    ]);
+    expect(adapterSdk.ADAPTER_SDKS.opencode).toMatchObject({
+      sdk: '@opencode-ai/sdk',
+      clis: ['opencode-ai'],
+    });
+  });
+
+  it('names both installs for an adapter that also needs a CLI', () => {
+    const lines = adapterSdk.adapterSdkFailureLines(
+      [{ adapter: 'opencode', sdk: '@opencode-ai/sdk', clis: ['opencode-ai'] }],
+      { ephemeralNpx: false },
+    );
+    expect(lines).toEqual([
+      'Adapter SDKs not installed: opencode',
+      '  npm install -g @opencode-ai/sdk',
+      '  npm install -g opencode-ai',
+      '',
+    ]);
+  });
+
+  it('detects an npm exec tree and prints the multi-package re-run', () => {
+    // A global SDK install is not on the ephemeral tree's ancestor walk, so
+    // an `npm install -g` remedy there is a command that cannot work.
+    expect(
+      adapterSdk.detectEphemeralNpxInstall(
+        'file:///home/dev/.npm/_npx/9ce5e27bec6c6909/node_modules/@sublang/playbook/reference/sdlc/code.playbook/bin/adapter-sdk.js',
+      ),
+    ).toBe(true);
+    expect(adapterSdk.detectEphemeralNpxInstall()).toBe(false);
+
+    const lines = adapterSdk.adapterSdkFailureLines(
+      [
+        { adapter: 'claude', sdk: '@anthropic-ai/claude-agent-sdk', clis: [] },
+        { adapter: 'codex', sdk: '@openai/codex-sdk', clis: [] },
+      ],
+      { ephemeralNpx: true },
+    );
+    expect(lines).toContain(
+      '    npx -y -p @sublang/playbook -p @anthropic-ai/claude-agent-sdk ' +
+        '-p @openai/codex-sdk playbook ...',
+    );
+    // One re-run line naming every missing SDK — not one npx line per SDK,
+    // and no npm install command that would land outside the tree.
+    expect(lines.filter((l: string) => l.includes('npx -y'))).toHaveLength(1);
+    expect(
+      lines.some((l: string) => l.trim().startsWith('npm install')),
+    ).toBe(false);
   });
 });
 
@@ -2792,6 +2853,34 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
 
     expect(out.code).toBe(0);
     expect(out.stdout.trim()).toBe('done');
+    expect(calls).toHaveLength(0);
+  });
+
+  it('gates an opencode lineup and names both of its installs', async () => {
+    runEntry.lastCreate = undefined;
+    const { createAgent, calls } = fakeAgents({});
+
+    const out = await runCli(
+      ['run', 'mod://code', 'do it', '--captain', 'opencode'],
+      {
+        'mod://code': {
+          default: runEntry(async () => ({
+            outcome: 'terminal',
+            state: {},
+            output: 'x',
+          })),
+        },
+      },
+      createAgent,
+      undefined,
+      { probeAdapterSdk: async (adapter: string) => adapter !== 'opencode' },
+    );
+
+    expect(out.code).toBe(1);
+    expect(out.stderr).toContain('Adapter SDKs not installed: opencode');
+    expect(out.stderr).toContain('npm install -g @opencode-ai/sdk');
+    expect(out.stderr).toContain('npm install -g opencode-ai');
+    expect(runEntry.lastCreate).toBeUndefined();
     expect(calls).toHaveLength(0);
   });
 

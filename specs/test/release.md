@@ -34,11 +34,21 @@ The smoke test shall further fail unless, with **the tarball plus
 each adapter SDK named as its own top-level install root**, every
 adapter reports **available** when probed from that same location.
 
+The smoke test shall additionally cover **the ephemeral exec tree**
+(`npm exec` / `npx`), probing from `@sublang/cligent`'s location
+inside that tree — where npm hoists it flat rather than nesting it:
+
+- with the tarball as the only package, every adapter shall report
+  **unavailable**, because no install command reaches an exec tree;
+- with the tarball plus each adapter SDK named as sibling packages
+  of one exec invocation, every adapter shall report **available**.
+
 The lean shape pins the footprint contract; the opted-in shape
-pins the resolution contract behind the documented install command.
+pins the resolution contract behind the documented install command;
+the exec shapes pin the documented `npx` form.
 A shape that hoists the SDK flat — an in-repository or
 project-local install — satisfies both probes regardless and shall
-not be substituted for either case.
+not be substituted for any case.
 
 ### RELEASE-19
 
@@ -65,9 +75,15 @@ bundled production config, `package.json` lists it under
 `peerDependencies` with `peerDependenciesMeta.<name>.optional` set
 to `true`, lists it under neither `dependencies` nor
 `optionalDependencies`, lists it under `devDependencies`, and
-declares a peer range whose floor is no lower than
-`@sublang/cligent`'s own peer floor for that SDK as recorded in the
-installed cligent's `package.json`.
+declares a peer range **identical** to `@sublang/cligent`'s own peer
+range for that SDK as recorded in the installed cligent's
+`package.json`.
+Identity, not one-directional containment: a floor above cligent's
+makes npm's resolver reject an application-owned SDK version the
+loader accepts — `peerOptional` conflicts still fail `npm install` —
+and a floor below admits versions the loader would warn on. cligent is
+the only package that imports the SDK, so its range is the whole truth
+and this package restates it without narrowing or widening it.
 
 ### RELEASE-23
 

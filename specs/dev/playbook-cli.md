@@ -177,8 +177,17 @@ Where the command determines adapter SDK availability
 ([PBCLI-40](../user/playbook-cli.md#pbcli-40)), it shall probe each
 distinct declared adapter by constructing cligent's corresponding
 adapter — `@sublang/cligent/adapters/claude-code` for `claude`,
-`@sublang/cligent/adapters/codex` for `codex` — and awaiting its
+`@sublang/cligent/adapters/codex` for `codex`,
+`@sublang/cligent/adapters/opencode` for `opencode` — and awaiting its
 `isAvailable()`.
+The probe map shall cover exactly the adapters backed by cligent's
+optional peer SDKs. `gemini` is excluded by design: its transport SDK
+(`@agentclientprotocol/sdk`) is a regular dependency of cligent, so it
+has no missing-SDK failure mode for this gate to catch.
+Where an adapter's own availability probe additionally requires an
+external CLI — `opencode`'s managed mode spawns the `opencode` binary —
+the remedy shall name that CLI's global install alongside the SDK's,
+because the probe cannot distinguish which of the two is absent.
 The probe shall be the adapter's own loader rather than a resolution
 check: it performs the same dynamic import the adapter performs at run
 time, from the same installed module scope, so a passing probe cannot

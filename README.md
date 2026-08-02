@@ -47,6 +47,14 @@ one is missing, `playbook` says so and prints the install command
 before it launches anything
 ([DR-026](specs/decisions/026-optional-adapter-sdks.md)).
 
+Upgrading from 3.1.0 or earlier? Use the same full line — npm removes
+the SDK copies those releases bundled when it upgrades the package, so
+upgrading `@sublang/playbook` alone leaves no agent SDK installed.
+Running via `npx` instead? Name each SDK as a sibling package of the
+same invocation (`npx -y -p @sublang/playbook -p <sdk> playbook`) — no
+install command reaches npx's ephemeral tree; see
+[docs/cli.md](docs/cli.md).
+
 The first launch seeds a commented config at
 `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`,
 composes a `tmux-play` config, checks the declared adapters, and opens
