@@ -25,6 +25,7 @@ import {
 import {
   adapterSdkFailureLines,
   checkAdapterSdks,
+  mappedSdksFor,
   probeAdapterSdk,
 } from './adapter-sdk.js';
 
@@ -76,6 +77,9 @@ export async function runPlaybookCli(options = {}) {
       // PBCLI-39: the run path gates on SDK availability too.
       ...(options.probeAdapterSdk
         ? { probeAdapterSdk: options.probeAdapterSdk }
+        : {}),
+      ...(options.ephemeralNpx !== undefined
+        ? { ephemeralNpx: options.ephemeralNpx }
         : {}),
     });
   }
@@ -172,7 +176,16 @@ export async function runPlaybookCli(options = {}) {
       helpText({
         userConfigPath,
         failingAdapters: readiness.failingAdapters,
-        missingAdapters,
+        // PBCLI-40: the ephemeral re-run must carry the lineup's full mapped
+        // SDK set and the user's own arguments, so it completes in one hop
+        // and is executable exactly as printed.
+        sdkFailureLines: adapterSdkFailureLines(missingAdapters, {
+          requiredSdks: mappedSdksFor(declaredAdapters),
+          invocation: argv,
+          ...(options.ephemeralNpx !== undefined
+            ? { ephemeralNpx: options.ephemeralNpx }
+            : {}),
+        }),
       }),
     );
     return { code: READINESS_FAILURE_EXIT_CODE };
@@ -698,7 +711,7 @@ function hasExplicitConfig(argv) {
 function helpText({
   userConfigPath,
   failingAdapters = [],
-  missingAdapters = [],
+  sdkFailureLines = [],
 }) {
   const failures =
     failingAdapters.length > 0
@@ -707,7 +720,7 @@ function helpText({
   return [
     // PBCLI-40: the SDK remedy leads, because an unusable adapter cannot be
     // fixed by the credential advice further down.
-    ...adapterSdkFailureLines(missingAdapters),
+    ...sdkFailureLines,
     ...failures,
     'Usage:',
     '  playbook [--list] [--with <path>]... [--config <path>] [tmux-play options]',

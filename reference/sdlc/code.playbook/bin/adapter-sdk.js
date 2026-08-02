@@ -6,6 +6,7 @@
 // to be a named gate failure rather than a mid-turn adapter error, which is
 // what this probe provides for both the interactive launcher and `run`.
 
+import { readFileSync } from 'node:fs';
 import { sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -84,10 +85,52 @@ export function detectEphemeralNpxInstall(moduleUrl = import.meta.url) {
   return fileURLToPath(moduleUrl).split(sep).includes('_npx');
 }
 
+// PBCLI-39: the SDKs of every mapped adapter in a lineup, deduplicated in
+// map order. The ephemeral re-run must be built from this full set: a fresh
+// exec tree starts empty, so a re-run named after only the currently missing
+// SDKs drops the ones this tree does have and alternates between vendors
+// forever.
+export function mappedSdksFor(adapters) {
+  const distinct = new Set(adapters);
+  return Object.keys(ADAPTER_SDKS)
+    .filter((adapter) => distinct.has(adapter))
+    .map((adapter) => ADAPTER_SDKS[adapter].sdk);
+}
+
+// Minimal POSIX quoting so a preserved argument survives copy-paste; matches
+// cligent's shared shellQuote. tmux-play is POSIX-only, so no cmd.exe form.
+export function shellQuote(value) {
+  if (/^[a-zA-Z0-9_./:=@-]+$/.test(value)) {
+    return value;
+  }
+  return "'" + value.replace(/'/g, "'\\''") + "'";
+}
+
+// The running package's own spec, so the re-run reinstalls exactly this
+// version rather than whatever dist-tag `npx` would resolve today.
+function selfPackageSpec() {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8'),
+    );
+    if (typeof manifest.name === 'string' && typeof manifest.version === 'string') {
+      return `${manifest.name}@${manifest.version}`;
+    }
+  } catch {
+    // Fall through to the unpinned name.
+  }
+  return '@sublang/playbook';
+}
+
 // PBCLI-40: name every unavailable adapter and, for each, the exact command
 // that supplies it, so the remedy never requires reading a spec. External
 // CLIs are found through PATH, which an exec tree inherits, so their global
 // install lines hold in both cases.
+//
+// options.requiredSdks: the full mapped-SDK set of the lineup (see
+// mappedSdksFor) — the ephemeral re-run is built from it, not from the
+// missing subset. options.invocation: the original CLI arguments, preserved
+// on the re-run so the printed command is executable as printed.
 export function adapterSdkFailureLines(missingAdapters, options = {}) {
   if (missingAdapters.length === 0) return [];
   const ephemeralNpx = options.ephemeralNpx ?? detectEphemeralNpxInstall();
@@ -97,12 +140,16 @@ export function adapterSdkFailureLines(missingAdapters, options = {}) {
       .join(', ')}`,
   ];
   if (ephemeralNpx) {
+    const sdks = options.requiredSdks ?? missingAdapters.map(({ sdk }) => sdk);
+    const args = (options.invocation ?? [])
+      .map((arg) => ` ${shellQuote(arg)}`)
+      .join('');
     lines.push(
       '  This npx / npm exec run is ephemeral: no npm install reaches its tree.',
-      '  Re-run with each SDK named alongside the package:',
-      `    npx -y -p @sublang/playbook${missingAdapters
-        .map(({ sdk }) => ` -p ${sdk}`)
-        .join('')} playbook ...`,
+      '  Re-run with every SDK your config needs named alongside the package:',
+      `    npx -y -p ${selfPackageSpec()}${sdks
+        .map((sdk) => ` -p ${sdk}`)
+        .join('')} playbook${args}`,
     );
   } else {
     lines.push(...missingAdapters.map(({ sdk }) => `  npm install -g ${sdk}`));
