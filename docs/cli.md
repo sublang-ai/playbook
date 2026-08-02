@@ -7,6 +7,31 @@
 one-shot non-interactive `run`. Agent settings for both come from the
 [config](configuration.md).
 
+## Installing agent SDKs
+
+Each adapter is backed by a vendor SDK that is an *optional peer
+dependency*, so installing `@sublang/playbook` never downloads an agent
+stack you did not ask for. Install the SDKs your config names, each as
+its own top-level install root:
+
+```sh
+npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk   # claude
+npm install -g @sublang/playbook @openai/codex-sdk                # codex
+```
+
+The "own top-level root" part matters. The adapter that imports the SDK
+lives at `@sublang/playbook/node_modules/@sublang/cligent/`, and Node
+finds a bare specifier by walking *up* from there — which reaches the
+install prefix's own `node_modules`, but never into a sibling package's
+subtree. An SDK that landed inside some other package is invisible to
+the adapter even though it is on disk
+([DR-026](../specs/decisions/026-optional-adapter-sdks.md)).
+
+Both surfaces check this before doing any work: a declared adapter
+whose SDK is not loadable blocks the launch, names the adapter, and
+prints its exact `npm install -g` line
+([PBCLI-40](../specs/user/playbook-cli.md#pbcli-40)).
+
 ## Interactive
 
 ```sh
@@ -85,7 +110,7 @@ the playbook needs a Boss reply
 A compiled playbook module imports `xstate` and
 `@sublang/playbook/xstate-runtime` from its own directory. When a
 filesystem `<from>` cannot resolve them — typically under a global
-`npm install -g @sublang/playbook` with no project-local packages —
+install with no project-local packages —
 `playbook run` provisions them automatically before loading: it creates
 `node_modules/xstate` and `node_modules/@sublang/playbook` beside the
 module as symlinks to the running host's own packages and prints one

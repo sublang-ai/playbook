@@ -279,3 +279,22 @@ sibling link created — while the command exits `1` naming the occupied
 path; and a filesystem failure while creating links surfaces the
 `playbook run: <message>` diagnostic form with exit `1` rather than a
 raw exception.
+
+### PBCLI-41
+
+Verifies: [PBCLI-40](../user/playbook-cli.md#pbcli-40), [PBCLI-39](../dev/playbook-cli.md#pbcli-39)
+
+When the test suite exercises the adapter SDK preflight over an
+injected probe, the test suite shall fail unless: a config whose
+adapters all probe available launches tmux-play unchanged; a config
+with one unavailable adapter SDK blocks the launch, prints that
+adapter id and its exact `npm install -g <sdk>` remedy to stderr,
+exits non-zero with a status distinct from `127`, and spawns nothing;
+a config that is simultaneously missing a credential and an SDK
+reports both failures rather than only one; an adapter with no known
+SDK mapping is excluded from the probe without emitting a second
+unknown-adapter warning; a `--config <path>` launch runs no probe;
+each distinct adapter is probed at most once per invocation; and
+`playbook run` with an unavailable SDK exits non-zero naming the same
+remedy before constructing the runtime, on a first run and on a
+resumed one alike, with no agent call made.

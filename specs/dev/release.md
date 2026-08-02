@@ -111,15 +111,42 @@ The scoped `@sublang/playbook` package shall be published with
 ### RELEASE-12
 
 The published `@sublang/playbook` package shall declare
-`@sublang/cligent` and every adapter SDK wired by the bundled
-production config (currently `@anthropic-ai/claude-agent-sdk`
-and `@openai/codex-sdk`) as regular runtime `dependencies`, not
-as optional or peer dependencies.
+`@sublang/cligent` as a regular runtime dependency, not as an
+optional or peer dependency, so that a global install nests it
+inside `@sublang/playbook`'s own module tree.
 
-A global install of the package shall therefore yield a
-self-contained closure: `@sublang/cligent` nests inside
-`@sublang/playbook`'s module tree, and each adapter SDK resolves
-from `@sublang/cligent`'s installed location.
+The package shall declare every adapter SDK wired by the bundled
+production config (currently `@anthropic-ai/claude-agent-sdk` and
+`@openai/codex-sdk`) as an **optional peer dependency** —
+listed under `peerDependencies` with
+`peerDependenciesMeta.<name>.optional` set to `true` — and shall
+declare neither among `dependencies` or `optionalDependencies`
+([DR-026](../decisions/026-optional-adapter-sdks.md)).
+Each declared peer range shall be satisfied by every version
+satisfying `@sublang/cligent`'s corresponding peer range, so a
+resolution accepted here is accepted there.
+Both SDKs shall additionally be `devDependencies`, so this
+repository's own test, CI, and local acceptance runs exercise real
+adapters.
+
+An installed adapter SDK therefore resolves from
+`@sublang/cligent`'s installed location whenever it sits on the
+directory-ancestor walk from that location — as a top-level
+install root does, and as a package hoisted flat in a project
+`node_modules` does. An SDK nested inside a *sibling* install
+root's own subtree does not, which is why the documented global
+install shall name each wanted SDK alongside the package
+([DR-026 §3](../decisions/026-optional-adapter-sdks.md#3-a-supplied-sdk-must-be-a-top-level-install-root)):
+
+```sh
+npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk @openai/codex-sdk
+```
+
+A user configuring a single vendor shall be able to install that
+vendor's SDK alone and pay only that stack's footprint.
+The absence of a wanted SDK shall never surface as a mid-turn
+adapter failure; it is gated ahead of any agent call by
+[PBCLI-39](playbook-cli.md#pbcli-39).
 
 ### RELEASE-14
 

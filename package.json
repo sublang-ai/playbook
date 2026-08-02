@@ -68,6 +68,7 @@
     "reference/sdlc/code.playbook/bin/playbook.js",
     "reference/sdlc/code.playbook/bin/run.js",
     "reference/sdlc/code.playbook/bin/provision.js",
+    "reference/sdlc/code.playbook/bin/adapter-sdk.js",
     "reference/sdlc/discuss.playbook/discuss.gears.md",
     "reference/sdlc/discuss.playbook/discuss.fsm.ts",
     "reference/sdlc/discuss.playbook/discuss.fsm.js",
@@ -129,15 +130,27 @@
     "provenance": true
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.154",
-    "@openai/codex-sdk": "^0.139.0",
     "@sublang/cligent": "^0.16.0",
     "@sublang/spex": "^0.3.0",
     "p-queue": "^9.3.1",
     "xstate": "^5.19.4",
     "yaml": "^2.9.0"
   },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": ">=0.3.154",
+    "@openai/codex-sdk": ">=0.139.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "optional": true
+    },
+    "@openai/codex-sdk": {
+      "optional": true
+    }
+  },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.154",
+    "@openai/codex-sdk": "^0.139.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
