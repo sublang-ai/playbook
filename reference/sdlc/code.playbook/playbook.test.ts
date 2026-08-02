@@ -1173,6 +1173,10 @@ async function runCli(
     createAgent,
     ...(readStdin ? { readStdin } : {}),
     userConfigPath: ABSENT_USER_CONFIG,
+    // Hermetic like the user-config path above: the real probe reads host
+    // state (installed SDKs, the opencode CLI on PATH), so a lineup naming
+    // any adapter would pass or fail by machine. Preflight tests override.
+    probeAdapterSdk: async () => true,
     ...extra,
     stdout: stdout as never,
     stderr: stderr as never,
