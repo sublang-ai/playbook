@@ -177,7 +177,7 @@ async function runFirst(args, ctx) {
   const sdkError = await adapterSdksDiagnostic(
     [...roleSpecs.values(), captainSpec],
     ctx,
-    args.task === undefined ? [task] : [],
+    stdinReplayArgs(args, task),
   );
   if (sdkError !== undefined) {
     stderr.write(sdkError);
@@ -320,7 +320,7 @@ async function runResume(args, ctx) {
   const sdkError = await adapterSdksDiagnostic(
     [...roleSpecs.values(), record.captain],
     ctx,
-    args.task === undefined ? [reply] : [],
+    stdinReplayArgs(args, reply),
   );
   if (sdkError !== undefined) {
     stderr.write(sdkError);
@@ -676,6 +676,19 @@ function specsDiagnostic(specs) {
   return undefined;
 }
 
+// PBCLI-40: the replay tail for input the command consumed from stdin —
+// the pipe that carried it will not exist when the printed command runs.
+// The value rides behind a `--` end-of-options terminator, because quoting
+// alone cannot keep a flag-shaped value (`--json`, `--last`, a `-`-leading
+// bullet) from being read as an option; where the original invocation
+// already activated a terminator of its own, that one is reused — a second
+// `--` after the first would itself be positional data on the replay,
+// turning a `--json` task into `-- --json`.
+function stdinReplayArgs(args, resolved) {
+  if (args.task !== undefined) return [];
+  return args.terminated ? [resolved] : ['--', resolved];
+}
+
 // PBCLI-39/40: returns the ready-to-write stderr block naming every bound
 // adapter whose optional-peer SDK is not installed, or undefined when every
 // one of them loads. Runs only after specsDiagnostic has accepted the
@@ -690,16 +703,11 @@ async function adapterSdksDiagnostic(specs, ctx, stdinArgs = []) {
   const [header, ...commands] = adapterSdkFailureLines(missingAdapters, {
     // PBCLI-40: the ephemeral re-run carries the lineup's full mapped SDK
     // set and the original arguments, so it completes in one hop and runs
-    // exactly as printed. A task or reply consumed from stdin before this
-    // gate is appended behind an end-of-options `--`: quoting alone cannot
-    // keep a flag-shaped value (`--json`, `- bullet …`) from being read as
-    // an option, and the pipe that supplied it will not exist when the
-    // printed command runs.
+    // exactly as printed. stdinArgs arrive terminator-ready from
+    // stdinReplayArgs — appended verbatim here, because whether a `--` is
+    // needed depends on the original invocation's own parse state.
     requiredSdks: mappedSdksFor(adapters),
-    invocation: [
-      ...ctx.rawArgv,
-      ...(stdinArgs.length > 0 ? ['--', ...stdinArgs] : []),
-    ],
+    invocation: [...ctx.rawArgv, ...stdinArgs],
     ...(ctx.ephemeralNpx !== undefined
       ? { ephemeralNpx: ctx.ephemeralNpx }
       : {}),
@@ -964,6 +972,7 @@ export function parseRunArgs(argv) {
     verbose: false,
     noProvision: false,
     help: false,
+    terminated: false,
   };
   const positionals = [];
   for (let i = 0; i < argv.length; i += 1) {
@@ -971,8 +980,12 @@ export function parseRunArgs(argv) {
     // PBCLI-40: end-of-options — everything after `--` is positional, so a
     // flag-shaped task or reply (a stdin-derived `--json`, a `- bullet`
     // line) survives the ephemeral re-run round trip instead of being
-    // reinterpreted as an option.
+    // reinterpreted as an option. `terminated` records that this branch
+    // fired — only a `--` the walk itself treats as the terminator counts,
+    // never one consumed as an option's value (`--cwd --`) — so the re-run
+    // builder can reuse an active terminator instead of doubling it.
     if (arg === '--') {
+      args.terminated = true;
       positionals.push(...argv.slice(i + 1));
       break;
     }
