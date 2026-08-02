@@ -3070,6 +3070,96 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
     expect(replayed.stdout).not.toContain('"outcome"');
   });
 
+  it('reuses an already-active terminator instead of doubling it', async () => {
+    const { createAgent } = fakeAgents({});
+    const modules = {
+      'mod://code': {
+        default: runEntry(async () => ({
+          outcome: 'terminal',
+          state: {},
+          output: 'done',
+        })),
+      },
+    };
+
+    // A valid invocation can end with an active `--` while leaving the
+    // task to stdin. A second terminator would itself be positional data
+    // on the replay, turning the task into `-- --json`.
+    const trailing = await runCli(
+      ['run', 'mod://code', '--'],
+      modules,
+      createAgent,
+      async () => '--json\n',
+      { probeAdapterSdk: async () => false, ephemeralNpx: true },
+    );
+    expect(trailing.code).toBe(1);
+    const trailingRerun = trailing.stderr
+      .split('\n')
+      .find((l) => l.includes('npx -y'));
+    expect(trailingRerun).toContain('playbook run mod://code -- --json');
+    // The corrupt form was two standalone terminator tokens in a row.
+    expect(trailingRerun).not.toContain(' -- -- ');
+
+    // A mid-argv terminator is active for everything after it, so the
+    // appended value needs no marker there either.
+    const midArgv = await runCli(
+      ['run', '--', 'mod://code'],
+      modules,
+      createAgent,
+      async () => 'stdin task\n',
+      { probeAdapterSdk: async () => false, ephemeralNpx: true },
+    );
+    expect(midArgv.code).toBe(1);
+    const midRerun = midArgv.stderr
+      .split('\n')
+      .find((l) => l.includes('npx -y'));
+    expect(midRerun).toContain("playbook run -- mod://code 'stdin task'");
+  });
+
+  it('distinguishes a terminator from -- consumed as an option value', async () => {
+    const { parseRunArgs } = await import(
+      new URL('./bin/run.js', import.meta.url).href
+    );
+    expect(parseRunArgs(['mod://code', '--']).terminated).toBe(true);
+    expect(parseRunArgs(['--', 'mod://code']).terminated).toBe(true);
+    // `--cwd --` consumes the marker as the option's value; a replayed
+    // stdin task here still needs its own terminator.
+    const viaValue = parseRunArgs(['mod://code', '--cwd', '--']);
+    expect(viaValue.terminated).toBe(false);
+    expect(viaValue.cwd).toBe('--');
+  });
+
+  it('reuses an active terminator on a resume re-run too', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    const parked = await runCli(
+      ['run', 'mod://code', 'ambiguous'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir, probeAdapterSdk: async () => true },
+    );
+    expect(parked.code).toBe(3);
+    const sessionId = record.inits[0].sessionId;
+
+    const resumed = await runCli(
+      ['run', 'resume', sessionId, '--'],
+      modules,
+      createAgent,
+      async () => '--last\n',
+      { sessionsDir, probeAdapterSdk: async () => false, ephemeralNpx: true },
+    );
+    expect(resumed.code).toBe(1);
+    const rerun = resumed.stderr.split('\n').find((l) => l.includes('npx -y'));
+    expect(rerun).toContain(`playbook run resume ${sessionId} -- --last`);
+    expect(rerun).not.toContain(' -- -- ');
+  });
+
   it('keeps a flag-shaped resume reply inert through the round trip', async () => {
     const sessionsDir = await sessionStoreDir();
     const { entry, record } = parkableEntry([

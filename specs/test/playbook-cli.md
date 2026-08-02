@@ -312,6 +312,9 @@ command consumed from stdin is appended to the re-run as a quoted
 positional behind a `--` end-of-options terminator, on first runs and
 resumes alike; a flag-shaped stdin value survives the round trip —
 replaying the emitted invocation delivers a `--json` task or a
-`--last` reply as Boss text with no option semantics; and a missing
+`--last` reply as Boss text with no option semantics; an invocation
+whose own terminator is already active — trailing or mid-argv, on
+first runs and resumes alike — gets no second `--`, while a `--`
+consumed as an option's value does not count as active; and a missing
 adapter's external CLI install is printed before the ephemeral re-run
 rather than after it.

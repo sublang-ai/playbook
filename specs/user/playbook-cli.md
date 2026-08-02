@@ -294,6 +294,11 @@ input appended behind a `--` end-of-options terminator
 exist when the printed command runs, and quoting alone cannot keep a
 flag-shaped value such as `--json`, `--last`, or a `-`-leading bullet
 from being reinterpreted as an option on the replay.
+Where the original invocation itself already activated a terminator —
+one the parser treated as end-of-options, not a `--` consumed as an
+option's value — the re-run shall reuse it rather than append a
+second: parsing stops at the first `--`, so a doubled terminator is
+itself positional data and turns a `--json` task into `-- --json`.
 External CLI installs stay global, because the exec tree inherits
 `PATH`, and shall be printed **before** the re-run: the re-run probes
 the CLI again, so following the output top-to-bottom must install it

@@ -84,6 +84,12 @@ at the two install shapes users actually produce.
    latter silently resuming the wrong session — with first-run and
    resume round-trip tests; amend PBCLI-18/40/41, DR-026 §3, the run
    help text, and the changelog.
+9. **Terminator reuse.** _[done]_ Reuse an invocation's own active
+   `--` instead of appending a second — parsing stops at the first,
+   so a doubled marker becomes positional data (`-- --json`) — with
+   the parser itself reporting activation so a `--` consumed as an
+   option's value never counts; trailing, mid-argv, and resume cases
+   tested; amend PBCLI-40/41, DR-026 §3, and the changelog.
 
 ## Acceptance criteria
 
