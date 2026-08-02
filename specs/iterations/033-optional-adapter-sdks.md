@@ -74,11 +74,16 @@ at the two install shapes users actually produce.
    amend PBCLI-40/41, RELEASE-13's partial exec shape with its CI leg,
    DR-026 §3, and the changelog accordingly.
 7. **Stdin preservation and CLI ordering.** _[done]_ Append a
-   stdin-consumed task or reply to the re-run as a quoted positional —
-   the parser collects positionals wherever they appear, so the
-   appended form is parse-equivalent — and print prerequisite external
-   CLI installs before the ephemeral re-run; amend PBCLI-40/41, DR-026
-   §3, and the changelog.
+   stdin-consumed task or reply to the re-run as a quoted positional
+   and print prerequisite external CLI installs before the ephemeral
+   re-run; amend PBCLI-40/41, DR-026 §3, and the changelog.
+8. **Flag-shaped stdin values.** _[done]_ Add the `--` end-of-options
+   terminator to the `run` argument grammar and emit it before
+   stdin-derived values on the re-run — quoting cannot stop a `--json`
+   task or `--last` reply from being reinterpreted as an option, the
+   latter silently resuming the wrong session — with first-run and
+   resume round-trip tests; amend PBCLI-18/40/41, DR-026 §3, the run
+   help text, and the changelog.
 
 ## Acceptance criteria
 

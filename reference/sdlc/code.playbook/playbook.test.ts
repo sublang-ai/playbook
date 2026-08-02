@@ -3026,7 +3026,82 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
 
     expect(out.code).toBe(1);
     const rerun = out.stderr.split('\n').find((l) => l.includes('npx -y'));
-    expect(rerun).toContain("playbook run mod://code 'piped task text'");
+    // Behind `--`: quoting alone cannot keep a flag-shaped value from
+    // being read as an option on the replay.
+    expect(rerun).toContain("playbook run mod://code -- 'piped task text'");
+  });
+
+  it('keeps a flag-shaped stdin task inert through the re-run round trip', async () => {
+    const { createAgent } = fakeAgents({});
+    const modules = {
+      'mod://code': {
+        default: runEntry(async () => ({
+          outcome: 'terminal',
+          state: {},
+          output: 'done',
+        })),
+      },
+    };
+
+    // Hop 1: the gate emits the re-run with the stdin task behind `--`.
+    const blocked = await runCli(
+      ['run', 'mod://code'],
+      modules,
+      createAgent,
+      async () => '--json\n',
+      { probeAdapterSdk: async () => false, ephemeralNpx: true },
+    );
+    expect(blocked.code).toBe(1);
+    const rerun = blocked.stderr.split('\n').find((l) => l.includes('npx -y'));
+    expect(rerun).toContain('playbook run mod://code -- --json');
+
+    // Hop 2: replaying that exact invocation treats --json as the task,
+    // not as the JSON-envelope flag.
+    runEntry.lastCreate = undefined;
+    const replayed = await runCli(
+      ['run', 'mod://code', '--', '--json'],
+      modules,
+      createAgent,
+      undefined,
+      { probeAdapterSdk: async () => true },
+    );
+    expect(replayed.code).toBe(0);
+    expect(replayed.stdout.trim()).toBe('done');
+    expect(replayed.stdout).not.toContain('"outcome"');
+  });
+
+  it('keeps a flag-shaped resume reply inert through the round trip', async () => {
+    const sessionsDir = await sessionStoreDir();
+    const { entry, record } = parkableEntry([
+      { result: { outcome: 'quiescent', state: {} }, snapshot: parkSnapshot() },
+      { result: { outcome: 'terminal', state: {}, output: 'resumed' } },
+    ]);
+    const { createAgent } = fakeAgents({});
+    const modules = { 'mod://code': { default: entry } };
+
+    const parked = await runCli(
+      ['run', 'mod://code', 'ambiguous'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir, probeAdapterSdk: async () => true },
+    );
+    expect(parked.code).toBe(3);
+    const sessionId = record.inits[0].sessionId;
+
+    // A reply of `--last` replayed bare would silently flip resume-by-id
+    // into resume-most-recent and demote the id to the reply text. Behind
+    // `--` it stays the reply.
+    const resumed = await runCli(
+      ['run', 'resume', sessionId, '--', '--last'],
+      modules,
+      createAgent,
+      undefined,
+      { sessionsDir, probeAdapterSdk: async () => true },
+    );
+    expect(resumed.code).toBe(0);
+    expect(resumed.stdout.trim()).toBe('resumed');
+    expect(record.turnTexts).toEqual(['ambiguous', '--last']);
   });
 
   it('appends a stdin-supplied reply to the resume re-run', async () => {
@@ -3062,7 +3137,7 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
     expect(resumed.code).toBe(1);
     const rerun = resumed.stderr.split('\n').find((l) => l.includes('npx -y'));
     expect(rerun).toContain(
-      `playbook run resume ${sessionId} 'the piped reply'`,
+      `playbook run resume ${sessionId} -- 'the piped reply'`,
     );
   });
 

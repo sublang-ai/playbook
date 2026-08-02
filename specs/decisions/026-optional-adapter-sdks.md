@@ -124,10 +124,12 @@ forever — pins the running package's own version, and replays the
 original arguments, so it is executable as printed and completes in
 one hop.
 Input the command already consumed from stdin (a `run` task, a
-`resume` reply) is appended to the re-run as a quoted positional,
-because the pipe that carried it is gone when the printed command
-runs; and any prerequisite external CLI install is printed before the
-re-run, since the re-run probes the CLI again.
+`resume` reply) is appended to the re-run behind a `--` end-of-options
+terminator, quoted, because the pipe that carried it is gone when the
+printed command runs and quoting alone cannot stop a flag-shaped value
+(`--json`, `--last`, a `-`-leading bullet) from being reinterpreted as
+an option; and any prerequisite external CLI install is printed before
+the re-run, since the re-run probes the CLI again.
 
 ### 4. Missing SDKs fail at the gate, not mid-turn
 

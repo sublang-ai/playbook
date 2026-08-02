@@ -309,6 +309,9 @@ invocation's arguments shell-quoted rather than placeholder text, and
 therefore succeeds in one hop; the lineup SDK set is deduplicated
 when the captain and a player share an adapter; a task or reply the
 command consumed from stdin is appended to the re-run as a quoted
-positional, on first runs and resumes alike; and a missing adapter's
-external CLI install is printed before the ephemeral re-run rather
-than after it.
+positional behind a `--` end-of-options terminator, on first runs and
+resumes alike; a flag-shaped stdin value survives the round trip —
+replaying the emitted invocation delivers a `--json` task or a
+`--last` reply as Boss text with no option semantics; and a missing
+adapter's external CLI install is printed before the ephemeral re-run
+rather than after it.
