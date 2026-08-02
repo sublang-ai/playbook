@@ -273,9 +273,18 @@ also requires.
 Where the running installation is npm's ephemeral exec tree (`npx` /
 `npm exec`), no install command reaches the tree the adapters resolve
 from, so the command shall instead be one multi-package re-run naming
-the package and every missing SDK as sibling `-p` packages of the same
-invocation; external CLI installs stay global, because the exec tree
-inherits `PATH`.
+the running package at its own version and, as sibling `-p` packages,
+the SDK of **every** mapped adapter the lineup requires — not only the
+missing ones: a fresh exec tree starts empty, and a missing-only list
+drops the SDKs this tree does have, alternating between vendors
+forever.
+The re-run shall end with the original invocation's arguments, quoted
+where the shell requires it, so the printed command is executable
+exactly as printed and completes in one hop; it shall never carry
+placeholder text such as a literal `...`, which the launch surfaces
+reject as an argument.
+External CLI installs stay global, because the exec tree inherits
+`PATH`.
 
 This check is independent of the credential check
 ([PBCLI-12](../dev/playbook-cli.md#pbcli-12)): a missing SDK and a

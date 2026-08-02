@@ -65,6 +65,14 @@ at the two install shapes users actually produce.
    replace the false upgrade-compatibility claim with the measured
    prune-and-reinstall migration in DR-026, README, `docs/cli.md`, and
    the changelog.
+6. **One-hop ephemeral re-run.** _[done]_ Build the printed re-run from
+   the lineup's full mapped SDK set instead of the missing subset —
+   each distinct package set is a distinct exec tree, so a missing-only
+   re-run alternated between partial trees forever — pin the running
+   package's own version, and replay the original arguments
+   shell-quoted in place of the literal `playbook ...` placeholder;
+   amend PBCLI-40/41, RELEASE-13's partial exec shape with its CI leg,
+   DR-026 §3, and the changelog accordingly.
 
 ## Acceptance criteria
 
@@ -82,8 +90,12 @@ at the two install shapes users actually produce.
   expectation holds unchanged.
 - A bare exec tree (`npm exec` / `npx` with the tarball alone) reports
   every adapter unavailable and the gate prints the multi-package
-  re-run naming each missing SDK, not an install command; the same exec
-  invocation with the SDKs as sibling packages reports them available.
+  re-run, not an install command; the same exec invocation with the
+  SDKs as sibling packages reports them available.
+- A partially supplied exec tree prints a re-run naming every lineup
+  SDK — the supplied one included — at the running package's own
+  version, ending with the original arguments shell-quoted and no
+  placeholder, so following it succeeds in one hop.
 - An application depending on the package plus `@openai/codex-sdk`
   0.138.0 installs without a peer conflict.
 - An `opencode` lineup with its SDK unavailable blocks naming both

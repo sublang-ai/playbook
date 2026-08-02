@@ -61,7 +61,10 @@ A bare `npx @sublang/playbook` cannot be repaired by any install
 command: npx materializes the run in an ephemeral cache tree whose
 ancestor walk touches no global prefix, so an SDK installed with
 `npm install -g` is invisible to it. The preflight detects this case
-and prints the multi-package re-run above instead of an install line.
+and prints the multi-package re-run instead of an install line, naming
+every SDK your config needs — including any already present, since each
+distinct package set is a distinct tree — and replaying your original
+arguments, so the printed command works in one hop.
 
 The command resolves its config (seeding it on first run), composes a
 `tmux-play` config, checks adapter readiness, and launches. It exits

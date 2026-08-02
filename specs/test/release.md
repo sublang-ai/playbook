@@ -41,7 +41,13 @@ inside that tree — where npm hoists it flat rather than nesting it:
 - with the tarball as the only package, every adapter shall report
   **unavailable**, because no install command reaches an exec tree;
 - with the tarball plus each adapter SDK named as sibling packages
-  of one exec invocation, every adapter shall report **available**.
+  of one exec invocation, every adapter shall report **available**;
+- with the tarball plus only one SDK, the installed executable's own
+  gate shall block and print a re-run naming **every** lineup SDK —
+  the supplied one included — and no placeholder argument, because
+  each distinct package set materializes a distinct tree and a
+  missing-only re-run alternates between partial trees forever
+  ([PBCLI-40](playbook-cli.md#pbcli-40)).
 
 The lean shape pins the footprint contract; the opted-in shape
 pins the resolution contract behind the documented install command;

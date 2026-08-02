@@ -233,3 +233,31 @@ jobs:
           SMOKE_DIR="$(dirname "$(dirname "$BIN")")/@sublang/cligent"
           cp scripts/smoke-adapters.mjs "$SMOKE_DIR/"
           (cd "$SMOKE_DIR" && node ./smoke-adapters.mjs available)
+
+      # RELEASE-13 partial exec shape: one SDK supplied, one missing. The
+      # real binary's gate must print a re-run naming BOTH SDKs — building
+      # it from the missing subset only made two partial trees alternate
+      # forever, since each distinct package set is a distinct tree — and
+      # must never emit a literal `playbook ...` placeholder.
+      - name: Gate the partially supplied exec tree — expect a one-hop re-run
+        run: |
+          export npm_config_cache=/tmp/npxcache
+          TARBALL=$(ls /tmp/sublang-playbook-*.tgz)
+          BIN=$(npm exec --yes \
+            --package="$TARBALL" \
+            --package=@anthropic-ai/claude-agent-sdk \
+            --call 'command -v playbook')
+          export HOME=/tmp/npxhome XDG_CONFIG_HOME=/tmp/npxhome/.config
+          mkdir -p "$HOME"
+          set +e
+          OUT=$(ANTHROPIC_API_KEY=x OPENAI_API_KEY=y "$BIN" 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUT"
+          test "$STATUS" -ne 0 || { echo "::error::gate did not block"; exit 1; }
+          echo "$OUT" | grep -q -- '-p @anthropic-ai/claude-agent-sdk' \
+            || { echo "::error::re-run dropped the supplied SDK (alternation regression)"; exit 1; }
+          echo "$OUT" | grep -q -- '-p @openai/codex-sdk' \
+            || { echo "::error::re-run omitted the missing SDK"; exit 1; }
+          echo "$OUT" | grep -q 'playbook \.\.\.' \
+            && { echo "::error::re-run still carries a literal placeholder"; exit 1; } || true

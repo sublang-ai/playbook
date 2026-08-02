@@ -896,25 +896,79 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     ).toBe(true);
     expect(adapterSdk.detectEphemeralNpxInstall()).toBe(false);
 
+    // The partial-tree case that alternated forever: claude is present in
+    // THIS tree, codex is not. The re-run must still name BOTH — a fresh
+    // exec tree starts empty — and must carry the original arguments
+    // instead of a literal `...` no surface accepts.
     const lines = adapterSdk.adapterSdkFailureLines(
-      [
-        { adapter: 'claude', sdk: '@anthropic-ai/claude-agent-sdk', clis: [] },
-        { adapter: 'codex', sdk: '@openai/codex-sdk', clis: [] },
-      ],
-      { ephemeralNpx: true },
+      [{ adapter: 'codex', sdk: '@openai/codex-sdk', clis: [] }],
+      {
+        ephemeralNpx: true,
+        requiredSdks: adapterSdk.mappedSdksFor(['claude', 'codex']),
+        invocation: ['run', 'mod://code', 'do the thing'],
+      },
     );
     expect(lines).toContain(
-      '    npx -y -p @sublang/playbook -p @anthropic-ai/claude-agent-sdk ' +
-        '-p @openai/codex-sdk playbook ...',
+      `    npx -y -p ${pkgSelfSpec()} -p @anthropic-ai/claude-agent-sdk ` +
+        "-p @openai/codex-sdk playbook run mod://code 'do the thing'",
     );
-    // One re-run line naming every missing SDK — not one npx line per SDK,
-    // and no npm install command that would land outside the tree.
+    // One re-run line — not one npx line per SDK, no literal `...`, and no
+    // npm install command that would land outside the tree.
     expect(lines.filter((l: string) => l.includes('npx -y'))).toHaveLength(1);
+    expect(lines.some((l: string) => l.includes('...'))).toBe(false);
     expect(
       lines.some((l: string) => l.trim().startsWith('npm install')),
     ).toBe(false);
   });
+
+  it('dedupes and orders the lineup SDK set canonically', () => {
+    // captain and a player sharing an adapter must not produce a repeated
+    // -p flag, and unmapped adapters contribute nothing.
+    expect(
+      adapterSdk.mappedSdksFor(['codex', 'claude', 'codex', 'gemini']),
+    ).toEqual(['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk']);
+  });
+
+  it('prints a one-hop re-run for a partially supplied exec tree', async () => {
+    const home = await makeTempHome();
+    await writeUserConfig(home, minimalConfig());
+    const spawn = fakeSpawn();
+    const stderr = writer();
+
+    // Claude's SDK is present in this exec tree, codex's is not.
+    const result = await runPlaybookCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: async (adapter: string) => adapter !== 'codex',
+      ephemeralNpx: true,
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.code).not.toBe(127);
+    const rerun = stderr
+      .text()
+      .split('\n')
+      .find((l) => l.includes('npx -y'));
+    expect(rerun).toContain('-p @anthropic-ai/claude-agent-sdk');
+    expect(rerun).toContain('-p @openai/codex-sdk');
+    // With no original arguments the command ends at the bin — never a
+    // literal `...`, which tmux-play rejects as a positional.
+    expect(rerun?.trimEnd().endsWith('playbook')).toBe(true);
+    expect(spawn.calls).toHaveLength(0);
+  });
 });
+
+function pkgSelfSpec(): string {
+  const manifest = JSON.parse(
+    readFileSync(new URL('../../../package.json', import.meta.url), 'utf8'),
+  ) as { name: string; version: string };
+  return `${manifest.name}@${manifest.version}`;
+}
 
 describe('playbook launcher — CLI surface (PBCLI-17)', () => {
   it('lists configured playbooks without launching', async () => {
@@ -2884,6 +2938,42 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
     expect(out.stderr).toContain('Adapter SDKs not installed: opencode');
     expect(out.stderr).toContain('npm install -g @opencode-ai/sdk');
     expect(out.stderr).toContain('npm install -g opencode-ai');
+    expect(runEntry.lastCreate).toBeUndefined();
+    expect(calls).toHaveLength(0);
+  });
+
+  it('preserves the run invocation on an ephemeral-tree re-run', async () => {
+    runEntry.lastCreate = undefined;
+    const { createAgent, calls } = fakeAgents({});
+
+    // Mixed lineup: codex captain over the default claude players. Codex's
+    // SDK is missing; the re-run must still name BOTH SDKs and replay the
+    // exact `run` invocation, quoted where the shell needs it.
+    const out = await runCli(
+      ['run', 'mod://code', 'do it', '--captain', 'codex'],
+      {
+        'mod://code': {
+          default: runEntry(async () => ({
+            outcome: 'terminal',
+            state: {},
+            output: 'x',
+          })),
+        },
+      },
+      createAgent,
+      undefined,
+      {
+        probeAdapterSdk: async (adapter: string) => adapter !== 'codex',
+        ephemeralNpx: true,
+      },
+    );
+
+    expect(out.code).toBe(1);
+    const rerun = out.stderr.split('\n').find((l) => l.includes('npx -y'));
+    expect(rerun).toContain('-p @anthropic-ai/claude-agent-sdk');
+    expect(rerun).toContain('-p @openai/codex-sdk');
+    expect(rerun).toContain("playbook run mod://code 'do it' --captain codex");
+    expect(out.stderr).not.toContain('npm install -g @openai/codex-sdk');
     expect(runEntry.lastCreate).toBeUndefined();
     expect(calls).toHaveLength(0);
   });

@@ -116,6 +116,13 @@ npx -y -p @sublang/playbook -p @anthropic-ai/claude-agent-sdk playbook
 The preflight (§4) detects an exec-tree run and prints this re-run
 form instead of an `npm install -g` line that would install somewhere
 the tree cannot see.
+The printed re-run names the SDK of every mapped adapter the lineup
+requires, not only the missing ones — each distinct package set
+materializes a distinct exec tree, so a missing-only list drops the
+SDKs the current tree does have and the two partial trees alternate
+forever — pins the running package's own version, and replays the
+original arguments, so it is executable as printed and completes in
+one hop.
 
 ### 4. Missing SDKs fail at the gate, not mid-turn
 

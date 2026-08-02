@@ -300,6 +300,11 @@ remedy before constructing the runtime, on a first run and on a
 resumed one alike, with no agent call made; an unavailable `opencode`
 names both its SDK and its external CLI install; the probe map holds
 exactly the adapters backed by cligent's optional peer SDKs (`claude`,
-`codex`, `opencode`); and a run detected inside npm's ephemeral exec
-tree prints one multi-package re-run naming every missing SDK rather
-than any `npm install` command.
+`codex`, `opencode`); a run detected inside npm's ephemeral exec tree
+prints one multi-package re-run rather than any `npm install` command;
+that re-run names the SDK of every mapped adapter the lineup requires
+even when only some are missing — the partially supplied exec tree
+case — pins the running package's own version, ends with the original
+invocation's arguments shell-quoted rather than placeholder text, and
+therefore succeeds in one hop; and the lineup SDK set is deduplicated
+when the captain and a player share an adapter.

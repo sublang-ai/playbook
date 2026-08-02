@@ -32,6 +32,7 @@ import { hiddenControlEnvelope } from '../../../../src/xstate-runtime.js';
 import {
   adapterSdkFailureLines,
   checkAdapterSdks,
+  mappedSdksFor,
   probeAdapterSdk,
 } from './adapter-sdk.js';
 import { provisionEngine } from './provision.js';
@@ -85,6 +86,10 @@ export async function runPlaybookRun(options = {}) {
     // PBCLI-39: the adapter SDK probe, injectable like createAgent so tests
     // can drive an unavailable SDK without uninstalling one.
     probeAdapterSdk: options.probeAdapterSdk ?? probeAdapterSdk,
+    // PBCLI-40: the original invocation, preserved on the ephemeral re-run;
+    // this module receives argv with the leading `run` already consumed.
+    rawArgv: ['run', ...argv],
+    ephemeralNpx: options.ephemeralNpx,
     // PBCLI-37: injected host package roots let tests provision against
     // synthetic trees, like the injected session store.
     hostRoots: options.hostRoots,
@@ -674,14 +679,22 @@ function specsDiagnostic(specs) {
 // one of them loads. Runs only after specsDiagnostic has accepted the
 // adapter names, so every spec here carries a known adapter.
 async function adapterSdksDiagnostic(specs, ctx) {
+  const adapters = specs.map((spec) => spec.adapter);
   const { missingAdapters } = await checkAdapterSdks(
-    specs.map((spec) => spec.adapter),
+    adapters,
     ctx.probeAdapterSdk,
   );
   if (missingAdapters.length === 0) return undefined;
-  const [header, ...commands] = adapterSdkFailureLines(missingAdapters).filter(
-    (line) => line !== '',
-  );
+  const [header, ...commands] = adapterSdkFailureLines(missingAdapters, {
+    // PBCLI-40: the ephemeral re-run carries the lineup's full mapped SDK
+    // set and the original arguments, so it completes in one hop and runs
+    // exactly as printed.
+    requiredSdks: mappedSdksFor(adapters),
+    invocation: ctx.rawArgv,
+    ...(ctx.ephemeralNpx !== undefined
+      ? { ephemeralNpx: ctx.ephemeralNpx }
+      : {}),
+  }).filter((line) => line !== '');
   // Only the header takes the command prefix; the install lines stay
   // copy-pasteable.
   return [`playbook run: ${header}`, ...commands]
