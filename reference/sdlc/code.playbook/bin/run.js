@@ -177,6 +177,7 @@ async function runFirst(args, ctx) {
   const sdkError = await adapterSdksDiagnostic(
     [...roleSpecs.values(), captainSpec],
     ctx,
+    args.task === undefined ? [task] : [],
   );
   if (sdkError !== undefined) {
     stderr.write(sdkError);
@@ -319,6 +320,7 @@ async function runResume(args, ctx) {
   const sdkError = await adapterSdksDiagnostic(
     [...roleSpecs.values(), record.captain],
     ctx,
+    args.task === undefined ? [reply] : [],
   );
   if (sdkError !== undefined) {
     stderr.write(sdkError);
@@ -678,7 +680,7 @@ function specsDiagnostic(specs) {
 // adapter whose optional-peer SDK is not installed, or undefined when every
 // one of them loads. Runs only after specsDiagnostic has accepted the
 // adapter names, so every spec here carries a known adapter.
-async function adapterSdksDiagnostic(specs, ctx) {
+async function adapterSdksDiagnostic(specs, ctx, stdinArgs = []) {
   const adapters = specs.map((spec) => spec.adapter);
   const { missingAdapters } = await checkAdapterSdks(
     adapters,
@@ -688,9 +690,13 @@ async function adapterSdksDiagnostic(specs, ctx) {
   const [header, ...commands] = adapterSdkFailureLines(missingAdapters, {
     // PBCLI-40: the ephemeral re-run carries the lineup's full mapped SDK
     // set and the original arguments, so it completes in one hop and runs
-    // exactly as printed.
+    // exactly as printed. A task or reply consumed from stdin before this
+    // gate is appended as a positional — parse-equivalent, since the
+    // argument parser collects positionals wherever they appear — because
+    // the pipe that supplied it will not exist when the printed command
+    // runs.
     requiredSdks: mappedSdksFor(adapters),
-    invocation: ctx.rawArgv,
+    invocation: [...ctx.rawArgv, ...stdinArgs],
     ...(ctx.ephemeralNpx !== undefined
       ? { ephemeralNpx: ctx.ephemeralNpx }
       : {}),

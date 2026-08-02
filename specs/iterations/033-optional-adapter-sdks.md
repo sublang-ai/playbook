@@ -73,6 +73,12 @@ at the two install shapes users actually produce.
    shell-quoted in place of the literal `playbook ...` placeholder;
    amend PBCLI-40/41, RELEASE-13's partial exec shape with its CI leg,
    DR-026 §3, and the changelog accordingly.
+7. **Stdin preservation and CLI ordering.** _[done]_ Append a
+   stdin-consumed task or reply to the re-run as a quoted positional —
+   the parser collects positionals wherever they appear, so the
+   appended form is parse-equivalent — and print prerequisite external
+   CLI installs before the ephemeral re-run; amend PBCLI-40/41, DR-026
+   §3, and the changelog.
 
 ## Acceptance criteria
 
