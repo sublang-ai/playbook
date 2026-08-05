@@ -34,6 +34,22 @@ const CAPTAIN_GENERATED_BUNDLE = [
   `${CAPTAIN_BASE}.slc-verify/verify-coverage.d.ts`,
 ] as const;
 
+// The manifest dependency groups pnpm records in the root importer.
+const DEPENDENCY_GROUPS = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+] as const;
+
+// The lockfile `settings` snapshot pnpm resolves from tracked configuration
+// — no `.npmrc` is tracked, so these are the defaults every CI install
+// computes, and the values the verified frozen install runs against. A pnpm
+// major that changes a default changes this line, deliberately.
+const CI_LOCKFILE_SETTINGS = {
+  autoInstallPeers: true,
+  excludeLinksFromLockfile: false,
+};
+
 const pkg = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as {
@@ -42,6 +58,7 @@ const pkg = JSON.parse(
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  pnpm?: { overrides?: Record<string, string> };
 };
 
 const lockfile = parseYaml(
@@ -80,13 +97,13 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     ).toBe(true);
   });
 
-  it('never commits the RELEASE-11 link into the lockfile', () => {
+  it('never commits local install state into the lockfile', () => {
     // Every production and CI install consumes the COMMITTED lockfile
-    // frozen, after dropping the override file — a committed link fails
-    // them all on the overrides snapshot before any test runs. The working
-    // copy may legitimately record the link while the override is active,
-    // so this asserts on the committed lockfile; while the two differ the
-    // lockfile is mid-edit and the working-copy checks above govern.
+    // frozen, after dropping the override file, so local state that reached
+    // a commit fails them all before any test runs. The working copy
+    // legitimately carries that state while the override is active; the
+    // commit never does — and a clean HEAD satisfies this whatever the
+    // working copy holds, so no dirty-tree exemption is needed.
     let headLock: string;
     try {
       headLock = execFileSync('git', ['show', 'HEAD:pnpm-lock.yaml'], {
@@ -94,16 +111,65 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         encoding: 'utf8',
       });
     } catch {
-      // No git or no committed lockfile to compare against (e.g. an
-      // exported tree); the working-copy checks above still ran.
+      // No git and no committed lockfile to read — an exported tree, say,
+      // where the working-copy checks above are the whole contract.
       return;
     }
-    const workingLock = readFileSync(
-      new URL('../pnpm-lock.yaml', import.meta.url),
-      'utf8',
-    );
-    if (headLock !== workingLock) return;
-    expect(headLock).not.toContain('link:../cligent');
+    const committed = parseYaml(headLock) as {
+      overrides?: Record<string, string>;
+      settings?: Record<string, unknown>;
+      importers?: Record<
+        string,
+        Record<string, Record<string, { specifier?: string; version?: string }>>
+      >;
+    };
+    const declaredOverrides = pkg.pnpm?.overrides ?? {};
+
+    // pnpm gates a frozen install on the lockfile's config snapshot matching
+    // the config it resolves at install time, aborting with
+    // ERR_PNPM_LOCKFILE_CONFIG_MISMATCH on any difference, whatever the
+    // value. Both halves of that snapshot are checked by equality, never by
+    // path or protocol: `overrides` against the manifest — the only tracked
+    // source, since `pnpm-workspace.yaml` is git-ignored — and `settings`
+    // against the values CI's own install is verified against. The settings
+    // half is not hypothetical: `exclude-links-from-lockfile` is exactly
+    // what a contributor reaches for to stop the RELEASE-11 override
+    // rewriting their lockfile, and it silently hides the link from every
+    // importer entry below.
+    expect(committed.overrides ?? {}).toEqual(declaredOverrides);
+    expect(committed.settings ?? {}).toEqual(CI_LOCKFILE_SETTINGS);
+
+    // RELEASE-11 sanctions exactly one way to link a local checkout — the
+    // git-ignored override file — so no tracked override may name a local
+    // path, however it is spelled. Without this, the equality above would
+    // admit a committed link by construction.
+    for (const [name, value] of Object.entries(declaredOverrides)) {
+      expect(value, `${name} override names a local path`).not.toMatch(
+        /^(?:link|file|portal):/,
+      );
+    }
+
+    // The importer must agree with the manifest exactly, which is what
+    // rejects the link by its effect rather than by its spelling: the
+    // override rewrites the recorded specifier, so a link at any depth or
+    // an absolute one disagrees with the declared range, as does a dropped
+    // entry or a stale hand-edit (ERR_PNPM_OUTDATED_LOCKFILE). A tracked
+    // override legitimately rewrites its own dependency's specifier, so it
+    // is the effective specifier that must match — and a dependency the
+    // manifest itself declares as a local path stays valid, since that is
+    // tracked rather than local state.
+    for (const group of DEPENDENCY_GROUPS) {
+      const declared = pkg[group] ?? {};
+      const recorded = committed.importers?.['.']?.[group] ?? {};
+      expect(Object.keys(recorded).sort(), `${group} entries`).toEqual(
+        Object.keys(declared).sort(),
+      );
+      for (const [name, range] of Object.entries(declared)) {
+        expect(recorded[name]?.specifier, `${group}.${name} specifier`).toBe(
+          declaredOverrides[name] ?? range,
+        );
+      }
+    }
   });
 
   it('pins cligent lifecycle and isolated call contracts', () => {

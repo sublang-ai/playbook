@@ -74,12 +74,39 @@ pre-close `Captain.prepareDispose()` lifecycle and
 `CallCaptainOptions.allowedTools` accepted by
 `CaptainContext.callCaptain`.
 
-The committed lockfile is never exempt: whenever the working copy of
-`pnpm-lock.yaml` matches the committed one, the test suite shall fail
-if the committed lockfile records the RELEASE-11 link — enforcing
-RELEASE-11's rule that the override's lockfile mutation is never
-committed, since every production and CI install consumes the
-committed lockfile frozen, after dropping the override.
+The committed lockfile is never exempt, whatever the working copy
+holds. Where a committed `pnpm-lock.yaml` is readable, the test suite
+shall fail unless all of the following hold of it:
+
+- its `overrides` block equals the overrides declared by tracked
+  configuration — `package.json`'s `pnpm.overrides`, the only tracked
+  source while `pnpm-workspace.yaml` stays git-ignored;
+- its `settings` block equals the values the verified frozen install
+  runs against;
+- no tracked override names a local path (`link:`, `file:`, or
+  `portal:`), RELEASE-11 sanctioning only the git-ignored override
+  file;
+- the root importer's entries are exactly the manifest's declared
+  dependencies, each recording the manifest's specifier, or the
+  tracked override's where one applies.
+
+Nothing here may be asserted by path or by spelling. The override path
+is contributor-adjustable, so an assertion naming
+`pnpm-workspace.yaml.example`'s default would pass a deeper or
+absolute checkout that breaks the clean install identically, and a
+specifier a contributor's `exclude-links-from-lockfile` erased from the
+importer would leave no path to name at all. Equality against tracked
+configuration is what stays faithful: it rejects local state whatever
+its shape, and admits a legitimately declared override or vendored
+local dependency, which is tracked rather than local.
+
+This enforces RELEASE-11's rule that the override's lockfile mutation
+is never committed, since every production and CI install consumes the
+committed lockfile frozen, after dropping the override. Each clause
+above corresponds to a way that install aborts: a config snapshot with
+no tracked backing — `overrides` or `settings` alike — raises
+`ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, and an importer disagreeing with
+the manifest raises `ERR_PNPM_OUTDATED_LOCKFILE`.
 
 ### RELEASE-27
 
