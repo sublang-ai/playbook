@@ -65,7 +65,14 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     const recordsLocalLink = lockEntry.version.startsWith('link:');
 
     expect(packageSpecifier).toMatch(/^\^\d+\.\d+\.\d+$/);
-    expect(lockEntry.specifier).toBe(packageSpecifier);
+    // A pnpm override rewrites the importer's recorded specifier as well as
+    // its resolution, so both checks admit the link only while the local
+    // override file exists.
+    expect(
+      hasLocalOverride
+        ? lockEntry.specifier === packageSpecifier || recordsLocalLink
+        : lockEntry.specifier === packageSpecifier,
+    ).toBe(true);
     expect(
       hasLocalOverride
         ? recordsConcreteVersion || recordsLocalLink
@@ -122,45 +129,22 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
 });
 
 describe('adapter SDK declarations (RELEASE-27)', () => {
-  // DR-026: the SDKs wired by the bundled production config are the user's
-  // choice of agent vendor, so they are optional peers — declaring them as
-  // dependencies is what made every install carry every stack.
+  // DR-027: cligent's own optional-peer declaration is the single range npm
+  // checks. Absence, not identity — a restated range here is a second copy
+  // that can only drift, and the earlier identity requirement froze at
+  // cligent's old floor the first time cligent's moved.
   const ADAPTER_SDKS = [
     '@anthropic-ai/claude-agent-sdk',
     '@openai/codex-sdk',
   ] as const;
 
-  // cligent exports no `./package.json` subpath and vitest provides no
-  // `import.meta.resolve`, so read the installed manifest through the
-  // node_modules symlink pnpm always creates for a direct dependency.
-  const cligentPeers = (() => {
-    const manifest = join(
-      repoRoot,
-      'node_modules',
-      CLIGENT_DEP,
-      'package.json',
-    );
-    const parsed = JSON.parse(readFileSync(manifest, 'utf8')) as {
-      peerDependencies?: Record<string, string>;
-    };
-    return parsed.peerDependencies ?? {};
-  })();
-
-  it.each(ADAPTER_SDKS)('declares %s as an optional peer', (sdk) => {
-    expect(pkg.peerDependencies?.[sdk]).toBeTypeOf('string');
-    expect(pkg.peerDependenciesMeta?.[sdk]?.optional).toBe(true);
+  it.each(ADAPTER_SDKS)('declares no runtime range for %s', (sdk) => {
+    expect(pkg.peerDependencies?.[sdk]).toBeUndefined();
+    expect(pkg.peerDependenciesMeta?.[sdk]).toBeUndefined();
     expect(pkg.dependencies[sdk]).toBeUndefined();
     expect(pkg.optionalDependencies?.[sdk]).toBeUndefined();
     // The repo's own tests, CI, and acceptance runs still need real SDKs.
     expect(pkg.devDependencies[sdk]).toBeTypeOf('string');
-  });
-
-  it.each(ADAPTER_SDKS)('declares the identical peer range cligent declares for %s', (sdk) => {
-    // Identity, not one-directional containment. A floor above cligent's
-    // ERESOLVE-conflicts with an application-owned SDK the loader accepts;
-    // a floor below admits versions the loader would warn on. cligent is the
-    // only package that imports the SDK, so its range is the whole truth.
-    expect(pkg.peerDependencies?.[sdk]).toBe(cligentPeers[sdk]);
   });
 });
 

@@ -21,6 +21,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  AGENT_RUNTIME_TARGETS,
+  classifyRuntime,
+  type RuntimeReadiness,
+  type RuntimeTarget,
+} from '@sublang/cligent';
 import { loadTmuxPlayConfig } from '@sublang/cligent/tmux-play';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createMachine } from 'xstate';
@@ -713,9 +719,33 @@ describe('playbook launcher — readiness (PBCLI-16)', () => {
   });
 });
 
-// PBCLI-41 (DR-026): the adapter SDKs are optional peers, so a launch must
-// name a missing one and its install command instead of letting cligent
-// fail mid-turn.
+// PBCLI-41 (DR-027): the agent runtimes are cligent's to know; a launch
+// must render cligent's verdict — absent and below-floor distinctly, each
+// with its pinned repair — instead of letting a runtime fail mid-turn.
+// Expectations derive from cligent's descriptor, never restated literals.
+const CLAUDE_TARGET = AGENT_RUNTIME_TARGETS.claude[0];
+const CODEX_TARGET = AGENT_RUNTIME_TARGETS.codex[0];
+const [OPENCODE_SDK, OPENCODE_CLI] = AGENT_RUNTIME_TARGETS.opencode;
+
+// Drives cligent's real classifier from an injected version table rather
+// than the host's installed runtimes, so a missing or below-floor verdict
+// is reproducible on any machine. An absent key classifies as missing —
+// built directly, because `classifyRuntime`'s version parameter defaults
+// on an explicit `undefined` and would read the host's runtimes.
+function classifyWith(versions: Record<string, string>) {
+  return (target: RuntimeTarget, available: boolean): RuntimeReadiness => {
+    const installed = versions[target.package];
+    if (installed === undefined) {
+      return {
+        state: available ? 'unknown' : 'missing',
+        target,
+        repair: { spec: target.repairSpec, steps: target.steps ?? [] },
+      };
+    }
+    return classifyRuntime(target, available, installed);
+  };
+}
+
 describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
   function fakeProbe(unavailable: string[]) {
     const probed: string[] = [];
@@ -764,16 +794,61 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
       probeAdapterSdk: fakeProbe(['codex']).fn,
+      classifyRuntime: classifyWith({
+        [CLAUDE_TARGET.package]: CLAUDE_TARGET.tested,
+      }),
     });
 
     expect(result.code).not.toBe(0);
     expect(result.code).not.toBe(127);
-    expect(stderr.text()).toContain('Adapter SDKs not installed: codex');
-    expect(stderr.text()).toContain('npm install -g @openai/codex-sdk');
+    expect(stderr.text()).toContain(
+      `Adapter runtimes not usable: codex (${CODEX_TARGET.bundles} not installed)`,
+    );
+    expect(stderr.text()).toContain(
+      `npm install -g ${CODEX_TARGET.repairSpec}`,
+    );
     // The available vendor's SDK is not advertised as a remedy.
     expect(stderr.text()).not.toContain(
-      'npm install -g @anthropic-ai/claude-agent-sdk\n',
+      `npm install -g ${CLAUDE_TARGET.repairSpec}`,
     );
+    expect(spawn.calls).toHaveLength(0);
+  });
+
+  it('reports a below-floor runtime with versions, never as absent', async () => {
+    const home = await makeTempHome();
+    await writeUserConfig(home, minimalConfig());
+    const spawn = fakeSpawn();
+    const stderr = writer();
+
+    // Codex's runtime IS installed — at the version DR-013 was written
+    // about — so the report must carry the installed and required versions
+    // with the same pinned repair; "not installed" would send the user
+    // hunting for something already present.
+    const result = await runPlaybookCli({
+      argv: [],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: fakeProbe(['codex']).fn,
+      classifyRuntime: classifyWith({
+        [CLAUDE_TARGET.package]: CLAUDE_TARGET.tested,
+        [CODEX_TARGET.package]: '0.139.0',
+      }),
+    });
+
+    expect(result.code).not.toBe(0);
+    expect(result.code).not.toBe(127);
+    expect(stderr.text()).toContain(
+      `Adapter runtimes not usable: codex (${CODEX_TARGET.bundles} 0.139.0 ` +
+        `installed, >=${CODEX_TARGET.supportedFrom} required)`,
+    );
+    expect(stderr.text()).toContain(
+      `npm install -g ${CODEX_TARGET.repairSpec}`,
+    );
+    expect(stderr.text()).not.toContain('not installed');
     expect(spawn.calls).toHaveLength(0);
   });
 
@@ -795,19 +870,24 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
       probeAdapterSdk: fakeProbe(['claude']).fn,
+      classifyRuntime: classifyWith({
+        [CODEX_TARGET.package]: CODEX_TARGET.tested,
+      }),
     });
 
     expect(result.code).not.toBe(0);
     expect(result.code).not.toBe(127);
-    expect(stderr.text()).toContain('Adapter SDKs not installed: claude');
     expect(stderr.text()).toContain(
-      'npm install -g @anthropic-ai/claude-agent-sdk',
+      `Adapter runtimes not usable: claude (${CLAUDE_TARGET.bundles} not installed)`,
+    );
+    expect(stderr.text()).toContain(
+      `npm install -g ${CLAUDE_TARGET.repairSpec}`,
     );
     expect(stderr.text()).toContain('Adapters not ready:');
     expect(spawn.calls).toHaveLength(0);
   });
 
-  it('excludes an adapter with no known SDK and probes each once', async () => {
+  it('gates gemini too and probes each declared adapter once', async () => {
     const home = await makeTempHome();
     await writeUserConfig(home, geminiConfig());
     const spawn = fakeSpawn();
@@ -826,14 +906,28 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     });
 
     expect(result).toEqual({ code: 0 });
-    // The config declares captain claude plus two gemini players: gemini has
-    // no SDK mapping and claude is probed once, not once per declaration.
-    expect(probe.probed).toEqual(['claude']);
-    // PBCLI-12 already warns about gemini; the SDK check adds no second one.
+    // The config declares captain claude plus two gemini players. DR-027
+    // ends gemini's exemption — cligent publishes its CLI target — and each
+    // distinct adapter is probed once, not once per declaration.
+    expect([...probe.probed].sort()).toEqual(['claude', 'gemini']);
+    // PBCLI-12 still warns about gemini's absent credential check; the
+    // runtime gate adds no second warning.
     expect(
       stderr.text().match(/no readiness check for adapter "gemini"/g),
     ).toHaveLength(1);
     expect(spawn.calls).toHaveLength(1);
+  });
+
+  it('excludes an adapter cligent publishes no targets for', async () => {
+    const probe = fakeProbe([]);
+    const { unusableAdapters } = await adapterSdk.checkAdapterSdks(
+      ['claude', 'mystery'],
+      probe.fn,
+    );
+    expect(unusableAdapters).toEqual([]);
+    // The unknown adapter stays with PBCLI-12's unknown-adapter warning;
+    // probing it would import a module path that cannot exist.
+    expect(probe.probed).toEqual(['claude']);
   });
 
   it('runs no probe for a raw --config launch', async () => {
@@ -857,31 +951,57 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     expect(spawn.calls).toHaveLength(1);
   });
 
-  it('maps exactly the adapters backed by cligent optional peer SDKs', () => {
-    // opencode is run-path-supported and its SDK is an optional peer, so
-    // leaving it unmapped restores the mid-turn failure DR-026 §4 removes.
-    // gemini stays out by design: its transport SDK is a regular dependency
-    // of cligent, so there is no missing-SDK failure mode to gate.
-    expect(Object.keys(adapterSdk.ADAPTER_SDKS).sort()).toEqual([
-      'claude',
-      'codex',
-      'opencode',
-    ]);
-    expect(adapterSdk.ADAPTER_SDKS.opencode).toMatchObject({
-      sdk: '@opencode-ai/sdk',
-      clis: ['opencode-ai'],
-    });
+  it('maps every descriptor adapter by module path alone', () => {
+    // DR-027: the map is API-shape knowledge — module and export — and
+    // nothing else. Version knowledge living here is exactly the copy this
+    // decision deletes, so its absence is asserted structurally.
+    expect(Object.keys(adapterSdk.ADAPTER_MODULES).sort()).toEqual(
+      Object.keys(AGENT_RUNTIME_TARGETS).sort(),
+    );
+    for (const entry of Object.values(adapterSdk.ADAPTER_MODULES)) {
+      expect(Object.keys(entry as object).sort()).toEqual([
+        'export',
+        'module',
+      ]);
+      expect((entry as { module: string }).module).toMatch(
+        /^@sublang\/cligent\/adapters\//,
+      );
+    }
   });
 
   it('names both installs for an adapter that also needs a CLI', () => {
+    const verdicts = AGENT_RUNTIME_TARGETS.opencode.map((target) =>
+      classifyWith({})(target, false),
+    );
     const lines = adapterSdk.adapterSdkFailureLines(
-      [{ adapter: 'opencode', sdk: '@opencode-ai/sdk', clis: ['opencode-ai'] }],
+      [{ adapter: 'opencode', verdicts }],
       { ephemeralNpx: false },
     );
     expect(lines).toEqual([
-      'Adapter SDKs not installed: opencode',
-      '  npm install -g @opencode-ai/sdk',
-      '  npm install -g opencode-ai',
+      `Adapter runtimes not usable: opencode (${OPENCODE_SDK.package} ` +
+        `not installed; ${OPENCODE_CLI.package} not installed)`,
+      `  npm install -g ${OPENCODE_SDK.repairSpec}`,
+      `  npm install -g ${OPENCODE_CLI.repairSpec}`,
+      '',
+    ]);
+  });
+
+  it('names only the opencode half actually at fault', async () => {
+    // The CLI is present and in range; only the SDK is absent. Naming the
+    // healthy half sends the user to install what is already there, so the
+    // verdict set carries the faulty runtime alone.
+    const probe = fakeProbe(['opencode']);
+    const { unusableAdapters } = await adapterSdk.checkAdapterSdks(
+      ['opencode'],
+      probe.fn,
+      classifyWith({ [OPENCODE_CLI.package]: OPENCODE_CLI.tested }),
+    );
+    const lines = adapterSdk.adapterSdkFailureLines(unusableAdapters, {
+      ephemeralNpx: false,
+    });
+    expect(lines).toEqual([
+      `Adapter runtimes not usable: opencode (${OPENCODE_SDK.package} not installed)`,
+      `  npm install -g ${OPENCODE_SDK.repairSpec}`,
       '',
     ]);
   });
@@ -898,10 +1018,16 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
 
     // The partial-tree case that alternated forever: claude is present in
     // THIS tree, codex is not. The re-run must still name BOTH — a fresh
-    // exec tree starts empty — and must carry the original arguments
-    // instead of a literal `...` no surface accepts.
+    // exec tree starts empty — at cligent's pinned repair specs, and must
+    // carry the original arguments instead of a literal `...` no surface
+    // accepts.
     const lines = adapterSdk.adapterSdkFailureLines(
-      [{ adapter: 'codex', sdk: '@openai/codex-sdk', clis: [] }],
+      [
+        {
+          adapter: 'codex',
+          verdicts: [classifyWith({})(CODEX_TARGET, false)],
+        },
+      ],
       {
         ephemeralNpx: true,
         requiredSdks: adapterSdk.mappedSdksFor(['claude', 'codex']),
@@ -909,8 +1035,8 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       },
     );
     expect(lines).toContain(
-      `    npx -y -p ${pkgSelfSpec()} -p @anthropic-ai/claude-agent-sdk ` +
-        "-p @openai/codex-sdk playbook run mod://code 'do the thing'",
+      `    npx -y -p ${pkgSelfSpec()} -p ${CLAUDE_TARGET.repairSpec} ` +
+        `-p ${CODEX_TARGET.repairSpec} playbook run mod://code 'do the thing'`,
     );
     // One re-run line — not one npx line per SDK, no literal `...`, and no
     // npm install command that would land outside the tree.
@@ -926,15 +1052,22 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     // top-to-bottom must install it first — printed after the re-run, the
     // user's first hop fails and needs another.
     const lines = adapterSdk.adapterSdkFailureLines(
-      [{ adapter: 'opencode', sdk: '@opencode-ai/sdk', clis: ['opencode-ai'] }],
+      [
+        {
+          adapter: 'opencode',
+          verdicts: AGENT_RUNTIME_TARGETS.opencode.map((target) =>
+            classifyWith({})(target, false),
+          ),
+        },
+      ],
       {
         ephemeralNpx: true,
-        requiredSdks: ['@opencode-ai/sdk'],
+        requiredSdks: [OPENCODE_SDK.repairSpec],
         invocation: ['run', 'mod://x'],
       },
     );
     const cliIndex = lines.findIndex((l: string) =>
-      l.includes('npm install -g opencode-ai'),
+      l.includes(`npm install -g ${OPENCODE_CLI.repairSpec}`),
     );
     const rerunIndex = lines.findIndex((l: string) => l.includes('npx -y'));
     expect(cliIndex).toBeGreaterThan(-1);
@@ -944,10 +1077,11 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
 
   it('dedupes and orders the lineup SDK set canonically', () => {
     // captain and a player sharing an adapter must not produce a repeated
-    // -p flag, and unmapped adapters contribute nothing.
+    // -p flag. gemini is descriptor-gated but CLI-kind, so it contributes
+    // no -p sibling: PATH persists across exec trees.
     expect(
       adapterSdk.mappedSdksFor(['codex', 'claude', 'codex', 'gemini']),
-    ).toEqual(['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk']);
+    ).toEqual([CLAUDE_TARGET.repairSpec, CODEX_TARGET.repairSpec]);
   });
 
   it('prints a one-hop re-run for a partially supplied exec tree', async () => {
@@ -966,6 +1100,9 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
       probeAdapterSdk: async (adapter: string) => adapter !== 'codex',
+      classifyRuntime: classifyWith({
+        [CLAUDE_TARGET.package]: CLAUDE_TARGET.tested,
+      }),
       ephemeralNpx: true,
     });
 
@@ -975,8 +1112,8 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       .text()
       .split('\n')
       .find((l) => l.includes('npx -y'));
-    expect(rerun).toContain('-p @anthropic-ai/claude-agent-sdk');
-    expect(rerun).toContain('-p @openai/codex-sdk');
+    expect(rerun).toContain(`-p ${CLAUDE_TARGET.repairSpec}`);
+    expect(rerun).toContain(`-p ${CODEX_TARGET.repairSpec}`);
     // With no original arguments the command ends at the bin — never a
     // literal `...`, which tmux-play rejects as a positional.
     expect(rerun?.trimEnd().endsWith('playbook')).toBe(true);
@@ -2884,8 +3021,9 @@ async function runProvisionCli(
   };
 }
 
-// PBCLI-41 (DR-026): the non-interactive path gates on the same optional
-// peer SDKs, before the runtime exists and before any agent call.
+// PBCLI-41 (DR-027): the non-interactive path gates on the same
+// cligent-published runtime targets, before the runtime exists and before
+// any agent call.
 describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
   it('fails before constructing the runtime, naming the install command', async () => {
     runEntry.lastCreate = undefined;
@@ -2896,13 +3034,16 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       { 'mod://code': { default: runEntry(async () => ({ outcome: 'terminal', state: {}, output: 'x' })) } },
       createAgent,
       undefined,
-      { probeAdapterSdk: async (adapter: string) => adapter !== 'claude' },
+      {
+        probeAdapterSdk: async (adapter: string) => adapter !== 'claude',
+        classifyRuntime: classifyWith({}),
+      },
     );
 
     expect(out.code).toBe(1);
-    expect(out.stderr).toContain('Adapter SDKs not installed: claude');
+    expect(out.stderr).toContain('Adapter runtimes not usable: claude');
     expect(out.stderr).toContain(
-      'npm install -g @anthropic-ai/claude-agent-sdk',
+      `npm install -g ${CLAUDE_TARGET.repairSpec}`,
     );
     // Nothing downstream ran: no runtime, no agent call.
     expect(runEntry.lastCreate).toBeUndefined();
@@ -2952,13 +3093,16 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       },
       createAgent,
       undefined,
-      { probeAdapterSdk: async (adapter: string) => adapter !== 'opencode' },
+      {
+        probeAdapterSdk: async (adapter: string) => adapter !== 'opencode',
+        classifyRuntime: classifyWith({}),
+      },
     );
 
     expect(out.code).toBe(1);
-    expect(out.stderr).toContain('Adapter SDKs not installed: opencode');
-    expect(out.stderr).toContain('npm install -g @opencode-ai/sdk');
-    expect(out.stderr).toContain('npm install -g opencode-ai');
+    expect(out.stderr).toContain('Adapter runtimes not usable: opencode');
+    expect(out.stderr).toContain(`npm install -g ${OPENCODE_SDK.repairSpec}`);
+    expect(out.stderr).toContain(`npm install -g ${OPENCODE_CLI.repairSpec}`);
     expect(runEntry.lastCreate).toBeUndefined();
     expect(calls).toHaveLength(0);
   });
@@ -2968,8 +3112,9 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
     const { createAgent, calls } = fakeAgents({});
 
     // Mixed lineup: codex captain over the default claude players. Codex's
-    // SDK is missing; the re-run must still name BOTH SDKs and replay the
-    // exact `run` invocation, quoted where the shell needs it.
+    // SDK is missing; the re-run must still name BOTH SDKs at their pinned
+    // repair specs and replay the exact `run` invocation, quoted where the
+    // shell needs it.
     const out = await runCli(
       ['run', 'mod://code', 'do it', '--captain', 'codex'],
       {
@@ -2985,16 +3130,21 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       undefined,
       {
         probeAdapterSdk: async (adapter: string) => adapter !== 'codex',
+        classifyRuntime: classifyWith({
+          [CLAUDE_TARGET.package]: CLAUDE_TARGET.tested,
+        }),
         ephemeralNpx: true,
       },
     );
 
     expect(out.code).toBe(1);
     const rerun = out.stderr.split('\n').find((l) => l.includes('npx -y'));
-    expect(rerun).toContain('-p @anthropic-ai/claude-agent-sdk');
-    expect(rerun).toContain('-p @openai/codex-sdk');
+    expect(rerun).toContain(`-p ${CLAUDE_TARGET.repairSpec}`);
+    expect(rerun).toContain(`-p ${CODEX_TARGET.repairSpec}`);
     expect(rerun).toContain("playbook run mod://code 'do it' --captain codex");
-    expect(out.stderr).not.toContain('npm install -g @openai/codex-sdk');
+    // No peer install line in the ephemeral branch — it would land outside
+    // the exec tree.
+    expect(out.stderr).not.toContain('npm install -g');
     expect(runEntry.lastCreate).toBeUndefined();
     expect(calls).toHaveLength(0);
   });
@@ -3020,6 +3170,7 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       async () => 'piped task text\n',
       {
         probeAdapterSdk: async () => false,
+        classifyRuntime: classifyWith({}),
         ephemeralNpx: true,
       },
     );
@@ -3049,7 +3200,11 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       modules,
       createAgent,
       async () => '--json\n',
-      { probeAdapterSdk: async () => false, ephemeralNpx: true },
+      {
+        probeAdapterSdk: async () => false,
+        classifyRuntime: classifyWith({}),
+        ephemeralNpx: true,
+      },
     );
     expect(blocked.code).toBe(1);
     const rerun = blocked.stderr.split('\n').find((l) => l.includes('npx -y'));
@@ -3090,7 +3245,11 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       modules,
       createAgent,
       async () => '--json\n',
-      { probeAdapterSdk: async () => false, ephemeralNpx: true },
+      {
+        probeAdapterSdk: async () => false,
+        classifyRuntime: classifyWith({}),
+        ephemeralNpx: true,
+      },
     );
     expect(trailing.code).toBe(1);
     const trailingRerun = trailing.stderr
@@ -3107,7 +3266,11 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       modules,
       createAgent,
       async () => 'stdin task\n',
-      { probeAdapterSdk: async () => false, ephemeralNpx: true },
+      {
+        probeAdapterSdk: async () => false,
+        classifyRuntime: classifyWith({}),
+        ephemeralNpx: true,
+      },
     );
     expect(midArgv.code).toBe(1);
     const midRerun = midArgv.stderr
@@ -3152,7 +3315,12 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       modules,
       createAgent,
       async () => '--last\n',
-      { sessionsDir, probeAdapterSdk: async () => false, ephemeralNpx: true },
+      {
+        sessionsDir,
+        probeAdapterSdk: async () => false,
+        classifyRuntime: classifyWith({}),
+        ephemeralNpx: true,
+      },
     );
     expect(resumed.code).toBe(1);
     const rerun = resumed.stderr.split('\n').find((l) => l.includes('npx -y'));
@@ -3256,11 +3424,15 @@ describe('playbook run — adapter SDK preflight (PBCLI-41)', () => {
       modules,
       createAgent,
       undefined,
-      { sessionsDir, probeAdapterSdk: async () => false },
+      {
+        sessionsDir,
+        probeAdapterSdk: async () => false,
+        classifyRuntime: classifyWith({}),
+      },
     );
 
     expect(resumed.code).toBe(1);
-    expect(resumed.stderr).toContain('Adapter SDKs not installed: claude');
+    expect(resumed.stderr).toContain('Adapter runtimes not usable: claude');
     expect(record.restores).toHaveLength(0);
     expect(record.turnTexts).toEqual(['ambiguous']);
   });

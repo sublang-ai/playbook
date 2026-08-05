@@ -1,55 +1,60 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// PBCLI-39/40 (DR-026): the agent SDKs are optional peer dependencies, so
-// an install carries only the stacks the user asked for. Their absence has
-// to be a named gate failure rather than a mid-turn adapter error, which is
-// what this probe provides for both the interactive launcher and `run`.
+// PBCLI-39/40 (DR-027): the agent runtimes are cligent's to know. This
+// module keeps only cligent module-path knowledge — which subpath exports
+// which adapter class — and derives every runtime identity, supported
+// floor, and repair from cligent's shipped descriptor, so a cligent
+// upgrade alone moves the compatibility policy. A runtime's absence or
+// staleness has to be a named gate failure rather than a mid-turn adapter
+// error, which is what this probe provides for both the interactive
+// launcher and `run`.
 
 import { readFileSync } from 'node:fs';
 import { sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// PBCLI-39: adapter shorthand -> the optional peer SDK its cligent adapter
-// demand-loads, the cligent module that performs that load, and any external
-// CLI the adapter's own availability probe additionally requires. The map
-// covers exactly the adapters backed by cligent's optional peer SDKs;
-// gemini is excluded by design — its transport SDK is a regular dependency
-// of cligent, so it has no missing-SDK failure mode to gate. Adapters absent
-// from this map are excluded from the result and stay covered by PBCLI-12's
+import { classifyRuntime } from '@sublang/cligent';
+import { AGENT_RUNTIME_TARGETS } from '@sublang/cligent/runtime-targets';
+
+// PBCLI-39: adapter shorthand -> the cligent module that constructs it.
+// This is API-shape knowledge, not version knowledge; versions, floors,
+// and repairs come from the descriptor. Adapters absent from cligent's
+// descriptor are excluded from the gate and stay covered by PBCLI-12's
 // unknown-adapter warning.
-export const ADAPTER_SDKS = {
+export const ADAPTER_MODULES = {
   claude: {
-    sdk: '@anthropic-ai/claude-agent-sdk',
     module: '@sublang/cligent/adapters/claude-code',
     export: 'ClaudeCodeAdapter',
-    clis: [],
   },
   codex: {
-    sdk: '@openai/codex-sdk',
     module: '@sublang/cligent/adapters/codex',
     export: 'CodexAdapter',
-    clis: [],
+  },
+  // DR-027 ends gemini's exemption: its missing-SDK rationale was true but
+  // incomplete — the CLI can be absent or below cligent's floor, and the
+  // descriptor names both.
+  gemini: {
+    module: '@sublang/cligent/adapters/gemini',
+    export: 'GeminiAdapter',
+  },
+  kimi: {
+    module: '@sublang/cligent/adapters/kimi',
+    export: 'KimiAdapter',
   },
   opencode: {
-    sdk: '@opencode-ai/sdk',
     module: '@sublang/cligent/adapters/opencode',
     export: 'OpenCodeAdapter',
-    // OpenCode's managed default also spawns the `opencode` binary, and its
-    // isAvailable() probes both — so the remedy must name both installs.
-    clis: ['opencode-ai'],
   },
 };
 
 // PBCLI-39: probe through cligent's own adapter rather than by resolution.
-// `isAvailable()` performs the same dynamic import the adapter performs at
-// run time, from cligent's installed module scope — so a passing probe
-// cannot disagree with a failing run. Resolution-based probes are wrong
-// here: neither SDK exports `./package.json`, and @openai/codex-sdk is
-// ESM-only, so `createRequire(...).resolve()` reports both absent when
-// they are present.
+// `isAvailable()` performs the same load the adapter performs at run time,
+// from cligent's installed module scope — and since cligent enforces its
+// version floors inside that same loader, a passing probe cannot disagree
+// with a failing run, for absence and for staleness alike.
 export async function probeAdapterSdk(adapter) {
-  const entry = ADAPTER_SDKS[adapter];
+  const entry = ADAPTER_MODULES[adapter];
   if (entry === undefined) return true;
   try {
     const AdapterClass = (await import(entry.module))[entry.export];
@@ -61,20 +66,48 @@ export async function probeAdapterSdk(adapter) {
   }
 }
 
-// PBCLI-39: probe each distinct known adapter at most once and report the
-// unavailable ones in declaration order.
-export async function checkAdapterSdks(adapters, probe = probeAdapterSdk) {
-  const known = [...new Set(adapters)].filter((a) => a in ADAPTER_SDKS);
+// The descriptor rows for one adapter shorthand, in declaration order.
+function runtimeTargetsFor(adapter) {
+  return adapter in ADAPTER_MODULES
+    ? (AGENT_RUNTIME_TARGETS[adapter] ?? [])
+    : [];
+}
+
+// PBCLI-39: probe each distinct gated adapter at most once, and classify
+// an unavailable adapter's runtimes through cligent's structured verdict.
+// Only the runtimes at fault are reported: an `opencode` whose CLI is
+// present and in range names the SDK alone, because the two halves have
+// different repairs and naming a healthy one sends the user to install
+// what is already there.
+export async function checkAdapterSdks(
+  adapters,
+  probe = probeAdapterSdk,
+  classify = classifyRuntime,
+) {
+  const known = [...new Set(adapters)].filter(
+    (a) => runtimeTargetsFor(a).length > 0,
+  );
   const results = await Promise.all(known.map((a) => probe(a)));
-  return {
-    missingAdapters: known
-      .filter((_, i) => !results[i])
-      .map((adapter) => ({
-        adapter,
-        sdk: ADAPTER_SDKS[adapter].sdk,
-        clis: ADAPTER_SDKS[adapter].clis,
-      })),
-  };
+  const unusableAdapters = [];
+  known.forEach((adapter, i) => {
+    if (results[i]) return;
+    const verdicts = runtimeTargetsFor(adapter).map((target) =>
+      classify(target, false),
+    );
+    const unsupported = verdicts.filter((v) => v.state === 'unsupported');
+    const missing = verdicts.filter(
+      (v) => v.state === 'missing' && v.installed === undefined,
+    );
+    // When neither explains the failure (e.g. the cligent module itself
+    // failed to import), fall back to every runtime so the gate still
+    // blocks with a usable remedy.
+    const culprits =
+      unsupported.length > 0 || missing.length > 0
+        ? [...unsupported, ...missing]
+        : verdicts;
+    unusableAdapters.push({ adapter, verdicts: culprits });
+  });
+  return { unusableAdapters };
 }
 
 // PBCLI-40: a run under `npx` / `npm exec` lives in npm's ephemeral cache
@@ -85,16 +118,24 @@ export function detectEphemeralNpxInstall(moduleUrl = import.meta.url) {
   return fileURLToPath(moduleUrl).split(sep).includes('_npx');
 }
 
-// PBCLI-39: the SDKs of every mapped adapter in a lineup, deduplicated in
-// map order. The ephemeral re-run must be built from this full set: a fresh
-// exec tree starts empty, so a re-run named after only the currently missing
-// SDKs drops the ones this tree does have and alternates between vendors
-// forever.
+// PBCLI-39: the pinned repair specifiers of every descriptor-backed peer
+// SDK in a lineup, deduplicated in descriptor order. The ephemeral re-run
+// must be built from this full set: a fresh exec tree starts empty, so a
+// re-run named after only the currently missing SDKs drops the ones this
+// tree does have and alternates between vendors forever. Pinned specs also
+// mean the re-run installs versions the gate accepts.
 export function mappedSdksFor(adapters) {
   const distinct = new Set(adapters);
-  return Object.keys(ADAPTER_SDKS)
-    .filter((adapter) => distinct.has(adapter))
-    .map((adapter) => ADAPTER_SDKS[adapter].sdk);
+  const specs = [];
+  for (const [adapter, targets] of Object.entries(AGENT_RUNTIME_TARGETS)) {
+    if (!distinct.has(adapter) || !(adapter in ADAPTER_MODULES)) continue;
+    for (const target of targets) {
+      if (target.kind === 'peer' && !specs.includes(target.repairSpec)) {
+        specs.push(target.repairSpec);
+      }
+    }
+  }
+  return specs;
 }
 
 // Minimal POSIX quoting so a preserved argument survives copy-paste; matches
@@ -122,31 +163,59 @@ function selfPackageSpec() {
   return '@sublang/playbook';
 }
 
-// PBCLI-40: name every unavailable adapter and, for each, the exact command
-// that supplies it, so the remedy never requires reading a spec. External
-// CLIs are found through PATH, which an exec tree inherits, so their global
-// install lines hold in both cases.
+// One clause describing a runtime verdict. `unsupported` carries versions,
+// because "not installed" for a runtime that is installed sends the user
+// hunting for something already present (PBCLI-40).
+function describeVerdict(verdict) {
+  const named = verdict.target.bundles ?? verdict.target.package;
+  if (verdict.state === 'unsupported') {
+    return `${named} ${verdict.installed} installed, >=${verdict.target.supportedFrom} required`;
+  }
+  return `${named} not installed`;
+}
+
+// PBCLI-40: name every unusable adapter with its per-runtime verdicts and,
+// for each runtime at fault, the exact pinned command that supplies it.
+// External CLIs are found through PATH, which an exec tree inherits, so
+// their global install lines hold in both cases.
 //
-// options.requiredSdks: the full mapped-SDK set of the lineup (see
+// options.requiredSdks: the full mapped-spec set of the lineup (see
 // mappedSdksFor) — the ephemeral re-run is built from it, not from the
 // missing subset. options.invocation: the original CLI arguments, preserved
 // on the re-run so the printed command is executable as printed.
-export function adapterSdkFailureLines(missingAdapters, options = {}) {
-  if (missingAdapters.length === 0) return [];
+export function adapterSdkFailureLines(unusableAdapters, options = {}) {
+  if (unusableAdapters.length === 0) return [];
   const ephemeralNpx = options.ephemeralNpx ?? detectEphemeralNpxInstall();
   const lines = [
-    `Adapter SDKs not installed: ${missingAdapters
-      .map(({ adapter }) => adapter)
+    `Adapter runtimes not usable: ${unusableAdapters
+      .map(
+        ({ adapter, verdicts }) =>
+          `${adapter} (${verdicts.map(describeVerdict).join('; ')})`,
+      )
       .join(', ')}`,
   ];
   // External CLIs are found through PATH, which persists across exec trees
-  // and installed prefixes alike, so their global installs are keyed to the
-  // missing adapters only — no alternation risk — and hold in both branches.
-  const cliInstalls = missingAdapters.flatMap(({ clis }) =>
-    (clis ?? []).map((cli) => `npm install -g ${cli}`),
+  // and installed prefixes alike, so their pinned global installs are keyed
+  // to the runtimes actually at fault and hold in both branches. A CLI's
+  // one-time steps (e.g. a login) follow its install.
+  const cliInstalls = unusableAdapters.flatMap(({ verdicts }) =>
+    verdicts
+      .filter((v) => v.target.kind === 'cli')
+      .flatMap((v) => [`npm install -g ${v.repair.spec}`, ...v.repair.steps]),
+  );
+  const peerInstalls = unusableAdapters.flatMap(({ verdicts }) =>
+    verdicts
+      .filter((v) => v.target.kind === 'peer')
+      .map((v) => `npm install -g ${v.repair.spec}`),
   );
   if (ephemeralNpx) {
-    const sdks = options.requiredSdks ?? missingAdapters.map(({ sdk }) => sdk);
+    const sdks =
+      options.requiredSdks ??
+      unusableAdapters.flatMap(({ verdicts }) =>
+        verdicts
+          .filter((v) => v.target.kind === 'peer')
+          .map((v) => v.repair.spec),
+      );
     const args = (options.invocation ?? [])
       .map((arg) => ` ${shellQuote(arg)}`)
       .join('');
@@ -169,7 +238,7 @@ export function adapterSdkFailureLines(missingAdapters, options = {}) {
     );
   } else {
     lines.push(
-      ...missingAdapters.map(({ sdk }) => `  npm install -g ${sdk}`),
+      ...peerInstalls.map((command) => `  ${command}`),
       ...cliInstalls.map((command) => `  ${command}`),
     );
   }

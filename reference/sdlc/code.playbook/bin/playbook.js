@@ -78,6 +78,9 @@ export async function runPlaybookCli(options = {}) {
       ...(options.probeAdapterSdk
         ? { probeAdapterSdk: options.probeAdapterSdk }
         : {}),
+      ...(options.classifyRuntime
+        ? { classifyRuntime: options.classifyRuntime }
+        : {}),
       ...(options.ephemeralNpx !== undefined
         ? { ephemeralNpx: options.ephemeralNpx }
         : {}),
@@ -162,16 +165,17 @@ export async function runPlaybookCli(options = {}) {
   // PBCLI-39/40: SDK availability is an independent check with its own
   // remedy — a credential and an SDK can be missing at once, and reporting
   // only the first would send the user round the loop twice.
-  const { missingAdapters } = await checkAdapterSdks(
+  const { unusableAdapters } = await checkAdapterSdks(
     declaredAdapters,
     options.probeAdapterSdk ?? probeAdapterSdk,
+    ...(options.classifyRuntime ? [options.classifyRuntime] : []),
   );
   for (const adapter of readiness.unknownAdapters) {
     stderr.write(
       `playbook: warning: no readiness check for adapter "${adapter}"\n`,
     );
   }
-  if (readiness.failingAdapters.length > 0 || missingAdapters.length > 0) {
+  if (readiness.failingAdapters.length > 0 || unusableAdapters.length > 0) {
     stderr.write(
       helpText({
         userConfigPath,
@@ -179,7 +183,7 @@ export async function runPlaybookCli(options = {}) {
         // PBCLI-40: the ephemeral re-run must carry the lineup's full mapped
         // SDK set and the user's own arguments, so it completes in one hop
         // and is executable exactly as printed.
-        sdkFailureLines: adapterSdkFailureLines(missingAdapters, {
+        sdkFailureLines: adapterSdkFailureLines(unusableAdapters, {
           requiredSdks: mappedSdksFor(declaredAdapters),
           invocation: argv,
           ...(options.ephemeralNpx !== undefined

@@ -130,27 +130,15 @@
     "provenance": true
   },
   "dependencies": {
-    "@sublang/cligent": "^0.16.0",
+    "@sublang/cligent": "^0.18.0",
     "@sublang/spex": "^0.3.0",
     "p-queue": "^9.3.1",
     "xstate": "^5.19.4",
     "yaml": "^2.9.0"
   },
-  "peerDependencies": {
-    "@anthropic-ai/claude-agent-sdk": ">=0.3.154",
-    "@openai/codex-sdk": ">=0.138.0"
-  },
-  "peerDependenciesMeta": {
-    "@anthropic-ai/claude-agent-sdk": {
-      "optional": true
-    },
-    "@openai/codex-sdk": {
-      "optional": true
-    }
-  },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.154",
-    "@openai/codex-sdk": "^0.139.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.221",
+    "@openai/codex-sdk": "^0.146.0",
     "@types/node": "^22.0.0",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"

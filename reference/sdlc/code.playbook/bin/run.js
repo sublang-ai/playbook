@@ -83,9 +83,11 @@ export async function runPlaybookRun(options = {}) {
     readStdin,
     sessionsDir,
     userConfigPath,
-    // PBCLI-39: the adapter SDK probe, injectable like createAgent so tests
-    // can drive an unavailable SDK without uninstalling one.
+    // PBCLI-39: the adapter SDK probe and the runtime classifier, injectable
+    // like createAgent so tests can drive an unavailable or below-floor
+    // runtime without uninstalling or downgrading one.
     probeAdapterSdk: options.probeAdapterSdk ?? probeAdapterSdk,
+    classifyRuntime: options.classifyRuntime,
     // PBCLI-40: the original invocation, preserved on the ephemeral re-run;
     // this module receives argv with the leading `run` already consumed.
     rawArgv: ['run', ...argv],
@@ -695,12 +697,13 @@ function stdinReplayArgs(args, resolved) {
 // adapter names, so every spec here carries a known adapter.
 async function adapterSdksDiagnostic(specs, ctx, stdinArgs = []) {
   const adapters = specs.map((spec) => spec.adapter);
-  const { missingAdapters } = await checkAdapterSdks(
+  const { unusableAdapters } = await checkAdapterSdks(
     adapters,
     ctx.probeAdapterSdk,
+    ...(ctx.classifyRuntime ? [ctx.classifyRuntime] : []),
   );
-  if (missingAdapters.length === 0) return undefined;
-  const [header, ...commands] = adapterSdkFailureLines(missingAdapters, {
+  if (unusableAdapters.length === 0) return undefined;
+  const [header, ...commands] = adapterSdkFailureLines(unusableAdapters, {
     // PBCLI-40: the ephemeral re-run carries the lineup's full mapped SDK
     // set and the original arguments, so it completes in one hop and runs
     // exactly as printed. stdinArgs arrive terminator-ready from
