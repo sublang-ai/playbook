@@ -38,14 +38,17 @@ npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk @openai/codex-sd
 playbook
 ```
 
-Each agent SDK is an optional peer dependency, so you install only the
-vendors your config names — install one and the package stays around
-14 MB rather than pulling every stack. Name each SDK as its own
-top-level install root, exactly as above: an SDK nested inside another
-package's subtree is not reachable from the adapter that loads it. If
-one is missing, `playbook` says so and prints the install command
-before it launches anything
-([DR-026](specs/decisions/026-optional-adapter-sdks.md)).
+The agent SDKs are optional, so you install only the vendors your
+config names — install one and the package stays around 14 MB rather
+than pulling every stack. Name each SDK as its own top-level install
+root, exactly as above: an SDK nested inside another package's subtree
+is not reachable from the adapter that loads it. Which versions work
+is cligent's knowledge and ships with it: if a runtime is missing — or
+installed below the version cligent supports — `playbook` says so
+before it launches anything, naming the installed and required
+versions and printing cligent's pinned install command
+([DR-026](specs/decisions/026-optional-adapter-sdks.md),
+[DR-027](specs/decisions/027-runtime-compatibility-from-cligent.md)).
 
 Upgrading from 3.1.0 or earlier? Use the same full line — npm removes
 the SDK copies those releases bundled when it upgrades the package, so

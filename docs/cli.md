@@ -9,10 +9,15 @@ one-shot non-interactive `run`. Agent settings for both come from the
 
 ## Installing agent SDKs
 
-Each adapter is backed by a vendor SDK that is an *optional peer
-dependency*, so installing `@sublang/playbook` never downloads an agent
-stack you did not ask for. Install the SDKs your config names, each as
-its own top-level install root:
+Each adapter is backed by a vendor runtime that installing
+`@sublang/playbook` never downloads for you, so no install carries an
+agent stack you did not ask for. Which versions each adapter supports
+is [cligent](https://github.com/sublang-ai/cligent)'s knowledge and
+ships with it
+([DR-027](../specs/decisions/027-runtime-compatibility-from-cligent.md));
+the commands below install the latest, which cligent accepts from its
+supported floor up. Install the SDKs your config names, each as its
+own top-level install root:
 
 ```sh
 npm install -g @sublang/playbook @anthropic-ai/claude-agent-sdk   # claude
@@ -21,7 +26,8 @@ npm install -g @sublang/playbook @opencode-ai/sdk opencode-ai     # opencode (SD
 ```
 
 The `gemini` adapter needs no SDK install — its transport ships inside
-cligent — only the `gemini` CLI on `PATH`.
+cligent — only the `gemini` CLI on `PATH`, at a version cligent
+supports; the preflight gates it like the SDKs.
 
 **Upgrading from ≤ 3.1.0:** run the same full line. The old releases
 bundled the SDKs inside `@sublang/playbook`'s own tree, and npm
@@ -38,8 +44,12 @@ the adapter even though it is on disk
 ([DR-026](../specs/decisions/026-optional-adapter-sdks.md)).
 
 Both surfaces check this before doing any work: a declared adapter
-whose SDK is not loadable blocks the launch, names the adapter, and
-prints the exact command that supplies it
+whose runtime is not loadable — or is installed below the version
+cligent supports — blocks the launch and names the adapter. An absent
+runtime is reported as not installed; a stale one with its installed
+and required versions, never as absent. Either way the remedy printed
+is cligent's pinned install, `npm install -g <package>@<version>`, so
+following it cannot install a version the gate refuses again
 ([PBCLI-40](../specs/user/playbook-cli.md#pbcli-40)).
 
 ## Interactive
@@ -62,9 +72,10 @@ command: npx materializes the run in an ephemeral cache tree whose
 ancestor walk touches no global prefix, so an SDK installed with
 `npm install -g` is invisible to it. The preflight detects this case
 and prints the multi-package re-run instead of an install line, naming
-every SDK your config needs — including any already present, since each
-distinct package set is a distinct tree — and replaying your original
-arguments, so the printed command works in one hop.
+every SDK your config needs at cligent's pinned version — including any
+already present, since each distinct package set is a distinct tree —
+and replaying your original arguments, so the printed command works in
+one hop.
 
 The command resolves its config (seeding it on first run), composes a
 `tmux-play` config, checks adapter readiness, and launches. It exits
