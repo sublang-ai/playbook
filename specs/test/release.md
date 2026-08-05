@@ -109,7 +109,9 @@ unless all of the following hold of it:
 - every committed resolution falls inside the caret range its own
   manifest entry declares, RELEASE-14 having the pin refreshed within
   that range, and an overridden dependency excepted as the override's
-  to decide.
+  to decide. Range membership follows SemVer, under which a prerelease
+  falls inside a range only where that range carries a prerelease on
+  the same version — so a stable caret admits none.
 
 The last three clauses are what internal agreement alone cannot supply,
 and they are the ones no install failure will report. A manifest and a

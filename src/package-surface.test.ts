@@ -66,12 +66,24 @@ const CARET_RANGE = /^\^\d+\.\d+\.\d+$/;
  *
  * Only caret ranges are interpreted — every range this manifest declares is
  * one — and a resolution whose numbers do not parse is treated as outside,
- * because an unreadable pin is not a verified one. The peer suffix pnpm
- * appends (`0.18.0(dep@1.2.3)`) and any prerelease tag are dropped first.
+ * because an unreadable pin is not a verified one.
+ *
+ * A prerelease never satisfies one of these ranges. SemVer admits a
+ * prerelease only where the range itself carries one on the same
+ * `major.minor.patch`, and `CARET_RANGE` matches stable ranges only, so
+ * `0.18.0-beta.1` is below `^0.18.0` rather than inside it. That is the
+ * opposite of how cligent's own floor check orders a prerelease, and
+ * deliberately: this compares a resolution against a dependency range npm
+ * itself resolves, where SemVer's rule is the one that governs.
  */
 function satisfiesCaret(version: string, range: string): boolean {
-  const parts = (value: string): number[] =>
-    (value.split('(')[0] ?? '').split(/[-+]/)[0]!.split('.').map(Number);
+  // SemVer's numeric-identifier grammar, not `parseInt`, which would accept
+  // a leading zero, interior whitespace, and trailing garbage that SemVer
+  // rejects — reading `1.2.9zzz` as the in-range `1.2.9`.
+  const numbers = (value: string): number[] =>
+    value
+      .split('.')
+      .map((part) => (/^(?:0|[1-9]\d*)$/.test(part) ? Number(part) : Number.NaN));
   const compare = (left: number[], right: number[]): number => {
     for (let i = 0; i < 3; i += 1) {
       const diff = (left[i] ?? 0) - (right[i] ?? 0);
@@ -79,11 +91,19 @@ function satisfiesCaret(version: string, range: string): boolean {
     }
     return 0;
   };
-  const resolved = parts(version);
-  if (resolved.length < 3 || resolved.some((part) => !Number.isFinite(part))) {
+  // pnpm appends the peer suffix `(dep@1.2.3)`, whose package names carry
+  // hyphens of their own, so it goes before any prerelease test. Build
+  // metadata does not affect precedence and is dropped.
+  const core = ((version.split('(')[0] ?? '').split('+')[0] ?? '').trim();
+  if (core.includes('-')) return false;
+  const resolved = numbers(core);
+  if (
+    resolved.length !== 3 ||
+    resolved.some((part) => !Number.isSafeInteger(part))
+  ) {
     return false;
   }
-  const lower = parts(range.slice(1));
+  const lower = numbers(range.slice(1));
   const [major = 0, minor = 0, patch = 0] = lower;
   // Caret pins the leftmost non-zero component, which is why a 0.x range
   // admits only patch moves — the rule that froze the SDK ranges DR-027
@@ -222,8 +242,17 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         LOCAL_PROTOCOL,
       );
       // `$name` reuses that dependency's own declared range, and pnpm
-      // expands it before writing, so only its presence is comparable.
-      if (declaredValue?.startsWith('$')) continue;
+      // expands it before writing, so only its presence is comparable —
+      // but presence is still required. pnpm compares the whole resolved
+      // overrides map against the lockfile's, so a declared override the
+      // lockfile omits is the same config mismatch as one it invents.
+      if (declaredValue?.startsWith('$')) {
+        expect(
+          committed.overrides?.[key],
+          `${key} override is declared but the lockfile records none`,
+        ).toBeTypeOf('string');
+        continue;
+      }
       expect(committed.overrides?.[key], `${key} override`).toBe(declaredValue);
     }
     expect(committed.settings ?? {}).toEqual(CI_LOCKFILE_SETTINGS);
