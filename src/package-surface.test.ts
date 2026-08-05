@@ -59,6 +59,44 @@ const CI_LOCKFILE_SETTINGS = {
 // rather than to a published artifact.
 const LOCAL_PROTOCOL = /^(?:link|file|portal):/;
 
+const CARET_RANGE = /^\^\d+\.\d+\.\d+$/;
+
+/**
+ * Whether a lockfile resolution falls inside a declared caret range.
+ *
+ * Only caret ranges are interpreted — every range this manifest declares is
+ * one — and a resolution whose numbers do not parse is treated as outside,
+ * because an unreadable pin is not a verified one. The peer suffix pnpm
+ * appends (`0.18.0(dep@1.2.3)`) and any prerelease tag are dropped first.
+ */
+function satisfiesCaret(version: string, range: string): boolean {
+  const parts = (value: string): number[] =>
+    (value.split('(')[0] ?? '').split(/[-+]/)[0]!.split('.').map(Number);
+  const compare = (left: number[], right: number[]): number => {
+    for (let i = 0; i < 3; i += 1) {
+      const diff = (left[i] ?? 0) - (right[i] ?? 0);
+      if (diff !== 0) return diff < 0 ? -1 : 1;
+    }
+    return 0;
+  };
+  const resolved = parts(version);
+  if (resolved.length < 3 || resolved.some((part) => !Number.isFinite(part))) {
+    return false;
+  }
+  const lower = parts(range.slice(1));
+  const [major = 0, minor = 0, patch = 0] = lower;
+  // Caret pins the leftmost non-zero component, which is why a 0.x range
+  // admits only patch moves — the rule that froze the SDK ranges DR-027
+  // deletes.
+  const upper =
+    major > 0
+      ? [major + 1, 0, 0]
+      : minor > 0
+        ? [0, minor + 1, 0]
+        : [0, 0, patch + 1];
+  return compare(resolved, lower) >= 0 && compare(resolved, upper) < 0;
+}
+
 const STRUCTURAL_LOCKFILE_KEYS = [
   'lockfileVersion',
   'settings',
@@ -216,7 +254,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       committedPkg.dependencies?.[CLIGENT_DEP],
       `committed ${CLIGENT_DEP} range`,
-    ).toMatch(/^\^\d+\.\d+\.\d+$/);
+    ).toMatch(CARET_RANGE);
     expect(
       committed.importers?.['.']?.dependencies?.[CLIGENT_DEP]?.version ?? '',
       `committed ${CLIGENT_DEP} resolution`,
@@ -275,6 +313,19 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
             recorded[name]?.version ?? '',
             `${group}.${name} resolves to a local path`,
           ).not.toMatch(LOCAL_PROTOCOL);
+        }
+        // RELEASE-14 has the pin refreshed *within* the declared range. A
+        // pin outside it is not a disagreement the install reports: pnpm
+        // trusts the recorded resolution, so it installs the forbidden
+        // version and exits 0, and the surface the manifest was raised to
+        // require is simply absent at run time. An overridden dependency is
+        // exempt, its resolution being the override's to decide.
+        if (CARET_RANGE.test(range) && !isOverridden(name)) {
+          const resolved = recorded[name]?.version ?? '';
+          expect(
+            satisfiesCaret(resolved, range),
+            `${group}.${name} pins ${resolved.split('(')[0]}, outside its declared ${range}`,
+          ).toBe(true);
         }
       }
     }

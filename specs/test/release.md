@@ -105,16 +105,23 @@ unless all of the following hold of it:
   manifest and a concrete resolved version in the committed importer —
   with no local-development exemption, that exemption belonging to a
   working copy mid-development and RELEASE-11 forbidding the state it
-  exempts from ever reaching a commit.
+  exempts from ever reaching a commit;
+- every committed resolution falls inside the caret range its own
+  manifest entry declares, RELEASE-14 having the pin refreshed within
+  that range, and an overridden dependency excepted as the override's
+  to decide.
 
-The last two clauses are what internal agreement alone cannot supply,
+The last three clauses are what internal agreement alone cannot supply,
 and they are the ones no install failure will report. A manifest and a
 lockfile that both name a sibling checkout agree with each other
 perfectly: the frozen install then *succeeds*, printing the linked
 package at version `0.0.0` and leaving a dangling symlink behind, and
 the packed tarball carries `link:` into the published manifest, where
-it fails every consumer with `EUNSUPPORTEDPROTOCOL`. The damage lands
-past every gate that reports one.
+it fails every consumer with `EUNSUPPORTEDPROTOCOL`. A resolution
+outside its declared range is likewise no disagreement pnpm reports —
+it trusts the recorded resolution, installs the forbidden version, and
+exits `0`, leaving the surface the range was raised to require simply
+absent. The damage lands past every gate that reports one.
 
 Nothing here may be asserted by path or by spelling. The override path
 is contributor-adjustable, so an assertion naming
