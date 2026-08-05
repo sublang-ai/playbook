@@ -96,7 +96,25 @@ unless all of the following hold of it:
   dependencies, each recording the manifest's specifier — except where
   a declared override rewrites it, that being the resolver's own rule
   — and none resolving to a local path unless the manifest itself
-  declares that dependency as one.
+  declares that dependency as one;
+- every dependency the manifest declares as a local path names one
+  that travels with the package: an archive beneath the package root,
+  never a linked directory and never a path climbing out of it;
+- `@sublang/cligent` satisfies [RELEASE-14](../dev/release.md#release-14)
+  in the committed pair itself — a caret range in the committed
+  manifest and a concrete resolved version in the committed importer —
+  with no local-development exemption, that exemption belonging to a
+  working copy mid-development and RELEASE-11 forbidding the state it
+  exempts from ever reaching a commit.
+
+The last two clauses are what internal agreement alone cannot supply,
+and they are the ones no install failure will report. A manifest and a
+lockfile that both name a sibling checkout agree with each other
+perfectly: the frozen install then *succeeds*, printing the linked
+package at version `0.0.0` and leaving a dangling symlink behind, and
+the packed tarball carries `link:` into the published manifest, where
+it fails every consumer with `EUNSUPPORTEDPROTOCOL`. The damage lands
+past every gate that reports one.
 
 Nothing here may be asserted by path or by spelling. The override path
 is contributor-adjustable, so an assertion naming
@@ -113,11 +131,13 @@ dangling symlink with no error at all.
 
 This enforces RELEASE-11's rule that the override's lockfile mutation
 is never committed, since every production and CI install consumes the
-committed lockfile frozen, after dropping the override. Each clause
-above corresponds to a way that install aborts: a config snapshot with
+committed lockfile frozen, after dropping the override. Most clauses
+above correspond to a way that install aborts: a config snapshot with
 no tracked backing — `overrides` or `settings` alike — raises
 `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, and an importer disagreeing with
-the manifest raises `ERR_PNPM_OUTDATED_LOCKFILE`.
+the manifest raises `ERR_PNPM_OUTDATED_LOCKFILE`. The two clauses
+named above as exceptions abort nothing, which is precisely why they
+are stated here rather than left to the install.
 
 ### RELEASE-27
 

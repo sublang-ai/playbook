@@ -203,15 +203,32 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       );
     }
 
+    // RELEASE-14 governs the committed pair itself, not only the working
+    // copy: agreement between a manifest and a lockfile that BOTH name a
+    // local checkout is still agreement, and nothing downstream reports it
+    // — the frozen install succeeds, prints the linked package at `0.0.0`,
+    // and leaves a dangling symlink, while `npm pack` carries `link:` into
+    // the published manifest, where consumers hit EUNSUPPORTEDPROTOCOL.
+    // The caret range and the concrete resolution are therefore required of
+    // HEAD directly, with no local-override exemption — that exemption
+    // exists for a working copy mid-development, and RELEASE-11 forbids the
+    // state it exempts from ever reaching a commit.
+    expect(
+      committedPkg.dependencies?.[CLIGENT_DEP],
+      `committed ${CLIGENT_DEP} range`,
+    ).toMatch(/^\^\d+\.\d+\.\d+$/);
+    expect(
+      committed.importers?.['.']?.dependencies?.[CLIGENT_DEP]?.version ?? '',
+      `committed ${CLIGENT_DEP} resolution`,
+    ).toMatch(/^\d+\.\d+\.\d+(?:\(|$)/);
+
     // The importer must agree with the manifest exactly, which is what
     // rejects the link by its effect rather than by its spelling: the
     // override rewrites the recorded specifier, so a link at any depth or
     // an absolute one disagrees with the declared range, as does a dropped
     // entry or a stale hand-edit (ERR_PNPM_OUTDATED_LOCKFILE). A tracked
     // override legitimately rewrites its own dependency's specifier, so it
-    // is the effective specifier that must match — and a dependency the
-    // manifest itself declares as a local path stays valid, since that is
-    // tracked rather than local state.
+    // is the effective specifier that must match.
     const isOverridden = (name: string): boolean =>
       Object.keys(declaredOverrides).some((key) => {
         const target = key.split('>').pop() ?? key;
@@ -233,13 +250,27 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
             range,
           );
         }
+        // A manifest may declare a local path, but only one that travels
+        // with the package: a vendored archive under the package root ships
+        // inside the tarball, while a linked directory or a path climbing
+        // out of it resolves to something no consumer and no CI runner has.
+        // Declaring it in tracked config does not make it portable.
+        const declaresLocalPath = LOCAL_PROTOCOL.test(range);
+        if (declaresLocalPath) {
+          const target = range.slice(range.indexOf(':') + 1);
+          expect(
+            range.startsWith('file:') &&
+              !target.startsWith('/') &&
+              !target.startsWith('~') &&
+              !target.startsWith('../'),
+            `${group}.${name} declares ${range}, which leaves the package`,
+          ).toBe(true);
+        }
         // The resolution is checked separately from the specifier, because a
         // lockfile can name the declared range and still resolve it to a
         // local checkout — a shape that installs a dangling symlink with no
         // error at all, and the one the guard's own subject escapes through.
-        // A dependency the manifest itself declares as a local path stays
-        // valid: that is tracked rather than local state.
-        if (!LOCAL_PROTOCOL.test(range)) {
+        if (!declaresLocalPath) {
           expect(
             recorded[name]?.version ?? '',
             `${group}.${name} resolves to a local path`,
