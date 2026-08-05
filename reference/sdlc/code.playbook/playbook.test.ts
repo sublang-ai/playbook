@@ -336,6 +336,10 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
       stderr: stderr as never,
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     });
     expect(stderr.text()).not.toContain('migrated');
     expect(await readFile(configPath, 'utf8')).toBe(afterFirst);
@@ -567,6 +571,10 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       stdout: writer(),
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     });
 
     expect(result).toEqual({ code: 0 });
@@ -663,6 +671,10 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       stdout: writer(),
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     });
 
     expect(stderr.text()).not.toContain('created config');
@@ -686,6 +698,10 @@ describe('playbook launcher — readiness (PBCLI-16)', () => {
       stdout: writer(),
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     });
 
     expect(result.code).not.toBe(0);
@@ -709,6 +725,10 @@ describe('playbook launcher — readiness (PBCLI-16)', () => {
       stdout: writer(),
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     });
 
     expect(result).toEqual({ code: 0 });
@@ -1143,6 +1163,10 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       stdout,
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     });
 
     expect(result).toEqual({ code: 0 });
@@ -1165,6 +1189,10 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       stdout,
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     });
 
     expect(result).toEqual({ code: 0 });
@@ -1185,6 +1213,10 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       stdout: writer(),
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     });
 
     expect(result).toEqual({ code: 0 });
@@ -1207,6 +1239,10 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       stderr: writer(),
       stdout: writer(),
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: the real probe reads host state (installed SDKs, the
+      // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
+      // by machine. Gate behaviour has its own tests, which inject their own.
+      probeAdapterSdk: async () => true,
     };
 
     const exit3 = await runPlaybookCli({ ...base, spawn: fakeSpawn({ exitCode: 3 }).fn });
