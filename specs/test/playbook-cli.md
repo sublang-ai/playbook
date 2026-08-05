@@ -287,9 +287,12 @@ Verifies: [PBCLI-40](../user/playbook-cli.md#pbcli-40), [PBCLI-39](../dev/playbo
 When the test suite exercises the adapter SDK preflight over an
 injected probe, the test suite shall fail unless: a config whose
 adapters all probe available launches tmux-play unchanged; a config
-with one unavailable adapter SDK blocks the launch, prints that
-adapter id and its exact `npm install -g <sdk>` remedy to stderr,
+with one absent adapter runtime blocks the launch, prints that adapter
+id and cligent's pinned `npm install -g <spec>` remedy to stderr,
 exits non-zero with a status distinct from `127`, and spawns nothing;
+a config with a runtime installed below cligent's floor blocks the
+same way, naming the installed and required versions rather than
+reporting the runtime absent;
 a config that is simultaneously missing a credential and an SDK
 reports both failures rather than only one; an adapter with no known
 SDK mapping is excluded from the probe without emitting a second
@@ -297,13 +300,15 @@ unknown-adapter warning; a `--config <path>` launch runs no probe;
 each distinct adapter is probed at most once per invocation;
 `playbook run` with an unavailable SDK exits non-zero naming the same
 remedy before constructing the runtime, on a first run and on a
-resumed one alike, with no agent call made; an unavailable `opencode`
-names both its SDK and its external CLI install; the probe map holds
-exactly the adapters backed by cligent's optional peer SDKs (`claude`,
-`codex`, `opencode`); a run detected inside npm's ephemeral exec tree
+resumed one alike, with no agent call made; an `opencode` failure
+names only the runtime at fault when the other is present and in
+range, and names both when both are absent; the gate covers exactly
+the declared adapters with published runtime targets, `gemini`
+included; a run detected inside npm's ephemeral exec tree
 prints one multi-package re-run rather than any `npm install` command;
-that re-run names the SDK of every mapped adapter the lineup requires
-even when only some are missing — the partially supplied exec tree
+that re-run names cligent's pinned repair specifier of every
+descriptor-backed adapter the lineup requires even when only some are
+missing — the partially supplied exec tree
 case — pins the running package's own version, ends with the original
 invocation's arguments shell-quoted rather than placeholder text, and
 therefore succeeds in one hop; the lineup SDK set is deduplicated

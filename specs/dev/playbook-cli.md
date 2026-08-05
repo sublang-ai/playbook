@@ -173,21 +173,24 @@ readiness predicates; readiness remains launcher-owned
 
 ### PBCLI-39
 
-Where the command determines adapter SDK availability
+Where the command determines adapter runtime availability
 ([PBCLI-40](../user/playbook-cli.md#pbcli-40)), it shall probe each
 distinct declared adapter by constructing cligent's corresponding
-adapter — `@sublang/cligent/adapters/claude-code` for `claude`,
-`@sublang/cligent/adapters/codex` for `codex`,
-`@sublang/cligent/adapters/opencode` for `opencode` — and awaiting its
-`isAvailable()`.
-The probe map shall cover exactly the adapters backed by cligent's
-optional peer SDKs. `gemini` is excluded by design: its transport SDK
-(`@agentclientprotocol/sdk`) is a regular dependency of cligent, so it
-has no missing-SDK failure mode for this gate to catch.
-Where an adapter's own availability probe additionally requires an
-external CLI — `opencode`'s managed mode spawns the `opencode` binary —
-the remedy shall name that CLI's global install alongside the SDK's,
-because the probe cannot distinguish which of the two is absent.
+adapter and awaiting its `isAvailable()`.
+The gate shall derive each adapter's runtimes, supported floors, and
+repair specifiers from cligent's shipped runtime descriptor
+(`@sublang/cligent/runtime-targets`) and shall hold no adapter-to-SDK
+version knowledge of its own; only the cligent module path that exports
+each adapter class is this package's to know
+([DR-027](../decisions/027-runtime-compatibility-from-cligent.md)).
+The gate shall cover every declared adapter for which the descriptor
+publishes runtime targets. `gemini`'s former exemption ends: its
+missing-SDK rationale was true but incomplete, because its CLI can be
+absent or below cligent's floor, and the descriptor names both.
+Where an adapter is unavailable, the gate shall classify each of its
+descriptor runtimes through cligent's structured verdict and shall
+report only the runtimes at fault: an `opencode` failure whose CLI is
+present and in range names the SDK alone.
 The probe shall be the adapter's own loader rather than a resolution
 check: it performs the same dynamic import the adapter performs at run
 time, from the same installed module scope, so a passing probe cannot
@@ -199,8 +202,8 @@ A resolution-based probe shall not be substituted: neither SDK exports
 
 An adapter whose module cannot be imported at all shall be treated as
 unavailable, not as an internal error.
-An adapter with no known SDK mapping shall be excluded from the result
-and shall reuse the single unknown-adapter warning of
+An adapter with no published runtime targets shall be excluded from the
+result and shall reuse the single unknown-adapter warning of
 [PBCLI-12](#pbcli-12) rather than emitting a second one.
 Each probe shall run at most once per distinct adapter per invocation.
 

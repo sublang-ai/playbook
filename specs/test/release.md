@@ -78,18 +78,14 @@ Verifies: [RELEASE-12](../dev/release.md#release-12)
 
 The test suite shall fail unless, for each adapter SDK wired by the
 bundled production config, `package.json` lists it under
-`peerDependencies` with `peerDependenciesMeta.<name>.optional` set
-to `true`, lists it under neither `dependencies` nor
-`optionalDependencies`, lists it under `devDependencies`, and
-declares a peer range **identical** to `@sublang/cligent`'s own peer
-range for that SDK as recorded in the installed cligent's
-`package.json`.
-Identity, not one-directional containment: a floor above cligent's
-makes npm's resolver reject an application-owned SDK version the
-loader accepts — `peerOptional` conflicts still fail `npm install` —
-and a floor below admits versions the loader would warn on. cligent is
-the only package that imports the SDK, so its range is the whole truth
-and this package restates it without narrowing or widening it.
+`devDependencies` and under none of `dependencies`,
+`optionalDependencies`, `peerDependencies`, or `peerDependenciesMeta`.
+Absence, not identity: cligent's own optional-peer declaration is the
+single range npm checks, so a restated range here is a second copy
+that can only drift — the earlier identity requirement froze at
+cligent's old floor the first time cligent's moved — and its absence
+is what keeps a cligent floor move from forcing a release of this
+package ([DR-027](../decisions/027-runtime-compatibility-from-cligent.md)).
 
 ### RELEASE-23
 

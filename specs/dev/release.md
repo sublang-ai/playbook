@@ -115,19 +115,16 @@ The published `@sublang/playbook` package shall declare
 optional or peer dependency, so that a global install nests it
 inside `@sublang/playbook`'s own module tree.
 
-The package shall declare every adapter SDK wired by the bundled
-production config (currently `@anthropic-ai/claude-agent-sdk` and
-`@openai/codex-sdk`) as an **optional peer dependency** —
-listed under `peerDependencies` with
-`peerDependenciesMeta.<name>.optional` set to `true` — and shall
-declare neither among `dependencies` or `optionalDependencies`
-([DR-026](../decisions/026-optional-adapter-sdks.md)).
-Each declared peer range shall be identical to `@sublang/cligent`'s
-corresponding peer range, so the two packages accept exactly the same
-versions: cligent is the only package that imports the SDK, and a
-range here that is narrower than the loader's rejects
-application-owned SDK versions the loader accepts, while a wider one
-admits versions the loader would warn on.
+The package shall declare no agent SDK among `dependencies`,
+`optionalDependencies`, `peerDependencies`, or `peerDependenciesMeta`
+([DR-026](../decisions/026-optional-adapter-sdks.md),
+[DR-027](../decisions/027-runtime-compatibility-from-cligent.md)).
+cligent is the only package that imports the SDKs, and its own
+optional-peer declaration is the single range npm checks; a second
+identical copy here adds no acceptance and one more declaration to
+drift — the mirror froze at cligent's old floor the first time
+cligent's moved — while a non-identical copy either rejects versions
+the loader accepts or admits versions it would warn on.
 Both SDKs shall additionally be `devDependencies`, so this
 repository's own test, CI, and local acceptance runs exercise real
 adapters.

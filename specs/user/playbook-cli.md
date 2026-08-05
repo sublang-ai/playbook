@@ -267,18 +267,25 @@ is never downloaded.
 
 Where `playbook` runs the readiness gate ([PBCLI-1](#pbcli-1)) or binds
 agents for `playbook run` ([PBCLI-18](#pbcli-18)), when a declared
-adapter's SDK is not loadable, the command shall block before launching
-tmux-play or making any agent call, print to stderr a line naming every
-such adapter and, for each, the exact command that supplies it, and
+adapter's runtime is not loadable or is installed below the version
+cligent supports, the command shall block before launching tmux-play or
+making any agent call, print to stderr a line naming every such adapter
+and, for each affected runtime, the exact command that supplies it, and
 exit non-zero with a status distinct from `127`.
-For an installed tree, that command is `npm install -g <sdk>`, plus the
-global install of any external CLI the adapter's availability probe
-also requires.
+An absent runtime shall be reported as not installed; a runtime
+installed below cligent's floor shall be reported as unsupported with
+its installed and required versions, and shall not be reported as
+absent, because that sends the user to install what is already present.
+For an installed tree, the remedy is `npm install -g <spec>` where
+`<spec>` is cligent's pinned repair specifier for that runtime, so a
+printed repair installs a version the gate accepts; only the runtimes
+at fault are named.
 Where the running installation is npm's ephemeral exec tree (`npx` /
 `npm exec`), no install command reaches the tree the adapters resolve
 from, so the command shall instead be one multi-package re-run naming
 the running package at its own version and, as sibling `-p` packages,
-the SDK of **every** mapped adapter the lineup requires — not only the
+the pinned repair specifier of **every** descriptor-backed adapter the
+lineup requires — not only the
 missing ones: a fresh exec tree starts empty, and a missing-only list
 drops the SDKs this tree does have, alternating between vendors
 forever.

@@ -50,6 +50,7 @@ meta.md     The spec of specs
 | DR-024 | [024-runtime-engine-provisioning.md](decisions/024-runtime-engine-provisioning.md) | Run-time engine provisioning in `playbook run`: probe-first resolution from the artifact, two direct symlinks to the host's own `xstate` and `@sublang/playbook` on failure, `--no-provision`, declared-manifest refusal and dangling-link diagnostics, and the re-scoped hermetic global-only acceptance gate |
 | DR-025 | [025-resilient-captain-control-adjudication.md](decisions/025-resilient-captain-control-adjudication.md) | Resilient Captain control adjudication: the exported explicit `{ guard, … }` judge reply contract reused by the compiled default Captain, one corrective re-ask on a malformed control reply, and shell disposal of a failed internal Captain root with Boss-appropriate failure text |
 | DR-026 | [026-optional-adapter-sdks.md](decisions/026-optional-adapter-sdks.md) | Adapter SDKs become optional peer dependencies matching cligent's: libraries declare and the deliberately-installed root supplies, a supplied SDK must be a top-level install root to resolve from nested cligent, missing SDKs fail at an `isAvailable()` preflight rather than mid-turn, and the release smoke asserts both the lean and opted-in install shapes |
+| DR-027 | [027-runtime-compatibility-from-cligent.md](decisions/027-runtime-compatibility-from-cligent.md) | Delegate all agent-runtime version knowledge to cligent: the gate derives runtimes, floors, and pinned repairs from cligent's shipped descriptor and renders its structured verdict, unsupported is reported distinctly from absent, `gemini`'s exemption ends, and no agent-SDK peer range is declared here |
 
 ## Iterations
 
@@ -86,6 +87,7 @@ meta.md     The spec of specs
 | IR-031 | [031-runtime-engine-provisioning.md](iterations/031-runtime-engine-provisioning.md) | Implement DR-024: probe-first engine provisioning in `playbook run` with `--no-provision`, guard-order diagnostics, injected host roots, PBCLI-38 integration tests, and the fourth hermetic global-only acceptance case |
 | IR-032 | [032-conversational-first-turn-resilience.md](iterations/032-conversational-first-turn-resilience.md) | Implement DR-025: `defaultBuildCaptainJudgePrompt` exported and reused by the compiled Captain, the corrective adjudication re-ask, internal-root failure disposal in the shell, and their integration tests |
 | IR-033 | [033-optional-adapter-sdks.md](iterations/033-optional-adapter-sdks.md) | Implement DR-026: move both adapter SDKs to optional peers plus devDependencies, add the launcher and `run` SDK preflight with named install remedies, and re-aim the release smoke at the lean and opted-in global install shapes |
+| IR-034 | [034-runtime-compatibility-from-cligent.md](iterations/034-runtime-compatibility-from-cligent.md) | Implement DR-027: descriptor-derived gate with per-runtime verdicts and pinned repairs, drop the peer-range mirror, and end `gemini`'s exemption |
 
 ## Packages
 
