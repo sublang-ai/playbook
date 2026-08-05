@@ -80,6 +80,32 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     ).toBe(true);
   });
 
+  it('never commits the RELEASE-11 link into the lockfile', () => {
+    // Every production and CI install consumes the COMMITTED lockfile
+    // frozen, after dropping the override file — a committed link fails
+    // them all on the overrides snapshot before any test runs. The working
+    // copy may legitimately record the link while the override is active,
+    // so this asserts on the committed lockfile; while the two differ the
+    // lockfile is mid-edit and the working-copy checks above govern.
+    let headLock: string;
+    try {
+      headLock = execFileSync('git', ['show', 'HEAD:pnpm-lock.yaml'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+      });
+    } catch {
+      // No git or no committed lockfile to compare against (e.g. an
+      // exported tree); the working-copy checks above still ran.
+      return;
+    }
+    const workingLock = readFileSync(
+      new URL('../pnpm-lock.yaml', import.meta.url),
+      'utf8',
+    );
+    if (headLock !== workingLock) return;
+    expect(headLock).not.toContain('link:../cligent');
+  });
+
   it('pins cligent lifecycle and isolated call contracts', () => {
     const script = `
       import { readFileSync } from 'node:fs';

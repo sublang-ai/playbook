@@ -58,19 +58,28 @@ not be substituted for any case.
 
 ### RELEASE-19
 
-Verifies: [RELEASE-14](../dev/release.md#release-14)
+Verifies: [RELEASE-14](../dev/release.md#release-14),
+[RELEASE-11](../dev/release.md#release-11)
 
 The test suite shall fail unless `package.json` declares
-`@sublang/cligent` with a caret SemVer range, the root importer in
-`pnpm-lock.yaml` records the same specifier, and, unless the
+`@sublang/cligent` with a caret SemVer range and — unless the
 [RELEASE-11](../dev/release.md#release-11) local-development
-override is active, the lockfile records a concrete resolved
+override is active, which rewrites both the recorded specifier and
+the resolution in the working copy — the root importer in
+`pnpm-lock.yaml` records the same specifier and a concrete resolved
 cligent version whose public tmux-play contract declares both the
 pre-close `Captain.prepareDispose()` lifecycle and
 `CallPlayerOptions.resume` selection accepted by
 `CaptainContext.callPlayer`, plus `CallCaptainOptions.resume` and
 `CallCaptainOptions.allowedTools` accepted by
 `CaptainContext.callCaptain`.
+
+The committed lockfile is never exempt: whenever the working copy of
+`pnpm-lock.yaml` matches the committed one, the test suite shall fail
+if the committed lockfile records the RELEASE-11 link — enforcing
+RELEASE-11's rule that the override's lockfile mutation is never
+committed, since every production and CI install consumes the
+committed lockfile frozen, after dropping the override.
 
 ### RELEASE-27
 
