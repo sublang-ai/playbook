@@ -50,6 +50,24 @@ const CI_LOCKFILE_SETTINGS = {
   excludeLinksFromLockfile: false,
 };
 
+// The lockfile's structural sections. Every other top-level key pnpm writes
+// is derived from configuration — `overrides`, and the checksums a
+// `packageExtensions` or `patchedDependencies` block leaves behind — so a
+// key outside this set with no tracked configuration to explain it is local
+// state that reached a commit.
+// The specifier protocols that resolve to a checkout on the running machine
+// rather than to a published artifact.
+const LOCAL_PROTOCOL = /^(?:link|file|portal):/;
+
+const STRUCTURAL_LOCKFILE_KEYS = [
+  'lockfileVersion',
+  'settings',
+  'overrides',
+  'importers',
+  'packages',
+  'snapshots',
+];
+
 const pkg = JSON.parse(
   readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
 ) as {
@@ -104,15 +122,27 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     // legitimately carries that state while the override is active; the
     // commit never does — and a clean HEAD satisfies this whatever the
     // working copy holds, so no dirty-tree exemption is needed.
+    //
+    // Both sides come from HEAD, because CI installs the committed manifest
+    // against the committed lockfile: that pair's agreement is the only one
+    // that predicts it, and judging a committed lockfile against a working
+    // manifest lets an uncommitted edit mask a broken commit. The `./`
+    // anchors the paths to this package rather than to the top of whatever
+    // repository happens to contain it, so an export vendored inside an
+    // unrelated checkout skips instead of asserting against that repo.
     let headLock: string;
+    let headManifest: string;
     try {
-      headLock = execFileSync('git', ['show', 'HEAD:pnpm-lock.yaml'], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-      });
+      [headLock, headManifest] = ['pnpm-lock.yaml', 'package.json'].map(
+        (file) =>
+          execFileSync('git', ['show', `HEAD:./${file}`], {
+            cwd: repoRoot,
+            encoding: 'utf8',
+          }),
+      ) as [string, string];
     } catch {
-      // No git and no committed lockfile to read — an exported tree, say,
-      // where the working-copy checks above are the whole contract.
+      // No git and no committed pair to read — an exported tree, say, where
+      // the working-copy checks above are the whole contract.
       return;
     }
     const committed = parseYaml(headLock) as {
@@ -123,29 +153,53 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         Record<string, Record<string, { specifier?: string; version?: string }>>
       >;
     };
-    const declaredOverrides = pkg.pnpm?.overrides ?? {};
+    const committedPkg = JSON.parse(headManifest) as typeof pkg;
+    const declaredOverrides = committedPkg.pnpm?.overrides ?? {};
 
     // pnpm gates a frozen install on the lockfile's config snapshot matching
     // the config it resolves at install time, aborting with
     // ERR_PNPM_LOCKFILE_CONFIG_MISMATCH on any difference, whatever the
     // value. Both halves of that snapshot are checked by equality, never by
-    // path or protocol: `overrides` against the manifest — the only tracked
-    // source, since `pnpm-workspace.yaml` is git-ignored — and `settings`
-    // against the values CI's own install is verified against. The settings
+    // path or protocol: `overrides` against the committed manifest — the
+    // only tracked source, since `pnpm-workspace.yaml` is git-ignored — and
+    // `settings` against the values CI's install runs against. The settings
     // half is not hypothetical: `exclude-links-from-lockfile` is exactly
     // what a contributor reaches for to stop the RELEASE-11 override
     // rewriting their lockfile, and it silently hides the link from every
     // importer entry below.
-    expect(committed.overrides ?? {}).toEqual(declaredOverrides);
+    for (const key of new Set([
+      ...Object.keys(declaredOverrides),
+      ...Object.keys(committed.overrides ?? {}),
+    ])) {
+      const declaredValue = declaredOverrides[key];
+      expect(
+        declaredValue,
+        `${key} override is recorded but the manifest does not declare it`,
+      ).toBeTypeOf('string');
+      // RELEASE-11 sanctions exactly one way to link a local checkout — the
+      // git-ignored override file — so no tracked override may name a local
+      // path, however it is spelled. Without this, the equality below would
+      // admit a committed link by construction.
+      expect(declaredValue, `${key} override names a local path`).not.toMatch(
+        LOCAL_PROTOCOL,
+      );
+      // `$name` reuses that dependency's own declared range, and pnpm
+      // expands it before writing, so only its presence is comparable.
+      if (declaredValue?.startsWith('$')) continue;
+      expect(committed.overrides?.[key], `${key} override`).toBe(declaredValue);
+    }
     expect(committed.settings ?? {}).toEqual(CI_LOCKFILE_SETTINGS);
 
-    // RELEASE-11 sanctions exactly one way to link a local checkout — the
-    // git-ignored override file — so no tracked override may name a local
-    // path, however it is spelled. Without this, the equality above would
-    // admit a committed link by construction.
-    for (const [name, value] of Object.entries(declaredOverrides)) {
-      expect(value, `${name} override names a local path`).not.toMatch(
-        /^(?:link|file|portal):/,
+    // A lockfile carries config-derived keys beyond those two — a
+    // `packageExtensions` block in the same git-ignored override file leaves
+    // `packageExtensionsChecksum` behind, and it aborts the install with the
+    // same mismatch. Structural keys are known; anything else must be backed
+    // by a tracked `pnpm` configuration block.
+    if (committedPkg.pnpm === undefined) {
+      expect(Object.keys(committed).sort()).toEqual(
+        Object.keys(committed)
+          .filter((key) => STRUCTURAL_LOCKFILE_KEYS.includes(key))
+          .sort(),
       );
     }
 
@@ -158,16 +212,39 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     // is the effective specifier that must match — and a dependency the
     // manifest itself declares as a local path stays valid, since that is
     // tracked rather than local state.
+    const isOverridden = (name: string): boolean =>
+      Object.keys(declaredOverrides).some((key) => {
+        const target = key.split('>').pop() ?? key;
+        return target === name || target.startsWith(`${name}@`);
+      });
+
     for (const group of DEPENDENCY_GROUPS) {
-      const declared = pkg[group] ?? {};
+      const declared = committedPkg[group] ?? {};
       const recorded = committed.importers?.['.']?.[group] ?? {};
       expect(Object.keys(recorded).sort(), `${group} entries`).toEqual(
         Object.keys(declared).sort(),
       );
       for (const [name, range] of Object.entries(declared)) {
-        expect(recorded[name]?.specifier, `${group}.${name} specifier`).toBe(
-          declaredOverrides[name] ?? range,
-        );
+        // An overridden dependency's recorded specifier is whatever pnpm's
+        // own rewrite rules produce, which a literal comparison cannot
+        // predict; the override itself was checked above.
+        if (!isOverridden(name)) {
+          expect(recorded[name]?.specifier, `${group}.${name} specifier`).toBe(
+            range,
+          );
+        }
+        // The resolution is checked separately from the specifier, because a
+        // lockfile can name the declared range and still resolve it to a
+        // local checkout — a shape that installs a dangling symlink with no
+        // error at all, and the one the guard's own subject escapes through.
+        // A dependency the manifest itself declares as a local path stays
+        // valid: that is tracked rather than local state.
+        if (!LOCAL_PROTOCOL.test(range)) {
+          expect(
+            recorded[name]?.version ?? '',
+            `${group}.${name} resolves to a local path`,
+          ).not.toMatch(LOCAL_PROTOCOL);
+        }
       }
     }
   });

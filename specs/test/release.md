@@ -75,20 +75,28 @@ pre-close `Captain.prepareDispose()` lifecycle and
 `CaptainContext.callCaptain`.
 
 The committed lockfile is never exempt, whatever the working copy
-holds. Where a committed `pnpm-lock.yaml` is readable, the test suite
-shall fail unless all of the following hold of it:
+holds. Both sides of every comparison below shall be this package's own
+committed state — the committed lockfile against the committed
+manifest, never against the working copy, which is a pair no install
+ever consumes and which lets an uncommitted edit mask a broken commit.
+Where that committed pair is readable, the test suite shall fail
+unless all of the following hold of it:
 
-- its `overrides` block equals the overrides declared by tracked
-  configuration — `package.json`'s `pnpm.overrides`, the only tracked
-  source while `pnpm-workspace.yaml` stays git-ignored;
+- its `overrides` block records every override the committed manifest
+  declares and no others, at the declared value, or — for a `$`
+  reference the resolver expands before writing — at any value;
 - its `settings` block equals the values the verified frozen install
-  runs against;
-- no tracked override names a local path (`link:`, `file:`, or
+  runs against, and it carries no further configuration-derived
+  top-level key unless the committed manifest declares the `pnpm`
+  configuration that produced it;
+- no declared override names a local path (`link:`, `file:`, or
   `portal:`), RELEASE-11 sanctioning only the git-ignored override
   file;
 - the root importer's entries are exactly the manifest's declared
-  dependencies, each recording the manifest's specifier, or the
-  tracked override's where one applies.
+  dependencies, each recording the manifest's specifier — except where
+  a declared override rewrites it, that being the resolver's own rule
+  — and none resolving to a local path unless the manifest itself
+  declares that dependency as one.
 
 Nothing here may be asserted by path or by spelling. The override path
 is contributor-adjustable, so an assertion naming
@@ -98,7 +106,10 @@ specifier a contributor's `exclude-links-from-lockfile` erased from the
 importer would leave no path to name at all. Equality against tracked
 configuration is what stays faithful: it rejects local state whatever
 its shape, and admits a legitimately declared override or vendored
-local dependency, which is tracked rather than local.
+local dependency, which is tracked rather than local. The resolution
+is checked apart from the specifier because a lockfile may name the
+declared range and still resolve it locally — a shape that installs a
+dangling symlink with no error at all.
 
 This enforces RELEASE-11's rule that the override's lockfile mutation
 is never committed, since every production and CI install consumes the
