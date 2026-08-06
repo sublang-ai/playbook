@@ -9,13 +9,15 @@
 
 _Skills made reliable through state machines and diverse LLMs._
 
-Natural-language skills are flexible and maintainable, but less predictable than scripted workflows.
-Even the best LLMs make mistakes.
+Natural-language skills are flexible and easy to use, but less predictable than scripted workflows, especially on long-horizon jobs.
+And even the best LLMs make mistakes, partly because plain-language descriptions rarely eliminate vagueness or guarantee completeness.
 
 SubLang Playbook addresses both:
 
 - The companion [SLC compiler](https://github.com/sublang-ai/slc) turns plain-language procedures, such as a `SKILL.md`, into playbooks with deterministic state-machine control flow.
 - A playbook can assign different agents or LLMs to its steps and have them review and challenge one another, helping catch mistakes before delivery.
+
+![Venn diagram: Skill is flexible, Workflow is deterministic, and Playbook sits in the intersection as both.](docs/assets/playbook-venn.svg)
 
 Vocabulary: the **Boss** is you; the **Captain** is the coordinating agent you talk to; **players** are the agents a playbook delegates work to.
 

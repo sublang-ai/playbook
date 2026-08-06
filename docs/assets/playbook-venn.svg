@@ -1,0 +1,13 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 415 124" width="415" height="124" role="img" aria-labelledby="venn-title" font-family="-apple-system,'Segoe UI',Helvetica,Arial,sans-serif">
+  <title id="venn-title">Skills are flexible, workflows are deterministic; Playbook sits in the intersection and is both.</title>
+  <ellipse cx="136" cy="62" rx="126" ry="56" fill="#e5484d" fill-opacity="0.06" stroke="#e5484d" stroke-width="2.2"/>
+  <ellipse cx="279" cy="62" rx="126" ry="56" fill="#4285d6" fill-opacity="0.06" stroke="#4285d6" stroke-width="2.2"/>
+  <path d="M 207.5 15.9 A 126 56 0 0 1 207.5 108.1 A 126 56 0 0 1 207.5 15.9 Z" fill="#b06bff" fill-opacity="0.08"/>
+  <text x="91" y="42.7" text-anchor="middle" font-size="12" font-weight="600" letter-spacing="1" fill="#e5484d">FLEXIBLE</text>
+  <text x="91" y="71.7" text-anchor="middle" font-size="16" font-weight="600" fill="#e5484d">Skill</text>
+  <text x="324" y="42.7" text-anchor="middle" font-size="12" font-weight="600" letter-spacing="1" fill="#4285d6">DETERMINISTIC</text>
+  <text x="324" y="71.7" text-anchor="middle" font-size="16" font-weight="600" fill="#4285d6">Workflow</text>
+  <text x="207.5" y="71.7" text-anchor="middle" font-size="16" font-weight="700" fill="#b06bff">Playbook</text>
+</svg>
