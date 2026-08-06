@@ -91,6 +91,7 @@ meta.md     The spec of specs
 | IR-033 | [033-optional-adapter-sdks.md](iterations/033-optional-adapter-sdks.md) | Implement DR-026: move both adapter SDKs to optional peers plus devDependencies, add the launcher and `run` SDK preflight with named install remedies, and re-aim the release smoke at the lean and opted-in global install shapes |
 | IR-034 | [034-runtime-compatibility-from-cligent.md](iterations/034-runtime-compatibility-from-cligent.md) | Implement DR-027: descriptor-derived gate with per-runtime verdicts and pinned repairs, drop the peer-range mirror, and end `gemini`'s exemption |
 | IR-035 | [035-empty-ok-result-re-ask.md](iterations/035-empty-ok-result-re-ask.md) | Implement DR-028: one corrective re-ask on an empty `ok` player or direct-Captain result under the unified empty predicate, with per-call trace pairs, PBRT-38 resume selection, and the PBRT-51 integration tests |
+| IR-036 | [036-session-scoped-conversational-captain.md](iterations/036-session-scoped-conversational-captain.md) | Implement DR-029: the engine `describe`/`apply` control surface, rewritten CAPTAIN/CAPPLAY specs, the recompiled controller Captain, the durable-conversation shell rework, the cligent floor bump, and the three-tier acceptance plan — hermetic A-28/A-29 task gates, the fifth live conversational scenario, and the `pnpm smoke:release` release gate |
 
 ## Packages
 
