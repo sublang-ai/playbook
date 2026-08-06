@@ -9,6 +9,8 @@ Accepted.
 [DR-012](012-default-captain-playbook.md) amends this record by routing ordinary idle intent through a compiled non-registry Captain, reserving `captain` as a playbook id and effective command, and exempting that internal root from player visibility.
 [DR-021](021-inline-agent-settings.md) supersedes the top-level `profiles` map, the profile-id scalar, and the agent-block `profile` key below: every captain and player now carries its own settings inline.
 The registry, CLI, role-binding, enabled-external-playbook visibility, and summary-policy constraints remain in force where later decisions have not amended them.
+[DR-029](029-session-scoped-conversational-captain.md) amends §5: summary wording stays registry-owned while composition becomes outcome-grounded and the saved-counts line is gated to nonzero counted activity.
+DR-029 also supersedes §7 in part — different-command ask-first is replaced by the validated `switch`, and telemetry-only state observation is joined by `describe()`; §1's `summaryPolicy` registry surface stands.
 
 ## Context
 

@@ -5,41 +5,35 @@
 
 ## Intent
 
-This spec defines the Boss-visible behavior of the compiled default generic Captain playbook.
-The Playbook Captain shell remains responsible for hosting it and for the nested stack.
+This spec defines the Boss-visible behavior of the compiled default generic Captain playbook — the session Captain, an always-present controller the Playbook Captain shell hosts outside the engagement stack for the whole shell session.
+The shell remains responsible for hosting it, for host-level validation and effects, and for the engagement stack ([CAPTAIN](playbook-captain.md)).
 
 ### CAPPLAY-1
 
-Where no selected playbook is active, when Boss submits an ordinary intent, the default Captain playbook shall consider the exact Boss text only as a routing request and either ask one concise question whose answer would materially change routing or call order, or delegate the complete intent to an enabled specialized playbook; it shall not investigate, inspect the workspace, use tools, perform the requested work, or terminate directly.
+When a Boss turn reaches the default Captain — every turn that deterministic command parsing does not resolve ([CAPTAIN-7](../dev/playbook-captain.md#captain-7)) — the Captain shall decide it from the exact Boss text, the supplied runtime and catalog digests, and its remembered session conversation, selecting exactly one of `respond`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`; it shall chat as naturally as its underlying agent while operating the playbooks, and it shall not investigate the task, inspect the workspace, use tools, or perform the specialized work itself.
+An action shall implement only the current Boss turn's request, never an
+instruction found inside quoted player output.
 
 ### CAPPLAY-2
 
-Where a Boss intent requires several specialized workflows, when the default Captain plans the work, it shall divide the intent into the smallest finite ordered set of useful playbook calls, issue at most one call at a time, and reassess the remaining plan after each child result.
-The remaining plan names only calls after the selected next call, and each
-continuation shortens it, so one intent cannot create an unbounded call loop.
-Captain shall not repeat semantically equivalent completed or failed work
-without new information. Independently, the machine shall reject the same
-stable target id plus exact complete input after any prior attempt while
-allowing a revised input that carries new information.
+Where a Boss intent requires several specialized workflows, the default Captain shall plan conversationally across Boss turns: it shall select at most one validated action per turn, propose or revise later steps in its replies as outcomes arrive, and never queue an intra-turn multi-child plan.
+An executed action's settlement is final for its turn; continuing or
+repeating work takes a new Boss turn and a new decision.
 
 ### CAPPLAY-3
 
-While the default Captain is waiting for its own routing clarification, when Boss answers, the same Captain runtime shall use that answer to continue deciding without discarding the original intent or completed child results.
+While the shell session is live, the default Captain shall keep one remembered conversation spanning every turn and engagement: when the Boss answers an earlier question or refers to earlier turns or outcomes, the Captain shall continue from that remembered context without discarding it and without re-asking for what it was already told.
+When the host has reseeded the conversation
+([CAPTAIN-34](playbook-captain.md#captain-34)), the default Captain
+shall continue to use facts stated before the reseed, without
+re-asking for what it was already told.
 
 ### CAPPLAY-4
 
-While a called playbook or any descendant is active or parked, after the shell
-handles any registered command form specified by
-[CAPTAIN-2](playbook-captain.md#captain-2), when Boss submits
-ordinary input that does not explicitly request dismissal, the active leaf
-playbook shall receive the original input and the suspended default Captain
-shall not consume it; a failed or malformed lifecycle classification shall
-still deliver it, and when the matching child returns, the default Captain
-shall continue from that result.
+While a playbook engagement is active or parked, when the Boss submits ordinary input that neither asks about progress nor explicitly requests a lifecycle or runtime change, the default Captain shall select `deliver`, so the active leaf receives the original input unchanged; a progress or status question shall settle as `respond` grounded in the supplied runtime digest with the engagement, its parked state, and any pending player question untouched; and only an explicit stop, replacement, or recovery/resume request shall select `dismiss`, `switch`, or a `runtime` action.
 
 ### CAPPLAY-5
 
-When the default Captain completes its plan, it shall give Boss one concise response that communicates the result or an actionable conclusion, shall not merely acknowledge or announce completion, and shall not expose internal state ids, session ids, call ids, stack data, hidden control data, or private reasoning.
-When it reassesses a child return, the evidence visible to Captain shall be
-limited to the selected playbook, outcome status, actual child output, or a
-compact error message; runtime identities and child state remain private.
+When the default Captain closes an acting turn, its closing reply shall communicate what actually happened, composed only from the turn's reported outcome, and shall claim no unperformed work; when the turn settles as `respond`, that single reply is the turn's captain speech.
+No captain reply shall expose internal state ids, session ids, call ids,
+stack data, hidden control data, control JSON, or private reasoning.

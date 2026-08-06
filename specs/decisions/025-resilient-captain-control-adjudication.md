@@ -6,6 +6,8 @@
 ## Status
 
 Accepted.
+[DR-029](029-session-scoped-conversational-captain.md) extends §One corrective re-ask to the interactive decision call and supersedes §Internal-root failure resets the shell: disposal-on-failure is replaced by the conversation reseed — the stack and completed work survive, and only the model-side conversation is replaced.
+§Explicit shared adjudication reply contract stands: `defaultBuildCaptainJudgePrompt` stays exported and reused.
 
 ## Context
 

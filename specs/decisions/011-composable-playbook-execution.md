@@ -6,6 +6,8 @@
 ## Status
 
 Accepted.
+[DR-029](029-session-scoped-conversational-captain.md) amends §4: the Captain is placed outside the engagement stack as an always-present controller, the manual-slash-selection sentence is superseded by the absent-from-path `switch`, and leaf-only Boss input is recast as leaf-only *delivery* — the Captain receives every turn.
+The stack semantics themselves stay intact.
 
 ## Context
 

@@ -10,6 +10,7 @@ Pins the CODE-specific bindings that [slc/link.md](../../slc/link.md) leaves ope
 [DR-007](007-hidden-judge-captain-pane.md) amends §11's `callJudge` port wiring to run the judge call hidden (`{ visibility: 'hidden' }`); the original row below is retained as the historical decision and carries an inline pointer.
 [Addendum A2](#a2-committer-composite-binding-made-configurable) amends §2's baked Committer binding to be config-driven (a `captain.options.code.committer` alias resolved in the `playbook-code` composer and the CODE runtime, with no cligent change).
 [Addendum A4](#a4-runtime-contract-types-sourced-from-a-shared-module) amends §10 so the emitted runtime imports and re-exports the contract types `PlayerResult` / `PlaybookPorts` / `PlaybookRuntime` from the shared `@sublang/playbook/runtime` module instead of redefining them.
+[DR-029](029-session-scoped-conversational-captain.md) amends §3's Boss-event mapping: the `BOSS_INTERRUPT`-is-reached-only-when-the-judge-picks-it sentence is scoped to `handleBossInput` classification, with `apply()` of a runtime-advertised action a second, runtime-validated path to the same events that still involves no host-fabricated event.
 
 ## Context
 

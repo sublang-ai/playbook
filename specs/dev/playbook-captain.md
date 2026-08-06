@@ -10,6 +10,11 @@ Playbook Captain shell that runs as the tmux-play Captain and hosts
 registered playbook runtimes.
 The shell is a meta-level Captain over playbooks; it does not
 replace the CODE runtime contract in [PBRT](playbook-runtime.md).
+The shell hosts the session Captain — the compiled default Captain
+playbook ([CAPPLAY](captain-playbook.md)) — for the whole shell
+session as a controller outside the engagement stack, and owns
+host-level validation and effects: stack, registry, presentation,
+and the session journal.
 The published `@sublang/playbook` module surface is essential to
 this package's intent because tmux-play configs import the shell by
 package specifier.
@@ -50,8 +55,15 @@ frames permitted by [CAPTAIN-29](#captain-29) and shall keep only a
 bounded control ledger: root and leaf playbook/session ids, bounded
 frame path and depth, shell mode, latest leaf runtime state descriptor,
 pending Boss questions when mirrored from telemetry, normalized last
-error when mirrored from telemetry, and last lifecycle decision.
+error when mirrored from telemetry, the last validated action and its
+settlement status, the pinned durable-conversation resume token and
+session journal handle ([CAPTAIN-35](#captain-35)), and the session
+Captain's own playbook session id created at `init`
+([CAPTAIN-16](#captain-16)).
 The normalized last error shall carry only `{ name, message }`.
+The pinned conversation token value shall appear in no model prompt,
+visible status message, turn summary, or shell FSM telemetry
+payload.
 The shell shall not duplicate the full Boss conversation in its
 ledger.
 
@@ -64,6 +76,9 @@ When the shell emits its own FSM telemetry, it shall use topic
 `playbook.captain.fsm.state`, not `playbook.fsm.state`.
 The shell FSM telemetry payload shall carry `from`, `to`, `event`,
 and a snapshot of the bounded control ledger.
+That ledger snapshot shall identify the durable conversation and
+session journal by presence only and shall carry no resume-token
+value.
 If engagement initialization fails after entering `engaged.parked`, the shell
 shall pop the broken frame and emit a best-effort recovery transition back to
 `chat` with stack depth zero while preserving the original failure.
@@ -79,29 +94,76 @@ telemetry that it passes through.
 ### CAPTAIN-7
 
 Where the Playbook Captain shell receives a Boss turn, the shell
-shall parse registered commands before runtime routing. While idle, a
-registered command shall select that external playbook directly and
-all other non-empty text shall lazily create the compiled default
-Captain root. Empty or whitespace-only idle text shall return without
-allocating a session or runtime. While a stack exists, the shell shall select its active
-leaf from host state and shall not let a command replace the root.
-For engaged ordinary text, a hidden lifecycle-only classifier may
-return exactly `deliver` or `dismiss`; it shall choose `dismiss` only when
-Boss explicitly asks to stop or dismiss the active leaf and shall choose
-`deliver` for every task instruction, answer, clarification, continuation,
-near miss, or ambiguous message. It shall receive the original Boss text but
-no registry, ledger, frame, session, or call identity. `deliver`, a rejected
-or thrown call, malformed or unknown output, a non-`ok` result, or an `ok`
-result without `finalText` shall submit the original text unchanged to the
-active leaf. The classifier shall neither select a playbook nor synthesize
-replacement or dismissal text.
+shall parse registered commands first and resolve the parse
+deterministically, with no model call parsing the command:
+
+| Input | Shell state | Resolution |
+| --- | --- | --- |
+| `/<command> <text>`, enabled command | idle | `start` that playbook with `<text>` |
+| `/<command> <text>`, command names the active leaf | engaged | `deliver` `<text>` to the leaf |
+| `/<command> <text>`, enabled command absent from the active path | engaged | `switch` to that playbook with `<text>` |
+| `/<command> <text>`, command names an active non-leaf ancestor | engaged | `respond` only |
+| bare `/<command>`, enabled command | any | `respond` only — status or clarification, never a restart |
+| unregistered `/<x>` or ordinary text | any | the session Captain's decision call |
+
+A parse-resolved `start`, `deliver`, or `switch` shall skip the
+decision call and proceed directly to validation and execution; a
+parse-resolved `respond` shall make one durable prose call surfaced
+as captain speech ([CAPTAIN-9](#captain-9)) and shall execute no
+action regardless of that call's reply.
+Empty or whitespace-only input shall allocate no call, session, or
+telemetry.
+Every turn the parse does not resolve shall be submitted to the
+session Captain, whose selection arrives through the host-supplied
+controller port ([CAPPLAY-9](captain-playbook.md#capplay-9)) as one
+of `respond`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`,
+with `respond` carrying the turn's reply prose so a chat turn
+settles in that one decision call.
+The shell shall validate a selection against host state before any
+effect: `start` and `switch` targets shall be enabled registry
+entries; `start` shall require an idle shell; `switch` shall require
+an active root and a target absent from the active path; `dismiss`,
+`deliver`, and `runtime` shall require an active leaf; and `runtime`
+shall require the active leaf's current `describe()` to advertise
+the selected action id.
+An invalid selection shall settle `rejected` with a reason and no
+effect; the shell shall surface that rejection reason to the Boss as
+shell-owned human-readable status message text
+([CAPTAIN-6](#captain-6)), never as captain speech
+([CAPTAIN-9](#captain-9)).
+The shell shall execute at most one validated action per Boss turn
+and settle the selection with `status`, the outcome-report facts —
+what was dismissed, started, delivered, applied, or rejected, plus
+the resulting leaf-state summary — the receipt where a `runtime`
+action executed, and the turn's counted activity
+([CAPTAIN-20](#captain-20)); settlements shall carry no prose field.
+A settlement with status `ok` shall be final for that turn: the
+shell shall never re-execute the executed action, and retries stay
+phase-local.
+`switch` shall dismiss the stack, then start the target, with no
+rollback; a failing start shall settle with both facts.
+A failing dispose during dismissal shall not resurrect the
+engagement: the entry leaves the stack with its dispose failure
+recorded as a normalized error, dismissal continues down the stack,
+a `switch` still proceeds to start, the settlement names each
+dispose failure and whether the target started, and the shell lands
+idle or newly engaged so the next Boss turn settles normally.
+The shell shall make no hidden lifecycle classification call: no
+turn is routed through a deliver-or-dismiss classifier, and engaged
+ordinary text shall reach the session Captain's decision unchanged.
 
 ### CAPTAIN-8
 
 Where the Playbook Captain shell submits text to an engaged
 playbook runtime, the shell shall call the active leaf runtime's
 `handleBossInput` with text and the Boss-turn signal and consume its
-`PlaybookRunResult`.
+`PlaybookRunResult`; `deliver` shall carry text only.
+Where the validated selection is a `runtime` action, the shell shall
+execute it only through the active leaf's
+`apply({ actionId, key, signal })` with the advertised action id and
+a previously unused idempotency key, consuming its receipt
+([PBRT-52](playbook-runtime.md#pbrt-52)); the shell shall fabricate
+no action id and shall pass no free text into `apply`.
 The shell shall not pre-classify playbook events, choose
 `BOSS_INTERRUPT` targets, expose jumpable state lists through the
 registry, or otherwise decide in-playbook FSM events.
@@ -111,17 +173,41 @@ registry, or otherwise decide in-playbook FSM events.
 ### CAPTAIN-9
 
 Where the Playbook Captain shell uses cligent Captain primitives,
-the shell shall use one Captain agent configuration and shall serialize
-visible compiled Captain work, hidden lifecycle calls, and hidden sub-runtime
-judge calls through one abort-aware concurrency-one queue. Hidden lifecycle
-and sub-runtime judge calls shall pass `{ visibility: 'hidden' }` to
-`callCaptain`.
-Shell-owned command guidance and turn summaries shall use their separate
-visible prompt envelopes; the shell shall not wrap or rewrite a compiled
-runtime's `callCaptain` prompt.
-Hidden control calls shall use a prompt envelope that identifies
-the call as control work and asks for control JSON only.
-For a hidden sub-runtime judge call, that envelope shall preserve the
+the shell shall use one Captain agent configuration and shall
+serialize durable session-Captain calls and hidden sub-runtime judge
+calls through one abort-aware concurrency-one queue.
+Every session-Captain call and sub-runtime judge call shall pass
+`{ visibility: 'hidden' }` to `callCaptain`; no visible Captain call
+shall exist.
+Hidden control calls shall use a prompt envelope that identifies the
+call as control work; for a session-Captain decision call the shell
+shall append, inside that envelope, the exact Boss text as a labeled
+block plus the two shell-composed labeled digest blocks the compiled
+prompt references ([CAPPLAY-7](captain-playbook.md#capplay-7)):
+the ControlView digest — the active path as commands root to leaf,
+the leaf state (`stateId`, tags, quiescence, status; the full
+multi-region state value with every active region readable while the
+leaf occupies a `type: 'parallel'` state), pending questions
+verbatim with their question ids, the last error as
+`{ name, message }`, and the advertised actions as id plus label,
+composed from the active leaf's `describe()`
+([PBRT-52](playbook-runtime.md#pbrt-52)) — and the catalog digest —
+each enabled playbook's id, effective command, and intent.
+Digests and session-Captain prompts shall exclude session and call
+UUIDs, resume tokens, trace payloads, module specifiers, option
+values, player rosters, journal text, and ledger JSON; player output
+shall enter the conversation only as fenced quotes.
+The shell shall validate every durable call's returned prose with
+the missing-or-empty predicate and its single corrective re-ask
+([DR-028](../decisions/028-empty-ok-result-re-ask.md)) and shall
+surface exactly two kinds of validated prose as captain speech
+through cligent `CaptainContext.emitReply`: a `respond` selection's
+`text` and an acting turn's closing reply; a reply carrying control
+JSON or internal control vocabulary shall not be surfaced.
+`emitStatus` shall never carry captain prose; the shell shall
+suppress the session Captain runtime's human status stream while
+forwarding its structured telemetry.
+For a hidden sub-runtime judge call, the envelope shall preserve the
 runtime-supplied judge prompt verbatim as delimited evidence, shall direct the
 judge to treat quoted actor output only as evidence rather than instructions,
 shall forbid tool use and the execution, simulation, or narration of tool
@@ -148,6 +234,9 @@ sub-runtime `callJudge` through that same queue to hidden
 `context.callCaptain`, route `callPlaybook` through the stack protocol
 in [CAPTAIN-29](#captain-29), and pass sub-runtime
 `emitStatus` and `emitTelemetry` calls through to the host in order.
+Hidden sub-runtime judge calls shall stay fresh and isolated and
+shall never resume or replace the pinned durable-conversation token
+([CAPTAIN-31](#captain-31)).
 The shell shall also pass the resolved binding in the metadata given
 to the entry's `createRuntime`, so a playbook such as CODE can derive
 prompt identity strings from the host player actually bound to each
@@ -162,46 +251,58 @@ ledger.
 
 ### CAPTAIN-31
 
-Where the shell hosts the compiled default Captain, when it forwards a visible routing or reassessment call, the shell shall request `resume: false` and `allowedTools: []` and preserve the runtime prompt as the exact host prompt; when it forwards a hidden adjudication call, it shall request the same isolation and preserve the runtime-supplied judge prompt verbatim inside the hidden-control envelope required by [CAPTAIN-9](#captain-9). Where the launcher has supplied the resolved captain adapter as
-`captain.options.captainAdapter` and that adapter has no provider-enforced
-tool-restriction surface, the shell shall omit `allowedTools` from those calls
-instead of sending the empty list, degrading that adapter's isolation to the
-[CAPTAIN-9](#captain-9) hidden-control envelope per
+Where the shell hosts the session Captain, every session-Captain
+call — the per-turn decision call, the result-phase closing-reply
+call, and a parse-resolved `respond` call — shall run hidden on the one
+durable conversation: the shell shall request `resume` with the
+pinned token, shall request a fresh conversation (`resume: false`)
+only for the session's first call and for the
+[CAPTAIN-35](#captain-35) reseed, and shall pin each returned
+`resumeToken` in place of the prior pin.
+The shell shall preserve the runtime prompt as the exact host prompt
+and shall pass the original Boss text unchanged into the decision
+call's labeled block; no model call shall replace or paraphrase Boss
+text before entry.
+Every such call shall keep the DR-013 A1 tool posture: request
+`allowedTools: []`; where the launcher has supplied the resolved
+captain adapter as `captain.options.captainAdapter` and that adapter
+has no provider-enforced tool-restriction surface, omit
+`allowedTools` from those calls instead of sending the empty list,
+degrading that adapter's isolation to the [CAPTAIN-9](#captain-9)
+hidden-control envelope per
 [DR-013 A1](../decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement);
-where the adapter is absent or unrecognized it shall keep requesting the empty
-allowlist.
-The shell shall reject either call if the configured adapter is asked for the empty allowlist and cannot enforce it; the shared queue shall serialize these isolated calls without treating an agent conversation as workflow memory.
-Where the shell submits an ordinary idle turn to the default Captain runtime,
-it shall pass the original Boss text unchanged and shall not make a model call
-that can replace or paraphrase that text before runtime entry.
+where the adapter is absent or unrecognized it shall keep requesting
+the empty allowlist.
+The shell shall reject the call if the configured adapter is asked
+for the empty allowlist and cannot enforce it; the shared queue
+shall serialize these calls.
 
 ### CAPTAIN-20
 
-Where the Playbook Captain shell submits text to an engaged
-playbook runtime, the shell shall collect turn-summary counts only
-for the duration of that sub-runtime `handleBossInput` call, and
-only when the active registry entry declares a `summaryPolicy`.
+Where the Playbook Captain shell executes a validated action for a
+Boss turn, the shell shall collect turn-summary counts only for the
+duration of that action's execution — the sub-runtime
+`handleBossInput` call, the `apply()` call, or a `switch`'s
+dismissals and start — and only when the active registry entry
+declares a `summaryPolicy`.
 When the active registry entry declares no `summaryPolicy`, the
-shell shall skip turn-summary counting and shall not make the
-visible turn-summary Captain call for that turn
-([CAPTAIN-19](../user/playbook-captain.md#captain-19)).
+shell shall skip turn-summary counting for that turn.
 The `summaryPolicy` maps counted state ids and adjudication guard
 names to Boss-visible labels and supplies the saved-counts line
 template or equivalent wording policy.
 For that same duration, the shell shall aggregate sub-runtime
 `playbook.fsm.state` telemetry into a summary-visible progress
-phrase for the turn-summary prompt, counting only state ids that the
+phrase for the result-phase prompt, counting only state ids that the
 active registry entry's `summaryPolicy` labels.
 The summary-visible progress phrase shall be `none` when no
 summary-visible state occurred.
 The summary-visible progress round total shall be the sum of all
-summary-visible state counts collected for the completed
-sub-runtime turn.
+summary-visible state counts collected for the turn.
 When the active registry entry's `summaryPolicy` provides a
 state-count label for a state id, the shell shall count that state
 under the provided label.
 When the `summaryPolicy` does not provide a state-count label for a
-state id, the shell shall not count that state in the turn-summary
+state id, the shell shall not count that state in the result-phase
 prompt and shall not derive a fallback label from the state id.
 When a wrapped sub-runtime `callPlayer` call returns a player
 reply, the shell shall count one saved interruption for that reply.
@@ -215,28 +316,34 @@ rebuttal items the handoff text contains.
 Each registry entry's `summaryPolicy` shall own its exact copy-paste
 guard names, so an adjudicated guard removed from that list is not
 counted.
-The shell shall not count hidden lifecycle calls, shell-owned command-guidance calls,
-sub-runtime classifier/event JSON, or malformed adjudication
-replies as saved copy-pastes.
-After the sub-runtime `handleBossInput` call settles, the shell
-shall make one visible Captain call with a turn-summary prompt
-envelope.
-The turn-summary prompt envelope shall provide the exact saved
-interruption and copy-paste counts, shall provide the aggregate
-summary-visible progress phrase and round total, and shall instruct
-Captain to write the Boss-visible block required by
-[CAPTAIN-19](../user/playbook-captain.md#captain-19) using the
-active entry's `summaryPolicy` wording, including its saved-counts
-line template with the supplied counts and natural singular forms
-when a count is one.
-The turn-summary prompt envelope shall instruct Captain not to
-include counts for state ids the `summaryPolicy` does not label.
-The turn-summary prompt envelope shall instruct Captain not to
-repeat the exact summary-visible progress round count outside the
+The shell shall not count session-Captain decision, reply, or
+result-phase calls, sub-runtime classifier/event JSON, or malformed
+adjudication replies as saved copy-pastes.
+After the executed action settles, the shell shall make one hidden
+result-phase call on the durable conversation
+([CAPTAIN-31](#captain-31)) whose prompt provides the settlement's
+outcome-report facts verbatim, the exact saved interruption and
+copy-paste counts, and the aggregate summary-visible progress phrase
+and round total, and shall instruct Captain to compose the closing
+reply required by
+[CAPTAIN-19](../user/playbook-captain.md#captain-19) only from that
+outcome report.
+While the turn's counted activity — the saved interruptions plus
+saved copy-pastes plus the summary-visible round total — is nonzero,
+the result-phase prompt shall instruct Captain to append the active
+entry's `summaryPolicy` saved-counts line verbatim with the supplied
+counts and natural singular forms when a count is one; when that
+counted activity is zero or the entry declares no `summaryPolicy`,
+it shall instruct Captain to append no saved-counts line.
+When the Boss turn executes no action, the shell shall make no
+result-phase call.
+The result-phase prompt shall instruct Captain not to include counts
+for state ids the `summaryPolicy` does not label and not to repeat
+the exact summary-visible progress round count outside the
 saved-counts line.
-The turn-summary prompt envelope shall not include shell ledger JSON
-or raw state ids for states that are not counted in the
-summary-visible progress phrase.
+The result-phase prompt shall not include shell ledger JSON or raw
+state ids for states that are not counted in the summary-visible
+progress phrase.
 
 ## Lifecycle
 
@@ -246,26 +353,33 @@ Where the Playbook Captain shell has an active leaf runtime, when its
 normalized state is quiescent and tagged `playbook.parked` or its run
 result is suspended, the shell shall park the root engagement in
 `engaged.parked`.
-Where the active root runtime returns terminal or the lifecycle classifier dismisses
-the root, the shell shall dispose the complete stack and return to
-its idle `chat` mode without making another visible chat call; where a child returns terminal or is dismissed, the shell shall
-return it to its parent per [CAPTAIN-29](#captain-29).
+Where the active root runtime returns terminal or a validated
+`dismiss` or `switch` dismisses the root, the shell shall dispose the
+complete stack and return to its idle `chat` mode — for a `switch`,
+idle only until the same turn's start phase engages the target
+([CAPTAIN-7](#captain-7)); where a child
+returns terminal or is dismissed, the shell shall return it to its
+parent per [CAPTAIN-29](#captain-29).
 The shell shall defer terminal disposal until the active runtime call
 settles.
 Where the Boss submits text while a leaf is parked, the shell shall
 reuse that exact leaf runtime rather than constructing a replacement.
-Where the Playbook Captain shell has no active stack, when a registered
-command selects an enabled external playbook, the shell shall construct a new
-root runtime from that registry entry's `createRuntime` function and the
-validated options captured during `init`; when any other non-empty idle text
-arrives, it shall instead lazily construct the internal default Captain root.
-In either case it shall generate a previously unissued UUID playbook session
-id and initialize the runtime with that id, its playbook id, and the wrapped
-ports.
+Where the Playbook Captain shell has no active stack, when a
+parse-resolved or session-Captain-validated `start` selects an
+enabled external playbook ([CAPTAIN-7](#captain-7)), the shell shall
+construct a new root runtime from that registry entry's
+`createRuntime` function and the validated options captured during
+`init`, generate a previously unissued UUID playbook session id, and
+initialize the runtime with that id, its playbook id, and the
+wrapped ports; ordinary idle text shall construct no runtime by
+itself.
+The session Captain shall never be constructed as an engagement: its
+runtime exists from `init` ([CAPTAIN-16](#captain-16)), holds no
+stack frame, and `callPlaybook` shall not be reachable from it.
 Where the Playbook Captain shell has disposed an active root stack
 because it reached its final state or was dismissed, when a later
-registered command or compiled Captain call engages the same playbook id,
-the shell shall construct a replacement sub-runtime.
+validated `start` engages the same playbook id, the shell shall
+construct a replacement sub-runtime.
 
 ## Adapter lifecycle
 
@@ -277,7 +391,12 @@ playbook registry entries from `captain.options.playbooks`, derive
 each entry's local-role-to-host-player binding
 ([CAPTAIN-10](#captain-10)) from its generated host player ids,
 validate each entry's own option slice through that entry's
-`validateOptions`, enter `chat`, and not construct a sub-runtime.
+`validateOptions`, enter `chat`, open the session journal
+([CAPTAIN-35](#captain-35)), and construct, initialize, and start
+the session Captain runtime — the compiled default Captain
+([CAPPLAY-6](captain-playbook.md#capplay-6)) — with its own
+generated playbook session id ([CAPTAIN-26](#captain-26)) and the
+controller port, while constructing no working-playbook sub-runtime.
 The shell shall require `captain.options.playbooks` and shall reject
 `init` when it is missing or empty; it shall not infer a CODE-only
 default from `captain.options.code`.
@@ -318,9 +437,10 @@ When tmux-play calls `handleBossTurn(turn, context)` before
 `init(session)`, the shell shall reject the call.
 Where tmux-play calls `prepareDispose()` while session emissions remain
 live, the shell shall dispose every active frame from leaf to root so
-each final trace can drain, clear the active turn context, emit no shell
-status or shell FSM telemetry for the adapter teardown itself, and
-resolve only after every runtime's `dispose()` call returns. The shell's later
+each final trace can drain, dispose the session Captain last, clear
+the active turn context, emit no shell status or shell FSM telemetry
+for the adapter teardown itself, and resolve only after every
+runtime's `dispose()` call returns. The shell's later
 `dispose()` hook shall retain the same operation as an idempotent
 fallback for older or non-tmux hosts.
 
@@ -337,20 +457,26 @@ The same parked runtime shall retain that id; a replacement engagement
 after final completion or dismissal shall receive a new one; and a
 collision from an injected id generator shall reject rather than reuse
 an earlier id.
+At `init` the shell shall likewise generate the session Captain's own
+previously unissued UUID playbook session id
+([CAPTAIN-16](#captain-16)); that identity shall serve the whole
+shell session and shall never be reissued to an engagement.
 The shell shall include root and leaf session ids in its bounded ledger
-and shell FSM telemetry, pass sub-runtime `playbook.trace` telemetry
-through unchanged, forward every explicit player `resume` selection to
-cligent's `context.callPlayer`, and return the authoritative host
-`resumeToken` unchanged.
+and shell FSM telemetry, keep the pinned durable-conversation token
+and journal handle in the ledger under the [CAPTAIN-5](#captain-5)
+exclusion rule, pass sub-runtime
+`playbook.trace` telemetry through unchanged, forward every explicit
+player `resume` selection to cligent's `context.callPlayer`, and
+return the authoritative host `resumeToken` unchanged.
 The shell shall put neither resume tokens nor trace payloads in model
 prompts, visible status messages, or turn summaries.
 If engagement initialization rejects, the shell shall clear the broken
 engagement, best-effort dispose its partially initialized runtime while
-preserving the original failure, and let a later command construct a
-new external engagement with a new session id or a later ordinary idle turn
-construct a new internal Captain root with a new session id.
-Its recovery shell telemetry shall show `chat` and an empty stack rather than
-leaving observers at the earlier attempted engagement.
+preserving the original failure, and let a later validated `start`
+construct a new engagement with a new session id; the session Captain,
+its durable conversation, and the journal shall be unaffected.
+Its recovery shell telemetry shall show `chat` and an empty stack rather
+than leaving observers at the earlier attempted engagement.
 
 ## Nested playbook stack
 
@@ -364,6 +490,9 @@ players, and submit the call input as the child's initial Boss text.
 The child `PlaybookSession` shall receive a fresh UUID plus
 `rootSessionId`, `parentSessionId`, `parentCallId`, and depth; the root
 shall use its own UUID as root id and depth zero.
+The session Captain shall hold no frame on this stack and its
+wrapped ports shall expose no reachable `callPlaybook`; the stack
+holds only working playbooks.
 The shell shall permit one outstanding child per frame, reject a target
 already present anywhere on the active frame path (including the
 caller), and reject a target absent from
@@ -375,8 +504,8 @@ return its suspended child session id so the parent runtime can settle
 its Boss turn; only the top frame shall receive later Boss turns.
 When a child returns terminal output, rejects at the runtime boundary,
 is aborted, or is dismissed, the
-shell shall dispose and pop it, restore external-parent visibility when
-applicable, and call the parent's `resumePlaybookCall` with the same call id
+shell shall dispose and pop it, restore the parent's player
+visibility, and call the parent's `resumePlaybookCall` with the same call id
 and current-turn signal, continuing until the top frame parks, suspends, or waits for
 Boss, or the root finishes.
 Where a child returns workflow outcome `failed` in a recoverable parked
@@ -389,8 +518,8 @@ Root dismissal and adapter teardown shall dispose frames from leaf to
 root; teardown shall not resume callers after disposal begins.
 The shell's bounded ledger and shell telemetry shall identify the root
 and top session and contain only bounded causal frame metadata; hidden
-lifecycle prompts, compiled Captain prompts, shell-owned visible prompts,
-status, and summaries shall contain neither the
+session-Captain prompts, shell-owned prompts, status, and closing
+replies shall contain neither the
 stack ledger nor session/call ids.
 The shell shall pass each frame's `playbook.trace` through unchanged,
 including the causal fields on child `session.started` and parent
@@ -408,7 +537,7 @@ visibility for that leaf playbook's generated host player ids through
 runtime.
 The requested visible set shall be the external leaf's generated
 host player ids and shall never be empty.
-The playerless internal Captain root shall make no visibility request;
+The playerless session Captain shall make no visibility request;
 when an external child is active, that child's non-empty generated set
 shall apply.
 Because the launcher has already validated those generated player
@@ -434,18 +563,38 @@ for the Playbook Captain shell, which loads its enabled playbooks
 from `captain.options.playbooks` at `init`
 ([CAPTAIN-16](#captain-16)) rather than hardcoding any playbook.
 
-## Failure recovery
+## Durable conversation and failure recovery
 
 ### CAPTAIN-35
 
-Where a parentless internal Captain frame's delivered boundary call rejects,
-whether `handleBossInput` or the `resumePlaybookCall` that returns a child,
-the shell shall dispose the complete stack under a `failure` disposal reason
-before the Boss turn settles, shall make no additional visible chat call, and
-shall rethrow a boundary error whose message names a concrete next step and
-carries the original diagnostic as its `cause`; the raw control diagnostic
-shall appear in no Boss-visible chat or status text and shall remain
-available on the runtime's trace telemetry and that `cause`.
-Where a parentless external root's delivered turn rejects, the shell shall
-retain the frame for later Boss recovery and shall propagate the boundary
-error unchanged.
+Where the shell hosts the session Captain, the shell shall keep one
+host-side session journal per shell session: append-only, JSON-safe
+records
+`{ seq, turnId, kind: 'boss' | 'reply' | 'action' | 'outcome', payload }`
+covering Boss text, validated captain replies, validated actions
+with their targets, and settlement facts.
+The journal shall never be Boss-visible, shall feed only the
+conversation reseed, and shall be complete for the session lifetime:
+the shell shall drop no record, and the only bounding shall be a
+deterministic per-record truncation of long player output quoted
+inside a payload.
+After every durable session-Captain call the shell shall pin the
+returned `resumeToken`, replacing the prior pin.
+When a durable call throws, returns a non-`ok` status, or returns
+`ok` without a token, the shell shall treat the conversation as
+unsynchronized: clear the pin, re-issue that call exactly once on a
+fresh conversation (`resume: false`) seeded with a journal digest
+plus the current ControlView digest, and pin the new token.
+Only the model-side conversation shall be replaced: the engagement
+stack, player sessions, journal, and the turn's completed work —
+including an already-executed action, which shall never be
+re-executed — shall survive.
+When the re-issued call fails again, the shell shall fail that phase
+without touching the stack, surfacing the
+[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply;
+the underlying diagnostic shall remain available on trace telemetry
+and as the boundary error's `cause` and shall appear in no
+Boss-visible chat or status text.
+Where a parentless external root's delivered turn rejects, the shell
+shall retain the frame for later Boss recovery and shall propagate
+the boundary error unchanged.

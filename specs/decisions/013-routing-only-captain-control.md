@@ -7,6 +7,9 @@
 
 Accepted.
 [Addendum A1](#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement) amends §Isolated control calls: a host shall not request an explicit empty tool allowlist from an adapter it knows cannot enforce one, and shall substitute the authored prompt-level restriction instead.
+[DR-029](029-session-scoped-conversational-captain.md) amends §Initial Captain is a router — the routing-only, no-investigation posture stays while the two-outcome menu is superseded by the closed action set — and §Control and presentation separation: hidden control versus human prose stays, with prose now surfaced through host-validated captain speech instead of visible Captain calls.
+DR-029 supersedes §Isolated control calls for the interactive shell: Captain-root calls resume the durable conversation, with the A1 tool posture retained on every such call and sub-runtime judge isolation unchanged.
+§Exact input provenance stands.
 
 ## Context
 

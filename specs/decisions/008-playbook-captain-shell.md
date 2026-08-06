@@ -8,6 +8,8 @@
 Accepted.
 The hand-authored chat, selection, and hidden-router policy portions of this record are superseded by [DR-012](012-default-captain-playbook.md).
 The registry, host-adapter, one-Captain-session, lifecycle, visibility, and in-playbook event-authority constraints remain in force where later decisions have not amended them.
+[DR-029](029-session-scoped-conversational-captain.md) supersedes, for the interactive shell, §3's and §9's residual prohibitions on pre-classified events and action surfaces: runtime-advertised actions now flow through the runtime-owned `describe`/`apply` pair, while the shell still fabricates no FSM event itself.
+DR-029 also restores §4's one-durable-Captain-conversation intent — sub-runtime judge calls now stay fresh and isolated instead of sharing it — and amends §5: the deferred `getSnapshot()` arrives as `describe()`, with telemetry mirroring staying for the shell ledger.
 
 ## Context
 

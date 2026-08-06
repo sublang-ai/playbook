@@ -11,7 +11,7 @@ The iteration also lands the DR-028/DR-029 acceptance plan in three tiers: herme
 ## Deliverables
 
 - [x] Engine control surface: `describe`/`apply` on every `createXStatePlaybookRuntime` runtime, the ControlView/receipt types on `@sublang/playbook/runtime`, apply trace boundaries, the `slc/link.md` control-surface contract, amended PBRT items including the [PBRT-51](../test/playbook-runtime.md#pbrt-51) fidelity fold, and integration tests.
-- [ ] Rewritten CAPTAIN and CAPPLAY spec packages, Status annotations on DR-004/008/009/011/012/013/025, and the map package-summary rows.
+- [x] Rewritten CAPTAIN and CAPPLAY spec packages, Status annotations on DR-004/008/009/011/012/013/025, and the map package-summary rows.
 - [ ] Rewritten `reference/sdlc/captain.md` source and recompiled `captain.playbook/` GEARS, FSM, runtime, and verification artifacts, with the six CAPPLAY-20 prompt-contract re-pins.
 - [ ] Playbook Captain shell on the controller model: durable conversation with continuity detection and journal reseed, deterministic command parse table, controller port, captain speech via cligent `captain_reply`, gated grounded summaries, and the CAPTAIN-37…-40 hermetic suites over real compiled CODE/DISCUSS entries.
 - [ ] cligent dependency bump admitting `CaptainRunResult.resumeToken` and `CaptainContext.emitReply`, plus `[Unreleased]` CHANGELOG entries per [RELEASE-4](../dev/release.md#release-4).

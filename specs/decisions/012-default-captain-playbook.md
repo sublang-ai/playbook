@@ -7,6 +7,8 @@
 
 Accepted.
 The initial routing, Captain-call isolation, input provenance, and terminal-presentation decisions are superseded by [DR-013](013-routing-only-captain-control.md).
+[DR-029](029-session-scoped-conversational-captain.md) supersedes §Compiled orchestration policy, §Sequential decide-call-observe loop, §Deterministic stack ownership, and §Internal root presentation: the lazy internal root, intra-turn `remainingPlan` multi-child plans, and the hidden lifecycle classifier are retired, while the reserved `captain` id, status filtering, and no-visibility posture restate in the rewritten CAPTAIN/CAPPLAY items.
+§Captain is a first-class runtime actor and §Catalog and dynamic child target stand amended: the `callCaptain` port, queue, `captain.call.*` traces, and sanitized catalog stay; the visible-workflow-call sentence is scoped to non-Captain compiled playbooks — the rewritten Captain's own calls run hidden with prose resurfaced via validated captain speech — and the compiler's dynamic-call support stays for other playbooks while the Captain policy stops using `callPlaybook`.
 
 ## Context
 
