@@ -51,6 +51,7 @@ meta.md     The spec of specs
 | DR-025 | [025-resilient-captain-control-adjudication.md](decisions/025-resilient-captain-control-adjudication.md) | Resilient Captain control adjudication: the exported explicit `{ guard, … }` judge reply contract reused by the compiled default Captain, one corrective re-ask on a malformed control reply, and shell disposal of a failed internal Captain root with Boss-appropriate failure text |
 | DR-026 | [026-optional-adapter-sdks.md](decisions/026-optional-adapter-sdks.md) | Adapter SDKs become optional peer dependencies matching cligent's: libraries declare and the deliberately-installed root supplies, a supplied SDK must be a top-level install root to resolve from nested cligent, missing SDKs fail at an `isAvailable()` preflight rather than mid-turn, and the release smoke asserts both the lean and opted-in install shapes |
 | DR-027 | [027-runtime-compatibility-from-cligent.md](decisions/027-runtime-compatibility-from-cligent.md) | Delegate all agent-runtime version knowledge to cligent: the gate derives runtimes, floors, and pinned repairs from cligent's shipped descriptor and renders its structured verdict, unsupported is reported distinctly from absent, `gemini`'s exemption ends, and no agent-SDK peer range is declared here |
+| DR-028 | [028-empty-ok-result-re-ask.md](decisions/028-empty-ok-result-re-ask.md) | One corrective re-ask on an empty `ok` player or direct-Captain result before failure-sink routing, with both boundaries unified on the missing-or-empty/whitespace-only predicate |
 
 ## Iterations
 
