@@ -209,31 +209,61 @@ the player prompt ([PLAYBOOK-5](playbook.md#playbook-5),
 [PLAYBOOK-6](playbook.md#playbook-6)), and call
 `callPlayer(playerId, prompt, signal, options)` with the explicit
 resume selection required by [PBRT-38](#pbrt-38). When the result status is
-`ok` with a `finalText`, the runtime shall adjudicate that text
+`ok` with a non-empty, non-whitespace-only `finalText`, the
+runtime shall adjudicate that text
 ([PBRT-10](#pbrt-10)) and return the adjudicated `CaptainOutput`
-so the FSM advances. When the result status is not `ok`, or
-`finalText` is absent, the runtime shall throw so the FSM routes
-through its error path to the failure state.
+so the FSM advances. When the result status is `ok` but
+`finalText` is missing, empty, or whitespace-only, the runtime
+shall issue exactly one corrective re-ask
+([DR-028](../decisions/028-empty-ok-result-re-ask.md)): the same
+composed call repeated through the same boundary, with resume
+selection again per [PBRT-38](#pbrt-38) — continuing the player
+session when the first result carried a resume token, fresh when
+it cleared one — traced as its own
+player-call pair, and its result interpreted under these same
+rules — except that a second missing, empty, or whitespace-only
+`ok` `finalText` shall make the runtime throw with no further
+re-ask. When the result status is not `ok`, the runtime shall
+throw with no corrective re-ask. Either throw routes the FSM
+through its error path to the failure state. A rejecting
+player-call trace emission shall trigger no corrective re-ask; it
+remains a control-plane error for the turn's drain, as at the
+direct-Captain boundary ([PBRT-47](#pbrt-47)).
 
 ### PBRT-47
 
 While driving a Boss turn, for each FSM direct-Captain invocation, when
 `callCaptain` returns a host result whose status is not `ok` or whose
-`finalText` is absent or empty, the runtime shall record that failure on the
-call's single `captain.call.finished` trace and throw it from the invoked
-actor so the FSM routes through its error path to the failure state, and
-shall not treat it as a control-plane error.
+`finalText` is missing, empty, or whitespace-only — the same empty
+predicate the delegated-player bridge applies ([PBRT-9](#pbrt-9)) — the
+runtime shall record that failure on that call's single
+`captain.call.finished` trace.
+For the not-`ok` status the runtime shall then throw the failure from the
+invoked actor with no corrective re-ask.
+For the empty `ok` result the runtime shall first issue exactly one
+corrective re-ask
+([DR-028](../decisions/028-empty-ok-result-re-ask.md)) — the same
+direct-Captain call repeated through the same boundary with the
+originating call's continuity policy unchanged (DR-028's retry-continuity
+bullet), traced as its own
+`captain.call.started` / `captain.call.finished` pair — and interpret the
+second result under these same rules, except that a second missing, empty,
+or whitespace-only `ok` `finalText` shall throw with no further re-ask.
+Either throw shall route the FSM through its error path to the failure
+state and shall not be treated as a control-plane error.
 `handleBossInput` shall therefore resolve the structured `failed` outcome
 carrying that failure as the state's error, exactly as it does for the
 equivalent delegated-player result ([PBRT-9](#pbrt-9)), rather than reject
 ([PBRT-41](#pbrt-41)).
 A non-abort thrown `callCaptain` port, a malformed host result, and a rejecting
-trace sink remain control-plane errors ([PBRT-41](#pbrt-41)); a transport
+trace sink remain control-plane errors ([PBRT-41](#pbrt-41)) and shall trigger
+no corrective re-ask; a transport
 failure causally identical to the active signal remains ordinary abort
 settlement ([PBRT-13](#pbrt-13)).
 
 Where the required `captain.call.finished` emission itself rejects, the
-runtime shall keep the host-result failure as the invoked actor's error so
+runtime shall issue no corrective re-ask and shall keep the host-result
+failure as the invoked actor's error so
 the failure state records it, while the emission failure remains the
 control-plane error the turn's drain surfaces ([PBRT-41](#pbrt-41)).
 

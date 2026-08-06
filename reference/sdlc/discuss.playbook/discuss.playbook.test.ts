@@ -219,33 +219,141 @@ describe('runtime option snapshots', () => {
   });
 });
 
-describe('delegated-player final text boundary', () => {
-  it('fails the invoked state without adjudicating an absent finalText', async () => {
-    let judgeCalls = 0;
+describe('delegated-player final text boundary (DR-028)', () => {
+  it.each([
+    ['missing', undefined],
+    ['empty-string', ''],
+    ['whitespace-only', ' \n\t '],
+  ] as const)(
+    'fails the invoked state without adjudicating after one corrective re-ask when finalText stays %s',
+    async (_label, emptyText) => {
+      let judgeCalls = 0;
+      let playerCalls = 0;
+      const ports: PlaybookPorts = {
+        callPlayer: async () => {
+          playerCalls += 1;
+          return emptyText === undefined
+            ? { status: 'ok' }
+            : { status: 'ok', finalText: emptyText };
+        },
+        callJudge: async () => {
+          judgeCalls += 1;
+          return JSON.stringify({
+            event: 'START_REVIEW',
+            latestChanges: 'missing final text review',
+            reviewScope: 'mixed',
+          });
+        },
+        callPlaybook: async () => {
+          throw new Error('unexpected nested playbook call');
+        },
+        emitStatus: async () => {},
+        emitTelemetry: async () => {},
+      };
+      const runtime = createPlaybookRuntime({});
+      await runtime.init(playbookSession(ports, 'missing-final-text'));
+
+      await expect(
+        runtime.handleBossInput({ text: 'write it', signal: signal() }),
+      ).resolves.toMatchObject({ outcome: 'failed' });
+      // DR-028 / PBRT-9: the empty `ok` shape earns exactly one re-ask of
+      // the same call; a second such result follows the failure path with
+      // no player-output adjudication (the single judge call is the Boss
+      // classification).
+      expect(playerCalls).toBe(2);
+      expect(judgeCalls).toBe(1);
+      await runtime.dispose();
+    },
+  );
+
+  it('recovers the turn when the corrective re-ask returns the finalText', async () => {
+    const playerCalls: Array<{
+      playerId: string;
+      prompt: string;
+      resume: string | false;
+    }> = [];
+    const traces: Array<{ type: string; callId?: unknown }> = [];
+    const telemetry: Array<Record<string, unknown>> = [];
+    // A sequential review flow: classification, the Participant review
+    // (empty first result, then the corrective re-ask), the reviewed commit.
+    const judgeReplies = [
+      JSON.stringify({
+        event: 'START_REVIEW',
+        latestChanges: 'empty result review',
+        reviewScope: 'mixed',
+      }),
+      JSON.stringify({ guard: 'noFindings' }),
+      JSON.stringify({ guard: 'committed' }),
+    ];
+    let judgeIndex = 0;
+
     const ports: PlaybookPorts = {
-      callPlayer: async () => ({ status: 'ok' }),
-      callJudge: async () => {
-        judgeCalls += 1;
-        return JSON.stringify({
-          event: 'START_REVIEW',
-          latestChanges: 'missing final text review',
-          reviewScope: 'mixed',
-        });
+      callPlayer: async (playerId, prompt, _signal, options) => {
+        playerCalls.push({ playerId, prompt, resume: options.resume });
+        if (playerCalls.length === 1) {
+          // The incident shape: a contract-legal `ok` result carrying a
+          // resume token and only whitespace for finalText.
+          return {
+            status: 'ok',
+            resumeToken: 'participant-tok-1',
+            finalText: ' \n',
+          };
+        }
+        return { status: 'ok', finalText: `${playerId} output` };
       },
       callPlaybook: async () => {
         throw new Error('unexpected nested playbook call');
       },
+      callJudge: async () => {
+        const reply = judgeReplies[judgeIndex++];
+        if (reply === undefined) {
+          throw new Error(`unscripted judge call #${judgeIndex}`);
+        }
+        return reply;
+      },
       emitStatus: async () => {},
-      emitTelemetry: async () => {},
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.fsm.state') {
+          telemetry.push(event.payload as Record<string, unknown>);
+        }
+        if (event.topic === 'playbook.trace') {
+          const trace = event.payload as { type: string; callId?: unknown };
+          if (
+            trace.type === 'player.call.started' ||
+            trace.type === 'player.call.finished'
+          ) {
+            traces.push({ type: trace.type, callId: trace.callId });
+          }
+        }
+      },
     };
-    const runtime = createPlaybookRuntime({});
-    await runtime.init(playbookSession(ports, 'missing-final-text'));
 
-    await expect(
-      runtime.handleBossInput({ text: 'write it', signal: signal() }),
-    ).resolves.toMatchObject({ outcome: 'failed' });
-    expect(judgeCalls).toBe(1);
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(playbookSession(ports, 'empty-then-recovered'));
+    await runtime.handleBossInput({
+      text: 'review the latest changes',
+      signal: signal(),
+    });
     await runtime.dispose();
+
+    const visited = telemetry.map((payload) => payload.to);
+    expect(visited).not.toContain('failed');
+    expect(visited).toContain('done');
+    // The corrective call repeats the same composed call and continues the
+    // player session the first result left (PBRT-38 token adoption), traced
+    // as its own player-call pair; the flow then advances to the commit.
+    expect(playerCalls).toHaveLength(3);
+    expect(playerCalls[0].playerId).toBe('participant');
+    expect(playerCalls[1].playerId).toBe('participant');
+    expect(playerCalls[1].prompt).toBe(playerCalls[0].prompt);
+    expect(playerCalls[0].resume).toBe(false);
+    expect(playerCalls[1].resume).toBe('participant-tok-1');
+    expect(traces.slice(0, 4)).toEqual([
+      { type: 'player.call.started', callId: 'player-1' },
+      { type: 'player.call.finished', callId: 'player-1' },
+      { type: 'player.call.started', callId: 'player-2' },
+      { type: 'player.call.finished', callId: 'player-2' },
+    ]);
   });
 });
 

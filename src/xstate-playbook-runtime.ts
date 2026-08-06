@@ -178,6 +178,37 @@ function isFsmResultFailure(error: unknown): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// DR-028: both call boundaries treat an `ok` result whose `finalText` is
+// missing, empty, or whitespace-only under one empty predicate, and that
+// shape earns exactly one corrective re-ask — the same composed call
+// re-issued once through the same boundary — before a second such result
+// follows the existing failure path. The retry marker distinguishes the
+// re-askable empty-`ok` Captain failure from the never-retried non-`ok`
+// statuses; it is applied only when the failure's finish trace emitted
+// cleanly, because a rejecting finish sink is a control-plane error whose
+// turn gets no corrective re-ask (PBRT-47).
+// ---------------------------------------------------------------------------
+
+function isEmptyFinalText(finalText: string | undefined): boolean {
+  return finalText === undefined || finalText.trim().length === 0;
+}
+
+const emptyOkRetryFailures = new WeakSet<object>();
+
+function markEmptyOkRetryFailure(error: Error): Error {
+  emptyOkRetryFailures.add(error);
+  return error;
+}
+
+function isEmptyOkRetryFailure(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    emptyOkRetryFailures.has(error as object)
+  );
+}
+
+// ---------------------------------------------------------------------------
 // DR-022: the engine's compatibility self-report. A linked thin module
 // records the values current at link time in `spec.compat`; the factory
 // checks that declaration against this very module — the engine instance
@@ -730,8 +761,10 @@ function validateBossReplyOutput(
 // ---------------------------------------------------------------------------
 // Delegated-player actor bridge. One PromiseActorLogic the machine invokes
 // from every player-invoking state: resolve the playerId, compose the prompt,
-// await callPlayer, adjudicate the finalText. A non-`ok` result or missing
-// finalText throws so XState routes via onError to the FSM's failure sink.
+// await callPlayer, adjudicate the finalText. An `ok` result with a missing,
+// empty, or whitespace-only finalText earns exactly one corrective re-ask of
+// the same composed call (DR-028); a non-`ok` result, or a second such empty
+// result, throws so XState routes via onError to the FSM's failure sink.
 //
 // `getActiveSignal` flows the Boss's public-boundary signal into the host
 // port calls — fromPromise hands the bridge XState's actor-scoped signal,
@@ -757,17 +790,40 @@ export function createPlayerBridge(
       const activeSignal = combineAbortSignals(signal, getActiveSignal?.());
       const playerId = spec.resolvePlayerId(input);
       const prompt = spec.composePlayerPrompt(input);
-      const result = boundary
-        ? await boundary.callPlayer(input, playerId, prompt, activeSignal)
-        : await ports.callPlayer(playerId, prompt, activeSignal, {
-            resume: false,
-          });
+      const callPlayer = (resume: string | false) =>
+        boundary
+          ? boundary.callPlayer(input, playerId, prompt, activeSignal)
+          : ports.callPlayer(playerId, prompt, activeSignal, { resume });
+      let result = await callPlayer(false);
+      if (result.status === 'ok' && isEmptyFinalText(result.finalText)) {
+        // An abort that lands between the empty first result and the
+        // corrective call ends the turn as ordinary abort settlement with
+        // no second host call — aborts are never retried (DR-028 via
+        // DR-025's transport exclusion) — matching the direct-Captain
+        // boundary, whose queued corrective call re-checks the signal
+        // before starting.
+        activeSignal.throwIfAborted();
+        // DR-028: exactly one corrective re-ask of the same composed call
+        // through the same path, traced by the boundary as its own
+        // player-call pair. The traced boundary re-reads its token map
+        // (PBRT-38), so the corrective call continues the player session
+        // when the first result carried a resume token and starts fresh
+        // when it cleared one; the portless verification path mirrors that
+        // by carrying the first result's token.
+        result = await callPlayer(
+          typeof result.resumeToken === 'string' &&
+            result.resumeToken.trim().length > 0
+            ? result.resumeToken
+            : false,
+        );
+      }
       if (result.status !== 'ok') {
         throw new Error(
           result.error ?? `captainBridge: callPlayer status "${result.status}"`,
         );
       }
-      if (result.finalText === undefined) {
+      const finalText = result.finalText ?? '';
+      if (isEmptyFinalText(finalText)) {
         throw new Error(
           'captainBridge: callPlayer returned status=ok with no finalText',
         );
@@ -776,7 +832,7 @@ export function createPlayerBridge(
         const output = await adjudicatePlayerOutput(
           spec.adjudication,
           input,
-          result.finalText,
+          finalText,
           ports,
           activeSignal,
           boundary,
@@ -1956,6 +2012,7 @@ export function createXStatePlaybookRuntime<TOptions>(
           // authoritative for the actor's error path even when the required
           // finish emission fails or a coincident boundary abort lands.
           let resultFailure: Error | undefined;
+          let emptyOkRetry = false;
           if (result.status !== 'ok') {
             resultFailure = markFsmResultFailure(
               new Error(
@@ -1963,12 +2020,13 @@ export function createXStatePlaybookRuntime<TOptions>(
                   `captainActor: callCaptain status "${result.status}"`,
               ),
             );
-          } else if (result.finalText === undefined || result.finalText === '') {
+          } else if (isEmptyFinalText(result.finalText)) {
             resultFailure = markFsmResultFailure(
               new Error(
                 'captainActor: callCaptain returned status=ok with no finalText',
               ),
             );
+            emptyOkRetry = true;
           }
           try {
             await emitTrace(
@@ -1990,12 +2048,17 @@ export function createXStatePlaybookRuntime<TOptions>(
           } catch (error) {
             // Keep the finish-sink failure in the emission queue for public
             // cleanup evidence, but do not replace an authoritative result
-            // failure on the invoked actor's XState onError path.
+            // failure on the invoked actor's XState onError path. A failure
+            // thrown here is never marked re-askable: a rejecting finish
+            // sink stays a control-plane error with no corrective re-ask
+            // (PBRT-47).
             if (resultFailure !== undefined) throw resultFailure;
             throw error;
           }
           if (resultFailure !== undefined) {
-            throw resultFailure;
+            throw emptyOkRetry
+              ? markEmptyOkRetryFailure(resultFailure)
+              : resultFailure;
           }
           return result;
         }) as Promise<CaptainResult>;
@@ -2041,19 +2104,31 @@ export function createXStatePlaybookRuntime<TOptions>(
           try {
             await drainEmissions();
             const prompt = composeCaptainPrompt(input);
-            const result = await boundary.callCaptain!(input, prompt, active);
+            let result: CaptainResult;
+            try {
+              result = await boundary.callCaptain!(input, prompt, active);
+            } catch (error) {
+              if (!isEmptyOkRetryFailure(error)) throw error;
+              // DR-028: exactly one corrective re-ask of the same composed
+              // call through the same boundary, traced as its own
+              // started/finished pair, its result read under the unchanged
+              // rules — a second empty `ok` result throws from the boundary
+              // exactly as the first did, with no further re-ask.
+              result = await boundary.callCaptain!(input, prompt, active);
+            }
             // The boundary owns result validation (PBRT-47) and throws the
             // authoritative failure itself, so a returned result is always
             // `ok` with visible text. Assert that invariant rather than
             // restating the failure semantics, which would drift.
-            if (result.status !== 'ok' || !result.finalText) {
+            const finalText = result.finalText ?? '';
+            if (result.status !== 'ok' || isEmptyFinalText(finalText)) {
               throw new Error(
                 'captainActor: boundary returned an unvalidated Captain result',
               );
             }
             const judgePrompt = defaultBuildCaptainJudgePrompt(
               input,
-              result.finalText,
+              finalText,
             );
             const raw = await boundary.callJudge(
               'captain-output-adjudication',
@@ -2064,7 +2139,7 @@ export function createXStatePlaybookRuntime<TOptions>(
             const output = adjudicateCaptainOutput(
               extractFields,
               input,
-              result.finalText,
+              finalText,
               raw,
             );
             validateBossReplyOutput(input, output, resumableStateIds);

@@ -240,6 +240,10 @@ type PlaybookCallStart =
 
 `PlayerResult` mirrors the status, resume token, final text, and error fields of cligent's `PlayerRunResult` ([TMUX-033](https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033)).
 The runtime treats `status !== 'ok'` as a player failure and routes it through the FSM's error path (§Abort).
+An `ok` player result whose `finalText` is missing, empty, or whitespace-only
+earns exactly one corrective re-ask: the same player call repeated under the
+stored resume selection, traced as its own player-call pair, before a second
+such result routes through the same error path.
 
 `callCaptain` runs a direct-Captain FSM actor against the host's Captain
 agent. The linked runtime shall pass
@@ -257,9 +261,13 @@ array requests a tool-free call, while omission preserves the host Captain's
 configured tools.
 `CaptainResult` carries no resume token or player-continuation selection.
 A non-`ok`
-result, or an `ok` result without non-empty `finalText`, shall record that
-failure on the call's single finish trace and reject the actor through the
-FSM's error path. These structured host-result failures are recoverable
+result, or an `ok` result whose `finalText` is missing, empty, or
+whitespace-only, shall record that failure on the call's single finish trace.
+A non-`ok` result shall then reject the actor through the FSM's error path
+with no corrective re-ask; an empty `ok` result shall first earn exactly one
+corrective re-ask — the same call repeated, traced as its own
+started/finished pair — and only a second such result shall reject the actor
+the same way. These structured host-result failures are recoverable
 workflow failures, not control-plane failures: the runtime shall let the actor
 take `onError`, drive it to quiescence, drain ordered emissions, and resolve
 the public method with `{ outcome: 'failed' }` carrying the failure state's
@@ -400,8 +408,11 @@ judge `purpose` is
 `{ name, message, stack? }` rather than a raw string or `Error` instance.
 The Captain finish payload shall preserve the exact `CaptainResult` status and
 final text when present, while carrying any failure in normalized form.
-An `ok` result without `finalText` therefore retains status `ok` but also
-carries the normalized missing-text failure that makes the actor reject.
+An `ok` result without non-empty `finalText` therefore retains status `ok` but
+also carries the normalized missing-text failure; the corrective re-ask that
+follows (§PlaybookPorts contract) traces as its own started/finished pair, and,
+when that corrective call happens, only a second such finish makes the actor
+reject.
 If the Captain port rejects before returning a result, the finish instead
 carries explicit `status: 'aborted'` when the combined signal has aborted or
 `status: 'error'` otherwise. A finish boundary never omits status merely

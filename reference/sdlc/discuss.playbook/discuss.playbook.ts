@@ -713,6 +713,14 @@ function normalizeErrorFull(
   return err === undefined || err === null ? undefined : normalizeError(err);
 }
 
+// DR-028's unified empty predicate: a missing, empty, or whitespace-only
+// `finalText` on an `ok` player result is the one shape that earns exactly
+// one corrective re-ask before the existing failure path applies. Mirrors
+// the shared engine's predicate (PBRT-9).
+function isEmptyFinalText(finalText: string | undefined): boolean {
+  return finalText === undefined || finalText.trim().length === 0;
+}
+
 function isAbortFailure(error: unknown, signal: AbortSignal): boolean {
   if (!signal.aborted) return false;
   if (Object.is(error, signal.reason)) return true;
@@ -1263,7 +1271,19 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       }
       combined.throwIfAborted();
 
-      const { playerId, result } = await callPlayer(input, combined);
+      let { playerId, result } = await callPlayer(input, combined);
+      if (result.status === 'ok' && isEmptyFinalText(result.finalText)) {
+        // DR-028: an `ok` result whose finalText is missing, empty, or
+        // whitespace-only earns exactly one corrective re-ask — the same
+        // composed call repeated, traced by runPlayerCall as its own
+        // player-call pair, with the resume selection re-read from the
+        // token map the first result left (PBRT-38). An abort that lands
+        // between the two calls ends the turn without the re-ask (aborts
+        // are never retried), and a rejecting finish emission rejects
+        // `callPlayer` itself, so it never reaches this branch (PBRT-47).
+        combined.throwIfAborted();
+        ({ playerId, result } = await callPlayer(input, combined));
+      }
       if (result.status !== 'ok') {
         throw new Error(
           `player "${playerId}" returned status "${result.status}"${
@@ -1271,7 +1291,8 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           }`,
         );
       }
-      if (result.finalText === undefined) {
+      const finalText = result.finalText ?? '';
+      if (isEmptyFinalText(finalText)) {
         throw new Error(
           `player "${playerId}" returned status "ok" with no finalText`,
         );
@@ -1279,7 +1300,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       combined.throwIfAborted();
 
       try {
-        const prompt = buildAdjudicatorPrompt(input, result.finalText);
+        const prompt = buildAdjudicatorPrompt(input, finalText);
         return parseAdjudication(
           await callJudge(
             prompt,

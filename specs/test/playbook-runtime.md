@@ -147,11 +147,16 @@ under fake ports, the test suite shall fail unless:
 - the adjudicator prompt identifies hidden control work, prohibits tool use,
   file inspection, and external evidence, and requires exactly one JSON object
   with no prose;
-- `PlayerResult` `status='ok'` with `finalText` advances the FSM
-  through `onDone`;
-- `status='ok'` without `finalText`, `status='aborted'`, and
-  `status='error'` each route the FSM to the failure state
-  through `onError`;
+- `PlayerResult` `status='ok'` with non-empty `finalText` advances
+  the FSM through `onDone`;
+- `status='aborted'` and `status='error'` each route the FSM to
+  the failure state through `onError` with no repeated
+  `callPlayer` call;
+- `status='ok'` without non-empty `finalText` routes the FSM to
+  the failure state through `onError` only after the single
+  corrective re-ask of
+  [PBRT-9](../dev/playbook-runtime.md#pbrt-9) returns a second
+  such result;
 - a `callJudge` reply that is malformed JSON, names an undeclared
   guard, or omits a required extracted (non-verbatim) payload
   field — for example `taskDescription` on `taskReady` or
@@ -163,6 +168,30 @@ under fake ports, the test suite shall fail unless:
   substitutes the player's `finalText.trim()` into that field
   and the FSM advances; any judge-supplied value for those
   fields is overwritten by the verbatim text.
+
+### PBRT-51
+
+Verifies: [PBRT-9](../dev/playbook-runtime.md#pbrt-9), [PBRT-47](../dev/playbook-runtime.md#pbrt-47)
+
+When the delegated-player bridge and the direct-Captain actor are
+each driven under fake ports whose scripted first result is an
+`ok` result with missing, `''`, or whitespace-only `finalText` —
+or, for the final bullet, an `aborted` or `error` result — the
+test suite shall fail unless:
+
+- a second scripted `ok` result with non-empty `finalText` lets
+  the turn recover after exactly two host calls — the player path
+  adjudicates the second text and advances through `onDone`, and
+  the direct-Captain path resolves the second result — with each
+  call traced as its own started/finished pair;
+- a second scripted empty result routes the FSM to the failure
+  state through `onError` after exactly two host calls, and
+  `handleBossInput` resolves the structured `failed` outcome
+  rather than rejecting;
+- both boundaries treat `''` and whitespace-only `finalText`
+  exactly like a missing `finalText`;
+- a first `status='aborted'` or `status='error'` result triggers
+  no second host call.
 
 ### PBRT-49
 

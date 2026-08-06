@@ -1348,9 +1348,13 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     expect(judgeCalls[1]).toContain('needsBossInput');
   });
 
-  it('lands at #failed when callPlayer returns status="aborted"', async () => {
+  it('lands at #failed when callPlayer returns status="aborted", with no repeated call', async () => {
+    let playerCalls = 0;
     const ports = makeFakePorts({
-      callPlayer: async () => ({ status: 'aborted', error: 'host signal' }),
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'aborted', error: 'host signal' };
+      },
     });
     const actor = buildActor(ports);
     actor.start();
@@ -1359,11 +1363,16 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     await settleAt(actor, ['failed', 'ready', 'done']);
 
     expect(actor.getSnapshot().value).toBe('failed');
+    expect(playerCalls).toBe(1);
   });
 
-  it('lands at #failed when callPlayer returns status="error"', async () => {
+  it('lands at #failed when callPlayer returns status="error", with no repeated call', async () => {
+    let playerCalls = 0;
     const ports = makeFakePorts({
-      callPlayer: async () => ({ status: 'error', error: 'player crashed' }),
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'error', error: 'player crashed' };
+      },
     });
     const actor = buildActor(ports);
     actor.start();
@@ -1372,6 +1381,7 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     await settleAt(actor, ['failed', 'ready', 'done']);
 
     expect(actor.getSnapshot().value).toBe('failed');
+    expect(playerCalls).toBe(1);
   });
 
   it('combines invocation and public-boundary cancellation', async () => {
@@ -1409,9 +1419,15 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     expect(boundaryController.signal.aborted).toBe(false);
   });
 
-  it('lands at #failed when callPlayer returns status="ok" with no finalText', async () => {
+  it('lands at #failed after exactly one corrective re-ask when callPlayer keeps returning status="ok" with no finalText', async () => {
+    // DR-028 / PBRT-9: the empty `ok` shape earns one re-ask of the same
+    // call; a second empty result follows the existing failure path.
+    let playerCalls = 0;
     const ports = makeFakePorts({
-      callPlayer: async () => ({ status: 'ok' }),
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'ok' };
+      },
     });
     const actor = buildActor(ports);
     actor.start();
@@ -1420,6 +1436,34 @@ describe('captainBridge (DR-004 §7) — actor end-to-end', () => {
     await settleAt(actor, ['failed', 'ready', 'done']);
 
     expect(actor.getSnapshot().value).toBe('failed');
+    expect(playerCalls).toBe(2);
+  });
+
+  it('recovers the original incident shape when the corrective re-ask returns the finalText (DR-028)', async () => {
+    // The incident: an adapter legally returned status=ok with no finalText
+    // and the whole turn failed. One corrective re-ask now recovers it.
+    let playerCalls = 0;
+    const ports = makeFakePorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'ok' }
+          : { status: 'ok', finalText: 'Progress noted.' };
+      },
+      callJudge: judgeSequence([
+        { guard: 'singleCommitReady' },
+        { guard: 'needsBossInput' },
+      ]),
+    });
+    const actor = buildActor(ports);
+    actor.start();
+    actor.send({ type: 'START_CODING', intent: 'add a button' });
+
+    await settleAt(actor, ['ready', 'failed', 'done']);
+
+    expect(actor.getSnapshot().value).toBe('ready');
+    // Call 1 empty, call 2 the corrective re-ask, call 3 the Committer.
+    expect(playerCalls).toBe(3);
   });
 
   it('lands at #failed when callJudge returns malformed JSON', async () => {

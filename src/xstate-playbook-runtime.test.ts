@@ -986,6 +986,8 @@ describe('direct-Captain actor over the shared factory', () => {
   // failure, not a control-plane error. It routes through the invoked actor's
   // XState error path to the failure state and resolves `failed`, exactly as
   // the delegated-player boundary does for the same class of host failure.
+  // A non-`ok` status is never re-asked (DR-028 / PBRT-51): exactly one
+  // host call happens.
   it.each([
     [
       'non-ok result',
@@ -997,18 +999,21 @@ describe('direct-Captain actor over the shared factory', () => {
       { status: 'aborted' as const },
       /callCaptain status "aborted"/,
     ],
-    ['missing finalText', { status: 'ok' as const }, /no finalText/],
-    ['empty finalText', { status: 'ok' as const, finalText: '' }, /no finalText/],
   ])(
-    'routes a %s to the FSM failure state instead of rejecting',
+    'routes a %s to the FSM failure state instead of rejecting, with no second call',
     async (_label, captainResult, error) => {
+      let captainCalls = 0;
       const { ports, telemetry } = makeRecordingPorts({
-        callCaptain: async () => captainResult,
+        callCaptain: async () => {
+          captainCalls += 1;
+          return captainResult;
+        },
       });
       const runtime = createCaptainRuntime({});
       await runtime.init(makeSession(ports));
       const result = await runtime.handleBossInput(turn('release timing'));
 
+      expect(captainCalls).toBe(1);
       expect(result.outcome).toBe('failed');
       expect(result.state.stateId).toBe('failed');
       expect('error' in result ? result.error : undefined).toMatchObject({
@@ -1255,6 +1260,312 @@ describe('direct-Captain actor over the shared factory', () => {
     ]);
     await restored.dispose();
     await first.dispose();
+  });
+});
+
+// DR-028 / PBRT-51: an `ok` result whose finalText is missing, empty, or
+// whitespace-only earns exactly one corrective re-ask of the same composed
+// call through the same boundary — its own traced started/finished pair —
+// before a second such result follows the existing failure path. The three
+// variants are one empty predicate at both boundaries.
+const EMPTY_FINAL_TEXT_VARIANTS: ReadonlyArray<[string, string | undefined]> = [
+  ['missing', undefined],
+  ['empty-string', ''],
+  ['whitespace-only', ' \n\t '],
+];
+
+describe('empty ok Captain result corrective re-ask (DR-028 / PBRT-51)', () => {
+  it.each(EMPTY_FINAL_TEXT_VARIANTS)(
+    'recovers a %s finalText through exactly one re-ask of the same call',
+    async (_label, emptyText) => {
+      let captainCalls = 0;
+      const prompts: string[] = [];
+      const { ports, telemetry } = makeRecordingPorts({
+        callCaptain: async (prompt) => {
+          captainCalls += 1;
+          prompts.push(prompt);
+          if (captainCalls === 1) {
+            return emptyText === undefined
+              ? { status: 'ok' }
+              : { status: 'ok', finalText: emptyText };
+          }
+          return { status: 'ok', finalText: 'Ship it on Tuesday.' };
+        },
+        callJudge: async () => '{"guard":"final"}',
+      });
+      const runtime = createCaptainRuntime({});
+      await runtime.init(makeSession(ports));
+      const result = await runtime.handleBossInput(turn('release timing'));
+
+      expect(captainCalls).toBe(2);
+      expect(prompts[1]).toBe(prompts[0]);
+      expect(result.outcome).toBe('terminal');
+      expect('output' in result ? result.output : undefined).toEqual({
+        response: 'Ship it on Tuesday.',
+      });
+      const captainTraces = telemetry
+        .map(
+          ({ payload }) =>
+            payload as {
+              type?: string;
+              callId?: string;
+              payload?: Record<string, unknown>;
+            },
+        )
+        .filter(
+          (event) =>
+            event.type === 'captain.call.started' ||
+            event.type === 'captain.call.finished',
+        );
+      // Each call traces as its own started/finished pair.
+      expect(
+        captainTraces.map(({ type, callId }) => ({ type, callId })),
+      ).toEqual([
+        { type: 'captain.call.started', callId: 'captain-1' },
+        { type: 'captain.call.finished', callId: 'captain-1' },
+        { type: 'captain.call.started', callId: 'captain-2' },
+        { type: 'captain.call.finished', callId: 'captain-2' },
+      ]);
+      // The first call's single finish records the empty-result failure;
+      // the second is the ordinary success finish.
+      expect(captainTraces[1]?.payload).toMatchObject({
+        status: 'ok',
+        error: {
+          name: 'Error',
+          message: expect.stringMatching(/no finalText/) as unknown as string,
+        },
+      });
+      expect(captainTraces[3]?.payload).toMatchObject({
+        status: 'ok',
+        finalText: 'Ship it on Tuesday.',
+      });
+      expect(captainTraces[3]?.payload).not.toHaveProperty('error');
+      await runtime.dispose();
+    },
+  );
+
+  it.each(EMPTY_FINAL_TEXT_VARIANTS)(
+    'routes a second %s finalText to the failure state after exactly two calls',
+    async (_label, emptyText) => {
+      let captainCalls = 0;
+      const { ports, telemetry } = makeRecordingPorts({
+        callCaptain: async () => {
+          captainCalls += 1;
+          return emptyText === undefined
+            ? { status: 'ok' }
+            : { status: 'ok', finalText: emptyText };
+        },
+      });
+      const runtime = createCaptainRuntime({});
+      await runtime.init(makeSession(ports));
+      const result = await runtime.handleBossInput(turn('release timing'));
+
+      expect(captainCalls).toBe(2);
+      expect(result.outcome).toBe('failed');
+      expect(result.state.stateId).toBe('failed');
+      expect('error' in result ? result.error : undefined).toMatchObject({
+        name: 'Error',
+        message: expect.stringMatching(/no finalText/) as unknown as string,
+      });
+      const finishes = telemetry
+        .map(({ payload }) => payload as { type?: string; payload?: unknown })
+        .filter((event) => event.type === 'captain.call.finished');
+      expect(finishes).toHaveLength(2);
+      for (const finish of finishes) {
+        expect(finish.payload).toMatchObject({
+          status: 'ok',
+          error: { name: 'Error' },
+        });
+      }
+      await runtime.dispose();
+    },
+  );
+
+  it('issues no corrective re-ask when the empty result finish sink rejects', async () => {
+    let captainCalls = 0;
+    const { ports, statuses } = makeRecordingPorts({
+      callCaptain: async () => {
+        captainCalls += 1;
+        return { status: 'ok' };
+      },
+      emitTelemetry: async (event) => {
+        const trace = event.payload as { type?: string };
+        if (trace.type === 'captain.call.finished') {
+          throw new Error('finish sink failed');
+        }
+      },
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    // The rejecting sink stays the control-plane error the public boundary
+    // surfaces; the host-result failure stays the failure state's evidence
+    // and earns no second host call (PBRT-47).
+    await expect(
+      runtime.handleBossInput(turn('release timing')),
+    ).rejects.toThrow('finish sink failed');
+    expect(captainCalls).toBe(1);
+    expect(
+      statuses.find(({ message }) => message.startsWith('Workflow failed;')),
+    ).toMatchObject({
+      data: {
+        lastError: {
+          message: expect.stringMatching(/no finalText/) as unknown as string,
+        },
+      },
+    });
+    await runtime.dispose();
+  });
+});
+
+describe('empty ok player result corrective re-ask (DR-028 / PBRT-51)', () => {
+  it.each(EMPTY_FINAL_TEXT_VARIANTS)(
+    'recovers a %s finalText with the resume selection the first result left',
+    async (_label, emptyText) => {
+      const playerCalls: Array<{ prompt: string; resume: string | false }> = [];
+      const { ports, telemetry } = makeRecordingPorts({
+        callPlayer: async (_playerId, prompt, _signal, options) => {
+          playerCalls.push({ prompt, resume: options.resume });
+          if (playerCalls.length === 1) {
+            return {
+              status: 'ok',
+              ...(emptyText === undefined ? {} : { finalText: emptyText }),
+              resumeToken: 'tok-1',
+            };
+          }
+          return { status: 'ok', finalText: 'All done, boss.' };
+        },
+        callJudge: async () => '{"guard":"implemented","summary":"shipped"}',
+      });
+      const runtime = createWorkflowRuntime({});
+      await runtime.init(makeSession(ports));
+      const result = await runtime.handleBossInput(turn('build the widget'));
+
+      expect(result.outcome).toBe('terminal');
+      expect(playerCalls).toHaveLength(2);
+      // The same composed call, repeated — and the corrective call continues
+      // the player session the first result left (PBRT-38 token adoption).
+      expect(playerCalls[1].prompt).toBe(playerCalls[0].prompt);
+      expect(playerCalls[0].resume).toBe(false);
+      expect(playerCalls[1].resume).toBe('tok-1');
+      const playerTraces = telemetry
+        .map(({ payload }) => payload as { type?: string; callId?: string })
+        .filter(
+          (event) =>
+            event.type === 'player.call.started' ||
+            event.type === 'player.call.finished',
+        );
+      // Each call traces as its own started/finished pair.
+      expect(
+        playerTraces.map(({ type, callId }) => ({ type, callId })),
+      ).toEqual([
+        { type: 'player.call.started', callId: 'player-1' },
+        { type: 'player.call.finished', callId: 'player-1' },
+        { type: 'player.call.started', callId: 'player-2' },
+        { type: 'player.call.finished', callId: 'player-2' },
+      ]);
+      await runtime.dispose();
+    },
+  );
+
+  it('starts the corrective call fresh when the first result cleared the token', async () => {
+    const resumes: Array<string | false> = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, _prompt, _signal, options) => {
+        resumes.push(options.resume);
+        return resumes.length === 1
+          ? { status: 'ok', finalText: '' }
+          : { status: 'ok', finalText: 'All done, boss.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"shipped"}',
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('build the widget'));
+
+    expect(result.outcome).toBe('terminal');
+    expect(resumes).toEqual([false, false]);
+    await runtime.dispose();
+  });
+
+  it.each(EMPTY_FINAL_TEXT_VARIANTS)(
+    'resolves the failed outcome after a second %s finalText',
+    async (_label, emptyText) => {
+      let playerCalls = 0;
+      const { ports } = makeRecordingPorts({
+        callPlayer: async () => {
+          playerCalls += 1;
+          return emptyText === undefined
+            ? { status: 'ok' }
+            : { status: 'ok', finalText: emptyText };
+        },
+      });
+      const runtime = createWorkflowRuntime({});
+      await runtime.init(makeSession(ports));
+      const result = await runtime.handleBossInput(turn('build the widget'));
+
+      expect(playerCalls).toBe(2);
+      expect(result.outcome).toBe('failed');
+      expect(result.state.stateId).toBe('failed');
+      expect('error' in result ? result.error : undefined).toMatchObject({
+        message: expect.stringMatching(/no finalText/) as unknown as string,
+      });
+      await runtime.dispose();
+    },
+  );
+
+  it.each([
+    ['aborted', { status: 'aborted' as const }],
+    ['error', { status: 'error' as const, error: 'player crashed' }],
+  ])('makes no second call after a first %s result', async (_label, first) => {
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return first;
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('build the widget'));
+
+    expect(playerCalls).toBe(1);
+    expect(result.outcome).toBe('failed');
+    expect(result.state.stateId).toBe('failed');
+    await runtime.dispose();
+  });
+
+  it('skips the corrective re-ask when the boundary abort lands on the empty first result', async () => {
+    // Aborts are never retried (DR-028 via DR-025's transport exclusion):
+    // an abort fired from the first call's own finish sink must end the
+    // turn as abort settlement after exactly one host call, matching the
+    // direct-Captain boundary's queue-start signal check.
+    const controller = new AbortController();
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'ok', finalText: '' };
+      },
+      emitTelemetry: async (event) => {
+        const trace = event.payload as { type?: string };
+        if (
+          event.topic === 'playbook.trace' &&
+          trace.type === 'player.call.finished'
+        ) {
+          controller.abort(new Error('stop before the re-ask'));
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput({
+      text: 'build the widget',
+      signal: controller.signal,
+    });
+
+    expect(playerCalls).toBe(1);
+    expect(result.outcome).toBe('aborted');
+    await runtime.dispose();
   });
 });
 

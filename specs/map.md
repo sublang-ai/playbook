@@ -90,6 +90,7 @@ meta.md     The spec of specs
 | IR-032 | [032-conversational-first-turn-resilience.md](iterations/032-conversational-first-turn-resilience.md) | Implement DR-025: `defaultBuildCaptainJudgePrompt` exported and reused by the compiled Captain, the corrective adjudication re-ask, internal-root failure disposal in the shell, and their integration tests |
 | IR-033 | [033-optional-adapter-sdks.md](iterations/033-optional-adapter-sdks.md) | Implement DR-026: move both adapter SDKs to optional peers plus devDependencies, add the launcher and `run` SDK preflight with named install remedies, and re-aim the release smoke at the lean and opted-in global install shapes |
 | IR-034 | [034-runtime-compatibility-from-cligent.md](iterations/034-runtime-compatibility-from-cligent.md) | Implement DR-027: descriptor-derived gate with per-runtime verdicts and pinned repairs, drop the peer-range mirror, and end `gemini`'s exemption |
+| IR-035 | [035-empty-ok-result-re-ask.md](iterations/035-empty-ok-result-re-ask.md) | Implement DR-028: one corrective re-ask on an empty `ok` player or direct-Captain result under the unified empty predicate, with per-call trace pairs, PBRT-38 resume selection, and the PBRT-51 integration tests |
 
 ## Packages
 
@@ -135,8 +136,8 @@ meta.md     The spec of specs
 | Group | File | Summary |
 | --- | --- | --- |
 | user | [playbook-runtime.md](user/playbook-runtime.md) | CODE Boss surface after a turn reaches CODE: free-text classification, `awaitBossReply` reply-vs-directive behavior, Captain-pane progress, and tmux-play host configuration through `@sublang/playbook/playbook-captain` with host-owned fields such as notifications, namespaced `code-coder`/`code-reviewer` binding, plus CODE options under `captain.options.playbooks.code.options` and the Committer alias |
-| dev | [playbook-runtime.md](dev/playbook-runtime.md) | Linked runtime behavior: six host-agnostic ports including direct Captain, causal sessions, Captain/player/judge/nested traces, continuation, constrained DISCUSS review-scope adjudication, XState parallel joins and structured state, nested call/resume, abort, telemetry, the optional parked-session snapshot capability, the engine compatibility self-report with the `spec.compat` construction check, and the public contract |
-| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for six-port identity, Captain/player/judge traces and abort, continuation, constrained DISCUSS review-scope adjudication, parallel DISCUSS and branch waits, structured state, nested call/resume, parked-session snapshot round trips, lifecycle, and registry wiring |
+| dev | [playbook-runtime.md](dev/playbook-runtime.md) | Linked runtime behavior: six host-agnostic ports including direct Captain, causal sessions, Captain/player/judge/nested traces, continuation, the single empty-result corrective re-ask at the player and direct-Captain boundaries, constrained DISCUSS review-scope adjudication, XState parallel joins and structured state, nested call/resume, abort, telemetry, the optional parked-session snapshot capability, the engine compatibility self-report with the `spec.compat` construction check, and the public contract |
+| test | [playbook-runtime.md](test/playbook-runtime.md) | Integration tests for six-port identity, Captain/player/judge traces and abort, continuation, empty-result re-ask recovery at both boundaries, constrained DISCUSS review-scope adjudication, parallel DISCUSS and branch waits, structured state, nested call/resume, parked-session snapshot round trips, lifecycle, and registry wiring |
 
 ### PLAYBOOK
 

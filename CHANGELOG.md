@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A transient empty agent reply no longer costs the whole turn.** cligent keeps `PlayerRunResult.finalText` optional, so any adapter may legally return `status: 'ok'` with no text; the engine previously failed the turn at once (`captainBridge: callPlayer returned status=ok with no finalText`), and its two call boundaries disagreed on whether `''` counted as empty. The delegated-player bridge and the direct-Captain boundary now treat a missing, empty, or whitespace-only `finalText` under one shared predicate and re-issue the same call exactly once — the corrective call traced as its own started/finished pair, a corrective player call continuing the player session under the stored resume selection — before a second such result follows the existing failure path unchanged. The linked DISCUSS reference runtime applies the same predicate and re-ask at its player boundary. Non-`ok` results, thrown calls, aborts, and rejecting finish-trace sinks are never retried ([DR-028](specs/decisions/028-empty-ok-result-re-ask.md), [IR-035](specs/iterations/035-empty-ok-result-re-ask.md), [PBRT-9](specs/dev/playbook-runtime.md#pbrt-9), [PBRT-47](specs/dev/playbook-runtime.md#pbrt-47), [PBRT-23](specs/test/playbook-runtime.md#pbrt-23), [PBRT-51](specs/test/playbook-runtime.md#pbrt-51)).
+
 ## [4.0.0] - 2026-08-05
 
 ### Changed
