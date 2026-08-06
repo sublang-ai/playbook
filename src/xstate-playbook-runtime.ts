@@ -1055,8 +1055,11 @@ export function stateDescriptionsFromMachine(
 /**
  * First configured target of `eventType` from the state with `stateId`,
  * falling back to the machine root's own transitions. Used only to pick the
- * source description that labels a retry action, so guard selection order is
- * irrelevant — any declared target names what the replay re-enters.
+ * source description that labels a retry action, and only for events that
+ * carry no recorded `targetId`: a guarded multi-arm list keyed on the
+ * event's `targetId` (the root `BOSS_INTERRUPT` shape) resumes the recorded
+ * target, not the first configured arm, so the recorded event outranks this
+ * fallback.
  */
 function firstTransitionTarget(
   machine: AnyStateMachine,
@@ -1911,6 +1914,11 @@ export function createXStatePlaybookRuntime<TOptions>(
 
           let rawResult: unknown;
           try {
+            // An abort may land while the awaited started emission drains
+            // (e.g. fired from the trace sink itself); the host call must
+            // never start after abort, so settle the already-started pair
+            // as `aborted` through the catch below.
+            signal.throwIfAborted();
             rawResult = await requireHostPorts().callPlayer(
               playerId,
               prompt,
@@ -2012,6 +2020,11 @@ export function createXStatePlaybookRuntime<TOptions>(
           );
           let reply: unknown;
           try {
+            // An abort may land while the awaited started emission drains
+            // (e.g. fired from the trace sink itself); the host call must
+            // never start after abort, so settle the already-started pair
+            // as `aborted` through the catch below.
+            signal.throwIfAborted();
             reply = await requireHostPorts().callJudge(prompt, signal);
             signal.throwIfAborted();
           } catch (error) {
@@ -2084,6 +2097,11 @@ export function createXStatePlaybookRuntime<TOptions>(
           );
           let rawResult: unknown;
           try {
+            // An abort may land while the awaited started emission drains
+            // (e.g. fired from the trace sink itself); the host call must
+            // never start after abort, so settle the already-started pair
+            // as `aborted` through the catch below.
+            signal.throwIfAborted();
             rawResult = await requireHostPorts().callCaptain(prompt, signal, {
               visibility: 'visible',
               resume: false,
@@ -2711,11 +2729,20 @@ export function createXStatePlaybookRuntime<TOptions>(
         return undefined;
       }
       if (!snapshotCan(snapshot, lastBossEvent)) return undefined;
-      const target = firstTransitionTarget(
-        machine,
-        stateId,
-        lastBossEvent.type,
-      );
+      // A recorded explicit-state-jump event names the exact state its
+      // replay re-enters: the root BOSS_INTERRUPT shape is a guarded
+      // multi-arm list keyed on `targetId`, so the first configured arm
+      // may label a different state than the one the recorded event
+      // actually resumes.
+      const recordedTargetId =
+        lastBossEvent.type === JUMP_EVENT_TYPE
+          ? (lastBossEvent as { targetId?: unknown }).targetId
+          : undefined;
+      const target =
+        typeof recordedTargetId === 'string' &&
+        recordedTargetId.trim().length > 0
+          ? recordedTargetId
+          : firstTransitionTarget(machine, stateId, lastBossEvent.type);
       const description =
         (target === undefined ? undefined : stateDescriptions.get(target)) ??
         target ??
@@ -3089,12 +3116,39 @@ export function createXStatePlaybookRuntime<TOptions>(
         let settlementError: unknown;
         try {
           try {
+            const identity = {
+              actionId,
+              key,
+              ...stateIdentity(currentState().stateId),
+            };
             await emitCallStarted(
               'apply.started',
               'apply.finished',
-              { actionId, key, ...stateIdentity(currentState().stateId) },
+              identity,
               position,
             );
+            // An abort may land while the awaited started emission drains
+            // (e.g. fired from the trace sink itself); the action must
+            // never execute after abort. Settle the already-started pair
+            // as `aborted` and end the call pre-acceptance: no receipt is
+            // recorded and the key stays free.
+            if (signal.aborted) {
+              try {
+                await emitTrace(
+                  'apply.finished',
+                  {
+                    ...identity,
+                    status: 'aborted',
+                    error: normalizeError(signal.reason),
+                  },
+                  position,
+                );
+              } catch {
+                // The abort remains authoritative over a rejecting finish
+                // sink.
+              }
+              signal.throwIfAborted();
+            }
             const snapshot = actor.getSnapshot();
             const candidate = deriveControlActions(snapshot).find(
               ({ action }) => action.id === actionId,

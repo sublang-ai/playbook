@@ -802,6 +802,55 @@ describe('player + script workflow over the shared factory', () => {
     expect(playerCalls).toBe(1);
     await runtime.dispose();
   });
+
+  it('makes no host judge call when abort lands during the judge.call.started emission', async () => {
+    // The queue-front signal checks cannot see an abort that fires while the
+    // classifier call's own `judge.call.started` emission drains. The
+    // boundary must settle that window as an ordinary abort — the pair
+    // finished `aborted` with zero host judge calls, the machine unmoved.
+    const controller = new AbortController();
+    let judgeCalls = 0;
+    let playerCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'error', error: 'agent unavailable' };
+      },
+      callJudge: async () => {
+        judgeCalls += 1;
+        return '{"type":"START"}';
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (trace.type === 'judge.call.started') {
+          controller.abort(new Error('stop inside the started emission'));
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const failed = await runtime.handleBossInput(turn('first try'));
+    expect(failed.state.stateId).toBe('failed');
+
+    const aborted = await runtime.handleBossInput({
+      text: 'try again',
+      signal: controller.signal,
+    });
+    expect(aborted.outcome).toBe('aborted');
+    expect(aborted.state.stateId).toBe('failed');
+    expect(judgeCalls).toBe(0);
+    expect(playerCalls).toBe(1);
+    const pair = traces.filter(({ type }) => type.startsWith('judge.call.'));
+    expect(pair.map(({ type }) => type)).toEqual([
+      'judge.call.started',
+      'judge.call.finished',
+    ]);
+    expect(pair[1].payload).toMatchObject({ status: 'aborted' });
+    await runtime.dispose();
+  });
 });
 
 interface CaptainOptions {
@@ -1422,6 +1471,49 @@ describe('empty ok Captain result corrective re-ask (DR-028 / PBRT-51)', () => {
     });
     await runtime.dispose();
   });
+
+  it('makes no second host call when abort lands during the corrective started emission', async () => {
+    // The queue-start signal check cannot see an abort that fires while the
+    // corrective call's own `captain.call.started` emission drains. The
+    // boundary must settle that window as an ordinary abort — the pair
+    // finished `aborted` after exactly one host call.
+    const controller = new AbortController();
+    let captainCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callCaptain: async () => {
+        captainCalls += 1;
+        return { status: 'ok' };
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (
+          trace.type === 'captain.call.started' &&
+          trace.callId === 'captain-2'
+        ) {
+          controller.abort(new Error('stop inside the started emission'));
+        }
+      },
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput({
+      text: 'release timing',
+      signal: controller.signal,
+    });
+
+    expect(captainCalls).toBe(1);
+    expect(result.outcome).toBe('aborted');
+    const corrective = traces.filter(({ callId }) => callId === 'captain-2');
+    expect(corrective.map(({ type }) => type)).toEqual([
+      'captain.call.started',
+      'captain.call.finished',
+    ]);
+    expect(corrective[1].payload).toMatchObject({ status: 'aborted' });
+    await runtime.dispose();
+  });
 });
 
 describe('empty ok player result corrective re-ask (DR-028 / PBRT-51)', () => {
@@ -1572,6 +1664,49 @@ describe('empty ok player result corrective re-ask (DR-028 / PBRT-51)', () => {
 
     expect(playerCalls).toBe(1);
     expect(result.outcome).toBe('aborted');
+    await runtime.dispose();
+  });
+
+  it('makes no second host call when abort lands during the corrective started emission', async () => {
+    // The pre-corrective signal check cannot see an abort that fires while
+    // the corrective call's own `player.call.started` emission drains. The
+    // boundary must settle that window as an ordinary abort — the pair
+    // finished `aborted` after exactly one host call.
+    const controller = new AbortController();
+    let playerCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'ok', finalText: '' };
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (
+          trace.type === 'player.call.started' &&
+          trace.callId === 'player-2'
+        ) {
+          controller.abort(new Error('stop inside the started emission'));
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput({
+      text: 'build the widget',
+      signal: controller.signal,
+    });
+
+    expect(playerCalls).toBe(1);
+    expect(result.outcome).toBe('aborted');
+    const corrective = traces.filter(({ callId }) => callId === 'player-2');
+    expect(corrective.map(({ type }) => type)).toEqual([
+      'player.call.started',
+      'player.call.finished',
+    ]);
+    expect(corrective[1].payload).toMatchObject({ status: 'aborted' });
     await runtime.dispose();
   });
 });
@@ -2550,6 +2685,68 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     await runtime.dispose();
   });
 
+  it('settles pre-acceptance when abort lands during the apply.started emission: no effect, no receipt', async () => {
+    // The pre-acceptance signal check runs before the started emission; an
+    // abort that fires while that emission drains must still settle before
+    // acceptance — the machine unmoved, no host call, no receipt recorded,
+    // the pair finished `aborted`, and the key free to execute later.
+    const controller = new AbortController();
+    let playerCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'error', error: 'agent crashed' }
+          : { status: 'ok', finalText: 'Recovered.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"recovered"}',
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (trace.type === 'apply.started') {
+          controller.abort(new Error('stop inside the started emission'));
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const failedRun = await runtime.handleBossInput(turn('build the widget'));
+    expect(failedRun.outcome).toBe('failed');
+    const machineBefore = runtime.exportSnapshot!()!.machine;
+
+    await expect(
+      runtime.apply!({
+        actionId: 'retry:START',
+        key: 'window-abort',
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('stop inside the started emission');
+
+    expect(playerCalls).toBe(1);
+    expect(runtime.describe!().state.stateId).toBe('failed');
+    expect(runtime.exportSnapshot!()!.machine).toEqual(machineBefore);
+    const pair = traces.filter(
+      ({ type }) => type === 'apply.started' || type === 'apply.finished',
+    );
+    expect(pair.map(({ type, callId }) => ({ type, callId }))).toEqual([
+      { type: 'apply.started', callId: 'apply-1' },
+      { type: 'apply.finished', callId: 'apply-1' },
+    ]);
+    expect(pair[1].payload).toMatchObject({ status: 'aborted' });
+    // No receipt was recorded, so the same key executes once the abort is
+    // gone.
+    const receipt = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'window-abort',
+      signal: sigOf(),
+    });
+    expect(receipt.disposition).toBe('executed');
+    expect(playerCalls).toBe(2);
+    await runtime.dispose();
+  });
+
   it('drives the real CODE runtime: ControlView at failed, receipt discrimination, and idempotent replay', async () => {
     const playerScript: PlayerResult[] = [
       { status: 'error', error: 'coder is down' },
@@ -2749,6 +2946,38 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
         ({ turnId }) => turnId !== undefined && applyTurnIds.has(turnId),
       ),
     ).toHaveLength(2);
+    await runtime.dispose();
+  });
+
+  it('labels the failure-state retry from the recorded BOSS_INTERRUPT targetId, not the first configured arm', async () => {
+    // CODE's root BOSS_INTERRUPT is a guarded multi-arm list whose first
+    // configured arm targets `ready`. The replay resumes the recorded
+    // event's own targetId, so the label must name that state's
+    // description — never the first arm's.
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'error', error: 'coder is down' };
+      },
+      callJudge: async () =>
+        '{"event":"BOSS_INTERRUPT","payload":{"targetId":"respondToReview"}}',
+    });
+    const runtime = createCodePlaybookRuntime({});
+    await runtime.init(makeSession(ports));
+    const failedRun = await runtime.handleBossInput(
+      turn('address the review findings'),
+    );
+    expect(failedRun.outcome).toBe('failed');
+    expect(playerCalls).toBe(1);
+
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('failed');
+    expect(view.actions[0]).toEqual({
+      id: 'retry:BOSS_INTERRUPT',
+      label:
+        'Retry: CODE-2: Coder addresses or challenges Reviewer findings.',
+    });
     await runtime.dispose();
   });
 

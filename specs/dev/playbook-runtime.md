@@ -369,6 +369,10 @@ take no synthetic FSM action: a cancelled player or direct-Captain call's
 failure propagates through its invoked actor and the FSM's error path to the
 failure state, whose `lastError` the runtime surfaces per
 [PBRT-14](#pbrt-14).
+A player, direct-Captain, or judge host call shall not start once its
+combined signal has aborted — including an abort that lands while that
+call's own started-trace emission drains: the already-started pair
+finishes `aborted` with no host call made.
 The runtime shall forward the XState playbook invocation's lifetime
 signal to `callPlaybook`; after a later child return it shall forward
 `resumePlaybookCall.signal` to any newly resumed player, Captain, or judge work.
@@ -792,7 +796,11 @@ state id whose explicit-state-jump event (`BOSS_INTERRUPT` with that
 `targetId` and optional textual fields omitted) the live snapshot
 accepts, guards included, it shall advertise `jump:<stateId>`. Each
 action shall carry a stable id and a label written from the source
-state descriptions; a candidate whose event requires a payload the
+state descriptions; a retry whose recorded event carries its own
+`targetId` (the explicit-state-jump shape) shall be labeled from that
+recorded target's description — the state its replay re-enters — never
+from another configured arm of a guarded transition list; a candidate
+whose event requires a payload the
 runtime cannot source from recorded state shall be excluded — `apply`
 shall never invent free text and shall never enter Boss-input
 classification.
@@ -814,7 +822,11 @@ against the live state, traces its own pair, and may execute once the
 action is advertised — while a call that threw before acceptance
 (lifecycle misuse, invalid input, a pre-acceptance abort, or a rejected
 start sink) shall likewise record nothing, so a later call with that
-key may execute. `apply`
+key may execute.
+An abort that lands while the `apply.started` emission drains shall
+settle before acceptance — no execution, no receipt, the machine
+unmoved — with the pair finished `aborted` carrying the abort's
+normalized error and no disposition. `apply`
 shall share the single active-boundary sentinel with `handleBossInput`
 and `resumePlaybookCall`, shall honor its `AbortSignal` exactly as a
 Boss-turn signal, and shall trace as the paired `apply.started` /

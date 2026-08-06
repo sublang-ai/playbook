@@ -37,6 +37,10 @@ with `lastError` populated, the port-observed combined signal aborts, and the
 method waits for quiescence and paired emissions before returning. A deferred
 Captain call and deferred child opening shall prove that no later state,
 status, or trace mutation occurs after return.
+When the abort lands while a classifier judge call's own
+`judge.call.started` emission drains (fired from the trace sink), the
+suite shall fail unless no host judge call starts, the pair finishes
+`aborted`, the FSM stays unmoved, and the turn settles as an abort.
 
 ### PBRT-19
 
@@ -192,6 +196,10 @@ test suite shall fail unless:
   exactly like a missing `finalText`;
 - a first `status='aborted'` or `status='error'` result triggers
   no second host call;
+- an abort that lands while the corrective call's own started emission
+  drains (fired from the trace sink) triggers no second host call at
+  either boundary: the corrective pair finishes `aborted` and the turn
+  settles as an abort;
 - the corrective call's prompt is byte-equal to the first call's
   prompt, at both boundaries;
 - the corrective player call's resume selection follows
@@ -550,7 +558,10 @@ and the last error as `{ name, message }`-bearing normalized form.
 Action derivation shall fail unless: the real CODE runtime parked in
 `failed` advertises the `retry:<EVENT_TYPE>` action for the recorded
 last classified event with a label written from the source state
-description, plus the `jump:<stateId>` entries its live snapshot
+description — resolved for a recorded `BOSS_INTERRUPT` from the
+event's own `targetId` against the guarded multi-arm root transition,
+never from the first configured arm — plus the `jump:<stateId>`
+entries its live snapshot
 accepts; a recorded event the current state does not accept produces
 no retry entry; outside the failure state no retry entry appears; the
 real DISCUSS FSM at fresh `ready` excludes every context-conditional
@@ -569,7 +580,9 @@ mid-action settles `failed` with the normalized error while its
 effects stay visible in traces; and a repeated idempotency key returns
 the recorded receipt with exactly one execution in total.
 The suite shall also fail unless a key whose call threw before
-acceptance (a pre-aborted signal) records no receipt and may execute
+acceptance (a pre-aborted signal, or an abort landing while the
+`apply.started` emission drains — the machine unmoved, no host call,
+the pair finished `aborted`) records no receipt and may execute
 later; unless a key first settled `rejected` while its action was not
 advertised records no receipt and executes when re-applied after the
 action becomes advertisable, each of the two calls tracing its own
