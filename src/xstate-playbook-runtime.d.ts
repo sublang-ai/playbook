@@ -216,6 +216,12 @@ export declare function defaultBuildCaptainJudgePrompt(input: {
 /** Targets of the FSM's `awaitBossReply` BOSS_REPLY transitions. */
 export declare function resumableStateIdsFromMachine(machine: AnyStateMachine): ReadonlySet<string>;
 /**
+ * Source state descriptions by state key, node id, and `meta.playbook`
+ * state id, read from `machine.config`. Control actions are labeled from
+ * these descriptions (DR-029 §3); a state without one falls back to its id.
+ */
+export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): ReadonlyMap<string, string>;
+/**
  * Build a `PlaybookRuntimeFactory` that interprets the given FSM artifact
  * under the slc/link.md contract. The factory provides every actor kind the
  * machine declares — `player`, `script`, `captain`, and nested `playbook`

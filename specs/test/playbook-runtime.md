@@ -191,7 +191,13 @@ test suite shall fail unless:
 - both boundaries treat `''` and whitespace-only `finalText`
   exactly like a missing `finalText`;
 - a first `status='aborted'` or `status='error'` result triggers
-  no second host call.
+  no second host call;
+- the corrective call's prompt is byte-equal to the first call's
+  prompt, at both boundaries;
+- the corrective player call's resume selection follows
+  [PBRT-38](../dev/playbook-runtime.md#pbrt-38): it resumes the
+  token the empty result carried and starts fresh when that result
+  cleared the stored token.
 
 ### PBRT-49
 
@@ -521,3 +527,57 @@ active turn and after disposal; unless `restore` rejects a
 schema-version mismatch, a playbook-id mismatch, and an already
 initialized instance; and unless the DISCUSS linked runtime round-trips
 a parked branch question through the same export/restore surface.
+
+## Control surface
+
+### PBRT-53
+
+Verifies: [PBRT-52](../dev/playbook-runtime.md#pbrt-52)
+
+Where the integration suite drives shared-factory runtimes — synthetic
+workflow machines plus the real linked CODE runtime and the real
+DISCUSS FSM at the bare runtime surface, under fake ports with
+scripted per-call results — the test suite shall fail unless every
+factory-built runtime exposes `describe` and `apply` together, and
+unless both members throw before `init`, during an active boundary,
+and after disposal.
+The suite shall fail unless `describe()` is side-effect free (no
+trace, status, or telemetry; back-to-back views deep-equal; the
+machine snapshot unmoved) and its view carries the normalized state,
+the sanitized JSON-safe context with non-JSON-safe entries dropped and
+raw errors normalized, the pending Boss question with its stable id,
+and the last error as `{ name, message }`-bearing normalized form.
+Action derivation shall fail unless: the real CODE runtime parked in
+`failed` advertises the `retry:<EVENT_TYPE>` action for the recorded
+last classified event with a label written from the source state
+description, plus the `jump:<stateId>` entries its live snapshot
+accepts; a recorded event the current state does not accept produces
+no retry entry; outside the failure state no retry entry appears; the
+real DISCUSS FSM at fresh `ready` excludes every context-conditional
+jump target its guards refuse and excludes resumable-but-not-jumpable
+branch leaves, while a synthetic context-conditional target flips from
+excluded to included once the live context gains its required input;
+and jump events are sent with textual fields omitted, never with
+invented text (an applied retry replays the recorded payload with no
+classification call).
+Receipts shall fail unless the A29-17 engine-level twins hold against
+real `apply()`: an advertised retry from `failed` settles
+`executed` with the run result; the same `actionId` re-applied after
+the state moved on settles `rejected` with a reason before any effect
+— snapshot unchanged, zero player calls; a scripted player `error`
+mid-action settles `failed` with the normalized error while its
+effects stay visible in traces; and a repeated idempotency key returns
+the recorded receipt with exactly one execution in total.
+The suite shall also fail unless a key whose call threw before
+acceptance (a pre-aborted signal) records no receipt and may execute
+later; unless a key first settled `rejected` while its action was not
+advertised records no receipt and executes when re-applied after the
+action becomes advertisable, each of the two calls tracing its own
+pair; unless a crash between acceptance and settlement (a rejecting
+`apply.finished` sink) still records the receipt so the replayed key
+returns it without re-execution; unless an abort mid-execution settles
+a `failed` receipt whose error reflects the abort while the boundary
+drains cleanly; and unless every executed or rejected `apply` traces
+as one paired `apply.started`/`apply.finished` carrying the action id,
+idempotency key, and receipt disposition under a session-unique
+`apply-<n>` call id, with no new pair on a replayed key.

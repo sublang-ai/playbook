@@ -157,6 +157,8 @@ export type PlaybookTraceType =
   | 'captain.call.finished'
   | 'playbook.call.started'
   | 'playbook.call.finished'
+  | 'apply.started'
+  | 'apply.finished'
   | 'fsm.transition'
   | 'status.emitted'
   | 'boss.input.settled'
@@ -206,6 +208,33 @@ export interface PlaybookRuntimeSnapshot {
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
 }
 
+// DR-029 §3: one currently valid, runtime-advertised control action. The id
+// is stable within the returned view; the label is runtime-written,
+// Boss-appropriate text derived from source state descriptions.
+export interface PlaybookControlAction {
+  id: string;
+  label: string;
+}
+
+// DR-029 §3: the sanitized control view `describe()` returns — current
+// state, JSON-safe relevant context, pending Boss questions, the last
+// recorded error, and the currently valid actions.
+export interface PlaybookControlView {
+  state: PlaybookState;
+  context?: JsonValue;
+  pendingQuestions: readonly PlaybookPendingBossQuestion[];
+  lastError?: NormalizedError;
+  actions: readonly PlaybookControlAction[];
+}
+
+// DR-029 §3: the receipt `apply()` returns says which of three things
+// happened — rejected before any effect, executed with the settled run
+// result, or failed after effects may exist.
+export type PlaybookControlReceipt =
+  | { disposition: 'rejected'; reason: string }
+  | { disposition: 'executed'; run: PlaybookRunResult }
+  | { disposition: 'failed'; error: NormalizedError };
+
 export interface PlaybookRuntime {
   init(session: PlaybookSession): Promise<void>;
   // DR-014 §1 optional durable-session capability: a runtime implements
@@ -218,6 +247,18 @@ export interface PlaybookRuntime {
     session: PlaybookSession,
     snapshot: PlaybookRuntimeSnapshot,
   ): Promise<void>;
+  // DR-029 §3 optional control-surface capability: a runtime implements
+  // both members or neither. `describe` is side-effect free and valid at
+  // parked quiescence outside an active boundary; `apply` revalidates the
+  // named action against the live state, executes it at most once per
+  // idempotency key, and returns a receipt. A runtime lacking the pair
+  // advertises no actions; plain text delivery is the only verb against it.
+  describe?(): PlaybookControlView;
+  apply?(input: {
+    actionId: string;
+    key: string;
+    signal: AbortSignal;
+  }): Promise<PlaybookControlReceipt>;
   handleBossInput(turn: {
     text: string;
     signal: AbortSignal;

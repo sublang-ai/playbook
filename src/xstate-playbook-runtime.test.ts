@@ -12,23 +12,30 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assign, createMachine } from 'xstate';
+import { assign, createActor, createMachine, fromPromise, waitFor } from 'xstate';
 
 import type {
+  JsonValue,
   PlaybookPorts,
   PlaybookRunResult,
+  PlaybookRuntime,
   PlaybookSession,
+  PlaybookTraceEvent,
+  PlayerResult,
 } from './runtime.js';
 import {
   createXStatePlaybookRuntime,
   defaultComposeCaptainPrompt,
   defaultComposePlayerPrompt,
   defaultExtractRequiredFields,
+  normalizePlaybookSnapshot,
   resumableStateIdsFromMachine,
   RUNTIME_ABI,
   SUPPORTED_ARTIFACT_SCHEMAS,
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
+import createCodePlaybookRuntime from '../reference/sdlc/code.playbook/code.playbook.js';
+import { discussMachine } from '../reference/sdlc/discuss.playbook/discuss.fsm.js';
 
 const meta = (stateId: string) => ({
   playbook: { stateId, description: `${stateId} state` },
@@ -1868,5 +1875,953 @@ describe('runtime compatibility declaration (DR-022)', () => {
         } as unknown as { artifactSchema: number; runtimeAbi: number },
       }),
     ).toThrow(/spec\.compat\.runtimeAbi must be an integer/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DR-029 §3 control surface (PBRT-52 / PBRT-53): describe/apply over the
+// shared factory — synthetic workflow machines plus the real linked CODE
+// runtime and the real DISCUSS FSM at the bare runtime surface, under fake
+// ports with scripted per-call results.
+// ---------------------------------------------------------------------------
+
+function deferredValue<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function sigOf(): AbortSignal {
+  return new AbortController().signal;
+}
+
+function playbookTraces(
+  telemetry: RecordedTelemetry[],
+): PlaybookTraceEvent[] {
+  return telemetry
+    .filter(({ topic }) => topic === 'playbook.trace')
+    .map(({ payload }) => payload as PlaybookTraceEvent);
+}
+
+function applyTraces(telemetry: RecordedTelemetry[]): PlaybookTraceEvent[] {
+  return playbookTraces(telemetry).filter(
+    (event) =>
+      event.type === 'apply.started' || event.type === 'apply.finished',
+  );
+}
+
+// Synthetic machine with a context-conditional jump guard plus deliberately
+// non-JSON-safe context entries, for the PBRT-53 sanitize and
+// excluded-to-included flip rows.
+const conditionalMachine = createMachine({
+  id: 'cond',
+  context: () => ({
+    task: undefined as string | undefined,
+    note: new Error('kept note') as unknown,
+    probe: (() => true) as unknown,
+    lastError: undefined as unknown,
+  }),
+  initial: 'ready',
+  on: {
+    BOSS_INTERRUPT: {
+      guard: ({ context, event }) =>
+        (event as { targetId?: string }).targetId === 'implement' &&
+        context.task !== undefined,
+      target: '#cond-implement',
+      reenter: true,
+    },
+  },
+  states: {
+    ready: {
+      meta: meta('ready'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'implement',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+    implement: {
+      id: 'cond-implement',
+      meta: meta('implement'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'implement',
+          player: 'Coder',
+          sourceItem: 'CD-1',
+          prompt: 'Do: <task>',
+          task: context.task,
+          result: { done: 'Finished.' },
+        }),
+        onDone: { target: 'ready' },
+        onError: {
+          target: 'failed',
+          actions: assign({ lastError: ({ event }) => event.error }),
+        },
+      },
+    },
+    awaitBossReply: {
+      meta: meta('awaitBossReply'),
+      tags: ['playbook.parked'],
+      on: { BOSS_REPLY: { target: 'implement' } },
+    },
+    failed: {
+      meta: meta('failed'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'implement',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+          }),
+        },
+      },
+    },
+  },
+});
+
+const createConditionalRuntime = createXStatePlaybookRuntime(
+  conditionalMachine,
+  {
+    label: 'conditional',
+    snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+    machineInput: () => ({}),
+    entryEvent: { type: 'START', textField: 'task' },
+  },
+);
+
+// The real DISCUSS FSM at the bare runtime surface: the shared factory over
+// the compiled machine, registering the PBRT-40 category exemplars — a
+// resumable-but-not-jumpable branch leaf, two context-conditional jumpable
+// targets, and the context-conditional parallel parent.
+const createDiscussControlRuntime = createXStatePlaybookRuntime(
+  discussMachine,
+  {
+    label: 'discuss-control',
+    snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+    machineInput: () => ({}),
+    entryEvent: { type: 'START_DISCUSSION', textField: 'topic' },
+    resumableStateIds: new Set([
+      'askHostInitial',
+      'hostWritesAgreement',
+      'commitInitialChanges',
+      'initialProposalRound',
+    ]),
+  },
+);
+
+describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-53)', () => {
+  it('exposes describe and apply together on every factory runtime and detects a pair-less runtime distinctly', () => {
+    const factoryRuntimes: PlaybookRuntime[] = [
+      createWorkflowRuntime({}),
+      createConditionalRuntime({}),
+      createCodePlaybookRuntime({}),
+      createDiscussControlRuntime({}),
+    ];
+    for (const runtime of factoryRuntimes) {
+      expect(typeof runtime.describe).toBe('function');
+      expect(typeof runtime.apply).toBe('function');
+    }
+    // DR-022-style feature detection: the pair stays optional on the
+    // contract, so a capability-less runtime remains legal and reports the
+    // pair as absent — it advertises no actions and plain text delivery is
+    // the only verb against it.
+    const capabilityLess: PlaybookRuntime = {
+      init: async () => {},
+      handleBossInput: async () => {
+        throw new Error('unused');
+      },
+      resumePlaybookCall: async () => {
+        throw new Error('unused');
+      },
+      dispose: async () => {},
+    };
+    expect(capabilityLess.describe).toBeUndefined();
+    expect(capabilityLess.apply).toBeUndefined();
+  });
+
+  it('throws from describe and apply before init, during an active boundary, and after disposal', async () => {
+    const fresh = createWorkflowRuntime({});
+    expect(() => fresh.describe!()).toThrow(/init must be called first/);
+    await expect(
+      fresh.apply!({ actionId: 'jump:implement', key: 'k', signal: sigOf() }),
+    ).rejects.toThrow(/init must be called first/);
+
+    const playerStarted = deferredValue<void>();
+    const playerRelease = deferredValue<PlayerResult>();
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerStarted.resolve();
+        return playerRelease.promise;
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"done"}',
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const activeTurn = runtime.handleBossInput(turn('busy work'));
+    await playerStarted.promise;
+    expect(() => runtime.describe!()).toThrow(
+      /another runtime turn is active/,
+    );
+    await expect(
+      runtime.apply!({
+        actionId: 'jump:implement',
+        key: 'held',
+        signal: sigOf(),
+      }),
+    ).rejects.toThrow(/another runtime turn is active/);
+    playerRelease.resolve({ status: 'ok', finalText: 'done' });
+    await activeTurn;
+
+    // The rejected-by-lifecycle call reached no acceptance, so its key
+    // recorded nothing: a later call with it settles on the live state
+    // (rejected here — the machine is terminal) instead of replaying.
+    const receipt = await runtime.apply!({
+      actionId: 'jump:implement',
+      key: 'held',
+      signal: sigOf(),
+    });
+    expect(receipt.disposition).toBe('rejected');
+
+    await runtime.dispose();
+    expect(() => runtime.describe!()).toThrow(/disposing or disposed/);
+    await expect(
+      runtime.apply!({ actionId: 'jump:implement', key: 'k2', signal: sigOf() }),
+    ).rejects.toThrow(/disposing or disposed/);
+  });
+
+  it('describes side-effect free: view fields, pending question id, live jump derivation, unmoved machine', async () => {
+    let playerCalls = 0;
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'ok', finalText: 'Which database should I use?' };
+      },
+      callJudge: async () =>
+        '{"guard":"needsBossReply","question":"Which database?"}',
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+
+    // Parked at ready: the machine's own guards accept the jump, so it is
+    // advertised; no retry entry outside the failure state.
+    const atReady = runtime.describe!();
+    expect(atReady.state.stateId).toBe('ready');
+    expect(atReady.actions).toEqual([
+      { id: 'jump:implement', label: 'Resume from: implement state' },
+    ]);
+    expect(atReady.pendingQuestions).toEqual([]);
+    expect(atReady.lastError).toBeUndefined();
+
+    await runtime.handleBossInput(turn('build storage'));
+    const snapshotBefore = runtime.exportSnapshot!();
+    const statusCount = statuses.length;
+    const telemetryCount = telemetry.length;
+
+    const first = runtime.describe!();
+    const second = runtime.describe!();
+    expect(second).toEqual(first);
+    expect(Object.isFrozen(first)).toBe(true);
+    expect(Object.isFrozen(first.actions)).toBe(true);
+    // Side-effect free: no trace, status, or telemetry; the machine
+    // snapshot is unmoved.
+    expect(statuses.length).toBe(statusCount);
+    expect(telemetry.length).toBe(telemetryCount);
+    expect(runtime.exportSnapshot!()).toEqual(snapshotBefore);
+
+    expect(first.state.stateId).toBe('awaitBossReply');
+    expect(first.pendingQuestions).toEqual([
+      {
+        questionId: 'q-1',
+        player: 'Coder',
+        question: 'Which database?',
+        sourceItem: 'WF-1',
+      },
+    ]);
+    expect(first.lastError).toBeUndefined();
+    expect(first.actions.map(({ id }) => id)).toEqual(['jump:implement']);
+    expect(playerCalls).toBe(1);
+    await runtime.dispose();
+  });
+
+  it('advertises the failure-state retry and replays exactly the recorded event with no classification call', async () => {
+    let playerCalls = 0;
+    const playerPrompts: string[] = [];
+    const judgePrompts: string[] = [];
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerCalls += 1;
+        playerPrompts.push(prompt);
+        return playerCalls === 1
+          ? { status: 'error', error: 'agent crashed' }
+          : { status: 'ok', finalText: 'Recovered.' };
+      },
+      callJudge: async (prompt) => {
+        judgePrompts.push(prompt);
+        return '{"guard":"implemented","summary":"recovered"}';
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const failedRun = await runtime.handleBossInput(turn('build the widget'));
+    expect(failedRun.outcome).toBe('failed');
+
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('failed');
+    expect(view.lastError).toMatchObject({
+      name: 'Error',
+      message: 'agent crashed',
+    });
+    expect(view.actions).toEqual([
+      { id: 'retry:START', label: 'Retry: implement state' },
+      { id: 'jump:implement', label: 'Resume from: implement state' },
+    ]);
+
+    const judgeCallsBefore = judgePrompts.length;
+    const receipt = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'retry-1',
+      signal: sigOf(),
+    });
+    expect(receipt.disposition).toBe('executed');
+    expect(
+      receipt.disposition === 'executed' ? receipt.run.outcome : undefined,
+    ).toBe('terminal');
+    // The retry replayed the recorded classified event with its recorded
+    // payload: the second player prompt is byte-equal to the first, and no
+    // judge call was a Boss-text classification.
+    expect(playerPrompts).toEqual([
+      'Implement this task: build the widget',
+      'Implement this task: build the widget',
+    ]);
+    for (const prompt of judgePrompts.slice(judgeCallsBefore)) {
+      expect(prompt).not.toContain('Classify the following Boss message');
+    }
+
+    const pairs = applyTraces(telemetry);
+    expect(pairs.map(({ type }) => type)).toEqual([
+      'apply.started',
+      'apply.finished',
+    ]);
+    expect(pairs[0].callId).toBe('apply-1');
+    expect(pairs[1].callId).toBe('apply-1');
+    expect(pairs[0].turnId).toBe(pairs[1].turnId);
+    expect(pairs[0].payload).toMatchObject({
+      actionId: 'retry:START',
+      key: 'retry-1',
+      stateId: 'failed',
+    });
+    expect(pairs[1].payload).toMatchObject({
+      actionId: 'retry:START',
+      key: 'retry-1',
+      disposition: 'executed',
+    });
+    await runtime.dispose();
+  });
+
+  it('advertises no retry when the failure state refuses the recorded event', async () => {
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'ok', finalText: 'Which database should I use?' }
+          : { status: 'error', error: 'resume crashed' };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          return '{"type":"BOSS_REPLY","questionId":"q-1"}';
+        }
+        return '{"guard":"needsBossReply","question":"Which database?"}';
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('build storage'));
+    const failedRun = await runtime.handleBossInput(turn('use sqlite'));
+    expect(failedRun.outcome).toBe('failed');
+
+    // The recorded last classified event is BOSS_REPLY, which the failure
+    // state does not accept — no retry entry, no invented substitute.
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('failed');
+    expect(view.lastError).toMatchObject({ message: 'resume crashed' });
+    expect(view.actions.map(({ id }) => id)).toEqual(['jump:implement']);
+    await runtime.dispose();
+  });
+
+  it('derives context-conditional jumps from the live snapshot and sanitizes the control context', async () => {
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'error', error: 'cond agent failed' }),
+    });
+    const runtime = createConditionalRuntime({});
+    await runtime.init(makeSession(ports));
+
+    // Fresh ready: the jump guard requires context input the machine does
+    // not yet hold, so the candidate is excluded.
+    expect(runtime.describe!().actions).toEqual([]);
+
+    const failedRun = await runtime.handleBossInput(turn('polish the docs'));
+    expect(failedRun.outcome).toBe('failed');
+
+    // The live context gained the required input: excluded flips to
+    // included; the recorded entry event is retryable from failed.
+    const view = runtime.describe!();
+    expect(view.actions).toEqual([
+      { id: 'retry:START', label: 'Retry: implement state' },
+      { id: 'jump:implement', label: 'Resume from: implement state' },
+    ]);
+    // Sanitized JSON-safe context: the raw Error entry is normalized, the
+    // non-JSON-safe function entry is dropped, and the first-class-surfaced
+    // members (lastError, pendingBossQuestion) are omitted.
+    expect(Object.keys(view.context as Record<string, unknown>)).toEqual([
+      'task',
+      'note',
+    ]);
+    expect(view.context).toMatchObject({
+      task: 'polish the docs',
+      note: { name: 'Error', message: 'kept note' },
+    });
+    expect(view.lastError).toMatchObject({
+      name: 'Error',
+      message: 'cond agent failed',
+    });
+    await runtime.dispose();
+  });
+
+  it('records no receipt for keys that never reach acceptance and executes them later', async () => {
+    const playerPrompts: string[] = [];
+    let failStartSink = false;
+    const telemetryEvents: RecordedTelemetry[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerPrompts.push(prompt);
+        return { status: 'ok', finalText: 'done' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"jumped"}',
+      emitTelemetry: async (event) => {
+        telemetryEvents.push({ topic: event.topic, payload: event.payload });
+        const trace = event.payload as { type?: string };
+        if (
+          event.topic === 'playbook.trace' &&
+          trace.type === 'apply.started' &&
+          failStartSink
+        ) {
+          failStartSink = false;
+          throw new Error('start sink offline');
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+
+    // Pre-acceptance abort: the call throws, records nothing, and emits no
+    // trace pair.
+    const preAborted = new AbortController();
+    preAborted.abort(new Error('gone before start'));
+    await expect(
+      runtime.apply!({
+        actionId: 'jump:implement',
+        key: 'first',
+        signal: preAborted.signal,
+      }),
+    ).rejects.toThrow('gone before start');
+    expect(applyTraces(telemetryEvents)).toEqual([]);
+
+    // Pre-acceptance start-sink rejection: same key, still no receipt.
+    failStartSink = true;
+    await expect(
+      runtime.apply!({
+        actionId: 'jump:implement',
+        key: 'first',
+        signal: sigOf(),
+      }),
+    ).rejects.toThrow('start sink offline');
+
+    // The key never reached acceptance, so it may execute now — and the
+    // jump event is sent with its textual fields omitted: the machine's
+    // placeholder stays unsubstituted, never invented.
+    const receipt = await runtime.apply!({
+      actionId: 'jump:implement',
+      key: 'first',
+      signal: sigOf(),
+    });
+    expect(receipt.disposition).toBe('executed');
+    expect(playerPrompts).toEqual(['Implement this task: <task>']);
+    const finishes = applyTraces(telemetryEvents).filter(
+      (event) => event.type === 'apply.finished',
+    );
+    expect(
+      finishes.filter(
+        (event) =>
+          (event.payload as { disposition?: string }).disposition ===
+          'executed',
+      ),
+    ).toHaveLength(1);
+    await runtime.dispose();
+  });
+
+  it('records no receipt for a rejected key, which executes once the action is advertised', async () => {
+    let playerCalls = 0;
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'error', error: 'agent crashed' }
+          : { status: 'ok', finalText: 'Recovered.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"recovered"}',
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+
+    // At fresh `ready` no retry is advertised: the call settles `rejected`
+    // before acceptance, traces its own pair, and records nothing under
+    // the key.
+    const rejected = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'retry-later',
+      signal: sigOf(),
+    });
+    expect(rejected).toEqual({
+      disposition: 'rejected',
+      reason: 'action "retry:START" is not currently advertised',
+    });
+    expect(playerCalls).toBe(0);
+
+    // Drive the run into `failed`, so the retry becomes advertisable.
+    await runtime.handleBossInput(turn('build the widget'));
+    expect(
+      runtime.describe!().actions.some(({ id }) => id === 'retry:START'),
+    ).toBe(true);
+
+    // The rejection was not final for its key: the same key revalidates
+    // afresh and executes exactly once, tracing its own second pair.
+    const executed = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'retry-later',
+      signal: sigOf(),
+    });
+    expect(executed.disposition).toBe('executed');
+    expect(playerCalls).toBe(2);
+
+    // The executed receipt is recorded and final: a replay returns it
+    // verbatim with no further execution and no new pair.
+    const pairsBefore = applyTraces(telemetry).length;
+    const replayed = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'retry-later',
+      signal: sigOf(),
+    });
+    expect(replayed).toEqual(executed);
+    expect(playerCalls).toBe(2);
+    const pairs = applyTraces(telemetry);
+    expect(pairs).toHaveLength(pairsBefore);
+    expect(
+      pairs
+        .filter((event) => event.type === 'apply.finished')
+        .map(
+          (event) =>
+            (event.payload as { disposition?: string }).disposition,
+        ),
+    ).toEqual(['rejected', 'executed']);
+    expect(new Set(pairs.map(({ callId }) => callId)).size).toBe(2);
+    await runtime.dispose();
+  });
+
+  it('keeps the receipt recorded across a crash between acceptance and settlement', async () => {
+    let playerCalls = 0;
+    let failFinishSink = false;
+    const telemetryEvents: RecordedTelemetry[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'error', error: 'agent crashed' }
+          : { status: 'ok', finalText: 'Recovered.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"recovered"}',
+      emitTelemetry: async (event) => {
+        telemetryEvents.push({ topic: event.topic, payload: event.payload });
+        const trace = event.payload as { type?: string };
+        if (
+          event.topic === 'playbook.trace' &&
+          trace.type === 'apply.finished' &&
+          failFinishSink
+        ) {
+          failFinishSink = false;
+          throw new Error('finish sink offline');
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('build the widget'));
+
+    failFinishSink = true;
+    await expect(
+      runtime.apply!({
+        actionId: 'retry:START',
+        key: 'crash',
+        signal: sigOf(),
+      }),
+    ).rejects.toThrow('finish sink offline');
+    expect(playerCalls).toBe(2);
+
+    // The receipt was recorded at acceptance, before the settlement
+    // emissions: the replayed key returns it with no re-execution and no
+    // new trace pair.
+    const beforeReplay = applyTraces(telemetryEvents).length;
+    const replayed = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'crash',
+      signal: sigOf(),
+    });
+    expect(replayed.disposition).toBe('executed');
+    expect(
+      replayed.disposition === 'executed' ? replayed.run.outcome : undefined,
+    ).toBe('terminal');
+    expect(playerCalls).toBe(2);
+    expect(applyTraces(telemetryEvents)).toHaveLength(beforeReplay);
+    await runtime.dispose();
+  });
+
+  it('settles a failed receipt when the boundary aborts mid-execution and drains cleanly', async () => {
+    let playerCalls = 0;
+    const applyPlayerStarted = deferredValue<void>();
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async (_playerId, _prompt, signal) => {
+        playerCalls += 1;
+        if (playerCalls === 1) {
+          return { status: 'error', error: 'agent crashed' };
+        }
+        applyPlayerStarted.resolve();
+        return new Promise((_, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason));
+        });
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('build the widget'));
+
+    const controller = new AbortController();
+    const applying = runtime.apply!({
+      actionId: 'retry:START',
+      key: 'aborted-apply',
+      signal: controller.signal,
+    });
+    await applyPlayerStarted.promise;
+    // apply shares the single active-boundary sentinel.
+    expect(() => runtime.describe!()).toThrow(
+      /another runtime turn is active/,
+    );
+    controller.abort(new Error('boss cancelled'));
+
+    // Post-acceptance abort settles the receipt rather than rejecting.
+    const receipt = await applying;
+    expect(receipt.disposition).toBe('failed');
+    expect(
+      receipt.disposition === 'failed' ? receipt.error.message : undefined,
+    ).toBe('boss cancelled');
+
+    // The boundary drained cleanly: describe works again, the abort receipt
+    // is replayable under its key, and no new pair is emitted for it.
+    const pairCount = applyTraces(telemetry).length;
+    expect(runtime.describe!().state.stateId).toBe('failed');
+    const replayed = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'aborted-apply',
+      signal: sigOf(),
+    });
+    expect(replayed).toEqual(receipt);
+    expect(playerCalls).toBe(2);
+    expect(applyTraces(telemetry)).toHaveLength(pairCount);
+    await runtime.dispose();
+  });
+
+  it('drives the real CODE runtime: ControlView at failed, receipt discrimination, and idempotent replay', async () => {
+    const playerScript: PlayerResult[] = [
+      { status: 'error', error: 'coder is down' },
+      { status: 'error', error: 'coder is down again' },
+      { status: 'ok', finalText: 'I need to ask the Boss something.' },
+    ];
+    const playerCalls: { playerId: string; prompt: string }[] = [];
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async (playerId, prompt) => {
+        const next = playerScript.shift();
+        if (!next) throw new Error('unexpected player call');
+        playerCalls.push({ playerId, prompt });
+        return next;
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          return '{"event":"START_CODING","payload":{"intent":"add a button"}}';
+        }
+        return '{"guard":"needsBossReply","question":"Which repo should I touch?"}';
+      },
+    });
+    const runtime = createCodePlaybookRuntime({});
+    await runtime.init(makeSession(ports));
+
+    const failedRun = await runtime.handleBossInput(turn('add a button'));
+    expect(failedRun.outcome).toBe('failed');
+    expect(playerCalls).toHaveLength(1);
+
+    // ControlView on the real machine: failed leaf, normalized lastError,
+    // the recorded-event retry labeled from the source state description,
+    // and exactly the registered resumable targets the live guards accept.
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('failed');
+    expect(view.lastError).toMatchObject({
+      name: 'Error',
+      message: 'coder is down',
+    });
+    expect(view.actions[0]).toEqual({
+      id: 'retry:START_CODING',
+      label:
+        'Retry: CODE-1: Coder assesses a Boss intent and either implements ' +
+        'a single-commit change or drafts an IR.',
+    });
+    expect(view.actions.map(({ id }) => id)).toEqual([
+      'retry:START_CODING',
+      'jump:adjudicateChallenges',
+      'jump:commitCoderInitial',
+      'jump:commitJoint',
+      'jump:continueIr',
+      // CODE registers `failed` itself among its Boss-reply targets (the
+      // empty-reply arm), and its interrupt guard accepts it live.
+      'jump:failed',
+      'jump:planAndImplement',
+      'jump:respondToReview',
+      'jump:reviewBossCommitCode',
+      'jump:reviewBossCommitMixed',
+      'jump:reviewBossCommitSpecs',
+      'jump:reviewChangesAndChallengesCode',
+      'jump:reviewChangesAndChallengesMixed',
+      'jump:reviewChangesAndChallengesSpecs',
+      'jump:reviewChangesCode',
+      'jump:reviewChangesMixed',
+      'jump:reviewChangesSpecs',
+      'jump:reviewIrTaskCommitCode',
+      'jump:reviewIrTaskCommitMixed',
+      'jump:reviewIrTaskCommitSpecs',
+      'jump:summarizeSpecs',
+    ]);
+    expect(
+      view.actions.find(({ id }) => id === 'jump:planAndImplement')?.label,
+    ).toBe(
+      'Resume from: CODE-1: Coder assesses a Boss intent and either ' +
+        'implements a single-commit change or drafts an IR.',
+    );
+    expect(view.context).not.toHaveProperty('lastError');
+    expect(view.context).not.toHaveProperty('pendingBossQuestion');
+
+    // A29-17 leg (c): a scripted player error mid-action settles `failed`
+    // with the normalized error while its effects stay visible in traces.
+    const failedReceipt = await runtime.apply!({
+      actionId: 'retry:START_CODING',
+      key: 'code-k1',
+      signal: sigOf(),
+    });
+    expect(failedReceipt.disposition).toBe('failed');
+    expect(
+      failedReceipt.disposition === 'failed'
+        ? failedReceipt.error.message
+        : undefined,
+    ).toBe('coder is down again');
+    expect(playerCalls).toHaveLength(2);
+
+    // A29-17 leg (a): the advertised retry from failed settles `executed`
+    // with the run result.
+    const executedReceipt = await runtime.apply!({
+      actionId: 'retry:START_CODING',
+      key: 'code-k2',
+      signal: sigOf(),
+    });
+    expect(executedReceipt.disposition).toBe('executed');
+    expect(
+      executedReceipt.disposition === 'executed'
+        ? executedReceipt.run
+        : undefined,
+    ).toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply' },
+    });
+    expect(playerCalls).toHaveLength(3);
+
+    // The executed action parked the real machine on its pending Boss
+    // question, surfaced with its stable id; no retry outside failed.
+    const parkedView = runtime.describe!();
+    expect(parkedView.pendingQuestions).toEqual([
+      {
+        questionId: 'planAndImplement',
+        player: 'Coder',
+        question: 'Which repo should I touch?',
+        sourceItem: 'CODE-1',
+      },
+    ]);
+    expect(
+      parkedView.actions.some(({ id }) => id.startsWith('retry:')),
+    ).toBe(false);
+
+    // A29-17 leg (b): the same actionId re-applied after the state moved on
+    // settles `rejected` before any effect — snapshot unchanged, zero
+    // player calls.
+    const machineBefore = runtime.exportSnapshot!()!.machine;
+    const rejectedReceipt = await runtime.apply!({
+      actionId: 'retry:START_CODING',
+      key: 'code-k3',
+      signal: sigOf(),
+    });
+    expect(rejectedReceipt).toEqual({
+      disposition: 'rejected',
+      reason: 'action "retry:START_CODING" is not currently advertised',
+    });
+    expect(runtime.exportSnapshot!()!.machine).toEqual(machineBefore);
+    expect(playerCalls).toHaveLength(3);
+
+    // A29-17 leg (d): the repeated idempotency key returns the recorded
+    // receipt with exactly one execution in total and no new trace pair.
+    const pairsBeforeReplay = applyTraces(telemetry);
+    const replayed = await runtime.apply!({
+      actionId: 'retry:START_CODING',
+      key: 'code-k2',
+      signal: sigOf(),
+    });
+    expect(replayed).toEqual(executedReceipt);
+    expect(playerCalls).toHaveLength(3);
+
+    const pairs = applyTraces(telemetry);
+    expect(pairs).toHaveLength(pairsBeforeReplay.length);
+    expect(pairs.map(({ type }) => type)).toEqual([
+      'apply.started',
+      'apply.finished',
+      'apply.started',
+      'apply.finished',
+      'apply.started',
+      'apply.finished',
+    ]);
+    expect(pairs.map(({ callId }) => callId)).toEqual([
+      'apply-1',
+      'apply-1',
+      'apply-2',
+      'apply-2',
+      'apply-3',
+      'apply-3',
+    ]);
+    expect(pairs[0].payload).toMatchObject({
+      actionId: 'retry:START_CODING',
+      key: 'code-k1',
+      stateId: 'failed',
+    });
+    expect(pairs[1].payload).toMatchObject({
+      disposition: 'failed',
+      error: { message: 'coder is down again' },
+    });
+    expect(pairs[3].payload).toMatchObject({ disposition: 'executed' });
+    expect(pairs[4].payload).toMatchObject({ stateId: 'awaitBossReply' });
+    expect(pairs[5].payload).toMatchObject({
+      disposition: 'rejected',
+      reason: 'action "retry:START_CODING" is not currently advertised',
+    });
+    // The player call executed by apply-1 traces inside that boundary.
+    const applyTurnIds = new Set(
+      pairs
+        .map(({ turnId }) => turnId)
+        .filter((turnId): turnId is number => turnId !== undefined),
+    );
+    const playerStarts = playbookTraces(telemetry).filter(
+      (event) => event.type === 'player.call.started',
+    );
+    expect(
+      playerStarts.filter(
+        ({ turnId }) => turnId !== undefined && applyTurnIds.has(turnId),
+      ),
+    ).toHaveLength(2);
+    await runtime.dispose();
+  });
+
+  it('excludes refused DISCUSS targets at the bare runtime surface and includes them once context allows', async () => {
+    // Fresh ready: every registered candidate is excluded — the branch leaf
+    // is resumable but not jumpable, and the jumpable targets'
+    // context-conditional guards refuse an empty context (PBRT-40).
+    const runtime = createDiscussControlRuntime({});
+    await runtime.init(makeSession(makeRecordingPorts().ports));
+    const fresh = runtime.describe!();
+    expect(fresh.state.stateId).toBe('ready');
+    expect(fresh.actions).toEqual([]);
+    await runtime.dispose();
+
+    // Seed the real machine to `failed` with the round's input in context —
+    // outside any runtime, since the shared factory's singular-state
+    // telemetry contract does not drive this parallel FSM — and restore the
+    // parked capture at the bare runtime surface.
+    const seed = createActor(
+      discussMachine.provide({
+        actors: {
+          player: fromPromise(async () => {
+            throw 'proposal agent down';
+          }),
+        } as never,
+      }),
+      { input: {} },
+    );
+    seed.start();
+    seed.send({
+      type: 'START_DISCUSSION',
+      topic: 'Should we adopt X or Y?',
+    });
+    await waitFor(seed, (snapshot) => snapshot.value === 'failed');
+    const machineSnapshot = JSON.parse(
+      JSON.stringify(seed.getPersistedSnapshot()),
+    ) as JsonValue;
+    const state = normalizePlaybookSnapshot(seed.getSnapshot());
+    seed.stop();
+
+    const restored = createDiscussControlRuntime({});
+    const session = makeSession(makeRecordingPorts().ports);
+    await restored.restore!(session, {
+      schemaVersion: 1,
+      playbookId: session.playbookId,
+      machine: machineSnapshot,
+      playerResumeTokens: {},
+      sequences: {
+        trace: 0,
+        turn: 0,
+        judgeCall: 0,
+        playerCall: 0,
+        playbookCall: 0,
+      },
+      state,
+      pendingBossQuestions: [],
+    });
+
+    // The live context now holds the round's required input, so exactly the
+    // context-conditional parallel parent flips to included; the other
+    // registered candidates stay excluded. No retry appears: the recorded
+    // last classified event is process-local and never restores.
+    const view = restored.describe!();
+    expect(view.state.stateId).toBe('failed');
+    expect(view.lastError).toMatchObject({ message: 'proposal agent down' });
+    expect(view.context).toMatchObject({ topic: 'Should we adopt X or Y?' });
+    expect(view.actions).toEqual([
+      {
+        id: 'jump:initialProposalRound',
+        label:
+          'Resume from: Host and Participant independently propose designs.',
+      },
+    ]);
+    await restored.dispose();
   });
 });

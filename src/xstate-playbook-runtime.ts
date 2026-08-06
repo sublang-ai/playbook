@@ -41,6 +41,9 @@ import type {
   CaptainResult,
   JsonValue,
   PlaybookCallResult,
+  PlaybookControlAction,
+  PlaybookControlReceipt,
+  PlaybookControlView,
   PlaybookPorts,
   PlaybookRunResult,
   PlaybookRuntime,
@@ -998,6 +1001,95 @@ export function resumableStateIdsFromMachine(
 }
 
 // ---------------------------------------------------------------------------
+// DR-029 §3 control surface: the FSM's explicit-state-jump event and the
+// source state descriptions that label runtime-advertised actions.
+// ---------------------------------------------------------------------------
+
+/** The FSM's explicit-state-jump event type (slc/link.md §Boss-event mapping). */
+const JUMP_EVENT_TYPE = 'BOSS_INTERRUPT';
+
+/**
+ * Source state descriptions by state key, node id, and `meta.playbook`
+ * state id, read from `machine.config`. Control actions are labeled from
+ * these descriptions (DR-029 §3); a state without one falls back to its id.
+ */
+export function stateDescriptionsFromMachine(
+  machine: AnyStateMachine,
+): ReadonlyMap<string, string> {
+  const descriptions = new Map<string, string>();
+  const record = (key: unknown, description: string): void => {
+    if (typeof key !== 'string' || key.length === 0) return;
+    if (!descriptions.has(key)) descriptions.set(key, description);
+  };
+  const visit = (key: string, stateDef: unknown): void => {
+    if (!isPlainObject(stateDef)) return;
+    const playbook = isPlainObject(stateDef.meta)
+      ? (stateDef.meta as Record<string, unknown>).playbook
+      : undefined;
+    const description =
+      isPlainObject(playbook) && typeof playbook.description === 'string'
+        ? playbook.description
+        : typeof stateDef.description === 'string'
+          ? stateDef.description
+          : undefined;
+    if (description !== undefined && description.length > 0) {
+      record(key, description);
+      record(stateDef.id, description);
+      if (isPlainObject(playbook)) record(playbook.stateId, description);
+    }
+    if (isPlainObject(stateDef.states)) {
+      for (const [childKey, child] of Object.entries(stateDef.states)) {
+        visit(childKey, child);
+      }
+    }
+  };
+  const config = (machine as unknown as { config?: unknown }).config;
+  if (isPlainObject(config) && isPlainObject(config.states)) {
+    for (const [key, stateDef] of Object.entries(config.states)) {
+      visit(key, stateDef);
+    }
+  }
+  return descriptions;
+}
+
+/**
+ * First configured target of `eventType` from the state with `stateId`,
+ * falling back to the machine root's own transitions. Used only to pick the
+ * source description that labels a retry action, so guard selection order is
+ * irrelevant — any declared target names what the replay re-enters.
+ */
+function firstTransitionTarget(
+  machine: AnyStateMachine,
+  stateId: string | undefined,
+  eventType: string,
+): string | undefined {
+  const config = (machine as unknown as { config?: unknown }).config;
+  if (!isPlainObject(config)) return undefined;
+  const candidates: unknown[] = [];
+  if (stateId !== undefined && isPlainObject(config.states)) {
+    const state = config.states[stateId];
+    if (isPlainObject(state) && isPlainObject(state.on)) {
+      candidates.push(state.on[eventType]);
+    }
+  }
+  if (isPlainObject(config.on)) candidates.push(config.on[eventType]);
+  for (const candidate of candidates) {
+    if (candidate === undefined) continue;
+    const targets = transitionTargets(candidate);
+    if (targets.length > 0) return targets[0];
+  }
+  return undefined;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const member of Object.values(value)) deepFreeze(member);
+  }
+  return value;
+}
+
+// ---------------------------------------------------------------------------
 // Default transition/status derivation.
 // ---------------------------------------------------------------------------
 
@@ -1476,6 +1568,9 @@ export function createXStatePlaybookRuntime<TOptions>(
   const declaredActors = collectInvokeSources(machine);
   const resumableStateIds =
     spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
+  // DR-029 §3: source state descriptions label the control actions the
+  // runtime advertises through `describe()`.
+  const stateDescriptions = stateDescriptionsFromMachine(machine);
   const resolvePlayerIdSpec = spec.resolvePlayerId;
   const composePlayerPrompt =
     spec.composePlayerPrompt ??
@@ -1549,6 +1644,19 @@ export function createXStatePlaybookRuntime<TOptions>(
     let playerCallSequence = 0;
     let playbookCallSequence = 0;
     let captainCallSequence = 0;
+    let applyCallSequence = 0;
+    // DR-029 §3: the last event a public Boss boundary sent into the
+    // machine — classified, deterministic entry, or Boss reply — kept with
+    // its recorded payload so a failure-state retry action can replay the
+    // event that drove the run into `failed`. Process-local: the schema-1
+    // parked snapshot does not persist it (PBRT-50: no schema bump).
+    let lastBossEvent: EventObject | undefined;
+    // DR-029 §3: at-most-once `apply` execution — the accepted receipt
+    // recorded for each idempotency key, returned verbatim on a repeated
+    // key. A key whose call settled `rejected` or threw before reaching
+    // acceptance records nothing, so a later call with that key may still
+    // execute.
+    const appliedReceipts = new Map<string, PlaybookControlReceipt>();
     const playerResumeTokens = new Map<string, string>();
     const activePlayerIds = new Set<string>();
     const playbookCallTurnIds = new Map<string, number | undefined>();
@@ -1728,11 +1836,13 @@ export function createXStatePlaybookRuntime<TOptions>(
       startedType:
         | 'player.call.started'
         | 'judge.call.started'
-        | 'captain.call.started',
+        | 'captain.call.started'
+        | 'apply.started',
       finishedType:
         | 'player.call.finished'
         | 'judge.call.finished'
-        | 'captain.call.finished',
+        | 'captain.call.finished'
+        | 'apply.finished',
       identity: Record<string, unknown>,
       position: TracePosition,
     ): Promise<void> {
@@ -2548,6 +2658,7 @@ export function createXStatePlaybookRuntime<TOptions>(
       activeEmissionCalls.clear();
       emissionQueue.clear();
       judgeQueue.clear();
+      appliedReceipts.clear();
       actor = undefined;
       session = undefined;
       savedPorts = undefined;
@@ -2557,6 +2668,7 @@ export function createXStatePlaybookRuntime<TOptions>(
       controlPlaneError = undefined;
       emissionFailure = undefined;
       priorState = undefined;
+      lastBossEvent = undefined;
       suppressInspectionEmissions = false;
       initialized = false;
       traceSequence = 0;
@@ -2565,6 +2677,134 @@ export function createXStatePlaybookRuntime<TOptions>(
       playerCallSequence = 0;
       playbookCallSequence = 0;
       captainCallSequence = 0;
+      applyCallSequence = 0;
+    }
+
+    // -----------------------------------------------------------------
+    // DR-029 §3 control surface: action derivation shared by `describe`
+    // and by `apply`'s live revalidation.
+    // -----------------------------------------------------------------
+
+    interface DerivedControlAction {
+      action: PlaybookControlAction;
+      event: EventObject;
+    }
+
+    function snapshotCan(snapshot: unknown, event: EventObject): boolean {
+      const can = (snapshot as { can?: unknown } | null)?.can;
+      return (
+        typeof can === 'function' &&
+        (can as (candidate: EventObject) => boolean).call(snapshot, event) ===
+          true
+      );
+    }
+
+    // The failure-state retry entry replays the recorded last classified
+    // event with its recorded payload. A candidate whose event the live
+    // snapshot does not accept — or whose payload the runtime never
+    // recorded — is excluded rather than completed with invented text.
+    function retryActionFor(
+      snapshot: unknown,
+      stateId: string | undefined,
+    ): DerivedControlAction | undefined {
+      if (stateId !== 'failed' || lastBossEvent === undefined) {
+        return undefined;
+      }
+      if (!snapshotCan(snapshot, lastBossEvent)) return undefined;
+      const target = firstTransitionTarget(
+        machine,
+        stateId,
+        lastBossEvent.type,
+      );
+      const description =
+        (target === undefined ? undefined : stateDescriptions.get(target)) ??
+        target ??
+        lastBossEvent.type;
+      return {
+        action: {
+          id: `retry:${lastBossEvent.type}`,
+          label: `Retry: ${description}`,
+        },
+        event: lastBossEvent,
+      };
+    }
+
+    function deriveControlActions(snapshot: unknown): DerivedControlAction[] {
+      // Actions derive only at the safe point the parked snapshot also
+      // uses — quiescent actor with status `active` and no pending nested
+      // call. Anywhere else the view still describes the state while
+      // advertising nothing.
+      let state: PlaybookState;
+      try {
+        state = normalizePlaybookSnapshot(snapshot, {
+          pendingCall: nestedBridge.getPendingCall(),
+        });
+      } catch {
+        return [];
+      }
+      if (
+        state.status !== 'active' ||
+        !state.quiescent ||
+        nestedBridge.getPendingCall()
+      ) {
+        return [];
+      }
+      const derived: DerivedControlAction[] = [];
+      const retry = retryActionFor(snapshot, state.stateId);
+      if (retry !== undefined) derived.push(retry);
+      // Jump entries: resumable targets whose explicit-state-jump event the
+      // live snapshot accepts (state guards included), sent with the
+      // advertised target id and optional textual fields omitted.
+      for (const targetId of [...resumableStateIds].sort()) {
+        const event = { type: JUMP_EVENT_TYPE, targetId } as EventObject;
+        if (!snapshotCan(snapshot, event)) continue;
+        derived.push({
+          action: {
+            id: `jump:${targetId}`,
+            label: `Resume from: ${stateDescriptions.get(targetId) ?? targetId}`,
+          },
+          event,
+        });
+      }
+      return derived;
+    }
+
+    // Sanitized, JSON-safe relevant context for the control view: FSM
+    // context entries that survive strict JSON snapshotting, raw Error
+    // values normalized first, with the members the view surfaces
+    // first-class (pending question, last error) left out. An entry that
+    // cannot be made JSON-safe is dropped, never thrown — `describe` must
+    // stay side-effect free and total.
+    function sanitizeControlContext(
+      context: Record<string, unknown>,
+    ): JsonValue | undefined {
+      const sanitized: Record<string, JsonValue> = {};
+      for (const [key, value] of Object.entries(context)) {
+        if (key === 'pendingBossQuestion' || key === 'lastError') continue;
+        if (value === undefined) continue;
+        try {
+          sanitized[key] = snapshotJsonValue(
+            value instanceof Error ? normalizeError(value) : value,
+            `control context ${key}`,
+          );
+        } catch {
+          // Not JSON-safe — sanitized out.
+        }
+      }
+      return Object.keys(sanitized).length === 0 ? undefined : sanitized;
+    }
+
+    function receiptTracePayload(
+      receipt: PlaybookControlReceipt,
+    ): Record<string, unknown> {
+      return {
+        disposition: receipt.disposition,
+        ...(receipt.disposition === 'rejected'
+          ? { reason: receipt.reason }
+          : {}),
+        ...(receipt.disposition === 'failed' ? { error: receipt.error } : {}),
+        ...(receipt.disposition === 'executed' ? { run: receipt.run } : {}),
+      };
     }
 
     const runtime = {
@@ -2686,6 +2926,11 @@ export function createXStatePlaybookRuntime<TOptions>(
             // Every Captain call already consumed at least one trace number,
             // so the global trace counter is a collision-safe id floor.
             boundSnapshot.sequences.trace;
+          // The schema-1 snapshot carries no apply counter (PBRT-50: no
+          // schema bump); every apply boundary consumed trace numbers, so
+          // the persisted trace counter is a collision-safe id floor here
+          // too, keeping `apply-<n>` call ids unique across restore.
+          applyCallSequence = boundSnapshot.sequences.trace;
           playerResumeTokens.clear();
           for (const [playerId, token] of Object.entries(
             boundSnapshot.playerResumeTokens,
@@ -2714,6 +2959,239 @@ export function createXStatePlaybookRuntime<TOptions>(
           finishInitialization();
           if (initInFlight === initialization) initInFlight = undefined;
         }
+      },
+
+      // DR-029 §3 / PBRT-52: side-effect-free control view over the live
+      // snapshot, valid at parked quiescence outside an active boundary.
+      // The view is detached and frozen; producing it emits nothing and
+      // moves nothing.
+      describe(): PlaybookControlView {
+        if (disposed || disposalPromise !== undefined) {
+          throw new Error(
+            'createPlaybookRuntime.describe: runtime is disposing or disposed',
+          );
+        }
+        if (!actor || !savedPorts) {
+          throw new Error(
+            'createPlaybookRuntime.describe: init must be called first',
+          );
+        }
+        if (activeSignal !== undefined) {
+          throw new Error(
+            'createPlaybookRuntime.describe: another runtime turn is active',
+          );
+        }
+        const snapshot = actor.getSnapshot();
+        const state = currentState();
+        const context = ((snapshot as { context?: unknown }).context ??
+          {}) as Record<string, unknown>;
+        const pending = pendingBossQuestionFromContext(context);
+        const lastError = normalizeErrorFull(context.lastError);
+        const sanitizedContext = sanitizeControlContext(context);
+        return deepFreeze({
+          state,
+          ...(sanitizedContext !== undefined
+            ? { context: sanitizedContext }
+            : {}),
+          pendingQuestions:
+            pending === undefined
+              ? []
+              : [
+                  {
+                    questionId: pending.questionId,
+                    player: pending.player,
+                    question: pending.question,
+                    sourceItem: pending.sourceItem,
+                  },
+                ],
+          ...(lastError !== undefined ? { lastError } : {}),
+          actions: deriveControlActions(snapshot).map(({ action }) => action),
+        });
+      },
+
+      // DR-029 §3 / PBRT-52: revalidate the named action against the live
+      // state and execute it at most once per idempotency key. The receipt
+      // discriminates rejected-before-any-effect from executed and from
+      // failed-after-effects-may-exist; a repeated key returns the recorded
+      // receipt without re-execution. A rejection settles before acceptance,
+      // so — like a key whose call threw before reaching acceptance — it
+      // records nothing and the key may execute later, once the action is
+      // advertised.
+      async apply(input: {
+        actionId: string;
+        key: string;
+        signal: AbortSignal;
+      }): Promise<PlaybookControlReceipt> {
+        if (input === null || typeof input !== 'object') {
+          throw new TypeError(
+            'createPlaybookRuntime.apply: input must be an object',
+          );
+        }
+        const { actionId, key, signal } = input;
+        if (typeof actionId !== 'string' || actionId.length === 0) {
+          throw new TypeError(
+            'createPlaybookRuntime.apply: actionId must be a non-empty string',
+          );
+        }
+        if (typeof key !== 'string' || key.length === 0) {
+          throw new TypeError(
+            'createPlaybookRuntime.apply: key must be a non-empty string',
+          );
+        }
+        if (!(signal instanceof AbortSignal)) {
+          throw new TypeError(
+            'createPlaybookRuntime.apply: signal must be an AbortSignal',
+          );
+        }
+        if (disposed || disposalPromise !== undefined) {
+          throw new Error(
+            'createPlaybookRuntime.apply: runtime is disposing or disposed',
+          );
+        }
+        if (!actor || !savedPorts) {
+          throw new Error(
+            'createPlaybookRuntime.apply: init must be called first',
+          );
+        }
+        if (activeSignal !== undefined) {
+          throw new Error(
+            'createPlaybookRuntime.apply: another runtime turn is active',
+          );
+        }
+        // Settlement is final: a repeated key returns the recorded receipt
+        // with no revalidation, no execution, and no new trace pair.
+        const recorded = appliedReceipts.get(key);
+        if (recorded !== undefined) return recorded;
+        // An abort before acceptance ends the call with no receipt
+        // recorded, like every other pre-acceptance failure.
+        signal.throwIfAborted();
+
+        const turnId = ++turnSequence;
+        const callId = `apply-${++applyCallSequence}`;
+        const position: TracePosition = { turnId, callId };
+        activeTurnId = turnId;
+        activeSignal = signal;
+        controlPlaneError = undefined;
+        // Every receipt variant is normalized and frozen where it is built,
+        // inside the guarded region, so the recording step below cannot
+        // throw after effects exist.
+        const settledReceipt = (
+          value: PlaybookControlReceipt,
+        ): PlaybookControlReceipt =>
+          deepFreeze(
+            snapshotJsonValue(
+              value,
+              'apply receipt',
+            ) as unknown as PlaybookControlReceipt,
+          );
+        let receipt: PlaybookControlReceipt | undefined;
+        let operationError: unknown;
+        let settlementError: unknown;
+        try {
+          try {
+            await emitCallStarted(
+              'apply.started',
+              'apply.finished',
+              { actionId, key, ...stateIdentity(currentState().stateId) },
+              position,
+            );
+            const snapshot = actor.getSnapshot();
+            const candidate = deriveControlActions(snapshot).find(
+              ({ action }) => action.id === actionId,
+            );
+            if (candidate === undefined) {
+              receipt = settledReceipt({
+                disposition: 'rejected',
+                reason: `action ${JSON.stringify(
+                  actionId,
+                )} is not currently advertised`,
+              });
+            } else {
+              // Acceptance: from here every outcome records a receipt under
+              // the key, so the action can never execute twice.
+              try {
+                actor.send(candidate.event);
+                await waitForPlaybookQuiescence(actor, {
+                  pendingCalls: nestedBridge,
+                });
+                if (controlPlaneError !== undefined) throw controlPlaneError;
+                const run = runResultFor(settledOutcome(signal));
+                receipt = settledReceipt(
+                  run.outcome === 'failed' || run.outcome === 'aborted'
+                    ? {
+                        disposition: 'failed',
+                        error:
+                          ('error' in run ? run.error : undefined) ??
+                          normalizeError(
+                            new Error(
+                              `apply settled with outcome ${run.outcome}`,
+                            ),
+                          ),
+                      }
+                    : { disposition: 'executed', run },
+                );
+              } catch (error) {
+                // Effects may exist: a post-acceptance failure is the
+                // receipt, not a control-plane rejection (DR-029 §3).
+                receipt = settledReceipt({
+                  disposition: 'failed',
+                  error: normalizeError(error),
+                });
+              }
+            }
+          } catch (error) {
+            operationError = error; // pre-acceptance: no receipt is recorded
+          }
+
+          // Record acceptance before the settlement emissions, so a crash
+          // between acceptance and settlement can never re-execute the
+          // action: the recorded receipt survives and a replayed key
+          // returns it. A rejection settled before acceptance: it is
+          // returned and traced but never recorded, so its key stays free
+          // to execute once the action is advertised.
+          if (receipt !== undefined && receipt.disposition !== 'rejected') {
+            appliedReceipts.set(key, receipt);
+          }
+          try {
+            await drainEmissions();
+          } catch (error) {
+            settlementError = error;
+          }
+          if (receipt !== undefined) {
+            try {
+              await emitTrace(
+                'apply.finished',
+                { actionId, key, ...receiptTracePayload(receipt) },
+                position,
+              );
+            } catch (error) {
+              settlementError ??= error;
+            }
+            // Drain even when the finish emission rejected, so its latched
+            // sink failure cannot leak into the next public boundary.
+            try {
+              await drainEmissions();
+            } catch (error) {
+              settlementError ??= error;
+            }
+          }
+        } finally {
+          // Always release the boundary sentinel, even on a path no
+          // constructible input reaches today, so a defect here can never
+          // wedge every later public boundary behind "another runtime turn
+          // is active".
+          activeSignal = undefined;
+          activeTurnId = undefined;
+          controlPlaneError = undefined;
+        }
+        const failure = operationError ?? settlementError;
+        if (failure !== undefined) throw failure;
+        if (receipt === undefined) {
+          throw new Error(
+            'createPlaybookRuntime.apply: no receipt was produced',
+          );
+        }
+        return receipt;
       },
 
       async handleBossInput({
@@ -2792,6 +3270,18 @@ export function createXStatePlaybookRuntime<TOptions>(
               actor.stop();
               actor = buildActor(runtimePorts!);
               actor.start();
+            }
+            // DR-029 §3: keep the classified event with its recorded payload
+            // as the retry-replay source. Recording is sanitizing, not
+            // load-bearing: an override classifier's non-JSON-safe event is
+            // simply not recorded, and the turn proceeds unchanged.
+            try {
+              lastBossEvent = snapshotJsonValue(
+                event,
+                'recorded Boss event',
+              ) as unknown as EventObject;
+            } catch {
+              lastBossEvent = undefined;
             }
             actor.send(event);
             await waitForPlaybookQuiescence(actor, {
@@ -2970,11 +3460,13 @@ export function createXStatePlaybookRuntime<TOptions>(
             activeEmissionCalls.clear();
             emissionQueue.clear();
             judgeQueue.clear();
+            appliedReceipts.clear();
             actor = undefined;
             activeSignal = undefined;
             activeTurnId = undefined;
             controlPlaneError = undefined;
             emissionFailure = undefined;
+            lastBossEvent = undefined;
             savedPorts = undefined;
             runtimePorts = undefined;
             session = undefined;

@@ -36,7 +36,10 @@ so consumers of
 `@sublang/playbook/code/playbook` resolve the same contract types. It
 shall default-export a `createPlaybookRuntime(options)` factory
 returning a `PlaybookRuntime` (`init`, `handleBossInput`,
-`resumePlaybookCall`, `dispose`),
+`resumePlaybookCall`, `dispose`, and the optional control-surface pair
+`describe`/`apply` of
+[slc/link.md](../../slc/link.md#control-surface-optional), which every
+runtime obtained from the shared factory implements),
 typed `PlaybookRuntimeFactory<CodePlaybookOptions>`. The options shall
 carry only per-run identity strings; the mapping from FSM players to
 player-id strings shall be fixed in the runtime, not supplied at run
@@ -59,7 +62,8 @@ runtime contract types `PlayerResult`, `PlayerCallOptions`,
 `JsonValue`, `NormalizedError`,
 `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
 `PlaybookStateValue`, `PlaybookState`, `PlaybookPendingCall`,
-`PlaybookRunResult`, `PlaybookPorts`, `PlaybookSession`,
+`PlaybookRunResult`, `PlaybookControlAction`, `PlaybookControlView`,
+`PlaybookControlReceipt`, `PlaybookPorts`, `PlaybookSession`,
 `PlaybookTraceType`, `PlaybookTraceEvent`,
 `PlaybookRuntime`, and `PlaybookRuntimeFactory<Options = unknown>`, as
 the TypeScript projection of
@@ -76,6 +80,19 @@ accept a `PlaybookSession`, and `PlaybookPorts` shall declare exactly
 the members `callPlayer`,
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
 `emitTelemetry`.
+`PlaybookRuntime` shall declare the optional control-surface pair —
+`describe?(): PlaybookControlView` and
+`apply?(input: { actionId: string; key: string; signal: AbortSignal }):
+Promise<PlaybookControlReceipt>` — implemented both or neither
+([slc/link.md](../../slc/link.md#control-surface-optional));
+`PlaybookControlView` shall carry `state`, optional sanitized JSON-safe
+`context`, `pendingQuestions`, optional `lastError`, and `actions` of
+`PlaybookControlAction` (`id`, `label`), and `PlaybookControlReceipt`
+shall discriminate exactly `rejected` (with `reason`, before any
+effect), `executed` (with the `run` result), and `failed` (with the
+normalized `error`, after effects may exist).
+`PlaybookTraceType` shall include the paired `apply.started` and
+`apply.finished` members alongside the existing boundary pairs.
 The module shall import no CODE or FSM types, directly or
 transitively, so it carries no dependency on any specific playbook;
 the dependency runs one way, from `code.playbook` to this module
@@ -738,3 +755,74 @@ disposing, or disposed runtime, following the same failed-start cleanup
 as `init` so `dispose` remains callable.
 The compiled default Captain runtime shall not expose the capability
 ([DR-014 §5](../decisions/014-durable-one-shot-run-sessions.md#5-preserved-scope)).
+
+## Control surface
+
+### PBRT-52
+
+Where a linked runtime implements the optional control-surface
+capability of `@sublang/playbook/runtime` —
+[DR-029 §3](../decisions/029-session-scoped-conversational-captain.md)
+and [slc/link.md](../../slc/link.md#control-surface-optional) — it
+shall implement `describe` and `apply` together, and every runtime the
+shared `createXStatePlaybookRuntime` factory constructs shall implement
+the pair. The capability shall be feature-detected by member presence
+like the parked-session snapshot capability, changing no runtime ABI
+and no artifact or snapshot schema ([PBRT-50](#pbrt-50)); a runtime
+without the pair advertises no actions and plain text delivery is the
+only verb against it.
+`describe()` shall be side-effect free — no trace, status, telemetry,
+or machine movement — and shall throw before `init`, while another
+public boundary is active, and once disposal begins. It shall return a
+detached view carrying the current normalized state descriptor, the
+sanitized JSON-safe relevant FSM context (raw `Error` values
+normalized, non-JSON-safe entries dropped, first-class-surfaced members
+omitted), the pending Boss questions with their stable ids, the last
+recorded error in normalized `{ name, message, stack? }` form, and the
+currently valid actions.
+Actions shall derive from the live snapshot only at the safe capture
+point of [PBRT-45](#pbrt-45) (actor status `active`, quiescent, no
+pending nested call) and shall be empty anywhere else. While the
+singular state id is the recoverable failure state and the runtime
+holds the recorded last classified event — the event a public Boss
+boundary sent, kept with its recorded payload — whose type the live
+snapshot accepts, the runtime shall advertise the `retry:<EVENT_TYPE>`
+action replaying exactly that event; for each registered resumable
+state id whose explicit-state-jump event (`BOSS_INTERRUPT` with that
+`targetId` and optional textual fields omitted) the live snapshot
+accepts, guards included, it shall advertise `jump:<stateId>`. Each
+action shall carry a stable id and a label written from the source
+state descriptions; a candidate whose event requires a payload the
+runtime cannot source from recorded state shall be excluded — `apply`
+shall never invent free text and shall never enter Boss-input
+classification.
+`apply({ actionId, key, signal })` shall revalidate against the live
+state and settle `{ disposition: 'rejected', reason }` with no effect
+when the action is not currently advertised; an accepted action shall
+execute at most once per idempotency `key`, driving the validated event
+through the same actor drive, boundaries, and emissions as a Boss turn,
+and settle `executed` with the projected run result or `failed` with
+the normalized error when the run parks in the failure state, aborts,
+or a post-acceptance control-plane error lands (effects may exist).
+The receipt shall be recorded under its key at acceptance, before the
+settlement emissions, and a repeated key shall return the recorded
+receipt verbatim with no revalidation, no execution, and no new trace
+pair. Only accepted receipts (`executed` or `failed`) shall be recorded
+and final for their key: a `rejected` receipt settles before acceptance
+and shall record nothing, so a later call with that key revalidates
+against the live state, traces its own pair, and may execute once the
+action is advertised — while a call that threw before acceptance
+(lifecycle misuse, invalid input, a pre-acceptance abort, or a rejected
+start sink) shall likewise record nothing, so a later call with that
+key may execute. `apply`
+shall share the single active-boundary sentinel with `handleBossInput`
+and `resumePlaybookCall`, shall honor its `AbortSignal` exactly as a
+Boss-turn signal, and shall trace as the paired `apply.started` /
+`apply.finished` events of
+[slc/link.md](../../slc/link.md#playbook-trace) carrying the action id,
+idempotency key, and — on finish — the receipt disposition with its
+reason, normalized error, or projected run result, under a
+session-unique `apply-<n>` call id whose counter restores from the
+persisted trace floor. Recorded receipts and the recorded last
+classified event shall stay process-local: the schema-1 parked snapshot
+persists neither.

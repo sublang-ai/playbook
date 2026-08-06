@@ -559,6 +559,19 @@ describe('public XState runtime surface (RELEASE-15)', () => {
       ) {
         throw new Error('missing SUPPORTED_ARTIFACT_SCHEMAS');
       }
+      // DR-029 §3 / PBRT-52: every runtime the shipped shared factory
+      // constructs implements the optional control-surface pair together.
+      const { createMachine } = await import('xstate');
+      const probeRuntime = createXStatePlaybookRuntime(
+        createMachine({ id: 'probe', initial: 'ready', states: { ready: {} } }),
+        { label: 'probe', snapshotOptions: (value) => value ?? {} },
+      )({});
+      if (
+        typeof probeRuntime.describe !== 'function' ||
+        typeof probeRuntime.apply !== 'function'
+      ) {
+        throw new Error('missing control-surface pair');
+      }
       process.stdout.write('OK');
     `;
     const out = execFileSync(

@@ -143,7 +143,7 @@ exactly one `pendingCall` is active.
 Control-plane exceptions reject the runtime method rather than masquerade as a
 recoverable workflow `failed` result.
 
-`PlaybookRuntimeOptions` is host-agnostic and carries only _per-run_ knobs such as identity strings (e.g., model names a playbook substitutes into prompt placeholders) and strategy overrides the linker exposes.
+`PlaybookRuntimeOptions` is host-agnostic and carries only _per-run_ knobs such as identity strings (e.g., model names a playbook substitutes into prompt placeholders), strategy overrides the linker exposes, and — where the compiled playbook's policy needs a host seam — host-supplied port-shaped callbacks the linker exposes as option members whose types the artifact itself declares, so the six-member `PlaybookPorts` contract and the shared contract module stay free of host types.
 The link compiler emits a typed options interface per playbook based on the FSM's `CodingInput` (or equivalent).
 The CLI's absence of `--link-option` values does not mean that
 `PlaybookRuntimeOptions` is empty. CLI link options are compile-time inputs;
@@ -355,6 +355,8 @@ type PlaybookTraceType =
   | 'captain.call.finished'
   | 'playbook.call.started'
   | 'playbook.call.finished'
+  | 'apply.started'
+  | 'apply.finished'
   | 'fsm.transition'
   | 'status.emitted'
   | 'boss.input.settled'
@@ -381,10 +383,19 @@ The trace types are `session.started`, `boss.input.received`,
 `judge.call.started`, `judge.call.finished`, `player.call.started`,
 `player.call.finished`, `captain.call.started`, `captain.call.finished`,
 `playbook.call.started`,
-`playbook.call.finished`, `fsm.transition`, `status.emitted`,
+`playbook.call.finished`, `apply.started`, `apply.finished`,
+`fsm.transition`, `status.emitted`,
 `boss.input.settled`, and `session.disposed`.
 Call pairs carry exact prompts and replies, normalized failures, actor and state
 identity, and their boundary-specific options.
+`apply.started` and `apply.finished` are the paired schema-2 boundary of an
+executed `apply()` call on a runtime implementing the optional control surface
+(§Control surface): both carry the action id and idempotency `key` (plus the
+singular `stateId` on start when one exists), the pair shares one
+session-unique `apply-<n>` call id and the boundary's turn id, and the finish
+adds the receipt `disposition` with its `reason`, normalized `error`, or
+projected `run` result, all JSON-safe. A repeated idempotency key returns the
+recorded receipt without a new pair.
 Direct-Captain start and finish payloads shall carry `allowedTools` exactly when
 the originating `CaptainCallOptions` selects it and shall omit the member when
 the call preserves the host Captain's configured tools.
@@ -1180,6 +1191,104 @@ not `active` or whose state descriptor cannot be normalized shall fail
 `restore` through the same failed-start cleanup path as `init`.
 A restore failure shall leave the runtime unbound so `dispose` remains
 callable and terminal.
+
+## Control surface (optional)
+
+A linked runtime may implement the optional control-surface capability of
+`@sublang/playbook/runtime` — `describe()` and `apply(...)` — so a host can
+observe the parked machine and execute a runtime-advertised recovery or jump
+action without fabricating an FSM event (DR-029 §3). A runtime that
+implements either member shall implement both; every runtime the shared
+`createXStatePlaybookRuntime` factory constructs implements the pair. A
+runtime lacking the pair advertises no actions, and plain text delivery is
+the only verb against it. Presence is feature-detected like the
+parked-session snapshot capability; the pair changes no runtime ABI and no
+artifact or snapshot schema.
+
+```typescript
+interface PlaybookControlAction {
+  id: string;      // stable within the returned view
+  label: string;   // runtime-written, Boss-appropriate
+}
+
+interface PlaybookControlView {
+  state: PlaybookState;
+  context?: JsonValue;   // sanitized, JSON-safe relevant context
+  pendingQuestions: readonly PlaybookPendingBossQuestion[];
+  lastError?: NormalizedError;
+  actions: readonly PlaybookControlAction[];
+}
+
+type PlaybookControlReceipt =
+  | { disposition: 'rejected'; reason: string }          // before any effect
+  | { disposition: 'executed'; run: PlaybookRunResult }
+  | { disposition: 'failed'; error: NormalizedError };   // effects may exist
+
+// Optional PlaybookRuntime members — both or neither:
+describe?(): PlaybookControlView;
+apply?(input: { actionId: string; key: string; signal: AbortSignal }): Promise<PlaybookControlReceipt>;
+```
+
+`describe()` shall be side-effect free — it emits no trace, status, or
+telemetry and moves no machine state — and is valid at parked quiescence
+outside an active `handleBossInput`/`resumePlaybookCall`/`apply` boundary;
+during an active boundary, before `init`, or after disposal begins it shall
+throw. The view carries the current normalized state descriptor, sanitized
+JSON-safe relevant FSM context (raw `Error` values normalized, non-JSON-safe
+entries dropped, members the view surfaces first-class omitted), the pending
+Boss questions with their stable ids, the last recorded error in normalized
+form, and the currently valid actions.
+
+Actions derive from the live snapshot, only at the same safe point the
+parked-session snapshot uses (actor status `active`, quiescent, no pending
+nested call); anywhere else `actions` is empty while the rest of the view
+still describes the state. Two families exist, labeled from source state
+descriptions:
+
+- **Failure-state retry** — while the singular state id is the recoverable
+  failure state and the runtime holds a recorded last classified event (the
+  event a public Boss boundary sent that drove the run into `failed`, kept
+  with its recorded payload), and the live snapshot accepts that event, the
+  runtime shall advertise `retry:<EVENT_TYPE>` replaying exactly that
+  recorded event.
+- **Jump entries** — for each registered resumable state id whose
+  explicit-state-jump event (`BOSS_INTERRUPT` with that `targetId`, optional
+  textual fields omitted) the live snapshot accepts, guards included, the
+  runtime shall advertise `jump:<stateId>`.
+
+A candidate whose event requires a payload the runtime cannot source from
+recorded state shall be excluded from `actions` — `apply` never invents free
+text and never enters Boss-input classification.
+
+`apply({ actionId, key, signal })` shall revalidate the action against the
+live state and settle `{ disposition: 'rejected', reason }` with no effect
+when it is no longer advertised. It shall execute an accepted action at most
+once per idempotency `key`: the receipt is recorded at acceptance, before
+the settlement emissions, and a repeated key returns the recorded receipt
+verbatim with no revalidation, no execution, and no new trace pair — so a
+crash between acceptance and settlement can never re-execute the action.
+Only accepted receipts (`executed` or `failed`) are recorded and final for
+their key. A rejection settles before acceptance and records nothing under
+its key — a later call with that key revalidates afresh, traces its own
+pair, and may execute once the action is advertised — and a key whose call
+threw before reaching acceptance (lifecycle misuse, invalid input, a
+pre-acceptance abort, a rejected start-boundary sink) likewise records
+nothing, so a later call with that key may execute. Executing sends the
+validated event through the same actor drive as `handleBossInput` — state
+transitions, player/judge boundaries, statuses, and traces flow unchanged —
+and settles `executed` with the projected run result, or `failed` with the
+normalized error when the run settles in the failure state, aborts, or a
+post-acceptance control-plane error lands (effects may exist). `signal`
+follows §Abort exactly as a Boss-turn signal does; an abort after acceptance
+settles the `failed` receipt rather than rejecting. The boundary traces as
+the paired `apply.started` / `apply.finished` events of §Playbook trace, and
+`apply` shares the single active-boundary sentinel with `handleBossInput`
+and `resumePlaybookCall`.
+
+The recorded receipts and the recorded last classified event are
+process-local: the schema-1 parked-session snapshot persists neither, and a
+restored runtime advertises a retry again only after its next classified
+event.
 
 ## Abort
 

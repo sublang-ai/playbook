@@ -108,7 +108,7 @@ export interface PlaybookSession {
     depth: number;
     ports: PlaybookPorts;
 }
-export type PlaybookTraceType = 'session.started' | 'boss.input.received' | 'judge.call.started' | 'judge.call.finished' | 'player.call.started' | 'player.call.finished' | 'captain.call.started' | 'captain.call.finished' | 'playbook.call.started' | 'playbook.call.finished' | 'fsm.transition' | 'status.emitted' | 'boss.input.settled' | 'session.disposed';
+export type PlaybookTraceType = 'session.started' | 'boss.input.received' | 'judge.call.started' | 'judge.call.finished' | 'player.call.started' | 'player.call.finished' | 'captain.call.started' | 'captain.call.finished' | 'playbook.call.started' | 'playbook.call.finished' | 'apply.started' | 'apply.finished' | 'fsm.transition' | 'status.emitted' | 'boss.input.settled' | 'session.disposed';
 export interface PlaybookTraceEvent {
     schemaVersion: 2;
     sessionId: string;
@@ -148,10 +148,37 @@ export interface PlaybookRuntimeSnapshot {
     state: PlaybookState;
     pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
 }
+export interface PlaybookControlAction {
+    id: string;
+    label: string;
+}
+export interface PlaybookControlView {
+    state: PlaybookState;
+    context?: JsonValue;
+    pendingQuestions: readonly PlaybookPendingBossQuestion[];
+    lastError?: NormalizedError;
+    actions: readonly PlaybookControlAction[];
+}
+export type PlaybookControlReceipt = {
+    disposition: 'rejected';
+    reason: string;
+} | {
+    disposition: 'executed';
+    run: PlaybookRunResult;
+} | {
+    disposition: 'failed';
+    error: NormalizedError;
+};
 export interface PlaybookRuntime {
     init(session: PlaybookSession): Promise<void>;
     exportSnapshot?(): PlaybookRuntimeSnapshot | undefined;
     restore?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>;
+    describe?(): PlaybookControlView;
+    apply?(input: {
+        actionId: string;
+        key: string;
+        signal: AbortSignal;
+    }): Promise<PlaybookControlReceipt>;
     handleBossInput(turn: {
         text: string;
         signal: AbortSignal;

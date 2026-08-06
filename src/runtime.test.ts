@@ -134,6 +134,8 @@ function methodSignature(
 }
 
 const TRACE_TYPES = [
+  'apply.finished',
+  'apply.started',
   'boss.input.received',
   'boss.input.settled',
   'captain.call.finished',
@@ -149,6 +151,24 @@ const TRACE_TYPES = [
   'session.started',
   'status.emitted',
 ];
+
+// Markdown contract blocks may annotate members with trailing `//` comments
+// that tsc's emitted declarations legitimately lack.
+function stripLineComments(src: string): string {
+  return src.replace(/\/\/[^\n]*/g, '');
+}
+
+function applyMemberSignature(src: string): {
+  parameters: string;
+  result: string;
+} {
+  const signature = src.match(/apply\?\s*\(([\s\S]*?)\)\s*:\s*Promise<([^>]+)>/);
+  if (!signature) throw new Error('optional apply member not found');
+  return {
+    parameters: normalizeType(signature[1]).replace(/,$/, ''),
+    result: normalizeType(signature[2]),
+  };
+}
 
 describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
   // PBRT-35: consistency with the authored slc/link.md contract.
@@ -290,6 +310,41 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(unionMembers(runtimeDts, 'PlaybookTraceType')).toEqual(
       unionMembers(linkSpec, 'PlaybookTraceType'),
     );
+    // DR-029 §3 / PBRT-52: the optional control-surface pair and its types.
+    expect(interfaceProperties(runtimeDts, 'PlaybookControlAction')).toEqual([
+      'id:string',
+      'label:string',
+    ]);
+    expect(interfaceProperties(runtimeDts, 'PlaybookControlAction')).toEqual(
+      interfaceProperties(linkSpec, 'PlaybookControlAction'),
+    );
+    expect(interfaceProperties(runtimeDts, 'PlaybookControlView')).toEqual([
+      'actions:readonlyPlaybookControlAction[]',
+      'context?:JsonValue',
+      'lastError?:NormalizedError',
+      'pendingQuestions:readonlyPlaybookPendingBossQuestion[]',
+      'state:PlaybookState',
+    ]);
+    expect(interfaceProperties(runtimeDts, 'PlaybookControlView')).toEqual(
+      interfaceProperties(linkSpec, 'PlaybookControlView'),
+    );
+    expect(
+      normalizeType(typeAliasBody(runtimeDts, 'PlaybookControlReceipt')),
+    ).toBe(
+      normalizeType(
+        stripLineComments(typeAliasBody(linkSpec, 'PlaybookControlReceipt')),
+      ),
+    );
+    for (const src of [
+      interfaceBody(runtimeDts, 'PlaybookRuntime'),
+      linkSpec,
+    ]) {
+      expect(src).toMatch(/describe\?\s*\(\s*\)\s*:\s*PlaybookControlView;/);
+      expect(applyMemberSignature(src)).toEqual({
+        parameters: 'input:{actionId:string;key:string;signal:AbortSignal}',
+        result: 'PlaybookControlReceipt',
+      });
+    }
     expect(interfaceProperties(runtimeDts, 'PlaybookTraceEvent')).toEqual([
       'callId?:string',
       'depth:number',
@@ -344,6 +399,8 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'PlaybookState',
       'PlaybookPendingCall',
       'PlaybookCallRequest',
+      'PlaybookControlAction',
+      'PlaybookControlView',
       'PlaybookPorts',
       'PlaybookSession',
       'PlaybookTraceEvent',
@@ -357,6 +414,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'PlaybookCallResult',
       'PlaybookCallStart',
       'PlaybookRunResult',
+      'PlaybookControlReceipt',
       'PlaybookTraceType',
       'PlaybookRuntimeFactory',
     ]) {
