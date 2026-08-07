@@ -169,7 +169,7 @@ function classifyControllerTurn(text, _ports, _signal, _snapshotOrState, _bounda
 // ---------------------------------------------------------------------------
 const RESTATED_REPLY_CONTRACT = [
     'Reply again with exactly one JSON object `{ "action": …, … }` and no other text, selecting exactly one action from the closed set `respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`:',
-    '`{ "action": "respond", "text": … }`, `{ "action": "start", "playbookId": …, "input": … }`, `{ "action": "switch", "playbookId": …, "input": … }`, `{ "action": "dismiss" }`, `{ "action": "deliver" }`, or `{ "action": "runtime", "actionId": … }`.',
+    '`{ "action": "respond", "text": … }`, `{ "action": "start", "playbookId": …, "input": { "origin": "boss" | "captain", "text": … } }`, `{ "action": "switch", "playbookId": …, "input": { "origin": "boss" | "captain", "text": … } }`, `{ "action": "dismiss" }`, `{ "action": "deliver" }`, or `{ "action": "runtime", "actionId": … }`.',
 ].join('\n');
 function correctiveDecisionPrompt(prompt, reason) {
     return [
@@ -223,11 +223,36 @@ function readDecisionReply(reply, options, selfPlaybookId, declaredActions) {
         }
         case 'start':
         case 'switch': {
-            const shape = requireKeys(['playbookId', 'input']) ??
-                nonEmpty('playbookId') ??
-                nonEmpty('input');
+            const shape = requireKeys(['playbookId', 'input']) ?? nonEmpty('playbookId');
             if (shape !== undefined)
                 return { reason: shape };
+            // DR-029 §2: the input is provenance-tagged, never bare text. A
+            // missing or unknown origin is a malformed required payload field
+            // and earns the single corrective re-ask like any other.
+            const rawInput = parsed.input;
+            if (!isRecord(rawInput)) {
+                return {
+                    reason: `the ${action} selection's \`input\` must be \`{ "origin": "boss" | "captain", "text": … }\``,
+                };
+            }
+            if (rawInput.origin !== 'boss' && rawInput.origin !== 'captain') {
+                return {
+                    reason: `the ${action} selection's \`input.origin\` must be "boss" or "captain" (got ${JSON.stringify(rawInput.origin ?? null)})`,
+                };
+            }
+            if (typeof rawInput.text !== 'string' ||
+                rawInput.text.trim().length === 0) {
+                return {
+                    reason: `the ${action} selection's \`input.text\` must be a non-empty string`,
+                };
+            }
+            for (const key of Object.keys(rawInput)) {
+                if (key !== 'origin' && key !== 'text') {
+                    return {
+                        reason: `the ${action} selection's \`input\` carries undeclared field \`${key}\``,
+                    };
+                }
+            }
             const playbookId = parsed.playbookId;
             if (playbookId === selfPlaybookId) {
                 return {
@@ -240,7 +265,11 @@ function readDecisionReply(reply, options, selfPlaybookId, declaredActions) {
                 };
             }
             return {
-                selection: { action, playbookId, input: parsed.input },
+                selection: {
+                    action,
+                    playbookId,
+                    input: { origin: rawInput.origin, text: rawInput.text },
+                },
             };
         }
         case 'dismiss': {
@@ -272,11 +301,30 @@ function selectionFromParsedDecision(decision) {
     if (decision.action === 'deliver') {
         return { action: 'deliver' };
     }
+    // A parse-resolved `start` / `switch` is always the current Boss turn's own
+    // request (CAPTAIN-7 command table), so it enters the port under
+    // `origin: 'boss'` — the host stays authoritative for the text.
     return {
         action: decision.action,
         playbookId: decision.playbookId,
-        input: decision.input,
+        input: { origin: 'boss', text: decision.input },
     };
+}
+/**
+ * The decision state's own output contract keeps `input` a plain string (the
+ * request text): the provenance tag is a port-boundary concern, and the
+ * machine retains only the selected action and its settlement evidence
+ * (CAPPLAY-10).
+ */
+function decisionOutputOf(selection) {
+    if (selection.action === 'start' || selection.action === 'switch') {
+        return {
+            guard: selection.action,
+            playbookId: selection.playbookId,
+            input: selection.input.text,
+        };
+    }
+    return { ...selection, guard: selection.action };
 }
 // ---------------------------------------------------------------------------
 // Settlement validation: the returned settlement is the only evidence of
@@ -432,7 +480,10 @@ async function runDecisionState(run) {
         }
     }
     const settlement = await submitSelection(run, selection);
-    return { ...selection, guard: selection.action, settlement };
+    return {
+        ...decisionOutputOf(selection),
+        settlement,
+    };
 }
 async function controllerCaptainStrategy(run) {
     if (run.input.stateId === 'deciding') {

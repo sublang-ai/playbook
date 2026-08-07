@@ -1,5 +1,6 @@
 import type { Captain } from '@sublang/cligent/tmux-play';
 import type { PlaybookRuntime } from '@sublang/playbook/runtime';
+import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';
 import type { PlaybookSummaryPolicy, RegistryPlayer } from './code.registry.js';
 export interface CreatePlaybookRuntimeOptions {
     captainOptions: unknown;
@@ -14,6 +15,7 @@ export interface PlaybookCaptainDeps {
             readonly command: string;
             readonly intent: string;
         }[];
+        readonly controller: CaptainControllerPort;
     }) => PlaybookRuntime;
 }
 export interface PlaybookCaptainRegistryEntry {

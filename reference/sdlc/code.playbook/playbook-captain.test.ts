@@ -48,6 +48,8 @@ interface StubContext {
   }[];
   captainCalls: { prompt: string; options?: CaptainCallOptions }[];
   visiblePlayers: string[][];
+  /** Captain speech surfaced through cligent `emitReply` (DR-029 §7). */
+  replies: string[];
 }
 
 type CaptainReply =
@@ -258,15 +260,67 @@ function stubSession(
   };
 }
 
+// The session Captain's durable calls are identified by the verbatim runtime
+// prompt the shell wraps (CAPTAIN-9): the decision call, the parse-resolved
+// command reply, and the acting turn's closing reply.
+function isDecisionPrompt(prompt: string): boolean {
+  return prompt.includes(
+    'Select exactly one action from the closed set `respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`',
+  );
+}
+
+function isCommandReplyPrompt(prompt: string): boolean {
+  return prompt.includes(
+    'Boss issued a registered command that produces no action this turn',
+  );
+}
+
+function isClosingReplyPrompt(prompt: string): boolean {
+  return prompt.includes(
+    'An action just executed for the current Boss turn',
+  );
+}
+
+function isSessionCaptainPrompt(prompt: string): boolean {
+  return (
+    isDecisionPrompt(prompt) ||
+    isCommandReplyPrompt(prompt) ||
+    isClosingReplyPrompt(prompt)
+  );
+}
+
+/**
+ * The default decision for a test that scripts none: an engaged shell hands
+ * ordinary text to its leaf, an idle shell answers in chat. Both are read
+ * from the shell-composed ControlView digest in the captured prompt.
+ */
+function defaultDecision(prompt: string): string {
+  return prompt.includes('Active path: none — no playbook is engaged')
+    ? JSON.stringify({ action: 'respond', text: 'Nothing is running yet.' })
+    : JSON.stringify({ action: 'deliver' });
+}
+
 function stubContext(
   captainReplies: CaptainReply[] = [],
   onCaptainCall?: CaptainCallHook,
+  options: { omitTokens?: boolean } = {},
 ): StubContext {
   const controller = new AbortController();
   const playerCalls: StubContext['playerCalls'] = [];
   const captainCalls: StubContext['captainCalls'] = [];
   const visiblePlayers: StubContext['visiblePlayers'] = [];
+  const replies: string[] = [];
   let captainIndex = 0;
+  let tokenSequence = 0;
+  // CAPTAIN-35: a durable `ok` result without a resume token marks the
+  // conversation unsynchronized, so the default host pins one per call. A
+  // test proving the unsynchronized path opts out with `omitTokens`.
+  const withToken = (result: CaptainRunResult): CaptainRunResult =>
+    options.omitTokens ||
+    result.status !== 'ok' ||
+    result.resumeToken !== undefined
+      ? result
+      : { ...result, resumeToken: `conversation-${++tokenSequence}` };
   return {
     context: {
       signal: controller.signal,
@@ -287,32 +341,43 @@ function stubContext(
       setVisiblePlayers: async (ids): Promise<void> => {
         visiblePlayers.push([...ids]);
       },
+      emitReply: async (text: string): Promise<void> => {
+        replies.push(text);
+      },
       callCaptain: async (prompt, options): Promise<CaptainRunResult> => {
         captainCalls.push({ prompt, options });
         onCaptainCall?.(prompt, options);
-        if (isTurnSummaryPrompt(prompt)) {
-          return {
-            status: 'ok',
-            turnId: 1,
-            finalText: 'summary done',
-          };
-        }
         const scripted = captainReplies[captainIndex++];
         if (typeof scripted === 'function') {
-          return scripted(prompt, options);
+          return withToken(scripted(prompt, options));
         }
-        if (scripted) return scripted;
-        return {
+        if (scripted) return withToken(scripted);
+        if (isDecisionPrompt(prompt)) {
+          return withToken({
+            status: 'ok',
+            turnId: 1,
+            finalText: defaultDecision(prompt),
+          });
+        }
+        if (isSessionCaptainPrompt(prompt)) {
+          return withToken({
+            status: 'ok',
+            turnId: 1,
+            finalText: 'Done — here is where things stand.',
+          });
+        }
+        return withToken({
           status: 'ok',
           turnId: 1,
           finalText: 'captain done',
-        };
+        });
       },
     },
     controller,
     playerCalls,
     captainCalls,
     visiblePlayers,
+    replies,
   };
 }
 
@@ -378,20 +443,55 @@ function fakePlaybookEntry(
   return registry;
 }
 
-function fakeInternalCaptain(
+/**
+ * A stand-in session Captain: it receives every Boss turn like the compiled
+ * controller does, and, with no scripted hook, executes the host's own
+ * deterministic parse resolution through the controller port (CAPTAIN-7).
+ */
+function fakeSessionCaptain(
   handleHook?: HandleHook,
   resumeHook?: ResumeHook,
   disposeHook?: DisposeHook,
 ) {
   const runtimes: FakeRuntime[] = [];
+  const ports: {
+    controller?: {
+      submit: (selection: unknown, signal: AbortSignal) => Promise<unknown>;
+      resolveParsedTurn?: (text: string) => unknown;
+    };
+  } = {};
+  const parseDrivenHook: HandleHook = async (_runtime, runtimeTurn) => {
+    const resolution = ports.controller?.resolveParsedTurn?.(
+      runtimeTurn.text,
+    ) as { kind?: string; decision?: unknown } | undefined;
+    if (resolution?.kind === 'action') {
+      const decision = resolution.decision as {
+        action: string;
+        playbookId?: string;
+        input?: string;
+      };
+      await ports.controller!.submit(
+        decision.action === 'deliver'
+          ? { action: 'deliver' }
+          : {
+              action: decision.action,
+              playbookId: decision.playbookId,
+              input: { origin: 'boss', text: decision.input },
+            },
+        runtimeTurn.signal,
+      );
+    }
+    return quiescentResult();
+  };
   const createCaptainRuntime = vi.fn(
     (
-      _options: Parameters<
+      options: Parameters<
         NonNullable<PlaybookCaptainDeps['createCaptainRuntime']>
       >[0],
     ) => {
+      ports.controller = options.controller as typeof ports.controller;
       const runtime = new FakeRuntime(
-        handleHook,
+        handleHook ?? parseDrivenHook,
         disposeHook,
         undefined,
         resumeHook,
@@ -400,7 +500,7 @@ function fakeInternalCaptain(
       return runtime;
     },
   );
-  return { createCaptainRuntime, runtimes };
+  return { createCaptainRuntime, runtimes, ports };
 }
 
 // Construct the shell through the `captain.options.playbooks` enablement
@@ -434,6 +534,10 @@ function makeShell(
   }
   let sessionSequence = 0;
   const sessionIds = opts.sessionIds;
+  // CAPTAIN-16/26: the session Captain takes its own previously unissued id at
+  // `init`, before any engagement, so injected engagement ids keep their
+  // meaning.
+  let captainIdIssued = false;
   return createPlaybookCaptainShell(
     {
       playbooks,
@@ -446,15 +550,24 @@ function makeShell(
         if (specifier in modules) return modules[specifier];
         throw new Error(`no module ${specifier}`);
       },
-      createSessionId: () =>
-        sessionIds?.shift() ??
-        `00000000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`,
+      createSessionId: () => {
+        if (!captainIdIssued) {
+          captainIdIssued = true;
+          return SESSION_CAPTAIN_ID;
+        }
+        return (
+          sessionIds?.shift() ??
+          `00000000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`
+        );
+      },
       ...(opts.createCaptainRuntime
         ? { createCaptainRuntime: opts.createCaptainRuntime }
         : {}),
     },
   );
 }
+
+const SESSION_CAPTAIN_ID = '00000000-0000-4000-8000-0000000000ff';
 
 function turn(prompt: string, id = 1): BossTurn {
   return { id, prompt, timestamp: 0 };
@@ -468,8 +581,10 @@ function captainJson(value: unknown): CaptainRunResult {
   };
 }
 
+// CAPTAIN-19/20/21: the acting turn's result-phase closing-reply call is the
+// turn's only summary, and the shell supplies its outcome report.
 function isTurnSummaryPrompt(prompt: string): boolean {
-  return prompt.includes('turn-summary block') && prompt.includes('Saved you ');
+  return isClosingReplyPrompt(prompt);
 }
 
 function turnSummaryCalls(context: StubContext): StubContext['captainCalls'] {
@@ -481,6 +596,14 @@ function turnSummaryCalls(context: StubContext): StubContext['captainCalls'] {
 function hiddenCaptainCalls(context: StubContext): StubContext['captainCalls'] {
   return context.captainCalls.filter(
     (call) => call.options?.visibility === 'hidden',
+  );
+}
+
+// Sub-runtime judge calls, told apart from the shell's own durable
+// session-Captain calls by the hidden-control judge envelope (CAPTAIN-9).
+function judgeCalls(context: StubContext): StubContext['captainCalls'] {
+  return context.captainCalls.filter((call) =>
+    call.prompt.includes(HIDDEN_JUDGE_BEGIN),
   );
 }
 
@@ -596,25 +719,29 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     });
   });
 
-  it('bare /code engages CODE and uses visible Captain chat without dispatch', async () => {
+  // CAPTAIN-7: a bare enabled command resolves to `respond` only — status or
+  // clarification, never a start or restart.
+  it('answers a bare /code as captain speech without engaging', async () => {
     const registry = fakeCodeEntry();
     const shell = makeShell(registry);
     const session = stubSession();
-    const context = stubContext();
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'CODE is not running yet.' },
+    ]);
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code'), context.context);
 
-    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
-    expect(registry.runtimes[0]?.inputs).toEqual([]);
+    expect(registry.createRuntime).not.toHaveBeenCalled();
     expect(context.captainCalls).toHaveLength(1);
     expect(context.captainCalls[0]?.options).toEqual(
-      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
+      ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
     );
-    expect(context.captainCalls[0]?.prompt).toContain('visible Boss chat');
     expect(context.captainCalls[0]?.prompt).toContain(
-      'Ask what task to run with /code.',
+      'Boss issued a registered command that produces no action this turn',
     );
+    expect(context.replies).toEqual(['CODE is not running yet.']);
+    expect(session.statuses).toEqual([]);
   });
 
   it('continues the existing CODE runtime for same-playbook /code text', async () => {
@@ -636,9 +763,9 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
 });
 
 describe('createPlaybookCaptainShell internal Captain and lifecycle routing', () => {
-  it('ignores idle whitespace without allocating an internal Captain root', async () => {
+  it('ignores idle whitespace without allocating a call, session, or telemetry', async () => {
     const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain();
+    const internal = fakeSessionCaptain();
     const shell = makeShell(registry, {
       createCaptainRuntime: internal.createCaptainRuntime,
     });
@@ -646,98 +773,24 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     const context = stubContext();
 
     await shell.init!(session.session);
+    // CAPTAIN-16: the session Captain exists from `init`, outside the stack.
+    expect(internal.createCaptainRuntime).toHaveBeenCalledTimes(1);
+    expect(internal.runtimes[0]?.initCount).toBe(1);
+
     await shell.handleBossTurn(turn('   \n\t'), context.context);
 
-    expect(internal.createCaptainRuntime).not.toHaveBeenCalled();
+    expect(internal.runtimes[0]?.inputs).toEqual([]);
     expect(registry.createRuntime).not.toHaveBeenCalled();
     expect(context.captainCalls).toEqual([]);
+    expect(context.replies).toEqual([]);
     expect(session.statuses).toEqual([]);
     expect(session.telemetry).toEqual([]);
   });
 
-  // CAPTAIN-33 (DR-013 A1): an empty allowlist means "no tools" and is
-  // distinct from omission, which grants the adapter's full tool surface.
-  // Request it only where the adapter can enforce it.
-  // DEFERRED — IR-036 task 4 (shell controller rework): this row drives the
-  // real compiled captain artifact, which now implements the DR-029
-  // controller policy (hidden decision calls over the controller port); the
-  // retired visible-router flow scripted here is rewritten with the shell.
-  // The A1 tool posture at the new layer is pinned by
-  // reference/sdlc/captain.playbook/captain.playbook.integration.test.ts.
-  it.skip.each([
-    { label: 'no captainAdapter', captainAdapter: undefined },
-    { label: 'an enforcing adapter', captainAdapter: 'claude' },
-    { label: 'an unrecognized adapter', captainAdapter: 'future-agent' },
-  ])(
-    'requests the enforced empty tool allowlist with $label',
-    async ({ captainAdapter }) => {
-      const registry = fakeCodeEntry();
-      const shell = makeShell(registry, {
-        ...(captainAdapter === undefined ? {} : { captainAdapter }),
-      });
-      const session = stubSession();
-      const question = 'Should I route this to the CODE workflow?';
-      const context = stubContext([
-        (_prompt, options) => {
-          expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
-          return { status: 'ok', turnId: 1, finalText: question };
-        },
-        (_prompt, options) => {
-          expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
-          return captainJson({ guard: 'question' });
-        },
-      ]);
-
-      await shell.init!(session.session);
-      await shell.handleBossTurn(turn('route this'), context.context);
-
-      expect(context.captainCalls).toHaveLength(2);
-      for (const { options } of context.captainCalls) {
-        expect(options?.allowedTools).toEqual([]);
-      }
-    },
-  );
-
-  // DEFERRED — IR-036 task 4 (shell controller rework): drives the real
-  // compiled captain, whose retired visible-router flow this scripts.
-  it.skip('omits allowedTools for an adapter that cannot enforce it', async () => {
-    const registry = fakeCodeEntry();
-    // Cligent's codex adapter rejects any tool list outright, so requesting
-    // one would fail every control call before the model is reached.
-    const shell = makeShell(registry, { captainAdapter: 'codex' });
-    const session = stubSession();
-    const question = 'Should I route this to the CODE workflow?';
-    const context = stubContext([
-      (_prompt, options) => {
-        expect(options).toEqual({ visibility: 'visible', resume: false });
-        return { status: 'ok', turnId: 1, finalText: question };
-      },
-      (prompt, options) => {
-        expect(options).toEqual({ visibility: 'hidden', resume: false });
-        // Isolation degrades to the authored prompt-level restriction.
-        expect(prompt).toContain('Do not use tools.');
-        return captainJson({ guard: 'question' });
-      },
-    ]);
-
-    await shell.init!(session.session);
-    await shell.handleBossTurn(turn('route this'), context.context);
-
-    expect(context.captainCalls).toHaveLength(2);
-    for (const { options } of context.captainCalls) {
-      expect(options).not.toHaveProperty('allowedTools');
-      // Every other isolation guarantee is unchanged.
-      expect(options?.resume).toBe(false);
-    }
-  });
-
-  // CAPTAIN-33 (DR-013 A1) — the adapter-conditional tool posture the two
-  // deferred rows above scripted through the now-retired visible-router
-  // flow. The posture itself is live and unchanged (`controlCallToolOptions`
-  // in playbook-captain.ts), so it stays pinned here through the hidden
-  // lifecycle classifier over a fake runtime — a path that does not depend
-  // on the compiled Captain's retired routing errand and so survives the
-  // IR-036 task-4 shell rework independently of it.
+  // CAPTAIN-33 (DR-013 A1): the adapter-conditional tool posture over the
+  // durable session-Captain calls. An empty allowlist means "no tools" and is
+  // distinct from omission, which grants the adapter's full native tool
+  // surface, so it is requested only where the adapter can enforce it.
   it.each([
     { label: 'no captainAdapter', captainAdapter: undefined, enforced: true },
     { label: 'an enforcing adapter', captainAdapter: 'claude', enforced: true },
@@ -760,17 +813,25 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
         ...(captainAdapter === undefined ? {} : { captainAdapter }),
       });
       const session = stubSession();
-      const context = stubContext([captainJson({ decision: 'dismiss' })]);
+      const context = stubContext([
+        // The parse-resolved start's closing reply, then the decision call.
+        { status: 'ok', turnId: 1, finalText: 'Started CODE on the task.' },
+        captainJson({ action: 'dismiss' }),
+        { status: 'ok', turnId: 1, finalText: 'Stopped CODE.' },
+      ]);
 
       await shell.init!(session.session);
       await shell.handleBossTurn(turn('/code first task'), context.context);
       await shell.handleBossTurn(turn('dismiss this', 2), context.context);
 
-      expect(context.captainCalls).toHaveLength(1);
+      expect(context.captainCalls).toHaveLength(3);
+      for (const call of context.captainCalls) {
+        expect(call.options?.visibility).toBe('hidden');
+      }
       const options = context.captainCalls[0]?.options;
       expect(options).toEqual(
         enforced
-          ? ISOLATED_HIDDEN_CAPTAIN_OPTIONS
+          ? { visibility: 'hidden', resume: false, allowedTools: [] }
           : // Cligent's Codex adapter rejects any tool list outright, so
             // requesting one would fail the control call before the model.
             { visibility: 'hidden', resume: false },
@@ -784,195 +845,12 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     },
   );
 
-  // DEFERRED — IR-036 task 4 (shell controller rework): the DR-005 routing
-  // question and awaitBossReply parking are retired by the DR-029 session
-  // loop (a clarifying question to Boss is a `respond` selection); the
-  // exact-text entry pin moves to the controller suites.
-  it.skip('enters exact Boss text directly and parks on a routing question', async () => {
-    const registry = fakeCodeEntry();
-    const shell = makeShell(registry);
-    const session = stubSession();
-    const bossText = 'Route THIS request exactly: preserve /slashes and CASE.';
-    const question = 'Should I route this to the CODE workflow?';
-    const context = stubContext([
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
-        expect(prompt).toContain(`Boss intent: ${bossText}`);
-        expect(prompt).not.toContain('nextPlaybookId');
-        expect(prompt).not.toContain('remainingPlan');
-        return { status: 'ok', turnId: 1, finalText: question };
-      },
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
-        expect(prompt).toContain(question);
-        return captainJson({ guard: 'question' });
-      },
-    ]);
-
-    await shell.init!(session.session);
-    await expect(
-      shell.handleBossTurn(turn(bossText), context.context),
-    ).resolves.toBeUndefined();
-
-    expect(context.captainCalls).toHaveLength(2);
-    expect(
-      context.captainCalls.some(({ prompt }) =>
-        prompt.includes('Boss-event classifier'),
-      ),
-    ).toBe(false);
-    expect(registry.createRuntime).not.toHaveBeenCalled();
-    expect(session.statuses).toEqual([]);
-    expect(
-      JSON.stringify(telemetryWithTopic(session, 'playbook.fsm.state')),
-    ).toContain(question);
-    expect(
-      telemetryWithTopic(session, 'playbook.captain.fsm.state').at(-1),
-    ).toMatchObject({
-      payload: {
-        to: 'engaged.parked',
-        ledger: { mode: 'engaged.parked', stackDepth: 1 },
-      },
-    });
-    await shell.prepareDispose!();
-  });
-
-  // DEFERRED — IR-036 task 4 (shell controller rework): the compiled
-  // Captain no longer calls playbooks itself — `callPlaybook` is not
-  // reachable from the controller (CAPTAIN-11); the shell executes a
-  // validated `start` selection instead.
-  it.skip('routes the real default Captain through a child before meaningful completion', async () => {
-    const bossText =
-      'Review parseAdjudication for prototype-chain guard lookup; keep this punctuation: /**proto**.';
-    const childInput =
-      'Review parseAdjudication for prototype-chain guard lookup and report the concrete conclusion.';
-    const registry = fakeCodeEntry(async (_runtime, runtimeTurn) => {
-      expect(runtimeTurn.text).toBe(childInput);
-      return terminalResult('done', {
-        conclusion: 'Use an own-property membership check for declared guards.',
-      });
-    });
-    delete registry.entry.summaryPolicy;
-    const shell = makeShell(registry, {
-      sessionIds: ['10000000-0000-4000-8000-000000000001'],
-    });
-    const session = stubSession();
-    const context = stubContext([
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
-        expect(prompt).toContain(`Boss intent: ${bossText}`);
-        expect(prompt).toContain('"id":"code"');
-        expect(prompt).not.toContain('nextPlaybookId');
-        expect(prompt).not.toContain('remainingPlan');
-        return {
-          status: 'ok',
-          turnId: 1,
-          finalText: 'I will route this review to the CODE playbook.',
-        };
-      },
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
-        expect(prompt).toContain(
-          'I will route this review to the CODE playbook.',
-        );
-        return captainJson({
-          guard: 'delegation',
-          remainingPlan: [],
-          nextPlaybookId: 'code',
-          nextPlaybookInput: childInput,
-        });
-      },
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
-        expect(prompt).toContain(
-          'Use an own-property membership check for declared guards.',
-        );
-        return {
-          status: 'ok',
-          turnId: 3,
-          finalText:
-            'The CODE review found that declared guards need an own-property membership check.',
-        };
-      },
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
-        expect(prompt).toContain(
-          'The CODE review found that declared guards need an own-property membership check.',
-        );
-        return captainJson({ guard: 'final' });
-      },
-    ]);
-
-    await shell.init!(session.session);
-    expect(telemetryWithTopic(session, 'playbook.trace')).toEqual([]);
-    expect(context.captainCalls).toEqual([]);
-
-    await shell.handleBossTurn(turn(bossText), context.context);
-
-    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
-    expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      childInput,
-    ]);
-    expect(context.captainCalls).toHaveLength(4);
-    expect(
-      context.captainCalls.map(({ options }) => options?.visibility),
-    ).toEqual(['visible', 'hidden', 'visible', 'hidden']);
-    expect(session.statuses.map(({ message }) => message)).toEqual([
-      '◇ /code called by Captain',
-      '◇ /code returned to Captain',
-    ]);
-    const visiblePrompts = context.captainCalls
-      .filter(({ options }) => options?.visibility === 'visible')
-      .map(({ prompt }) => prompt)
-      .join('\n');
-    expect(visiblePrompts).not.toContain('Current state: routing');
-    expect(visiblePrompts).not.toContain('"stateId":"routing"');
-    expect(visiblePrompts).not.toContain('callingPlaybook');
-    expect(visiblePrompts).not.toContain('/captain');
-    expect(visiblePrompts).not.toContain(
-      '10000000-0000-4000-8000-000000000001',
-    );
-    expect(visiblePrompts).not.toContain('nextPlaybookId');
-    expect(visiblePrompts).not.toContain('remainingPlan');
-    expect(
-      context.captainCalls.some(({ prompt }) =>
-        prompt.includes('Boss-event classifier'),
-      ),
-    ).toBe(false);
-
-    const traces = telemetryWithTopic(session, 'playbook.trace').map(
-      ({ payload }) => payload as { playbookId?: unknown; type?: unknown },
-    );
-    expect(traces).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          playbookId: 'captain',
-          type: 'session.started',
-        }),
-        expect.objectContaining({
-          playbookId: 'captain',
-          type: 'captain.call.started',
-        }),
-        expect.objectContaining({
-          playbookId: 'captain',
-          type: 'captain.call.finished',
-        }),
-        expect.objectContaining({
-          playbookId: 'captain',
-          type: 'session.disposed',
-        }),
-      ]),
-    );
-    const stateTelemetryJson = JSON.stringify(
-      telemetryWithTopic(session, 'playbook.fsm.state'),
-    );
-    expect(stateTelemetryJson).toContain('routing');
-    expect(stateTelemetryJson).toContain('done');
-  });
-
-  it('lazily creates an internal root with only the sanitized catalog', async () => {
+  // CAPTAIN-16: the session Captain is constructed at `init` with the
+  // sanitized catalog and the host controller port, outside the stack.
+  it('constructs the session Captain at init with the sanitized catalog and the controller port', async () => {
     const code = fakeCodeEntry();
     const docs = fakePlaybookEntry('docs', 'docs');
-    const internal = fakeInternalCaptain();
+    const internal = fakeSessionCaptain();
     const shell = makeShell([code, docs], {
       commands: { code: 'dev' },
       createCaptainRuntime: internal.createCaptainRuntime,
@@ -981,48 +859,40 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     const context = stubContext();
 
     await shell.init!(session.session);
-    expect(internal.createCaptainRuntime).not.toHaveBeenCalled();
 
-    await shell.handleBossTurn(
-      turn('please coordinate this work'),
-      context.context,
-    );
-
-    expect(internal.createCaptainRuntime).toHaveBeenCalledWith({
-      enabledPlaybooks: [
-        {
-          id: 'code',
-          command: 'dev',
-          intent: 'software development / SDLC coding workflow',
-        },
-        { id: 'docs', command: 'docs', intent: 'docs playbook' },
-      ],
-    });
     const captainOptions = internal.createCaptainRuntime.mock.calls[0]?.[0];
+    expect(captainOptions?.enabledPlaybooks).toEqual([
+      {
+        id: 'code',
+        command: 'dev',
+        intent: 'software development / SDLC coding workflow',
+      },
+      { id: 'docs', command: 'docs', intent: 'docs playbook' },
+    ]);
     expect(Object.isFrozen(captainOptions?.enabledPlaybooks)).toBe(true);
     expect(
-      captainOptions?.enabledPlaybooks?.every((entry) =>
-        Object.isFrozen(entry),
-      ),
+      captainOptions?.enabledPlaybooks?.every((entry) => Object.isFrozen(entry)),
     ).toBe(true);
-    expect(internal.runtimes[0]?.session).toMatchObject({
-      playbookId: 'captain',
-      depth: 0,
-    });
+    expect(typeof captainOptions?.controller?.submit).toBe('function');
+    expect(typeof captainOptions?.controller?.resolveParsedTurn).toBe(
+      'function',
+    );
+    // The session Captain holds no engagement frame and starts no playbook.
+    expect(code.createRuntime).not.toHaveBeenCalled();
+    expect(docs.createRuntime).not.toHaveBeenCalled();
+    expect(internal.runtimes[0]?.session?.playbookId).toBe('captain');
+    expect(internal.runtimes[0]?.session?.depth).toBe(0);
+    expect(internal.runtimes[0]?.session?.sessionId).toBe(SESSION_CAPTAIN_ID);
+
+    await shell.handleBossTurn(turn('please coordinate this work'), context.context);
     expect(internal.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
       'please coordinate this work',
     ]);
-    expect(code.createRuntime).not.toHaveBeenCalled();
-    expect(docs.createRuntime).not.toHaveBeenCalled();
-    expect(context.visiblePlayers).toEqual([]);
-    expect(session.statuses.map(({ message }) => message)).not.toEqual(
-      expect.arrayContaining([expect.stringContaining('/captain')]),
-    );
   });
 
   it('keeps internal Captain state status hidden while retaining telemetry', async () => {
     const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain(async (runtime) => {
+    const internal = fakeSessionCaptain(async (runtime) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await runtime.ports.emitStatus('Entered internalRouting', {
         stateId: 'internalRouting',
@@ -1056,7 +926,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
 
   it('treats an unregistered slash near-miss as internal Captain input', async () => {
     const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain();
+    const internal = fakeSessionCaptain();
     const shell = makeShell(registry, {
       createCaptainRuntime: internal.createCaptainRuntime,
     });
@@ -1072,67 +942,73 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(registry.createRuntime).not.toHaveBeenCalled();
   });
 
-  it('does not disclose internal frame identity to lifecycle classification', async () => {
+  // CAPTAIN-9: the decision envelope carries the exact Boss text and the two
+  // shell-composed digests and no shell ledger, session id, or call id.
+  it('keeps shell ledger identity out of the decision envelope', async () => {
     const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain();
     const shell = makeShell(registry, {
-      createCaptainRuntime: internal.createCaptainRuntime,
+      sessionIds: ['20000000-0000-4000-8000-000000000001'],
     });
     const session = stubSession();
-    const context = stubContext([captainJson({ decision: 'deliver' })]);
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      captainJson({ action: 'deliver' }),
+      { status: 'ok', turnId: 1, finalText: 'Handed it over.' },
+    ]);
 
     await shell.init!(session.session);
-    await shell.handleBossTurn(turn('coordinate first'), context.context);
+    await shell.handleBossTurn(turn('/code coordinate first'), context.context);
     await shell.handleBossTurn(
       turn('continue coordinating', 2),
       context.context,
     );
 
-    const lifecyclePrompt = hiddenCaptainCalls(context)[0]?.prompt;
-    expect(lifecyclePrompt).not.toContain('activePlaybookId');
-    expect(lifecyclePrompt).not.toContain('/captain');
-    expect(lifecyclePrompt).not.toContain('"captain"');
-    expect(internal.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
+    const decision = context.captainCalls.find((call) =>
+      isDecisionPrompt(call.prompt),
+    );
+    expect(decision?.prompt).toContain('[Boss message]\ncontinue coordinating');
+    expect(decision?.prompt).toContain('[ControlView digest]');
+    expect(decision?.prompt).toContain('[Catalog digest]');
+    expect(decision?.prompt).not.toContain('activePlaybookId');
+    expect(decision?.prompt).not.toContain('stackDepth');
+    expect(decision?.prompt).not.toContain(
+      '20000000-0000-4000-8000-000000000001',
+    );
+    expect(decision?.prompt).not.toContain(SESSION_CAPTAIN_ID);
+    expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
       'coordinate first',
       'continue coordinating',
     ]);
   });
 
-  it('does not let a registered slash replace an active internal root', async () => {
-    const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain();
-    const shell = makeShell(registry, {
-      createCaptainRuntime: internal.createCaptainRuntime,
-    });
-    const session = stubSession();
-    const context = stubContext();
-
-    await shell.init!(session.session);
-    await shell.handleBossTurn(turn('coordinate first'), context.context);
-    await shell.handleBossTurn(turn('/code replace it', 2), context.context);
-
-    expect(internal.createCaptainRuntime).toHaveBeenCalledTimes(1);
-    expect(internal.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      'coordinate first',
-    ]);
-    expect(registry.createRuntime).not.toHaveBeenCalled();
-    const rejection = context.captainCalls.find((call) =>
-      call.prompt.includes('Captain is already running'),
-    );
-    expect(rejection?.prompt).toContain('before starting /code');
-    expect(rejection?.prompt).not.toContain('/captain');
-  });
-
-  // CAPTAIN-34/35/36: a rejecting internal-root turn disposes the stack under
-  // a `failure` reason and rethrows Boss-appropriate prose with the original
-  // diagnostic as `cause`, so the next registered command engages cleanly.
-  it('resets a failed internal root so the next registered command engages cleanly', async () => {
+  // CAPTAIN-34/35: a session-Captain boundary failure settles the turn with a
+  // Boss-appropriate reply naming a concrete next step, leaves the stack
+  // untouched, and keeps the raw diagnostic off every Boss-visible surface.
+  it('settles a failed session-Captain turn with a Boss-appropriate reply and keeps the stack', async () => {
     const registry = fakeCodeEntry();
     const rawFailure = new Error(
       'adjudicator selected undeclared guard undefined',
     );
-    const internal = fakeInternalCaptain(async () => {
-      throw rawFailure;
+    let failNext = true;
+    const internal = fakeSessionCaptain(async (_runtime, runtimeTurn) => {
+      if (failNext) {
+        failNext = false;
+        throw rawFailure;
+      }
+      const resolution = internal.ports.controller?.resolveParsedTurn?.(
+        runtimeTurn.text,
+      ) as { kind?: string; decision?: { action: string; playbookId?: string; input?: string } } | undefined;
+      if (resolution?.kind === 'action' && resolution.decision) {
+        await internal.ports.controller!.submit(
+          {
+            action: resolution.decision.action,
+            playbookId: resolution.decision.playbookId,
+            input: { origin: 'boss', text: resolution.decision.input },
+          },
+          runtimeTurn.signal,
+        );
+      }
+      return quiescentResult();
     });
     const shell = makeShell(registry, {
       createCaptainRuntime: internal.createCaptainRuntime,
@@ -1141,171 +1017,89 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     const context = stubContext();
 
     await shell.init!(session.session);
-    let caught: unknown;
-    try {
-      await shell.handleBossTurn(
-        turn('hello, what can you do?'),
-        context.context,
-      );
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    const message = (caught as Error).message;
-    expect(message).toMatch(/send the request again/i);
-    expect(message).toContain('/code');
-    expect(message).not.toMatch(/adjudicator|guard|undeclared|hidden/i);
-    expect((caught as Error).cause).toBe(rawFailure);
-    expect(internal.runtimes[0]?.disposeCount).toBe(1);
-    expect(session.telemetry).toContainEqual(
-      expect.objectContaining({
-        payload: expect.objectContaining({ to: 'chat', event: 'failure' }),
-      }),
-    );
-    // CAPTAIN-35: the failing turn makes no visible chat call, so the raw
-    // diagnostic reaches no Boss-visible surface.
+    await expect(
+      shell.handleBossTurn(turn('hello, what can you do?'), context.context),
+    ).rejects.toBe(rawFailure);
+
+    expect(context.replies).toHaveLength(1);
+    const reply = context.replies[0]!;
+    expect(reply).toMatch(/send the request again/i);
+    expect(reply).toContain('/code');
+    expect(reply).not.toMatch(/adjudicator|guard|undeclared|hidden/i);
+    // No visible chat call carried the diagnostic, and the stack is untouched.
     expect(context.captainCalls).toHaveLength(0);
+    expect(registry.createRuntime).not.toHaveBeenCalled();
 
     await shell.handleBossTurn(turn('/code fix the parser', 2), context.context);
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
     expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
       'fix the parser',
     ]);
-    expect(
-      context.captainCalls.find((call) =>
-        call.prompt.includes('already running'),
-      ),
-    ).toBeUndefined();
   });
 
-  // CAPTAIN-35/36: the same reset applies when the rejecting boundary is the
-  // internal root's `resumePlaybookCall` returning a completed child, not just
-  // a directly delivered Boss turn.
-  it('resets a failed internal root when a returning child rejects its resume', async () => {
-    const rawFailure = new Error(
-      'adjudicator selected undeclared guard undefined',
-    );
-    let childStart:
-      | Awaited<ReturnType<PlaybookPorts['callPlaybook']>>
-      | undefined;
-    const internal = fakeInternalCaptain(
-      async (runtime, runtimeTurn) => {
-        if (!runtime.ports) throw new Error('runtime ports missing');
-        childStart = await runtime.ports.callPlaybook(
-          { callId: 'captain:code:1', playbookId: 'code', text: 'do the work' },
-          runtimeTurn.signal,
-        );
-        if (childStart.state !== 'suspended') {
-          throw new Error('expected the child to suspend');
-        }
-        return suspendedResult({
-          callId: 'captain:code:1',
-          playbookId: 'code',
-          childSessionId: childStart.childSessionId,
-        });
-      },
-      async () => {
-        throw rawFailure;
-      },
-    );
-    const registry = fakeCodeEntry(async (_runtime, runtimeTurn) =>
-      runtimeTurn.text === 'do the work'
-        ? quiescentResult('working')
-        : terminalResult('done', { summary: 'work complete' }),
-    );
-    const shell = makeShell(registry, {
-      createCaptainRuntime: internal.createCaptainRuntime,
-    });
-    const session = stubSession();
-    const context = stubContext([captainJson({ decision: 'deliver' })]);
-
-    await shell.init!(session.session);
-    await shell.handleBossTurn(turn('coordinate the work'), context.context);
-    expect(childStart?.state).toBe('suspended');
-
-    let caught: unknown;
-    try {
-      await shell.handleBossTurn(turn('finish it', 2), context.context);
-    } catch (error) {
-      caught = error;
-    }
-    expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toMatch(/send the request again/i);
-    expect((caught as Error).message).not.toMatch(
-      /adjudicator|guard|undeclared|hidden/i,
-    );
-    expect((caught as Error).cause).toBe(rawFailure);
-    expect(internal.runtimes[0]?.disposeCount).toBe(1);
-    expect(registry.runtimes[0]?.disposeCount).toBe(1);
-    expect(session.telemetry).toContainEqual(
-      expect.objectContaining({
-        payload: expect.objectContaining({ to: 'chat', event: 'failure' }),
-      }),
-    );
-    expect(
-      context.captainCalls.some((call) => call.prompt.includes('adjudicator')),
-    ).toBe(false);
-
-    await shell.handleBossTurn(turn('/code retry it', 3), context.context);
-    expect(registry.createRuntime).toHaveBeenCalledTimes(2);
-    expect(registry.runtimes[1]?.inputs.map(({ text }) => text)).toEqual([
-      'retry it',
-    ]);
-    expect(
-      context.captainCalls.find((call) =>
-        call.prompt.includes('already running'),
-      ),
-    ).toBeUndefined();
-  });
-
-  // CAPTAIN-35/36: an external root's rejected turn keeps its recoverable
+  // CAPTAIN-35: an external root's rejected delivery keeps its recoverable
   // frame and propagates the boundary error unchanged.
   it('retains a failed external root and propagates its boundary error unchanged', async () => {
     const rawFailure = new Error('code runtime control failure');
-    let failNext = true;
+    let turns = 0;
     const registry = fakeCodeEntry(async () => {
-      if (failNext) {
-        failNext = false;
-        throw rawFailure;
-      }
+      turns += 1;
+      if (turns === 2) throw rawFailure;
       return quiescentResult();
     });
+    delete registry.entry.summaryPolicy;
     const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
 
     await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code do the work'), context.context);
+    const repliesBefore = context.replies.length;
     await expect(
-      shell.handleBossTurn(turn('/code do the work'), context.context),
+      shell.handleBossTurn(turn('/code keep going', 2), context.context),
     ).rejects.toBe(rawFailure);
     expect(registry.runtimes[0]?.disposeCount).toBe(0);
+    // No Boss-appropriate failure reply replaces the propagated error.
+    expect(context.replies).toHaveLength(repliesBefore);
 
-    await shell.handleBossTurn(turn('/code try again', 2), context.context);
+    await shell.handleBossTurn(turn('/code try again', 3), context.context);
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
     expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
       'do the work',
+      'keep going',
       'try again',
     ]);
   });
 
-  it('independently rejects internal-Captain and unknown child targets', async () => {
-    const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain(async (runtime, runtimeTurn) => {
+  // CAPTAIN-11/29: `callPlaybook` is not reachable from the session Captain,
+  // and an unknown child target rejects from a working playbook.
+  it('keeps callPlaybook unreachable from the session Captain and rejects unknown child targets', async () => {
+    const internal = fakeSessionCaptain(async (runtime, runtimeTurn) => {
+      if (!runtime.ports) throw new Error('runtime ports missing');
+      await expect(
+        runtime.ports.callPlaybook(
+          { callId: 'captain:self:1', playbookId: 'captain', text: 'recurse' },
+          runtimeTurn.signal,
+        ),
+      ).rejects.toThrow('never calls a playbook');
+      if (runtimeTurn.text === 'kick off the work') {
+        await internal.ports.controller!.submit(
+          {
+            action: 'start',
+            playbookId: 'code',
+            input: { origin: 'captain', text: 'do the work' },
+          },
+          runtimeTurn.signal,
+        );
+      }
+      return quiescentResult();
+    });
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await expect(
         runtime.ports.callPlaybook(
           {
-            callId: 'captain:self:1',
-            playbookId: 'captain',
-            text: 'recurse',
-          },
-          runtimeTurn.signal,
-        ),
-      ).rejects.toThrow('internal Captain playbook cannot call itself');
-      await expect(
-        runtime.ports.callPlaybook(
-          {
-            callId: 'captain:unknown:1',
+            callId: 'code:unknown:1',
             playbookId: 'missing',
             text: 'delegate',
           },
@@ -1317,19 +1111,25 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     const shell = makeShell(registry, {
       createCaptainRuntime: internal.createCaptainRuntime,
     });
+    const session = stubSession();
+    const context = stubContext();
 
-    await shell.init!(stubSession().session);
-    await shell.handleBossTurn(turn('route carefully'), stubContext().context);
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('coordinate this'), context.context);
+    // A Captain-composed `start` passes its own text through, distinguishable
+    // from Boss text in the settlement facts (CAPTAIN-7).
+    await shell.handleBossTurn(turn('kick off the work', 2), context.context);
 
-    expect(registry.createRuntime).not.toHaveBeenCalled();
+    expect(registry.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
+      'do the work',
+    ]);
   });
 
-  it('serializes internal Captain and judge calls through one queue', async () => {
+  it('serializes sub-runtime Captain and judge calls through one queue', async () => {
     const firstStarted = deferred<void>();
     const releaseFirst = deferred<void>();
     const callOrder: string[] = [];
-    const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain(async (runtime, runtimeTurn) => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await Promise.all([
         runtime.ports.callCaptain(
@@ -1341,9 +1141,8 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       ]);
       return quiescentResult();
     });
-    const shell = makeShell(registry, {
-      createCaptainRuntime: internal.createCaptainRuntime,
-    });
+    delete registry.entry.summaryPolicy;
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
     let calls = 0;
@@ -1354,12 +1153,17 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
         firstStarted.resolve(undefined);
         await releaseFirst.promise;
       }
-      return { status: 'ok', turnId: calls, finalText: 'done' };
+      return {
+        status: 'ok',
+        turnId: calls,
+        finalText: 'done',
+        resumeToken: `conversation-${calls}`,
+      };
     };
 
     await shell.init!(session.session);
     const running = shell.handleBossTurn(
-      turn('handle directly'),
+      turn('/code handle directly'),
       context.context,
     );
     await firstStarted.promise;
@@ -1369,13 +1173,15 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     releaseFirst.resolve(undefined);
     await running;
 
-    expect(callOrder).toHaveLength(2);
+    // The two runtime calls, then the shell's own closing-reply call.
+    expect(callOrder).toHaveLength(3);
     expect(callOrder[0]).toBe('visible:visible workflow call');
     expect(callOrder[1]).toMatch(/^hidden:/);
     expectHiddenJudgeEnvelope(
       callOrder[1]?.slice('hidden:'.length),
       'hidden judge call',
     );
+    expect(callOrder[2]).toMatch(/^hidden:/);
   });
 
   it('keeps an aborted running Captain call in the queue until its host settles', async () => {
@@ -1383,8 +1189,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     const secondQueued = deferred<void>();
     const releaseFirst = deferred<void>();
     let hostCalls = 0;
-    const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain(async (runtime, runtimeTurn) => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       const narrow = new AbortController();
       const first = runtime.ports.callJudge('first', narrow.signal);
@@ -1395,9 +1200,8 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       await Promise.allSettled([first, second]);
       return quiescentResult();
     });
-    const shell = makeShell(registry, {
-      createCaptainRuntime: internal.createCaptainRuntime,
-    });
+    delete registry.entry.summaryPolicy;
+    const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext();
     context.context.callCaptain = async () => {
@@ -1406,21 +1210,32 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
         firstStarted.resolve(undefined);
         await releaseFirst.promise;
       }
-      return { status: 'ok', turnId: hostCalls, finalText: 'done' };
+      return {
+        status: 'ok',
+        turnId: hostCalls,
+        finalText: 'done',
+        resumeToken: `conversation-${hostCalls}`,
+      };
     };
 
     await shell.init!(session.session);
-    const running = shell.handleBossTurn(turn('route'), context.context);
+    const running = shell.handleBossTurn(
+      turn('/code route'),
+      context.context,
+    );
     await secondQueued.promise;
     await Promise.resolve();
     expect(hostCalls).toBe(1);
 
     releaseFirst.resolve(undefined);
     await running;
-    expect(hostCalls).toBe(2);
+    // The two judge calls plus the shell's closing-reply call.
+    expect(hostCalls).toBe(3);
   });
 
-  it('serializes a shell turn summary behind unfinished runtime Captain work', async () => {
+  // CAPTAIN-19/21: the acting turn's closing reply runs after the action's
+  // ordered emissions settle, serialized behind unfinished runtime work.
+  it('serializes the closing reply behind unfinished runtime Captain work', async () => {
     const runtimeCallStarted = deferred<void>();
     const releaseRuntimeCall = deferred<void>();
     const callOrder: string[] = [];
@@ -1451,7 +1266,8 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       return {
         status: 'ok',
         turnId: callOrder.length,
-        finalText: 'done',
+        finalText: 'The round is set up and CODE is running.',
+        resumeToken: `conversation-${callOrder.length}`,
       };
     };
 
@@ -1470,14 +1286,19 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
 
     expect(callOrder).toHaveLength(2);
     expect(callOrder[0]).toBe('visible:unfinished runtime Captain work');
-    expect(callOrder[1]).toContain('turn-summary block');
+    expect(callOrder[1]).toContain(
+      'An action just executed for the current Boss turn',
+    );
+    expect(context.replies).toEqual([
+      'The round is set up and CODE is running.',
+    ]);
   });
 
-  it('disposes a terminal internal root without synthetic lifecycle status', async () => {
+  // CAPTAIN-3/11: the session Captain is never an engagement and emits none of
+  // the lifecycle status lines, however many turns it settles.
+  it('emits no lifecycle status for the session Captain across turns', async () => {
     const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain(async () =>
-      terminalResult('done', { response: 'complete' }),
-    );
+    const internal = fakeSessionCaptain(async () => quiescentResult());
     const shell = makeShell(registry, {
       createCaptainRuntime: internal.createCaptainRuntime,
     });
@@ -1488,41 +1309,50 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     await shell.handleBossTurn(turn('first intent'), context.context);
     await shell.handleBossTurn(turn('second intent', 2), context.context);
 
-    expect(internal.createCaptainRuntime).toHaveBeenCalledTimes(2);
-    expect(internal.runtimes.map((runtime) => runtime.disposeCount)).toEqual([
-      1, 1,
-    ]);
-    expect(session.statuses.map(({ message }) => message)).not.toEqual(
-      expect.arrayContaining([expect.stringContaining('/captain')]),
-    );
+    // One session Captain for the whole shell session, never reconstructed.
+    expect(internal.createCaptainRuntime).toHaveBeenCalledTimes(1);
+    expect(internal.runtimes[0]?.disposeCount).toBe(0);
+    expect(session.statuses).toEqual([]);
+
+    await shell.prepareDispose!();
+    expect(internal.runtimes[0]?.disposeCount).toBe(1);
   });
 
+  // CAPTAIN-7/8/13: a validated `deliver` hands the shell-authoritative Boss
+  // text to the leaf, ignoring any text the selection carries.
   it('delivers the original Boss text to the active runtime', async () => {
     const registry = fakeCodeEntry();
     const shell = makeShell(registry);
     const session = stubSession();
-    const context = stubContext([captainJson({ decision: 'deliver' })]);
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      captainJson({ action: 'deliver', text: 'a divergent restatement' }),
+      { status: 'ok', turnId: 1, finalText: 'Handed it to CODE.' },
+    ]);
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code first task'), context.context);
     await shell.handleBossTurn(turn('continue from here', 2), context.context);
 
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
-    expect(hiddenCaptainCalls(context)[0]?.options).toEqual({
+    const decision = context.captainCalls.find((call) =>
+      isDecisionPrompt(call.prompt),
+    );
+    expect(decision?.options).toEqual({
       visibility: 'hidden',
-      resume: false,
+      resume: 'conversation-1',
       allowedTools: [],
     });
     expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
       'first task',
       'continue from here',
     ]);
-    expect(hiddenCaptainCalls(context)[0]?.prompt).toContain(
-      'lifecycle classifier',
-    );
-    expect(hiddenCaptainCalls(context)[0]?.prompt).not.toContain(
-      '"decision":"dispatch"',
-    );
+    // No hidden lifecycle classification call exists.
+    expect(
+      context.captainCalls.some((call) =>
+        call.prompt.includes('lifecycle classifier'),
+      ),
+    ).toBe(false);
   });
 
   it.each([
@@ -1587,16 +1417,17 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     ]);
   });
 
-  it('dismisses without using classifier-authored text or making visible chat', async () => {
+  // CAPTAIN-13/14: `dismiss` executes only as a validated selection, and the
+  // Boss sees the shell's own lifecycle line plus the closing reply.
+  it('dismisses on a validated selection without visible chat', async () => {
     const registry = fakeCodeEntry();
     delete registry.entry.summaryPolicy;
     const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
-      captainJson({
-        decision: 'dismiss',
-        text: 'CODE has been dismissed.',
-      }),
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      captainJson({ action: 'dismiss' }),
+      { status: 'ok', turnId: 1, finalText: 'Stopped CODE for you.' },
     ]);
 
     await shell.init!(session.session);
@@ -1604,22 +1435,17 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     await shell.handleBossTurn(turn('dismiss this', 2), context.context);
 
     expect(registry.runtimes[0]?.disposeCount).toBe(1);
-    expect(hiddenCaptainCalls(context)[0]?.options).toEqual({
-      visibility: 'hidden',
-      resume: false,
-      allowedTools: [],
-    });
-    expect(context.captainCalls).toHaveLength(1);
-    expect(hiddenCaptainCalls(context)[0]?.prompt).toContain(
-      '{"decision":"dismiss"}',
-    );
-    expect(hiddenCaptainCalls(context)[0]?.prompt).not.toContain(
-      'optional visible dismissal reply',
-    );
-    expect(session.statuses).toContainEqual({
-      message: '◇ /code stopped',
-      data: undefined,
-    });
+    for (const call of context.captainCalls) {
+      expect(call.options?.visibility).toBe('hidden');
+    }
+    expect(session.statuses.map(({ message }) => message)).toEqual([
+      '◇ /code started',
+      '◇ /code stopped',
+    ]);
+    expect(context.replies).toEqual([
+      'Started CODE.',
+      'Stopped CODE for you.',
+    ]);
   });
 });
 
@@ -1633,7 +1459,11 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     });
     const shell = makeShell(registry);
     const session = stubSession();
-    const context = stubContext([captainJson({ decision: 'deliver' })]);
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      captainJson({ action: 'deliver' }),
+      { status: 'ok', turnId: 1, finalText: 'Resumed the round.' },
+    ]);
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code first task'), context.context);
@@ -1644,12 +1474,17 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       'first task',
       'resume it',
     ]);
-    expect(hiddenCaptainCalls(context)).toHaveLength(1);
-    const lifecyclePrompt = hiddenCaptainCalls(context)[0]!.prompt;
-    expect(lifecyclePrompt).not.toContain('"mode":"engaged.parked"');
-    expect(lifecyclePrompt).not.toContain('latestSubRuntimeStateId');
-    expect(lifecyclePrompt).not.toContain('activePlaybookId');
-    expect(telemetryWithTopic(session, 'playbook.fsm.state')).toHaveLength(2);
+    const decisionPrompt = context.captainCalls.find((call) =>
+      isDecisionPrompt(call.prompt),
+    )!.prompt;
+    expect(decisionPrompt).not.toContain('"mode":"engaged.parked"');
+    expect(decisionPrompt).not.toContain('latestSubRuntimeStateId');
+    expect(decisionPrompt).not.toContain('activePlaybookId');
+    // The session Captain forwards its own structured telemetry on the same
+    // topic, so assert the mirrored sub-runtime event rather than a count.
+    expect(telemetryWithTopic(session, 'playbook.fsm.state')).toContainEqual(
+      stateTelemetry('ready', { event: { type: 'xstate.done' } }),
+    );
     expect(telemetryWithTopic(session, 'playbook.captain.fsm.state')).toEqual(
       expect.arrayContaining([
         {
@@ -1695,12 +1530,11 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     const shell = makeShell(registry);
     const session = stubSession();
     const context = stubContext([
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
-        expect(prompt).toContain('lifecycle classifier');
-        return captainJson({ decision: 'deliver' });
-      },
-      captainJson({ decision: 'deliver' }),
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      captainJson({ action: 'deliver' }),
+      { status: 'ok', turnId: 1, finalText: 'Answered the question.' },
+      captainJson({ action: 'deliver' }),
+      { status: 'ok', turnId: 1, finalText: 'Reported the failure.' },
     ]);
 
     await shell.init!(session.session);
@@ -1709,14 +1543,24 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     await shell.handleBossTurn(turn('what happened?', 3), context.context);
 
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
-    expect(hiddenCaptainCalls(context)).toHaveLength(2);
-    for (const { prompt } of hiddenCaptainCalls(context)) {
-      expect(prompt).not.toContain('pendingBossQuestions');
-      expect(prompt).not.toContain('Which branch should I use?');
-      expect(prompt).not.toContain('lastError');
-      expect(prompt).not.toContain('"message":"boom"');
+    const decisionPrompts = context.captainCalls
+      .filter((call) => isDecisionPrompt(call.prompt))
+      .map((call) => call.prompt);
+    expect(decisionPrompts).toHaveLength(2);
+    // CAPTAIN-9: this fake leaf ships no control surface, so the shell
+    // composes the degraded ControlView digest from the facts it mirrors —
+    // the pending question verbatim and the compact `{ name, message }`
+    // error — while the raw stack and the shell ledger stay out.
+    for (const prompt of decisionPrompts) {
+      expect(prompt).toContain('advertises no control surface');
       expect(prompt).not.toContain('hidden stack');
+      expect(prompt).not.toContain('stackDepth');
+      expect(prompt).not.toContain('latestSubRuntimeStateId');
     }
+    expect(decisionPrompts[0]).toContain('Which branch should I use?');
+    expect(decisionPrompts[1]).toContain(
+      'Last error: {"name":"TypeError","message":"boom"}',
+    );
     const shellTelemetry = JSON.stringify(
       telemetryWithTopic(session, 'playbook.captain.fsm.state'),
     );
@@ -1765,7 +1609,12 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
     delete registry.entry.summaryPolicy;
     const shell = makeShell(registry);
     const session = stubSession();
-    const context = stubContext([captainJson({ decision: 'dismiss' })]);
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      captainJson({ action: 'dismiss' }),
+      { status: 'ok', turnId: 1, finalText: 'Stopped CODE.' },
+      { status: 'ok', turnId: 1, finalText: 'Started CODE again.' },
+    ]);
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code first task'), context.context);
@@ -1781,32 +1630,41 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
       message: '◇ /code stopped',
       data: undefined,
     });
-    expect(context.captainCalls).toHaveLength(1);
-    expect(context.captainCalls[0]?.options).toEqual(
-      ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
-    );
+    expect(context.captainCalls).toHaveLength(4);
+    for (const call of context.captainCalls) {
+      expect(call.options?.visibility).toBe('hidden');
+      expect(call.options?.allowedTools).toEqual([]);
+    }
   });
 
-  it('rejects a different registered command while CODE is engaged', async () => {
+  // CAPTAIN-2/7: an enabled command absent from the active path switches —
+  // dismissal then start, in that order — instead of being refused.
+  it('switches to a different registered command while CODE is engaged', async () => {
     const code = fakeCodeEntry();
+    delete code.entry.summaryPolicy;
     const docs = fakePlaybookEntry('docs', 'docs');
+    delete docs.entry.summaryPolicy;
     const shell = makeShell([code, docs]);
     const session = stubSession();
     const context = stubContext();
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code first task'), context.context);
-    await shell.handleBossTurn(turn('/docs write docs', 2), context.context);
+    await shell.handleBossTurn(turn('/docs write it up', 2), context.context);
 
-    expect(code.createRuntime).toHaveBeenCalledTimes(1);
-    expect(docs.createRuntime).not.toHaveBeenCalled();
-    const visibleRejection = context.captainCalls.find((call) =>
-      call.prompt.includes('/code is already running'),
-    );
-    expect(visibleRejection?.options).toEqual(
-      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
-    );
-    expect(visibleRejection?.prompt).toContain('/code is already running');
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(docs.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
+      'write it up',
+    ]);
+    expect(session.statuses.map(({ message }) => message)).toEqual([
+      '◇ /code started',
+      '◇ /code stopped',
+      '◇ /docs started',
+    ]);
+    // No decision call parsed the command itself.
+    expect(
+      context.captainCalls.some((call) => isDecisionPrompt(call.prompt)),
+    ).toBe(false);
   });
 
   it('pre-close teardown drains the active runtime exactly once without shell emissions', async () => {
@@ -1901,7 +1759,8 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       },
     ]);
     const nonSummaryCaptainCalls = context.captainCalls.filter(
-      (call) => !isTurnSummaryPrompt(call.prompt),
+      (call) =>
+        !isTurnSummaryPrompt(call.prompt) && !isSessionCaptainPrompt(call.prompt),
     );
     expect(nonSummaryCaptainCalls.slice(0, 2)).toEqual([
       {
@@ -1954,9 +1813,9 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       message: 'sub-runtime status',
       data: { step: 1 },
     });
-    expect(telemetryWithTopic(session, 'playbook.fsm.state')).toEqual([
+    expect(telemetryWithTopic(session, 'playbook.fsm.state')).toContainEqual(
       stateTelemetry('ready'),
-    ]);
+    );
     expect(
       telemetryWithTopic(session, 'playbook.captain.fsm.state').length,
     ).toBeGreaterThan(0);
@@ -1986,14 +1845,11 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
     await shell.init!(stubSession().session);
     await shell.handleBossTurn(turn('/code adjudicate it'), context.context);
 
-    expect(hiddenCaptainCalls(context)).toHaveLength(1);
-    expect(hiddenCaptainCalls(context)[0]?.options).toEqual(
+    expect(judgeCalls(context)).toHaveLength(1);
+    expect(judgeCalls(context)[0]?.options).toEqual(
       ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
     );
-    expectHiddenJudgeEnvelope(
-      hiddenCaptainCalls(context)[0]?.prompt,
-      runtimePrompt,
-    );
+    expectHiddenJudgeEnvelope(judgeCalls(context)[0]?.prompt, runtimePrompt);
     expect(judgeReply).toBe('{"guard":"accepted"}');
   });
 
@@ -2044,6 +1900,15 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       return result;
     };
     context.context.callCaptain = async (prompt): Promise<CaptainRunResult> => {
+      if (isSessionCaptainPrompt(prompt)) {
+        // The shell's own durable closing-reply call runs after the action.
+        return {
+          status: 'ok',
+          turnId: 9,
+          finalText: 'The round is under way.',
+          resumeToken: 'conversation-late',
+        };
+      }
       expectHiddenJudgeEnvelope(prompt, 'gated judge');
       order.push('judge:start');
       judgeStarted.resolve(undefined);
@@ -2120,8 +1985,11 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     const session = stubSession();
     const context = stubContext(
       [
-        captainJson({ decision: 'deliver' }),
-        captainJson({ decision: 'deliver' }),
+        { status: 'ok', turnId: 1, finalText: 'Ran the command task.' },
+        captainJson({ action: 'deliver' }),
+        { status: 'ok', turnId: 1, finalText: 'Routed the task.' },
+        captainJson({ action: 'deliver' }),
+        { status: 'ok', turnId: 1, finalText: 'Continued the round.' },
       ],
       (prompt) => {
         if (isTurnSummaryPrompt(prompt)) order.push('summary');
@@ -2135,31 +2003,25 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
 
     const summaries = turnSummaryCalls(context);
     expect(summaries).toHaveLength(3);
-    expect(summaries.map(({ options }) => options)).toEqual([
-      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
-      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
-      ISOLATED_VISIBLE_CAPTAIN_OPTIONS,
-    ]);
-    expect(summaries.map((call) => call.prompt)).toEqual([
-      expect.stringContaining(
+    for (const summary of summaries) {
+      // Every durable call is hidden (CAPTAIN-9).
+      expect(summary.options?.visibility).toBe('hidden');
+      expect(summary.prompt).toContain(
         'Saved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.',
-      ),
-      expect.stringContaining(
-        'Saved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.',
-      ),
-      expect.stringContaining(
-        'Saved you 1 interruption and 0 copy-pastes across 0 rounds of reviews/rebuttals.',
-      ),
-    ]);
-    expect(summaries[0]?.prompt).toContain(
-      'Submitted Boss text:\ncommand task',
-    );
-    expect(summaries[0]?.prompt).toContain('Progress counts:\nnone');
-    expect(summaries[0]?.prompt).not.toContain('Ledger:');
+      );
+      expect(summary.prompt).toContain('Progress counts: none');
+      expect(summary.prompt).not.toContain('stackDepth');
+    }
+    expect(summaries[0]?.prompt).toContain('[Boss message]\n/code command task');
     expect(summaries[1]?.prompt).toContain(
-      'Submitted Boss text:\nplease route a task',
+      '[Boss message]\nplease route a task',
     );
-    expect(summaries[2]?.prompt).toContain('Submitted Boss text:\ncontinue it');
+    expect(summaries[2]?.prompt).toContain('[Boss message]\ncontinue it');
+    expect(context.replies).toEqual([
+      'Ran the command task.',
+      'Routed the task.',
+      'Continued the round.',
+    ]);
     expect(order).toEqual([
       'status',
       'telemetry',
@@ -2218,6 +2080,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       captainJson({ guard: 'hasFindings' }),
       captainJson({ guard: 'changesMadeSpecs' }),
       captainJson({ guard: 'accepted' }),
+      { status: 'ok', turnId: 1, finalText: 'Ran the review round.' },
     ]);
 
     await shell.init!(session.session);
@@ -2228,19 +2091,25 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       'Saved you 2 interruptions and 3 copy-pastes across 3 rounds of reviews/rebuttals.',
     );
     expect(summary?.prompt).toContain(
-      'Progress counts:\n2 review rounds, 1 rebuttal',
+      'Progress counts: 2 review rounds, 1 rebuttal',
     );
     expect(summary?.prompt).not.toContain('custom state');
-    expect(summary?.prompt).not.toContain('Ledger:');
+    expect(summary?.prompt).not.toContain('stackDepth');
+    // The grounding and no-raw-vocabulary instructions live in the compiled
+    // closing-reply prompt the shell wraps verbatim (CAPPLAY-20 pin 5).
     expect(summary?.prompt).toContain(
-      'State only what was done or what changed',
+      'compose the closing reply and turn summary only from the outcome-report facts',
     );
-    expect(summary?.prompt).toContain('do not explain how it was done');
-    expect(summary?.prompt).toContain('Do not list raw state names');
     expect(summary?.prompt).toContain(
-      "Do not mention counts for states the active playbook's summary policy does not label",
+      'claim no work the report does not contain',
     );
-    expect(summary?.prompt).toContain('natural, chat-like tone');
+    expect(summary?.prompt).toContain(
+      'Write concise human chat prose with no guard names',
+    );
+    expect(summary?.prompt).toContain(
+      'Do not mention counts for states the report does not name',
+    );
+    expect(summary?.prompt).toContain('Keep a natural chat-like tone');
   });
 
   it('counts explicit labeled-state reentry without counting parallel snapshots twice', async () => {
@@ -2290,7 +2159,7 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     );
 
     const summary = turnSummaryCalls(context)[0];
-    expect(summary?.prompt).toContain('Progress counts:\n2 proposal rounds');
+    expect(summary?.prompt).toContain('Progress counts: 2 proposal rounds');
     expect(summary?.prompt).toContain(
       'Saved you 0 interruptions and 0 copy-pastes across 2 rounds of reviews/rebuttals.',
     );
@@ -2304,7 +2173,10 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     });
     const shell = makeShell(registry);
     const session = stubSession();
-    const context = stubContext([captainJson({ guard: 'accepted' })]);
+    const context = stubContext([
+      captainJson({ guard: 'accepted' }),
+      { status: 'ok', turnId: 1, finalText: 'Adjudicated the rebuttal.' },
+    ]);
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code singular forms'), context.context);
@@ -2313,31 +2185,33 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(summary?.prompt).toContain(
       'Saved you 0 interruptions and 1 copy-paste across 1 round of reviews/rebuttals.',
     );
-    expect(summary?.prompt).toContain('Progress counts:\n1 rebuttal');
+    expect(summary?.prompt).toContain('Progress counts: 1 rebuttal');
   });
 
-  it('does not append a turn summary after an internal Captain turn or bare selection', async () => {
+  // CAPTAIN-19/21: a do-nothing turn — a `respond` settle or a parse-resolved
+  // `respond` — makes no result-phase call, so no `Saved you` line can follow.
+  it('makes no result-phase call for a respond settle or a bare command', async () => {
     const registry = fakeCodeEntry();
-    const internal = fakeInternalCaptain();
-    const shell = makeShell(registry, {
-      createCaptainRuntime: internal.createCaptainRuntime,
-    });
+    const shell = makeShell(registry);
     const session = stubSession();
-    const context = stubContext();
+    const context = stubContext([
+      captainJson({ action: 'respond', text: 'Nothing is running yet.' }),
+    ]);
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('just chat with me'), context.context);
 
     expect(registry.createRuntime).not.toHaveBeenCalled();
-    expect(internal.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      'just chat with me',
-    ]);
     expect(turnSummaryCalls(context)).toHaveLength(0);
+    expect(context.replies).toEqual(['Nothing is running yet.']);
+    expect(JSON.stringify(context.replies)).not.toContain('Saved you');
 
     const selectionRegistry = fakeCodeEntry();
     const selectionShell = makeShell(selectionRegistry);
     const selectionSession = stubSession();
-    const selectionContext = stubContext();
+    const selectionContext = stubContext([
+      { status: 'ok', turnId: 2, finalText: 'CODE is not running.' },
+    ]);
 
     await selectionShell.init!(selectionSession.session);
     await selectionShell.handleBossTurn(
@@ -2345,11 +2219,14 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       selectionContext.context,
     );
 
-    expect(selectionRegistry.runtimes[0]?.inputs).toEqual([]);
+    expect(selectionRegistry.createRuntime).not.toHaveBeenCalled();
     expect(turnSummaryCalls(selectionContext)).toHaveLength(0);
+    expect(JSON.stringify(selectionContext.replies)).not.toContain('Saved you');
   });
 
-  it('does not append a turn summary for a submitted turn when the entry declares no summary policy', async () => {
+  // CAPTAIN-19/20: an entry without a `summaryPolicy` still gets the acting
+  // turn's closing reply, but no saved-counts line is supplied for it.
+  it('supplies no saved-counts line when the entry declares no summary policy', async () => {
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
       await runtime.ports.callPlayer(
@@ -2370,7 +2247,11 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
       'do the task',
     ]);
-    expect(turnSummaryCalls(context)).toHaveLength(0);
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary?.prompt).toContain(
+      'No saved-counts line is supplied for this turn; append no saved-counts line.',
+    );
+    expect(summary?.prompt).not.toContain('Saved you');
   });
 });
 
@@ -2552,8 +2433,11 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     });
     const session = stubSession();
     const context = stubContext([
-      captainJson({ decision: 'dismiss', text: 'Stopped.' }),
-      { status: 'ok', turnId: 2, finalText: 'Stopped.' },
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      { status: 'ok', turnId: 2, finalText: 'Continued CODE.' },
+      captainJson({ action: 'dismiss' }),
+      { status: 'ok', turnId: 3, finalText: 'Stopped CODE.' },
+      { status: 'ok', turnId: 4, finalText: 'Started CODE again.' },
     ]);
 
     await shell.init!(session.session);
@@ -2623,16 +2507,20 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     });
     const session = stubSession();
     const context = stubContext([
-      captainJson({ decision: 'dismiss', text: 'Stopped.' }),
-      { status: 'ok', turnId: 2, finalText: 'Stopped.' },
+      { status: 'ok', turnId: 1, finalText: 'Started CODE.' },
+      captainJson({ action: 'dismiss' }),
+      { status: 'ok', turnId: 2, finalText: 'Stopped CODE.' },
     ]);
 
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code first'), context.context);
     await shell.handleBossTurn(turn('dismiss it', 2), context.context);
-    await expect(
-      shell.handleBossTurn(turn('/code second', 3), context.context),
-    ).rejects.toThrow(`playbook session id collision: ${FIRST_ID}`);
+    // DR-029 §2: a failing start settles with its facts rather than
+    // rolling back, and the shell lands idle for the next turn.
+    await shell.handleBossTurn(turn('/code second', 3), context.context);
+    const failure = turnSummaryCalls(context).at(-1)?.prompt ?? '';
+    expect(failure).toContain(`playbook session id collision: ${FIRST_ID}`);
+    expect(failure).toContain('Settlement status: failed');
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
   });
 
@@ -2647,12 +2535,15 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     const context = stubContext();
     await shell.init!(session.session);
 
-    await expect(
-      shell.handleBossTurn(turn('/code first'), context.context),
-    ).rejects.toThrow('runtime init failed');
-    await expect(
-      shell.handleBossTurn(turn('/code retry', 2), context.context),
-    ).rejects.toThrow('runtime init failed');
+    // CAPTAIN-26: the broken engagement is cleared and its partial runtime
+    // disposed; the settlement reports the failure and a later validated
+    // `start` constructs a different engagement.
+    await shell.handleBossTurn(turn('/code first'), context.context);
+    await shell.handleBossTurn(turn('/code retry', 2), context.context);
+    for (const summary of turnSummaryCalls(context)) {
+      expect(summary.prompt).toContain('runtime init failed');
+      expect(summary.prompt).toContain('Settlement status: failed');
+    }
 
     expect(registry.runtimes).toHaveLength(2);
     expect(registry.runtimes.map((runtime) => runtime.initCount)).toEqual([
@@ -2784,16 +2675,25 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
       }
     }
 
+    let captainRun = 0;
     class UnusedCaptainAdapter implements AgentAdapter {
       readonly agent = 'claude-code';
 
-      async *run(): AsyncGenerator<AgentEvent, void, void> {
+      async *run(prompt: string): AsyncGenerator<AgentEvent, void, void> {
+        captainRun += 1;
         yield createEvent(
           'done',
           this.agent,
           {
             status: 'success',
-            result: 'unused',
+            // The durable session conversation returns a rotating token
+            // (CAPTAIN-31); a reply with none marks it unsynchronized. A
+            // decision call answers with control JSON, a prose call with
+            // captain speech.
+            result: isDecisionPrompt(prompt)
+              ? JSON.stringify({ action: 'deliver' })
+              : 'The round is under way.',
+            resumeToken: `captain-token-${captainRun}`,
             usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
             durationMs: 1,
           },
@@ -2913,7 +2813,12 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     expect(
       registry.runtimes.map((runtime) => runtime.session?.sessionId),
     ).toEqual([FIRST_ID, SECOND_ID]);
-    expect(disposedSessionIds).toEqual([FIRST_ID, SECOND_ID]);
+    // CAPTAIN-16: engagements dispose leaf to root, the session Captain last.
+    expect(disposedSessionIds).toEqual([
+      FIRST_ID,
+      SECOND_ID,
+      SESSION_CAPTAIN_ID,
+    ]);
   });
 });
 
@@ -2921,304 +2826,6 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
   const ROOT_ID = '20000000-0000-4000-8000-000000000001';
   const CHILD_ID = '20000000-0000-4000-8000-000000000002';
   const LEAF_ID = '20000000-0000-4000-8000-000000000003';
-
-  // DEFERRED — IR-036 task 4 (shell controller rework): this scenario runs
-  // the real compiled captain as a nested engagement driving `callPlaybook`,
-  // which the DR-029 controller no longer reaches (CAPTAIN-11/29); the
-  // LIFO-unwind coverage over fake runtimes below still runs.
-  it.skip('routes a real Captain call to the active leaf and unwinds every parent in LIFO order', async () => {
-    const order: string[] = [];
-    const code = fakeCodeEntry(
-      async (runtime, runtimeTurn) => {
-        if (!runtime.ports) throw new Error('runtime ports missing');
-        order.push(`code:input:${runtimeTurn.text}`);
-        const start = await runtime.ports.callPlaybook(
-          {
-            callId: 'code:docs:real-captain',
-            playbookId: 'docs',
-            text: 'draft the supporting notes',
-          },
-          runtimeTurn.signal,
-        );
-        if (start.state !== 'suspended') {
-          throw new Error('docs must park for Boss');
-        }
-        return suspendedResult({
-          callId: 'code:docs:real-captain',
-          playbookId: 'docs',
-          childSessionId: start.childSessionId,
-        });
-      },
-      undefined,
-      undefined,
-      async (_runtime, input) => {
-        order.push(`code:resume:${input.result.playbookId}`);
-        expect(input).toMatchObject({
-          callId: 'code:docs:real-captain',
-          result: {
-            status: 'ok',
-            playbookId: 'docs',
-            childSessionId: LEAF_ID,
-            output: { notes: 'approved' },
-          },
-        });
-        return terminalResult('done', { codeResult: 'implemented' });
-      },
-    );
-    const docs = fakePlaybookEntry(
-      'docs',
-      'docs',
-      async (_runtime, runtimeTurn) => {
-        order.push(`docs:input:${runtimeTurn.text}`);
-        return runtimeTurn.text === 'draft the supporting notes'
-          ? quiescentResult('awaitBossReply')
-          : terminalResult('done', { notes: 'approved' });
-      },
-    );
-    code.entry.summaryPolicy = undefined;
-    docs.entry.summaryPolicy = undefined;
-    const shell = makeShell([code, docs], {
-      sessionIds: [ROOT_ID, CHILD_ID, LEAF_ID],
-    });
-    const session = stubSession();
-    const context = stubContext([
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
-        expect(prompt).toContain(
-          'Boss intent: implement the feature and document it',
-        );
-        return {
-          status: 'ok',
-          turnId: 1,
-          finalText: 'Delegate the coordinated work to the code playbook.',
-        };
-      },
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
-        expect(prompt).toContain(
-          'Delegate the coordinated work to the code playbook.',
-        );
-        return captainJson({
-          guard: 'delegation',
-          remainingPlan: [],
-          nextPlaybookId: 'code',
-          nextPlaybookInput: 'implement the feature and prepare its notes',
-        });
-      },
-      captainJson({ decision: 'deliver' }),
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_VISIBLE_CAPTAIN_OPTIONS);
-        expect(prompt).toContain('"codeResult":"implemented"');
-        return {
-          status: 'ok',
-          turnId: 5,
-          finalText: 'Implementation and notes are complete.',
-        };
-      },
-      (prompt, options) => {
-        expect(options).toEqual(ISOLATED_HIDDEN_CAPTAIN_OPTIONS);
-        expect(prompt).toContain('Implementation and notes are complete.');
-        return captainJson({ guard: 'final' });
-      },
-    ]);
-
-    await shell.init!(session.session);
-    await shell.handleBossTurn(
-      turn('implement the feature and document it'),
-      context.context,
-    );
-
-    expect(code.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      'implement the feature and prepare its notes',
-    ]);
-    expect(docs.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      'draft the supporting notes',
-    ]);
-
-    await shell.handleBossTurn(
-      turn('Use the public API examples exactly.', 2),
-      context.context,
-    );
-
-    expect(code.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      'implement the feature and prepare its notes',
-    ]);
-    expect(docs.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      'draft the supporting notes',
-      'Use the public API examples exactly.',
-    ]);
-    expect(code.runtimes[0]?.resumes).toHaveLength(1);
-    expect(code.runtimes[0]?.disposeCount).toBe(1);
-    expect(docs.runtimes[0]?.disposeCount).toBe(1);
-    expect(order).toEqual([
-      'code:input:implement the feature and prepare its notes',
-      'docs:input:draft the supporting notes',
-      'docs:input:Use the public API examples exactly.',
-      'code:resume:docs',
-    ]);
-    expect(session.statuses).toEqual([
-      { message: '◇ /code called by Captain', data: undefined },
-      { message: '◇ /docs called by /code', data: undefined },
-      { message: '◇ /docs returned to /code', data: undefined },
-      { message: '◇ /code returned to Captain', data: undefined },
-    ]);
-    expect(JSON.stringify(session.statuses)).not.toContain('/captain');
-    expect(JSON.stringify(session.statuses)).not.toContain('routing');
-    expect(JSON.stringify(session.statuses)).not.toContain('callingPlaybook');
-
-    const captainTraces = telemetryWithTopic(session, 'playbook.trace').map(
-      ({ payload }) =>
-        payload as { callId?: unknown; playbookId?: unknown; type?: unknown },
-    );
-    const started = captainTraces.find(
-      (event) =>
-        event.playbookId === 'captain' &&
-        event.type === 'playbook.call.started',
-    );
-    const finished = captainTraces.find(
-      (event) =>
-        event.playbookId === 'captain' &&
-        event.type === 'playbook.call.finished',
-    );
-    expect(started?.callId).toBeTypeOf('string');
-    expect(finished?.callId).toBe(started?.callId);
-    expect(captainTraces).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          playbookId: 'captain',
-          type: 'session.disposed',
-        }),
-      ]),
-    );
-  });
-
-  it('routes exact Boss replies to an internal Captain child and returns to Captain', async () => {
-    const internal = fakeInternalCaptain(
-      async (runtime, runtimeTurn) => {
-        if (!runtime.ports) throw new Error('runtime ports missing');
-        const start = await runtime.ports.callPlaybook(
-          {
-            callId: 'captain:code:1',
-            playbookId: 'code',
-            text: 'run the selected workflow',
-          },
-          runtimeTurn.signal,
-        );
-        if (start.state !== 'suspended') throw new Error('code must suspend');
-        return suspendedResult({
-          callId: 'captain:code:1',
-          playbookId: 'code',
-          childSessionId: start.childSessionId,
-        });
-      },
-      async (_runtime, input) => {
-        expect(input.callId).toBe('captain:code:1');
-        expect(input.result).toMatchObject({
-          status: 'ok',
-          playbookId: 'code',
-          childSessionId: CHILD_ID,
-        });
-        return terminalResult('done', { response: 'all complete' });
-      },
-    );
-    const code = fakeCodeEntry(async (_runtime, runtimeTurn) =>
-      runtimeTurn.text === 'run the selected workflow'
-        ? quiescentResult('awaitBossReply')
-        : terminalResult('done', { result: 'complete' }),
-    );
-    const shell = makeShell(code, {
-      sessionIds: [ROOT_ID, CHILD_ID],
-      createCaptainRuntime: internal.createCaptainRuntime,
-    });
-    const session = stubSession();
-    const context = stubContext([captainJson({ decision: 'deliver' })]);
-
-    await shell.init!(session.session);
-    await shell.handleBossTurn(turn('coordinate a code task'), context.context);
-    await shell.handleBossTurn(
-      turn('exact answer for the parked child', 2),
-      context.context,
-    );
-
-    expect(internal.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      'coordinate a code task',
-    ]);
-    expect(code.runtimes[0]?.inputs.map(({ text }) => text)).toEqual([
-      'run the selected workflow',
-      'exact answer for the parked child',
-    ]);
-    expect(code.runtimes[0]?.disposeCount).toBe(1);
-    expect(internal.runtimes[0]?.resumes).toHaveLength(1);
-    expect(internal.runtimes[0]?.disposeCount).toBe(1);
-    expect(session.statuses.map(({ message }) => message)).toEqual(
-      expect.arrayContaining([
-        '◇ /code called by Captain',
-        '◇ /code returned to Captain',
-      ]),
-    );
-    expect(session.statuses.map(({ message }) => message)).not.toEqual(
-      expect.arrayContaining([expect.stringContaining('/captain')]),
-    );
-    expect(context.visiblePlayers).not.toContainEqual([]);
-  });
-
-  it('dismisses an internal Captain child without extra chat and names Captain literally', async () => {
-    const internal = fakeInternalCaptain(
-      async (runtime, runtimeTurn) => {
-        if (!runtime.ports) throw new Error('runtime ports missing');
-        const start = await runtime.ports.callPlaybook(
-          {
-            callId: 'captain:docs:dismiss',
-            playbookId: 'docs',
-            text: runtimeTurn.text,
-          },
-          runtimeTurn.signal,
-        );
-        if (start.state !== 'suspended') throw new Error('docs must suspend');
-        return suspendedResult({
-          callId: 'captain:docs:dismiss',
-          playbookId: 'docs',
-          childSessionId: start.childSessionId,
-        });
-      },
-      async () => quiescentResult('readyAfterDismiss'),
-    );
-    const docs = fakePlaybookEntry('docs', 'docs', async () =>
-      quiescentResult('awaitBossReply'),
-    );
-    delete docs.entry.summaryPolicy;
-    const shell = makeShell(docs, {
-      sessionIds: [ROOT_ID, CHILD_ID],
-      createCaptainRuntime: internal.createCaptainRuntime,
-    });
-    const session = stubSession();
-    const context = stubContext([
-      captainJson({ decision: 'dismiss', text: 'do not show this text' }),
-    ]);
-
-    await shell.init!(session.session);
-    await shell.handleBossTurn(turn('draft the guide'), context.context);
-    await shell.handleBossTurn(turn('stop the child', 2), context.context);
-
-    expect(docs.runtimes[0]?.disposeCount).toBe(1);
-    expect(internal.runtimes[0]?.resumes[0]).toMatchObject({
-      callId: 'captain:docs:dismiss',
-      result: {
-        status: 'aborted',
-        playbookId: 'docs',
-        childSessionId: CHILD_ID,
-      },
-    });
-    expect(session.statuses.map(({ message }) => message)).toEqual([
-      '◇ /docs called by Captain',
-      '◇ /docs stopped; returning to Captain',
-    ]);
-    expect(JSON.stringify(session.statuses)).not.toContain('/captain');
-    expect(context.captainCalls).toHaveLength(1);
-    expect(context.captainCalls[0]?.options).toEqual(
-      ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
-    );
-  });
 
   it('suspends a caller, routes the next turn to the leaf, and resumes with the child result', async () => {
     const order: string[] = [];
@@ -3301,8 +2908,11 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
 
     await shell.handleBossTurn(turn('continue the child', 2), context.context);
 
-    expect(hiddenCaptainCalls(context)).toHaveLength(1);
-    const lifecyclePrompt = hiddenCaptainCalls(context)[0]!.prompt;
+    const decisionPrompts = context.captainCalls.filter((call) =>
+      isDecisionPrompt(call.prompt),
+    );
+    expect(decisionPrompts).toHaveLength(1);
+    const lifecyclePrompt = decisionPrompts[0]!.prompt;
     expect(lifecyclePrompt).not.toContain('activePlaybookId');
     expect(lifecyclePrompt).not.toContain('Lifecycle facts:');
     expect(lifecyclePrompt).not.toContain('stackPath');
@@ -4019,7 +3629,9 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     });
     const session = stubSession();
     const context = stubContext([
-      captainJson({ decision: 'dismiss', text: 'Docs stopped.' }),
+      { status: 'ok', turnId: 1, finalText: 'CODE called the docs playbook.' },
+      captainJson({ action: 'dismiss' }),
+      { status: 'ok', turnId: 2, finalText: 'Stopped the docs child.' },
     ]);
 
     await shell.init!(session.session);
@@ -4041,7 +3653,7 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
       message: '◇ /docs stopped; returning to /code',
       data: undefined,
     });
-    expect(context.captainCalls).toHaveLength(1);
+    expect(context.captainCalls).toHaveLength(3);
     expect(context.captainCalls[0]?.options).toEqual(
       ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
     );
@@ -4072,8 +3684,11 @@ describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code'), context.context);
 
+    // CAPTAIN-7: a bare enabled command settles as one durable prose call.
+    expect(context.captainCalls).toHaveLength(1);
     expect(context.captainCalls[0]?.prompt).toContain(
-      'Ask what task to run with /code.',
+      'Boss issued a registered command that produces no action this turn',
     );
+    expect(context.replies).toHaveLength(1);
   });
 });

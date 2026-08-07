@@ -492,18 +492,28 @@ function createHarness(
     playbooks[entry.id] = { from, options: {} };
   }
   let id = 0;
+  // The session Captain takes its own id at `init` (CAPTAIN-16/26), before any
+  // engagement, so engagement ids keep their numbering.
+  let captainIdIssued = false;
   const shell = createPlaybookCaptainShell(
     { playbooks },
     {
       loadModule: async (specifier) => modules[specifier],
-      createSessionId: () =>
-        `30000000-0000-4000-8000-${String(++id).padStart(12, '0')}`,
+      createSessionId: () => {
+        if (!captainIdIssued) {
+          captainIdIssued = true;
+          return '30000000-0000-4000-8000-0000000000ff';
+        }
+        return `30000000-0000-4000-8000-${String(++id).padStart(12, '0')}`;
+      },
     },
   );
   const telemetry: Harness['telemetry'] = [];
   const statuses: string[] = [];
   const playerCalls: Harness['playerCalls'] = [];
   const routerDecisions: CaptainRunResult[] = [];
+  const replies: string[] = [];
+  let captainCalls = 0;
   const controller = new AbortController();
   const players: CaptainSession['players'] = entries.flatMap((entry) =>
     entry.requiredRoleIds.map((roleId) => ({
@@ -540,15 +550,31 @@ function createHarness(
           prompt === 'before child' ? 'parent-token' : 'rotated-token',
       };
     },
-    callCaptain: async (): Promise<CaptainRunResult> =>
-      routerDecisions.shift() ?? {
+    // The session Captain's durable conversation returns a rotating token on
+    // every call (CAPTAIN-31/35); a decision call answers with control JSON
+    // over the closed action set, a prose call with captain speech.
+    callCaptain: async (prompt): Promise<CaptainRunResult> => {
+      const scripted = routerDecisions.shift();
+      if (scripted !== undefined) {
+        return scripted.resumeToken === undefined
+          ? { ...scripted, resumeToken: `conversation-${++captainCalls}` }
+          : scripted;
+      }
+      const decision = prompt.includes(
+        'Select exactly one action from the closed set',
+      );
+      return {
         status: 'ok',
         turnId: 1,
-        finalText: JSON.stringify({
-          decision: 'sub',
-          text: 'continue child',
-        }),
-      },
+        finalText: decision
+          ? JSON.stringify({ action: 'deliver' })
+          : 'The child is running.',
+        resumeToken: `conversation-${++captainCalls}`,
+      };
+    },
+    emitReply: async (text: string): Promise<void> => {
+      replies.push(text);
+    },
     setVisiblePlayers: async () => {},
   };
   return {
@@ -559,6 +585,7 @@ function createHarness(
     statuses,
     playerCalls,
     routerDecisions,
+    replies,
   };
 }
 

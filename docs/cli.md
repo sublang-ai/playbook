@@ -86,12 +86,22 @@ exits `127` when it cannot launch at all
 
 ### Running a Boss turn
 
-The Boss pane starts at the Playbook Captain shell. Use `/code <task>`
-to select the CODE playbook explicitly, or type ordinary text and let
-the compiled default Captain ask a material routing question or plan one
-or more enabled playbook calls. It cannot answer the initial intent
-directly; calls run sequentially so Captain can reassess after every
-child result and then return a concrete result or actionable conclusion.
+The Boss pane starts at the Playbook Captain shell, where the session
+Captain runs for the whole session and sees every turn. Use
+`/code <task>` to select the CODE playbook explicitly — a registered
+command resolves deterministically, with no model call parsing it: at
+idle it starts that playbook, at its own leaf it delivers the rest of
+the line, an enabled command absent from the active path switches to it,
+and a bare `/code` answers with status or a clarification instead of
+restarting anything. Type ordinary text and the session Captain decides
+the turn instead: it chats back, starts or switches a playbook, hands
+the text to the working playbook, dismisses it, or applies one recovery
+action the running playbook currently offers. It never does the
+specialized work itself, and a conversational turn — including a
+progress or status question — leaves the engagement, its parked state,
+and any pending player question untouched
+([CAPTAIN-1](../specs/user/playbook-captain.md#captain-1),
+[CAPTAIN-2](../specs/user/playbook-captain.md#captain-2)).
 
 Once a turn reaches CODE, the CODE judge classifies it into an FSM event
 — start a coding turn, continue or summarize an iteration, interrupt to
@@ -105,7 +115,11 @@ fresh directive abandons it
 The Captain pane shows start/stop/finished status with `◇` lines and
 streams progress with captain-speech classification and questions
 ([PBRT-3](../specs/user/playbook-runtime.md#pbrt-3)), while player
-prompts ride their own panes.
+prompts ride their own panes. A turn that actually did something ends
+with one Captain reply summarizing what changed, composed only from that
+turn's reported outcome; a turn that changed nothing ends with an
+ordinary reply and no saved-counts line
+([CAPTAIN-19](../specs/user/playbook-captain.md#captain-19)).
 
 ## Non-interactive
 

@@ -21,8 +21,8 @@ const DECISION_PROMPT = [
     'Continue from the remembered conversation and any supplied conversation summary; do not re-ask for what Boss already told you.',
     'Select exactly one action from the closed set `respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`, choosing by the message\'s addressee and intent, and reply with exactly one JSON object `{ "action": …, … }` and no other text:',
     '`{ "action": "respond", "text": … }` — conversation, planning, clarification, a question to Boss, or a progress or status answer grounded in the ControlView digest, leaving the engagement, its parked state, and any pending player question untouched; valid for any turn; `text` is your complete reply to Boss.',
-    '`{ "action": "start", "playbookId": …, "input": … }` — start the enabled playbook `playbookId` names, when none is engaged; `input` is its complete standalone request.',
-    "`{ \"action\": \"switch\", \"playbookId\": …, \"input\": … }` — replace the active engagement with the enabled playbook `playbookId` names, only on Boss's explicit replacement request; `input` is its complete standalone request.",
+    '`{ "action": "start", "playbookId": …, "input": { "origin": …, "text": … } }` — start the enabled playbook `playbookId` names, when none is engaged; `input` is its complete standalone request tagged with its provenance: `"origin": "boss"` is the default and its `text` is this turn\'s Boss request, while `"origin": "captain"` carries only intent you accumulated across earlier turns and never restates the current turn.',
+    "`{ \"action\": \"switch\", \"playbookId\": …, \"input\": { \"origin\": …, \"text\": … } }` — replace the active engagement with the enabled playbook `playbookId` names, only on Boss's explicit replacement request; `input` carries the same provenance tagging as `start`.",
     "`{ \"action\": \"dismiss\" }` — stop the active engagement, only on Boss's explicit stop request.",
     '`{ "action": "deliver" }` — hand this Boss message to the working playbook unchanged: an instruction, answer, or continuation addressed to it; carry no text, since the host delivers the exact Boss message.',
     "`{ \"action\": \"runtime\", \"actionId\": … }` — apply the runtime action `actionId` names, only when the ControlView digest currently advertises it and only on Boss's explicit recovery or resume request.",
@@ -53,8 +53,8 @@ const CLOSING_REPLY_PROMPT = [
 // clarifying question to Boss is a `respond` selection.
 const DECISION_RESULTS = {
     respond: "Captain settled the turn in this decision call; the validated text is the turn's captain speech. Output shall include `text: <the complete captain reply>`.",
-    start: 'Captain selected starting an enabled playbook. Output shall include `playbookId: <stable catalog id>` and `input: <complete standalone request>`.',
-    switch: 'Captain selected replacing the active engagement. Output shall include `playbookId: <stable catalog id>` and `input: <complete standalone request>`.',
+    start: 'Captain selected starting an enabled playbook. Output shall include `playbookId: <stable catalog id>` and `input: <complete standalone request tagged origin "boss" or "captain">`.',
+    switch: 'Captain selected replacing the active engagement. Output shall include `playbookId: <stable catalog id>` and `input: <complete standalone request tagged origin "boss" or "captain">`.',
     dismiss: 'Captain selected stopping the active engagement; the selection carries no payload field.',
     deliver: 'Captain selected handing the turn to the working playbook; the host is authoritative for the delivered text, so the selection carries no payload field.',
     runtime: 'Captain selected one advertised runtime action. Output shall include `actionId: <advertised action id>`.',

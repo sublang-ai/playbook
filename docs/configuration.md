@@ -15,7 +15,8 @@ $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml"
 ## Anatomy
 
 The config is top-level (no `config:` wrapper): a `captain` agent (it
-runs both visible Captain work and hidden judge calls), optional
+runs the session Captain's hidden control calls, the hidden judge calls,
+and the replies you see in the Captain pane), optional
 `layout` / `notifications` / `theme`, and a `playbooks` map of enabled
 playbooks.
 
@@ -73,8 +74,9 @@ credit the concrete model rather than the adapter family.
 
 ## Choosing the Captain agent
 
-Hidden routing and adjudication calls run tool-free, which is what keeps
-the Captain routing instead of doing the work itself. Claude enforces
+Every session-Captain call and adjudication call is hidden and runs
+tool-free, which is what keeps the Captain deciding and reporting
+instead of doing the work itself. Claude enforces
 that at the provider level. The Codex adapter cannot — it rejects any
 tool list — so a `captain:` on `codex` falls back to a prompt-level
 restriction

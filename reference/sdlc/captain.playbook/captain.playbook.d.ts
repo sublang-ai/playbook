@@ -3,6 +3,16 @@ import { type CaptainInput, type DecisionAction, type EnabledPlaybook, type Pars
 import type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookControlReceipt, PlaybookControlView, PlaybookPendingCall, PlaybookRunResult, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlayerResult } from '@sublang/playbook/runtime';
 export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookControlReceipt, PlaybookControlView, PlaybookPendingCall, PlaybookRunResult, PlayerResult, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, };
 export type { DecisionAction, EnabledPlaybook, ParsedActingDecision, SettlementEvidence, SettlementReceiptEvidence, };
+/**
+ * A `start` / `switch` input is provenance-tagged, never bare text
+ * (DR-029 §2): `boss` carries this turn's request — for which the host is
+ * authoritative — and `captain` carries intent accumulated across earlier
+ * turns. A missing or unknown origin is a malformed required payload field.
+ */
+export type CaptainControllerInput = {
+    readonly origin: 'boss' | 'captain';
+    readonly text: string;
+};
 /** One validated controller selection submitted through the port (DR-029 §4). */
 export type CaptainControllerSelection = {
     readonly action: 'respond';
@@ -10,7 +20,7 @@ export type CaptainControllerSelection = {
 } | {
     readonly action: 'start' | 'switch';
     readonly playbookId: string;
-    readonly input: string;
+    readonly input: CaptainControllerInput;
 } | {
     readonly action: 'dismiss';
 } | {
