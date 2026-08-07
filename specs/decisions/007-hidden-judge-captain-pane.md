@@ -12,7 +12,7 @@ Accepted
 The tmux-play adapter wires the runtime's `callJudge` port to
 cligent's `context.callCaptain` per
 [PBRT-15](../dev/playbook-runtime.md#pbrt-15) and
-[DR-004 §11](./004-link-code-fsm-to-playbook-runtime.md#11-host-adapter-tmux-play).
+[DR-004 §11](./004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
 cligent streams every `callCaptain` reply to the Boss pane.
 
 The judge's replies are control-plane JSON, not Boss-facing prose:
@@ -92,7 +92,7 @@ against the native option.
 - The failure-state `emitStatus` data argument is unchanged: it
   still carries the compact `{ name, message }` form of `lastError`
   per [PBRT-14](../dev/playbook-runtime.md#pbrt-14).
-- [DR-004 §11](./004-link-code-fsm-to-playbook-runtime.md#11-host-adapter-tmux-play)'s
+- [DR-004 §11](./004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play)'s
   port-wiring table is amended: the `callJudge` row passes
   `{ visibility: 'hidden' }` into `context.callCaptain`.
 

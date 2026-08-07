@@ -47,7 +47,7 @@ inside that tree — where npm hoists it flat rather than nesting it:
   the supplied one included — and no placeholder argument, because
   each distinct package set materializes a distinct tree and a
   missing-only re-run alternates between partial trees forever
-  ([PBCLI-40](playbook-cli.md#pbcli-40)).
+  ([PBCLI-40](../user/playbook-cli.md#pbcli-40)).
 
 The lean shape pins the footprint contract; the opted-in shape
 pins the resolution contract behind the documented install command;
@@ -243,7 +243,7 @@ Each interactive case shall also fail unless the selected playbook leaves
 exactly the Captain and its two namespaced role panes visible with their
 expected adapters and the Boss/Captain pane focused.
 The fourth, hermetic global-only case
-([PBCLI-36](playbook-cli.md#pbcli-36)) shall install the packed
+([PBCLI-36](../user/playbook-cli.md#pbcli-36)) shall install the packed
 candidate into an isolated npm global prefix with inherited npm prefix
 configuration neutralized, place a compiled thin fixture playbook —
 importing `xstate` and `@sublang/playbook/xstate-runtime` and making
