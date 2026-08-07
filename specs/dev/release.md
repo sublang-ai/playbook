@@ -276,6 +276,89 @@ of `CHANGELOG.md` per [RELEASE-4](#release-4) and
 
 ## Pre-release Checklist
 
+### RELEASE-28
+
+Before tagging a release, the developer/agent shall run the local
+`pnpm smoke:release` gate. It shall spend no model call, read no
+credential, and create no tmux session, so it is reproducible on any
+maintainer machine; it shall require network access to the npm registry,
+because two of its steps install from it.
+
+The gate shall work inside one isolated temporary root, shall stop at the
+first failing step rather than continue against a candidate already known
+bad, and shall preserve that root when it fails. It shall fail unless every
+step below holds of the packed candidate:
+
+1. **Pack.** `npm pack` produces the tarball `npm publish` would upload
+   ([RELEASE-7](#release-7)).
+2. **Lean global shape.** Installing that tarball *alone* into a throwaway
+   npm prefix nests `@sublang/cligent` inside the installed
+   `@sublang/playbook` tree, leaves no `@anthropic-ai` or `@openai`
+   directory anywhere in the installed closure, and reports every adapter
+   **unavailable** when probed from `@sublang/cligent`'s own installed
+   location ([RELEASE-12](#release-12),
+   [RELEASE-13](../test/release.md#release-13)).
+3. **Opted-in global shape.** Installing that tarball plus each adapter SDK
+   named as its own top-level install root reports every adapter
+   **available** when probed from that same location
+   ([DR-026 §3](../decisions/026-optional-adapter-sdks.md#3-a-supplied-sdk-must-be-a-top-level-install-root)).
+4. **Installed CLI.** The installed `playbook` executable prints its usage
+   and resolved config path for `--help`, and for `--list` names both the
+   `code` and the `discuss` entry of a config enabling the two bundled
+   registries ([RELEASE-20](#release-20)).
+5. **Hermetic provisioning.** The deterministic variant of the
+   [DR-024 §7](../decisions/024-runtime-engine-provisioning.md#7-the-acceptance-gate-moves-here)
+   case: a bare fixture repository with no `package.json`, lockfile, or
+   `node_modules` at any level, holding a thin artifact that imports
+   `xstate` and `@sublang/playbook/xstate-runtime` and whose single working
+   state is a [DR-016](../decisions/016-script-actors-and-optimize-pass.md)
+   script actor, so the run needs no agent and no key. Neither engine
+   import resolves from the fixture before the run; the run prints one
+   provisioning line, creates exactly the two engine links and both resolve
+   into the isolated prefix, and returns its terminal JSON envelope; a
+   second run provisions nothing further; the fixture repository stays
+   clean.
+6. **Captain artifact integrity.** The installed
+   `@sublang/playbook/captain/playbook` subpath imports and constructs a
+   runtime carrying the full contract surface, and every packed
+   `reference/sdlc/captain.playbook/` artifact — the compiled
+   `captain.gears.md` among them — is byte-identical to the repository's
+   own.
+7. **Compiled-artifact fidelity.** That byte-equality extends to every
+   packed file the manifest is not, and the committed artifact-conformance
+   suites (`pnpm vitest run reference/sdlc/captain.playbook`) pass with the
+   GEARS ↔ FSM conformance, declared-transition coverage, and pinned
+   topology suites each named among those that ran, so a suite renamed,
+   moved, or deleted fails the gate instead of quietly shrinking it.
+8. **Nested cligent floor.** The nested installed `@sublang/cligent`
+   satisfies the caret range the packed manifest declares
+   ([RELEASE-14](#release-14)), and its shipped declarations carry the two
+   surfaces the Playbook Captain shell's durable conversation depends on:
+   `CaptainContext.emitReply` and `CaptainRunResult.resumeToken`
+   ([DR-029](../decisions/029-session-scoped-conversational-captain.md)).
+   A candidate whose declared range admits only published cligent releases
+   without both surfaces shall fail here rather than at a Boss turn.
+
+Step 7 shall claim no more than it proves. The SLC pipeline is agentic, so
+this gate shall not attempt to re-derive the compiled artifacts and shall
+not treat their reproduction as a release condition; the conformance chain
+it reruns is rooted at the compiled `captain.gears.md`, not at the
+maintained `reference/sdlc/captain.md`, so it establishes GEARS ↔ FSM ↔
+runtime fidelity only, and the byte-equality of step 6 is what carries that
+verdict from the repository tree onto the tarball. Agreement between the
+maintained source and the compiled GEARS is established by the text2gears
+pass alone and is asserted nowhere here. That byte-equality is a transfer
+argument and not a drift check either: `npm pack` copies the working tree,
+so agreement between the committed sources and their built siblings stays
+the CI sibling check of [RELEASE-10](#release-10).
+
+Because the gate spends no model call and needs no local agent
+authentication, it shall not be a substitute for
+[RELEASE-24](#release-24), and shall run before it
+([RELEASE-10](#release-10)) — a candidate that fails a packaging,
+install-shape, provisioning, or artifact check is not worth the live
+suite's real model calls.
+
 ### RELEASE-24
 
 Before tagging a release, the developer/agent shall run
@@ -299,6 +382,26 @@ repeated run provisions nothing further.
 Documentation shall drop the project-local install and `npx`
 consumption story only after this case passes.
 
+It shall additionally drive one conversational session against a real
+Claude Captain through an attached tmux-play session
+([DR-029](../decisions/029-session-scoped-conversational-captain.md)).
+Every machine outcome in that session shall come from a deterministic
+[DR-016](../decisions/016-script-actors-and-optimize-pass.md) script-actor
+fixture playbook whose failure is engineered by an absent flag file, never
+from a rigged agent, so the only live variable is the Captain's own
+judgment. The session shall carry, in one shell session on one durable
+conversation: a natural chat turn that engages nothing; an engagement
+driven to a deterministic failure whose reply names the failed step and
+claims no completion; the verbatim `Retry and continue the iteration`
+recovery, which shall reach the finished marker after the flag file is
+placed; a natural status question that moves no state; a second
+deterministic failure, and then a switch requested in ordinary prose —
+no slash command — against that still-active engagement, which shall
+dismiss it and start the named target in that order; and a dismissal.
+It shall fail unless the literal `Saved you 0` appears nowhere in the
+whole session, no turn-failure marker appears beyond the two engineered
+script failures, and the fixture repository is left clean.
+
 The suite shall fail unless `/code` implements and commits its fixture
 requirement with a clean worktree, and `/discuss` adds and commits its fixture
 spec item without implementing it, also with a clean worktree.
@@ -317,9 +420,11 @@ the release until corrected.
 
 ### RELEASE-10
 
-Before tagging a release, the developer/agent shall verify:
+Before tagging a release, the developer/agent shall verify, in this order:
 
 - [ ] All tests pass (`pnpm test` from the repo root).
+- [ ] The local model-free release smoke passes (`pnpm smoke:release`;
+      [RELEASE-28](#release-28)).
 - [ ] The local real-agent acceptance suite passes, covering both attached
       tmux workflows and non-interactive `playbook run`
       (`pnpm test:acceptance`; [RELEASE-24](#release-24)).

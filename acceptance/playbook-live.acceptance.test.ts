@@ -20,7 +20,7 @@ import {
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { liveConfig, liveModels } from './live-config.js';
@@ -33,6 +33,9 @@ const liveTimeoutMs = positiveIntegerEnv(
 const startupTimeoutMs = 90_000;
 const pollIntervalMs = 1_000;
 const bossHistoryLines = 400;
+// The conversational case counts markers across a whole multi-turn session,
+// not just the window a single wait needs.
+const sessionHistoryLines = 8_000;
 const launcherTailCharacters = 16 * 1024;
 const diagnosticTailCharacters = 8 * 1024;
 const liveCommandMaxBufferBytes = 20 * 1024 * 1024;
@@ -66,6 +69,34 @@ const headlessTask = 'Run the installed non-interactive acceptance probe.';
 const headlessToken = 'HEADLESS_ACCEPTANCE_OK';
 const hermeticTask = 'Echo the hermetic acceptance token.';
 const hermeticToken = 'HERMETIC_ACCEPTANCE_OK';
+
+// RELEASE-25 fifth case (DR-029). The budget must dominate the scenario's
+// own waits for the same reason the four-case budget above does: vitest's
+// timeout fires outside the try/finally, so a scenario that outlives it
+// never kills its tmux session and `afterAll` deletes the artifacts while
+// the Captain is still live. The scenario spends thirteen live-length waits
+// (six Boss replies plus the started/failed/finished/stopped marker waits)
+// and five startup-length ones (session, client, `boss>`, and the two
+// engagement starts).
+const conversationTimeoutMs =
+  13 * liveTimeoutMs + 5 * startupTimeoutMs + 60_000;
+// The conversational scenario engineers exactly two `◆ failed` markers on
+// purpose, so that one cannot double as an abort detector here; the rest of
+// the list still is one.
+const conversationFailureMarkers = turnFailureMarkers.filter(
+  (marker) => marker !== '◆ failed',
+);
+const checklistTask =
+  'Run the release checklist for this fixture repository end to end.';
+const conversationChatTurn =
+  'Hi — before we start anything, what can you help me with in this repository?';
+const conversationRetryTurn = 'Retry and continue the iteration';
+const conversationStatusTurn =
+  'Where do things stand with the checklist run, and what did you have to do along the way?';
+const conversationSwitchTurn =
+  'Drop this and discuss the release notes with me instead.';
+const conversationDismissTurn =
+  'That is enough for now — stop what is running and stand by.';
 
 let suiteRoot = '';
 let candidateTarball = '';
@@ -374,6 +405,252 @@ describe.sequential('installed playbook live acceptance', () => {
     },
     scenarioTimeoutMs,
   );
+
+  // RELEASE-25 fifth case (DR-029): one session, one durable conversation,
+  // a real Claude Captain, and no rigged agent anywhere — every machine
+  // outcome below comes from a DR-016 script actor whose failure is an
+  // absent flag file. What is live here is the Captain's own judgment:
+  // whether a chat turn stays a chat turn, whether "Retry and continue the
+  // iteration" reaches the one advertised recovery action, whether a status
+  // question moves nothing, and whether ordinary prose can switch an
+  // engagement that is still active.
+  //
+  // It lives in this file, after the four cases above, deliberately: the
+  // pack/install helpers are file-private and RELEASE-24/25 pin one pack and
+  // one install per run, and `vitest.acceptance.config.ts` declares no
+  // sequencer, so in-file source order under the serial runner is what puts
+  // this case last on that same single install.
+  it(
+    'holds one conversational session with a real Captain over deterministic fixtures',
+    async () => {
+      const scenario = createScenario('conversation');
+      const flagPath = join(scenario.root, 'checklist.flag');
+      const sessionsBefore = new Set(listTmuxSessions());
+      const launcher = spawnLauncher(scenario);
+      let sessionName: string | undefined;
+      try {
+        // Both fixtures import `xstate` and `@sublang/playbook/xstate-runtime`
+        // by bare specifier, and this case asserts the fixture repository
+        // stays byte-clean. Were either to resolve only through provisioning,
+        // the run would write engine links into that repository and the case
+        // would fail six live turns later on `gitStatus`. Assert the
+        // project-local-install-wins precondition here, in milliseconds.
+        const engines = createRequire(join(scenario.repo, 'probe.js'));
+        for (const specifier of [
+          'xstate',
+          '@sublang/playbook/xstate-runtime',
+        ]) {
+          expect(() => engines.resolve(specifier)).not.toThrow();
+        }
+
+        sessionName = await waitForNewSession(sessionsBefore, launcher);
+        const target = `${sessionName}:0.0`;
+        await waitForAttachedClient(sessionName, startupTimeoutMs, launcher);
+        await waitForPaneText(target, 'boss>', startupTimeoutMs, launcher);
+
+        // Every count in this case — replies seen, lifecycle markers, the
+        // two engineered failures — is cumulative over the whole session, so
+        // every capture reads the session-wide window. A per-wait window
+        // would drop earlier turns out of view as the pane scrolls, and a
+        // count could then fall rather than hold.
+        const sessionPane = (): string =>
+          capturePane(target, sessionHistoryLines);
+
+        // Every acting turn ends in exactly one Captain prose block and a
+        // chat turn is one, so the reply of the turn just sent is the next
+        // block after the ones already on the pane. Counting relative to
+        // what is there — rather than to an absolute turn number — keeps the
+        // scenario honest if the host ever greets the Boss at startup.
+        let repliesSeen = captainProseBlocks(sessionPane()).length;
+        const awaitReply = async (): Promise<string> => {
+          const reply = await waitForCaptainProse(
+            target,
+            repliesSeen + 1,
+            liveTimeoutMs,
+            launcher,
+            conversationFailureMarkers,
+          );
+          repliesSeen += 1;
+          return reply;
+        };
+
+        // (1) A natural chat turn: Captain prose, no engagement, no summary.
+        sendBossTurn(target, conversationChatTurn);
+        await awaitReply();
+        expect(countOccurrences(sessionPane(), '◇ ')).toBe(0);
+
+        // (2) Engage the fixture with the flag file absent: the middle
+        // script step exits nonzero and the exit-status guard parks the
+        // machine in `failed`. The turn's own reply must name that step —
+        // the live half of incident 4. "Claims no completion" is asserted
+        // mechanically rather than by reading prose for a negation: the
+        // shell owns the finished marker, and it must not be there.
+        expect(existsSync(flagPath)).toBe(false);
+        sendBossTurn(target, `/checklist ${checklistTask}`);
+        await waitForPaneOccurrences(
+          target,
+          '◇ /checklist started',
+          1,
+          startupTimeoutMs,
+          launcher,
+          conversationFailureMarkers,
+        );
+        await waitForPaneOccurrences(
+          target,
+          '◆ failed',
+          1,
+          liveTimeoutMs,
+          launcher,
+          conversationFailureMarkers,
+        );
+        const failureReply = await awaitReply();
+        expect(failureReply).toMatch(/verify|flag/i);
+        expect(countOccurrences(sessionPane(), '◇ /checklist finished')).toBe(
+          0,
+        );
+
+        // (3) Place the flag file, then the verbatim incident turn. The
+        // Captain must select the one advertised recovery action; the
+        // fixture then runs its remaining steps to terminal. This is plain
+        // resume continuity — the dangling-tool-call repair branch of
+        // incident 1 belongs to cligent's canned CLAUDE-010 unit and is
+        // deliberately never engineered here.
+        writeFileSync(flagPath, 'CHECKLIST_FLAG_OK\n');
+        sendBossTurn(target, conversationRetryTurn);
+        await waitForPaneOccurrences(
+          target,
+          '◇ /checklist finished',
+          1,
+          liveTimeoutMs,
+          launcher,
+          conversationFailureMarkers,
+        );
+        // The engagement the retry finished is the one that failed: the
+        // recovery applied an advertised runtime action to the parked
+        // engagement rather than starting a second one, which would have
+        // reached the same finished marker by a different route and left
+        // the started marker counted twice.
+        expect(countOccurrences(sessionPane(), '◇ /checklist started')).toBe(1);
+        await awaitReply();
+
+        // (4) A natural status question: answered from the conversation and
+        // the control view, moving nothing.
+        const markersBeforeStatus = lifecycleMarkerCounts(sessionPane());
+        sendBossTurn(target, conversationStatusTurn);
+        const statusReply = await awaitReply();
+        expect(statusReply).toMatch(/verify|flag|retr|fail/i);
+        expect(lifecycleMarkerCounts(sessionPane())).toEqual(
+          markersBeforeStatus,
+        );
+
+        // (5) Remove the flag and engage again: a genuinely active
+        // engagement, parked mid-iteration in `failed`. Then ask for the
+        // change in ordinary prose — no slash command — so the decision
+        // call itself has to produce a validated `switch`, which dismisses
+        // the stack and starts the target, in that order.
+        rmSync(flagPath, { force: true });
+        sendBossTurn(target, `/checklist ${checklistTask}`);
+        await waitForPaneOccurrences(
+          target,
+          '◇ /checklist started',
+          2,
+          startupTimeoutMs,
+          launcher,
+          conversationFailureMarkers,
+        );
+        await waitForPaneOccurrences(
+          target,
+          '◆ failed',
+          2,
+          liveTimeoutMs,
+          launcher,
+          conversationFailureMarkers,
+        );
+        await awaitReply();
+        sendBossTurn(target, conversationSwitchTurn);
+        await waitForPaneOccurrences(
+          target,
+          '◇ /checklist stopped',
+          1,
+          liveTimeoutMs,
+          launcher,
+          conversationFailureMarkers,
+        );
+        await waitForPaneOccurrences(
+          target,
+          '◇ /notes started',
+          1,
+          liveTimeoutMs,
+          launcher,
+          conversationFailureMarkers,
+        );
+        // Waiting for both markers proves only that both arrived: a single
+        // capture can carry them in either order. The switch contract is
+        // dismissal *then* start, so read their positions. Both markers are
+        // unique in the session and both waits above have already seen
+        // them, so each index is a real position.
+        const switchPane = sessionPane().replace(/\s+/g, ' ');
+        const dismissedAt = switchPane.indexOf('◇ /checklist stopped');
+        const startedAt = switchPane.indexOf('◇ /notes started');
+        expect(dismissedAt).toBeGreaterThanOrEqual(0);
+        expect(startedAt).toBeGreaterThan(dismissedAt);
+
+        // (6) Dismiss the engagement the switch just started, then exit.
+        // The switch target parks after one deterministic step, so this
+        // dismissal meets a genuinely active engagement rather than a
+        // finished one.
+        await awaitReply();
+        sendBossTurn(target, conversationDismissTurn);
+        await waitForPaneOccurrences(
+          target,
+          '◇ /notes stopped',
+          1,
+          liveTimeoutMs,
+          launcher,
+          conversationFailureMarkers,
+        );
+        await awaitReply();
+
+        // Whole session: the do-nothing turns carried no saved-counts line,
+        // the only failure markers are the two the fixture engineered, and
+        // the fixture repository is untouched — the checklist runs write
+        // nothing, and the flag file lives outside the repository so that
+        // stays true whether it exists or not. The absences use the same
+        // wrap-tolerant match every wait uses, so a line the pane happened
+        // to wrap cannot read as absent.
+        const finalPane = sessionPane();
+        expect(paneContains(finalPane, 'Saved you 0')).toBe(false);
+        expect(countOccurrences(finalPane, '◆ failed')).toBe(2);
+        for (const marker of conversationFailureMarkers) {
+          expect(paneContains(finalPane, marker)).toBe(false);
+        }
+        expect(headRevision(scenario.repo)).toBe(scenario.baselineCommit);
+        expect(gitStatus(scenario.repo)).toBe('');
+        expect(ignoredUntracked(scenario.repo)).toBe('');
+      } catch (error) {
+        preserveArtifacts = true;
+        writeFailureSnapshot(
+          scenario.root,
+          sessionName,
+          launcher,
+          error,
+          scenario,
+        );
+        throw withArtifactPath(error, scenario.root);
+      } finally {
+        if (sessionName && listTmuxSessions().includes(sessionName)) {
+          try {
+            tmuxText(['kill-session', '-t', sessionName]);
+          } catch {
+            // Preserve the original failure; the launcher stop below is the
+            // remaining best-effort cleanup.
+          }
+        }
+        await stopLauncher(launcher);
+      }
+    },
+    conversationTimeoutMs,
+  );
 });
 
 interface Scenario {
@@ -534,7 +811,7 @@ async function installGlobalCandidate(): Promise<string> {
 }
 
 function createScenario(
-  name: 'headless' | 'code' | 'discuss' | 'hermetic',
+  name: 'headless' | 'code' | 'discuss' | 'hermetic' | 'conversation',
 ): Scenario {
   // Every fixture path derives from `suiteRoot`. A relative value here would
   // silently build the fixture tree inside the real repository instead.
@@ -548,8 +825,12 @@ function createScenario(
   // node_modules — the project-local-install-wins path — and the run
   // provisions nothing, keeping the repository byte-clean. The hermetic
   // fixture stays outside every node_modules ancestry on purpose.
+  // The conversational fixtures nest under the same consumer tree for the
+  // same reason: their registry modules import `xstate` and
+  // `@sublang/playbook/xstate-runtime` by bare specifier, and the installed
+  // candidate is what must satisfy those imports.
   const root =
-    name === 'headless'
+    name === 'headless' || name === 'conversation'
       ? join(suiteRoot, 'candidate', 'fixtures', name)
       : join(suiteRoot, name);
   const repo = join(root, 'repo');
@@ -624,10 +905,28 @@ function createScenario(
       '',
     ].join('\n'),
   );
-  writeFileSync(
-    join(configHome, 'playbook/playbook.config.yaml'),
-    liveConfig(),
-  );
+  if (name === 'conversation') {
+    // Only the two deterministic fixtures are enabled here. The scenario's
+    // subject is the Captain's own decisions, and a real CODE or DISCUSS
+    // target would spend a full multi-player workflow on the switch turn —
+    // which also runs to terminal, leaving nothing for the dismissal turn
+    // to dismiss. The command-mapped `/discuss x` switch stays a hermetic
+    // A29-7 row; what is live here is the model-decided one.
+    writeFileSync(
+      join(configHome, 'playbook/playbook.config.yaml'),
+      conversationConfig(repo),
+    );
+    writeFileSync(
+      join(repo, 'checklist.registry.mjs'),
+      checklistFixtureSource(join(root, 'checklist.flag')),
+    );
+    writeFileSync(join(repo, 'notes.registry.mjs'), notesFixtureSource());
+  } else {
+    writeFileSync(
+      join(configHome, 'playbook/playbook.config.yaml'),
+      liveConfig(),
+    );
+  }
   if (name === 'headless') {
     writeFileSync(
       join(repo, 'acceptance-headless-token.txt'),
@@ -889,6 +1188,186 @@ async function waitForPaneText(
     `timed out waiting for ${JSON.stringify(expected)}\n` +
       `${launcher.output()}\nLast Boss pane:\n${diagnosticTail(lastPane)}`,
   );
+}
+
+function sendBossTurn(target: string, text: string): void {
+  console.info(`[acceptance] boss> ${text}`);
+  tmuxText(['send-keys', '-t', target, '-l', text]);
+  tmuxText(['send-keys', '-t', target, 'Enter']);
+}
+
+// Whitespace-insensitive occurrence count. One shell session replays the
+// same lifecycle markers turn after turn, so the four existing scenarios'
+// "does the pane contain it yet" waits cannot tell a fresh marker from the
+// one still sitting in the scrollback — the conversational case waits on
+// counts instead.
+function countOccurrences(pane: string, needle: string): number {
+  const haystack = pane.replace(/\s+/g, ' ');
+  const target = needle.replace(/\s+/g, ' ');
+  if (target === '') return 0;
+  let count = 0;
+  for (
+    let index = haystack.indexOf(target);
+    index !== -1;
+    index = haystack.indexOf(target, index + target.length)
+  ) {
+    count += 1;
+  }
+  return count;
+}
+
+function lifecycleMarkerCounts(pane: string): Record<string, number> {
+  return Object.fromEntries(
+    ['◇ ', '◆ failed'].map((marker) => [
+      marker,
+      countOccurrences(pane, marker),
+    ]),
+  );
+}
+
+// The Boss pane's Captain prose blocks: TMUX-038's grammar puts the
+// `captain> ` prefix on the first rendered line of a block, and an
+// operational line is bracketed (`captain> [status] …`), so prose is the
+// unbracketed form. Counting blocks is what tells one turn's reply from
+// the next in a session that keeps its scrollback.
+function captainProseBlocks(pane: string): string[] {
+  const blocks: string[] = [];
+  let current: string[] | undefined;
+  for (const line of pane.split('\n')) {
+    const speaker = /^(captain|boss)>\s?(.*)$/.exec(line);
+    if (speaker) {
+      if (current) blocks.push(current.join('\n').trim());
+      current =
+        speaker[1] === 'captain' && !speaker[2].startsWith('[')
+          ? [speaker[2]]
+          : undefined;
+      continue;
+    }
+    if (current) current.push(line);
+  }
+  if (current) blocks.push(current.join('\n').trim());
+  return blocks.filter((block) => block !== '');
+}
+
+async function waitForCaptainProse(
+  target: string,
+  minimumBlocks: number,
+  timeoutMs: number,
+  launcher: Launcher,
+  failureMarkers: readonly string[] = [],
+): Promise<string> {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  let lastPane = '';
+  let nextProgressAt = startedAt + 60_000;
+  while (Date.now() < deadline) {
+    lastPane = capturePaneOrFail(target, launcher, `${minimumBlocks} replies`);
+    const blocks = captainProseBlocks(lastPane);
+    if (blocks.length >= minimumBlocks) return blocks[blocks.length - 1];
+    assertNoFailureMarker(
+      lastPane,
+      failureMarkers,
+      `Captain reply ${minimumBlocks}`,
+      launcher,
+    );
+    assertLauncherAlive(launcher, `Captain reply ${minimumBlocks}`, lastPane);
+    if (Date.now() >= nextProgressAt) {
+      console.info(
+        `[acceptance] waiting for Captain reply ${minimumBlocks} ` +
+          `(${Math.floor((Date.now() - startedAt) / 1_000)}s)`,
+      );
+      nextProgressAt += 60_000;
+    }
+    await delay(pollIntervalMs);
+  }
+  throw new Error(
+    `timed out waiting for Captain reply ${minimumBlocks}\n` +
+      `${launcher.output()}\nLast Boss pane:\n${diagnosticTail(lastPane)}`,
+  );
+}
+
+async function waitForPaneOccurrences(
+  target: string,
+  expected: string,
+  minimumCount: number,
+  timeoutMs: number,
+  launcher: Launcher,
+  failureMarkers: readonly string[] = [],
+): Promise<void> {
+  const startedAt = Date.now();
+  const deadline = startedAt + timeoutMs;
+  const what = `${JSON.stringify(expected)} ×${minimumCount}`;
+  let lastPane = '';
+  let nextProgressAt = startedAt + 60_000;
+  while (Date.now() < deadline) {
+    lastPane = capturePaneOrFail(target, launcher, what);
+    if (countOccurrences(lastPane, expected) >= minimumCount) return;
+    assertNoFailureMarker(lastPane, failureMarkers, what, launcher);
+    assertLauncherAlive(launcher, what, lastPane);
+    if (Date.now() >= nextProgressAt) {
+      console.info(
+        `[acceptance] waiting for ${what} ` +
+          `(${Math.floor((Date.now() - startedAt) / 1_000)}s)`,
+      );
+      nextProgressAt += 60_000;
+    }
+    await delay(pollIntervalMs);
+  }
+  throw new Error(
+    `timed out waiting for ${what}\n` +
+      `${launcher.output()}\nLast Boss pane:\n${diagnosticTail(lastPane)}`,
+  );
+}
+
+// The count-based waiters below serve the conversational case alone, and a
+// count there is cumulative over the session: an occurrence that scrolled
+// out of a per-wait window would make a count fall, so a wait for the
+// second one could never be satisfied. They read the session-wide window.
+function capturePaneOrFail(
+  target: string,
+  launcher: Launcher,
+  what: string,
+): string {
+  try {
+    return capturePane(target, sessionHistoryLines);
+  } catch (error) {
+    throw new Error(
+      `tmux session ended while waiting for ${what}: ` +
+        `${errorMessage(error)}\n${launcher.output()}`,
+    );
+  }
+}
+
+function assertNoFailureMarker(
+  pane: string,
+  failureMarkers: readonly string[],
+  what: string,
+  launcher: Launcher,
+): void {
+  for (const marker of failureMarkers) {
+    if (paneContains(pane, marker)) {
+      throw new Error(
+        `playbook turn failed while waiting for ${what}; Boss pane contains ` +
+          `${JSON.stringify(marker)}\n${launcher.output()}\n` +
+          `Last Boss pane:\n${diagnosticTail(pane)}`,
+      );
+    }
+  }
+}
+
+function assertLauncherAlive(
+  launcher: Launcher,
+  what: string,
+  pane: string,
+): void {
+  const exit = launcher.exit();
+  if (exit) {
+    throw new Error(
+      `playbook launcher exited while waiting for ${what} ` +
+        `(code=${String(exit.code)}, signal=${String(exit.signal)})\n` +
+        `${launcher.output()}\nLast Boss pane:\n${diagnosticTail(pane)}`,
+    );
+  }
 }
 
 async function waitForPaneShape(
@@ -1313,6 +1792,344 @@ export default {
 `;
 }
 
+// RELEASE-25 fifth case: the two fixture playbooks the conversational
+// session engages, plus the config that enables exactly them. The Captain
+// block matches the live gate's own (`live-config.ts`); the fixtures need
+// no player call at all, but the launcher requires each playbook to resolve
+// at least one visible role, so one claude role is bound and never used.
+function conversationConfig(repo: string): string {
+  const { claude: claudeModel } = liveModels();
+  const fixture = (id: string, file: string): string[] => [
+    `  ${id}:`,
+    `    from: ${JSON.stringify(pathToFileURL(join(repo, file)).href)}`,
+    '    players:',
+    '      worker:',
+    '        adapter: claude',
+    `        model: ${JSON.stringify(claudeModel)}`,
+    '        effort: low',
+    '        permissions:',
+    '          mode: auto',
+  ];
+  return [
+    'captain:',
+    '  adapter: claude',
+    `  model: ${JSON.stringify(claudeModel)}`,
+    '  effort: high',
+    '  permissions:',
+    '    mode: auto',
+    'notifications:',
+    '  player_finished: off',
+    '  turn_finished: off',
+    '  turn_aborted: off',
+    'playbooks:',
+    ...fixture('checklist', 'checklist.registry.mjs'),
+    ...fixture('notes', 'notes.registry.mjs'),
+    '',
+  ].join('\n');
+}
+
+// A three-step checklist whose middle step is a DR-016 script actor reading
+// a flag file. With the flag absent the exit-status guard routes to
+// `failed`; with it present the same replayed entry event runs the machine
+// to terminal. No agent decides any of that — which is the point: the only
+// live judgment in the scenario is the Captain's.
+function checklistFixtureSource(flagPath: string): string {
+  return `// Conversational acceptance fixture: a deterministic script checklist.
+import { assign, setup } from 'xstate';
+import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+
+const flagPath = ${JSON.stringify(flagPath)};
+
+const scriptStep = (stateId, sourceItem, description, command, guards, next) => ({
+  id: stateId,
+  description,
+  meta: { playbook: { stateId, description } },
+  tags: ['playbook.busy'],
+  invoke: {
+    src: 'script',
+    input: () => ({
+      stateId,
+      sourceItem,
+      command,
+      result: {
+        [guards.ok]: 'The step command exited zero.',
+        [guards.failed]: 'The step command exited nonzero.',
+      },
+    }),
+    onDone: [
+      {
+        guard: ({ event }) => event.output.guard === guards.ok,
+        target: next,
+      },
+      {
+        target: 'failed',
+        actions: assign({
+          lastError: () => new Error(guards.message),
+        }),
+      },
+    ],
+    onError: {
+      target: 'failed',
+      actions: assign({ lastError: ({ event }) => event.error }),
+    },
+  },
+});
+
+const machine = setup({}).createMachine({
+  id: 'checklist',
+  initial: 'ready',
+  context: { task: undefined, lastError: undefined },
+  states: {
+    ready: {
+      id: 'ready',
+      description: 'Waits for the Boss checklist task.',
+      meta: {
+        playbook: {
+          stateId: 'ready',
+          description: 'Waits for the Boss checklist task.',
+        },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'prepare',
+          actions: assign({
+            task: ({ event }) => event.task,
+            lastError: () => undefined,
+          }),
+        },
+      },
+    },
+    prepare: scriptStep(
+      'prepare',
+      'CHECK-1',
+      'Prepare step: stage the checklist run.',
+      'exit 0',
+      {
+        ok: 'prepared',
+        failed: 'prepareFailed',
+        message: 'The prepare step failed.',
+      },
+      'verify',
+    ),
+    verify: scriptStep(
+      'verify',
+      'CHECK-2',
+      'Verify step: confirm the checklist flag file is present.',
+      \`test -f '\${flagPath}'\`,
+      {
+        ok: 'verified',
+        failed: 'verifyFailed',
+        message:
+          'The verify step failed: the checklist flag file is missing, so the checklist cannot continue.',
+      },
+      'publish',
+    ),
+    publish: scriptStep(
+      'publish',
+      'CHECK-3',
+      'Publish step: close the checklist run.',
+      'exit 0',
+      {
+        ok: 'published',
+        failed: 'publishFailed',
+        message: 'The publish step failed.',
+      },
+      'done',
+    ),
+    failed: {
+      id: 'failed',
+      description: 'Recoverable checklist failure awaiting Boss recovery.',
+      meta: {
+        playbook: {
+          stateId: 'failed',
+          description: 'Recoverable checklist failure awaiting Boss recovery.',
+        },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'prepare',
+          actions: assign({
+            task: ({ event }) => event.task,
+            lastError: () => undefined,
+          }),
+        },
+      },
+    },
+    done: {
+      id: 'done',
+      description: 'The checklist run finished.',
+      meta: {
+        playbook: {
+          stateId: 'done',
+          description: 'The checklist run finished.',
+        },
+      },
+      type: 'final',
+    },
+  },
+  output: () => ({ checklist: 'complete' }),
+});
+
+const createRuntime = createXStatePlaybookRuntime(machine, {
+  label: 'CHECKLIST',
+  snapshotOptions: () => ({}),
+  entryEvent: { type: 'START', textField: 'task' },
+  // The same failure grammar the bundled playbooks use, so the gate can
+  // count the two engineered failures apart from any real one.
+  statusesForState: (state) =>
+    state.stateId === undefined || state.stateId === 'ready'
+      ? []
+      : state.stateId === 'failed'
+        ? [{ message: '◆ failed' }]
+        : [{ message: \`⤷ \${state.stateId}\` }],
+});
+
+export default {
+  id: 'checklist',
+  command: 'checklist',
+  intent: 'run the fixture release checklist end to end',
+  requiredRoleIds: [],
+  validateOptions(value) {
+    return value ?? {};
+  },
+  createRuntime() {
+    return createRuntime({});
+  },
+};
+`;
+}
+
+// The switch target: one deterministic step, then a parked state that keeps
+// the engagement genuinely active so the dismissal turn has something to
+// dismiss.
+function notesFixtureSource(): string {
+  return `// Conversational acceptance fixture: the release-notes switch target.
+import { assign, setup } from 'xstate';
+import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+
+const machine = setup({}).createMachine({
+  id: 'notes',
+  initial: 'ready',
+  context: { topic: undefined },
+  states: {
+    ready: {
+      id: 'ready',
+      description: 'Waits for the Boss release-notes topic.',
+      meta: {
+        playbook: {
+          stateId: 'ready',
+          description: 'Waits for the Boss release-notes topic.',
+        },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'draft',
+          actions: assign({ topic: ({ event }) => event.topic }),
+        },
+      },
+    },
+    draft: {
+      id: 'draft',
+      description: 'Draft step: open the release-notes outline.',
+      meta: {
+        playbook: {
+          stateId: 'draft',
+          description: 'Draft step: open the release-notes outline.',
+        },
+      },
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'script',
+        input: () => ({
+          stateId: 'draft',
+          sourceItem: 'NOTES-1',
+          command: 'exit 0',
+          result: {
+            drafted: 'The step command exited zero.',
+            draftFailed: 'The step command exited nonzero.',
+          },
+        }),
+        onDone: [
+          {
+            guard: ({ event }) => event.output.guard === 'drafted',
+            target: 'outline',
+          },
+          { target: 'failed' },
+        ],
+        onError: {
+          target: 'failed',
+          actions: assign({ lastError: ({ event }) => event.error }),
+        },
+      },
+    },
+    outline: {
+      id: 'outline',
+      description: 'The outline is open; awaiting the next Boss turn.',
+      meta: {
+        playbook: {
+          stateId: 'outline',
+          description: 'The outline is open; awaiting the next Boss turn.',
+        },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'draft',
+          actions: assign({ topic: ({ event }) => event.topic }),
+        },
+      },
+    },
+    failed: {
+      id: 'failed',
+      description: 'Recoverable release-notes failure awaiting Boss recovery.',
+      meta: {
+        playbook: {
+          stateId: 'failed',
+          description:
+            'Recoverable release-notes failure awaiting Boss recovery.',
+        },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'draft',
+          actions: assign({ topic: ({ event }) => event.topic }),
+        },
+      },
+    },
+  },
+});
+
+const createRuntime = createXStatePlaybookRuntime(machine, {
+  label: 'NOTES',
+  snapshotOptions: () => ({}),
+  entryEvent: { type: 'START', textField: 'topic' },
+  statusesForState: (state) =>
+    state.stateId === undefined || state.stateId === 'ready'
+      ? []
+      : state.stateId === 'failed'
+        ? [{ message: '◆ failed' }]
+        : [{ message: \`⤷ \${state.stateId}\` }],
+});
+
+export default {
+  id: 'notes',
+  command: 'notes',
+  intent: 'draft and discuss the release notes for this repository',
+  requiredRoleIds: [],
+  validateOptions(value) {
+    return value ?? {};
+  },
+  createRuntime() {
+    return createRuntime({});
+  },
+};
+`;
+}
+
 function headlessRegistrySource(): string {
   return [
     `const expectedTask = ${JSON.stringify(headlessTask)};`,
@@ -1444,12 +2261,15 @@ function paneContains(pane: string, expected: string): boolean {
   );
 }
 
-function capturePane(target: string): string {
+function capturePane(
+  target: string,
+  historyLines: number = bossHistoryLines,
+): string {
   return tmuxText([
     'capture-pane',
     '-p',
     '-S',
-    `-${bossHistoryLines}`,
+    `-${historyLines}`,
     '-t',
     target,
   ]);

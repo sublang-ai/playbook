@@ -123,6 +123,7 @@
     "build": "tsc",
     "test": "vitest run",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
+    "smoke:release": "node scripts/release-smoke.mjs",
     "check:links": "node scripts/check-links.mjs",
     "playbook": "node reference/sdlc/code.playbook/bin/playbook.js"
   },

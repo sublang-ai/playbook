@@ -217,6 +217,59 @@ subpaths, declares `exports['./captain/playbook']`, declares neither
 `code.registry` and `discuss.registry` `.js` and `.d.ts` artifacts
 among the packed contents.
 
+## Local release smoke
+
+### RELEASE-29
+
+Verifies: [RELEASE-28](../dev/release.md#release-28),
+[RELEASE-12](../dev/release.md#release-12),
+[RELEASE-24 §hermetic](../dev/release.md#release-24)
+
+The local `pnpm smoke:release` entry point shall exist and shall run every
+[RELEASE-28](../dev/release.md#release-28) step against one freshly packed
+candidate, in one isolated temporary root, with no model call, no
+credential, and no tmux session.
+
+It shall fail — preserving the temporary root and naming the failing step —
+unless all of the following hold:
+
+- the two global install shapes probe every adapter from
+  `@sublang/cligent`'s own installed location, **unavailable** for the
+  tarball alone and **available** with each SDK named as its own top-level
+  install root, and the lean closure carries no `@anthropic-ai` or
+  `@openai` directory at any depth;
+- the installed executable answers `--help` and `--list`, the latter naming
+  both bundled registries;
+- the hermetic fixture resolves neither engine import before the run, is
+  provisioned exactly once into the isolated prefix, returns its terminal
+  JSON envelope from a script-actor-only artifact, provisions nothing on a
+  second run, and is left clean;
+- the installed `captain/playbook` subpath constructs, every packed file
+  other than the manifest is byte-identical to the repository's own, and
+  the `reference/sdlc/captain.playbook` conformance suites pass with the
+  GEARS ↔ FSM conformance, declared-transition coverage, and pinned
+  topology suites each named among those that ran; and
+- the nested installed `@sublang/cligent` satisfies the packed manifest's
+  caret range and ships both `CaptainContext.emitReply` and
+  `CaptainRunResult.resumeToken`.
+
+The last clause is a standing guard, not a formality: the shell's durable
+conversation calls both surfaces, a global install resolves cligent from
+that nested copy alone, and a candidate whose declared range admits only
+releases without them would install and then fail at the first Boss turn.
+
+Nothing here shall be asserted by recompiling a playbook. The SLC pipeline
+is agentic and its output is not reproducible byte-for-byte from the
+maintained source, so a reproduction check would fail on a correct
+candidate; byte-equality against the repository's own artifacts plus the
+conformance suites rooted at the compiled `captain.gears.md` are what this
+gate asserts, and agreement between `reference/sdlc/captain.md` and that
+compiled GEARS is outside it.
+
+Because it spends no model call and needs no authentication, this gate
+shall be runnable by any maintainer with registry access, and shall not be
+selected by the normal `pnpm test` configuration or by GitHub CI.
+
 ## Live pre-release acceptance
 
 ### RELEASE-25
@@ -224,7 +277,7 @@ among the packed contents.
 Verifies: [RELEASE-24](../dev/release.md#release-24)
 
 The opt-in local `pnpm test:acceptance` suite shall pack and install the
-candidate package once, then exercise four independent fresh git repositories
+candidate package once, then exercise five independent fresh git repositories
 through the installed npm `playbook` command shim.
 The first case shall invoke `playbook run` with `--json` over a small fixture
 playbook using one real Claude player and a real Codex captain for one hidden
@@ -258,6 +311,39 @@ links resolving into the isolated prefix; the run returns its terminal
 JSON envelope; a second run creates nothing further and prints no
 provisioning line; and `@sublang/cligent` resolves from beneath the
 prefix's `@sublang/playbook` rather than from any machine-global copy.
+
+The fifth, conversational case
+([DR-029](../decisions/029-session-scoped-conversational-captain.md)) shall
+drive one attached tmux-play session with a real Claude Captain and a
+bundled deterministic fixture playbook whose middle step is a
+[DR-016](../decisions/016-script-actors-and-optimize-pass.md) script actor
+succeeding only when a flag file exists — the engineered failure, so no
+agent is rigged and the Captain's judgment is the only live variable.
+It shall fail unless, in one shell session and in this order:
+
+- a natural-language chat turn is answered as Captain prose while no
+  engagement starts;
+- engaging the fixture with the flag file absent reaches the fixture's
+  failure, and that turn's reply names the failed step while claiming no
+  completion;
+- after the flag file is created, the verbatim Boss turn
+  `Retry and continue the iteration` drives that same engagement to its
+  finished marker, with no second engagement started in its place;
+- a natural status question is answered with no further lifecycle marker,
+  leaving the engagement where it stood;
+- after the flag file is removed and the fixture is engaged to its failure
+  a second time, a switch requested in ordinary prose — carrying no slash
+  command — emits the fixture's stopped marker and then the target
+  playbook's started marker, in that order; and
+- a dismissal requested in ordinary prose ends the engagement.
+
+It shall further fail unless, across the whole session, the literal
+`Saved you 0` never appears on the Boss surface, no turn-failure marker
+appears beyond the two engineered script failures, and the fixture
+repository is left clean with no ignored or untracked artifacts. The
+deterministic `/discuss <task>` command mapping is not this case's subject
+and stays in the hermetic tier; what this case exercises is the
+model-decided switch against a still-active engagement.
 
 The acceptance suite shall require local adapter authentication, tmux, glow,
 Expect, git, and npm. It shall not be selected by the normal `pnpm test`
