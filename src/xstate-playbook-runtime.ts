@@ -1848,6 +1848,13 @@ export function createXStatePlaybookRuntime<TOptions>(
         | 'apply.finished',
       identity: Record<string, unknown>,
       position: TracePosition,
+      // Base payload of the best-effort finish emitted when the start sink
+      // rejects; it defaults to the payload the start carried, which the
+      // player, judge, and captain pairs take as-is. The apply pair cannot:
+      // its finish carries the receipt disposition and none of the
+      // start-only fields, so it passes its own canonical pre-acceptance
+      // base (slc/link.md §Playbook trace).
+      finishIdentity: Record<string, unknown> = identity,
     ): Promise<void> {
       try {
         await emitTrace(startedType, identity, position);
@@ -1856,7 +1863,11 @@ export function createXStatePlaybookRuntime<TOptions>(
         try {
           await emitTrace(
             finishedType,
-            { ...identity, status: 'error', error: normalizeError(error) },
+            {
+              ...finishIdentity,
+              status: 'error',
+              error: normalizeError(error),
+            },
             position,
           );
         } catch {
@@ -3121,32 +3132,41 @@ export function createXStatePlaybookRuntime<TOptions>(
               key,
               ...stateIdentity(currentState().stateId),
             };
+            // Every apply finish carries the receipt disposition and no
+            // start-only field — `stateId` is on the start alone
+            // (slc/link.md §Playbook trace). Both finishes reachable
+            // before acceptance settle with no effect behind them, so both
+            // carry the canonical `rejected` disposition and the reason
+            // that ended the call, alongside the transport marker.
+            const preAcceptanceFinish = (
+              reason: string,
+            ): Record<string, unknown> => ({
+              actionId,
+              key,
+              ...receiptTracePayload({ disposition: 'rejected', reason }),
+            });
             await emitCallStarted(
               'apply.started',
               'apply.finished',
               identity,
               position,
+              preAcceptanceFinish('apply.started trace sink rejected'),
             );
             // An abort may land while the awaited started emission drains
             // (e.g. fired from the trace sink itself); the action must
             // never execute after abort. Settle the already-started pair
             // as `aborted` — carrying the canonical rejected-before-any-
-            // effect receipt disposition required of every apply finish
-            // (slc/link.md §Playbook trace) — and end the call
-            // pre-acceptance: no receipt is recorded and the key stays
-            // free.
+            // effect receipt disposition required of every apply finish —
+            // and end the call pre-acceptance: no receipt is recorded and
+            // the key stays free.
             if (signal.aborted) {
               try {
                 await emitTrace(
                   'apply.finished',
                   {
-                    ...identity,
+                    ...preAcceptanceFinish('aborted before acceptance'),
                     status: 'aborted',
                     error: normalizeError(signal.reason),
-                    ...receiptTracePayload({
-                      disposition: 'rejected',
-                      reason: 'aborted before acceptance',
-                    }),
                   },
                   position,
                 );

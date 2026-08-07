@@ -598,3 +598,11 @@ drains cleanly; and unless every executed or rejected `apply` traces
 as one paired `apply.started`/`apply.finished` carrying the action id,
 idempotency key, and receipt disposition under a session-unique
 `apply-<n>` call id, with no new pair on a replayed key.
+The suite shall assert those payloads over every `apply.finished` the
+trace holds, never over a disposition-filtered subset: the executed
+and rejected settlements, the pre-acceptance abort finish, and the
+best-effort finish a rejected `apply.started` sink emits shall each
+carry the receipt disposition with its reason, normalized error, or
+projected run result and no start-only field, `stateId` appearing on
+`apply.started` alone
+([slc/link.md](../../slc/link.md#playbook-trace)).

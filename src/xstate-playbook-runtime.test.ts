@@ -2493,16 +2493,38 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     });
     expect(receipt.disposition).toBe('executed');
     expect(playerPrompts).toEqual(['Implement this task: <task>']);
-    const finishes = applyTraces(telemetryEvents).filter(
-      (event) => event.type === 'apply.finished',
-    );
+    // slc/link.md §Playbook trace: every apply finish adds the receipt
+    // disposition and carries no start-only field. Assert over *every*
+    // finish in the trace — the best-effort one the start-sink rejection
+    // emits included, which a disposition-filtered assertion never sees.
+    const pairs = applyTraces(telemetryEvents);
+    const finishes = pairs.filter((event) => event.type === 'apply.finished');
+    for (const finish of finishes) {
+      const payload = finish.payload as Record<string, unknown>;
+      expect(payload.actionId).toBe('jump:implement');
+      expect(payload.key).toBe('first');
+      expect(typeof payload.disposition).toBe('string');
+      expect(payload).not.toHaveProperty('stateId');
+    }
     expect(
-      finishes.filter(
-        (event) =>
-          (event.payload as { disposition?: string }).disposition ===
-          'executed',
+      finishes.map(
+        (event) => (event.payload as { disposition?: string }).disposition,
       ),
-    ).toHaveLength(1);
+    ).toEqual(['rejected', 'executed']);
+    // The rejected-before-any-effect finish names why the call ended and
+    // keeps the transport failure as its diagnostic.
+    expect(finishes[0].payload).toMatchObject({
+      disposition: 'rejected',
+      reason: 'apply.started trace sink rejected',
+      status: 'error',
+      error: { message: 'start sink offline' },
+    });
+    // `stateId` is start-only, not merely absent everywhere.
+    expect(
+      pairs
+        .filter((event) => event.type === 'apply.started')
+        .map((event) => (event.payload as { stateId?: string }).stateId),
+    ).toEqual(['ready', 'ready']);
     await runtime.dispose();
   });
 
@@ -2738,11 +2760,16 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     // receipt disposition — for a pre-acceptance abort that is `rejected`
     // (before any effect) with its reason, alongside the abort marker.
     expect(pair[1].payload).toMatchObject({
+      actionId: 'retry:START',
+      key: 'window-abort',
       status: 'aborted',
       error: { message: 'stop inside the started emission' },
       disposition: 'rejected',
       reason: 'aborted before acceptance',
     });
+    // The start carries the state identity; the finish never does.
+    expect((pair[0].payload as { stateId?: string }).stateId).toBe('failed');
+    expect(pair[1].payload).not.toHaveProperty('stateId');
     // No receipt was recorded, so the same key executes once the abort is
     // gone.
     const receipt = await runtime.apply!({
@@ -2752,6 +2779,17 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     });
     expect(receipt.disposition).toBe('executed');
     expect(playerCalls).toBe(2);
+    // Every apply finish of the session — the aborted one and the executed
+    // one — is canonical: disposition present, start-only fields absent.
+    const finishes = traces.filter(({ type }) => type === 'apply.finished');
+    expect(
+      finishes.map(
+        ({ payload }) => (payload as { disposition?: string }).disposition,
+      ),
+    ).toEqual(['rejected', 'executed']);
+    for (const finish of finishes) {
+      expect(finish.payload).not.toHaveProperty('stateId');
+    }
     await runtime.dispose();
   });
 
