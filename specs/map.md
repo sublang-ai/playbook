@@ -93,6 +93,7 @@ meta.md     The spec of specs
 | IR-035 | [035-empty-ok-result-re-ask.md](iterations/035-empty-ok-result-re-ask.md) | Implement DR-028: one corrective re-ask on an empty `ok` player or direct-Captain result under the unified empty predicate, with per-call trace pairs, PBRT-38 resume selection, and the PBRT-51 integration tests |
 | IR-036 | [036-session-scoped-conversational-captain.md](iterations/036-session-scoped-conversational-captain.md) | Implement DR-029: the engine `describe`/`apply` control surface, rewritten CAPTAIN/CAPPLAY specs, the recompiled controller Captain, the durable-conversation shell rework, the cligent floor bump, and the three-tier acceptance plan — hermetic A-28/A-29 task gates, the fifth live conversational scenario, and the `pnpm smoke:release` release gate |
 | IR-037 | [037-markdown-cross-reference-check.md](iterations/037-markdown-cross-reference-check.md) | Fail the suite on a broken spec cross-reference: the XREF package, a dependency-free link/anchor checker with GitHub's slug rules, and the repointing of two links into a sibling checkout |
+| IR-038 | [038-conversational-gate-config-coverage.md](iterations/038-conversational-gate-config-coverage.md) | Bring the live gate's conversational config under `pnpm test`: its config and fixture playbook sources moved out of the excluded acceptance suite into `acceptance/live-config.ts` and `acceptance/live-fixtures.ts`, and the amended PBCLI-32 composing it through the real launcher over the real fixture modules |
 
 ## Packages
 

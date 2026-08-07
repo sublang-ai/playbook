@@ -222,12 +222,19 @@ without any agent call.
 Verifies: [PBCLI-8](../dev/playbook-cli.md#pbcli-8), [RELEASE-24](../dev/release.md#release-24)
 
 Where the live release gate ([RELEASE-24](../dev/release.md#release-24))
-writes a top-level config for its fixture repositories, when the normal
-test suite runs, the test suite shall fail unless that exact config
-composes through the launcher against the real CODE and DISCUSS
-registry modules, enabling both playbooks and generating the
+writes top-level configs for its fixture repositories, when the normal
+test suite runs, the test suite shall fail unless each of those exact
+configs composes through the launcher against the real modules it
+enables.
+It shall fail unless the workflow config composes against the real CODE
+and DISCUSS registry modules, enabling both playbooks and generating the
 `code-coder` / `code-reviewer` / `discuss-host` / `discuss-participant`
 roster with their expected adapters.
+It shall further fail unless the conversational config composes against
+the fixture playbook modules the gate generates from its own sources,
+written to the paths that config names, enabling `checklist` and `notes`
+under those effective commands and generating the `checklist-worker` /
+`notes-worker` roster on the `claude` adapter.
 The gate itself is excluded from `pnpm test` and CI, so without this
 check a config-model change would break the release gate silently and
 surface only during a manual pre-tag run.

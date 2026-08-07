@@ -382,6 +382,59 @@ describe('live acceptance gate config (PBCLI-32)', () => {
       'discuss-participant codex',
     ]);
   });
+
+  it('composes the conversational config with its real fixture modules', async () => {
+    const { conversationConfig } = await import(
+      new URL('../../../acceptance/live-config.ts', import.meta.url).href
+    );
+    const { checklistFixtureSource, notesFixtureSource } = await import(
+      new URL('../../../acceptance/live-fixtures.ts', import.meta.url).href
+    );
+    // Compose the way the gate does: the generated fixture modules on disk
+    // under the exact names the config's `from` URLs name, resolved by the
+    // real loader. Stub entries would make the ids and commands below
+    // self-fulfilling; importing the sources instead builds both machines
+    // and applies the runtime factory at module scope, so a fixture that no
+    // longer links fails here rather than during a manual pre-tag run.
+    // Scope: a fixture's own `@sublang/playbook/xstate-runtime` import
+    // resolves through the package export to the committed `src/*.js`
+    // sibling, not to the `.ts` this suite loads, so what fails here is
+    // fixture drift against the released engine surface — engine *source*
+    // drift stays the CI sibling drift check's job (RELEASE-10).
+    const repo = await mkdtemp(join(tmpdir(), 'playbook-live-conversation-'));
+    tempDirs.push(repo);
+    await writeFile(
+      join(repo, 'checklist.registry.mjs'),
+      checklistFixtureSource(join(repo, 'checklist.flag')),
+      'utf8',
+    );
+    await writeFile(
+      join(repo, 'notes.registry.mjs'),
+      notesFixtureSource(),
+      'utf8',
+    );
+
+    const top = parseYaml(conversationConfig(repo));
+    const { config, playbooks } = await composeGenericConfig(
+      top,
+      (specifier: string) => import(specifier),
+    );
+
+    // Both fixtures enable, and the commands the Captain offers are the
+    // fixture modules' own — the session drives `/checklist` and switches to
+    // `notes` by name.
+    expect(playbooks.map((p: any) => `${p.id} ${p.command}`)).toEqual([
+      'checklist checklist',
+      'notes notes',
+    ]);
+    expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
+    expect(config.captain.adapter).toBe('claude');
+    // One bound-but-unused claude role per fixture, namespaced the same way.
+    expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
+      'checklist-worker claude',
+      'notes-worker claude',
+    ]);
+  });
 });
 
 describe('playbook launcher — validation (PBCLI-15)', () => {
