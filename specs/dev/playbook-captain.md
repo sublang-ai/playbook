@@ -128,7 +128,10 @@ a model-decided `respond` carrying the turn's reply prose so a chat
 turn settles in that one decision call.
 The shell shall validate a selection against host state before any
 effect: `start` and `switch` targets shall be enabled registry
-entries; `start` shall require an idle shell; `switch` shall require
+entries; `start` and `switch` inputs shall carry an explicit
+`origin` of `'boss'` or `'captain'`
+([CAPPLAY-9](captain-playbook.md#capplay-9)); `start` shall require
+an idle shell; `switch` shall require
 an active root and a target absent from the active path; `dismiss`,
 `deliver`, and `runtime` shall require an active leaf; and `runtime`
 shall require the active leaf's current `describe()` to advertise
@@ -143,6 +146,22 @@ delivered text — the exact Boss text of the decided turn, or the
 parsed remainder of a same-command turn — and shall ignore, never
 delivering, any text carried on the selection
 ([CAPPLAY-9](captain-playbook.md#capplay-9)).
+For a validated `start` or `switch`, the shell shall resolve the
+child's initial Boss text from the selection's tagged `input`: under
+`origin: 'boss'` it shall be authoritative exactly as for `deliver`,
+starting the target with that same shell-held text and ignoring any
+divergent text carried on the selection, so a model restatement of
+the current turn can never reach the child; under
+`origin: 'captain'` it shall pass the composed text through and
+shall record the Captain origin in the settlement facts and the
+session journal ([CAPTAIN-35](#captain-35)), keeping
+Captain-composed input distinguishable from Boss text downstream.
+A selection reaching the port with a missing or unknown `origin`
+shall settle `rejected` with a reason and no effect — never defaulted
+silently — while a decision reply whose `input` omits `origin` or
+names an unknown one is a malformed required payload field for the
+runtime's own contract validation and its single corrective re-ask
+([CAPPLAY-18](captain-playbook.md#capplay-18)).
 The shell shall execute at most one validated action per Boss turn
 and settle the selection with `status`, the outcome-report facts —
 what was dismissed, started, delivered, applied, or rejected, plus
@@ -213,8 +232,16 @@ composed from the active leaf's `describe()`
 each enabled playbook's id, effective command, and intent.
 Digests and session-Captain prompts shall exclude session and call
 UUIDs, resume tokens, trace payloads, module specifiers, option
-values, player rosters, journal text, and ledger JSON; player output
-shall enter the conversation only as fenced quotes.
+values, player rosters, raw journal records, and ledger JSON; player
+output shall enter the conversation only as fenced quotes.
+A raw journal record shall reach no prompt, ever; the sole
+journal-derived text any prompt may carry is the deterministic
+reseed digest the shell composes from those records
+([CAPTAIN-35](#captain-35)), permitted on exactly the first call of a
+replacement conversation and on no other call, so on the healthy
+path — no reseed — no journal-derived text enters any prompt
+([DR-029 §2](../decisions/029-session-scoped-conversational-captain.md)).
+That digest shall itself observe the exclusions above.
 The shell shall validate every durable call's returned prose with
 the missing-or-empty predicate and its single corrective re-ask
 ([DR-028](../decisions/028-empty-ok-result-re-ask.md)) and shall
@@ -605,8 +632,18 @@ returned `resumeToken`, replacing the prior pin.
 When a durable call throws, returns a non-`ok` status, or returns
 `ok` without a token, the shell shall treat the conversation as
 unsynchronized: clear the pin, re-issue that call exactly once on a
-fresh conversation (`resume: false`) seeded with a journal digest
+fresh conversation (`resume: false`) seeded with the reseed digest
 plus the current ControlView digest, and pin the new token.
+The reseed digest shall be the shell's own deterministic rendering of
+the journal records — the same records shall always render the same
+digest — and shall be the only journal-derived text any prompt ever
+carries: raw journal records shall enter no prompt, the digest shall
+appear on exactly that one re-issued call and on no later call of the
+replacement conversation, and it shall observe the
+[CAPTAIN-9](#captain-9) prompt exclusions, carrying no session or
+call UUID, resume token, trace payload, module specifier, option
+value, player roster, or ledger JSON
+([DR-029 §2](../decisions/029-session-scoped-conversational-captain.md)).
 Only the model-side conversation shall be replaced: the engagement
 stack, player sessions, journal, and the turn's completed work —
 including an already-executed action, which shall never be

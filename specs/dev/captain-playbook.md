@@ -59,7 +59,7 @@ Where the shell initializes ([CAPTAIN-16](playbook-captain.md#captain-16)), the 
 Per Boss turn the runtime shall submit at most one selection through
 the controller port —
 `{ action: 'respond', text }`,
-`{ action: 'start' | 'switch', playbookId, input }`,
+`{ action: 'start' | 'switch', playbookId, input: { origin, text } }`,
 `{ action: 'dismiss' }`, `{ action: 'deliver' }`, or
 `{ action: 'runtime', actionId }` — and shall treat the returned
 settlement `{ status, facts, receipt?, leafState?, counts }` as the
@@ -70,6 +70,21 @@ A `deliver` selection shall carry no text payload: the shell is
 authoritative for the delivered text, and any text carried on the
 selection is ignored and never delivered
 ([CAPTAIN-7](playbook-captain.md#captain-7)).
+A `start` or `switch` selection's `input` shall be provenance-tagged,
+never bare text: `origin` shall be `'boss'` or `'captain'`, and a
+missing or unknown `origin` shall be a malformed required payload
+field ([CAPPLAY-18](#capplay-18)).
+`origin: 'boss'` shall be the default the compiled policy selects,
+its `text` the current turn's exact Boss text — the shell being
+authoritative for it ([CAPTAIN-7](playbook-captain.md#captain-7)) —
+and `origin: 'captain'` shall be permitted only to carry intent the
+Boss accumulated across earlier turns that the current turn's text
+alone does not express, such as a target the Boss named before.
+No selection shall paraphrase, summarize, translate, expand, or
+otherwise restate the current turn's Boss text under either origin:
+Captain-composed input adds accumulated intent and never silently
+replaces same-turn Boss text
+([DR-029 §4](../decisions/029-session-scoped-conversational-captain.md)).
 The runtime shall reach no playbook or player directly: it shall make
 no `callPlaybook` or `callPlayer` call, require no generated player or
 command, and make no visibility request.

@@ -64,8 +64,23 @@ second malformed reply settles the turn as a Boss-appropriate
 failure reply with no action executed and the stack untouched; no
 hidden lifecycle classification call exists; and no decision prompt
 carries session or call UUIDs, resume tokens, trace payloads, module
-specifiers, option values, player rosters, journal text, or ledger
-JSON.
+specifiers, option values, player rosters, ledger JSON, or any
+journal-derived text — neither a raw journal record nor the reseed
+digest, since no call on this unbroken path is a reseed
+([CAPTAIN-35](../dev/playbook-captain.md#captain-35)).
+The suite shall also fail unless every `start` or `switch` selection
+carries its `input` under an explicit origin: a scripted
+`origin: 'boss'` input whose text
+diverges from the turn's Boss text shall still start the target with
+the exact shell-authoritative Boss text, the carried text ignored; a
+scripted decision reply whose `input` omits `origin` or names an
+unknown one shall be a malformed required payload field and get the
+single corrective re-ask, and a selection that still reaches the
+controller port without a valid origin shall settle `rejected` with a
+reason and no effect, never a silent default; and an
+`origin: 'captain'` input shall start the target with that composed
+text while the settlement facts and the journal record name it as
+Captain-composed.
 
 ## Lifecycle and telemetry
 
@@ -346,10 +361,16 @@ fail, the suite shall fail unless each of the three unsynchronized
 shapes — a throw, a non-`ok` result, and an `ok` result without a
 resume token — clears the pin and re-issues only the failed call,
 exactly once, on a fresh conversation whose captured prompt carries
-the journal digest plus the current ControlView digest; the
+the reseed digest plus the current ControlView digest; the
 engagement stack, player sessions, journal, and completed turn work
 survive; and the turn otherwise settles normally with the new token
 pinned.
+The suite shall fail unless the reseed digest is confined to that one
+re-issued call: no captured prompt before the reseed carries it, no
+later call on the replacement conversation carries it again, no
+captured prompt at all carries a raw journal record, and the same
+journal renders the same digest twice
+([CAPTAIN-9](../dev/playbook-captain.md#captain-9)).
 The suite shall fail unless a second consecutive continuity failure
 fails the phase with a Boss-appropriate reply that names a concrete
 next step and contains no `adjudicator`, `guard`, `undeclared`, or
@@ -486,10 +507,10 @@ journal-seeded conversation, and leaves the stack, player sessions,
 journal, and completed work intact.
 The suite shall fail unless a nonce fact stated before a forced
 reseed remains usable after it: the reseed prompt carries the
-journal digest and the digest-outranks-memory instruction, and the
+reseed digest and the digest-outranks-memory instruction, and the
 post-reseed reply proves the nonce.
 The suite shall fail unless, when `apply()` executes and the
-result-phase durable call then throws, the re-issued call's journal
+result-phase durable call then throws, the re-issued call's reseed
 digest carries the executed action and outcome records — the reseed
 provably knows the action ran — no second `apply()` occurs, and the
 stack, journal, and completed work survive.

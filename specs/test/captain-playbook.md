@@ -36,7 +36,7 @@ structured state telemetry.
 
 ### CAPPLAY-17
 
-Verifies: [CAPPLAY-1](../user/captain-playbook.md#capplay-1), [CAPPLAY-5](../user/captain-playbook.md#capplay-5), [CAPPLAY-8](../dev/captain-playbook.md#capplay-8), [CAPPLAY-16](../dev/captain-playbook.md#capplay-16)
+Verifies: [CAPPLAY-1](../user/captain-playbook.md#capplay-1), [CAPPLAY-5](../user/captain-playbook.md#capplay-5), [CAPPLAY-8](../dev/captain-playbook.md#capplay-8), [CAPPLAY-9](../dev/captain-playbook.md#capplay-9), [CAPPLAY-16](../dev/captain-playbook.md#capplay-16)
 
 Where the session Captain is driven with a coding intent whose text could be paraphrased and investigated from the workspace, when the real shell and recompiled runtime process the turn, the integration suite shall fail unless hub entry preserves the text exactly, every durable decision and result-phase call runs hidden on the pinned conversation with the DR-013 A1 tool posture, the decision can select only the closed action set — no direct-to-terminal or perform-the-work outcome exists — and no Captain control call can inspect or execute the task.
 The suite shall also fail unless acting prompts contain no declared
@@ -44,6 +44,13 @@ guard or result-property schema, no model-authored paraphrase replaces
 Boss text, the surfaced captain speech is the exact validated prose of
 its call, and a closing reply communicates the settlement-backed
 result rather than a bare acknowledgement or completion announcement.
+The suite shall further fail unless every `start` or `switch`
+selection the scenario produces tags its `input`
+`origin: 'boss'` with that turn's exact Boss text — the default the
+compiled policy selects — and unless the only `origin: 'captain'`
+inputs are those adding intent the Boss accumulated across earlier
+turns: a Captain-composed input that restates, paraphrases, or
+summarizes the same turn's Boss text shall fail the suite.
 
 ### CAPPLAY-19
 
