@@ -70,16 +70,19 @@ restart, or reorder the stack.
 Where the Playbook Captain shell is running under tmux-play with one
 or more playbooks enabled, while a playbook is engaged, when the Boss
 submits ordinary text, the shell shall settle the turn through the
-session Captain's decision over the closed action set
-([CAPPLAY-4](captain-playbook.md#capplay-4)): a task instruction,
-answer, clarification, continuation, or ambiguous message is
-delivered as the original text unchanged to the active leaf runtime;
-a progress or status question settles as one visible captain reply
-grounded in the observed runtime state, with no state movement and
-the parked leaf and any pending player question untouched, however
-many times it is asked; an explicit stop request dismisses; an
-explicit replacement request switches; and an explicit recovery or
-resume request may execute one runtime-advertised action
+session Captain's decision over the closed action set, guided by the
+message's addressee and intent
+([CAPPLAY-4](captain-playbook.md#capplay-4)): task-directed content
+— an instruction, answer, or continuation for the working playbook —
+is delivered as the original text unchanged to the active leaf
+runtime; conversation, planning, or clarification addressed to the
+Captain — a progress or status question included — settles as one
+visible captain reply grounded in the observed runtime state, with
+no state movement and the parked leaf and any pending player
+question untouched, however many times such a question is asked; an
+explicit stop request dismisses; an explicit replacement request
+switches; and an explicit recovery or resume request may execute one
+runtime-advertised action
 ([CAPTAIN-8](../dev/playbook-captain.md#captain-8)).
 While a player question is pending on the active leaf, when the Boss
 answers, the shell shall deliver the answer to that same leaf, which

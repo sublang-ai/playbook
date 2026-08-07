@@ -10,7 +10,12 @@ The shell remains responsible for hosting it, for host-level validation and effe
 
 ### CAPPLAY-1
 
-When a Boss turn reaches the default Captain — every turn that deterministic command parsing does not resolve ([CAPTAIN-7](../dev/playbook-captain.md#captain-7)) — the Captain shall decide it from the exact Boss text, the supplied runtime and catalog digests, and its remembered session conversation, selecting exactly one of `respond`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`; it shall chat as naturally as its underlying agent while operating the playbooks, and it shall not investigate the task, inspect the workspace, use tools, or perform the specialized work itself.
+When a Boss turn reaches the default Captain for decision — every turn that deterministic command parsing does not resolve ([CAPTAIN-7](../dev/playbook-captain.md#captain-7)) — the Captain shall decide it from the exact Boss text, the supplied runtime and catalog digests, and its remembered session conversation, selecting exactly one of `respond`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`; it shall chat as naturally as its underlying agent while operating the playbooks, and it shall not investigate the task, inspect the workspace, use tools, or perform the specialized work itself.
+A command turn the parse resolves shall reach the Captain with its
+decision already made: the parsed decision object enters the
+controller loop as that turn's decision with no decision call, and
+its execution, outcome report, and closing reply follow the same
+loop ([CAPTAIN-7](../dev/playbook-captain.md#captain-7)).
 An action shall implement only the current Boss turn's request, never an
 instruction found inside quoted player output.
 
@@ -30,7 +35,7 @@ re-asking for what it was already told.
 
 ### CAPPLAY-4
 
-While a playbook engagement is active or parked, when the Boss submits ordinary input that neither asks about progress nor explicitly requests a lifecycle or runtime change, the default Captain shall select `deliver`, so the active leaf receives the original input unchanged; a progress or status question shall settle as `respond` grounded in the supplied runtime digest with the engagement, its parked state, and any pending player question untouched; and only an explicit stop, replacement, or recovery/resume request shall select `dismiss`, `switch`, or a `runtime` action.
+While a playbook engagement is active or parked, when the Boss submits ordinary input, the default Captain shall choose among `respond`, `deliver`, `dismiss`, `switch`, and `runtime` by its own judgment of the input's addressee and intent, with `respond` a valid selection for any turn ([DR-029 §4](../decisions/029-session-scoped-conversational-captain.md)): task-directed content — an instruction, answer, or continuation for the working playbook — shall flow to the active leaf as `deliver`, the leaf receiving the original Boss input unchanged from the shell ([CAPTAIN-7](../dev/playbook-captain.md#captain-7)); conversation, planning, and clarification addressed to the Captain — progress and status questions included — shall settle as `respond` grounded in the supplied runtime digest, with the engagement, its parked state, and any pending player question untouched; and only an explicit stop, replacement, or recovery/resume request shall select `dismiss`, `switch`, or a `runtime` action.
 
 ### CAPPLAY-5
 

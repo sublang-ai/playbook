@@ -50,7 +50,10 @@ Captain shell with scripted decision replies, the test suite shall
 fail unless every non-command turn produces exactly one hidden
 durable decision call; the executable selections are exactly
 `respond`, `start`, `switch`, `dismiss`, `deliver`, and `runtime`;
-`deliver` hands the original text unchanged to the active leaf and
+`deliver` hands the shell-supplied original Boss text unchanged to
+the active leaf — a scripted `deliver` selection carrying a
+divergent text payload still delivers the exact Boss text, the
+carried text ignored — and
 `dismiss` executes only as a validated selection; a selection
 failing shell validation — an unknown target, `start` while
 engaged, `switch` to an on-path target, or a `runtime` action id the
@@ -375,7 +378,9 @@ recorded, or as marked reconstructions — turn 1 —
 `Retry and continue the iteration` — produces exactly one hidden
 decision call on the durable conversation (the pinned resume token
 in the captured options) whose captured prompt carries the exact
-Boss text plus the ControlView digest — the failed leaf state,
+Boss text plus the ControlView digest — the failed leaf state, the
+sanitized ControlView context fields
+([CAPTAIN-9](../dev/playbook-captain.md#captain-9)),
 `lastError` `{ name, message }`, and the advertised retry action id
 with its label — the validated `runtime` selection is that retry id,
 exactly one real `apply()` executes with an `executed` receipt, and
@@ -399,16 +404,25 @@ validated prose surfaced through `emitReply`.
 The suite shall fail unless a pure chat turn settles in exactly one
 durable call (`respond`) with no separate summary call, while an
 acting turn costs two durable calls plus bounded correctives.
-The suite shall fail unless (a) the real compiled DISCUSS artifact
+The suite shall fail unless the real compiled DISCUSS artifact
 engaged as leaf — its bespoke runtime shipping without the
 `describe`/`apply` pair — is reported by the DR-022 gate as lacking
 the pair, advertises no actions, and answers a status question with
-`deliver` as the only verb and zero `apply` calls, and (b) a
-test-only parallel machine over the shared factory engaged as leaf
-and driven into its `type: 'parallel'` state answers a status
-question through `describe()` with the captured digest carrying the
-full multi-region state value, every active region readable, zero
-`apply` calls, and the machine untouched.
+`deliver` as the only verb and zero `apply` calls.
+Context-conditional action validity needs no shell fixture here: it
+is engine-pinned on scalar machines with context-conditional guards
+by the landed [PBRT-53](playbook-runtime.md#pbrt-53) rows — a
+guard-refused target excluded from `describe()` and included once
+the live context allows, and `apply()` of an id not currently
+advertised settling `rejected` before any effect.
+Shared-factory entry into a `type: 'parallel'` state is explicit
+future scope, not verified by this item: the shared factory's
+scalar-state contract rejects a parallel snapshot and no shipping
+artifact needs one (CODE and the session Captain are scalar; DISCUSS
+keeps its bespoke runtime), so the
+[CAPTAIN-9](../dev/playbook-captain.md#captain-9) parallel-digest
+clause carries no hermetic row until a parallel-capable
+control-surface runtime exists.
 The suite shall fail unless a full Boss turn through the real shell
 and real CODE artifact with a scripted empty-then-text player
 recovers with normal lifecycle markers and exactly one turn summary,

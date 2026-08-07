@@ -15,12 +15,18 @@ The FSM shall implement a session loop, not a finite errand: a parked
 conversational hub carrying `playbook.parked` that receives every Boss
 turn of the shell session; per turn, one decision over the closed
 action set `respond` | `start` | `switch` | `dismiss` | `deliver` |
-`runtime`; for a `respond` selection, settlement of the turn in that
-single decision call, whose validated `text` is the turn's captain
-speech; for an acting selection, submission through the controller
-port ([CAPPLAY-9](#capplay-9)), receipt of the settlement as the
-outcome report, and one closing-reply call grounded in that report
-before the machine returns to the hub.
+`runtime` — made by the hidden decision call, or, for a turn the
+shell's command parse resolved, taken from the injected
+parse-resolved decision object with no decision call
+([CAPTAIN-7](playbook-captain.md#captain-7)); for a model-decided
+`respond`, settlement of the turn in that single decision call,
+whose validated `text` is the turn's captain speech; for a
+parse-resolved `respond`, one durable prose call whose validated
+text is the turn's captain speech; for an acting selection —
+parse-resolved or model-decided alike — submission through the
+controller port ([CAPPLAY-9](#capplay-9)), receipt of the settlement
+as the outcome report, and one closing-reply call grounded in that
+report before the machine returns to the hub.
 The machine shall declare no terminal `{ response }` output and shall
 keep exactly one reachable `type: 'final'` shutdown state entered only
 by the shell's teardown event, satisfying
@@ -49,17 +55,21 @@ Where a compiled GEARS behavior has Captain decide a turn or compose a reply, th
 
 ### CAPPLAY-9
 
-Where the shell initializes ([CAPTAIN-16](playbook-captain.md#captain-16)), the session Captain runtime shall be constructed with the host-supplied controller port among its options and shall run for the whole shell session outside the engagement stack, receiving every turn that command parsing does not resolve and disposed last at teardown.
+Where the shell initializes ([CAPTAIN-16](playbook-captain.md#captain-16)), the session Captain runtime shall be constructed with the host-supplied controller port among its options and shall run for the whole shell session outside the engagement stack, receiving every Boss turn — a parse-resolved turn carrying its injected decision object, the others decided by the hidden decision call ([CAPTAIN-7](playbook-captain.md#captain-7)) — and disposed last at teardown.
 Per Boss turn the runtime shall submit at most one selection through
 the controller port —
 `{ action: 'respond', text }`,
 `{ action: 'start' | 'switch', playbookId, input }`,
-`{ action: 'dismiss' }`, `{ action: 'deliver', text }`, or
+`{ action: 'dismiss' }`, `{ action: 'deliver' }`, or
 `{ action: 'runtime', actionId }` — and shall treat the returned
 settlement `{ status, facts, receipt?, leafState?, counts }` as the
 only evidence of effects; the public `PlaybookPorts` contract stays
 six members, the port arriving as a linker-exposed option member
 ([slc/link.md](../../slc/link.md#playbookruntime-contract)).
+A `deliver` selection shall carry no text payload: the shell is
+authoritative for the delivered text, and any text carried on the
+selection is ignored and never delivered
+([CAPTAIN-7](playbook-captain.md#captain-7)).
 The runtime shall reach no playbook or player directly: it shall make
 no `callPlaybook` or `callPlayer` call, require no generated player or
 command, and make no visibility request.

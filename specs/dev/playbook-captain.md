@@ -106,19 +106,26 @@ deterministically, with no model call parsing the command:
 | bare `/<command>`, enabled command | any | `respond` only — status or clarification, never a restart |
 | unregistered `/<x>` or ordinary text | any | the session Captain's decision call |
 
-A parse-resolved `start`, `deliver`, or `switch` shall skip the
-decision call and proceed directly to validation and execution; a
-parse-resolved `respond` shall make one durable prose call surfaced
-as captain speech ([CAPTAIN-9](#captain-9)) and shall execute no
-action regardless of that call's reply.
+A parse-resolved turn shall bypass only the decision model call: the
+shell shall inject the parsed resolution into the session Captain's
+controller FSM as that turn's decision object
+([CAPPLAY-6](captain-playbook.md#capplay-6)), and validation,
+execution, the outcome report, and the closing reply shall flow
+through the controller loop identically to a model-decided turn; the
+shell shall execute no parsed action outside that loop.
+For a parse-resolved `respond`, the session Captain's one durable
+prose call settles the turn as captain speech
+([CAPTAIN-9](#captain-9)), and the shell shall execute no action for
+that turn regardless of that call's reply.
 Empty or whitespace-only input shall allocate no call, session, or
 telemetry.
-Every turn the parse does not resolve shall be submitted to the
-session Captain, whose selection arrives through the host-supplied
+The shell shall submit every other non-empty Boss turn to the
+session Captain for its hidden decision call, and every selection —
+parse-injected or model-decided — arrives through the host-supplied
 controller port ([CAPPLAY-9](captain-playbook.md#capplay-9)) as one
 of `respond`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`,
-with `respond` carrying the turn's reply prose so a chat turn
-settles in that one decision call.
+a model-decided `respond` carrying the turn's reply prose so a chat
+turn settles in that one decision call.
 The shell shall validate a selection against host state before any
 effect: `start` and `switch` targets shall be enabled registry
 entries; `start` shall require an idle shell; `switch` shall require
@@ -131,6 +138,11 @@ effect; the shell shall surface that rejection reason to the Boss as
 shell-owned human-readable status message text
 ([CAPTAIN-6](#captain-6)), never as captain speech
 ([CAPTAIN-9](#captain-9)).
+For a validated `deliver`, the shell shall be authoritative for the
+delivered text — the exact Boss text of the decided turn, or the
+parsed remainder of a same-command turn — and shall ignore, never
+delivering, any text carried on the selection
+([CAPPLAY-9](captain-playbook.md#capplay-9)).
 The shell shall execute at most one validated action per Boss turn
 and settle the selection with `status`, the outcome-report facts —
 what was dismissed, started, delivered, applied, or rejected, plus
@@ -157,7 +169,11 @@ ordinary text shall reach the session Captain's decision unchanged.
 Where the Playbook Captain shell submits text to an engaged
 playbook runtime, the shell shall call the active leaf runtime's
 `handleBossInput` with text and the Boss-turn signal and consume its
-`PlaybookRunResult`; `deliver` shall carry text only.
+`PlaybookRunResult`; delivery shall carry text only, and that text
+shall be the shell-authoritative Boss text of
+[CAPTAIN-7](#captain-7) — a `deliver` selection carries no text
+payload, and any text carried on one shall be ignored and never
+delivered.
 Where the validated selection is a `runtime` action, the shell shall
 execute it only through the active leaf's
 `apply({ actionId, key, signal })` with the advertised action id and
@@ -187,9 +203,11 @@ prompt references ([CAPPLAY-7](captain-playbook.md#capplay-7)):
 the ControlView digest — the active path as commands root to leaf,
 the leaf state (`stateId`, tags, quiescence, status; the full
 multi-region state value with every active region readable while the
-leaf occupies a `type: 'parallel'` state), pending questions
-verbatim with their question ids, the last error as
-`{ name, message }`, and the advertised actions as id plus label,
+leaf occupies a `type: 'parallel'` state), the sanitized JSON-safe
+relevant context fields of the leaf's ControlView
+([DR-029 §3](../decisions/029-session-scoped-conversational-captain.md)),
+pending questions verbatim with their question ids, the last error
+as `{ name, message }`, and the advertised actions as id plus label,
 composed from the active leaf's `describe()`
 ([PBRT-52](playbook-runtime.md#pbrt-52)) — and the catalog digest —
 each enabled playbook's id, effective command, and intent.
@@ -319,13 +337,15 @@ counted.
 The shell shall not count session-Captain decision, reply, or
 result-phase calls, sub-runtime classifier/event JSON, or malformed
 adjudication replies as saved copy-pastes.
-After the executed action settles, the shell shall make one hidden
-result-phase call on the durable conversation
-([CAPTAIN-31](#captain-31)) whose prompt provides the settlement's
-outcome-report facts verbatim, the exact saved interruption and
-copy-paste counts, and the aggregate summary-visible progress phrase
-and round total, and shall instruct Captain to compose the closing
-reply required by
+After the executed action settles, the session Captain's one
+result-phase closing-reply call
+([CAPPLAY-6](captain-playbook.md#capplay-6)) runs hidden on the
+durable conversation ([CAPTAIN-31](#captain-31)); the shell shall
+not make that call itself, and shall supply, inside that call's
+[CAPTAIN-9](#captain-9) envelope, the settlement's outcome-report
+facts verbatim, the exact saved interruption and copy-paste counts,
+and the aggregate summary-visible progress phrase and round total,
+and shall instruct Captain to compose the closing reply required by
 [CAPTAIN-19](../user/playbook-captain.md#captain-19) only from that
 outcome report.
 While the turn's counted activity — the saved interruptions plus
@@ -335,8 +355,9 @@ entry's `summaryPolicy` saved-counts line verbatim with the supplied
 counts and natural singular forms when a count is one; when that
 counted activity is zero or the entry declares no `summaryPolicy`,
 it shall instruct Captain to append no saved-counts line.
-When the Boss turn executes no action, the shell shall make no
-result-phase call.
+When the Boss turn executes no action, the shell shall supply no
+result-phase outcome report and no result-phase call shall occur
+([CAPPLAY-6](captain-playbook.md#capplay-6)).
 The result-phase prompt shall instruct Captain not to include counts
 for state ids the `summaryPolicy` does not label and not to repeat
 the exact summary-visible progress round count outside the
@@ -365,8 +386,9 @@ settles.
 Where the Boss submits text while a leaf is parked, the shell shall
 reuse that exact leaf runtime rather than constructing a replacement.
 Where the Playbook Captain shell has no active stack, when a
-parse-resolved or session-Captain-validated `start` selects an
-enabled external playbook ([CAPTAIN-7](#captain-7)), the shell shall
+validated `start` — parse-injected or model-decided
+([CAPTAIN-7](#captain-7)) — selects an enabled external playbook, the
+shell shall
 construct a new root runtime from that registry entry's
 `createRuntime` function and the validated options captured during
 `init`, generate a previously unissued UUID playbook session id, and
