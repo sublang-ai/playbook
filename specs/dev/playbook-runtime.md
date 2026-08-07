@@ -830,6 +830,11 @@ normalized error together with the canonical
 rejected-before-any-effect receipt disposition and its reason, since
 every apply finish adds the receipt disposition
 ([slc/link.md](../../slc/link.md#playbook-trace)).
+A rejected `apply.started` sink shall likewise finish the pair
+canonically: the best-effort `apply.finished` shall carry that same
+rejected-before-any-effect disposition with its reason alongside the
+transport error, and no apply finish shall carry a start-only field
+such as `stateId`.
 When the trace sink rejects that abort finish, the sink failure shall
 surface from the boundary in place of the abort reason — matching the
 settlement-drain precedence of the other public boundaries — while
