@@ -32,6 +32,32 @@ import { hashFile } from './hash.js';
  */
 export const NEEDS_BOSS_REPLY = 'needsBossReply';
 export const BOSS_QUESTION_MARKER = 'Output shall include `question:';
+/**
+ * The controller decision-state class (slc/gears2fsm.md §Setup, DR-029 §4):
+ * stable compiler-contract guard discriminants of a controller playbook's
+ * decision state. A machine declaring one such state is a controller
+ * machine — its conversational hub receives every Boss turn, so no state
+ * carries the Boss-reply suspension and the compiler adds no
+ * `needsBossReply` result to its `invoke.input.result` maps.
+ */
+export const CONTROLLER_ACTION_GUARDS = Object.freeze([
+    'respond',
+    'start',
+    'switch',
+    'dismiss',
+    'deliver',
+    'runtime',
+]);
+/** True when `result` declares exactly the closed controller action set. */
+export function isControllerDecisionResult(result) {
+    const domain = Object.keys(result ?? {}).filter((guard) => guard !== NEEDS_BOSS_REPLY);
+    return (domain.length === CONTROLLER_ACTION_GUARDS.length &&
+        CONTROLLER_ACTION_GUARDS.every((guard) => domain.includes(guard)));
+}
+/** True when the machine declares a controller decision state. */
+export function isControllerMachine(config) {
+    return enumerateCaptainStates(config).some((state) => isControllerDecisionResult(state.result));
+}
 const ITEM_HEADING = /^###\s+([A-Za-z][\w-]*)\s*$/;
 // The `text2gears` item form names a delegated player as "Captain shall prompt
 // <Player>" (or a "relay ... to <Player>" variant); English players are
@@ -719,13 +745,24 @@ export function checkGearsFsmConformance(gears, config) {
     }
     const itemIds = new Set(items.map((item) => item.id));
     const playbookItemIds = new Set(playbookItems.map((item) => item.id));
+    // A controller machine's hub receives every Boss turn, so a clarifying
+    // question to Boss is a `respond` selection: the compiler adds no
+    // `needsBossReply` result to any of its states (slc/gears2fsm.md §Setup,
+    // controller decision-state class; DR-029).
+    const controllerMachine = states.some((state) => isControllerDecisionResult(state.result));
     for (const state of states) {
         if (state.sourceItem !== '' && !itemIds.has(state.sourceItem)) {
             findings.push(`FSM state ${state.stateId} references unknown GEARS item ${state.sourceItem}`);
         }
-        // Every captain-invoking state supports Boss-reply suspension: its result
-        // map carries `needsBossReply` with the adjudicator-facing contract text
-        // (gears2fsm.md; VERIFY-3).
+        if (controllerMachine) {
+            if (state.result[NEEDS_BOSS_REPLY] !== undefined) {
+                findings.push(`FSM state ${state.stateId} declares ${NEEDS_BOSS_REPLY} on a controller machine`);
+            }
+            continue;
+        }
+        // Every captain-invoking state of a non-controller machine supports
+        // Boss-reply suspension: its result map carries `needsBossReply` with
+        // the adjudicator-facing contract text (gears2fsm.md; VERIFY-3).
         const bossReply = state.result[NEEDS_BOSS_REPLY];
         if (bossReply === undefined) {
             findings.push(`FSM state ${state.stateId} declares no ${NEEDS_BOSS_REPLY} result`);
@@ -1075,6 +1112,12 @@ export function checkPromptComposition(opts) {
     const findings = [];
     const substitutions = deriveSubstitutions(opts.config, opts.compose, opts.actor);
     const composerName = opts.actor === 'captain' ? 'composeCaptainPrompt' : 'composePlayerPrompt';
+    // A controller machine carries no Boss-reply suspension (slc/gears2fsm.md
+    // §Setup, controller decision-state class): its hub receives every Boss
+    // turn, no state resumes from a pending question, and the input thunks
+    // deliberately carry no continuation fields — so the continuation-turn
+    // composition contract below does not apply.
+    const controllerMachine = isControllerMachine(opts.config);
     for (const binding of enumerateCaptainBindings(opts.config)) {
         const { state, inputFn } = binding;
         if (opts.actor !== undefined && state.actor !== opts.actor)
@@ -1107,6 +1150,8 @@ export function checkPromptComposition(opts) {
         if ([CONTINUATION_PREAMBLE, BOSS_QUESTION_LABEL, BOSS_REPLY_LABEL].some((needle) => occurrences(ordinary, needle) > occurrences(state.prompt, needle))) {
             findings.push(`${state.stateId}: continuation blocks appear on an ordinary turn`);
         }
+        if (controllerMachine)
+            continue;
         // A Boss-reply continuation turn: the thunk carries the pending question
         // and reply, and the composer opens with the exact preamble and labelled
         // Q&A blocks before the domain body (gears2fsm.md, link.md).

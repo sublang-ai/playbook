@@ -10,32 +10,89 @@ import { findMachineConfig, pinIntrospection } from "./.slc-verify/verify.js";
 import * as fsm from "./captain.fsm.js";
 
 const PINNED = {
-  "initial": "ready",
+  "initial": "hub",
   "captain": [
     {
-      "state": "routing",
+      "state": "deciding",
       "actor": "captain",
       "sourceItem": "CAPTAIN-1",
       "player": "",
       "resultKeys": [
-        "delegation",
-        "needsBossReply",
-        "question"
+        "deliver",
+        "dismiss",
+        "respond",
+        "runtime",
+        "start",
+        "switch"
       ],
       "onDone": [
         {
           "index": 0,
-          "target": "awaitBossReply",
+          "target": "hub",
           "guarded": true
         },
         {
           "index": 1,
-          "target": "callPlaybook",
+          "target": "hub",
           "guarded": true
         },
         {
           "index": 2,
+          "target": "reporting",
+          "guarded": true
+        },
+        {
+          "index": 3,
+          "target": "reporting",
+          "guarded": true
+        },
+        {
+          "index": 4,
+          "target": "reporting",
+          "guarded": true
+        },
+        {
+          "index": 5,
+          "target": "reporting",
+          "guarded": true
+        },
+        {
+          "index": 6,
+          "target": "reporting",
+          "guarded": true
+        },
+        {
+          "index": 7,
           "target": "failed",
+          "guarded": false
+        }
+      ],
+      "onError": [
+        {
+          "index": 0,
+          "target": "hub",
+          "guarded": true
+        },
+        {
+          "index": 1,
+          "target": "failed",
+          "guarded": false
+        }
+      ],
+      "on": {}
+    },
+    {
+      "state": "answeringCommand",
+      "actor": "captain",
+      "sourceItem": "CAPTAIN-2",
+      "player": "",
+      "resultKeys": [
+        "done"
+      ],
+      "onDone": [
+        {
+          "index": 0,
+          "target": "hub",
           "guarded": false
         }
       ],
@@ -49,35 +106,17 @@ const PINNED = {
       "on": {}
     },
     {
-      "state": "reassessing",
+      "state": "reporting",
       "actor": "captain",
       "sourceItem": "CAPTAIN-3",
       "player": "",
       "resultKeys": [
-        "continuing",
-        "final",
-        "followUpQuestion",
-        "needsBossReply"
+        "done"
       ],
       "onDone": [
         {
           "index": 0,
-          "target": "done",
-          "guarded": true
-        },
-        {
-          "index": 1,
-          "target": "awaitBossReply",
-          "guarded": true
-        },
-        {
-          "index": 2,
-          "target": "callPlaybook",
-          "guarded": true
-        },
-        {
-          "index": 3,
-          "target": "failed",
+          "target": "hub",
           "guarded": false
         }
       ],
@@ -93,44 +132,35 @@ const PINNED = {
   ],
   "quiescent": [
     {
-      "state": "ready",
+      "state": "hub",
       "final": false,
       "on": {
-        "BOSS_INTENT": [
+        "BOSS_TURN": [
           {
             "index": 0,
-            "target": "routing",
+            "target": "deciding",
             "guarded": true
-          }
-        ]
-      }
-    },
-    {
-      "state": "awaitBossReply",
-      "final": false,
-      "on": {
-        "BOSS_REPLY": [
-          {
-            "index": 0,
-            "target": "routing",
-            "guarded": true
-          },
-          {
-            "index": 1,
-            "target": "reassessing",
-            "guarded": true
-          },
-          {
-            "index": 2,
-            "target": "failed",
-            "guarded": false
           }
         ],
-        "BOSS_INTENT": [
+        "PARSED_RESPOND": [
           {
             "index": 0,
-            "target": "routing",
+            "target": "answeringCommand",
             "guarded": true
+          }
+        ],
+        "PARSED_ACTION": [
+          {
+            "index": 0,
+            "target": "deciding",
+            "guarded": true
+          }
+        ],
+        "SHUTDOWN": [
+          {
+            "index": 0,
+            "target": "shutdown",
+            "guarded": false
           }
         ]
       }
@@ -139,66 +169,44 @@ const PINNED = {
       "state": "failed",
       "final": false,
       "on": {
-        "BOSS_INTENT": [
+        "BOSS_TURN": [
           {
             "index": 0,
-            "target": "routing",
+            "target": "deciding",
             "guarded": true
+          }
+        ],
+        "PARSED_RESPOND": [
+          {
+            "index": 0,
+            "target": "answeringCommand",
+            "guarded": true
+          }
+        ],
+        "PARSED_ACTION": [
+          {
+            "index": 0,
+            "target": "deciding",
+            "guarded": true
+          }
+        ],
+        "SHUTDOWN": [
+          {
+            "index": 0,
+            "target": "shutdown",
+            "guarded": false
           }
         ]
       }
     },
     {
-      "state": "done",
+      "state": "shutdown",
       "final": true,
       "on": {}
     }
   ],
-  "rootOn": {
-    "BOSS_INTERRUPT": [
-      {
-        "index": 0,
-        "target": "routing",
-        "guarded": true
-      }
-    ]
-  },
-  "interruptTargets": [
-    "routing"
-  ],
-  "playbook": [
-    {
-      "state": "callPlaybook",
-      "playbookIdContext": "nextPlaybookId",
-      "textContext": "nextPlaybookInput",
-      "sourceItem": "CAPTAIN-2",
-      "onDone": [
-        {
-          "index": 0,
-          "target": "reassessing",
-          "guarded": true
-        },
-        {
-          "index": 1,
-          "target": "failed",
-          "guarded": false
-        }
-      ],
-      "onError": [
-        {
-          "index": 0,
-          "target": "reassessing",
-          "guarded": true
-        },
-        {
-          "index": 1,
-          "target": "failed",
-          "guarded": false
-        }
-      ],
-      "on": {}
-    }
-  ]
+  "rootOn": {},
+  "interruptTargets": []
 };
 
 describe("captain: FSM introspection", () => {

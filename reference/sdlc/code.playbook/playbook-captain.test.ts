@@ -658,7 +658,13 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
   // CAPTAIN-33 (DR-013 A1): an empty allowlist means "no tools" and is
   // distinct from omission, which grants the adapter's full tool surface.
   // Request it only where the adapter can enforce it.
-  it.each([
+  // DEFERRED — IR-036 task 4 (shell controller rework): this row drives the
+  // real compiled captain artifact, which now implements the DR-029
+  // controller policy (hidden decision calls over the controller port); the
+  // retired visible-router flow scripted here is rewritten with the shell.
+  // The A1 tool posture at the new layer is pinned by
+  // reference/sdlc/captain.playbook/captain.playbook.integration.test.ts.
+  it.skip.each([
     { label: 'no captainAdapter', captainAdapter: undefined },
     { label: 'an enforcing adapter', captainAdapter: 'claude' },
     { label: 'an unrecognized adapter', captainAdapter: 'future-agent' },
@@ -692,7 +698,9 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     },
   );
 
-  it('omits allowedTools for an adapter that cannot enforce it', async () => {
+  // DEFERRED — IR-036 task 4 (shell controller rework): drives the real
+  // compiled captain, whose retired visible-router flow this scripts.
+  it.skip('omits allowedTools for an adapter that cannot enforce it', async () => {
     const registry = fakeCodeEntry();
     // Cligent's codex adapter rejects any tool list outright, so requesting
     // one would fail every control call before the model is reached.
@@ -723,7 +731,64 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     }
   });
 
-  it('enters exact Boss text directly and parks on a routing question', async () => {
+  // CAPTAIN-33 (DR-013 A1) — the adapter-conditional tool posture the two
+  // deferred rows above scripted through the now-retired visible-router
+  // flow. The posture itself is live and unchanged (`controlCallToolOptions`
+  // in playbook-captain.ts), so it stays pinned here through the hidden
+  // lifecycle classifier over a fake runtime — a path that does not depend
+  // on the compiled Captain's retired routing errand and so survives the
+  // IR-036 task-4 shell rework independently of it.
+  it.each([
+    { label: 'no captainAdapter', captainAdapter: undefined, enforced: true },
+    { label: 'an enforcing adapter', captainAdapter: 'claude', enforced: true },
+    {
+      label: 'an unrecognized adapter',
+      captainAdapter: 'future-agent',
+      enforced: true,
+    },
+    {
+      label: 'an adapter that cannot enforce it',
+      captainAdapter: 'codex',
+      enforced: false,
+    },
+  ])(
+    'resolves the control-call tool posture for $label',
+    async ({ captainAdapter, enforced }) => {
+      const registry = fakeCodeEntry();
+      delete registry.entry.summaryPolicy;
+      const shell = makeShell(registry, {
+        ...(captainAdapter === undefined ? {} : { captainAdapter }),
+      });
+      const session = stubSession();
+      const context = stubContext([captainJson({ decision: 'dismiss' })]);
+
+      await shell.init!(session.session);
+      await shell.handleBossTurn(turn('/code first task'), context.context);
+      await shell.handleBossTurn(turn('dismiss this', 2), context.context);
+
+      expect(context.captainCalls).toHaveLength(1);
+      const options = context.captainCalls[0]?.options;
+      expect(options).toEqual(
+        enforced
+          ? ISOLATED_HIDDEN_CAPTAIN_OPTIONS
+          : // Cligent's Codex adapter rejects any tool list outright, so
+            // requesting one would fail the control call before the model.
+            { visibility: 'hidden', resume: false },
+      );
+      // An empty allowlist means "no tools" and is distinct from omission,
+      // which grants the adapter's full native tool surface. `toEqual`
+      // ignores an explicitly-undefined key, so assert presence directly.
+      expect(
+        options !== undefined && Object.hasOwn(options, 'allowedTools'),
+      ).toBe(enforced);
+    },
+  );
+
+  // DEFERRED — IR-036 task 4 (shell controller rework): the DR-005 routing
+  // question and awaitBossReply parking are retired by the DR-029 session
+  // loop (a clarifying question to Boss is a `respond` selection); the
+  // exact-text entry pin moves to the controller suites.
+  it.skip('enters exact Boss text directly and parks on a routing question', async () => {
     const registry = fakeCodeEntry();
     const shell = makeShell(registry);
     const session = stubSession();
@@ -771,7 +836,11 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     await shell.prepareDispose!();
   });
 
-  it('routes the real default Captain through a child before meaningful completion', async () => {
+  // DEFERRED — IR-036 task 4 (shell controller rework): the compiled
+  // Captain no longer calls playbooks itself — `callPlaybook` is not
+  // reachable from the controller (CAPTAIN-11); the shell executes a
+  // validated `start` selection instead.
+  it.skip('routes the real default Captain through a child before meaningful completion', async () => {
     const bossText =
       'Review parseAdjudication for prototype-chain guard lookup; keep this punctuation: /**proto**.';
     const childInput =
@@ -2853,7 +2922,11 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
   const CHILD_ID = '20000000-0000-4000-8000-000000000002';
   const LEAF_ID = '20000000-0000-4000-8000-000000000003';
 
-  it('routes a real Captain call to the active leaf and unwinds every parent in LIFO order', async () => {
+  // DEFERRED — IR-036 task 4 (shell controller rework): this scenario runs
+  // the real compiled captain as a nested engagement driving `callPlaybook`,
+  // which the DR-029 controller no longer reaches (CAPTAIN-11/29); the
+  // LIFO-unwind coverage over fake runtimes below still runs.
+  it.skip('routes a real Captain call to the active leaf and unwinds every parent in LIFO order', async () => {
     const order: string[] = [];
     const code = fakeCodeEntry(
       async (runtime, runtimeTurn) => {

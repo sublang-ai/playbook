@@ -127,7 +127,22 @@ export interface RuntimeBoundaryCalls {
     input: PlaybookCaptainInput,
     prompt: string,
     signal: AbortSignal,
+    callOptions?: XStateCaptainCallOptions,
   ): Promise<CaptainResult>;
+}
+
+/**
+ * Presentation selection for one traced direct-Captain call
+ * (slc/link.md §Captain adjudication). `'visible'` (the default) is the
+ * workflow form: the port receives `{ visibility: 'visible', resume: false }`
+ * and the trace pair carries both members. `'hidden'` is the controller form
+ * (DR-029 §4): the port receives `{ visibility: 'hidden', resume: false }`
+ * while the host's session-Captain wrapper owns the actual durable-conversation
+ * resume selection, so the trace pair carries `visibility: 'hidden'` and no
+ * `resume` member — the pinned token never enters runtime telemetry.
+ */
+export interface XStateCaptainCallOptions {
+  visibility?: 'visible' | 'hidden';
 }
 
 export interface ScheduledStatus {
@@ -282,6 +297,53 @@ function assertRuntimeCompat(
 // to preserve their existing observable behavior exactly.
 // ---------------------------------------------------------------------------
 
+/**
+ * One direct-Captain actor invocation handed to a spec's `captainStrategy`
+ * (slc/link.md §Captain adjudication, controller form). The engine owns
+ * signal combination, emission draining, trace pairing, the shared
+ * Captain/judge lane, and control-plane latching; the strategy owns the
+ * playbook-specific call pipeline — e.g. the controller's hidden decision
+ * call, `{ action, … }` control-JSON validation with its single corrective
+ * re-ask, and controller-port submission.
+ */
+export interface XStateCaptainStrategyRun<TOptions> {
+  input: PlaybookCaptainInput;
+  /** The prompt composed by the spec's Captain composer for `input`. */
+  prompt: string;
+  /** Combined invocation-lifetime + active-boundary abort signal. */
+  signal: AbortSignal;
+  /** The immutable validated runtime options. */
+  options: TOptions;
+  /** The bound immutable playbook session identity. */
+  session: PlaybookSession;
+  /**
+   * One traced Captain call through the shared serialized lane; every call —
+   * initial or corrective — emits its own paired `captain.call.started` /
+   * `captain.call.finished` boundary. Throws the boundary's authoritative
+   * failure for non-`ok` and empty-`ok` results exactly as the default
+   * pipeline does.
+   */
+  callCaptain(
+    prompt: string,
+    callOptions?: XStateCaptainCallOptions,
+  ): Promise<CaptainResult>;
+  /**
+   * DR-028: true when `error` is the boundary's re-askable empty-`ok`
+   * marker; the strategy may re-issue the same composed call exactly once.
+   */
+  isEmptyOkRetry(error: unknown): boolean;
+  /**
+   * Mark `error` as a recoverable FSM-result failure: it travels the invoked
+   * actor's XState `onError` path without being latched as a control-plane
+   * error, so the machine's authored recovery arms can route it.
+   */
+  recoverableFailure<E extends Error>(error: E): E;
+}
+
+export type XStateCaptainStrategy<TOptions> = (
+  run: XStateCaptainStrategyRun<TOptions>,
+) => Promise<PlaybookActorOutput>;
+
 export interface XStatePlaybookRuntimeSpec<TOptions> {
   /** Diagnostic label used in internal invariant errors. Default 'playbook'. */
   label?: string;
@@ -310,14 +372,25 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
    * the XState machine alone.
    */
   bossEvents?: readonly XStateBossEventSpec[];
-  /** Boss-input classifier override; default: generic parked-state classifier. */
+  /** Boss-input classifier override; default: generic parked-state classifier. Receives the bound validated options last so a fully deterministic controller mapping can consult host-supplied option members (slc/link.md §Boss-event mapping). */
   classifyBossText?: (
     text: string,
     ports: PlaybookPorts,
     signal: AbortSignal,
     snapshotOrState: unknown,
     boundary?: RuntimeBoundaryCalls,
+    options?: TOptions,
   ) => Promise<EventObject | undefined>;
+  /**
+   * Direct-Captain actor strategy override (slc/link.md §Captain
+   * adjudication, controller form): replaces the default visible-call +
+   * hidden-judge pipeline for every `captain` state of this machine. The
+   * engine still composes the prompt, combines signals, traces each call as
+   * its own pair, and latches control-plane errors; failures the strategy
+   * marks with `recoverableFailure` travel the actor's `onError` path as
+   * recoverable FSM-result failures instead.
+   */
+  captainStrategy?: XStateCaptainStrategy<TOptions>;
   /** Status line emitted after classification names an event. Default: none. */
   classificationStatus?: (event: EventObject) => string | undefined;
   /** Map a player-invoking state's input to the host player id. Default: lowercased player name. */
@@ -1605,7 +1678,9 @@ export function createXStatePlaybookRuntime<TOptions>(
     spec.entryEvent,
     spec.bossEvents ?? [],
   );
-  const classifyBossText = spec.classifyBossText ?? derivedClassifyBossText;
+  const classifyBossText: NonNullable<
+    XStatePlaybookRuntimeSpec<TOptions>['classifyBossText']
+  > = spec.classifyBossText ?? derivedClassifyBossText;
   const normalizeTransitionEvent =
     spec.normalizeTransitionEvent ??
     makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
@@ -2079,18 +2154,23 @@ export function createXStatePlaybookRuntime<TOptions>(
         }) as Promise<string>;
       },
 
-      async callCaptain(input, prompt, signal): Promise<CaptainResult> {
+      async callCaptain(input, prompt, signal, callOptions): Promise<CaptainResult> {
         return judgeQueue.add(async () => {
           signal.throwIfAborted();
           await drainEmissions();
           signal.throwIfAborted();
           const turnId = activeTurnId;
           const callId = `captain-${++captainCallSequence}`;
+          const visibility = callOptions?.visibility ?? 'visible';
           const identity = {
             ...stateIdentity(input.stateId),
             sourceItem: input.sourceItem,
-            visibility: 'visible' as const,
-            resume: false as const,
+            visibility,
+            // The visible workflow form owns its `resume: false` selection;
+            // a hidden controller call's durable-conversation resume
+            // selection is host-owned (DR-029 §2), so its trace pair carries
+            // no resume member and no token.
+            ...(visibility === 'visible' ? { resume: false as const } : {}),
             ...(input.allowedTools === undefined
               ? {}
               : { allowedTools: [...input.allowedTools] }),
@@ -2114,7 +2194,7 @@ export function createXStatePlaybookRuntime<TOptions>(
             // as `aborted` through the catch below.
             signal.throwIfAborted();
             rawResult = await requireHostPorts().callCaptain(prompt, signal, {
-              visibility: 'visible',
+              visibility,
               resume: false,
               ...(input.allowedTools !== undefined
                 ? { allowedTools: input.allowedTools }
@@ -2243,6 +2323,28 @@ export function createXStatePlaybookRuntime<TOptions>(
           try {
             await drainEmissions();
             const prompt = composeCaptainPrompt(input);
+            if (spec.captainStrategy !== undefined) {
+              // Controller form (slc/link.md §Captain adjudication): the
+              // spec's strategy owns the call pipeline; the engine still
+              // owns tracing, the shared lane, signal combination, and the
+              // control-plane latch in the catch below.
+              const output = await spec.captainStrategy({
+                input,
+                prompt,
+                signal: active,
+                options: boundOptions,
+                session: requireSession(),
+                callCaptain: (callPrompt, callOptions) =>
+                  boundary.callCaptain!(input, callPrompt, active, callOptions),
+                isEmptyOkRetry: isEmptyOkRetryFailure,
+                recoverableFailure: <E extends Error>(error: E): E => {
+                  markFsmResultFailure(error);
+                  return error;
+                },
+              });
+              validateBossReplyOutput(input, output, resumableStateIds);
+              return output;
+            }
             let result: CaptainResult;
             try {
               result = await boundary.callCaptain!(input, prompt, active);
@@ -3335,6 +3437,7 @@ export function createXStatePlaybookRuntime<TOptions>(
                 signal,
                 snapshot,
                 boundary,
+                boundOptions,
               );
             }
             signal.throwIfAborted();

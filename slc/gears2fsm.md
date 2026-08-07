@@ -193,6 +193,49 @@ Both direct-Captain states additionally receive the universal
 `needsBossReply` result. Their guards and actions shall use those exact
 case-sensitive names so the compiled adjudication contract remains stable.
 
+For a controller playbook — one whose Source declares DR-029's session-scoped
+controller policy: a session Captain that runs for the whole host session,
+receives every Boss turn, and operates the working playbooks from outside the
+engagement stack (DR-029 §1) — the compiler shall apply the additive
+controller decision-state class below. The class joins the stable compiler
+contract beside the decide-call-observe vocabulary above; that vocabulary and
+the universal `needsBossReply` rule stay untouched for the artifacts that
+consume them.
+The controller machine shall be a session loop, not a finite errand: a
+quiescent conversational hub (tag `playbook.parked`) receives each Boss turn;
+the controller decision state decides it over the closed action set; a
+`respond` selection settles its turn in the decision call itself, its
+validated `text` being the turn's captain speech; an acting selection's host
+settlement becomes the outcome report grounding one closing-reply call; and
+the machine returns to the hub for the next turn. Returning to the hub after
+a settled turn completes the session loop's turn; it is not the idle-hub
+routing that [Transitions](#transitions) reserves for recovery.
+Because the hub receives every Boss turn, a controller state carries no
+Boss-reply suspension: the compiler shall not add `needsBossReply` to a
+controller machine's `invoke.input.result` maps — a clarifying question to
+Boss is a `respond` selection.
+The machine shall declare no terminal result output and shall keep exactly
+one reachable `type: 'final'` shutdown state entered only by the host's
+teardown event. The completion rule of
+[Errors and termination](#errors-and-termination) applies unamended: its
+output clause binds only where Source declares a terminal result, which a
+controller Source does not.
+The controller decision state's direct-Captain result contract discriminates
+the closed action set of DR-029 §4. Its guard discriminants are a stable
+compiler contract, not names the compiler may invent — `respond`, `start`,
+`switch`, `dismiss`, `deliver`, and `runtime` — with each guard's required
+payload fields:
+
+- `respond` requires `text`;
+- `start` and `switch` each require `playbookId` and `input`;
+- `runtime` requires `actionId`;
+- `dismiss` and `deliver` require none — a `deliver` result in particular
+  carries no text payload: the host is authoritative for the delivered text,
+  so the contract declares no field for it.
+
+The decision state's guards and actions shall use those exact case-sensitive
+names so the compiled controller contract remains stable.
+
 ## States
 
 Each state shall declare:
@@ -588,11 +631,20 @@ cannot supply alone, the machine shall suspend that task in a quiescent wait
 state and resume the same task with the Q+A in the next prompt.
 This is a third Boss surface alongside `BOSS_INTERRUPT` and Boss entry events.
 
-Every captain- and player-invoking state supports this path.
+Every captain- and player-invoking state supports this path, with one
+exception the compiler shall apply, not infer: the states of a controller
+machine ([Setup](#setup), controller decision-state class) carry no
+Boss-reply suspension, because its hub already receives every Boss turn and a
+clarifying question to Boss is a `respond` selection over the closed action
+set. The rule below is therefore universal over workflow states and silent
+about that class; in particular, adding `needsBossReply` to the controller
+decision state would add a seventh outcome to a closed six-action contract
+whose guard discriminants [Setup](#setup) fixes, and is nonconformant.
 There is no source-level opt-in annotation and no `needsBossReply` result metadata in GEARS output.
 The FSM compiler shall preserve the GEARS blockquote as the state's domain `prompt` body and shall not inject any Boss-question instruction into `invoke.input.prompt`.
 
-For every captain- and player-invoking state, the compiler shall add
+For every captain- and player-invoking state outside a controller machine,
+the compiler shall add
 `needsBossReply` to the state's `invoke.input.result` map.
 The description shall be the standard adjudicator-facing text:
 

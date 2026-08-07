@@ -20,7 +20,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createActor, fromPromise } from 'xstate';
-import { AWAIT_BOSS_REPLY_STATE, BOSS_REPLY_EVENT, INTERRUPT_EVENT, NEEDS_BOSS_REPLY, VERIFY_MODULE, enumerateCaptainStates, loadFsmModule, normalizeArms, } from './verify.js';
+import { AWAIT_BOSS_REPLY_STATE, BOSS_REPLY_EVENT, INTERRUPT_EVENT, NEEDS_BOSS_REPLY, VERIFY_MODULE, enumerateCaptainStates, isControllerDecisionResult, loadFsmModule, normalizeArms, } from './verify.js';
 /** The `gears2fsm`-mandated captain actor name a machine declares. */
 export const CAPTAIN_ACTOR = 'captain';
 function stateRefKey(ref) {
@@ -200,14 +200,17 @@ function initializedCoverageContext(machine, dynamic) {
         ...coverageGuardContext(dynamic),
     };
 }
-/** Payload fields a result description requires, per the adjudicator convention. */
-const REQUIRED_FIELD = /Output shall include `([A-Za-z_][A-Za-z0-9_]*):/g;
+/** The `Output shall include` clause a result description declares. */
+const OUTPUT_CLAUSE = /Output shall include\s+(.+)$/;
+/** Every backticked `field:` property named inside that clause. */
+const REQUIRED_FIELD = /`([A-Za-z_$][A-Za-z0-9_$]*):/g;
 /** Structured fields named by the generic Captain result contracts. */
 const STRUCTURED_RESULT_FIELD = /\b(response|question|remainingPlan|nextPlaybookId|nextPlaybookInput)\b/g;
 function requiredFields(description) {
+    const clause = OUTPUT_CLAUSE.exec(description)?.[1] ?? '';
     return [
         ...new Set([
-            ...[...description.matchAll(REQUIRED_FIELD)].map((match) => match[1]),
+            ...[...clause.matchAll(REQUIRED_FIELD)].map((match) => match[1]),
             ...[...description.matchAll(STRUCTURED_RESULT_FIELD)].map((match) => match[1]),
         ]),
     ];
@@ -219,20 +222,40 @@ function synthesizedFieldValue(field) {
         case 'remainingPlan':
             return [];
         case 'nextPlaybookId':
+        case 'playbookId':
             return COVERAGE_PLAYBOOK_ID;
         case 'nextPlaybookInput':
+        case 'input':
             return COVERAGE_PLAYBOOK_INPUT;
         case 'response':
             return COVERAGE_FINAL_RESPONSE;
+        case 'text':
+            return 'coverage: captain reply text.';
         default:
             return `coverage:${field}`;
     }
+}
+/** The synthetic executed controller-port settlement (DR-029 §2). */
+function coverageSettlement(status) {
+    return {
+        status,
+        facts: [`coverage: ${status} settlement fact.`],
+        ...(status === 'rejected'
+            ? { reason: 'coverage: rejected selection.' }
+            : { leafStateSummary: 'coverage: leaf summary.' }),
+    };
 }
 /** Synthesizes a captain output that selects `key` under the state's contract. */
 function synthOutput(state, key) {
     const output = { guard: key };
     for (const field of requiredFields(state.result[key] ?? '')) {
         output[field] = synthesizedFieldValue(field);
+    }
+    // A controller decision state's output carries the controller-port
+    // settlement evidence beside the selection payload (slc/gears2fsm.md
+    // §Setup, controller decision-state class; DR-029).
+    if (isControllerDecisionResult(state.result)) {
+        output.settlement = coverageSettlement('ok');
     }
     return output;
 }
@@ -1538,6 +1561,15 @@ export async function checkFsmCoverage(fsmModule, opts = {}) {
     if (finalStates.length === 0) {
         findings.push('machine declares no final state');
     }
+    // A controller machine (slc/gears2fsm.md §Setup, controller decision-state
+    // class; DR-029) is a session loop entered through its hub's deterministic
+    // Boss-turn events: it declares no `BOSS_INTERRUPT` root event and no
+    // Boss-reply wait state, so the interrupt-driven coverage below does not
+    // apply — the dedicated controller driver owns its transition coverage.
+    if (captains.some((captain) => isControllerDecisionResult(captain.binding.result))) {
+        findings.push(...(await checkControllerCoverage(machine, config, refs, captains)));
+        return findings;
+    }
     const rootArms = normalizeArms((config.on ?? {})[INTERRUPT_EVENT]);
     const canJump = rootArms.length > 0;
     if (!canJump) {
@@ -1860,6 +1892,360 @@ export async function checkFsmCoverage(fsmModule, opts = {}) {
             findings.push(`state ${stateKey}: onError arm ${directErrorArm} did not reach ${target ?? 'a quiescent state'}`);
         }
         actor.stop();
+    }
+    return findings;
+}
+/*
+ * Controller-machine coverage (slc/gears2fsm.md §Setup, controller
+ * decision-state class; DR-029). The session loop is entered through its
+ * conversational hub's deterministic Boss-turn events — BOSS_TURN-style text
+ * entries carrying `bossText`, a parse-resolved acting entry carrying the
+ * injected `decision` object, and the host teardown event into the one final
+ * shutdown state — so the driver enters captain states through those hub
+ * arms (and, for downstream states such as the closing-reply state, through
+ * a scripted decision output) instead of `BOSS_INTERRUPT` jumps. A rejected
+ * controller-port settlement and the marked second-malformed decision
+ * failure are probed and driven beside the ordinary outcomes.
+ */
+const COVERAGE_BOSS_TEXT = 'coverage: exact Boss turn text.';
+const CONTROLLER_DECISION_FAILURE_MARKER = 'controllerDecisionFailure';
+function controllerEntryPayload() {
+    return {
+        bossText: COVERAGE_BOSS_TEXT,
+        decision: {
+            action: 'start',
+            playbookId: COVERAGE_PLAYBOOK_ID,
+            input: COVERAGE_PLAYBOOK_INPUT,
+        },
+    };
+}
+function controllerMarkedDecisionError() {
+    return Object.assign(new Error('coverage: forced controller decision failure'), { [CONTROLLER_DECISION_FAILURE_MARKER]: true });
+}
+/** A one-shot script resolving `steps` in order, keyed by source item. */
+function controllerScript(steps, gate) {
+    let index = 0;
+    return (input) => {
+        if (!gate.armed)
+            return null;
+        const step = steps[index];
+        if (step === undefined || input.sourceItem !== step.sourceItem)
+            return null;
+        index += 1;
+        return step.output;
+    };
+}
+/**
+ * A deterministic entry plan for one controller captain state: the hub entry
+ * event that reaches it, plus any scripted upstream decision outputs that
+ * route the machine into it (e.g. an acting selection entering the
+ * closing-reply state).
+ */
+function controllerCaptainEntry(machine, refs, captains, initialRef, captain) {
+    for (const [event, raw] of Object.entries(initialRef.state.on ?? {})) {
+        for (const arm of normalizeArms(raw)) {
+            if (arm.target === null)
+                continue;
+            const target = stateRefForTarget(refs, arm.target);
+            if (sameStateRef(target, captain.ref)) {
+                return {
+                    event: { type: event, ...controllerEntryPayload() },
+                    preOutputs: [],
+                };
+            }
+        }
+    }
+    const decision = captains.find((candidate) => isControllerDecisionResult(candidate.binding.result));
+    if (decision === undefined || sameStateRef(decision.ref, captain.ref)) {
+        return undefined;
+    }
+    const rawDone = transitionArms(decision.invocation.onDone);
+    const doneArms = normalizeArms(decision.invocation.onDone);
+    for (const [index, arm] of rawDone.entries()) {
+        const target = doneArms[index]?.target;
+        if (target === null || target === undefined)
+            continue;
+        const targetRef = stateRefForTarget(refs, target, decision.ref);
+        if (!sameStateRef(targetRef, captain.ref))
+            continue;
+        const rawGuard = armGuard(arm);
+        const key = typeof rawGuard === 'string' &&
+            decision.binding.result[rawGuard] !== undefined
+            ? rawGuard
+            : undefined;
+        if (key === undefined)
+            continue;
+        const entry = controllerCaptainEntry(machine, refs, captains, initialRef, decision);
+        if (entry === undefined)
+            return undefined;
+        return {
+            event: entry.event,
+            preOutputs: [
+                ...entry.preOutputs,
+                {
+                    sourceItem: decision.binding.sourceItem,
+                    output: synthOutput(decision.binding, key),
+                },
+            ],
+        };
+    }
+    return undefined;
+}
+/** Parks a fresh scripted actor at `ref`, or returns undefined. */
+async function controllerReachQuiescent(machine, refs, captains, initialRef, ref) {
+    if (sameStateRef(ref, initialRef)) {
+        const actor = makeActor(machine, () => null);
+        return actor;
+    }
+    // A recoverable quiescent state is reached through a captain state whose
+    // directly selected onError arm targets it (typically `failed`).
+    for (const captain of captains) {
+        const rawErrorArms = transitionArms(captain.invocation.onError);
+        const plainError = new Error('coverage: forced captain failure');
+        const errorEvent = invocationEvent(machine, captain, 'error');
+        const direct = directlySelectedEventArm(machine, rawErrorArms, { ...errorEvent, error: plainError }, initializedCoverageContext(machine));
+        if (direct === undefined)
+            continue;
+        const target = rawArmTarget(rawErrorArms[direct]) ??
+            normalizeArms(captain.invocation.onError)[direct]?.target;
+        const targetRef = target === null || target === undefined
+            ? undefined
+            : stateRefForTarget(refs, target, captain.ref);
+        if (!sameStateRef(targetRef, ref))
+            continue;
+        const entry = controllerCaptainEntry(machine, refs, captains, initialRef, captain);
+        if (entry === undefined)
+            continue;
+        const gate = { armed: false };
+        const actor = makeActor(machine, controllerScript([
+            ...entry.preOutputs,
+            { sourceItem: captain.binding.sourceItem, output: plainError },
+        ], gate), () => null);
+        gate.armed = true;
+        actor.send(entry.event);
+        if (await settle(actor, atState(ref)))
+            return actor;
+        actor.stop();
+        return undefined;
+    }
+    return undefined;
+}
+async function checkControllerCoverage(machine, config, refs, captains) {
+    const findings = [];
+    const initialKey = typeof config.initial === 'string' ? config.initial : null;
+    const initialRef = initialKey === null
+        ? undefined
+        : refs.find((ref) => ref.path.length === 1 && ref.key === initialKey);
+    if (initialRef === undefined) {
+        return ['controller machine declares no initial hub state'];
+    }
+    if (!tagsOf(initialRef.state).includes('playbook.parked')) {
+        findings.push(`controller hub ${initialRef.stableId} lacks playbook.parked tag`);
+    }
+    const stateCandidates = refs.flatMap((ref) => [
+        ref.key,
+        ref.stableId,
+        ...(ref.configId === undefined ? [] : [ref.configId]),
+    ]);
+    for (const captain of captains) {
+        const state = captain.binding;
+        const stateKey = state.stateId;
+        const entry = controllerCaptainEntry(machine, refs, captains, initialRef, captain);
+        if (entry === undefined) {
+            findings.push(`state ${stateKey}: no deterministic controller entry path`);
+            continue;
+        }
+        const controllerDecision = isControllerDecisionResult(state.result);
+        const doneEvent = invocationEvent(machine, captain, 'done');
+        const errorEvent = invocationEvent(machine, captain, 'error');
+        const rawDoneArms = transitionArms(captain.invocation.onDone);
+        const onDoneArms = normalizeArms(captain.invocation.onDone);
+        // Every declared result key drives its accepting transition to the
+        // arm's declared target.
+        for (const key of Object.keys(state.result)) {
+            const output = synthOutput(state, key);
+            const direct = directlySelectedEventArm(machine, rawDoneArms, { ...doneEvent, output }, initializedCoverageContext(machine));
+            if (direct === undefined) {
+                findings.push(`state ${stateKey}: result "${key}" has no reachable accepting transition`);
+                continue;
+            }
+            const gate = { armed: false };
+            const actor = makeActor(machine, controllerScript([
+                ...entry.preOutputs,
+                { sourceItem: state.sourceItem, output },
+            ], gate), () => null);
+            gate.armed = true;
+            actor.send(entry.event);
+            const left = await settle(actor, leftState(captain.ref));
+            if (!left) {
+                findings.push(`state ${stateKey}: result "${key}" fired no transition`);
+                actor.stop();
+                continue;
+            }
+            const target = rawArmTarget(rawDoneArms[direct]) ?? onDoneArms[direct]?.target;
+            const targetRef = target === null || target === undefined
+                ? undefined
+                : stateRefForTarget(refs, target, captain.ref);
+            if (targetRef !== undefined && !(await settle(actor, atState(targetRef)))) {
+                findings.push(`state ${stateKey}: result "${key}" did not reach ${target}`);
+            }
+            actor.stop();
+        }
+        // A rejected controller-port settlement routes its dedicated arm.
+        if (controllerDecision) {
+            const rejectedOutput = {
+                ...synthOutput(state, 'start'),
+                settlement: coverageSettlement('rejected'),
+            };
+            const direct = directlySelectedEventArm(machine, rawDoneArms, { ...doneEvent, output: rejectedOutput }, initializedCoverageContext(machine));
+            if (direct === undefined) {
+                findings.push(`state ${stateKey}: a rejected settlement selects no transition arm`);
+            }
+            else {
+                const gate = { armed: false };
+                const actor = makeActor(machine, controllerScript([
+                    ...entry.preOutputs,
+                    { sourceItem: state.sourceItem, output: rejectedOutput },
+                ], gate), () => null);
+                gate.armed = true;
+                actor.send(entry.event);
+                const target = rawArmTarget(rawDoneArms[direct]) ?? onDoneArms[direct]?.target;
+                const targetRef = target === null || target === undefined
+                    ? undefined
+                    : stateRefForTarget(refs, target, captain.ref);
+                if (targetRef === undefined ||
+                    !(await settle(actor, atState(targetRef)))) {
+                    findings.push(`state ${stateKey}: a rejected settlement did not reach ${target ?? 'its target'}`);
+                }
+                actor.stop();
+            }
+        }
+        // Every onDone arm is satisfiable under the actual done-event
+        // identity, probing each key's full output, its rejected-settlement
+        // variant, and the bare malformed form.
+        for (const [index, arm] of rawDoneArms.entries()) {
+            const rawGuard = armGuard(arm);
+            if (rawGuard === undefined)
+                continue;
+            const declaredGuard = resolveGuard(machine, rawGuard);
+            if (declaredGuard === undefined) {
+                findings.push(`state ${stateKey}: onDone arm ${index} names an unresolvable guard "${guardLabel(rawGuard)}"`);
+                continue;
+            }
+            const guard = orderedArmPredicate(machine, rawDoneArms, index);
+            if (guard === undefined)
+                continue;
+            const anyOutput = Object.keys(state.result).some((key) => {
+                const base = synthOutput(state, key);
+                return (doneGuardSatisfiable(guard, doneEvent, base, stateCandidates) ||
+                    doneGuardSatisfiable(guard, doneEvent, {
+                        ...base,
+                        settlement: coverageSettlement('rejected'),
+                    }, stateCandidates) ||
+                    doneGuardSatisfiable(guard, doneEvent, { guard: key }, stateCandidates));
+            });
+            if (!anyOutput) {
+                findings.push(`state ${stateKey}: onDone arm ${index} (target ${onDoneArms[index]?.target ?? 'none'}) is unsatisfiable under probing`);
+            }
+        }
+        // Every onError arm is satisfiable and drivable under the plain
+        // forced error or the marked controller decision failure.
+        const rawErrorArms = transitionArms(captain.invocation.onError);
+        const onErrorArms = normalizeArms(captain.invocation.onError);
+        if (onErrorArms.length === 0) {
+            findings.push(`state ${stateKey} declares no onError transition`);
+            continue;
+        }
+        const errorBases = [
+            new Error('coverage: forced captain failure'),
+            controllerMarkedDecisionError(),
+        ];
+        for (const [index, arm] of rawErrorArms.entries()) {
+            const rawGuard = armGuard(arm);
+            if (rawGuard !== undefined &&
+                resolveGuard(machine, rawGuard) === undefined) {
+                findings.push(`state ${stateKey}: onError arm ${index} names an unresolvable guard "${guardLabel(rawGuard)}"`);
+                continue;
+            }
+            const guard = orderedArmPredicate(machine, rawErrorArms, index);
+            if (guard === undefined)
+                continue;
+            if (!errorBases.some((base) => errorGuardSatisfiable(guard, errorEvent, base, stateCandidates))) {
+                findings.push(`state ${stateKey}: onError arm ${index} (target ${onErrorArms[index]?.target ?? 'none'}) is unsatisfiable under probing`);
+            }
+        }
+        const drivenErrorArms = new Set();
+        for (const base of errorBases) {
+            const direct = directlySelectedEventArm(machine, rawErrorArms, { ...errorEvent, error: base }, initializedCoverageContext(machine));
+            if (direct === undefined || drivenErrorArms.has(direct))
+                continue;
+            drivenErrorArms.add(direct);
+            const target = rawArmTarget(rawErrorArms[direct]) ?? onErrorArms[direct]?.target;
+            const targetRef = target === null || target === undefined
+                ? undefined
+                : stateRefForTarget(refs, target, captain.ref);
+            const gate = { armed: false };
+            const actor = makeActor(machine, controllerScript([
+                ...entry.preOutputs,
+                { sourceItem: state.sourceItem, output: base },
+            ], gate), () => null);
+            gate.armed = true;
+            actor.send(entry.event);
+            const landed = await settle(actor, targetRef !== undefined ? atState(targetRef) : leftState(captain.ref));
+            if (!landed || (target !== null && targetRef === undefined)) {
+                findings.push(`state ${stateKey}: onError arm ${direct} did not reach ${target ?? 'a quiescent state'}`);
+            }
+            actor.stop();
+        }
+    }
+    // Every quiescent state's entry arms are drivable under the controller
+    // payload — the hub's Boss-turn entries, the recovery entries of parked
+    // failure states, and the teardown event into the final shutdown state.
+    for (const ref of refs) {
+        if (captains.some((captain) => sameStateRef(captain.ref, ref)))
+            continue;
+        if (ref.state.type === 'final')
+            continue;
+        const events = Object.entries(ref.state.on ?? {});
+        if (events.length === 0)
+            continue;
+        for (const [event, raw] of events) {
+            const rawArms = transitionArms(raw);
+            const payload = { type: event, ...controllerEntryPayload() };
+            const direct = directlySelectedEventArm(machine, rawArms, payload, initializedCoverageContext(machine));
+            if (direct === undefined) {
+                findings.push(`state ${ref.stableId}: entry event ${event} is unsatisfiable under the controller payload`);
+                continue;
+            }
+            const target = rawArmTarget(rawArms[direct]) ?? normalizeArms(raw)[direct]?.target;
+            const targetRef = target === null || target === undefined
+                ? undefined
+                : stateRefForTarget(refs, target, ref);
+            const actor = await controllerReachQuiescent(machine, refs, captains, initialRef, ref);
+            if (actor === undefined) {
+                findings.push(`state ${ref.stableId}: no deterministic route parks the machine for entry event ${event}`);
+                continue;
+            }
+            actor.send(payload);
+            const moved = await settle(actor, targetRef !== undefined ? atState(targetRef) : leftState(ref));
+            if (!moved) {
+                findings.push(`state ${ref.stableId}: entry event ${event} did not reach ${target ?? 'its target'}`);
+            }
+            actor.stop();
+        }
+        // A blank Boss text must not enter a working state from a parked hub.
+        const textual = events.find(([, raw]) => transitionArms(raw).some((arm) => armGuard(arm) !== undefined));
+        if (textual !== undefined) {
+            const actor = await controllerReachQuiescent(machine, refs, captains, initialRef, ref);
+            if (actor !== undefined) {
+                actor.send({ type: textual[0], bossText: '   ' });
+                await settleNoTransition();
+                if (!atState(ref)(actor.getSnapshot())) {
+                    findings.push(`state ${ref.stableId}: a blank ${textual[0]} text must not leave the parked state`);
+                }
+                actor.stop();
+            }
+        }
     }
     return findings;
 }

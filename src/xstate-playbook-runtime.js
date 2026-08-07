@@ -1431,18 +1431,23 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     return reply;
                 });
             },
-            async callCaptain(input, prompt, signal) {
+            async callCaptain(input, prompt, signal, callOptions) {
                 return judgeQueue.add(async () => {
                     signal.throwIfAborted();
                     await drainEmissions();
                     signal.throwIfAborted();
                     const turnId = activeTurnId;
                     const callId = `captain-${++captainCallSequence}`;
+                    const visibility = callOptions?.visibility ?? 'visible';
                     const identity = {
                         ...stateIdentity(input.stateId),
                         sourceItem: input.sourceItem,
-                        visibility: 'visible',
-                        resume: false,
+                        visibility,
+                        // The visible workflow form owns its `resume: false` selection;
+                        // a hidden controller call's durable-conversation resume
+                        // selection is host-owned (DR-029 §2), so its trace pair carries
+                        // no resume member and no token.
+                        ...(visibility === 'visible' ? { resume: false } : {}),
                         ...(input.allowedTools === undefined
                             ? {}
                             : { allowedTools: [...input.allowedTools] }),
@@ -1460,7 +1465,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         // as `aborted` through the catch below.
                         signal.throwIfAborted();
                         rawResult = await requireHostPorts().callCaptain(prompt, signal, {
-                            visibility: 'visible',
+                            visibility,
                             resume: false,
                             ...(input.allowedTools !== undefined
                                 ? { allowedTools: input.allowedTools }
@@ -1561,6 +1566,27 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 try {
                     await drainEmissions();
                     const prompt = composeCaptainPrompt(input);
+                    if (spec.captainStrategy !== undefined) {
+                        // Controller form (slc/link.md §Captain adjudication): the
+                        // spec's strategy owns the call pipeline; the engine still
+                        // owns tracing, the shared lane, signal combination, and the
+                        // control-plane latch in the catch below.
+                        const output = await spec.captainStrategy({
+                            input,
+                            prompt,
+                            signal: active,
+                            options: boundOptions,
+                            session: requireSession(),
+                            callCaptain: (callPrompt, callOptions) => boundary.callCaptain(input, callPrompt, active, callOptions),
+                            isEmptyOkRetry: isEmptyOkRetryFailure,
+                            recoverableFailure: (error) => {
+                                markFsmResultFailure(error);
+                                return error;
+                            },
+                        });
+                        validateBossReplyOutput(input, output, resumableStateIds);
+                        return output;
+                    }
                     let result;
                     try {
                         result = await boundary.callCaptain(input, prompt, active);
@@ -2472,7 +2498,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             };
                         }
                         else {
-                            event = await classifyBossText(text, runtimePorts, signal, snapshot, boundary);
+                            event = await classifyBossText(text, runtimePorts, signal, snapshot, boundary, boundOptions);
                         }
                         signal.throwIfAborted();
                     }

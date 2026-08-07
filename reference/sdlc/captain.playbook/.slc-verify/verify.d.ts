@@ -55,6 +55,17 @@ export interface PlaybookInvocationState {
  */
 export declare const NEEDS_BOSS_REPLY = "needsBossReply";
 export declare const BOSS_QUESTION_MARKER = "Output shall include `question:";
+/**
+ * The controller decision-state class (slc/gears2fsm.md §Setup, DR-029 §4):
+ * stable compiler-contract guard discriminants of a controller playbook's
+ * decision state. A machine declaring one such state is a controller machine —
+ * no state carries the Boss-reply suspension key.
+ */
+export declare const CONTROLLER_ACTION_GUARDS: readonly string[];
+/** True when `result` declares exactly the closed controller action set. */
+export declare function isControllerDecisionResult(result: Record<string, string> | undefined): boolean;
+/** True when the machine declares a controller decision state. */
+export declare function isControllerMachine(config: MachineConfigLike): boolean;
 /** The minimal XState machine-config shape the introspector walks (`machine.config`). */
 export interface MachineConfigLike {
     initial?: string;

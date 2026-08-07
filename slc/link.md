@@ -411,8 +411,12 @@ its message and optional data; consumers shall not have to recover state
 identity from a nested ad hoc object.
 Judge results use `reply`; player start and finish payloads both carry the
 selected `resume`; Captain start and finish payloads both carry
-the exact composed prompt, `visibility: 'visible'`, the direct invocation's
-`stateId` and `sourceItem`, and no player resume selection or resume token;
+the exact composed prompt, the boundary's selected `visibility`, the direct
+invocation's `stateId` and `sourceItem`, and no player resume selection or
+resume token — a visible workflow call carries its runtime-owned
+`resume: false` selection, while a hidden controller call
+(§Captain adjudication) omits the `resume` member altogether, its
+durable-conversation selection being host-owned;
 judge `purpose` is
 `boss-input-classification`, `player-output-adjudication`, or
 `captain-output-adjudication`; and every error uses
@@ -618,8 +622,17 @@ Where the current ready or reconstructed terminal machine accepts exactly one
 ordinary textual entry event and no Boss question is pending, the runtime
 shall send that event deterministically and attach the exact original text to
 its declared textual payload field without invoking `callJudge`.
-The default Captain's ready entry is
-`{ type: 'BOSS_INTENT', bossIntent: turn.text }`.
+The default Captain — the controller playbook of
+[gears2fsm "Setup"](gears2fsm.md#setup) — is deterministic at every parked
+entry: the runtime maps each Boss turn from the exact text and the host's
+deterministic command-parse resolution, supplied through the linked options'
+controller port, to the rewritten machine's hub entry union —
+`{ type: 'BOSS_TURN', bossText: turn.text }` for an undecided turn,
+`{ type: 'PARSED_RESPOND', bossText: turn.text }` for a parse-resolved
+`respond`, `{ type: 'PARSED_ACTION', bossText: turn.text, decision }` carrying
+the injected parse-resolved decision object, and `{ type: 'SHUTDOWN' }` for the
+host's teardown resolution — and invokes no classifier judge call; the exact
+original text still rides only the runtime-owned textual payload field.
 All other non-empty turns shall use `callJudge` only to choose one of the FSM's
 event kinds and non-text routing fields, or no FSM action.
 The classifier prompt shall include the exact, unmodified `turn.text` in a
@@ -699,7 +712,7 @@ If a host forwards text beginning with `/` to `handleBossInput`, the runtime tre
 Hosts that receive structured control input shall resolve host-level concerns before choosing a playbook runtime.
 Once they call `handleBossInput`, they shall pass the Boss content as text and shall not pre-classify in-playbook FSM events or rely on slash forms as a runtime protocol.
 
-`BOSS_INTERRUPT` (or the FSM's equivalent explicit-state-jump event) is reached only by the judge choosing it and supplying its required target payload.
+Within `handleBossInput` classification, `BOSS_INTERRUPT` (or the FSM's equivalent explicit-state-jump event) is reached only by the judge choosing it and supplying its required target payload; `apply()` of a runtime-advertised action (§Control surface) is the second, runtime-validated path to the same events, and on neither path does the host fabricate an FSM event itself.
 It is _not_ an abort surface; aborts go through the abort signal and the strategies in §Abort.
 Hosts where the abort signal is terminal (e.g., SIGINT runs shutdown) shall not route abort to `BOSS_INTERRUPT`.
 
@@ -767,6 +780,55 @@ already-visible `CaptainResult.finalText` is the machine response and Boss
 presentation. The linked
 runtime shall not make a second visible Captain call or expose the hidden
 structured adjudication merely to present the same response.
+
+That visible-call presentation — visible Captain prose as the Boss
+presentation, a separate hidden adjudicator that never authors the
+`question`/`response` fields, and runtime injection of the visible
+`finalText` — stays scoped to visible-presentation playbooks such as CODE
+and DISCUSS. For a controller playbook, whose FSM declares the controller
+decision-state class of [gears2fsm "Setup"](gears2fsm.md#setup), the
+Captain-call presentation admits the hidden controller form instead
+(DR-029 §4): the decision and closing-reply Captain calls run
+`{ visibility: 'hidden' }` on the host's durable conversation, whose resume
+token the host pins and rotates (DR-029 §2), and the decision call's reply
+is the `{ action, … }` control JSON itself — validated by the linked runtime
+against the declared decision-state contract rather than adjudicated through
+a separate judge call, with exactly one corrective re-ask appending the
+rejection reason and the restated reply contract (the DR-025 corrective
+pattern). Because the host owns that conversation, the `resume` member the
+runtime is required to pass on a controller call carries no continuity
+meaning: the runtime passes `resume: false` because it holds no token, and
+the host's pinned durable selection overrides it — a controller call shall
+never be read as a request for a fresh conversation.
+
+The validated selection is not itself an effect. The linked runtime shall
+submit it through the host-supplied controller port the linker exposed as an
+option member (§PlaybookRuntime contract) and shall take the returned
+settlement as the only evidence of what happened. That settlement, carried
+beside the selected action as the guard discriminant, is the decision
+invocation's own result — the actor output the decision state's `onDone` arms
+select on and its evidence action records — so the effect reports through the
+same invocation that decided it, with no second boundary and no host-sent
+event. A controller prose state (a parse-resolved `respond` reply, an acting
+turn's closing reply) settles on its declared single outcome and returns no
+prose to the machine at all.
+
+That reply is control data, never Boss presentation: the runtime
+shall not inject the `question` or `response` presentation fields into a
+controller result — no visible Captain call exists to own them. Controller
+prose reaches the Boss only as host-validated captain speech surfaced
+through the host's presentation seam, cligent `CaptainContext.emitReply`
+(DR-029 §5). Because no prose returns to the machine and no presentation
+field is injected, the host's own `callCaptain` implementation is that seam:
+it already holds the `CaptainResult` of the call it just served, and it
+identifies which call that is from the paired `captain.call.started` boundary
+the runtime emits before invoking the port, whose identity carries the
+invoking `stateId` and `sourceItem` (§Playbook trace). No prose therefore
+needs a return path through the machine, and none exists.
+The visible-call `question`/`response` injection rule above and
+the `{ visibility: 'visible', resume: false }` workflow-call selection
+(§PlaybookPorts contract, §Captain prompt composition) stay the
+visible-presentation shape for non-controller playbooks.
 
 The adjudicator shall fail loudly on:
 
