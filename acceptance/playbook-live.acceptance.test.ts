@@ -59,6 +59,61 @@ const turnFailureMarkers = [
   'workflow failed',
 ] as const;
 
+// DR-026: the adapter SDKs are optional peers that no install acquires on a
+// user's behalf — "libraries declare, the deliberately-installed root
+// supplies" (§2). Every scenario below spends real Claude and Codex calls
+// through the *installed* candidate, in a temp tree outside this repository,
+// so this gate is that deliberately-installed root and has to name them on
+// its own install lines. DR-026 §1's note that the repository's
+// devDependencies keep the acceptance suite on real adapters holds only for
+// suites that run in the repository's own module tree; RELEASE-24/25 pin
+// this one to a packed install, which the repository's `node_modules` never
+// reaches. Without them the launcher's §4 preflight correctly refuses every
+// scenario before it starts.
+const adapterSdks = [
+  '@anthropic-ai/claude-agent-sdk',
+  '@openai/codex-sdk',
+] as const;
+
+// Install the exact SDK builds this repository resolves and tests against,
+// never whatever `latest` floats to mid-run. Both reasons are about a gate
+// that spends real model calls: a floating install makes the gate less
+// reproducible than the `pnpm test` it exists to corroborate, and it hands
+// an upstream publish window the power to fail a release gate for reasons
+// that have nothing to do with the candidate — observed here as an
+// `@openai/codex-sdk` release whose own pinned dependency was missing from
+// this host's cached packument, which `--prefer-offline` then honoured as a
+// hard ETARGET. Pinning to a version the repository already depends on is
+// immune to that: a stale packument still lists it.
+//
+// This is also the concrete form of DR-026 §1's intent — that the
+// repository's devDependencies keep the real-agent acceptance suite on real
+// adapters. The suite runs from a packed install outside this tree, so the
+// versions have to be carried across rather than resolved again.
+function adapterSdkSpecs(): string[] {
+  return adapterSdks.map((sdk) => {
+    const manifest = join(
+      repoRoot,
+      'node_modules',
+      ...sdk.split('/'),
+      'package.json',
+    );
+    if (!existsSync(manifest)) {
+      throw new Error(
+        `${sdk} is not installed under ${repoRoot}; run \`pnpm install\` ` +
+          'before the live acceptance gate',
+      );
+    }
+    const { version } = JSON.parse(readFileSync(manifest, 'utf8')) as {
+      version?: string;
+    };
+    if (version === undefined) {
+      throw new Error(`${sdk} declares no version in ${manifest}`);
+    }
+    return `${sdk}@${version}`;
+  });
+}
+
 const codeCommand =
   '/code Implement the existing ACCEPT-1 requirement exactly. ' +
   'This is one small complete change. Do not broaden the requirement.';
@@ -751,6 +806,7 @@ async function packAndInstallCandidate(root: string): Promise<string> {
       '--no-package-lock',
       '--prefer-offline',
       tarball,
+      ...adapterSdkSpecs(),
     ],
     installRoot,
   );
@@ -762,7 +818,70 @@ async function packAndInstallCandidate(root: string): Promise<string> {
   if (!existsSync(installedBin)) {
     throw new Error(`installed playbook command is missing: ${installedBin}`);
   }
+  assertAdapterSdksVisible(
+    installRoot,
+    installedCligentDir(installRoot),
+    'candidate consumer',
+  );
   return installedBin;
+}
+
+// npm hoists cligent flat in a project install and nests it under
+// `@sublang/playbook` in a global one. Either is fine — what the SDK check
+// below needs is where cligent actually landed, not where it usually does.
+function installedCligentDir(installRoot: string): string {
+  const found = [
+    join(installRoot, 'node_modules/@sublang/cligent'),
+    join(
+      installRoot,
+      'node_modules/@sublang/playbook/node_modules/@sublang/cligent',
+    ),
+  ].find((path) => existsSync(path));
+  if (!found) {
+    throw new Error(`@sublang/cligent did not install under ${installRoot}`);
+  }
+  return found;
+}
+
+// DR-026 §3: a supplied SDK is only usable if it sits on the directory
+// ancestor walk from cligent's installed location — the same walk the
+// adapter's own dynamic import performs. Assert that here, at install time
+// and in milliseconds, rather than discovering it from a preflight refusal
+// once a scenario has already claimed a live turn's budget.
+//
+// `require.resolve` cannot stand in for this: DR-026 §4 records that neither
+// SDK exposes `./package.json` and that `@openai/codex-sdk` is ESM-only, so
+// resolution reports both missing when they are present.
+function assertAdapterSdksVisible(
+  installRoot: string,
+  cligentDir: string,
+  shape: string,
+): void {
+  const missing = adapterSdks.filter(
+    (sdk) => !sdkVisibleFrom(installRoot, cligentDir, sdk),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `the ${shape} install left ${missing.join(' and ')} off the module ` +
+        `walk from ${cligentDir}; the live scenarios would be refused at ` +
+        'the DR-026 §4 adapter preflight before spending a model call',
+    );
+  }
+}
+
+function sdkVisibleFrom(
+  installRoot: string,
+  cligentDir: string,
+  sdk: string,
+): boolean {
+  const segments = sdk.split('/');
+  for (let dir = cligentDir; ; dir = dirname(dir)) {
+    if (existsSync(join(dir, 'node_modules', ...segments))) return true;
+    // Bounded at the install root deliberately. Node's own walk keeps
+    // climbing, but an SDK found above the gate's temp tree would be the
+    // maintainer's machine answering rather than the install under test.
+    if (dir === installRoot || dirname(dir) === dir) return false;
+  }
 }
 
 // RELEASE-25 fourth case: install the same packed candidate globally into
@@ -790,6 +909,9 @@ async function installGlobalCandidate(): Promise<string> {
       '--no-fund',
       '--prefer-offline',
       candidateTarball,
+      // DR-026 §3: each SDK its own top-level install root, so it lands on
+      // the ancestor walk from the cligent nested under @sublang/playbook.
+      ...adapterSdkSpecs(),
     ],
     suiteRoot,
     env,
@@ -811,6 +933,7 @@ async function installGlobalCandidate(): Promise<string> {
   if (!existsSync(globalBin)) {
     throw new Error(`global playbook command is missing: ${globalBin}`);
   }
+  assertAdapterSdksVisible(prefix, nestedCligent, 'global prefix');
   return globalBin;
 }
 
@@ -1506,12 +1629,40 @@ function headHasPath(repo: string, path: string): boolean {
 function privateTmuxEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
+    // Between the inherited environment and the caller's overrides: it must
+    // beat a non-UTF-8 inherited locale, but never an explicit override.
+    ...utf8Locale(),
     ...overrides,
     TMUX_TMPDIR: tmuxSocketDir,
   };
   delete env.TMUX;
   delete env.TMUX_PANE;
   return env;
+}
+
+// tmux decides at startup whether it may keep non-ASCII, and under a
+// non-UTF-8 locale it rewrites every multi-byte character of a pane title to
+// `_` — its own `utf8_sanitize`. This gate asserts `Captain · claude` on the
+// pane titles and the `◇`/`◆`/`⤷` glyphs in pane content, so a shell with
+// `LC_ALL=C` (or with no locale set at all, as a non-interactive one often
+// has) turns a healthy candidate into a pane-title mismatch that reads
+// exactly like a cligent presentation regression. Measured on tmux 3.6a:
+// `select-pane -T 'Captain · claude'` reads back as `Captain _ claude` under
+// LANG=C and intact under LANG=en_US.UTF-8.
+//
+// The gate already pins TERM and COLORTERM so the terminal cannot drift
+// between hosts; the character encoding belongs with them. An inherited
+// UTF-8 locale is kept untouched — the maintainer's own terminal is the
+// environment this gate exists to reproduce.
+function utf8Locale(): NodeJS.ProcessEnv {
+  const inherited = [
+    process.env.LC_ALL,
+    process.env.LC_CTYPE,
+    process.env.LANG,
+  ].find((value) => value !== undefined && value !== '');
+  if (inherited !== undefined && /utf-?8/i.test(inherited)) return {};
+  // tmux's own first choice when it has to pick a UTF-8 locale itself.
+  return { LC_ALL: 'en_US.UTF-8', LANG: 'en_US.UTF-8' };
 }
 
 function tmuxText(args: readonly string[]): string {
