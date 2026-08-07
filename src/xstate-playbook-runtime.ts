@@ -3616,7 +3616,16 @@ export function createXStatePlaybookRuntime<TOptions>(
             const finalState = actor ? currentState() : undefined;
             // Stop the root before settling a suspended child. Its rejection
             // must not re-enter the FSM and start fresh work during disposal.
-            if (actor) actor.stop();
+            // Suppress inspection first: stopping a still-running actor fires
+            // one more `@xstate.snapshot` for the *unchanged* state value with
+            // `status: 'stopped'`, which is a disposal artifact and not a state
+            // entry — unsuppressed it would re-emit the parked state's statuses
+            // and a phantom self-loop transition, redundant with the
+            // `session.disposed` trace below (PBRT-6).
+            if (actor) {
+              suppressInspectionEmissions = true;
+              actor.stop();
+            }
             try {
               await nestedBridge.dispose();
             } catch (error) {

@@ -1922,6 +1922,40 @@ describe('boundary hygiene', () => {
     );
     await runtime.dispose();
   });
+
+  // PBRT-6: stopping a still-running actor makes XState fire one more
+  // `@xstate.snapshot` carrying the *unchanged* state value with
+  // `status: 'stopped'`. That is a disposal artifact, not a state entry, so
+  // disposal reports itself with `session.disposed` and nothing else.
+  it('emits no status or FSM telemetry for the actor stop during dispose', async () => {
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () => '{"guard":"implemented","summary":"shipped"}',
+    });
+    const runtime = createWorkflowRuntime({ command: 'false' });
+    await runtime.init(makeSession(ports));
+    const result = await runtime.handleBossInput(turn('build the widget'));
+    // Parked at a non-final state, so its actor is still running at dispose.
+    expect(result.state.stateId).toBe('failed');
+
+    const traceTypes = (): string[] =>
+      telemetry
+        .filter(({ topic }) => topic === 'playbook.trace')
+        .map(({ payload }) => (payload as PlaybookTraceEvent).type);
+    const fsmStateCount = (): number =>
+      telemetry.filter(({ topic }) => topic === 'playbook.fsm.state').length;
+    const statusesBefore = statuses.map(({ message }) => message);
+    const tracesBefore = traceTypes();
+    const fsmStatesBefore = fsmStateCount();
+
+    await runtime.dispose();
+
+    expect(traceTypes().slice(tracesBefore.length)).toEqual([
+      'session.disposed',
+    ]);
+    expect(fsmStateCount()).toBe(fsmStatesBefore);
+    expect(statuses.map(({ message }) => message)).toEqual(statusesBefore);
+  });
 });
 
 describe('runtime compatibility declaration (DR-022)', () => {

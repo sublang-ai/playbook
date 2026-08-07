@@ -141,6 +141,15 @@ at the idle state, the pre-`init` `handleBossInput` call rejects,
 `dispose` stops the actor, and `dispose` awaits any pending port
 emissions before resolving.
 
+When `dispose` is called on a runtime parked outside a final
+state, the test suite shall fail unless the disposal emits no
+status and no `playbook.fsm.state` telemetry, and the only trace it
+appends is `session.disposed`. When a host disposes such a runtime
+through a real Playbook Captain shell — the dismiss and switch
+paths both do — the test suite shall fail unless the runtime emits
+no further status for that disposal, so the parked state's line
+reaches the host exactly once for that engagement.
+
 ### PBRT-23
 
 Verifies: [PBRT-9](../dev/playbook-runtime.md#pbrt-9), [PBRT-10](../dev/playbook-runtime.md#pbrt-10)

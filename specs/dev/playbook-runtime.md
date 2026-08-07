@@ -154,7 +154,11 @@ lifetime, construct the FSM actor from the options, and start it,
 leaving the FSM in its idle
 state. When `dispose()` is called, the runtime shall stop the
 actor, abort a pending nested call, and drain any pending port
-emissions. Root sessions shall require `rootSessionId === sessionId`,
+emissions; stopping the actor shall emit no status, no FSM-state
+telemetry, and no state-transition trace, so the only boundary
+disposal reports for a runtime parked outside a final state is its
+own session disposal. Root sessions shall require
+`rootSessionId === sessionId`,
 no parent fields, and depth zero; child sessions shall require matching
 parent session/call fields, positive depth, and a session id distinct from
 both the root and immediate parent ids. When `handleBossInput`
