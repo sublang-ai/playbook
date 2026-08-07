@@ -26,9 +26,9 @@ This lands as **one commit**: the spec reconciliation (DR-007 + PBRT amendments)
 - [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md) — PBRT-3: two captain-speech acts; `awaitBossReply` emits the full-question speech line then the rider-less `◆` marker; judge JSON is not surfaced.
 - [x] [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md) — PBRT-14 (two `emitStatus` lines, full-question telemetry retained) and PBRT-15 (judge calls run hidden).
 - [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — PBRT-20 (two-line assertion), PBRT-21 (every `callCaptain` passes `{ visibility: 'hidden' }`), and new PBRT-32 (gated end-to-end no-JSON-on-pane test).
-- [x] [`code.tmux-play.ts`](../../reference/sdlc/code.playbook/code.tmux-play.ts) — `callJudge` passes `{ visibility: 'hidden' }`; temporary `@sublang/cligent/tmux-play` augmentation added with a `TODO(cligent-bump)` marker; siblings recompiled.
+- [x] `code.tmux-play.ts` — `callJudge` passes `{ visibility: 'hidden' }`; temporary `@sublang/cligent/tmux-play` augmentation added with a `TODO(cligent-bump)` marker; siblings recompiled.
 - [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — `awaitBossReply` entry emits the full-question captain-speech line then the rider-less marker; siblings recompiled.
-- [x] [`code.tmux-play.test.ts`](../../reference/sdlc/code.playbook/code.tmux-play.test.ts) — asserts every `callCaptain` passes `{ visibility: 'hidden' }`; adds the gated `describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)` integration test.
+- [x] `code.tmux-play.test.ts` — asserts every `callCaptain` passes `{ visibility: 'hidden' }`; adds the gated `describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)` integration test.
 - [x] [`code.playbook.test.ts`](../../reference/sdlc/code.playbook/code.playbook.test.ts) — asserts the two `awaitBossReply` lines (full-question chat + rider-less marker) and that telemetry still carries the full question.
 
 ## Tasks

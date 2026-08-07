@@ -31,7 +31,7 @@ Under cligent's contract (TMUX-008), when loading a config the loader rejects an
 So `captain.options` is the only place a plugin may extend without a cligent change.
 
 CODE will need its own runtime options, and there is no clean home for them today.
-The current onboarding seeds a full tmux-play config the user hand-maintains ([PBCODE-5](../user/playbook-code.md#pbcode-5), [PBCODE-7](../dev/playbook-code.md#pbcode-7)), including the `captain.from` and `players[].id` values the user is told not to touch ([PBRT-4](../user/playbook-runtime.md#pbrt-4)).
+The current onboarding seeds a full tmux-play config the user hand-maintains (PBCODE-5, PBCODE-7), including the `captain.from` and `players[].id` values the user is told not to touch ([PBRT-4](../user/playbook-runtime.md#pbrt-4)).
 That is a leaky abstraction: the user maintains invariants that are not theirs to change.
 
 cligent already exports the primitives needed to *read* a config — `findTmuxPlayConfig`, `loadTmuxPlayConfig`, and the config types — from `@sublang/cligent/tmux-play`.
@@ -66,13 +66,13 @@ adapter as the owner of `captain.options.code` validation.
 The launched tmux-play config shall be composed at launch, not hand-authored by the user:
 
 1. Locate an optional base tmux-play config with `findTmuxPlayConfig` — never the bare `loadTmuxPlayConfig`, which writes a default fanout config when none is found.
-2. Read the user-level CODE overlay (the [PBCODE-5](../user/playbook-code.md#pbcode-5) path) — a tmux-play-shaped config minus `captain.from`, with `players` keyed by role (`coder`, `reviewer`) instead of an array with `id`. Each `players.<role>` block carries that role's `adapter` and optional `model` / `reasoningEffort` / `permissions`; the `captain` block carries the judge fields; top-level host fields such as `layout` and `notifications` may be set; CODE options live under `captain.options.code`.
+2. Read the user-level CODE overlay (the PBCODE-5 path) — a tmux-play-shaped config minus `captain.from`, with `players` keyed by role (`coder`, `reviewer`) instead of an array with `id`. Each `players.<role>` block carries that role's `adapter` and optional `model` / `reasoningEffort` / `permissions`; the `captain` block carries the judge fields; top-level host fields such as `layout` and `notifications` may be set; CODE options live under `captain.options.code`.
 3. Force the invariants and map the roster: `captain.from` = the Playbook Captain shell adapter module with CODE registered; produce one composed `players[]` entry per role with `id` = the role name (`coder`, `reviewer`) carrying that role's declared `adapter` / `model` / `reasoningEffort` / `permissions`.
 4. Inherit from the base **only** `theme`, the top-level `layout` and `notifications` blocks, and the captain-judge fields (`adapter`, `model`, `reasoningEffort`, `permissions`), filling gaps the overlay leaves; the base `players[]` roster shall **not** be auto-mapped onto `coder` / `reviewer`. For `layout` and `notifications`, the gap is the block itself: a present overlay block replaces the base block whole rather than merging nested fields or event keys. `layout` and `notifications` are host-observable fields (per the §1 boundary table), so they ride alongside `theme` rather than under `captain.options.code`; the composer carries them through to the composed config and does not interpret them. `captain.adapter` must end up set from the overlay or the base, else composition fails with a path-named error; the role `adapter`s are required in the overlay and are not inherited.
 5. Carry the overlay's `captain.options.code` through to the composed config unchanged.
 6. Serialize the composed config to YAML with playbook's own serializer (cligent exports none), write it to a temp file, launch `tmux-play --config <temp>`, and remove it on exit.
 
-Explicit `--config <path>` shall still bypass composition entirely ([PBCODE-1](../user/playbook-code.md#pbcode-1)).
+Explicit `--config <path>` shall still bypass composition entirely (PBCODE-1).
 
 The roster is not inherited because CODE's two fixed roles have no canonical mapping from an arbitrary base `players[]` list; inheriting it would make `coder` / `reviewer` silently adopt whatever adapters the user's generic config happened to list.
 
@@ -87,8 +87,8 @@ That entry is also the natural home for an exported config serializer; until it 
 
 The implementing IR shall land these alongside the new items:
 
-- **[PBCODE-1](../user/playbook-code.md#pbcode-1) / [PBCODE-5](../user/playbook-code.md#pbcode-5)** — the launch target becomes the composed temp config; the user-level CODE config becomes the overlay source, not the launched file.
-- **[PBCODE-7](../dev/playbook-code.md#pbcode-7)** — the seeded template drops `captain.from` and `players[].id` (the composer injects them) and its comments no longer name those as user-maintained invariants.
+- **PBCODE-1 / PBCODE-5** — the launch target becomes the composed temp config; the user-level CODE config becomes the overlay source, not the launched file.
+- **PBCODE-7** — the seeded template drops `captain.from` and `players[].id` (the composer injects them) and its comments no longer name those as user-maintained invariants.
 - **[PBRT-4](../user/playbook-runtime.md#pbrt-4)** — the `captain.from` and baked-id invariants are injected by the composer rather than declared by the user; `captain.from` targets the Playbook Captain shell adapter per [DR-008](008-playbook-captain-shell.md), and `captain.options.code` is named as the CODE option surface.
 
 New normative items: PBRT-29 / PBRT-30 (host config + registry validation) and PBCODE-16 / PBCODE-17 (composer behavior + mechanics), with test items PBRT-31 / PBCODE-18.

@@ -17,8 +17,7 @@ Two coupled changes to the `playbook-code` CODE overlay and its composer.
    Cligent's tmux-play config has no alias concept (players are a flat array
    of unique ids); per the Boss it is "open to extend."
 
-2. Refresh the seeded default overlay
-   ([PBCODE-7](../dev/playbook-code.md#pbcode-7)):
+2. Refresh the seeded default overlay (the now-retired PBCODE-7):
    - a 174×49 window — cligent's tmux-play default, sized for 18pt text on a
      1080p 16:9 display — and 4:6:6 column weights, a playbook-specific override
      of cligent's `[1,1,1]` default, both under a top-level `layout` block;
@@ -30,8 +29,7 @@ Two coupled changes to the `playbook-code` CODE overlay and its composer.
 ## Why not one commit
 
 - The alias is a new config concept that spans the overlay schema
-  ([PBCODE-16](../user/playbook-code.md#pbcode-16),
-  [PBCODE-17](../dev/playbook-code.md#pbcode-17)), the composer, the CODE
+  (the now-retired PBCODE-16, PBCODE-17), the composer, the CODE
   runtime's player-id resolver ([PBRT-8](../dev/playbook-runtime.md#pbrt-8))
   and identity-string derivation ([PBRT-4](../user/playbook-runtime.md#pbrt-4)),
   and the namespaced `captain.options.code` validator
@@ -87,16 +85,16 @@ and DR-004 §2 (Addendum A2):
 - [x] IR-013 doc and its `map.md` row.
 - [x] Alias-representation decision recorded — DR-004 §2 amendment (Addendum A2); no DR-008, no new DR map row.
 - [x] [`specs/decisions/006-code-config-composition.md`](../decisions/006-code-config-composition.md) §2.4 amendment adding `layout` to the base-inheritable list (today closed to `theme` + the captain-judge fields) + `map.md` row refresh.
-- [x] [`specs/user/playbook-code.md`](../user/playbook-code.md) — PBCODE-16: overlay may carry a top-level `layout` block and a Committer alias.
-- [x] [`specs/dev/playbook-code.md`](../dev/playbook-code.md) — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7's template *shape* refreshed for the structural additions (the `layout` block and the alias slot), not concrete model picks — PBCODE-7 documents structure, and PBCODE-6 keeps model values user-tunable.
-- [x] [`specs/test/playbook-code.md`](../test/playbook-code.md) — PBCODE-18: `layout` and alias composition cases (alias cases landed in Task 2; `layout` cases in Task 3).
+- [x] `specs/user/playbook-code.md` — PBCODE-16: overlay may carry a top-level `layout` block and a Committer alias.
+- [x] `specs/dev/playbook-code.md` — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7's template *shape* refreshed for the structural additions (the `layout` block and the alias slot), not concrete model picks — PBCODE-7 documents structure, and PBCODE-6 keeps model values user-tunable.
+- [x] `specs/test/playbook-code.md` — PBCODE-18: `layout` and alias composition cases (alias cases landed in Task 2; `layout` cases in Task 3).
 - [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md) + [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md) — PBRT-8 (configurable Committer binding), PBRT-29/30 (alias placement), PBRT-4 interaction.
 - [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — alias-resolution and options-validation cases (PBRT-26 configured-alias, PBRT-31 valid/invalid `committer`).
 - [x] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-3 Committer binding stays gears-consistent.
 - [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2 baked-binding amendment (Addendum A2).
-- [x] [`reference/sdlc/code.playbook/playbook-code.config.template.yaml`](../../reference/sdlc/code.playbook/playbook-code.config.template.yaml) — `layout` (Task 3, done), model lineup (Task 4, done), Committer alias (Task 6, done).
-- [x] [`reference/sdlc/code.playbook/bin/playbook-code.js`](../../reference/sdlc/code.playbook/bin/playbook-code.js) — `layout` pass-through (Task 3, done) + alias resolution (Task 5) in the composer.
-- [x] [`reference/sdlc/code.playbook/code.tmux-play.ts`](../../reference/sdlc/code.playbook/code.tmux-play.ts) (+ `.js`) — alias option validation/threading.
+- [x] `reference/sdlc/code.playbook/playbook-code.config.template.yaml` — `layout` (Task 3, done), model lineup (Task 4, done), Committer alias (Task 6, done).
+- [x] `reference/sdlc/code.playbook/bin/playbook-code.js` — `layout` pass-through (Task 3, done) + alias resolution (Task 5) in the composer.
+- [x] `reference/sdlc/code.playbook/code.tmux-play.ts` (+ `.js`) — alias option validation/threading.
 - [x] [`reference/sdlc/code.playbook/code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) (+ `.js`/`.d.ts`) and [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) (+ `.js`) — `resolvePlayerId` honors the configured alias.
 - [x] Tests: `playbook-code.test.ts`, `code.tmux-play.test.ts`, `code.playbook.test.ts`, and the gears/prompt conformance suites.
 
