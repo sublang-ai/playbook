@@ -212,7 +212,7 @@ Therefore:
 
 ### 8. Cross-process deployment
 
-When the actor lives outside the browser (e.g., a tmux-play XState Captain), the Captain runs Diagram + Telemetry in its own process and publishes both through the host runtime's generic telemetry channel — for tmux-play, [DR-004](../../../cligent/specs/decisions/004-tmux-play-captain-architecture.md)'s `emitTelemetry({ topic, payload })`.
+When the actor lives outside the browser (e.g., a tmux-play XState Captain), the Captain runs Diagram + Telemetry in its own process and publishes both through the host runtime's generic telemetry channel — for tmux-play, [DR-004](https://github.com/sublang-ai/cligent/blob/main/specs/decisions/004-tmux-play-captain-architecture.md)'s `emitTelemetry({ topic, payload })`.
 A separate **sketch presenter**, registered as a runtime observer alongside the tmux presenter, consumes the records and owns the browser-facing transport.
 The Captain stays out of network plumbing; the presenter stays out of XState.
 
@@ -286,7 +286,7 @@ DR.
 - The Telemetry layer's inspect contract requires consumers to wire the inspector at actor creation. Inspector-less use degrades cleanly: `active` events still emit via `actor.subscribe`; only `fired` events are lost.
 - Without `disambiguate`, all candidate edges appear in a single `fired` event on guarded branches sharing `(from, event, to)` — honest about the ambiguity rather than guessing.
 - `actorRef`-identity filtering (not `rootId`) is mandatory: any actor system that invokes children would otherwise leak child events into the bound visualizer.
-- Cross-process deployment splits along DR-004's coordination/presentation boundary: the Captain runs Diagram + Telemetry and emits through [DR-004](../../../cligent/specs/decisions/004-tmux-play-captain-architecture.md)'s session-scoped `emitTelemetry`, wired once in `Captain.init(session)`; a sketch presenter (runtime observer) owns SSE/HTTP transport and the browser page. The source's subscribe-time initial emit covers same-page late binders; the presenter's cached `active` covers late SSE clients. No per-turn emit binding, slot, or replay method.
+- Cross-process deployment splits along DR-004's coordination/presentation boundary: the Captain runs Diagram + Telemetry and emits through [DR-004](https://github.com/sublang-ai/cligent/blob/main/specs/decisions/004-tmux-play-captain-architecture.md)'s session-scoped `emitTelemetry`, wired once in `Captain.init(session)`; a sketch presenter (runtime observer) owns SSE/HTTP transport and the browser page. The source's subscribe-time initial emit covers same-page late binders; the presenter's cached `active` covers late SSE clients. No per-turn emit binding, slot, or replay method.
 - Out of scope for this architecture: authoring the machine in the browser (Sketch's editing features); auth, multi-user sessions, persistence across reloads; replacing `@statelyai/inspect` for cross-process inspection; time-travel through past transitions; SSE replay or reconnect-with-resume.
 
 ## References

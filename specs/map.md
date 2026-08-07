@@ -92,6 +92,7 @@ meta.md     The spec of specs
 | IR-034 | [034-runtime-compatibility-from-cligent.md](iterations/034-runtime-compatibility-from-cligent.md) | Implement DR-027: descriptor-derived gate with per-runtime verdicts and pinned repairs, drop the peer-range mirror, and end `gemini`'s exemption |
 | IR-035 | [035-empty-ok-result-re-ask.md](iterations/035-empty-ok-result-re-ask.md) | Implement DR-028: one corrective re-ask on an empty `ok` player or direct-Captain result under the unified empty predicate, with per-call trace pairs, PBRT-38 resume selection, and the PBRT-51 integration tests |
 | IR-036 | [036-session-scoped-conversational-captain.md](iterations/036-session-scoped-conversational-captain.md) | Implement DR-029: the engine `describe`/`apply` control surface, rewritten CAPTAIN/CAPPLAY specs, the recompiled controller Captain, the durable-conversation shell rework, the cligent floor bump, and the three-tier acceptance plan — hermetic A-28/A-29 task gates, the fifth live conversational scenario, and the `pnpm smoke:release` release gate |
+| IR-037 | [037-markdown-cross-reference-check.md](iterations/037-markdown-cross-reference-check.md) | Fail the suite on a broken spec cross-reference: the XREF package, a dependency-free link/anchor checker with GitHub's slug rules, and the repointing of two links into a sibling checkout |
 
 ## Packages
 
@@ -161,3 +162,10 @@ meta.md     The spec of specs
 | user | [sketch.md](user/sketch.md) | XState sketch visualizer: diagram and live-activity behavior |
 | dev | [sketch.md](dev/sketch.md) | Architecture, telemetry protocol, and lifecycle contracts |
 | test | [sketch.md](test/sketch.md) | Integration tests for diagram, telemetry derivation, and lifecycle |
+
+### XREF
+
+| Group | File | Summary |
+| --- | --- | --- |
+| dev | [cross-references.md](dev/cross-references.md) | Relative markdown link and heading-anchor resolution: checked-file scope with in-repository containment, code-block and code-span exclusions, and GitHub slug derivation including the double hyphen a dropped character leaves between spaces and the verbatim rendering of a heading's code span |
+| test | [cross-references.md](test/cross-references.md) | Link and anchor resolution checks over `specs/`, `CHANGELOG.md`, and `README.md`: missing and repository-escaping targets, title and reference-definition forms, percent-decoding, per-file anchor resolution, duplicate-slug suffixes, and the near-miss report on a collapsed hyphen run |
