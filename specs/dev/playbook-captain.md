@@ -230,6 +230,20 @@ as `{ name, message }`, and the advertised actions as id plus label,
 composed from the active leaf's `describe()`
 ([PBRT-52](playbook-runtime.md#pbrt-52)) — and the catalog digest —
 each enabled playbook's id, effective command, and intent.
+Where the active leaf's runtime implements no control surface, the shell
+shall compose the degraded ControlView digest rather than omit the block:
+the engagement frame — the active path as commands root to leaf — plus the
+facts the shell already mirrors from that leaf's telemetry
+([CAPTAIN-10](#captain-10)): its normalized state descriptor, its pending
+questions verbatim with their ids, and its last error as
+`{ name, message }`, with an explicitly empty action list and no ControlView
+context fields.
+That digest shall state that the leaf advertises no actions, so plain text
+delivery is the only machine verb against it
+([PBRT-52](playbook-runtime.md#pbrt-52)) and a `runtime` selection is
+invalid; capability absence shall bound the machine verbs alone and shall
+never bound the conversation, `respond` staying valid for any turn
+([CAPPLAY-4](../user/captain-playbook.md#capplay-4)).
 Digests and session-Captain prompts shall exclude session and call
 UUIDs, resume tokens, trace payloads, module specifiers, option
 values, player rosters, raw journal records, and ledger JSON; player
@@ -249,6 +263,18 @@ surface exactly two kinds of validated prose as captain speech
 through cligent `CaptainContext.emitReply`: a `respond` selection's
 `text` and an acting turn's closing reply; a reply carrying control
 JSON or internal control vocabulary shall not be surfaced.
+The shell's own `callCaptain` implementation is that presentation seam: the
+session Captain runtime returns no prose to its machine and injects no
+presentation field
+([slc/link.md](../../slc/link.md#captain-adjudication)), so the prose the
+shell validates is the `CaptainResult` it just produced itself.
+The shell shall identify which durable call it is serving from the runtime's
+paired `captain.call.started` boundary — emitted before the port invocation
+and carrying the invoking `stateId` and `sourceItem`
+([slc/link.md](../../slc/link.md#playbook-trace)) — or, for a model-decided
+`respond`, from the selection the controller port delivers
+([CAPPLAY-9](captain-playbook.md#capplay-9)); it shall not infer a call's
+kind from the shape of its prose.
 `emitStatus` shall never carry captain prose; the shell shall
 suppress the session Captain runtime's human status stream while
 forwarding its structured telemetry.

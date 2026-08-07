@@ -66,6 +66,22 @@ settlement `{ status, facts, receipt?, leafState?, counts }` as the
 only evidence of effects; the public `PlaybookPorts` contract stays
 six members, the port arriving as a linker-exposed option member
 ([slc/link.md](../../slc/link.md#playbookruntime-contract)).
+That same port shall carry the turn's inbound direction: the shell's
+deterministic parse resolution ([CAPTAIN-7](playbook-captain.md#captain-7))
+shall reach the runtime only as the port's resolution member, which the
+runtime shall consult during `handleBossInput` — whose `{ text, signal }`
+shape is unchanged ([PBRT-34](playbook-runtime.md#pbrt-34)) — and map to the
+machine's hub entry: an unresolved turn, a parse-resolved `respond`, a
+parse-resolved acting decision carrying the injected decision object, or the
+shell's teardown, each carrying the exact Boss text on the runtime-owned
+textual field and invoking no classifier judge call
+([slc/link.md](../../slc/link.md#boss-event-mapping)).
+The shell shall fabricate no FSM event and shall reach the machine through
+no other path.
+The validated selection and the settlement it returns shall be the deciding
+invocation's own result, so an executed effect reports through the
+invocation that decided it, with no second boundary
+([slc/link.md](../../slc/link.md#captain-adjudication)).
 A `deliver` selection shall carry no text payload: the shell is
 authoritative for the delivered text, and any text carried on the
 selection is ignored and never delivered

@@ -52,6 +52,14 @@ Captain-pane status formatting — to the shared
 `@sublang/playbook/xstate-runtime`
 ([DR-019](../decisions/019-shared-linked-runtime-factory.md)); it shall
 not carry a per-artifact copy of the generic FSM-interpreter machinery.
+This item binds the CODE runtime module, whose policy needs no host seam
+beyond the six ports.
+Where another compiled playbook's policy does need one — the session
+Captain's controller port
+([CAPPLAY-9](captain-playbook.md#capplay-9)) — it shall arrive as a
+linker-exposed option member the artifact itself types, never as a seventh
+`PlaybookPorts` member and never as a widened
+`handleBossInput` ([PBRT-34](#pbrt-34)).
 
 ### PBRT-34
 
@@ -80,6 +88,16 @@ accept a `PlaybookSession`, and `PlaybookPorts` shall declare exactly
 the members `callPlayer`,
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
 `emitTelemetry`.
+`PlaybookRuntime.handleBossInput` shall accept exactly `{ text, signal }`:
+no FSM event, parsed decision, or other host-decided input shall enter a
+runtime through it, so a host's per-turn resolution of a Boss turn reaches a
+compiled runtime only as a linker-exposed option member whose type the
+artifact itself declares
+([slc/link.md](../../slc/link.md#playbookruntime-contract)), which that
+runtime's own classification maps to an FSM entry event
+([PBRT-7](#pbrt-7), [CAPPLAY-9](captain-playbook.md#capplay-9)).
+That keeps the shared contract module free of host and playbook types while
+leaving the injection path typed end to end at the artifact.
 `PlaybookRuntime` shall declare the optional control-surface pair —
 `describe?(): PlaybookControlView` and
 `apply?(input: { actionId: string; key: string; signal: AbortSignal }):

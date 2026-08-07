@@ -428,8 +428,17 @@ acting turn costs two durable calls plus bounded correctives.
 The suite shall fail unless the real compiled DISCUSS artifact
 engaged as leaf — its bespoke runtime shipping without the
 `describe`/`apply` pair — is reported by the DR-022 gate as lacking
-the pair, advertises no actions, and answers a status question with
-`deliver` as the only verb and zero `apply` calls.
+the pair, advertises no actions, and bounds only the machine verbs
+against that leaf: plain text delivery is the only one, and a
+`runtime` selection is invalid with zero `apply` calls.
+The suite shall fail unless a status question on that capability-less
+leaf still settles as `respond`
+([CAPPLAY-4](../user/captain-playbook.md#capplay-4)) — no `deliver`,
+no FSM event, the leaf snapshot identical before and after — grounded
+in the degraded ControlView digest the shell composes from the
+engagement frame and its mirrored leaf facts
+([CAPTAIN-9](../dev/playbook-captain.md#captain-9)), the captured
+decision prompt carrying that digest with its empty action list.
 Context-conditional action validity needs no shell fixture here: it
 is engine-pinned on scalar machines with context-conditional guards
 by the landed [PBRT-53](playbook-runtime.md#pbrt-53) rows — a
