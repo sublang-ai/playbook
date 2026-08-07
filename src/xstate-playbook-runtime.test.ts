@@ -2734,12 +2734,77 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
       { type: 'apply.started', callId: 'apply-1' },
       { type: 'apply.finished', callId: 'apply-1' },
     ]);
-    expect(pair[1].payload).toMatchObject({ status: 'aborted' });
+    // slc/link.md §Playbook trace: every apply finish adds the canonical
+    // receipt disposition — for a pre-acceptance abort that is `rejected`
+    // (before any effect) with its reason, alongside the abort marker.
+    expect(pair[1].payload).toMatchObject({
+      status: 'aborted',
+      error: { message: 'stop inside the started emission' },
+      disposition: 'rejected',
+      reason: 'aborted before acceptance',
+    });
     // No receipt was recorded, so the same key executes once the abort is
     // gone.
     const receipt = await runtime.apply!({
       actionId: 'retry:START',
       key: 'window-abort',
+      signal: sigOf(),
+    });
+    expect(receipt.disposition).toBe('executed');
+    expect(playerCalls).toBe(2);
+    await runtime.dispose();
+  });
+
+  it('surfaces a finish-sink rejection over the pre-acceptance abort like the other public boundaries', async () => {
+    // The abort lands while the apply.started emission drains, and the sink
+    // then rejects the abort finish itself. Like the settlement drain of
+    // handleBossInput/resumePlaybookCall, the latched sink failure outranks
+    // the abort at the public boundary: apply rejects with the sink error,
+    // still settling pre-acceptance — no execution, no receipt, the key
+    // free to execute later.
+    const controller = new AbortController();
+    let playerCalls = 0;
+    let failFinishSink = true;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'error', error: 'agent crashed' }
+          : { status: 'ok', finalText: 'Recovered.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"recovered"}',
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        if (trace.type === 'apply.started') {
+          controller.abort(new Error('stop inside the started emission'));
+        }
+        if (trace.type === 'apply.finished' && failFinishSink) {
+          failFinishSink = false;
+          throw new Error('finish sink offline');
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const failedRun = await runtime.handleBossInput(turn('build the widget'));
+    expect(failedRun.outcome).toBe('failed');
+
+    await expect(
+      runtime.apply!({
+        actionId: 'retry:START',
+        key: 'window-abort-sink',
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow('finish sink offline');
+
+    // Still pre-acceptance: no execution, no receipt, the machine unmoved,
+    // and the boundary drained cleanly for the next call.
+    expect(playerCalls).toBe(1);
+    expect(runtime.describe!().state.stateId).toBe('failed');
+    const receipt = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'window-abort-sink',
       signal: sigOf(),
     });
     expect(receipt.disposition).toBe('executed');

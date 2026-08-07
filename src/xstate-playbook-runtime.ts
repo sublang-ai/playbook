@@ -3130,8 +3130,11 @@ export function createXStatePlaybookRuntime<TOptions>(
             // An abort may land while the awaited started emission drains
             // (e.g. fired from the trace sink itself); the action must
             // never execute after abort. Settle the already-started pair
-            // as `aborted` and end the call pre-acceptance: no receipt is
-            // recorded and the key stays free.
+            // as `aborted` — carrying the canonical rejected-before-any-
+            // effect receipt disposition required of every apply finish
+            // (slc/link.md §Playbook trace) — and end the call
+            // pre-acceptance: no receipt is recorded and the key stays
+            // free.
             if (signal.aborted) {
               try {
                 await emitTrace(
@@ -3140,12 +3143,17 @@ export function createXStatePlaybookRuntime<TOptions>(
                     ...identity,
                     status: 'aborted',
                     error: normalizeError(signal.reason),
+                    ...receiptTracePayload({
+                      disposition: 'rejected',
+                      reason: 'aborted before acceptance',
+                    }),
                   },
                   position,
                 );
-              } catch {
-                // The abort remains authoritative over a rejecting finish
-                // sink.
+              } catch (error) {
+                // A rejecting finish sink surfaces at the boundary like
+                // any settlement failure (see the precedence below).
+                settlementError ??= error;
               }
               signal.throwIfAborted();
             }
@@ -3238,7 +3246,12 @@ export function createXStatePlaybookRuntime<TOptions>(
           activeTurnId = undefined;
           controlPlaneError = undefined;
         }
-        const failure = operationError ?? settlementError;
+        // Settlement failures (a rejecting finish sink, a drain-latched
+        // emission failure) outrank the pre-acceptance operation error,
+        // matching the `drainError ?? operationError` precedence of the
+        // other public boundaries. A start-sink failure is unaffected:
+        // its latched drain error is the start error itself.
+        const failure = settlementError ?? operationError;
         if (failure !== undefined) throw failure;
         if (receipt === undefined) {
           throw new Error(

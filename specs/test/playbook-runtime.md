@@ -582,8 +582,12 @@ the recorded receipt with exactly one execution in total.
 The suite shall also fail unless a key whose call threw before
 acceptance (a pre-aborted signal, or an abort landing while the
 `apply.started` emission drains — the machine unmoved, no host call,
-the pair finished `aborted`) records no receipt and may execute
-later; unless a key first settled `rejected` while its action was not
+the pair finished `aborted` with the canonical `rejected` disposition
+and its reason) records no receipt and may execute later; unless a
+finish sink rejecting that abort finish surfaces its failure from the
+boundary in place of the abort reason, the call still recording no
+receipt and its key still executing later; unless a key first settled
+`rejected` while its action was not
 advertised records no receipt and executes when re-applied after the
 action becomes advertisable, each of the two calls tracing its own
 pair; unless a crash between acceptance and settlement (a rejecting

@@ -826,7 +826,15 @@ key may execute.
 An abort that lands while the `apply.started` emission drains shall
 settle before acceptance — no execution, no receipt, the machine
 unmoved — with the pair finished `aborted` carrying the abort's
-normalized error and no disposition. `apply`
+normalized error together with the canonical
+rejected-before-any-effect receipt disposition and its reason, since
+every apply finish adds the receipt disposition
+([slc/link.md](../../slc/link.md#playbook-trace)).
+When the trace sink rejects that abort finish, the sink failure shall
+surface from the boundary in place of the abort reason — matching the
+settlement-drain precedence of the other public boundaries — while
+the call still settles pre-acceptance: no receipt recorded, the key
+free to execute later. `apply`
 shall share the single active-boundary sentinel with `handleBossInput`
 and `resumePlaybookCall`, shall honor its `AbortSignal` exactly as a
 Boss-turn signal, and shall trace as the paired `apply.started` /
