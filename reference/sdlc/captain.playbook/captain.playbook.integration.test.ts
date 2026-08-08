@@ -1399,6 +1399,9 @@ function makeShellHarness(
     playerPrompts,
     surfaced,
     context,
+    // The host surfaces themselves, so a row can enumerate the ports the
+    // shell is actually given rather than a list someone typed.
+    session,
     failStatusesFrom(prefix: string, message: string) {
       statusFailure = { prefix, message };
     },
@@ -3531,6 +3534,79 @@ describe('Boss-visible settlement and effect attribution by construction', () =>
     expect(body).toContain('visibleSettlement');
   });
 
+  /**
+   * The operand, not the site. The two rows above pin *where* attribution is
+   * produced and consumed, and they stayed green through round 8 while the
+   * boundary quietly wrapped the whole drive sequence: `runEffect` was handed
+   * a closure that ran the leaf check, the visibility request, the mode
+   * change, the runtime call, and the processing of its result. Any of the
+   * four shell steps throwing was then filed as an effect failure and
+   * propagated — with the runtime never invoked and the Boss never told.
+   *
+   * A guard on the site is structurally blind to that, because everything it
+   * reads is still true. This one reads what is passed in: one call
+   * expression, naming one of the four operations CAPTAIN-35 enumerates.
+   */
+  it('passes exactly one named effect operation to each effect boundary', () => {
+    // The operations CAPTAIN-35 names: the sub-runtime driven (either
+    // entry point), the engagement constructed, the stack disposed, the
+    // advertised action applied.
+    const EFFECT_OPERATIONS = [
+      'frame.runtime.handleBossInput',
+      'parent.runtime.resumePlaybookCall',
+      'leaf.runtime.apply!',
+      'engage',
+      'disposeStack',
+    ];
+    const operands: string[] = [];
+    for (let index = shellSource.indexOf('runEffect(');
+      index >= 0;
+      index = shellSource.indexOf('runEffect(', index + 1)
+    ) {
+      // Skip the definition and the prose that mentions it.
+      if (/[A-Za-z.]$/.test(shellSource.slice(index - 1, index))) continue;
+      const open = index + 'runEffect'.length;
+      let depth = 0;
+      let end = open;
+      for (; end < shellSource.length; end += 1) {
+        const char = shellSource[end];
+        if (char === '(') depth += 1;
+        else if (char === ')') {
+          depth -= 1;
+          if (depth === 0) break;
+        }
+      }
+      operands.push(
+        shellSource
+          .slice(open + 1, end)
+          .replace(/\s+/g, ' ')
+          .trim()
+          // Prettier's trailing comma on a wrapped argument.
+          .replace(/,$/, ''),
+      );
+    }
+    // The definition itself is `const runEffect = async <T>(operation…`, not a
+    // call, so every operand collected here is a real boundary.
+    expect(operands.length).toBeGreaterThanOrEqual(5);
+    for (const operand of operands) {
+      const call = /^\(\) => ([A-Za-z_$][\w$.!]*)\(([\s\S]*)\)$/.exec(operand);
+      expect(call, `not one call expression: ${operand}`).not.toBeNull();
+      const [, callee, args] = call!;
+      // The callee's own argument list has to close at the very end, so a
+      // sequence or a second call cannot hide inside the operand.
+      let depth = 1;
+      for (const char of args!) {
+        if (char === '(') depth += 1;
+        else if (char === ')') depth -= 1;
+        expect(depth, `operand closes early: ${operand}`).toBeGreaterThan(0);
+      }
+      expect(depth, `operand does not close: ${operand}`).toBe(1);
+      expect(EFFECT_OPERATIONS, `not a named effect: ${operand}`).toContain(
+        callee,
+      );
+    }
+  });
+
   it('records an effect error only where the effect threw', () => {
     const lines = codeLines();
     // Attribution is produced at one place: the catch inside `runEffect`.
@@ -4121,5 +4197,140 @@ describe('amended CAPTAIN-21 summary gating', () => {
       'No saved-counts line is supplied for this turn; append no saved-counts line.',
     );
     expect(closing).not.toContain('Saved you');
+  });
+});
+
+/**
+ * Round-8 finding 1, behavioral half. Every Boss turn owes exactly one visible
+ * settlement (CAPTAIN-34), and the shape guards above cannot see whether a
+ * given host fault reaches one — they read where attribution is recorded, not
+ * what happens when a port rejects. This matrix reads the ports off the host
+ * surfaces the shell is actually handed, so a seventh port is covered on the
+ * day it is added rather than the day someone remembers this file.
+ *
+ * The two settlement channels are excluded, and only they: a fault in the
+ * channel a settlement would go out on cannot be answered by surfacing a
+ * settlement on it, which is a different duty and has its own rows.
+ */
+describe('CAPTAIN-39 a faulting host port still settles the Boss turn', () => {
+  const SETTLEMENT_CHANNELS = new Set(['emitReply', 'emitStatus']);
+
+  const hostPortNames = (): string[] => {
+    const probe = makeShellHarness([shellEntry('code', 'code')]);
+    const names = new Set<string>();
+    for (const surface of [probe.session, probe.context] as Record<
+      string,
+      unknown
+    >[]) {
+      for (const [name, value] of Object.entries(surface)) {
+        if (typeof value === 'function' && !SETTLEMENT_CHANNELS.has(name)) {
+          names.add(name);
+        }
+      }
+    }
+    return [...names].sort();
+  };
+
+  const isRefusalLine = (line: string): boolean =>
+    line.startsWith('Cannot do that:');
+
+  it.each(hostPortNames())(
+    'settles the turn when the host %s port throws',
+    async (port) => {
+      const code = shellEntry('code', 'code');
+      const harness = makeShellHarness(
+        [code],
+        [
+          { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+          decisionReply({ action: 'deliver' }),
+          { status: 'ok', finalText: 'Passed it along.', resumeToken: 'A2' },
+        ],
+      );
+      await harness.init();
+      await harness.turn('/code fix the parser', 1);
+      const surfacedBefore = harness.surfaced.length;
+      const refusedBefore = harness.statuses.filter(isRefusalLine).length;
+      const drivesBefore = code.runtimes[0]!.inputs.length;
+
+      // Faulted from the second turn only, so the fixture reaching it is
+      // clean and the count below belongs to this turn alone.
+      for (const surface of [harness.session, harness.context] as Record<
+        string,
+        unknown
+      >[]) {
+        if (typeof surface[port] === 'function') {
+          surface[port] = async () => {
+            throw new Error(`${port} unavailable`);
+          };
+        }
+      }
+
+      await harness.turn('hand it to the coder', 2).catch(() => undefined);
+
+      const settlements =
+        harness.surfaced.length -
+        surfacedBefore +
+        (harness.statuses.filter(isRefusalLine).length - refusedBefore);
+      expect(
+        settlements,
+        `a faulting ${port} left the turn with no Boss-visible settlement`,
+      ).toBe(1);
+      // And nothing was driven twice on the way to it.
+      expect(code.runtimes[0]!.inputs.length - drivesBefore).toBeLessThanOrEqual(
+        1,
+      );
+    },
+  );
+
+  /**
+   * The narrowest reproduction of the same finding, and the one with no
+   * CAPTAIN-22 defense behind it: the host's telemetry sink rejects exactly
+   * the shell-FSM transition `setMode('engaged.driving', 'submit')` makes one
+   * line before the runtime call. Nothing about it is a visibility rejection,
+   * nothing about it is the runtime's, and the runtime is never reached — yet
+   * a boundary drawn around the drive sequence filed it as an effect failure
+   * and propagated it, ending the turn with nothing surfaced and nothing
+   * statused.
+   */
+  it('settles a telemetry rejection raised one line before the runtime call', async () => {
+    const code = shellEntry('code', 'code');
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        decisionReply({ action: 'deliver' }),
+        { status: 'ok', finalText: 'Passed it along.', resumeToken: 'A2' },
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const surfacedBefore = harness.surfaced.length;
+    const drivesBefore = code.runtimes[0]!.inputs.length;
+
+    const sink = harness.session.emitTelemetry;
+    harness.session.emitTelemetry = async (event: {
+      topic: string;
+      payload: unknown;
+    }) => {
+      const payload = event.payload as { to?: unknown } | undefined;
+      if (payload?.to === 'engaged.driving') {
+        throw new Error('telemetry sink unavailable');
+      }
+      await sink(event);
+    };
+
+    await harness.turn('hand it to the coder', 2).catch(() => undefined);
+
+    // The runtime was never invoked, so nothing was an effect...
+    expect(code.runtimes[0]!.inputs.length).toBe(drivesBefore);
+    expect(code.runtimes[0]!.disposeCount).toBe(0);
+    // ...and the turn still owed the Boss its one settlement, which it now
+    // reaches. Which CAPTAIN-34 wording that reply carries is composed from
+    // what the turn recorded and is pinned by CAPTAIN-34's own rows; what this
+    // row pins is that the reply exists at all, where before there was none.
+    const settlement = harness.surfaced.slice(surfacedBefore);
+    expect(settlement).toHaveLength(1);
+    expect(settlement[0]).toMatch(/^I could not finish/);
+    expect(settlement[0]).not.toContain('engaged.driving');
   });
 });

@@ -893,7 +893,17 @@ attribution at the effect invocation itself — the sub-runtime driven,
 the engagement constructed, the stack disposed, the advertised action
 applied — so that only a value which escaped one of those calls is an
 effect error, and shall not infer it from a turn-scoped record that an
-effect was attempted. A flag set before an attempt is inherited by
+effect was attempted.
+The boundary shall enclose that one operation and nothing else. Shell
+control work performed on the way to an effect — the leaf check, the
+visibility request ([CAPTAIN-22](#captain-22)), the mode change and its
+telemetry — and the processing of what the runtime returned are not
+effects, and a boundary drawn around the sequence containing them files
+their failures as effect failures with the runtime never invoked,
+propagating instead of settling and costing the Boss the settlement the
+turn owes ([CAPTAIN-34](../user/playbook-captain.md#captain-34)). A
+region is not an operation, and the shell shall not treat one as the
+other. A flag set before an attempt is inherited by
 everything after it: a `rejected` receipt is positive proof that no
 effect ran, yet a failure in *presenting* that refusal would still be
 filed as an effect error and propagated, leaving the Boss with no

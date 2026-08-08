@@ -632,6 +632,20 @@ leave through one seam that performs the emission, writes its journal
 record, and marks the turn together, and effect attribution shall be
 recorded at the effect invocation and read by identity of the value that
 threw, with no earlier-set flag anywhere in the shell.
+The suite shall read what is passed to that invocation and not only where
+it sits: it shall fail unless every effect boundary in the shell encloses
+exactly one call expression naming one of the operations
+[CAPTAIN-35](../dev/playbook-captain.md#captain-35) enumerates, a
+boundary wrapping a sequence being invisible to a check that reads only
+the recording site.
+The suite shall fail unless a host port that rejects still leaves the
+turn one Boss-visible settlement, over every port the shell is handed
+rather than a listed few — the two settlement channels excepted, a fault
+in the channel a settlement goes out on being a different duty — and
+unless the narrow case holds specifically: a telemetry sink rejecting the
+shell-FSM transition made one line before the runtime call settles the
+turn with the runtime never invoked, that failure being neither the
+runtime's nor a visibility rejection.
 
 ### CAPTAIN-40
 

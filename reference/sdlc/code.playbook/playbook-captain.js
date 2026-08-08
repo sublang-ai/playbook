@@ -1089,12 +1089,15 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (leafFrame() !== frame) {
             throw new Error('only the active leaf may receive Boss input');
         }
+        // CAPTAIN-35: the leaf check, the visibility request, and the mode change
+        // are shell control work performed on the way to the runtime, not the
+        // effect. Only the call below is the effect, so only it is inside the
+        // boundary — a `setVisiblePlayers` or telemetry rejection here leaves the
+        // runtime uninvoked and owes the Boss the CAPTAIN-34 reply rather than an
+        // exception filed against an effect that never ran.
         await requestVisibility(frame.enablement);
         await setMode('engaged.driving', 'submit');
-        const result = await frame.runtime.handleBossInput({
-            text,
-            signal,
-        });
+        const result = await runEffect(() => frame.runtime.handleBossInput({ text, signal }));
         frame.state = result.state;
         return result;
     };
@@ -1133,11 +1136,11 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
         let result;
         try {
-            result = await parent.runtime.resumePlaybookCall({
+            result = await runEffect(() => parent.runtime.resumePlaybookCall({
                 callId: parentLink.callId,
                 result: effectiveResult,
                 signal: context.signal,
-            });
+            }));
         }
         catch (error) {
             if (disposing || invocationSignal?.aborted)
@@ -1169,7 +1172,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 await resumeParent(frame, callResultFor(frame, result), context);
             }
             else {
-                await disposeStack('final');
+                await runEffect(() => disposeStack('final'));
             }
             return;
         }
@@ -1632,6 +1635,16 @@ export function createPlaybookCaptainShell(options, deps = {}) {
      * proof against, a `rejected` receipt whose surfacing then fails, where the
      * receipt says plainly that no effect ran. An effect error propagates
      * instead of settling, so a misfiling costs the Boss their only settlement.
+     *
+     * Neither can a boundary drawn around a *region* of the turn. `operation` is
+     * therefore always one call expression naming one of those four operations,
+     * never a closure that also performs the shell work leading to it: the leaf
+     * check, the visibility request, the mode change, and the processing of what
+     * the runtime returned are all shell control work, and a boundary wide
+     * enough to contain them files their failures as effect failures while the
+     * runtime sits uninvoked. Widening it again is what
+     * [CAPTAIN-39](../../../specs/test/playbook-captain.md) reads out of this
+     * source.
      */
     const runEffect = async (operation) => {
         try {
@@ -2058,10 +2071,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     };
     const driveAndProcess = async (frame, text, context) => {
         try {
-            await runEffect(async () => {
-                const result = await driveFrame(frame, text, context);
-                await processFrameResult(frame, result, context);
-            });
+            // CAPTAIN-35: no boundary here. `driveFrame` marks the runtime call and
+            // `processFrameResult` marks the resume and disposal it performs, each
+            // at the operation itself; a boundary drawn around the whole sequence
+            // would file this frame's shell work as an effect too.
+            const result = await driveFrame(frame, text, context);
+            await processFrameResult(frame, result, context);
         }
         catch (error) {
             if (frame.parent && frames.includes(frame)) {
@@ -2227,12 +2242,16 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             journalAction({ action: 'dismiss', playbookId: leaf.entry.id });
             const label = frameLabel(leaf);
             if (leaf.parent) {
-                await runEffect(() => resumeParent(leaf, {
+                // No boundary around the return itself: `resumeParent` disposes the
+                // child and drives the parent, and each of those is marked where it
+                // happens. A visibility rejection raised on the way back is shell
+                // control work and settles rather than propagating (CAPTAIN-22/35).
+                await resumeParent(leaf, {
                     status: 'aborted',
                     playbookId: leaf.entry.id,
                     childSessionId: leaf.sessionId,
                     ...(leaf.state ? { state: leaf.state } : {}),
-                }, context, 'stopped'));
+                }, context, 'stopped');
                 facts.push(`Dismissed ${label} and returned to its caller.`);
             }
             else {
@@ -2366,12 +2385,13 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (receipt.disposition === 'executed') {
             facts.push(`Applied "${actionId}" on ${frameLabel(leaf)}.`);
             if (receipt.run !== undefined) {
-                await runEffect(async () => {
-                    await processFrameResult(leaf, receipt.run, context);
-                    if (leafFrame() && mode === 'engaged.driving') {
-                        await setMode('engaged.parked', 'turn.settled');
-                    }
-                });
+                // The same rule as the drive path: processing the run the receipt
+                // carried is not itself an effect, and the resume or disposal it may
+                // perform is marked where it happens (CAPTAIN-35).
+                await processFrameResult(leaf, receipt.run, context);
+                if (leafFrame() && mode === 'engaged.driving') {
+                    await setMode('engaged.parked', 'turn.settled');
+                }
             }
         }
         else if (receipt.disposition === 'rejected') {
