@@ -2485,21 +2485,38 @@ export function createPlaybookCaptainShell(
       const kind = servingCall ?? 'decision';
       const turn = activeTurn;
       // CAPTAIN-35: a refusal owed to the pinned conversation rides the next
-      // call that opens a Boss turn, and is consumed the moment it does — a
-      // later refusal on this same turn writes a fresh one for the next. A
-      // closing reply is excluded: it composes only from the outcome report
+      // call that opens a Boss turn, and the shell delivers it once. A closing
+      // reply is excluded: it composes only from the outcome report
       // (CAPTAIN-20).
+      //
+      // "Once" is counted in calls, and `compose` runs once per *call*, not
+      // once per port invocation: DR-028's corrective re-ask and CAPTAIN-40's
+      // decision re-ask both recompose this same logical call, and the reseed
+      // re-issues it. Clearing the notice beside the capture therefore cleared
+      // it a call too early — every recomposition still carried the captured
+      // text, so a corrected turn delivered the block twice — while a turn
+      // that aborted after the clear delivered it zero times. The block is
+      // claimed by the first composition that carries it and the notice is
+      // cleared only once that call comes back, so a re-ask inherits the
+      // already-claimed state and an abort leaves the notice standing for the
+      // next turn. A reseeded re-issue carries it through the recap instead,
+      // the journal holding the same refusal record.
       const pendingRefusal = kind === 'closingReply' ? undefined : refusalNotice;
-      if (pendingRefusal !== undefined) refusalNotice = undefined;
+      let refusalClaimed = false;
+      const carryRefusal = (): boolean => {
+        if (pendingRefusal === undefined || refusalClaimed) return false;
+        refusalClaimed = true;
+        return true;
+      };
       const compose = (options: {
         reseedDigest?: string;
         proseRejection?: string;
       }): string =>
         sessionCaptainEnvelope(prompt, [
           ...(turn ? [labeledBlock('Boss message', turn.bossText)] : []),
-          ...(pendingRefusal === undefined
-            ? []
-            : [labeledBlock('Refused selection', pendingRefusal)]),
+          ...(carryRefusal()
+            ? [labeledBlock('Refused selection', pendingRefusal!)]
+            : []),
           ...(kind === 'closingReply'
             ? []
             : [labeledBlock('ControlView digest', controlViewDigest())]),
@@ -2520,6 +2537,12 @@ export function createPlaybookCaptainShell(
             : [labeledBlock('Conversation recap', options.reseedDigest)]),
         ]);
       const outcome = await durableCall(context, compose);
+      // Delivered: the call this notice rode came back. A refusal raised later
+      // in the turn writes a fresh notice, so the identity check keeps this
+      // from clearing that one.
+      if (refusalClaimed && refusalNotice === pendingRefusal) {
+        refusalNotice = undefined;
+      }
       if (kind === 'decision') {
         // A model-decided `respond` surfaces this call's own prose, so the
         // shell keeps the composed call reachable for CAPTAIN-40's corrective

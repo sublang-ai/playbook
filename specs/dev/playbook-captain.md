@@ -792,6 +792,15 @@ journal-derived, so it is inside the [CAPTAIN-9](#captain-9) exclusions,
 and it rides a call the turn was making anyway, so a refusal shall cost
 no model call ([CAPTAIN-7](#captain-7)). The shell shall deliver it once
 and shall then clear it, a later refusal composing a fresh one.
+Once is counted in delivered calls. A prompt may be composed more than
+once for the same call — a corrective re-ask of a rejected reply
+([DR-028](../decisions/028-empty-ok-result-re-ask.md)) and a reseeded
+re-issue both recompose it — so the block shall be claimed by the first
+composition that carries it and the notice cleared only when a call that
+carried it returns. Clearing it at composition delivers it twice on a
+turn that needs a corrective and zero times on a turn that then aborts;
+a reseeded re-issue needs no second copy, the reseed digest carrying the
+same refusal from the journal.
 The journal shall never be Boss-visible, shall feed only the
 conversation reseed, and shall be complete for the session lifetime:
 the shell shall drop no record, and the only bounding shall be a

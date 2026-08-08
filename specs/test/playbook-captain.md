@@ -626,6 +626,13 @@ naming the refused selection, which side refused, and the reason; that
 block shall ride exactly one call; and a later reseed digest shall carry
 the refused action record and the refusal line the Boss saw, in order
 between the two Boss messages they stand between.
+The suite shall fail unless a refused selection's block rides one call
+even where that call's prompt is composed more than once: a turn opening
+with the notice whose reply is then rejected and re-asked shall carry the
+block on the original call and not on the re-ask; and unless a turn whose
+notice-carrying call never delivered — its call and its reseed both
+failing in transport — leaves the notice standing, the next turn's
+opening call carrying it.
 The suite shall fail unless the shell's shape makes both duties
 unbranchable rather than enumerated: every Boss-visible settlement shall
 leave through one seam that performs the emission, writes its journal

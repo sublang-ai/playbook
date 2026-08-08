@@ -4334,3 +4334,92 @@ describe('CAPTAIN-39 a faulting host port still settles the Boss turn', () => {
     expect(settlement[0]).not.toContain('engaged.driving');
   });
 });
+
+/**
+ * Round-8 finding 6. CAPTAIN-35 gives the refusal notice to one call. The
+ * notice was captured and cleared once per *port invocation*, but the closure
+ * that carries it is composed once per *model call* — so a turn whose reply
+ * needed a corrective re-ask delivered the block on both calls.
+ */
+describe('CAPTAIN-35 the refusal block rides one call across a corrective re-ask', () => {
+  it('carries it on the original call and not on the re-ask', async () => {
+    const code = shellEntry('code', 'code');
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        // Turn 2: a second `start` while /code is engaged — refused.
+        decisionReply({
+          action: 'start',
+          playbookId: 'code',
+          input: { origin: 'boss', text: 'start code again' },
+        }),
+        // Turn 3 opens carrying the notice, and its prose leaks control
+        // syntax, so the shell re-asks the same call once.
+        decisionReply({
+          action: 'respond',
+          text: 'Sure: {"action":"deliver"} — handing it over.',
+        }),
+        {
+          status: 'ok',
+          finalText: 'It was already running, so nothing started twice.',
+          resumeToken: 'A3',
+        },
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    await harness.turn('start code again', 2);
+    await harness.turn('why?', 3);
+
+    const carrying = harness.captainCalls.filter((call) =>
+      call.prompt.includes('[Refused selection]'),
+    );
+    expect(carrying, 'the refusal block rides exactly one call').toHaveLength(1);
+    // And the one it rode is the original, not the corrective re-ask.
+    expect(carrying[0]!.prompt).not.toContain('[Reply rejected]');
+    const reask = harness.captainCalls.find((call) =>
+      call.prompt.includes('[Reply rejected]'),
+    );
+    expect(reask).toBeDefined();
+    expect(harness.surfaced.at(-1)).toBe(
+      'It was already running, so nothing started twice.',
+    );
+  });
+
+  it('keeps the notice for the next turn when the turn it rode never delivered', async () => {
+    // Cleared beside the capture, a notice was gone the moment a prompt was
+    // composed — so a turn that then failed in transport twice left the next
+    // turn with neither the block nor, on a pinned conversation, any other
+    // record of the refusal. It is cleared on delivery now.
+    const code = shellEntry('code', 'code');
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        decisionReply({
+          action: 'start',
+          playbookId: 'code',
+          input: { origin: 'boss', text: 'start code again' },
+        }),
+        // Turn 3: the call carrying the notice fails, and so does its reseed.
+        { status: 'error', error: 'transport down' },
+        { status: 'error', error: 'transport still down' },
+        // Turn 4 opens on a conversation that never received the notice.
+        decisionReply({ action: 'respond', text: 'It was already running.' }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    await harness.turn('start code again', 2);
+    await harness.turn('why?', 3);
+    await harness.turn('why though?', 4);
+
+    const turn4 = harness.captainCalls.at(-1)!;
+    expect(turn4.prompt).toContain('[Boss message]\nwhy though?');
+    expect(turn4.prompt).toContain('[Refused selection]');
+    expect(turn4.prompt).toContain(
+      'Your last selection (start) was refused by the host and executed nothing.',
+    );
+  });
+});
