@@ -62,6 +62,24 @@ function compactEvidence(text) {
         ? compacted
         : `${compacted.slice(0, QUOTED_EVIDENCE_LIMIT)}… (truncated)`;
 }
+/**
+ * CAPTAIN-9: the one way a value the shell did not author becomes part of a
+ * digest line. Tagging is what makes it a rule instead of a habit — past this
+ * tag a template literal cannot interpolate anything without the value being
+ * compacted and bounded first, so a line added to a digest later inherits the
+ * property rather than having to remember it.
+ *
+ * What escaped while it was a habit was nothing exotic: the advertised action
+ * id and label and the catalog intent, three plain strings sitting in the same
+ * function as the context lines the habit did cover. A newline in any of them
+ * opened a second `[Boss message]` or `[Catalog digest]` block inside the
+ * envelope, above the shell’s own, reading to the model as host-authored.
+ */
+function digestLine(parts, ...values) {
+    return parts.reduce((line, part, index) => index < values.length
+        ? `${line}${part}${compactEvidence(String(values[index]))}`
+        : `${line}${part}`, '');
+}
 // CAPTAIN-9: what a prompt is given as the leaf's state is that state's
 // *meaning*, never its internal identifier. The runtime publishes the meaning
 // in its ControlView (PBRT-52), written from the artifact's own source
@@ -78,9 +96,9 @@ function stateDigestLine(state, description) {
         description === undefined
             ? NO_STATE_DESCRIPTION
             : compactEvidence(description),
-        `tags ${tags}`,
+        digestLine `tags ${tags}`,
         state.quiescent ? 'quiescent' : 'busy',
-        `status ${state.status}`,
+        digestLine `status ${state.status}`,
     ].join('; ');
 }
 function pendingQuestionLines(pending) {
@@ -92,7 +110,7 @@ function pendingQuestionLines(pending) {
     const lines = [];
     for (const item of list) {
         if (typeof item === 'string') {
-            lines.push(`- ${quoteEvidence(item)}`);
+            lines.push(digestLine `- ${quoteEvidence(item)}`);
             continue;
         }
         if (typeof item === 'object' && item !== null) {
@@ -114,10 +132,14 @@ function pendingQuestionLines(pending) {
                 : typeof record.text === 'string'
                     ? record.text
                     : JSON.stringify(record);
+            // Each foreign value is bounded once, where it enters. A composed
+            // fragment is never handed back to the tag as a value: bounding it a
+            // second time would cut the line at the seam's limit and drop whatever
+            // the shell had already written after the long part.
             const asked = player === undefined
-                ? quoteEvidence(text)
-                : `${quoteEvidence(player)} asks: ${quoteEvidence(text)}`;
-            const marker = id === undefined ? '' : `(${quoteEvidence(id)}) `;
+                ? digestLine `${quoteEvidence(text)}`
+                : digestLine `${quoteEvidence(player)} asks: ${quoteEvidence(text)}`;
+            const marker = id === undefined ? '' : digestLine `(${quoteEvidence(id)}) `;
             lines.push(`- ${marker}${asked}`);
         }
     }
@@ -1489,19 +1511,19 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (typeof context !== 'object' ||
             context === null ||
             Array.isArray(context)) {
-            return [`Leaf context: ${compactEvidence(JSON.stringify(context))}`];
+            return [digestLine `Leaf context: ${JSON.stringify(context)}`];
         }
         const entries = Object.entries(context).filter(([, value]) => value !== undefined);
         if (entries.length === 0)
             return [];
         return [
             'Leaf context:',
-            ...entries.map(([key, value]) => `- ${compactEvidence(key)}: ${compactEvidence(JSON.stringify(value))}`),
+            ...entries.map(([key, value]) => digestLine `- ${key}: ${JSON.stringify(value)}`),
         ];
     };
     const controlViewDigest = () => {
         const leaf = leafFrame();
-        const lines = [`Active path: ${activePathDigest()}`];
+        const lines = [digestLine `Active path: ${activePathDigest()}`];
         if (!leaf) {
             lines.push('The shell is idle: no leaf state, no pending question.');
             lines.push('Advertised actions: none.');
@@ -1529,10 +1551,10 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             // Degraded digest (DR-029 §5): the engagement frame plus the leaf facts
             // the shell already mirrors from telemetry, and no context fields.
             lines.push(describeFailure === undefined
-                ? `Leaf ${frameLabel(leaf)} runtime advertises no control surface.`
-                : `Leaf ${frameLabel(leaf)} runtime has a control surface, but reading it failed: ${describeFailure.name}: ${compactEvidence(describeFailure.message)}.`);
+                ? digestLine `Leaf ${frameLabel(leaf)} runtime advertises no control surface.`
+                : digestLine `Leaf ${frameLabel(leaf)} runtime has a control surface, but reading it failed: ${describeFailure.name}: ${describeFailure.message}.`);
             if (leaf.state) {
-                lines.push(`Leaf state: ${stateDigestLine(leaf.state, undefined)}`);
+                lines.push(['Leaf state', stateDigestLine(leaf.state, undefined)].join(': '));
             }
             // The mirrored questions are this digest's only selection surface, and
             // the shell renders their ids into the prompt exactly as the read view
@@ -1546,7 +1568,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 ? 'Pending Boss questions: none.'
                 : ['Pending Boss questions:', ...pending].join('\n'));
             if (lastError) {
-                lines.push(`Last error: ${JSON.stringify(lastError)}`);
+                lines.push(digestLine `Last error: ${JSON.stringify(lastError)}`);
             }
             lines.push(describeFailure === undefined
                 ? 'Advertised actions: none.'
@@ -1568,14 +1590,17 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         // action id came to sit outside a duty the advertised-action id was inside.
         collectSuppliedIdentifiers(view.actions, recordSuppliedIdentifier);
         collectSuppliedIdentifiers(view.pendingQuestions, recordSuppliedIdentifier);
-        lines.push(`Leaf ${frameLabel(leaf)}: state: ${stateDigestLine(view.state, view.stateDescription)}`);
+        lines.push([
+            digestLine `Leaf ${frameLabel(leaf)}: state`,
+            stateDigestLine(view.state, view.stateDescription),
+        ].join(': '));
         lines.push(...leafContextLines(view.context));
-        const pending = view.pendingQuestions.map((question) => `- (${quoteEvidence(question.questionId)}) ${quoteEvidence(question.player)} asks: ${quoteEvidence(question.question)}`);
+        const pending = view.pendingQuestions.map((question) => digestLine `- (${quoteEvidence(question.questionId)}) ${quoteEvidence(question.player)} asks: ${quoteEvidence(question.question)}`);
         lines.push(pending.length === 0
             ? 'Pending Boss questions: none.'
             : ['Pending Boss questions:', ...pending].join('\n'));
         if (view.lastError) {
-            lines.push(`Last error: ${JSON.stringify({
+            lines.push(digestLine `Last error: ${JSON.stringify({
                 name: view.lastError.name,
                 message: view.lastError.message,
             })}`);
@@ -1584,12 +1609,16 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             ? 'Advertised actions: none.'
             : [
                 'Advertised actions:',
-                ...view.actions.map((action) => `- ${action.id}: ${action.label}`),
+                ...view.actions.map((action) => digestLine `- ${action.id}: ${action.label}`),
             ].join('\n'));
         return lines.join('\n');
     };
+    // The catalog is registry-authored, not shell-authored: an id, a command,
+    // and an intent all arrive from an enabled module. They pass the same seam
+    // the ControlView lines do, so an intent carrying a newline cannot open a
+    // second labeled block above the shell's own catalog.
     const catalogDigest = () => [...enablementById.values()]
-        .map((enablement) => `- ${enablement.entry.id} (/${enablement.command}): ${enablement.entry.intent}`)
+        .map((enablement) => digestLine `- ${enablement.entry.id} (/${enablement.command}): ${enablement.entry.intent}`)
         .join('\n');
     // -------------------------------------------------------------------------
     // Session journal (CAPTAIN-35): append-only, JSON-safe, never Boss-visible.

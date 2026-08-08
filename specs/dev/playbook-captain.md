@@ -284,6 +284,14 @@ value, and shall never insert a runtime's context as an opaque JSON
 document. A value the shell did not author — of any length, carrying
 any newline — shall therefore be unable to forge a second labeled
 block into the envelope or to crowd the rest of the digest out of it.
+That property is owed by every foreign value the shell composes into a
+digest line and not by the context members alone: an advertised action's
+id and label are the runtime's strings and an enabled playbook's id,
+command, and intent are the registry's, and a newline in any of them
+opens a labeled block the model reads as host-authored. The shell shall
+therefore escape and bound at the one seam through which a value it did
+not author becomes part of a digest line, so a line added to a digest
+later carries the property without restating it.
 Digests and session-Captain prompts shall exclude session and call
 UUIDs, resume tokens, trace payloads, module specifiers, option
 values, player rosters, raw journal records, and ledger JSON; player

@@ -719,6 +719,13 @@ unless a long exported value is truncated like every other quoted
 foreign span, and unless an exported value spelling out a second
 labeled block opens no such block in either the decision or the
 closing-reply prompt.
+The same shall hold for every other foreign string the shell composes
+into a digest line, enumerated from the declarations that define them
+rather than from a remembered list: the suite shall fail unless a
+newline-bearing sentinel placed in any string-typed member of the
+advertised-action record, of the pending-question record, or of an
+enabled playbook's registry entry leaves the composed prompt's labeled
+blocks exactly as a clean prompt's.
 The suite shall fail unless a leaf whose control view reads cleanly and
 publishes no description for its current state has that stated as a
 published absence, with the state id the same view carries never
