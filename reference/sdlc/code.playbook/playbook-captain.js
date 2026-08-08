@@ -97,15 +97,28 @@ function pendingQuestionLines(pending) {
         }
         if (typeof item === 'object' && item !== null) {
             const record = item;
-            const id = typeof record.id === 'string' ? record.id : undefined;
+            // PBRT-34 names this field `questionId`, and both shipping producers
+            // emit it under that name. Reading `id` here dropped the id of every
+            // mirrored question — and with it CAPTAIN-9's duty to carry pending
+            // questions with their ids, on precisely the degraded path a runtime
+            // without the control-surface pair takes. `id` stays as a fallback for a
+            // host that mirrors the shorter name.
+            const id = typeof record.questionId === 'string'
+                ? record.questionId
+                : typeof record.id === 'string'
+                    ? record.id
+                    : undefined;
+            const player = typeof record.player === 'string' ? record.player : undefined;
             const text = typeof record.question === 'string'
                 ? record.question
                 : typeof record.text === 'string'
                     ? record.text
                     : JSON.stringify(record);
-            lines.push(id === undefined
-                ? `- ${quoteEvidence(text)}`
-                : `- (${quoteEvidence(id)}) ${quoteEvidence(text)}`);
+            const asked = player === undefined
+                ? quoteEvidence(text)
+                : `${quoteEvidence(player)} asks: ${quoteEvidence(text)}`;
+            const marker = id === undefined ? '' : `(${quoteEvidence(id)}) `;
+            lines.push(`- ${marker}${asked}`);
         }
     }
     return lines;
@@ -152,9 +165,79 @@ const CONTROL_VOCABULARY = [
  * grammar is `<verb>:<target>`: without it, `jump:ready` — an identifier by
  * construction — would read as ordinary English while its own fragment is
  * correctly left alone.
+ *
+ * The capital has to be an *internal* one, as CAPTAIN-9 states it. A leading
+ * capital is what any word carries at the start of a sentence, so counting it
+ * would make `Boss` and `Ready` rejectable — plain speech again.
+ *
+ * There is no length floor. One stood here as a proxy for something else: the
+ * rejection test was a raw substring match, which a one- or two-character id
+ * such as `5` or `q1` made wildly over-broad, so short ids were dropped from
+ * the duty to keep the match safe. The floor was invisible in the spec, which
+ * states this criterion as a character class and nothing more, and it silently
+ * excused exactly the ids a runtime is most likely to mint. The match is
+ * token-aware now (`repeatsIdentifier`), so the proxy has nothing left to buy.
  */
 function machineShapedIdentifier(id) {
-    return id.length >= 3 && /[A-Z0-9_.:-]/.test(id);
+    return /[0-9_.:-]/.test(id) || /(?!^)[A-Z]/.test(id);
+}
+/**
+ * Whether a string is shaped like an identifier at all: one unbroken token
+ * whose `.`, `:`, or `-` separators sit between alphanumeric runs. Prose is
+ * not, so a published state description or a runtime's error message can never
+ * be mistaken for a supplied identifier however many capitals or digits it
+ * happens to carry.
+ */
+const IDENTIFIER_SHAPE = /^[A-Za-z0-9_$]+(?:[.:-][A-Za-z0-9_$]+)*$/;
+/** The identifier-shaped tokens of a text, under that same grammar. */
+const IDENTIFIER_TOKENS = /[A-Za-z0-9_$]+(?:[.:-][A-Za-z0-9_$]+)*/g;
+/**
+ * Whether prose repeats an identifier — as a token of its own, not as a
+ * substring of something else. A supplied id of `5` occurs inside `1.5.2` and
+ * a supplied id of `q1` inside a build tag; refusing a reply for either would
+ * refuse the reply for text it did not repeat, and it was that over-breadth
+ * the old length floor was silently paying for.
+ */
+function repeatsIdentifier(prose, id) {
+    if (id.length === 0 || !prose.includes(id))
+        return false;
+    for (const token of prose.match(IDENTIFIER_TOKENS) ?? []) {
+        if (token === id)
+            return true;
+    }
+    return false;
+}
+/**
+ * CAPTAIN-9's supplied set, read out of the artifacts the shell renders into a
+ * prompt rather than out of a call each renderer has to remember. Every
+ * identifier-shaped, machine-shaped string a structured record carries, at any
+ * depth, is one the shell placed in the prompt when it rendered that record —
+ * the leaf's ControlView, the mirrored pending questions, the journal action
+ * records a reseed recap replays. Registration by remembered call is what left
+ * the recap and the degraded question path outside the duty while the two
+ * lines someone did remember stayed inside it.
+ *
+ * Prose members are skipped by construction: a description or a message
+ * carries spaces, so it is not identifier-shaped, and the walk cannot turn a
+ * sentence the model is meant to speak into a token it may not repeat.
+ */
+function collectSuppliedIdentifiers(value, record) {
+    if (typeof value === 'string') {
+        if (IDENTIFIER_SHAPE.test(value) && machineShapedIdentifier(value)) {
+            record(value);
+        }
+        return;
+    }
+    if (Array.isArray(value)) {
+        for (const item of value)
+            collectSuppliedIdentifiers(item, record);
+        return;
+    }
+    if (typeof value === 'object' && value !== null) {
+        for (const member of Object.values(value)) {
+            collectSuppliedIdentifiers(member, record);
+        }
+    }
 }
 /**
  * CAPTAIN-9's identifier duty. Both rejectable sets — live session ids and the
@@ -192,17 +275,17 @@ function proseRejection(prose, liveSessionIds = [], liveStateIds = [], suppliedI
         }
     }
     for (const sessionId of liveSessionIds) {
-        if (sessionId.length > 0 && prose.includes(sessionId)) {
+        if (repeatsIdentifier(prose, sessionId)) {
             return 'the reply leaked a live session identifier';
         }
     }
     for (const stateId of liveStateIds) {
-        if (prose.includes(stateId)) {
+        if (repeatsIdentifier(prose, stateId)) {
             return 'the reply leaked an internal state identifier';
         }
     }
     for (const suppliedId of suppliedIds) {
-        if (prose.includes(suppliedId)) {
+        if (repeatsIdentifier(prose, suppliedId)) {
             return 'the reply repeated an internal identifier the host supplied for selection only';
         }
     }
@@ -1451,6 +1534,13 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (leaf.state) {
                 lines.push(`Leaf state: ${stateDigestLine(leaf.state, undefined)}`);
             }
+            // The mirrored questions are this digest's only selection surface, and
+            // the shell renders their ids into the prompt exactly as the read view
+            // renders an advertised action's. Walking the record rather than naming
+            // a field is what keeps the two paths from drifting again: this one had
+            // been reading `id` while both shipping producers emit `questionId`, so
+            // the id reached neither the prompt nor the guarded set.
+            collectSuppliedIdentifiers(pendingBossQuestions, recordSuppliedIdentifier);
             const pending = pendingQuestionLines(pendingBossQuestions);
             lines.push(pending.length === 0
                 ? 'Pending Boss questions: none.'
@@ -1466,12 +1556,21 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 : 'No runtime action can be validated while the control view is unreadable, so plain text delivery is the only machine verb against it this turn and a `runtime` selection is invalid. Conversation is unaffected: `respond` stays valid for any turn.');
             return lines.join('\n');
         }
+        // CAPTAIN-9: the guarded set is what the digest supplies *for selection* —
+        // the advertised actions and the pending questions, whose ids the decision
+        // reply picks one of. It is not the grounding the same digest publishes:
+        // the state's description, its tags, and the projected context members are
+        // there precisely so a reply can reflect them, and refusing a reply for
+        // repeating its own grounding would refuse the answer the turn asked for.
+        // Walking the two selection records registers every identifier they carry
+        // at any depth, so a field either of them grows later is guarded without
+        // this function being edited — which is how a question id and a recap's
+        // action id came to sit outside a duty the advertised-action id was inside.
+        collectSuppliedIdentifiers(view.actions, recordSuppliedIdentifier);
+        collectSuppliedIdentifiers(view.pendingQuestions, recordSuppliedIdentifier);
         lines.push(`Leaf ${frameLabel(leaf)}: state: ${stateDigestLine(view.state, view.stateDescription)}`);
         lines.push(...leafContextLines(view.context));
-        const pending = view.pendingQuestions.map((question) => {
-            recordSuppliedIdentifier(question.questionId);
-            return `- (${quoteEvidence(question.questionId)}) ${quoteEvidence(question.player)} asks: ${quoteEvidence(question.question)}`;
-        });
+        const pending = view.pendingQuestions.map((question) => `- (${quoteEvidence(question.questionId)}) ${quoteEvidence(question.player)} asks: ${quoteEvidence(question.question)}`);
         lines.push(pending.length === 0
             ? 'Pending Boss questions: none.'
             : ['Pending Boss questions:', ...pending].join('\n'));
@@ -1485,10 +1584,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             ? 'Advertised actions: none.'
             : [
                 'Advertised actions:',
-                ...view.actions.map((action) => {
-                    recordSuppliedIdentifier(action.id);
-                    return `- ${action.id}: ${action.label}`;
-                }),
+                ...view.actions.map((action) => `- ${action.id}: ${action.label}`),
             ].join('\n'));
         return lines.join('\n');
     };
@@ -1617,6 +1713,26 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     // -------------------------------------------------------------------------
     // The durable conversation (CAPTAIN-31, CAPTAIN-35).
     // -------------------------------------------------------------------------
+    /**
+     * The reseed recap, and the identifiers it re-supplies. A recap replays the
+     * journal's own action records, so ids the shell handed the model turns ago
+     * — a `jump:<stateId>` the leaf has long stopped advertising — enter this
+     * turn's prompt again. Registering only what the ControlView advertises left
+     * them outside CAPTAIN-9's duty: nothing live named them, so no live check
+     * could reach them either, and a reply quoting one back went out.
+     *
+     * Only the structured records are walked. A `boss` payload is the Boss's own
+     * words and a `reply` or `refusal` payload is text the Boss already read;
+     * repeating any of those is not repeating an identifier the shell supplied.
+     */
+    const reseedDigest = () => {
+        for (const record of journal) {
+            if (record.kind === 'action' || record.kind === 'outcome') {
+                collectSuppliedIdentifiers(record.payload, recordSuppliedIdentifier);
+            }
+        }
+        return renderReseedDigest(journal);
+    };
     const markControlFailure = (error) => {
         if (activeTurn)
             activeTurn.controlFailure = true;
@@ -1691,7 +1807,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         let result;
         let failure;
         try {
-            result = await rawDurableCall(context, compose(seedFirstCall ? { reseedDigest: renderReseedDigest(journal) } : {}), resume);
+            result = await rawDurableCall(context, compose(seedFirstCall ? { reseedDigest: reseedDigest() } : {}), resume);
         }
         catch (error) {
             if (context.signal.aborted)
@@ -1716,10 +1832,10 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         // stays `needsSeeding` until a call comes back with a token, so a reseed
         // that itself fails leaves the obligation standing for the next turn.
         conversation = { kind: 'needsSeeding' };
-        const reseedDigest = renderReseedDigest(journal);
+        const recap = reseedDigest();
         let reissued;
         try {
-            reissued = await rawDurableCall(context, compose({ reseedDigest }), false);
+            reissued = await rawDurableCall(context, compose({ reseedDigest: recap }), false);
         }
         catch (error) {
             if (context.signal.aborted)

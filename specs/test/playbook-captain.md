@@ -700,6 +700,17 @@ target name shall get exactly one corrective re-ask naming the repeated
 supplied identifier, only the corrected prose shall reach the Boss
 surface, and neither the id nor its `<verb>:`-stripped fragment shall
 appear in any surfaced reply.
+The suite shall fail unless the same holds for an identifier the shell
+supplied through a block other than a read control view's advertised
+actions: a mirrored pending question shall reach the degraded digest with
+its id under the contract's own field name and a reply repeating that id
+shall be refused; and a reseed digest replaying an action record shall
+put that action's id back in the turn's prompt with nothing live
+advertising it, a reply repeating it never reaching the Boss surface.
+The suite shall fail unless a one-character supplied id is guarded like
+any other, and unless a reply carrying that id only inside a longer token
+is surfaced unchanged — the duty following the token a reply repeats
+rather than a substring match a length floor had to compensate for.
 The shell's own composition of the ControlView block shall be pinned
 against whatever a runtime exports: the suite shall fail unless each
 exported context member appears as its own line carrying its name and

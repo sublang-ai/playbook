@@ -4423,3 +4423,171 @@ describe('CAPTAIN-35 the refusal block rides one call across a corrective re-ask
     );
   });
 });
+
+/**
+ * Round-8 finding 2. CAPTAIN-9's supplied-identifier duty covers "a
+ * machine-shaped identifier the shell itself placed in one of this turn's
+ * prompts". Registration was two remembered calls in the digest composer, so
+ * every other path that puts an id in a prompt sat outside it.
+ */
+describe('CAPTAIN-9 identifiers the shell supplies are guarded wherever it supplies them', () => {
+  it('carries a mirrored question id into the degraded digest and guards it', async () => {
+    // A leaf without the control-surface pair takes the degraded digest, whose
+    // pending questions come from mirrored telemetry. It read `id`; the
+    // contract field — and what both shipping producers emit — is
+    // `questionId`, so the id reached neither the prompt nor the guarded set.
+    const code = shellEntry('code', 'code', {
+      onInput: async (_text, runtime) => {
+        await runtime.ports!.emitTelemetry({
+          topic: 'playbook.fsm.state',
+          payload: {
+            state: runtime.state(),
+            pendingBossQuestions: [
+              {
+                questionId: 'q-42',
+                player: 'coder',
+                question: 'Which file should I edit?',
+              },
+            ],
+          },
+        });
+        return { outcome: 'quiescent', state: runtime.state() };
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        decisionReply({
+          action: 'respond',
+          text: 'The coder is blocked on q-42 until you answer.',
+        }),
+        {
+          status: 'ok',
+          finalText: 'The coder is waiting on your answer about a file.',
+          resumeToken: 'A3',
+        },
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    await harness.turn('what is pending?', 2);
+
+    const decision = harness.decisionPrompts().at(-1)!;
+    expect(decision).toContain('Pending Boss questions:');
+    expect(decision).toContain('("q-42")');
+    expect(decision).toContain('"coder" asks: "Which file should I edit?"');
+
+    // Supplied, therefore guarded: one corrective re-ask naming the repeat,
+    // and the id never reaches the Boss surface.
+    const corrective = harness.captainCalls.filter((call) =>
+      call.prompt.includes('[Reply rejected]'),
+    );
+    expect(corrective).toHaveLength(1);
+    expect(corrective[0]!.prompt).toContain(
+      'the reply repeated an internal identifier the host supplied for selection only',
+    );
+    expect(harness.surfaced.at(-1)).toBe(
+      'The coder is waiting on your answer about a file.',
+    );
+    expect(JSON.stringify(harness.surfaced)).not.toContain('q-42');
+  });
+
+  it('guards an action id a reseed recap re-supplies', async () => {
+    // Turn 2 applies a jump; turn 3 dismisses the leaf, so by turn 4 nothing
+    // live advertises that id and no live-state check can reach it. Turn 4
+    // reseeds, and the recap replays the journal's action record — putting the
+    // id back into this turn's prompt, which is the whole test.
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [
+          { id: 'jump:planAndImplement', label: 'Resume from: planning' },
+        ],
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        decisionReply({ action: 'runtime', actionId: 'jump:planAndImplement' }),
+        { status: 'ok', finalText: 'Planning resumed.', resumeToken: 'A2' },
+        decisionReply({ action: 'dismiss' }),
+        { status: 'ok', finalText: 'Cleared.', resumeToken: 'A3' },
+        // Turn 4: the decision call fails, forcing the journal-seeded reseed.
+        { status: 'error', error: 'transport down' },
+        decisionReply({
+          action: 'respond',
+          text: 'Earlier you ran jump:planAndImplement, so planning resumed.',
+        }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    await harness.turn('resume from planning', 2);
+    await harness.turn('clear it', 3);
+    const surfacedBefore = harness.surfaced.length;
+    await harness.turn('what happened earlier?', 4);
+
+    const seeded = harness.captainCalls.find(
+      (call) =>
+        call.options.resume === false &&
+        call.prompt.includes('[Conversation recap]'),
+    );
+    expect(
+      seeded?.prompt,
+      'the recap has to re-supply the id for this row to mean anything',
+    ).toContain('jump:planAndImplement');
+    // The recap already spent this call's one corrective (DR-028 §26), so the
+    // rejection settles the turn rather than buying a re-ask — and either way
+    // the id the shell re-supplied does not come back out on the Boss surface.
+    expect(harness.surfaced.slice(surfacedBefore)).toEqual([
+      'I could not finish that turn. Nothing was changed — please send the request again, or start a playbook directly with /code <task>.',
+    ]);
+    expect(JSON.stringify(harness.surfaced)).not.toContain('planAndImplement');
+  });
+
+  it('guards a one-character supplied id without refusing prose that merely contains it', async () => {
+    // The duty had a silent three-character floor, so a question id of `5` or
+    // `q1` was outside it. The floor was paying for a raw substring match: a
+    // supplied `5` would otherwise refuse any reply containing the digit. The
+    // match is token-aware now, so the floor buys nothing and is gone.
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [],
+        pendingQuestions: [
+          { questionId: '5', player: 'coder', question: 'Which file?' },
+        ],
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        // Repeats the id as a token of its own: refused.
+        decisionReply({
+          action: 'respond',
+          text: 'Question 5 is still open.',
+        }),
+        { status: 'ok', finalText: 'One question is still open.', resumeToken: 'A2' },
+        // Contains "5" only inside another token: surfaced unchanged.
+        decisionReply({
+          action: 'respond',
+          text: 'Version 1.5.2 shipped before that.',
+        }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    await harness.turn('what is pending?', 2);
+    await harness.turn('and before that?', 3);
+
+    const corrective = harness.captainCalls.filter((call) =>
+      call.prompt.includes('[Reply rejected]'),
+    );
+    expect(corrective).toHaveLength(1);
+    expect(harness.surfaced.slice(1)).toEqual([
+      'One question is still open.',
+      'Version 1.5.2 shipped before that.',
+    ]);
+  });
+});

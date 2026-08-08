@@ -325,19 +325,35 @@ that it is Boss-appropriate, which is the property
 same shell that composes the outcome report replaces an action id with
 its advertised label there precisely because the id is control data.
 The supplied set shall therefore be rejectable: the exact advertised
-action ids and pending-question ids of this turn's digests, plus the
+action ids and pending-question ids this turn's prompts carried, plus the
 fragment each id carries after its `<verb>:` prefix, that grammar being
 one [PBRT-52](playbook-runtime.md#pbrt-52) publishes and the fragment
 being what a reply actually repeats. A `jump:<stateId>` id names a
 state the machine is by construction not in, so no live-state check can
-reach it. This takes no interpretation the shell is not allowed: it is
-a string-identity test over the shell's own supply, exactly the form
-the live-session-id check already takes, and the shell still need not
-know what any id means. Keeping an action id out of visible prose stays
-a compiled-prompt instruction as well
+reach it.
+Membership shall follow the prompt and not the composing call site.
+Whichever block placed the id — a read control view's advertised
+actions, the mirrored pending questions of a degraded digest, or the
+reseed digest replaying an action the session took turns ago — the id
+was supplied this turn and is in the set; registration named at each
+composing site instead leaves whichever site nobody named outside a duty
+the others are inside. Text the *Boss* supplied is outside it either
+way: repeating the Boss's own words is not repeating an identifier the
+shell supplied.
+A reply repeats a supplied identifier when it carries that identifier as
+a token of its own, not merely as a substring: a supplied `5` occurs
+inside `1.5.2` and refusing that reply would refuse it for text it did
+not repeat. The duty shall carry no minimum identifier length — the
+criterion is the character class below and nothing else, and a runtime's
+`q1` or `5` is exactly the id a length rule would silently excuse.
+This takes no interpretation the shell is not allowed: it is a
+string-identity test over the shell's own supply, exactly the form the
+live-session-id check already takes, and the shell still need not know
+what any id means. Keeping an action id out of visible prose stays a
+compiled-prompt instruction as well
 ([CAPPLAY-16](captain-playbook.md#capplay-16)); the host check is what
-makes it verifiable. The duty shall stay
-narrow in the other direction too. The shell
+makes it verifiable. The duty shall stay narrow in the other direction
+too. The shell
 shall reject only identifiers it can tell apart from ordinary English —
 those carrying an internal capital, digit, underscore, dot, hyphen, or
 the colon of the `<verb>:<target>` action grammar
