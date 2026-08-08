@@ -9,70 +9,59 @@ Accepted.
 
 ## Context
 
-Nine review rounds over the session Captain shell ([DR-029](029-session-scoped-conversational-captain.md)) closed the same three defect classes, each round at sites the round before had not touched:
-
-- a Boss turn ending without a truthful visible settlement;
-- an error attributed to an operation that did not throw;
-- control data reaching Boss prose, or Boss prose refused as control data.
-
-The shell has no domain model for a turn or for a prompt fragment, so every invariant is re-enforced by convention wherever a new site appears, and two contracts are missing: what a turn records, and what a prompt fragment carries.
-One selected action can perform several effecting operations — `switch` dismisses the stack and then starts the target, and [DR-029 §4](029-session-scoped-conversational-captain.md) requires both facts reported when the start then fails — so a single-valued account of what a turn did cannot describe a real turn.
-A rejected presentation is not proof of non-delivery: cligent's record dispatcher awaits each observer in turn (`src/app/tmux-play/records.ts:170`, `:212`), so the presenter can render to the Boss before a later observer throws.
-And the shell's two memory paths — an append-only journal and a separate refusal carry-forward — are where round 8 found a settlement carried to the conversation twice on one path and never on another, and a replayed record putting a control identifier into a prompt with nothing live advertising it.
+The session Captain shell ([DR-029](029-session-scoped-conversational-captain.md)) has no domain model for a turn, for the session's memory, or for what a prompt fragment carries.
+Three defect classes therefore recur at whichever site the last review round did not touch: a turn ending without a truthful settlement, an effect claimed or a failure blamed beyond what the operation itself reported, and control data reaching Boss prose or Boss prose refused as control data.
+Two earlier revisions of this record patched the sites a round had found, and each shipped an invariant no real turn could satisfy.
+This record replaces that method with three contracts adopted whole — one turn transaction, one session log, and provenance carried on the text — which together resolve the empty-sequence contradiction, compound `switch`, truthful failure reporting, refusal duplication and loss, the final turn of a session, stale identifier leakage across turns, and prose-label false positives.
 
 ## Decision
 
-### 1. A turn records ordered evidence; its settlement is derived from that record
+### 1. One authoritative turn transaction
 
-- The turn's record is the ordered sequence of the operations its selected action performed. Each entry names the single operation invoked, whether it took effect, and what it produced.
-- An entry exists only because an invocation minted it, at that invocation. No turn-scoped flag, enclosing region, or later site may write, amend, or infer one, and a turn that selected nothing carries an empty sequence.
-- Whether an operation took effect is that operation's own report and never the shape of what it produced; a raised value is part of what it produced and decides none of the three by itself:
-  - **none** — proven no effect: the operation was refused, or failed before it could apply one;
-  - **applied** — proven it took effect;
-  - **unknown** — it failed after its effect may have been applied, or reported nothing that proves either way, this being what an operation carries absent a report of its own; it is not a kind of failure but the absence of proof, and no settlement, retry, or later turn may resolve it in either direction.
-- The settlement is a total function of the sequence, computed when the turn settles and never assigned. It states every entry and claims nothing beyond what they prove: an `unknown` effect is stated as unproven, never dropped from the account and never softened into either certainty.
-- An aborted turn is terminal on the evidence it holds: reported entries stand, an operation still in flight is `unknown`, and its settlement is derived and recorded as on any other turn — only delivery may be foreclosed (§2).
-- The representation is the IR's. What must hold: no entry without an invocation, no settlement except by derivation, and no second account of the turn standing beside the sequence.
+- Every Boss turn the shell takes up produces exactly one transaction, recording the Boss input, the decision outcome, the selected action if any, ordered operation receipts, the derived settlement, and the delivery receipt. Input carrying no text is not taken up and produces no transaction. No second account of the same turn stands beside it.
+- Each operation reports one of **not applied** (proven no effect), **applied** (proven effect), or **unknown** (it failed after its effect may have landed, or proved neither). The report states what that one operation proves about its own effect: a raised failure is `unknown` unless the operation proves it left none, and no report is read off the shape of a return or the fact that something threw.
+- `unknown` is the absence of proof, not a kind of failure. No settlement, retry, or later turn resolves it in either direction.
+- A receipt exists only because an operation was invoked, and names that one operation. A compound action produces one receipt per operation, in order: `switch` dismisses and then starts, so a failed start stands beside the succeeded dismissal instead of replacing it.
+- The settlement derives from the decision outcome **and** the receipts, never from the receipts alone — a successful `respond`, a refusal before any effect, and a failed decision with no selection all hold no receipts yet owe different settlements.
+- The settlement is derived when the turn settles, never assigned, and claims nothing the transaction does not hold: an `unknown` receipt is stated as unproven, neither dropped nor softened into certainty.
+- The delivery receipt reports one of **shown**, **not shown** (proof that nothing was emitted), or **unknown** (it failed after emission may have begun, or the boundary cannot prove that nothing was emitted). Absence of proof is `unknown`, never `not shown`.
+- A further presentation attempt is allowed only after **not shown**; **unknown** is never retried and never represented as seen. The presentation boundary must supply this truth; the API carrying it is the IR's.
+- A turn that aborts settles on the evidence it holds, an operation still in flight being `unknown`. A presentation the abort forecloses before anything is emitted is **not shown**; one cut off once emission may have begun is **unknown**.
 
-### 2. Delivery is a reported truth, not an assumption
+### 2. One authoritative session log with a per-conversation position
 
-- Delivery truth is reported by the boundary that attempts it — the shell's one Boss-visible settlement seam, over whichever cligent surface the settlement kind leaves through — as one of three: **shown**, it accepted; **not shown**, it proves nothing was emitted; **unknown**, it rejected after emission may have begun, which is also what a boundary unable to prove non-delivery reports, so the safe value is the default rather than the exception.
-- A settlement is presented once. Another channel may be tried only where non-delivery is proven; where delivery is `unknown` the turn claims nothing about what the Boss saw, a retry there being able to show one settlement twice.
-- Idempotent presentation is the alternative, and is rejected on merit: the Boss surface is rendered by another process behind seams that return `Promise<void>` and carry no settlement identity (cligent `CaptainContext.emitReply`, `src/app/tmux-play/contract.ts:108`; `CaptainSession.emitStatus`, `:30`), so the shell can neither deduplicate what it cannot identify nor unshow what was shown, whereas the three-valued truth is implementable on the shell's side today and is what §3 must record anyway.
+- The session log holds the turn transactions in order. It is the session's only memory of past turns and the only source of what any prompt carries about them; the live-state and catalog digests keep being composed from live state ([CAPTAIN-9](../dev/playbook-captain.md#captain-9)).
+- Each Captain conversation holds its own position in the log. While the session lasts a healthy conversation is given each new record once and never twice; a replacement conversation is given the complete log, so it is told everything the conversation it replaces was told.
+- Records a conversation was never given simply remain recorded when the session ends. No model call is made for the sole purpose of delivering them, so the final turn of a session needs no special case.
+- This is one channel and not two: it replaces both DR-029 §2's reseed-only journal and the separate refusal notice, so no settlement can be delivered twice by two paths or lost by belonging to neither. Storage, ordering, and position mechanics are the IR's.
 
-### 3. One record per settlement, one arrival
+### 3. Provenance survives as long as the conversation knows the text
 
-- Every settlement is recorded, with its evidence and its delivery truth, whether or not the Boss saw it.
-- Each recorded settlement reaches the durable Captain conversation exactly once, riding the first call the shell was making anyway that carries it and returns: recomposing or re-issuing that call is not a second arrival, and a call that never returns leaves the record unread. Arrival is counted per conversation, so a replacement conversation is seeded with everything the one it replaces was told.
-- That is one path and not two: what seeds a replacement conversation and what a live conversation is told next are the same records, read by the same rule. Storage, ordering, and queue mechanics are the IR's.
-
-### 4. A prompt fragment carries a role and a trust
-
-| Dimension | Values | What follows from it |
+| Property | Values | What follows from it |
 | --- | --- | --- |
-| role | control identifier \| Boss-facing | forbidden-set membership: an identifier enters the set, Boss-facing text never does |
-| trust | shell-authored \| foreign evidence \| Boss text | encoding: shell-authored is carried as written, foreign evidence is escaped and bounded, Boss text is escaped and carried whole |
+| exposure | speakable \| quoted evidence \| control | what may appear in Captain prose: a control identifier never may, speakable content may, quoted evidence only as quotation |
+| trust | Boss \| shell \| foreign | encoding: shell text is carried as written, Boss text is escaped and carried whole, foreign text is escaped and bounded |
 
-- The dimensions are independent and every fragment carries both: a runtime-authored action label is Boss-facing *and* foreign, so it is escaped and bounded yet never forbidden, while that runtime's action id is foreign *and* a control identifier. Reading either dimension as evidence of the other is what refused a legitimate label and what let unregistered identifiers through.
-- Both dimensions survive composition. A composed prompt carries the forbidden set its fragments' roles produced, and no classification is re-derived from the lexical shape of composed text — shape was wrong in both directions.
-- Both dimensions survive memory replay. A value re-entering a prompt from a recorded settlement (§3) carries the role and trust it had when first composed, so a replayed identifier is forbidden again and a replayed label is not.
-- This replaces which values the supplied-identifier duty covers and nothing else about it: the live session and engagement-state identifiers a reply may not carry stay known by identity from live shell state and reachable by no fragment, and the narrowing that spares ordinary English bounds both bases — role decides membership, and a member the shell cannot tell apart from ordinary English is still not refused ([CAPTAIN-9](../dev/playbook-captain.md#captain-9)).
+- The properties are independent and all prompt content carries both. A runtime-authored action label is speakable *and* foreign, so it is escaped and bounded yet never forbidden, while that runtime's action id is control *and* foreign. Reading either property as evidence of the other is what refused a legitimate label and what let unregistered identifiers through.
+- A control identifier is forbidden for the lifetime of every conversation that received it, not for the turn that composed it, and is restored with the log when a replacement conversation is seeded (§2). A stale identifier leaking across turns and the duty lapsing at a reseed are one defect.
+- No lexical guessing anywhere: neither property is re-derived from the shape of composed text, in either direction, and composition carries the properties its parts already held.
+- Nothing else about the host's validation duty changes: live session and engagement-state identifiers stay known by identity from live shell state, and a value the shell cannot tell from ordinary English is still not refused ([CAPTAIN-9](../dev/playbook-captain.md#captain-9)).
 
 ## Supersessions
 
-- [CAPTAIN-34](../user/playbook-captain.md#captain-34) — "Every Boss turn shall reach exactly one visible settlement" is unsatisfiable when every channel rejects, leaving the shell to violate it in silence; §1 and §2 replace it with one settlement always derived and recorded, and at most once presented. Its three settlement kinds and their Boss-facing content rules stand, and its no-selection-no-speech clause is the empty sequence's own settlement.
-- [DR-029 §4](029-session-scoped-conversational-captain.md) — one decision call per turn and at most one selected action stand. The outcome report and one closing reply do not: §1's derivation and §2's delivery replace them, a refusal having no closing reply and delivery being indeterminate or foreclosed. [DR-029 §3](029-session-scoped-conversational-captain.md)'s three-outcome receipt stands and is the source of §1's effect report.
-- [DR-029 §5](029-session-scoped-conversational-captain.md) and Addendum A3, with [CAPTAIN-9](../dev/playbook-captain.md#captain-9) — the host's duty to validate returned prose stands and A3's live machine-shaped identifier criterion stands unchanged; the supplied-identifier criterion CAPTAIN-9 grew on top of it is replaced by §4, and CAPTAIN-9's one-seam escaping duty and "membership shall follow the prompt and not the composing call site" become consequences of §4 rather than duties restated per site. Its bar on journal-derived text outside a reseed is re-based on §3: no prompt carries a raw record, and shell-composed text drawn from the one record is no longer the reseed's privilege, one path not being two.
-- [CAPTAIN-35](../dev/playbook-captain.md#captain-35) — attribution recorded at the effect invocation is what mints §1's entries, and "a region is not an operation" is why an entry names one; its append-only journal and separate refusal carry-forward are replaced by §3's one record, one arrival, and its unconditional retry "where a settlement channel remains untried" is bounded by §2's proof, the rows pinning that fallback ([CAPTAIN-39](../test/playbook-captain.md#captain-39)) moving with it.
-- No item file is amended here; the implementing IR lands every edit above.
+- [DR-029 §2](029-session-scoped-conversational-captain.md) — the reseed-only journal, replaced by §2's log.
+- [CAPTAIN-9](../dev/playbook-captain.md#captain-9) — the supplied-identifier set scoped to this turn's prompts, replaced by §3's exposure; and the bar on journal-derived text reaching a conversation that is not being reseeded, replaced by §2's log.
+- [CAPTAIN-34](../user/playbook-captain.md#captain-34) — "exactly one visible settlement" is withdrawn as unsatisfiable; §1 settles every turn and shows a settlement at most once.
+- [CAPTAIN-35](../dev/playbook-captain.md#captain-35) — the journal-plus-carry-forward arrangement, replaced by §2's single channel.
+- No item file is amended here; the implementing IR lands every edit.
 
 ## Alternatives considered
 
-- **Keep patching enumerated call sites** — nine rounds of evidence against it.
-- **A per-turn state summary standing beside the evidence** — a second account of the same turn, free to disagree with the first, which is what today's flags are.
+- **Patch the sites each round finds** — the method that shipped two unsatisfiable invariants, named by review as the error itself.
+- **A per-turn status summary standing beside the transaction** — a second account of one turn, free to disagree with the first.
 
 ## Consequences
 
-- Unconstructible rather than avoided: a settlement claiming more than its evidence, an error attributed to an operation never invoked, a multi-operation action reporting one fact, and a control identifier reaching Boss prose through a site nobody registered.
-- Every caller of the presentation boundary handles three outcomes where it may assume delivery today, and each cligent surface a settlement leaves through — DR-029's captain-speech presentation contract among them — gains one obligation: report delivery truth rather than `Promise<void>`.
-- The shell is restructured around the record: effects invoked through a boundary that mints entries, settlement derived from them, prompts composed from fragments carrying role and trust, and one record feeding the conversation.
+- Unconstructible rather than avoided: a settlement claiming more than its transaction holds, an effect attributed to an operation that reported none, a compound action reporting one fact, a settlement delivered twice or lost, and a control identifier reaching Boss prose through a site nobody registered.
+- The presentation boundary owes a delivery truth where it returns nothing today, and its callers handle three outcomes.
+- The shell is restructured around the transaction and the log: operations invoked through a seam that mints receipts, settlement derived rather than assigned, prompt content carrying exposure and trust, one log feeding every conversation.
