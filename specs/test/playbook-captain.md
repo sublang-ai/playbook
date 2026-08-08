@@ -400,8 +400,11 @@ recorded, or as marked reconstructions — turn 1 —
 decision call on the durable conversation (the pinned resume token
 in the captured options) whose captured prompt carries the exact
 Boss text plus the ControlView digest — the failed leaf state, the
-sanitized ControlView context fields
-([CAPTAIN-9](../dev/playbook-captain.md#captain-9)),
+context members CODE's own projection exports rendered one bounded
+line each, with none of its resolved player roster, option value, or
+player-authored members appearing anywhere in the prompt
+([CAPTAIN-9](../dev/playbook-captain.md#captain-9),
+[PBRT-52](../dev/playbook-runtime.md#pbrt-52)),
 `lastError` `{ name, message }`, and the advertised retry action id
 with its label — the validated `runtime` selection is that retry id,
 exactly one real `apply()` executes with an `executed` receipt, and
@@ -526,7 +529,27 @@ stack, journal, and completed work survive.
 The suite shall fail unless a durable controller call returning
 empty `ok` with no token gets exactly one corrective call, and that
 corrective call is the journal-seeded reseed — never a reseed plus
-another retry.
+another retry — including when that reseed is itself empty but
+carries a token, which shall cost the turn no third call.
+The suite shall fail unless, after a re-issued call also fails, the
+next Boss turn's first durable call is itself seeded — `resume: false`
+carrying the reseed digest — and a fact stated before the failed
+reseed is still recoverable from it.
+The suite shall fail unless a Boss requirement longer than the
+per-record bound reaches the reseed digest whole, with no truncation
+marker.
+The suite shall fail unless a delivered turn whose leaf throws leaves
+the journal holding both that turn's action record and an outcome
+record naming the failure, proven through a later reseed digest.
+The suite shall fail unless a second malformed decision reply — which
+returns the machine to its hub with a healthy outcome — still settles
+the Boss turn with the [CAPTAIN-34](../user/playbook-captain.md#captain-34)
+failure reply, after exactly two decision calls and with the
+engagement stack untouched.
+The suite shall fail unless, when the closing report of an executed
+dismissal fails twice, the failure reply names the recorded dismissal
+fact and carries neither a nothing-was-changed claim nor a resend
+invitation.
 
 ### CAPTAIN-40
 
@@ -544,3 +567,23 @@ an empty `captain_reply` reaching the Boss surface — and unless a
 reply that is valid action JSON but leaks control syntax into its
 visible prose gets one corrective re-ask and then Boss-appropriate
 failure text, the leaked syntax never appearing on the Boss pane.
+The suite shall fail unless that corrective re-ask is a real call for
+a model-decided `respond` too: the captured re-ask shall resume the
+decision call's own pinned token and carry the rejection reason, and a
+clean second answer shall be the surfaced captain speech.
+The suite shall fail unless a reply carrying an engagement's live
+generated session id is refused with one corrective re-ask naming the
+leaked identifier, that id never reaching the Boss surface.
+The shell's own composition of the ControlView block shall be pinned
+against whatever a runtime exports: the suite shall fail unless each
+exported context member appears as its own line carrying its name and
+its escaped, bounded value rather than as an inlined JSON document,
+unless a long exported value is truncated like every other quoted
+foreign span, and unless an exported value spelling out a second
+labeled block opens no such block in either the decision or the
+closing-reply prompt.
+The suite shall fail unless a leaf whose `describe()` is implemented
+and throws is reported as a control view that could not be read —
+naming the normalized failure, reporting the advertised actions as
+unknown rather than none, and never claiming the leaf advertises no
+control surface — while `respond` stays valid for that turn.

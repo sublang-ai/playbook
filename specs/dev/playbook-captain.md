@@ -222,9 +222,10 @@ prompt references ([CAPPLAY-7](captain-playbook.md#capplay-7)):
 the ControlView digest — the active path as commands root to leaf,
 the leaf state (`stateId`, tags, quiescence, status; the full
 multi-region state value with every active region readable while the
-leaf occupies a `type: 'parallel'` state), the sanitized JSON-safe
-relevant context fields of the leaf's ControlView
-([DR-029 §3](../decisions/029-session-scoped-conversational-captain.md)),
+leaf occupies a `type: 'parallel'` state), the context members the
+leaf's runtime authored into its ControlView projection
+([PBRT-52](playbook-runtime.md#pbrt-52),
+[DR-029 §3](../decisions/029-session-scoped-conversational-captain.md)),
 pending questions verbatim with their question ids, the last error
 as `{ name, message }`, and the advertised actions as id plus label,
 composed from the active leaf's `describe()`
@@ -244,6 +245,22 @@ delivery is the only machine verb against it
 invalid; capability absence shall bound the machine verbs alone and shall
 never bound the conversation, `respond` staying valid for any turn
 ([CAPPLAY-4](../user/captain-playbook.md#capplay-4)).
+Capability absence is member absence, which is how the capability is
+feature-detected ([PBRT-52](playbook-runtime.md#pbrt-52)). A
+`describe()` the leaf implements and that then throws is not absence,
+and the shell shall not report it as such: it shall compose the same
+degraded facts under a statement naming the read failure with its
+normalized `{ name, message }`, shall report the advertised actions as
+unknown rather than as none, and shall bound the machine verbs for
+that turn on the unreadable view rather than on a capability the leaf
+may well have. The conversation stays unbounded there too.
+Whatever the leaf's runtime exports, the shell composes this block and
+owns what it may contain: it shall render each exported context member
+as its own line carrying the member name and its escaped, bounded
+value, and shall never insert a runtime's context as an opaque JSON
+document. A value the shell did not author — of any length, carrying
+any newline — shall therefore be unable to forge a second labeled
+block into the envelope or to crowd the rest of the digest out of it.
 Digests and session-Captain prompts shall exclude session and call
 UUIDs, resume tokens, trace payloads, module specifiers, option
 values, player rosters, raw journal records, and ledger JSON; player
@@ -262,7 +279,19 @@ the missing-or-empty predicate and its single corrective re-ask
 surface exactly two kinds of validated prose as captain speech
 through cligent `CaptainContext.emitReply`: a `respond` selection's
 `text` and an acting turn's closing reply; a reply carrying control
-JSON or internal control vocabulary shall not be surfaced.
+JSON, internal control vocabulary, or a live session identifier — the
+session Captain's own session id or any engagement frame's — shall not
+be surfaced, and the shell shall read that identifier set from live
+shell state rather than from a fixed list, so an identifier minted
+later is covered without one.
+A reply shall not be withheld for naming the active leaf's state:
+the ControlView digest supplies that state line as the grounding a
+status answer is meant to reflect, and keeping internal state ids out
+of visible prose is an instruction the compiled decision prompt gives
+the model
+([CAPPLAY-16](captain-playbook.md#capplay-16)), not a host
+rejection duty — a live state id is not separable from ordinary
+English by the host.
 The shell's own `callCaptain` implementation is that presentation seam: the
 session Captain runtime returns no prose to its machine and injects no
 presentation field
@@ -319,6 +348,22 @@ Before passing through `playbook.fsm.state` telemetry, the wrapper
 shall mirror the active leaf's normalized state descriptor and any
 pending Boss questions or normalized error fields needed for the shell
 ledger.
+It shall mirror only what is evidence about a live leaf. Two payloads
+are not: one whose state descriptor reports an actor status other than
+`active` — a stopped actor is a teardown artifact, never a parked
+engagement the Boss can act on — and any payload from a frame whose
+disposal the shell has already begun, that disposal being under way
+from before the frame's runtime is asked to dispose, since the shell
+disposes a frame before it pops it
+([CAPTAIN-29](#captain-29)) and a runtime's last emissions therefore
+still find their frame at the top of the stack. Either payload shall
+pass through to the host unchanged and shall update neither the leaf
+ledger nor the authoritative shell mode, so a dropped engagement can
+never re-mark an emptied stack `engaged.parked` after dismissal has
+selected `chat`. This is the shell's own guard and shall not rest on
+any runtime's disposal hygiene
+([PBRT-6](playbook-runtime.md#pbrt-6)): it shall hold for a runtime the
+shell did not author.
 
 ### CAPTAIN-31
 
@@ -651,8 +696,19 @@ with their targets, and settlement facts.
 The journal shall never be Boss-visible, shall feed only the
 conversation reseed, and shall be complete for the session lifetime:
 the shell shall drop no record, and the only bounding shall be a
-deterministic per-record truncation of long player output quoted
-inside a payload.
+deterministic truncation applied where the shell quotes long player or
+sub-runtime output into a payload.
+Boss text, validated captain replies, validated actions, and the
+shell-composed settlement facts surrounding such a quote are
+host-authored, and the reseed digest shall render them whole: a long
+Boss requirement shall reach the replacement conversation complete,
+never abbreviated by a per-record bound the renderer applies without
+knowing whose text it is.
+Every recorded action shall be followed by a record of how that action
+ended, including where the executed effect throws before reporting; no
+action record shall stand in the journal without its outcome record,
+so a reseeded conversation is never shown a dispatched action whose
+result it is not told.
 After every durable session-Captain call the shell shall pin the
 returned `resumeToken`, replacing the prior pin.
 When a durable call throws, returns a non-`ok` status, or returns
@@ -660,12 +716,24 @@ When a durable call throws, returns a non-`ok` status, or returns
 unsynchronized: clear the pin, re-issue that call exactly once on a
 fresh conversation (`resume: false`) seeded with the reseed digest
 plus the current ControlView digest, and pin the new token.
+The conversation shall stay unsynchronized until some call returns a
+token, so where the re-issue also fails, the next durable call of the
+session — on that turn or any later one — shall itself be a seeded
+one, running `resume: false` and carrying the reseed digest.
+Apart from the session's first call, no durable call shall run both
+unpinned and unseeded.
+The reseed shall be the re-issued call's single corrective
+([DR-028 §26](../decisions/028-empty-ok-result-re-ask.md)): where the
+reseeded result is itself empty or unusable, the shell shall fail that
+phase and shall issue no further corrective call for it, neither the
+boundary's empty-`ok` re-ask nor its own prose re-ask.
 The reseed digest shall be the shell's own deterministic rendering of
 the journal records — the same records shall always render the same
 digest — and shall be the only journal-derived text any prompt ever
 carries: raw journal records shall enter no prompt, the digest shall
-appear on exactly that one re-issued call and on no later call of the
-replacement conversation, and it shall observe the
+appear on the seeded call that opens a replacement conversation and on
+no later call of that conversation — so a pinned conversation carries
+no journal-derived text at all — and it shall observe the
 [CAPTAIN-9](#captain-9) prompt exclusions, carrying no session or
 call UUID, resume token, trace payload, module specifier, option
 value, player roster, or ledger JSON

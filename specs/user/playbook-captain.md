@@ -231,9 +231,26 @@ stack, player sessions, completed turn work, and the Boss-visible
 transcript shall be unaffected, and the turn shall otherwise settle
 normally.
 When the re-issued call fails again, the turn shall settle with a
-Boss-appropriate failure reply that names a concrete next step, such
-as resending the request, and contains no internal control
-vocabulary such as `adjudicator`, `guard`, `undeclared`, or hidden
-control JSON; the engagement stack shall remain intact, and the
-Boss's next message or registered command shall settle normally with
-no already-running refusal and no lost work.
+Boss-appropriate failure reply that names a concrete next step and
+contains no internal control vocabulary such as `adjudicator`,
+`guard`, `undeclared`, or hidden control JSON; the engagement stack
+shall remain intact, and the Boss's next message or registered
+command shall settle normally with no already-running refusal and no
+lost work.
+That reply shall assert only what the turn recorded.
+Where no action settled, it shall state that nothing was changed and
+name resending the request as the next step.
+Where an action already settled, it shall name that settlement's
+recorded facts, shall not state that nothing was changed, and shall
+not name resending as the next step — a resend would repeat completed
+work — naming asking for the current state instead.
+Every Boss turn shall reach exactly one visible settlement: captain
+speech, the shell status line of a refused selection, or this failure
+reply.
+Where a turn ends with no selection submitted and no captain speech
+surfaced — including where the session Captain's machine recovers to
+its hub after a second malformed decision reply and reports a healthy
+outcome
+([CAPPLAY-18](../dev/captain-playbook.md#capplay-18)) — the shell
+shall settle that turn with this failure reply rather than end it
+with no action and no reply.
