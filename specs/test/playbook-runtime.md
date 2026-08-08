@@ -412,6 +412,22 @@ unless `PlaybookRuntime.init` accepts a causal
 `PlaybookSession`, and unless `handleBossInput` and
 `resumePlaybookCall` return `PlaybookRunResult`; its import graph
 includes no CODE or FSM module.
+The test suite shall additionally fail unless the linker contract
+itself still states the clauses the shipped artifacts depend on, since
+that contract is the source they are generated from and a rule stated
+only in an artifact is one the next re-link can undo: its control
+surface section shall state that the view's `context` is a projection
+the linked runtime authors, shall name the `controlContextFields` spec
+member that carries it, shall state that a runtime naming no member
+carries no `context`, and shall no longer describe the view as a
+sanitized serialization of the FSM context; and its output section
+shall list `controlContextFields` among the members an emitted module
+supplies, shall state that its default is nothing rather than
+everything, and shall require the `_internal` composers the artifact's
+own machine uses rather than a fixed player-and-Captain pair.
+Matching type shapes shall not satisfy this: the retired text declared
+the same optional `context` while describing the behavior the
+projection replaced.
 
 ### PBRT-36
 

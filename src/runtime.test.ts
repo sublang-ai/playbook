@@ -37,6 +37,15 @@ function portsMembers(src: string): string[] {
   return [...new Set(names)].sort();
 }
 
+/** One `## <title>` section of a markdown spec, up to the next `## `. */
+function sectionOf(src: string, title: string): string {
+  const start = src.indexOf(`\n## ${title}\n`);
+  if (start < 0) throw new Error(`section "${title}" not found`);
+  const rest = src.slice(start + 1);
+  const end = rest.indexOf('\n## ', 1);
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
 function interfaceBody(src: string, name: string): string {
   const block = src.match(
     new RegExp(`interface ${name}\\s*\\{([\\s\\S]*?)\\n\\}`),
@@ -386,6 +395,48 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       methodSignature(runtimeDts, 'PlaybookRuntime', 'resumePlaybookCall'),
     ).toEqual(
       methodSignature(linkSpec, 'PlaybookRuntime', 'resumePlaybookCall'),
+    );
+  });
+
+  // The linker contract is the source the artifacts are generated from, so a
+  // rule that lives only in the shipped artifacts is a rule the next re-link
+  // can undo. These assert the two clauses the ControlView privacy contract
+  // rests on are stated where a linker would read them — matching type shapes
+  // alone would not: the old text declared the same `context?: JsonValue`
+  // while describing an allow-by-default serialization of the FSM context.
+  it('states the authored context projection in the linker contract', () => {
+    const controlSurface = sectionOf(linkSpec, 'Control surface (optional)');
+    // The rule itself, and the spec member a linked module carries it in.
+    expect(controlSurface).toMatch(
+      /explicit projection the linked runtime \*\*authors\*\*/,
+    );
+    expect(controlSurface).toContain('controlContextFields');
+    expect(controlSurface).toMatch(/naming no member carries no `context`/);
+    // And the retired behavior is gone, not merely contradicted elsewhere.
+    expect(controlSurface).not.toMatch(
+      /sanitized\s+JSON-safe relevant FSM context/,
+    );
+  });
+
+  it('lists the context projection among the emitted spec members', () => {
+    const output = sectionOf(linkSpec, 'Output');
+    // §Output's enumeration is closed ("only what the factory cannot read"),
+    // so a member missing from it is a member a conforming linker omits — and
+    // omitting this one produces an artifact that exposes no context at all.
+    // The assertion is scoped to the enumeration itself: the paragraph that
+    // explains the member sits in the same section, so a section-wide match
+    // would stay green with the member dropped from the list it belongs to.
+    const enumeration = /Supplies in `spec` only what the factory cannot read[\s\S]*?\.\n/.exec(
+      output,
+    )?.[0];
+    expect(enumeration).toBeDefined();
+    expect(enumeration).toContain('controlContextFields');
+    expect(output).toMatch(/default is\s+\*nothing\* rather than everything/);
+    // The composer clause matches what a controller artifact can carry: the
+    // composers its own machine uses, not a fixed pair.
+    expect(output).toMatch(/at least the prompt composers its own machine uses/);
+    expect(output).not.toMatch(
+      /at least the player-prompt and Captain-prompt composers/,
     );
   });
 

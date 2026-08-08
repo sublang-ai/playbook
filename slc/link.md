@@ -1275,7 +1275,8 @@ interface PlaybookControlAction {
 
 interface PlaybookControlView {
   state: PlaybookState;
-  context?: JsonValue;   // sanitized, JSON-safe relevant context
+  stateDescription?: string;  // runtime-published meaning of the current state
+  context?: JsonValue;   // the runtime's authored projection, sanitized
   pendingQuestions: readonly PlaybookPendingBossQuestion[];
   lastError?: NormalizedError;
   actions: readonly PlaybookControlAction[];
@@ -1295,11 +1296,46 @@ apply?(input: { actionId: string; key: string; signal: AbortSignal }): Promise<P
 telemetry and moves no machine state — and is valid at parked quiescence
 outside an active `handleBossInput`/`resumePlaybookCall`/`apply` boundary;
 during an active boundary, before `init`, or after disposal begins it shall
-throw. The view carries the current normalized state descriptor, sanitized
-JSON-safe relevant FSM context (raw `Error` values normalized, non-JSON-safe
-entries dropped, members the view surfaces first-class omitted), the pending
-Boss questions with their stable ids, the last recorded error in normalized
-form, and the currently valid actions.
+throw. The view carries the current normalized state descriptor, the state
+description defined below, the authored context projection defined below, the
+pending Boss questions with their stable ids, the last recorded error in
+normalized form, and the currently valid actions.
+
+`stateDescription` is the runtime's own Boss-facing statement of what its
+current state means, taken from the same source state descriptions the action
+labels below are written from. A controller host has no other grounding for a
+status answer, and an internal state id is not text a reply may repeat, so the
+runtime publishes the meaning rather than leaving the host to substitute the
+identifier for it. A state whose source declares no description carries no
+`stateDescription`: an id is never promoted into a description, so a host is
+never handed an identifier dressed as meaning.
+
+The view's `context` is an explicit projection the linked runtime **authors**,
+never an allow-by-default serialization of the FSM context (DR-029 Addendum
+A1). Only the runtime knows which of its context members are safe and relevant
+for a controller prompt, while the host receiving the view cannot inspect an
+opaque blob for the player rosters, option values, and raw player output its
+own prompts must exclude; exporting by default makes the two obligations
+unsatisfiable together and gives every member added to an FSM later the wrong
+default. The rules:
+
+- The emitted module declares the projection in its `spec` as
+  `controlContextFields` — the FSM context member names its view exposes, in
+  the order it names them — and the factory exports those and nothing else.
+- A runtime naming no member carries no `context` at all, so a member is
+  private until an artifact names it and extending an FSM leaks nothing by
+  omission.
+- Sanitization sits on top of the projection, not in place of it: a named
+  member is still normalized (raw `Error` values normalized) and dropped when
+  it cannot be made JSON-safe, rather than thrown, since `describe` stays
+  side-effect free and total.
+- The two members the view surfaces first-class — the pending Boss question
+  and the last error — cannot be named. A projection naming either is a
+  construction error, failing runtime construction rather than being silently
+  ignored.
+- The host still composes its own prompt block from the projection rather than
+  pasting the projection in, so no runtime's exported value can forge a block
+  into an envelope the host owns.
 
 Actions derive from the live snapshot, only at the same safe point the
 parked-session snapshot uses (actor status `active`, quiescent, no pending
@@ -1346,6 +1382,20 @@ settles the `failed` receipt rather than rejecting. The boundary traces as
 the paired `apply.started` / `apply.finished` events of §Playbook trace, and
 `apply` shares the single active-boundary sentinel with `handleBossInput`
 and `resumePlaybookCall`.
+
+Acceptance is also the line past which `apply` does not throw, and
+publication — the `apply.finished` emission — is the line past which its
+receipt no longer changes. A settlement failure after acceptance but before
+publication (a rejecting emission drain) settles the `failed` receipt carrying
+its normalized error, replacing the one recorded at acceptance so the finish
+trace, the returned receipt, and any replay of the key report one settlement.
+A settlement failure at or after publication (a rejecting `apply.finished`
+sink) does not: the disposition is already emitted, so no rewrite can make the
+trace and the return agree, and a receipt states what happened to the effect
+rather than what happened to its telemetry. The published receipt stands, is
+returned and replayed verbatim, and the delivery failure travels on the
+runtime's emission-failure channel to surface from the next public boundary
+that drains.
 
 The recorded receipts and the recorded last classified event are
 process-local: the schema-1 parked-session snapshot persists neither, and a
@@ -1479,10 +1529,23 @@ The emitted module:
   exceptions not covered by the canonical kebab-token-to-camel-field mapping
   and the canonical `<#>` → `irNumber` special case; the
   transition-event payload fields the FSM's Boss union declares; a
-  non-default player binding where the linker inputs supplied one; and any
+  non-default player binding where the linker inputs supplied one; the
+  `controlContextFields` projection of §Control surface; and any
   per-playbook strategy override (classifier, prompt composers,
   required-field extraction, status formatting) an earlier section of this
-  definition requires for that playbook. The metadata shall keep the shared
+  definition requires for that playbook.
+  `controlContextFields` is authored, not derived: the linker names the FSM
+  context members the playbook's controller view exposes and no others, in the
+  order the view should render them, omitting the member entirely where the
+  playbook exposes no context. It is the one spec member whose default is
+  *nothing* rather than everything — the factory exports no context for a
+  module that supplies none — so a module emitted without it advertises a
+  playbook with no Boss-visible context rather than one whose whole FSM
+  context is Boss-visible. The linker shall not name a member the view
+  surfaces first-class (the pending Boss question, the last error), which is a
+  construction error, and shall not name a member carrying a resolved player
+  roster, an option value, or player-authored text, which a controller host's
+  prompts are required to exclude or to fence. The metadata shall keep the shared
   classifier's reply contract exactly flat `{ type, ...declaredFields }` and
   distinguish judge-authored routing fields from exact-text fields the
   runtime attaches itself. Everything else — player/script/captain/nested actor
@@ -1534,10 +1597,16 @@ The emitted module:
 - Default-exports the factory call as `createPlaybookRuntime`, typed
   `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`.
 - Exposes, under an `_internal` export, the pure helpers verification
-  needs — at least the player-prompt and Captain-prompt composers
-  (`composePlayerPrompt` and `composeCaptainPrompt`), which may re-export
-  the shared defaults when the spec does not override composition — so
-  compilation-correctness tests can exercise composition without a host.
+  needs — at least the prompt composers its own machine uses, which may
+  re-export the shared defaults when the spec does not override composition —
+  so compilation-correctness tests can exercise composition without a host.
+  A playbook that calls players exposes `composePlayerPrompt`; a playbook
+  whose states make direct-Captain calls exposes `composeCaptainPrompt`. A
+  controller playbook that calls no players exposes no player composer:
+  there is no composition to verify, and a stub under that name would
+  describe work the module cannot do. `_internal` is not a public API — the
+  leading underscore says so — and nothing in it is semver-stable; a helper
+  a host is meant to call is a top-level export and is governed as one.
 - Holds no host-specific types and no host primitive calls. The runtime
   speaks only `PlaybookPorts` for every agent and host concern; the
   `node:child_process` dependency of §Script execution lives in the shared

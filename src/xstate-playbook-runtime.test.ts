@@ -8,6 +8,7 @@
 // defaults (entry event, parked-state classifier, prompt composition,
 // adjudication, statuses).
 
+import { readFileSync, readdirSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -2246,6 +2247,67 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     expect(view.lastError).toMatchObject({ message: 'agent crashed' });
     expect(view.actions.length).toBeGreaterThan(0);
     await runtime.dispose();
+  });
+
+  // Source-first standing guard. The privacy contract lives in `slc/link.md`
+  // and reaches a shipped runtime only through the projection its artifact
+  // declares, so an artifact that ships without one — a re-link that dropped
+  // it, or a new artifact whose author never read the clause — silently
+  // exposes nothing, or, if the engine default ever regressed, everything.
+  // Artifacts are discovered rather than listed, so the next one is covered
+  // without anyone remembering this file.
+  describe('linked artifacts declare their control-context projection', () => {
+    const root = new URL('../', import.meta.url);
+    const artifacts = readdirSync(new URL('reference/sdlc/', root), {
+      withFileTypes: true,
+    })
+      .filter((entry) => entry.isDirectory() && entry.name.endsWith('.playbook'))
+      .flatMap((entry) => {
+        const dir = `reference/sdlc/${entry.name}/`;
+        return readdirSync(new URL(dir, root))
+          .filter((file) => file.endsWith('.playbook.ts'))
+          .map(
+            (file) =>
+              [
+                `${dir}${file}`,
+                readFileSync(new URL(`${dir}${file}`, root), 'utf8'),
+              ] as [string, string],
+          );
+      });
+
+    it('discovers every linked artifact', () => {
+      expect(artifacts.map(([path]) => path).sort()).toEqual([
+        'reference/sdlc/captain.playbook/captain.playbook.ts',
+        'reference/sdlc/code.playbook/code.playbook.ts',
+        'reference/sdlc/discuss.playbook/discuss.playbook.ts',
+      ]);
+    });
+
+    it.each(artifacts)('%s declares what its control view exposes', (
+      _path,
+      source,
+    ) => {
+      // Only a shared-factory artifact carries a spec; a fat artifact owns its
+      // own `describe` — or, like DISCUSS, ships without the pair at all.
+      if (!source.includes('createXStatePlaybookRuntime(')) return;
+      expect(source).toContain('controlContextFields:');
+    });
+
+    // The `_internal` clause of link.md §Output, matched to what each machine
+    // actually does: a playbook that calls players exposes the player
+    // composer; a controller that calls none exposes no stub under that name.
+    it.each(artifacts)('%s exposes the composers its machine uses', (
+      _path,
+      source,
+    ) => {
+      const internal = /export const _internal = \{([\s\S]*?)\n\};/.exec(
+        source,
+      )?.[1];
+      expect(internal).toBeDefined();
+      const callsPlayers = /ports\.callPlayer|callPlayer\(/.test(source);
+      expect(/compose\w*Prompt/.test(internal!)).toBe(true);
+      expect(internal!.includes('composePlayerPrompt')).toBe(callsPlayers);
+    });
   });
 
   it('refuses a projection naming a member the view surfaces first-class', () => {
