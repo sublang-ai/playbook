@@ -675,6 +675,66 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).not.toHaveProperty('./code/tmux-play');
   });
 
+  // RELEASE-20: the semver-stable unit of a public subpath is the module's
+  // declared public API, not merely the `exports` entry. Pinning only the
+  // entry is what let two named exports of `./captain/playbook` be removed
+  // with every gate green and the question of whether that was breaking left
+  // to be adjudicated after the fact. These sets are the recorded API: a
+  // removal or rename goes red here and is decided as a release event before
+  // the tag. `_internal` members are deliberately not pinned — the leading
+  // underscore declares them subject to change.
+  const PUBLIC_MODULE_EXPORTS: Record<string, readonly string[]> = {
+    './captain/playbook': ['_internal', 'createPlaybookRuntime', 'default'],
+    './code/registry': [
+      'codeCopyPasteGuardNames',
+      'codePlaybookRegistryEntry',
+      'codeSavedCountsLine',
+      'codeStateCountLabels',
+      'codeSummaryPolicy',
+      'createCodeRuntimeOptions',
+      'default',
+      'validateCodeOptions',
+    ],
+    './discuss/registry': [
+      'createDiscussRuntimeOptions',
+      'default',
+      'discussPlaybookRegistryEntry',
+      'discussSavedCountsLine',
+      'discussSummaryPolicy',
+      'validateDiscussOptions',
+    ],
+  };
+
+  it.each(Object.entries(PUBLIC_MODULE_EXPORTS))(
+    '%s declares exactly its recorded public exports',
+    async (subpath, expected) => {
+      const entry = manifest.exports[subpath] as {
+        types: string;
+        default: string;
+      };
+      const loaded = (await import(
+        new URL(`../${entry.default}`, import.meta.url).href
+      )) as Record<string, unknown>;
+      expect(Object.keys(loaded).sort()).toEqual([...expected].sort());
+
+      // The declaration file is the other half of the same public API: a
+      // consumer who imports a name TypeScript declares breaks when it goes,
+      // whether or not the JavaScript still carries it.
+      const dts = readFileSync(
+        new URL(`../${entry.types}`, import.meta.url),
+        'utf8',
+      );
+      const declared = new Set<string>();
+      for (const match of dts.matchAll(
+        /^export\s+declare\s+(?:function|const|class|let|var)\s+(\w+)/gm,
+      )) {
+        declared.add(match[1]);
+      }
+      if (/^export default /m.test(dts)) declared.add('default');
+      expect([...declared].sort()).toEqual([...expected].sort());
+    },
+  );
+
   it('packs the launcher and code.registry artifacts and not the retired files', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
     let out: string;

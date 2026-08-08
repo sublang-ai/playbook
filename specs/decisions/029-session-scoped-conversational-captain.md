@@ -123,14 +123,26 @@ There is no drop-in replacement, and restoring one would be worse than the remov
 - `composePlayerPrompt` has no meaning under the new machine. The controller Captain makes no player calls at all, so a restored body would describe work the module cannot do.
 - `composeCaptainPrompt` cannot be restored faithfully. The decision prompt is now the shell's labeled Boss / ControlView / catalog envelope ([CAPTAIN-9](../dev/playbook-captain.md#captain-9)) around the engine's shared `defaultComposeCaptainPrompt`. Re-exporting today's builder under the old name would keep an existing caller compiling and hand it prompts for a machine that no longer exists. A shim that silently changes behavior is a worse outcome than a removal stated plainly.
 
-The version number is left open here on purpose.
-It does not follow from this decision; it follows from what the semver-stable *unit* of `./captain/playbook` is, which no item states — the gap that let a breaking removal land against a record claiming none.
-The Boss decides it; the evidence is:
+The version number was left open here, between a major and a minor reading.
+It is settled now, and the minor reading is withdrawn as unsound: **the removal is breaking under [RELEASE-1](../dev/release.md#release-1), and the release carrying it shall be a major.**
 
-- **For a major.** [RELEASE-1](../dev/release.md#release-1) makes MAJOR the release for breaking changes, and RELEASE-20 declares the subpath public and semver-stable without narrowing that to any part of it. A consumer who imported either function by name breaks with nothing to move to. This is the conservative reading, and the one the `Removed` entry in `CHANGELOG.md` is already written for.
-- **For a minor.** Every item naming this surface names the subpath, never its members: RELEASE-20 pins the subpath, and [RELEASE-21](../test/release.md#release-21) pins only that `exports['./captain/playbook']` is declared. [link.md §Output](../../slc/link.md#output) requires a linked module to expose its prompt composers under `_internal` — which this artifact still does, for `composeCaptainPrompt` — and requires no top-level export of them. The sibling compiled artifacts agree: CODE and DISCUSS both declare `composePlayerPrompt` un-exported and reach it only through `_internal`, so the Captain artifact's top-level pair was one compile's departure from the linker contract rather than a designed API. Neither name appears in `README.md`, in `docs/`, or in any item under `specs/user`, `specs/dev`, or `specs/test`. Under this reading nothing semver-stable was removed.
+What 4.0.0 actually shipped, from the tag:
 
-Whichever reading is taken shall be recorded before the release tag ([RELEASE-4](../dev/release.md#release-4)), and RELEASE-20 shall then state which unit of a compiled-playbook subpath is semver-stable, so the next such removal is decided in advance instead of adjudicated afterwards.
+- `git show v4.0.0:reference/sdlc/captain.playbook/captain.playbook.js` declares both functions at column 0 — `export function composeCaptainPrompt(input)` and `export function composePlayerPrompt(input)` — module-level named exports, in addition to their appearance inside `_internal`.
+- `git show v4.0.0:reference/sdlc/captain.playbook/captain.playbook.d.ts` declares both as `export declare function`.
+- Extracted from the tag and imported through the package's own specifier, `@sublang/playbook/captain/playbook` resolved to named exports `_internal`, `composeCaptainPrompt`, `composePlayerPrompt`, `createPlaybookRuntime`, and `default`, both functions callable. The same probe at HEAD returns the first, fourth, and fifth, with both names `undefined`.
+
+The minor column argued from intent and internal convention: that no item pinned the members, that link.md asked only for `_internal` composers, that the sibling artifacts keep theirs un-exported, and that the names appear in no document.
+None of that unships a declared export.
+SemVer 2.0.0 lets a public API be declared "in the code itself", and a `.d.ts` `export declare function` is exactly that declaration; a consumer who wrote `import { composeCaptainPrompt } from '@sublang/playbook/captain/playbook'` compiled and ran at 4.0.0 and breaks at HEAD with no replacement.
+The link.md prop was unsound in the other direction besides: §Output *required* an `_internal` `composePlayerPrompt`, which the controller artifact cannot carry, so link.md could not be cited as the artifact's conformance standard until that clause was corrected (it now asks for the composers each machine uses).
+
+The alternative — restoring the exact 4.0.0 bodies as frozen, deprecated, unused compatibility exports for a 4.x release — is available and is rejected.
+It would ship dead code describing a machine that no longer exists and defer the break rather than remove it, and the reasons above for not restoring either function stand.
+Take it only if a real external consumer is ever found.
+
+RELEASE-20 now states which unit of a compiled-playbook subpath is semver-stable — the subpath entry plus every top-level named and default export of the JavaScript and declarations it resolves to, with `_internal` members explicitly outside it — and [RELEASE-21](../test/release.md#release-21) pins those export sets, so the next such removal goes red at the gate and is decided before the tag instead of adjudicated afterwards.
+The version number itself belongs to the release checklist ([RELEASE-4](../dev/release.md#release-4)): this record fixes that it is a major.
 
 ## Addendum A3 (the control view publishes the state's meaning, not its id)
 

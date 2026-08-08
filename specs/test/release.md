@@ -216,6 +216,15 @@ subpaths, declares `exports['./captain/playbook']`, declares neither
 `npm pack --dry-run` lists the `playbook` launcher entry and the
 `code.registry` and `discuss.registry` `.js` and `.d.ts` artifacts
 among the packed contents.
+The test suite shall additionally pin the semver-stable unit of each
+public subpath rather than only the subpath entry: it shall fail unless
+the top-level named and default exports of the JavaScript and
+declaration files behind `exports['./captain/playbook']`,
+`exports['./code/registry']`, and `exports['./discuss/registry']` are
+exactly the recorded sets, so removing or renaming one goes red at the
+gate and is decided as a [RELEASE-1](../dev/release.md#release-1)
+release event before the tag rather than adjudicated after it.
+Members reached only through an `_internal` export shall not be pinned.
 
 ## Local release smoke
 

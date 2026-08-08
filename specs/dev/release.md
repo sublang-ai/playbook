@@ -267,6 +267,16 @@ Removing or renaming the `playbook` bin or a
 `@sublang/playbook/<id>/registry` or `@sublang/playbook/captain/playbook`
 export shall be released under
 [RELEASE-1](#release-1) SemVer.
+The semver-stable unit of such a subpath is the module's declared public
+API: the subpath entry itself and every top-level named and default
+export of the JavaScript and declaration files it resolves to.
+Removing or renaming any of them is a breaking change under
+[RELEASE-1](#release-1), whether or not an item, guide, or README names
+that export — a `.d.ts` `export declare` is itself the declaration
+SemVer 2.0.0 speaks of, and a consumer who imported the name compiled
+and ran against it. Members reached only through an `_internal` export
+are not part of that unit: the leading underscore declares them subject
+to change, and they may be added, changed, or removed in any release.
 The removal of the `playbook-code` bin, the
 `@sublang/playbook/code/tmux-play` export, and the bundled legacy CODE
 tmux-play configs are breaking public-surface changes under
