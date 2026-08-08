@@ -2110,6 +2110,28 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
             return Object.keys(projected).length === 0 ? undefined : projected;
         }
+        // PBRT-52: the view's Boss-facing state description — the meaning of the
+        // state the runtime is in, written by the artifact's own source, from the
+        // same descriptions its action labels are written from. A control view is
+        // the only grounding a controller host has for a status answer, and an
+        // internal state id is not Boss-appropriate text
+        // (CAPPLAY-5), so the runtime publishes the meaning
+        // rather than leaving the host to substitute the identifier for it. A
+        // state whose source declares no description publishes none: an id is
+        // never promoted into a description by default.
+        function stateDescriptionFor(state) {
+            const keys = [
+                ...(state.stateId === undefined ? [] : [state.stateId]),
+                ...(typeof state.value === 'string' ? [state.value] : []),
+                ...state.activeStateIds,
+            ];
+            for (const key of keys) {
+                const description = stateDescriptions.get(key);
+                if (description !== undefined)
+                    return description;
+            }
+            return undefined;
+        }
         function receiptTracePayload(receipt) {
             return {
                 disposition: receipt.disposition,
@@ -2288,8 +2310,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const pending = pendingBossQuestionFromContext(context);
                 const lastError = normalizeErrorFull(context.lastError);
                 const projectedContext = projectControlContext(context);
+                const stateDescription = stateDescriptionFor(state);
                 return deepFreeze({
                     state,
+                    ...(stateDescription === undefined ? {} : { stateDescription }),
                     ...(projectedContext !== undefined
                         ? { context: projectedContext }
                         : {}),
@@ -2364,16 +2388,22 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // caller that gets an exception instead of a receipt is left with an
                 // executed effect it cannot record and a key it will not reuse.
                 let accepted = false;
-                // Past acceptance a settlement-emission failure is a post-acceptance
-                // control-plane error, which PBRT-52 settles as the `failed` receipt
-                // rather than as a throw. Folding replaces the receipt recorded at
-                // acceptance, so a replayed key returns the same settlement the
-                // caller saw; the boundary sentinel is still held, so nothing can
-                // observe the intermediate value. Only the first settlement error is
-                // latched, so one fold is all there is to do.
+                // Publication is the second line this boundary respects. Before it,
+                // nothing has left the runtime: a settlement failure past acceptance
+                // is a post-acceptance control-plane error PBRT-52 settles as the
+                // `failed` receipt, and folding it in replaces the receipt recorded
+                // at acceptance so the finish trace, the returned receipt, and any
+                // replay of the key all report one settlement. Past publication that
+                // agreement is no longer achievable — the disposition is already on
+                // the wire — so the fold refuses to run, by construction rather than
+                // by call ordering. Only the first settlement error is latched, so
+                // one fold is all there is to do.
                 let folded = false;
+                let published = false;
                 const foldSettlementFailure = () => {
-                    if (!accepted || folded || settlementError === undefined)
+                    if (published || !accepted || folded)
+                        return;
+                    if (settlementError === undefined)
                         return;
                     folded = true;
                     receipt = settledReceipt({
@@ -2381,6 +2411,18 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         error: normalizeError(settlementError),
                     });
                     appliedReceipts.set(key, receipt);
+                };
+                // A settlement failure that lands after the receipt is published says
+                // nothing about the effect: the action ran, the caller's receipt is
+                // true, and only the telemetry delivery failed. Rewriting `executed`
+                // to `failed` there would make the runtime lie to its only caller
+                // about work that succeeded, irrecoverably — accepted receipts are
+                // final for their key. Past publication such a failure is therefore
+                // re-latched onto the emission channel, surfacing from the next
+                // public boundary's drain, and `apply` still does not throw past
+                // acceptance (PBRT-52).
+                const latchDeliveryFailure = (error) => {
+                    emissionFailure ??= error;
                 };
                 try {
                     try {
@@ -2479,27 +2521,39 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     catch (error) {
                         settlementError = error;
                     }
-                    // Fold before the finish emission so the traced disposition is the
-                    // one the caller receives.
+                    // Fold before the finish emission, the last point at which the
+                    // traced disposition and the returned one can still be made the
+                    // same value.
                     foldSettlementFailure();
                     if (receipt !== undefined) {
+                        // Publication: this disposition is now the settlement, for the
+                        // trace, for the caller, and for every replay of the key.
+                        published = true;
                         try {
                             await emitTrace('apply.finished', { actionId, key, ...receiptTracePayload(receipt) }, position);
                         }
                         catch (error) {
-                            settlementError ??= error;
+                            if (accepted)
+                                latchDeliveryFailure(error);
+                            else
+                                settlementError ??= error;
                         }
-                        // Drain even when the finish emission rejected, so its latched
-                        // sink failure cannot leak into the next public boundary.
+                        // Drain even when the finish emission rejected, so this call
+                        // leaves no queued emission behind it. Before acceptance the
+                        // failure is consumed and thrown, as every pre-acceptance failure
+                        // is; past it the failure is re-latched instead — the effect
+                        // happened, so the delivery failure travels on the emission
+                        // channel to the next boundary rather than rewriting what
+                        // happened or vanishing here.
                         try {
                             await drainEmissions();
                         }
                         catch (error) {
-                            settlementError ??= error;
+                            if (accepted)
+                                latchDeliveryFailure(error);
+                            else
+                                settlementError ??= error;
                         }
-                        // A finish sink that itself rejected has already lost its pair;
-                        // the receipt still has to tell the caller what happened.
-                        foldSettlementFailure();
                     }
                 }
                 finally {

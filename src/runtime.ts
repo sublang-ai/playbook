@@ -217,10 +217,15 @@ export interface PlaybookControlAction {
 }
 
 // DR-029 §3: the sanitized control view `describe()` returns — current
-// state, JSON-safe relevant context, pending Boss questions, the last
-// recorded error, and the currently valid actions.
+// state and the runtime-written description of what that state means,
+// the authored context projection, pending Boss questions, the last
+// recorded error, and the currently valid actions. `stateDescription` is
+// the Boss-appropriate grounding a host may speak from; the state id is
+// internal and is absent from it whenever the runtime's source declares
+// no description for the state it is in.
 export interface PlaybookControlView {
   state: PlaybookState;
+  stateDescription?: string;
   context?: JsonValue;
   pendingQuestions: readonly PlaybookPendingBossQuestion[];
   lastError?: NormalizedError;

@@ -2324,6 +2324,11 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     // advertised; no retry entry outside the failure state.
     const atReady = runtime.describe!();
     expect(atReady.state.stateId).toBe('ready');
+    // The view publishes what the state *means*, from the same source
+    // descriptions the action labels are written from: a controller host has
+    // no other grounding for a status answer, and a state id is not
+    // Boss-appropriate text.
+    expect(atReady.stateDescription).toBe('ready state');
     expect(atReady.actions).toEqual([
       { id: 'jump:implement', label: 'Resume from: implement state' },
     ]);
@@ -2347,6 +2352,7 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     expect(runtime.exportSnapshot!()).toEqual(snapshotBefore);
 
     expect(first.state.stateId).toBe('awaitBossReply');
+    expect(first.stateDescription).toBe('awaitBossReply state');
     expect(first.pendingQuestions).toEqual([
       {
         questionId: 'q-1',
@@ -2668,7 +2674,14 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     await runtime.dispose();
   });
 
-  it('settles the receipt instead of throwing when settlement crashes after acceptance', async () => {
+  // A rejecting `apply.finished` sink is the one settlement failure that lands
+  // *after* the disposition is already on the wire. Rewriting the receipt there
+  // cannot make the trace and the return agree — the trace is gone — and it
+  // makes the runtime tell its only caller that work which succeeded failed,
+  // irrecoverably, since an accepted receipt is final for its key. The receipt
+  // stands; the delivery failure travels on the emission channel and surfaces
+  // from the next public boundary that drains it.
+  it('keeps the published receipt when the finish sink rejects and latches the delivery failure', async () => {
     let playerCalls = 0;
     let failFinishSink = false;
     const telemetryEvents: RecordedTelemetry[] = [];
@@ -2698,20 +2711,27 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     await runtime.handleBossInput(turn('build the widget'));
 
     failFinishSink = true;
-    // Past acceptance the boundary owes a receipt: the action ran, so a
-    // rejecting settlement sink is a post-acceptance control-plane error
-    // that settles `failed` (effects may exist) rather than a throw that
-    // would leave the caller with an effect it cannot record.
+    // Past acceptance the boundary owes a receipt and does not throw: the
+    // action ran, and the caller is told so.
     const settled = await runtime.apply!({
       actionId: 'retry:START',
       key: 'crash',
       signal: sigOf(),
     });
-    expect(settled.disposition).toBe('failed');
-    expect(
-      settled.disposition === 'failed' ? settled.error.message : undefined,
-    ).toBe('finish sink offline');
+    expect(settled.disposition).toBe('executed');
     expect(playerCalls).toBe(2);
+
+    // The emitted disposition and the returned one are the same value — the
+    // agreement PBRT-52 requires, held by construction rather than by a
+    // retroactive rewrite the emitted trace could not follow.
+    expect(
+      applyTraces(telemetryEvents)
+        .filter((event) => event.type === 'apply.finished')
+        .map(
+          (event) => (event.payload as { disposition?: string }).disposition,
+        )
+        .at(-1),
+    ).toBe('executed');
 
     // The key is settled and final: the replayed key returns exactly the
     // settlement the caller saw, with no re-execution and no new trace pair.
@@ -2724,6 +2744,15 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     expect(replayed).toEqual(settled);
     expect(playerCalls).toBe(2);
     expect(applyTraces(telemetryEvents)).toHaveLength(beforeReplay);
+
+    // The delivery failure is not swallowed either: it rides the engine's
+    // standing emission-failure latch — the same channel every background
+    // emission failure travels — and surfaces from the next public boundary
+    // that drains it. Probed with an empty turn, which reaches the settlement
+    // drain without opening a nested call boundary of its own.
+    await expect(runtime.handleBossInput(turn(''))).rejects.toThrow(
+      'finish sink offline',
+    );
     await runtime.dispose();
   });
 
@@ -3025,6 +3054,13 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     // and exactly the registered resumable targets the live guards accept.
     const view = runtime.describe!();
     expect(view.state.stateId).toBe('failed');
+    // The real artifact publishes the meaning of the state it is in, from the
+    // same source description its action labels are written from. This is the
+    // grounding a controller host speaks a status answer from, in place of the
+    // state id it used to be handed.
+    expect(view.stateDescription).toBe(
+      'Captures the last Captain error so the runner can report it. Boss may resume from here.',
+    );
     expect(view.lastError).toMatchObject({
       name: 'Error',
       message: 'coder is down',

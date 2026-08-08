@@ -581,9 +581,19 @@ and after disposal.
 The suite shall fail unless `describe()` is side-effect free (no
 trace, status, or telemetry; back-to-back views deep-equal; the
 machine snapshot unmoved) and its view carries the normalized state,
-the runtime-authored context projection, the pending Boss question
-with its stable id, and the last error as `{ name, message }`-bearing
-normalized form.
+the state description its source publishes for that state — verbatim,
+on synthetic machines and on the real CODE runtime parked at `failed`
+alike — the runtime-authored context projection, the pending Boss
+question with its stable id, and the last error as
+`{ name, message }`-bearing normalized form.
+The suite shall discover every linked playbook artifact in the
+repository rather than listing them, and shall fail unless each
+artifact built on the shared factory declares a `controlContextFields`
+projection and each artifact's `_internal` exposes the prompt composers
+its own machine uses — the player composer where and only where that
+playbook calls players — so a re-link or a newly linked artifact cannot
+ship without the declaration the privacy contract rests on
+([slc/link.md](../../slc/link.md#output)).
 The projection shall fail unless a factory runtime that declares no
 context members carries no `context` at all while its FSM context is
 populated; unless a runtime that declares members exports exactly
@@ -630,13 +640,19 @@ receipt and its key still executing later; unless a key first settled
 advertised records no receipt and executes when re-applied after the
 action becomes advertisable, each of the two calls tracing its own
 pair; unless a settlement failure after acceptance settles rather than
-throws — both a rejecting `apply.finished` sink over an executed
-action and a rejecting emission drain over an otherwise clean run
-shall resolve with a `failed` receipt carrying the sink's normalized
-error while the effects stay visible, the `apply.finished` pair shall
-carry that same `failed` disposition rather than the pre-fold one, and
-the replayed key shall return that receipt verbatim with no
-re-execution and no new pair; unless an abort mid-execution settles
+throws, discriminated by whether the receipt was already published: a
+rejecting emission drain over an otherwise clean run, landing before
+the finish emission, shall resolve with a `failed` receipt carrying the
+sink's normalized error while the effects stay visible, its
+`apply.finished` pair shall carry that same `failed` disposition rather
+than the pre-fold one, and the replayed key shall return that receipt
+verbatim with no re-execution and no new pair — while a rejecting
+`apply.finished` sink over an executed action shall leave the receipt
+`executed`, the emitted disposition and the returned one shall be the
+same value, the replayed key shall return that same `executed` receipt,
+and the sink failure shall surface from the next public boundary that
+drains rather than being discarded or recorded as the effect's
+settlement; unless an abort mid-execution settles
 a `failed` receipt whose error reflects the abort while the boundary
 drains cleanly; and unless every executed or rejected `apply` traces
 as one paired `apply.started`/`apply.finished` carrying the action id,

@@ -324,6 +324,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'lastError?:NormalizedError',
       'pendingQuestions:readonlyPlaybookPendingBossQuestion[]',
       'state:PlaybookState',
+      'stateDescription?:string',
     ]);
     expect(interfaceProperties(runtimeDts, 'PlaybookControlView')).toEqual(
       interfaceProperties(linkSpec, 'PlaybookControlView'),

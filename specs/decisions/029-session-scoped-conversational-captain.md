@@ -131,3 +131,20 @@ The Boss decides it; the evidence is:
 - **For a minor.** Every item naming this surface names the subpath, never its members: RELEASE-20 pins the subpath, and [RELEASE-21](../test/release.md#release-21) pins only that `exports['./captain/playbook']` is declared. [link.md §Output](../../slc/link.md#output) requires a linked module to expose its prompt composers under `_internal` — which this artifact still does, for `composeCaptainPrompt` — and requires no top-level export of them. The sibling compiled artifacts agree: CODE and DISCUSS both declare `composePlayerPrompt` un-exported and reach it only through `_internal`, so the Captain artifact's top-level pair was one compile's departure from the linker contract rather than a designed API. Neither name appears in `README.md`, in `docs/`, or in any item under `specs/user`, `specs/dev`, or `specs/test`. Under this reading nothing semver-stable was removed.
 
 Whichever reading is taken shall be recorded before the release tag ([RELEASE-4](../dev/release.md#release-4)), and RELEASE-20 shall then state which unit of a compiled-playbook subpath is semver-stable, so the next such removal is decided in advance instead of adjudicated afterwards.
+
+## Addendum A3 (the control view publishes the state's meaning, not its id)
+
+§3 says `describe()` returns a view carrying "current state" and never says what a host may *speak* from it.
+The engine answered with the only thing a normalized state descriptor carries: the state id.
+That put the two contracts in direct conflict.
+[CAPPLAY-5](../user/captain-playbook.md#capplay-5) forbids a captain reply to expose internal state ids, while a status answer is required to be grounded in the digest — and the digest's state line was the id, so the grounding could only be satisfied by violating the contract.
+The landed acceptance rows made the conflict explicit by requiring the violation: a Boss-surfaced reply asserted to contain `state value awaitBossReply`.
+
+Grounding needs the state's meaning, not its identifier, and the artifact already holds the meaning:
+
+- The view carries `stateDescription`, the runtime's own Boss-facing statement of what its current state means, written from the same source state descriptions its action labels are written from.
+- A state whose source declares no description publishes none. An id is never promoted into a description, and a host handed no description says so rather than substituting the id.
+- The host composes its digest from the description, so no prompt carries a state id at all.
+- Only then does the host owe a rejection duty, and only a narrow one: it refuses a reply carrying a live *machine-shaped* identifier — read from live shell state, never from a list of literals — and does not refuse a bare lowercase id such as `ready` or `failed`, which is ordinary English a Boss may hear in any sentence. A literal denylist over live state ids was the wrong remedy for exactly that reason.
+
+This changes what §3's view carries and what a host may speak; it changes nothing about `describe`/`apply` as a pair, their feature detection, the receipt contract, or the compatibility gate.

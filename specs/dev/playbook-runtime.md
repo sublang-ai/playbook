@@ -103,7 +103,9 @@ leaving the injection path typed end to end at the artifact.
 `apply?(input: { actionId: string; key: string; signal: AbortSignal }):
 Promise<PlaybookControlReceipt>` — implemented both or neither
 ([slc/link.md](../../slc/link.md#control-surface-optional));
-`PlaybookControlView` shall carry `state`, the optional JSON-safe
+`PlaybookControlView` shall carry `state`, the optional
+runtime-published `stateDescription` naming what that state means
+([PBRT-52](#pbrt-52)), the optional JSON-safe
 `context` projection its runtime authors ([PBRT-52](#pbrt-52)),
 `pendingQuestions`, optional `lastError`, and `actions` of
 `PlaybookControlAction` (`id`, `label`), and `PlaybookControlReceipt`
@@ -802,9 +804,19 @@ only verb against it.
 or machine movement — and shall throw before `init`, while another
 public boundary is active, and once disposal begins. It shall return a
 detached view carrying the current normalized state descriptor, the
+state description defined below, the
 runtime-authored context projection defined below, the pending Boss
 questions with their stable ids, the last recorded error in normalized
 `{ name, message, stack? }` form, and the currently valid actions.
+The view's `stateDescription` shall be the runtime's own Boss-facing
+statement of what its current state means, written from the same source
+state descriptions the action labels are written from, so a controller
+host has grounding it can speak from without reading an internal
+identifier ([CAPPLAY-5](../user/captain-playbook.md#capplay-5),
+[CAPTAIN-9](playbook-captain.md#captain-9)). A state whose source
+declares no description shall carry no `stateDescription`: the runtime
+shall not promote a state id into a description, so a host is never
+handed an identifier dressed as meaning.
 The view's `context` shall be an explicit projection the linked
 runtime authors — the FSM context members it names, in the order it
 names them — and shall never be an allow-by-default serialization of
@@ -857,12 +869,24 @@ pair.
 Acceptance is also the line past which `apply` shall not throw: the
 action may have run, and a caller handed an exception instead of a
 receipt is left with an effect it cannot record and a key it will not
-reuse. A settlement failure after acceptance — a rejecting emission
-drain or a rejecting `apply.finished` sink — is therefore one of the
+reuse. Publication — the `apply.finished` emission — is the second such
+line, and it is what decides which post-acceptance settlement failures
+may change the receipt. A settlement failure after acceptance and
+*before* publication — a rejecting emission drain — is one of the
 post-acceptance control-plane errors above and shall settle the
 `failed` receipt carrying its normalized error, replacing the receipt
-recorded at acceptance so that the finish trace, the returned receipt,
-and any later replay of the key all report the same settlement. Only
+recorded at acceptance, so that the finish trace, the returned receipt,
+and any later replay of the key all report the same settlement.
+A settlement failure at or after publication — a rejecting
+`apply.finished` sink, or a drain that rejects after it — shall not
+change the receipt: the disposition is already emitted, so no rewrite
+can make the trace and the return agree, and a receipt is a statement
+about the effect rather than about its telemetry. Such a failure is a
+delivery failure, the run having succeeded and the ledger not having
+heard of it; the runtime shall keep the published receipt, shall
+return and replay exactly that receipt, and shall carry the delivery
+failure on its emission-failure channel so it surfaces from the next
+public boundary that drains rather than being discarded. Only
 failures before acceptance surface by throwing, where no effect exists
 and no receipt is owed. Only accepted receipts (`executed` or
 `failed`) shall be recorded

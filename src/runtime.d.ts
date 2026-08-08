@@ -154,6 +154,7 @@ export interface PlaybookControlAction {
 }
 export interface PlaybookControlView {
     state: PlaybookState;
+    stateDescription?: string;
     context?: JsonValue;
     pendingQuestions: readonly PlaybookPendingBossQuestion[];
     lastError?: NormalizedError;
