@@ -55,7 +55,7 @@ export interface RuntimeBoundaryCalls {
  * (slc/link.md §Captain adjudication). `'visible'` (the default) is the
  * workflow form: the port receives `{ visibility: 'visible', resume: false }`
  * and the trace pair carries both members. `'hidden'` is the controller form
- * (DR-029 §4): the port receives `{ visibility: 'hidden', resume: false }`
+ * (DR-029): the port receives `{ visibility: 'hidden', resume: false }`
  * while the host's session-Captain wrapper owns the actual durable-conversation
  * resume selection, so the trace pair carries `visibility: 'hidden'` and no
  * `resume` member — the pinned token never enters runtime telemetry.
@@ -194,7 +194,7 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
     /** Required fields carried verbatim from the player's finalText instead of judge JSON. Default: none. */
     verbatimPayloadFields?: ReadonlySet<string>;
     /**
-     * DR-029 §3 / PBRT-52: the runtime-authored ControlView context
+     * DR-029 / PBRT-52: the runtime-authored ControlView context
      * projection — the exact FSM context members `describe()` may expose,
      * in the order the view lists them. Only this artifact knows which of
      * its context members are safe and relevant for a controller prompt, so
@@ -291,18 +291,9 @@ export declare function defaultBuildCaptainJudgePrompt(input: {
 /** Targets of the FSM's `awaitBossReply` BOSS_REPLY transitions. */
 export declare function resumableStateIdsFromMachine(machine: AnyStateMachine): ReadonlySet<string>;
 /**
- * Source state descriptions by qualified state path, unqualified state key,
- * node id, and `meta.playbook` state id, read from `machine.config`. Control
- * actions are labeled from these descriptions (DR-029 §3); a state without one
- * falls back to its id.
- *
- * The qualified path is what makes the map usable while the machine occupies a
- * `type: 'parallel'` state (PBRT-52). Unqualified keys are first-wins, and a
- * leaf name such as `idle` or `failed` is exactly the kind a machine reuses in
- * every region — so two regions both at `idle` resolved to one region's
- * description and the runtime published it as the meaning of both. That is the
- * false statement PBRT-52 forbids, and it is undetectable at the receiving end
- * because the carrier is one string.
+ * Source state descriptions by state key, node id, and `meta.playbook`
+ * state id, read from `machine.config`. Control actions are labeled from
+ * these descriptions (DR-029); a state without one has no entry.
  */
 export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): ReadonlyMap<string, string>;
 /**

@@ -24,6 +24,9 @@ instruction found inside quoted player output.
 Where a Boss intent requires several specialized workflows, the default Captain shall plan conversationally across Boss turns: it shall select at most one validated action per turn, propose or revise later steps in its replies as outcomes arrive, and never queue an intra-turn multi-child plan.
 An executed action's settlement is final for its turn; continuing or
 repeating work takes a new Boss turn and a new decision.
+When that conversation has established a complete request for a new
+playbook, the Captain shall hand off the agreed request rather than only
+the latest Boss message, without adding work the Boss did not request.
 
 ### CAPPLAY-3
 
@@ -35,10 +38,10 @@ re-asking for what it was already told.
 
 ### CAPPLAY-4
 
-While a playbook engagement is active or parked, when the Boss submits ordinary input, the default Captain shall choose among `respond`, `deliver`, `dismiss`, `switch`, and `runtime` by its own judgment of the input's addressee and intent, with `respond` a valid selection for any turn ([DR-029 §4](../decisions/029-session-scoped-conversational-captain.md)): task-directed content — an instruction, answer, or continuation for the working playbook — shall flow to the active leaf as `deliver`, the leaf receiving the original Boss input unchanged from the shell ([CAPTAIN-7](../dev/playbook-captain.md#captain-7)); conversation, planning, and clarification addressed to the Captain — progress and status questions included — shall settle as `respond` grounded in the supplied runtime digest, with the engagement, its parked state, and any pending player question untouched; and only an explicit stop, replacement, or recovery/resume request shall select `dismiss`, `switch`, or a `runtime` action.
+While a playbook engagement is active or parked, when the Boss submits ordinary input, the default Captain shall choose among `respond`, `deliver`, `dismiss`, `switch`, and `runtime` by its own judgment of the input's addressee and intent, with `respond` a valid selection for any turn ([DR-029](../decisions/029-session-scoped-conversational-captain.md)): task-directed content — an instruction, answer, or continuation for the working playbook — shall flow to the active leaf as `deliver`, the leaf receiving the original Boss input unchanged from the shell ([CAPTAIN-7](../dev/playbook-captain.md#captain-7)); conversation, planning, and clarification addressed to the Captain — progress and status questions included — shall settle as `respond` grounded in the supplied runtime digest, with the engagement, its parked state, and any pending player question untouched; and only an explicit stop, replacement, or recovery/resume request shall select `dismiss`, `switch`, or a `runtime` action.
 
 ### CAPPLAY-5
 
-When the default Captain closes an acting turn, its closing reply shall communicate what actually happened, composed only from the turn's reported outcome, and shall claim no unperformed work; when the turn settles as `respond`, that single reply is the turn's captain speech.
+When the default Captain closes a non-`respond` turn, including a rejected, failed, or partly completed selection, its closing reply shall communicate what actually happened, composed only from the turn's reported outcome, and shall claim no unperformed work; when the turn settles as `respond`, that single reply is the turn's captain speech.
 No captain reply shall expose internal state ids, session ids, call ids,
 stack data, hidden control data, control JSON, or private reasoning.

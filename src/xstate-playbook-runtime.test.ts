@@ -2049,7 +2049,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// DR-029 §3 control surface (PBRT-52 / PBRT-53): describe/apply over the
+// DR-029 control surface (PBRT-52 / PBRT-53): describe/apply over the
 // shared factory — synthetic workflow machines plus the real linked CODE
 // runtime and the real DISCUSS FSM at the bare runtime surface, under fake
 // ports with scripted per-call results.
@@ -2194,7 +2194,7 @@ const createDiscussControlRuntime = createXStatePlaybookRuntime(
   },
 );
 
-describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-53)', () => {
+describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)', () => {
   it('exposes describe and apply together on every factory runtime and detects a pair-less runtime distinctly', () => {
     const factoryRuntimes: PlaybookRuntime[] = [
       createWorkflowRuntime({}),
@@ -3411,190 +3411,6 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
       },
     ]);
     await restored.dispose();
-  });
-});
-
-// Round-7 finding 5. `stateDescription` is the *only* carrier a controller
-// host has for what the machine is doing — one string, which the host cannot
-// inspect for completeness. While more than one region is active, returning
-// the first region's description states a fraction as if it were the whole,
-// and the host publishes it verbatim to its model. The representation is
-// fixed here, while the v5 control contract is still being set.
-describe('parallel-state descriptions over the shared factory (PBRT-52)', () => {
-  // Reachable today: a parallel state in which exactly one active state
-  // declares `meta.playbook`. The factory admits it — its one-playbook-state-id
-  // rule is satisfied — and the old pick-first reading published that one
-  // region's meaning as the meaning of the whole state.
-  const partlyDescribed = createMachine({
-    id: 'partly',
-    initial: 'ready',
-    states: {
-      ready: {
-        meta: { playbook: { stateId: 'ready', description: 'ready state' } },
-        on: { SPLIT: 'split' },
-      },
-      split: {
-        type: 'parallel',
-        states: {
-          left: {
-            initial: 'leftIdle',
-            states: {
-              leftIdle: {
-                meta: {
-                  playbook: {
-                    stateId: 'leftIdle',
-                    description: 'the left region is idle',
-                  },
-                },
-              },
-            },
-          },
-          right: { initial: 'rightIdle', states: { rightIdle: {} } },
-        },
-      },
-    },
-  });
-
-  const createPartly = createXStatePlaybookRuntime(partlyDescribed, {
-    label: 'partly',
-    snapshotOptions: () => ({}),
-    entryEvent: { type: 'SPLIT' },
-  });
-
-  it('publishes nothing while an active region publishes no description', async () => {
-    const { ports } = makeRecordingPorts();
-    const runtime = createPartly({});
-    await runtime.init(makeSession(ports));
-    await runtime.handleBossInput(turn('split the work'));
-
-    const view = runtime.describe!();
-    // Genuinely multi-region, and the factory accepted it.
-    expect(view.state.value).toEqual({
-      split: { left: 'leftIdle', right: 'rightIdle' },
-    });
-    expect(view.state.activeStateIds).toEqual(['leftIdle']);
-    // "A published description per active region" is unsatisfiable here, so
-    // the view publishes none rather than narrowing to the region that has
-    // one. The host then states the absence, exactly as it does for a state
-    // whose source declares no description at all.
-    expect(view.stateDescription).toBeUndefined();
-    await runtime.dispose();
-  });
-
-  // Round-8 finding 4. The row below used to claim the covering form was
-  // unreachable, "because the shared factory refuses the only snapshots that
-  // could reach it: two active states both declaring `meta.playbook`". The
-  // factory refuses two playbook *state ids*; a description is not a state id.
-  // One region declaring `meta.playbook` and another declaring a plain
-  // `description` leaves exactly one playbook state id, passes the factory
-  // check, and reaches the covering branch — so the claim was false, and a
-  // comment asserting a branch is unreachable is worse than no comment,
-  // because it is what stops the next reader looking. The refusal is still
-  // pinned, as the fact it actually is; the covering form now has live rows.
-  it('refuses a snapshot whose active regions declare two playbook state ids', async () => {
-    const fullyDescribed = createMachine({
-      id: 'fully',
-      type: 'parallel',
-      states: {
-        left: {
-          initial: 'leftIdle',
-          states: {
-            leftIdle: {
-              meta: {
-                playbook: { stateId: 'leftIdle', description: 'left is idle' },
-              },
-            },
-          },
-        },
-        right: {
-          initial: 'rightIdle',
-          states: {
-            rightIdle: {
-              meta: {
-                playbook: {
-                  stateId: 'rightIdle',
-                  description: 'right is idle',
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    const createFully = createXStatePlaybookRuntime(fullyDescribed, {
-      label: 'fully',
-      snapshotOptions: () => ({}),
-    });
-    const { ports } = makeRecordingPorts();
-    const runtime = createFully({});
-    await expect(runtime.init(makeSession(ports))).rejects.toThrow(
-      /must expose exactly one playbook state id/,
-    );
-  });
-
-  /**
-   * The covering form, live. One region publishes through `meta.playbook` and
-   * the other through a plain `description`, so the snapshot carries one
-   * playbook state id and the factory admits it.
-   */
-  const coveringMachine = (leftKey: string, rightKey: string) =>
-    createMachine({
-      id: 'covering',
-      type: 'parallel',
-      states: {
-        left: {
-          initial: leftKey,
-          states: {
-            [leftKey]: {
-              meta: {
-                playbook: { stateId: 'leftState', description: 'left is idle' },
-              },
-            },
-          },
-        },
-        right: {
-          initial: rightKey,
-          states: { [rightKey]: { description: 'right is idle' } },
-        },
-      },
-    });
-
-  const describeCovering = async (
-    leftKey: string,
-    rightKey: string,
-  ): Promise<{ value: unknown; description: string | undefined }> => {
-    const create = createXStatePlaybookRuntime(
-      coveringMachine(leftKey, rightKey),
-      { label: 'covering', snapshotOptions: () => ({}) },
-    );
-    const { ports } = makeRecordingPorts();
-    const runtime = create({});
-    await runtime.init(makeSession(ports));
-    const view = runtime.describe!();
-    const read = {
-      value: view.state.value,
-      description: view.stateDescription,
-    };
-    await runtime.dispose();
-    return read;
-  };
-
-  it('publishes one description per active region when every region has one', async () => {
-    const read = await describeCovering('leftIdle', 'rightIdle');
-    expect(read.value).toEqual({ left: 'leftIdle', right: 'rightIdle' });
-    expect(read.description).toBe('left is idle | right is idle');
-  });
-
-  it('states each region apart when two regions share a leaf name', async () => {
-    // The regression: descriptions were indexed by unqualified state key and
-    // active regions were reduced to those same keys, so two regions both at
-    // `idle` produced two lookups of one key — and the join stated the left
-    // region's meaning as the meaning of both, losing the right region's
-    // published meaning entirely. Nothing in the string says so to the host.
-    const read = await describeCovering('idle', 'idle');
-    expect(read.value).toEqual({ left: 'idle', right: 'idle' });
-    expect(read.description).toBe('left is idle | right is idle');
-    expect(read.description).not.toBe('left is idle | left is idle');
   });
 });
 

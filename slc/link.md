@@ -788,9 +788,9 @@ presentation, a separate hidden adjudicator that never authors the
 and DISCUSS. For a controller playbook, whose FSM declares the controller
 decision-state class of [gears2fsm "Setup"](gears2fsm.md#setup), the
 Captain-call presentation admits the hidden controller form instead
-(DR-029 §4): the decision and closing-reply Captain calls run
+(DR-029): the decision and closing-reply Captain calls run
 `{ visibility: 'hidden' }` on the host's durable conversation, whose resume
-token the host pins and rotates (DR-029 §2), and the decision call's reply
+token the host pins and rotates (DR-029), and the decision call's reply
 is the `{ action, … }` control JSON itself — validated by the linked runtime
 against the declared decision-state contract rather than adjudicated through
 a separate judge call, with exactly one corrective re-ask appending the
@@ -818,7 +818,7 @@ shall not inject the `question` or `response` presentation fields into a
 controller result — no visible Captain call exists to own them. Controller
 prose reaches the Boss only as host-validated captain speech surfaced
 through the host's presentation seam, cligent `CaptainContext.emitReply`
-(DR-029 §5). Because no prose returns to the machine and no presentation
+(DR-029). Because no prose returns to the machine and no presentation
 field is injected, the host's own `callCaptain` implementation is that seam:
 it already holds the `CaptainResult` of the call it just served, and it
 identifies which call that is from the paired `captain.call.started` boundary
@@ -1259,7 +1259,7 @@ callable and terminal.
 A linked runtime may implement the optional control-surface capability of
 `@sublang/playbook/runtime` — `describe()` and `apply(...)` — so a host can
 observe the parked machine and execute a runtime-advertised recovery or jump
-action without fabricating an FSM event (DR-029 §3). A runtime that
+action without fabricating an FSM event (DR-029). A runtime that
 implements either member shall implement both; every runtime the shared
 `createXStatePlaybookRuntime` factory constructs implements the pair. A
 runtime lacking the pair advertises no actions, and plain text delivery is
@@ -1308,18 +1308,11 @@ status answer, and an internal state id is not text a reply may repeat, so the
 runtime publishes the meaning rather than leaving the host to substitute the
 identifier for it. A state whose source declares no description carries no
 `stateDescription`: an id is never promoted into a description, so a host is
-never handed an identifier dressed as meaning. While more than one region is
-active — a `type: 'parallel'` state — the statement covers every active
-region, one published description per region in a deterministic order taken
-from the normalized state value, and carries no region name, which is itself a
-state id; where any active region publishes none, the state publishes none,
-since the carrier is one string the host cannot inspect for completeness and a
-single region's description returned as the whole would be a false statement it
-cannot detect.
+never handed an identifier dressed as meaning.
 
 The view's `context` is an explicit projection the linked runtime **authors**,
-never an allow-by-default serialization of the FSM context (DR-029 Addendum
-A1). Only the runtime knows which of its context members are safe and relevant
+never an allow-by-default serialization of the FSM context (PBRT-52).
+Only the runtime knows which of its context members are safe and relevant
 for a controller prompt, while the host receiving the view cannot inspect an
 opaque blob for the player rosters, option values, and raw player output its
 own prompts must exclude; exporting by default makes the two obligations
@@ -1378,8 +1371,8 @@ live state and settle `{ disposition: 'rejected', reason }` with no effect
 when it is no longer advertised. It shall execute an accepted action at most
 once per idempotency `key`: the receipt is recorded at acceptance, before
 the settlement emissions, and a repeated key returns the recorded receipt
-verbatim with no revalidation, no execution, and no new trace pair — so a
-crash between acceptance and settlement can never re-execute the action.
+verbatim with no revalidation, no execution, and no new trace pair within the
+runtime instance.
 Only accepted receipts (`executed` or `failed`) are recorded and final for
 their key. A rejection settles before acceptance and records nothing under
 its key — a later call with that key revalidates afresh, traces its own

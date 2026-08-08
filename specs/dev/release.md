@@ -284,6 +284,11 @@ same declaration in the same file, and a consumer who imported the name
 compiled and ran against it. Members reached only through an `_internal` export
 are not part of that unit: the leading underscore declares them subject
 to change, and they may be added, changed, or removed in any release.
+The current unreleased Captain rewrite removes the public
+`composeCaptainPrompt` and `composePlayerPrompt` named exports.
+That removal stands, so the next release shall be 5.0.0; the package
+version and changelog section shall change at tag preparation under
+[RELEASE-2](#release-2) and [RELEASE-4](#release-4), not before.
 The removal of the `playbook-code` bin, the
 `@sublang/playbook/code/tmux-play` export, and the bundled legacy CODE
 tmux-play configs are breaking public-surface changes under

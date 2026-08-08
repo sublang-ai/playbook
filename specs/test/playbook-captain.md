@@ -58,29 +58,22 @@ carried text ignored — and
 failing shell validation — an unknown target, `start` while
 engaged, `switch` to an on-path target, or a `runtime` action id the
 leaf does not advertise — settles `rejected` with a reason and no
-effect; a malformed decision reply gets exactly one corrective
+effect, then returns through the result-phase Captain call and closing
+reply with no separate refusal status; a malformed decision reply gets exactly one corrective
 re-ask appending the rejection reason and the restated contract; a
 second malformed reply settles the turn as a Boss-appropriate
 failure reply with no action executed and the stack untouched; no
 hidden lifecycle classification call exists; and no decision prompt
 carries session or call UUIDs, resume tokens, trace payloads, module
 specifiers, option values, player rosters, ledger JSON, or any
-journal-derived text — neither a raw journal record nor the reseed
+history-derived text — neither a raw recovery record nor the reseed
 digest, since no call on this unbroken path is a reseed
 ([CAPTAIN-35](../dev/playbook-captain.md#captain-35)).
 The suite shall also fail unless every `start` or `switch` selection
-carries its `input` under an explicit origin: a scripted
-`origin: 'boss'` input whose text
-diverges from the turn's Boss text shall still start the target with
-the exact shell-authoritative Boss text, the carried text ignored; a
-scripted decision reply whose `input` omits `origin` or names an
-unknown one shall be a malformed required payload field and get the
-single corrective re-ask, and a selection that still reaches the
-controller port without a valid origin shall settle `rejected` with a
-reason and no effect, never a silent default; and an
-`origin: 'captain'` input shall start the target with that composed
-text while the settlement facts and the journal record name it as
-Captain-composed.
+carries one nonempty scalar input: a parse-resolved selection carries
+its command remainder unchanged, a model-decided selection after
+several planning turns may carry the complete agreed request, and a
+missing, empty, or non-string input is rejected before any effect.
 
 ## Lifecycle and telemetry
 
@@ -230,8 +223,9 @@ than hardcoding any playbook.
 Verifies: [CAPTAIN-7](../dev/playbook-captain.md#captain-7), [CAPTAIN-19](../user/playbook-captain.md#captain-19), [CAPTAIN-20](../dev/playbook-captain.md#captain-20)
 
 Where the test suite drives the Playbook Captain shell with a
-registered playbook runtime, the test suite shall fail unless an
-acting turn — one that executes a validated action — ends with one
+registered playbook runtime, the test suite shall fail unless every
+non-`respond` selection, including rejection or partial completion,
+ends with one
 hidden result-phase call on the durable conversation, made after the
 action's ordered status and telemetry emissions settle, whose prompt
 carries the settlement's outcome-report facts verbatim, the exact
@@ -242,13 +236,12 @@ only summary; and, when the active registry entry declares a
 prompt carries the exact supplied saved-counts line
 `Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.`
 with natural singular forms when a count is one.
-The suite shall fail unless a do-nothing turn — a `respond` settle,
-a parse-resolved `respond`, or a rejected selection — makes no
-result-phase call and the literal substring `Saved you` appears
-nowhere in the turn's Boss-visible text, a rejected selection's
-reason surfacing as shell-owned status text and never as captain
-speech; a zero-activity acting turn and an entry
-without a `summaryPolicy` likewise produce no saved-counts line.
+The suite shall fail unless a `respond` or parse-resolved `respond`
+makes no result-phase call, while a rejected selection makes the normal
+result-phase call with no action effect; the literal substring
+`Saved you` shall appear nowhere on either zero-activity turn.
+A zero-activity accepted action and an entry without a `summaryPolicy`
+shall likewise produce no saved-counts line.
 The suite shall fail unless completed
 sub-runtime player replies increment the interruption count by one
 per reply; adjudicated guards named by the active registry entry's
@@ -459,17 +452,6 @@ by the landed [PBRT-53](playbook-runtime.md#pbrt-53) rows — a
 guard-refused target excluded from `describe()` and included once
 the live context allows, and `apply()` of an id not currently
 advertised settling `rejected` before any effect.
-The covering form of the
-[CAPTAIN-9](../dev/playbook-captain.md#captain-9) parallel-digest
-clause carries no hermetic row here because no runtime with a control
-surface enters a parallel state (CODE and the session Captain are
-scalar; DISCUSS declares one and keeps a bespoke runtime with no control
-surface, so it takes the degraded path) — not because it is unreachable,
-which it is not: the factory admits one active `meta.playbook` state id
-per snapshot and a description is not a state id, so a state every one of
-whose regions publishes a description reaches it. Both halves are
-engine-pinned by [PBRT-53](playbook-runtime.md#pbrt-53), the covering one
-with live rows rather than a claim of unreachability.
 The suite shall fail unless a full Boss turn through the real shell
 and real CODE artifact with a scripted empty-then-text player
 recovers with normal lifecycle markers and exactly one turn summary,
@@ -514,17 +496,16 @@ from the source state description — the selection is that action,
 real `apply()` lands the snapshot at the target with an `executed`
 receipt, the result-phase prompt carries the jump fact, and the
 scripted closing reply names the state.
-The suite shall fail unless a receipt the runtime refused settles
-visibly: the shell status line names the refusal by the action's
-advertised label and its reason, no closing-reply call is spent, and no
-captain speech is surfaced — the turn ending with exactly the one
-settlement [CAPTAIN-34](../user/playbook-captain.md#captain-34)
-requires rather than in silence.
+The suite shall fail unless a receipt the runtime refused returns
+through the result-phase call and attempts one captain closing reply
+grounded in the advertised action label and the refusal; when accepted,
+exactly that reply is visible, with no effect, no separate refusal
+status, and the refusal available to the next conversational turn.
 The suite shall fail unless a `runtime` selection against a leaf whose
-`describe()` throws at revalidation is refused with that same status
-line naming the read failure — no `apply` call, no effect, and no
-exception escaping the Boss turn, a control view that cannot be read
-being no evidence that an effect was attempted.
+`describe()` throws at revalidation follows that same result path — no
+`apply` call, no effect, and no exception escaping the Boss turn, a
+control view that cannot be read being no evidence that an effect was
+attempted.
 
 ### CAPTAIN-39
 
@@ -536,123 +517,38 @@ fail unless the pin rotates across durable calls (A1 then A2) while
 an interleaved sub-runtime judge call stays fresh and isolated and
 never replaces the pin, the next durable call resuming A2 and never
 the judge call's token.
-The suite shall fail unless each of the three unsynchronized shapes
-— a throw, a non-`ok` result, and an `ok` result without a token —
-with no executed action in flight marks the conversation
-unsynchronized, re-issues only the failed call on exactly one fresh
-journal-seeded conversation, and leaves the stack, player sessions,
-journal, and completed work intact.
-The suite shall fail unless a nonce fact stated before a forced
-reseed remains usable after it: the reseed prompt carries the
-reseed digest and the digest-outranks-memory instruction, and the
-post-reseed reply proves the nonce.
-The suite shall fail unless, when `apply()` executes and the
-result-phase durable call then throws, the re-issued call's reseed
-digest carries the executed action and outcome records — the reseed
-provably knows the action ran — no second `apply()` occurs, and the
-stack, journal, and completed work survive.
-The suite shall fail unless a durable controller call returning
-empty `ok` with no token gets exactly one corrective call, and that
-corrective call is the journal-seeded reseed — never a reseed plus
-another retry — including when that reseed is itself empty but
-carries a token, which shall cost the turn no third call.
-The suite shall fail unless the same holds inside a *corrective*
-decision attempt, which is a fresh call and re-arms the call-scoped
-mechanisms: a phase whose first reply is whole and malformed and whose
-corrective call is then empty and tokenless shall spend exactly three
-model calls — the original, the corrective, and its one reseed — and no
-fourth when that reseed is empty too.
-The suite shall fail unless the combined worst case is exactly six model
-calls and no seventh
-([CAPTAIN-35](../dev/playbook-captain.md#captain-35)): where the
-original decision call returns empty `ok` with a token, its empty-`ok`
-re-ask fails in transport, its reseed returns whole-but-malformed
-control JSON, and the corrective decision call repeats that same
-sequence, the phase shall spend six calls with exactly two of them
-seeded `resume: false` re-issues and the corrective call carrying the
-rejection reason, shall settle the turn with the
-[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply
-carrying none of the malformed text, and shall leave the engagement
-stack untouched.
-The suite shall fail unless, after a re-issued call also fails, the
-next Boss turn's first durable call is itself seeded — `resume: false`
-carrying the reseed digest — and a fact stated before the failed
-reseed is still recoverable from it.
-The suite shall fail unless a Boss requirement longer than the
-per-record bound reaches the reseed digest whole, with no truncation
-marker.
-The suite shall fail unless a delivered turn whose leaf throws leaves
-the journal holding both that turn's action record and an outcome
-record naming the failure, proven through a later reseed digest.
-The suite shall fail unless a second malformed decision reply — which
-returns the machine to its hub with a healthy outcome — still settles
-the Boss turn with the [CAPTAIN-34](../user/playbook-captain.md#captain-34)
-failure reply, after exactly two decision calls and with the
-engagement stack untouched.
-The suite shall fail unless, when the closing report of an executed
-dismissal fails twice, the failure reply names the recorded dismissal
-fact and carries neither a nothing-was-changed claim nor a resend
-invitation.
-The suite shall fail unless that failure reply is journaled like every
-other Boss-visible reply: with a turn's decision call and its reseeded
-re-issue both failing, the reply the Boss saw shall appear in the
-reseed digest of the next turn's seeded call, between the two Boss
-messages it stands between.
-The suite shall fail unless the same reply names an executed runtime
-action by its advertised label rather than its action id, and unless a
-settlement whose recorded facts quote runtime-authored text that fails
-prose validation is spoken without those facts — still claiming the
-work ran and still naming the next step, and never printing the
-unvalidated text.
-The suite shall fail unless a continuity failure raised by a submitted
-selection *before* it attempts any effect reaches that same failure
-reply rather than the boundary: a `respond` selection whose prose
-re-ask and its reseed both fail in transport shall settle the turn
-visibly, with the Boss turn resolving rather than throwing and the leaf
-neither driven nor disposed — an effect error being one an attempted
-effect raised, never one inferred from a throw escaping the selection.
-The suite shall fail unless the same holds *after* an effect was
-attempted and proven not to have run: where `apply()` returns a
-`rejected` receipt and the emission of the refusal status line then
-throws, the turn shall resolve with the CAPTAIN-34 reply surfaced
-through the reply channel, the leaf neither driven nor disposed and its
-single `apply` call recorded — attribution following the operation that
-threw rather than a turn-scoped record that some effect was attempted
-earlier.
-The suite shall fail unless a refused selection reaches both durable
-memory channels with no model call of its own: the next
-turn-opening decision call shall carry the shell-composed refusal block
-naming the refused selection, which side refused, and the reason; that
-block shall ride exactly one call; and a later reseed digest shall carry
-the refused action record and the refusal line the Boss saw, in order
-between the two Boss messages they stand between.
-The suite shall fail unless a refused selection's block rides one call
-even where that call's prompt is composed more than once: a turn opening
-with the notice whose reply is then rejected and re-asked shall carry the
-block on the original call and not on the re-ask; and unless a turn whose
-notice-carrying call never delivered — its call and its reseed both
-failing in transport — leaves the notice standing, the next turn's
-opening call carrying it.
-The suite shall fail unless the shell's shape makes both duties
-unbranchable rather than enumerated: every Boss-visible settlement shall
-leave through one seam that performs the emission, writes its journal
-record, and marks the turn together, and effect attribution shall be
-recorded at the effect invocation and read by identity of the value that
-threw, with no earlier-set flag anywhere in the shell.
-The suite shall read what is passed to that invocation and not only where
-it sits: it shall fail unless every effect boundary in the shell encloses
-exactly one call expression naming one of the operations
-[CAPTAIN-35](../dev/playbook-captain.md#captain-35) enumerates, a
-boundary wrapping a sequence being invisible to a check that reads only
-the recording site.
-The suite shall fail unless a host port that rejects still leaves the
-turn one Boss-visible settlement, over every port the shell is handed
-rather than a listed few — the two settlement channels excepted, a fault
-in the channel a settlement goes out on being a different duty — and
-unless the narrow case holds specifically: a telemetry sink rejecting the
-shell-FSM transition made one line before the runtime call settles the
-turn with the runtime never invoked, that failure being neither the
-runtime's nor a visibility rejection.
+The suite shall fail unless a throw, non-`ok` result, or missing token
+replaces only the model conversation from the complete recovery
+history, preserving the engagement stack, player sessions, and
+completed work.
+A fact and a long Boss requirement accepted before that replacement
+shall remain usable afterward without restatement, and a turn whose
+model call failed shall appear in the recovered conversation rather
+than disappear between adjacent turns.
+
+The suite shall fail unless an action that completed before its
+result-phase or presentation call failed is recorded with its outcome
+and is never executed again during recovery.
+It shall also fail unless a retainable root-runtime `aborted` result settles
+as an uncertain failure, is recorded that way, and is never reported as
+successful or repeated automatically.
+A rejecting presentation shall have exactly one attempted reply, no
+alternate-channel retry, and a surfaced boundary failure; the next
+session-Captain call shall start fresh from a recovery recap containing the
+exact attempted reply and its uncertain delivery rather than resuming a
+conversation whose transcript may disagree with Boss.
+A partial switch shall remain remembered as its separate dismissal and
+start results, and its recovery reply shall claim neither rollback nor
+unperformed work.
+
+The suite shall fail unless a rejected selection returns through the
+same result-phase conversation as any other selection, appears in the
+recovery history, and lets a following “why?” continue from the
+rejection without a separate refusal notice.
+When immediate conversation recovery also fails, the next turn shall
+still recover the prior history, leave the engagement untouched, and
+surface only the truthful fallback allowed by
+[CAPTAIN-34](../user/playbook-captain.md#captain-34).
 
 ### CAPTAIN-40
 
@@ -685,13 +581,10 @@ either — and unless a reply naming a live state id that is an ordinary
 English word (`failed`, `ready`) is surfaced unchanged with no
 corrective at all, the duty being narrow by construction rather than a
 list of literals.
-The suite shall fail unless the refusal status line passes this same
-validation, being a Boss-visible settlement like the other two: with the
-runtime's refusal reason naming the internal state its advertised jump
-id embeds, the line shall degrade to the fact-free refusal — stating
-that the request was refused, that nothing changed, and the next step —
-with the identifier absent from the Boss surface, no closing-reply call
-spent, and no captain speech surfaced.
+The suite shall fail unless a rejected action's result-phase closing
+reply passes this same validation: with the runtime's reason naming an
+internal state its advertised jump id embeds, the Captain shall state
+the rejection and next step without exposing that identifier.
 The suite shall fail unless the same holds for a machine-shaped
 identifier the host itself supplied this turn, which no live-state check
 can reach: with the real CODE artifact parked in its failure state and
@@ -711,6 +604,9 @@ The suite shall fail unless a one-character supplied id is guarded like
 any other, and unless a reply carrying that id only inside a longer token
 is surfaced unchanged — the duty following the token a reply repeats
 rather than a substring match a length floor had to compensate for.
+It shall also fail unless a Boss-facing action label that resembles an
+identifier is surfaced unchanged while that action's distinct control id
+remains guarded.
 The shell's own composition of the ControlView block shall be pinned
 against whatever a runtime exports: the suite shall fail unless each
 exported context member appears as its own line carrying its name and

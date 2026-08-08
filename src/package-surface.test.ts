@@ -5,17 +5,19 @@ import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isAbsolute, join, relative, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 
-const repoRoot = fileURLToPath(new URL('../', import.meta.url));
+const packageRootUrl = new URL('../', import.meta.url);
+const repoRoot = fileURLToPath(packageRootUrl);
 const SLC_SPECS = ['link.md', 'gears2fsm.md', 'text2gears.md', 'optimize.md'];
 const CLIGENT_DEP = '@sublang/cligent';
 const LOCAL_OVERRIDE = new URL('../pnpm-workspace.yaml', import.meta.url);
@@ -565,7 +567,7 @@ describe('public XState runtime surface (RELEASE-15)', () => {
       ) {
         throw new Error('missing SUPPORTED_ARTIFACT_SCHEMAS');
       }
-      // DR-029 §3 / PBRT-52: every runtime the shipped shared factory
+      // DR-029 / PBRT-52: every runtime the shipped shared factory
       // constructs implements the optional control-surface pair together.
       const { createMachine } = await import('xstate');
       const probeRuntime = createXStatePlaybookRuntime(
@@ -1052,13 +1054,23 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
    *
    * A wildcard whose target is a relative path inside the package is resolved
    * and enumerated, so the re-exported names are recorded like any others. One
-   * that is not — a bare package specifier, or a relative target that is
-   * missing — is what no single-file enumeration can resolve, and it fails.
+   * that is not — a bare package specifier, a missing target, or a target
+   * outside the package root — cannot be enumerated, and it fails.
    */
-  const WILDCARD_REEXPORT = /^export\s+(?:type\s+)?\*\s+from\s+'([^']+)';/gm;
+  const WILDCARD_REEXPORT =
+    /^[ \t]*export[ \t]+(?:type[ \t]+)?\*[ \t]+from[ \t]+(['"])([^'"]+)\1[ \t]*;?[ \t]*\r?$/gm;
+
+  const isWithin = (root: string, target: string): boolean => {
+    const path = relative(root, target);
+    return (
+      path === '' ||
+      (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
+    );
+  };
 
   function resolveDeclarationExports(
     file: URL,
+    packageRoot: URL = packageRootUrl,
     seen: ReadonlySet<string> = new Set(),
   ): string[] {
     const href = file.href;
@@ -1066,13 +1078,20 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     const dts = readFileSync(file, 'utf8');
     const names = new Set(declaredExports(dts));
     for (const match of dts.matchAll(WILDCARD_REEXPORT)) {
-      const specifier = match[1]!;
-      if (!specifier.startsWith('.')) {
+      const specifier = match[2]!;
+      if (!/^\.\.?\//.test(specifier)) {
         throw new Error(
           `${href} re-exports by wildcard from "${specifier}", which no single-file enumeration can resolve`,
         );
       }
       const target = new URL(specifier.replace(/\.js$/, '.d.ts'), file);
+      const rootPath = fileURLToPath(packageRoot);
+      const targetPath = fileURLToPath(target);
+      if (!isWithin(rootPath, targetPath)) {
+        throw new Error(
+          `${href} re-exports by wildcard from "${specifier}", whose target is outside the package root`,
+        );
+      }
       if (!existsSync(target)) {
         throw new Error(
           `${href} re-exports by wildcard from "${specifier}", whose declaration file is missing`,
@@ -1080,6 +1099,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       }
       for (const name of resolveDeclarationExports(
         target,
+        packageRoot,
         new Set([...seen, href]),
       )) {
         names.add(name);
@@ -1192,11 +1212,17 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
         const file = join(scratch, 'entry.d.ts');
         writeFileSync(file, `${form} from '@somewhere/else';\n`);
         expect(() =>
-          resolveDeclarationExports(new URL(`file://${file}`)),
+          resolveDeclarationExports(
+            pathToFileURL(file),
+            pathToFileURL(scratch),
+          ),
         ).toThrow(/no single-file enumeration can resolve/);
         writeFileSync(file, `${form} from './missing.js';\n`);
         expect(() =>
-          resolveDeclarationExports(new URL(`file://${file}`)),
+          resolveDeclarationExports(
+            pathToFileURL(file),
+            pathToFileURL(scratch),
+          ),
         ).toThrow(/declaration file is missing/);
       } finally {
         rmSync(scratch, { recursive: true, force: true });
@@ -1204,25 +1230,57 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     },
   );
 
-  it.each(['export *', 'export type *'])(
-    'enumerates a resolvable `%s` re-export rather than ignoring it',
-    (form) => {
-      const scratch = mkdtempSync(join(tmpdir(), 'playbook-wildcard-'));
-      try {
-        writeFileSync(
-          join(scratch, 'inner.d.ts'),
-          'export interface Hidden {\n    member: string;\n}\n',
-        );
-        const file = join(scratch, 'entry.d.ts');
-        writeFileSync(file, `${form} from './inner.js';\n`);
-        expect(resolveDeclarationExports(new URL(`file://${file}`))).toEqual([
-          'Hidden',
-        ]);
-      } finally {
-        rmSync(scratch, { recursive: true, force: true });
-      }
-    },
-  );
+  it.each([
+    ['single-quoted value wildcard', "export * from './inner.js';"],
+    ['single-quoted type wildcard', "export type * from './inner.js';"],
+    ['double-quoted value wildcard', 'export * from "./inner.js";'],
+    ['double-quoted type wildcard', 'export type * from "./inner.js";'],
+    ['indented semicolonless value wildcard', "  export * from './inner.js'"],
+    [
+      'indented semicolonless type wildcard',
+      "\texport type * from './inner.js'",
+    ],
+  ])('enumerates a resolvable %s rather than ignoring it', (_shape, source) => {
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-wildcard-'));
+    try {
+      writeFileSync(
+        join(scratch, 'inner.d.ts'),
+        'export interface Hidden {\n    member: string;\n}\n',
+      );
+      const file = join(scratch, 'entry.d.ts');
+      writeFileSync(file, `${source}\n`);
+      expect(
+        resolveDeclarationExports(
+          pathToFileURL(file),
+          pathToFileURL(scratch),
+        ),
+      ).toEqual(['Hidden']);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a relative wildcard target that escapes the package root', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-wildcard-'));
+    try {
+      const packageRoot = join(scratch, 'package');
+      mkdirSync(packageRoot);
+      writeFileSync(
+        join(scratch, 'outside.d.ts'),
+        'export type Escaped = true;\n',
+      );
+      const file = join(packageRoot, 'entry.d.ts');
+      writeFileSync(file, "export * from '../outside.js';\n");
+      expect(() =>
+        resolveDeclarationExports(
+          pathToFileURL(file),
+          pathToFileURL(packageRoot),
+        ),
+      ).toThrow(/target is outside the package root/);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 
   it('packs the launcher and code.registry artifacts and not the retired files', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));

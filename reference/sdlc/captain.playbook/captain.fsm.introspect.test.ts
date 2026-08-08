@@ -33,7 +33,7 @@ const PINNED = {
         },
         {
           "index": 1,
-          "target": "hub",
+          "target": "reporting",
           "guarded": true
         },
         {
@@ -58,11 +58,6 @@ const PINNED = {
         },
         {
           "index": 6,
-          "target": "reporting",
-          "guarded": true
-        },
-        {
-          "index": 7,
           "target": "failed",
           "guarded": false
         }

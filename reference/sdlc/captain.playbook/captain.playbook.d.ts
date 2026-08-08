@@ -3,23 +3,16 @@ import { type CaptainInput, type DecisionAction, type EnabledPlaybook, type Pars
 import type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookControlReceipt, PlaybookControlView, PlaybookPendingCall, PlaybookRunResult, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlayerResult } from '@sublang/playbook/runtime';
 export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookControlReceipt, PlaybookControlView, PlaybookPendingCall, PlaybookRunResult, PlayerResult, PlaybookPorts, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, };
 export type { DecisionAction, EnabledPlaybook, ParsedActingDecision, SettlementEvidence, SettlementReceiptEvidence, };
-/**
- * A `start` / `switch` input is provenance-tagged, never bare text
- * (DR-029 §2): `boss` carries this turn's request — for which the host is
- * authoritative — and `captain` carries intent accumulated across earlier
- * turns. A missing or unknown origin is a malformed required payload field.
- */
-export type CaptainControllerInput = {
-    readonly origin: 'boss' | 'captain';
-    readonly text: string;
-};
-/** One validated controller selection submitted through the port (DR-029 §4). */
+/** One nonempty complete standalone request selected for `start` or `switch`. */
+export type CaptainControllerInput = string;
+/** One validated controller selection submitted through the port (DR-029). */
 export type CaptainControllerSelection = {
     readonly action: 'respond';
     readonly text: string;
 } | {
     readonly action: 'start' | 'switch';
     readonly playbookId: string;
+    /** Complete standalone request synthesized from the remembered Boss conversation. */
     readonly input: CaptainControllerInput;
 } | {
     readonly action: 'dismiss';
@@ -45,7 +38,7 @@ export type CaptainParsedResolution = {
     readonly kind: 'shutdown';
 };
 /**
- * The host-supplied controller port (CAPPLAY-9, DR-029 §2): one validated
+ * The host-supplied controller port (CAPPLAY-9, DR-029): one validated
  * selection per Boss turn in, its settlement back as the only evidence of
  * effects. The optional `resolveParsedTurn` member supplies the host's
  * deterministic command-parse resolution for the entry mapping.

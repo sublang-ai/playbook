@@ -208,7 +208,7 @@ export interface PlaybookRuntimeSnapshot {
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
 }
 
-// DR-029 §3: one currently valid, runtime-advertised control action. The id
+// DR-029: one currently valid, runtime-advertised control action. The id
 // is stable within the returned view; the label is runtime-written,
 // Boss-appropriate text derived from source state descriptions.
 export interface PlaybookControlAction {
@@ -216,7 +216,7 @@ export interface PlaybookControlAction {
   label: string;
 }
 
-// DR-029 §3: the sanitized control view `describe()` returns — current
+// DR-029: the sanitized control view `describe()` returns — current
 // state and the runtime-written description of what that state means,
 // the authored context projection, pending Boss questions, the last
 // recorded error, and the currently valid actions. `stateDescription` is
@@ -232,7 +232,7 @@ export interface PlaybookControlView {
   actions: readonly PlaybookControlAction[];
 }
 
-// DR-029 §3: the receipt `apply()` returns says which of three things
+// DR-029: the receipt `apply()` returns says which of three things
 // happened — rejected before any effect, executed with the settled run
 // result, or failed after effects may exist.
 export type PlaybookControlReceipt =
@@ -252,12 +252,13 @@ export interface PlaybookRuntime {
     session: PlaybookSession,
     snapshot: PlaybookRuntimeSnapshot,
   ): Promise<void>;
-  // DR-029 §3 optional control-surface capability: a runtime implements
+  // DR-029 optional control-surface capability: a runtime implements
   // both members or neither. `describe` is side-effect free and valid at
   // parked quiescence outside an active boundary; `apply` revalidates the
   // named action against the live state, executes it at most once per
-  // idempotency key, and returns a receipt. A runtime lacking the pair
-  // advertises no actions; plain text delivery is the only verb against it.
+  // idempotency key within that runtime instance, and returns a receipt. A
+  // runtime lacking the pair advertises no actions; plain text delivery is
+  // the only verb against it.
   describe?(): PlaybookControlView;
   apply?(input: {
     actionId: string;

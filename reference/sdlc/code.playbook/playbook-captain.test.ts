@@ -48,7 +48,7 @@ interface StubContext {
   }[];
   captainCalls: { prompt: string; options?: CaptainCallOptions }[];
   visiblePlayers: string[][];
-  /** Captain speech surfaced through cligent `emitReply` (DR-029 §7). */
+  /** Captain speech surfaced through cligent `emitReply` (DR-029). */
   replies: string[];
 }
 
@@ -277,7 +277,7 @@ function isCommandReplyPrompt(prompt: string): boolean {
 
 function isClosingReplyPrompt(prompt: string): boolean {
   return prompt.includes(
-    'An action just executed for the current Boss turn',
+    'An action just settled for the current Boss turn',
   );
 }
 
@@ -476,7 +476,7 @@ function fakeSessionCaptain(
           : {
               action: decision.action,
               playbookId: decision.playbookId,
-              input: { origin: 'boss', text: decision.input },
+              input: decision.input,
             },
         runtimeTurn.signal,
       );
@@ -1003,7 +1003,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
           {
             action: resolution.decision.action,
             playbookId: resolution.decision.playbookId,
-            input: { origin: 'boss', text: resolution.decision.input },
+            input: resolution.decision.input,
           },
           runtimeTurn.signal,
         );
@@ -1037,9 +1037,9 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     ]);
   });
 
-  // CAPTAIN-35: an external root's rejected delivery keeps its recoverable
-  // frame and propagates the boundary error unchanged.
-  it('retains a failed external root and propagates its boundary error unchanged', async () => {
+  // CAPTAIN-35: an external root's failed delivery keeps its recoverable
+  // frame and returns the failure through the Captain result phase.
+  it('retains a failed external root and reports its boundary error', async () => {
     const rawFailure = new Error('code runtime control failure');
     let turns = 0;
     const registry = fakeCodeEntry(async () => {
@@ -1057,10 +1057,12 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     const repliesBefore = context.replies.length;
     await expect(
       shell.handleBossTurn(turn('/code keep going', 2), context.context),
-    ).rejects.toBe(rawFailure);
+    ).resolves.toBeUndefined();
     expect(registry.runtimes[0]?.disposeCount).toBe(0);
-    // No Boss-appropriate failure reply replaces the propagated error.
-    expect(context.replies).toHaveLength(repliesBefore);
+    expect(context.replies).toHaveLength(repliesBefore + 1);
+    const failurePrompt = turnSummaryCalls(context).at(-1)?.prompt ?? '';
+    expect(failurePrompt).toContain('Settlement status: failed');
+    expect(failurePrompt).toContain(rawFailure.message);
 
     await shell.handleBossTurn(turn('/code try again', 3), context.context);
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
@@ -1087,7 +1089,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
           {
             action: 'start',
             playbookId: 'code',
-            input: { origin: 'captain', text: 'do the work' },
+            input: 'do the work',
           },
           runtimeTurn.signal,
         );
@@ -1287,7 +1289,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
     expect(callOrder).toHaveLength(2);
     expect(callOrder[0]).toBe('visible:unfinished runtime Captain work');
     expect(callOrder[1]).toContain(
-      'An action just executed for the current Boss turn',
+      'An action just settled for the current Boss turn',
     );
     expect(context.replies).toEqual([
       'The round is set up and CODE is running.',
@@ -2375,7 +2377,7 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     ).rejects.toThrow(/duplicate effective command/);
   });
 
-  it('treats a setVisiblePlayers rejection as an internal error rather than swallowing it', async () => {
+  it('reports a setVisiblePlayers rejection without driving the runtime', async () => {
     const registry = fakeCodeEntry();
     const shell = createPlaybookCaptainShell(
       { playbooks: { code: { from: CODE_FROM } } },
@@ -2392,7 +2394,11 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     await shell.init!(session.session);
     await expect(
       shell.handleBossTurn(turn('/code do the task'), context.context),
-    ).rejects.toThrow(/invalid visible set/);
+    ).resolves.toBeUndefined();
+    expect(registry.runtimes[0]?.inputs).toEqual([]);
+    const failurePrompt = turnSummaryCalls(context).at(-1)?.prompt ?? '';
+    expect(failurePrompt).toContain('Settlement status: failed');
+    expect(failurePrompt).toContain('invalid visible set');
   });
 
   it('default-exports the CODE registry entry from @sublang/playbook/code/registry', async () => {
@@ -2515,7 +2521,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     await shell.init!(session.session);
     await shell.handleBossTurn(turn('/code first'), context.context);
     await shell.handleBossTurn(turn('dismiss it', 2), context.context);
-    // DR-029 §2: a failing start settles with its facts rather than
+    // DR-029: a failing start settles with its facts rather than
     // rolling back, and the shell lands idle for the next turn.
     await shell.handleBossTurn(turn('/code second', 3), context.context);
     const failure = turnSummaryCalls(context).at(-1)?.prompt ?? '';
@@ -3093,7 +3099,7 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     await shell.dispose!();
   });
 
-  it('surfaces nested visibility validation as a control error, not child evidence', async () => {
+  it('reports nested visibility validation as a failed result, not child evidence', async () => {
     let childCallReturned = false;
     const code = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
@@ -3128,11 +3134,14 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     await shell.init!(session.session);
     await expect(
       shell.handleBossTurn(turn('/code open a nested child'), context.context),
-    ).rejects.toThrow('invalid nested visible set');
+    ).resolves.toBeUndefined();
 
     expect(childCallReturned).toBe(false);
     expect(docs.runtimes[0]?.disposeCount).toBe(1);
     expect(code.runtimes[0]?.resumes).toEqual([]);
+    const failurePrompt = turnSummaryCalls(context).at(-1)?.prompt ?? '';
+    expect(failurePrompt).toContain('Settlement status: failed');
+    expect(failurePrompt).toContain('invalid nested visible set');
   });
 
   it('uses the parent invocation lifetime signal for the child initial turn', async () => {
@@ -3664,6 +3673,79 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
       'continue root',
     ]);
     expect(docs.createRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports a nested cleanup failure while keeping the child dismissed', async () => {
+    const code = fakeCodeEntry(
+      async (runtime, runtimeTurn) => {
+        if (!runtime.ports) throw new Error('runtime ports missing');
+        if (runtimeTurn.text !== 'call docs') {
+          return quiescentResult('readyAfterDismiss');
+        }
+        const start = await runtime.ports.callPlaybook(
+          {
+            callId: 'code:docs:dismiss-failure',
+            playbookId: 'docs',
+            text: 'draft docs',
+          },
+          runtimeTurn.signal,
+        );
+        if (start.state !== 'suspended') throw new Error('docs must suspend');
+        return suspendedResult({
+          callId: 'code:docs:dismiss-failure',
+          playbookId: 'docs',
+          childSessionId: start.childSessionId,
+        });
+      },
+      undefined,
+      undefined,
+      async () => quiescentResult('readyAfterDismiss'),
+    );
+    const docs = fakePlaybookEntry(
+      'docs',
+      'docs',
+      async () => quiescentResult('drafting'),
+      async () => {
+        throw new Error('child dispose failed');
+      },
+    );
+    delete code.entry.summaryPolicy;
+    delete docs.entry.summaryPolicy;
+    const shell = makeShell([code, docs], {
+      sessionIds: [ROOT_ID, CHILD_ID],
+    });
+    const session = stubSession();
+    const context = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'CODE called the docs playbook.' },
+      captainJson({ action: 'dismiss' }),
+      {
+        status: 'ok',
+        turnId: 2,
+        finalText: 'The docs child was removed, but its cleanup failed.',
+      },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/code call docs'), context.context);
+    await shell.handleBossTurn(turn('stop the child', 2), context.context);
+
+    expect(docs.runtimes[0]?.disposeCount).toBe(1);
+    expect(code.runtimes[0]?.disposeCount).toBe(0);
+    expect(code.runtimes[0]?.resumes[0]?.result).toMatchObject({
+      status: 'error',
+      error: { message: 'child dispose failed' },
+    });
+    const report = turnSummaryCalls(context).at(-1)?.prompt ?? '';
+    expect(report).toContain('Settlement status: failed');
+    expect(report).toContain('Dismissed /docs and returned to its caller.');
+    expect(report).toContain('Cleanup while removing /docs failed');
+    expect(report).toContain('child dispose failed');
+
+    await shell.handleBossTurn(turn('/code continue root', 3), context.context);
+    expect(code.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
+      'call docs',
+      'continue root',
+    ]);
   });
 });
 

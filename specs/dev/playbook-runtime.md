@@ -791,7 +791,7 @@ The compiled default Captain runtime shall not expose the capability
 
 Where a linked runtime implements the optional control-surface
 capability of `@sublang/playbook/runtime` —
-[DR-029 §3](../decisions/029-session-scoped-conversational-captain.md)
+[DR-029](../decisions/029-session-scoped-conversational-captain.md)
 and [slc/link.md](../../slc/link.md#control-surface-optional) — it
 shall implement `describe` and `apply` together, and every runtime the
 shared `createXStatePlaybookRuntime` factory constructs shall implement
@@ -817,31 +817,6 @@ identifier ([CAPPLAY-5](../user/captain-playbook.md#capplay-5),
 declares no description shall carry no `stateDescription`: the runtime
 shall not promote a state id into a description, so a host is never
 handed an identifier dressed as meaning.
-While more than one region is active — a `type: 'parallel'` state — the
-published statement shall cover every active region, one published
-description per region in a deterministic order derived from the
-normalized state value, and shall carry no region *name*, a region name
-being an internal state id. Where any active region publishes no
-description the runtime shall publish none for the state: the carrier is
-a single string the host cannot inspect for completeness, so one
-region's description returned as the state's meaning is a false
-statement the host cannot detect and would relay verbatim, and "a
-description per active region" is satisfiable or it is not.
-Each region's description shall be resolved by that region's qualified
-state path and not by its leaf state key, and the active regions shall
-be carried to the lookup qualified the same way. A leaf key such as
-`idle` or `failed` is exactly the name a machine reuses in every region,
-so a leaf-keyed index resolves two regions to one description and
-publishes it as the meaning of both — the same undetectable false
-statement, arrived at from the other end.
-The covering form is reachable under the shared
-`createXStatePlaybookRuntime` factory: the factory admits at most one
-active `meta.playbook` state id per snapshot, and a description is not a
-state id, so one region publishing through `meta.playbook` and another
-through a plain source `description` satisfies that rule and reaches it
-([PBRT-53](../test/playbook-runtime.md#pbrt-53)). No shipping runtime
-with a control surface enters a parallel state today, which bounds the
-consequence and not the reachability.
 The view's `context` shall be an explicit projection the linked
 runtime authors — the FSM context members it names, in the order it
 names them — and shall never be an allow-by-default serialization of

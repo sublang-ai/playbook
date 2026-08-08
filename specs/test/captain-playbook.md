@@ -17,7 +17,7 @@ Where the Captain source is compiled through `slc playbook`, the test suite shal
 
 Verifies: [CAPPLAY-1](../user/captain-playbook.md#capplay-1), [CAPPLAY-2](../user/captain-playbook.md#capplay-2), [CAPPLAY-3](../user/captain-playbook.md#capplay-3), [CAPPLAY-7](../dev/captain-playbook.md#capplay-7)
 
-Where the shell provides two or more enabled playbooks, when tests drive scripted decision replies through the compiled session Captain, the suite shall fail unless every non-command turn produces exactly one decision selection from the closed set; a `respond` selection settles the turn in that single call with its `text` the turn's captain speech; a multi-workflow intent is planned across Boss turns — at most one validated action per turn and never an intra-turn multi-child plan; a `start` or `switch` target outside the catalog fails validation rather than reaching the registry; the captured decision prompt carries the exact Boss text and references the labeled catalog and ControlView digest blocks; and a fact stated in an earlier turn remains available to a later decision on the same durable conversation.
+Where the shell provides two or more enabled playbooks, when tests drive scripted decision replies through the compiled session Captain, the suite shall fail unless every non-command turn produces exactly one decision selection from the closed set; a `respond` selection settles the turn in that single call with its `text` the turn's captain speech; a multi-workflow intent is planned across Boss turns — at most one validated action per turn and never an intra-turn multi-child plan; a `start` or `switch` target outside the catalog fails validation rather than reaching the registry; the captured decision prompt carries the exact Boss text and references the labeled catalog and ControlView digest blocks; a fact stated in an earlier turn remains available to a later decision on the same durable conversation; and a task refined across several chat turns is handed to the selected playbook as the complete agreed request rather than only the final Boss message.
 
 ### CAPPLAY-13
 
@@ -44,13 +44,11 @@ guard or result-property schema, no model-authored paraphrase replaces
 Boss text, the surfaced captain speech is the exact validated prose of
 its call, and a closing reply communicates the settlement-backed
 result rather than a bare acknowledgement or completion announcement.
-The suite shall further fail unless every `start` or `switch`
-selection the scenario produces tags its `input`
-`origin: 'boss'` with that turn's exact Boss text — the default the
-compiled policy selects — and unless the only `origin: 'captain'`
-inputs are those adding intent the Boss accumulated across earlier
-turns: a Captain-composed input that restates, paraphrases, or
-summarizes the same turn's Boss text shall fail the suite.
+The suite shall further fail unless a parse-resolved `start` or `switch`
+uses its exact command remainder as a scalar input, while one reached
+after conversational planning uses a nonempty standalone input that
+faithfully consolidates the remembered request and adds no work the
+Boss did not request.
 
 ### CAPPLAY-19
 

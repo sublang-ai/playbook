@@ -137,11 +137,17 @@ Nested child completion and dismissal shall instead follow
 
 ### CAPTAIN-19
 
-Where the Playbook Captain shell settles a Boss turn by executing a
-validated action (an acting turn), the shell shall end the turn with
-one visible captain closing reply after the action's ordered status
-and telemetry emissions, and that closing reply shall be the turn
-summary.
+Where the Playbook Captain shell settles a Boss turn with a
+non-`respond` selection, including a rejected, failed, or partly
+completed selection, the shell shall make one attempt to present a
+captain closing reply after the action's ordered status and telemetry
+emissions, and that reply shall be the turn summary.
+When presentation accepts, exactly one closing reply shall be visible.
+When presentation rejects, the shell shall surface the boundary failure
+without retrying the reply through another channel or repeating the
+action.
+This single-attempt rule applies to every captain reply, including a
+`respond` reply and a recovery failure reply.
 The closing reply shall use a natural chat-like tone and clear
 formatting while remaining brief.
 It shall state only what was done or what changed, composed from the
@@ -174,9 +180,8 @@ rebuttals, revisions, approvals, and passes — that Boss did not
 have to transfer manually, and review/rebuttal rounds are the
 counted review-round and rebuttal occurrences for that turn.
 When the turn's counted activity is zero, when the active registry
-entry declares no summary policy, or when the Boss turn executes no
-action — a `respond` settle, a parse-resolved `respond`, or a rejected
-selection — the saved-counts line shall not appear, so text
+entry declares no summary policy, or when the Boss turn settles as
+`respond`, the saved-counts line shall not appear, so text
 beginning `Saved you` never follows a turn that saved nothing.
 
 ## Active-playbook visibility
@@ -221,62 +226,31 @@ or stack ledger data in those status lines.
 
 ### CAPTAIN-34
 
-Where a session-Captain durable call fails so that the shell cannot
-prove the conversation is synchronized — it throws, returns a
-non-`ok` status, or returns `ok` without a resume token — the shell
-shall recover per
-[CAPTAIN-35](../dev/playbook-captain.md#captain-35) by re-issuing
-only that call once on a reseeded conversation; the engagement
-stack, player sessions, completed turn work, and the Boss-visible
-transcript shall be unaffected, and the turn shall otherwise settle
-normally.
-When the re-issued call fails again, the turn shall settle with a
-Boss-appropriate failure reply that names a concrete next step and
-contains no internal control vocabulary such as `adjudicator`,
-`guard`, `undeclared`, or hidden control JSON; the engagement stack
-shall remain intact, and the Boss's next message or registered
-command shall settle normally with no already-running refusal and no
-lost work.
-That reply shall assert only what the turn recorded.
-Where no action settled, it shall state that nothing was changed and
-name resending the request as the next step.
-Where an action already settled, it shall name that settlement's
-recorded facts, shall not state that nothing was changed, and shall
-not name resending as the next step — a resend would repeat completed
-work — naming asking for the current state instead.
-Those facts shall be named in Boss-facing terms: an executed or refused
-runtime action shall be named by the label its runtime advertised for
-it, never by the action id, and the composed reply shall carry no
-internal identifier or control vocabulary
-([CAPTAIN-9](../dev/playbook-captain.md#captain-9)); where the recorded
-facts cannot be stated that way — a runtime-authored refusal reason or
-error message being foreign text — the reply shall omit the facts and
-still state the settlement and the next step, rather than being
-withheld or printed unchecked.
-Every Boss turn shall reach exactly one visible settlement: captain
-speech, the shell status line of a refused selection, or this failure
-reply.
-A selection the active runtime refuses shall reach that same status
-line as one the shell refuses itself: the refusal ends the turn with no
-action and no closing reply, and which side refused is not the Boss's
-concern.
-That status line is a Boss-visible settlement like the other two and
-shall be held to the same rules: it shall carry no internal identifier
-or control vocabulary, and where the refusal cannot be stated that way —
-a runtime-authored reason being foreign text and a rejected name being
-the model's — it shall state that the request was refused, that nothing
-was changed, and the next step, rather than being withheld or printed
-unchecked.
-A refused selection shall also survive in the session's own memory, so
-a follow-up such as "why?" or "do it anyway" is answered against it:
-the next turn shall be able to name what was proposed, that it was
-refused, and why, without the Boss restating any of it, and without the
-refusal having cost a model call
-([CAPTAIN-35](../dev/playbook-captain.md#captain-35)).
-Where a turn ends with no selection submitted and no captain speech
-surfaced — including where the session Captain's machine recovers to
-its hub after a second malformed decision reply and reports a healthy
-outcome
-([CAPPLAY-18](../dev/captain-playbook.md#capplay-18)) — the shell
-shall settle that turn with this failure reply rather than end it
-with no action and no reply.
+Where a session-Captain call loses conversation continuity, the shell
+shall recover through [CAPTAIN-35](../dev/playbook-captain.md#captain-35)
+without replacing the engagement stack, player sessions, completed
+turn work, or remembered Boss transcript.
+The recovered conversation shall know the failed turn and every action
+outcome already established before the failure.
+No recovery or reply failure shall cause an action to run again.
+
+When a selected action is rejected, fails, or completes only in part,
+the shell shall return that result to the session Captain and attempt
+one natural closing reply grounded in all facts the result establishes.
+An accepted presentation shall make exactly that reply visible; a
+rejected presentation shall surface its boundary failure and shall not
+be retried.
+A rejection shall not end through a separate shell-status or deferred
+memory path.
+A follow-up such as “why?” or “do it anyway” shall therefore continue
+from the remembered result without requiring the Boss to restate it.
+
+When the Captain cannot produce the normal reply after bounded
+recovery, the shell shall attempt one Boss-appropriate failure reply
+that states only established facts, preserves the engagement, and
+names a safe next step.
+If that presentation rejects, the shell shall surface the boundary
+failure without another presentation attempt.
+It shall not claim that nothing changed or invite a retry when work may
+already have completed, and shall expose no internal control data
+([CAPTAIN-9](../dev/playbook-captain.md#captain-9)).

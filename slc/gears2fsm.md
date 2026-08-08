@@ -196,7 +196,7 @@ case-sensitive names so the compiled adjudication contract remains stable.
 For a controller playbook — one whose Source declares DR-029's session-scoped
 controller policy: a session Captain that runs for the whole host session,
 receives every Boss turn, and operates the working playbooks from outside the
-engagement stack (DR-029 §1) — the compiler shall apply the additive
+engagement stack (DR-029) — the compiler shall apply the additive
 controller decision-state class below. The class joins the stable compiler
 contract beside the decide-call-observe vocabulary above; that vocabulary and
 the universal `needsBossReply` rule stay untouched for the artifacts that
@@ -221,7 +221,7 @@ teardown event. The completion rule of
 output clause binds only where Source declares a terminal result, which a
 controller Source does not.
 The controller decision state's direct-Captain result contract discriminates
-the closed action set of DR-029 §4. Its guard discriminants are a stable
+the closed action set of DR-029. Its guard discriminants are a stable
 compiler contract, not names the compiler may invent — `respond`, `start`,
 `switch`, `dismiss`, `deliver`, and `runtime` — with each guard's required
 payload fields:

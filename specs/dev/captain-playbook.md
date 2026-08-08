@@ -22,11 +22,11 @@ parse-resolved decision object with no decision call
 `respond`, settlement of the turn in that single decision call,
 whose validated `text` is the turn's captain speech; for a
 parse-resolved `respond`, one durable prose call whose validated
-text is the turn's captain speech; for an acting selection —
-parse-resolved or model-decided alike — submission through the
-controller port ([CAPPLAY-9](#capplay-9)), receipt of the settlement
-as the outcome report, and one closing-reply call grounded in that
-report before the machine returns to the hub.
+text is the turn's captain speech; for every non-`respond` selection —
+parse-resolved or model-decided, accepted or rejected — submission
+through the controller port ([CAPPLAY-9](#capplay-9)), receipt of the
+settlement as the outcome report, and one closing-reply call grounded
+in that report before the machine returns to the hub.
 The machine shall declare no terminal `{ response }` output and shall
 keep exactly one reachable `type: 'final'` shutdown state entered only
 by the shell's teardown event, satisfying
@@ -59,11 +59,12 @@ Where the shell initializes ([CAPTAIN-16](playbook-captain.md#captain-16)), the 
 Per Boss turn the runtime shall submit at most one selection through
 the controller port —
 `{ action: 'respond', text }`,
-`{ action: 'start' | 'switch', playbookId, input: { origin, text } }`,
+`{ action: 'start' | 'switch', playbookId, input }`,
 `{ action: 'dismiss' }`, `{ action: 'deliver' }`, or
-`{ action: 'runtime', actionId }` — and shall treat the returned
-settlement `{ status, facts, receipt?, leafState?, counts }` as the
-only evidence of effects; the public `PlaybookPorts` contract stays
+`{ action: 'runtime', actionId }` — and shall treat the returned settlement
+`{ status, facts, reason?, receipt?, leafStateSummary? }` as the only
+evidence of effects; counted activity remains shell-owned and is supplied
+separately in the result-phase prompt; the public `PlaybookPorts` contract stays
 six members, the port arriving as a linker-exposed option member
 ([slc/link.md](../../slc/link.md#playbookruntime-contract)).
 That same port shall carry the turn's inbound direction: the shell's
@@ -86,21 +87,15 @@ A `deliver` selection shall carry no text payload: the shell is
 authoritative for the delivered text, and any text carried on the
 selection is ignored and never delivered
 ([CAPTAIN-7](playbook-captain.md#captain-7)).
-A `start` or `switch` selection's `input` shall be provenance-tagged,
-never bare text: `origin` shall be `'boss'` or `'captain'`, and a
-missing or unknown `origin` shall be a malformed required payload
-field ([CAPPLAY-18](#capplay-18)).
-`origin: 'boss'` shall be the default the compiled policy selects,
-its `text` the current turn's exact Boss text — the shell being
-authoritative for it ([CAPTAIN-7](playbook-captain.md#captain-7)) —
-and `origin: 'captain'` shall be permitted only to carry intent the
-Boss accumulated across earlier turns that the current turn's text
-alone does not express, such as a target the Boss named before.
-No selection shall paraphrase, summarize, translate, expand, or
-otherwise restate the current turn's Boss text under either origin:
-Captain-composed input adds accumulated intent and never silently
-replaces same-turn Boss text
-([DR-029 §4](../decisions/029-session-scoped-conversational-captain.md)).
+A `start` or `switch` selection's `input` shall be one nonempty
+standalone request that the target can execute without reconstructing
+the Captain conversation.
+A parse-resolved selection shall carry the command remainder unchanged;
+a model-decided selection may faithfully consolidate intent agreed
+across remembered Boss turns but shall add no unrequested work.
+The shell shall validate the scalar input and pass it to the target
+unchanged, while the recovery history preserves the original Boss turns
+([DR-029](../decisions/029-session-scoped-conversational-captain.md)).
 The runtime shall reach no playbook or player directly: it shall make
 no `callPlaybook` or `callPlayer` call, require no generated player or
 command, and make no visibility request.
@@ -111,7 +106,7 @@ reach the Boss only as validated captain speech.
 
 ### CAPPLAY-10
 
-Where a settlement returns through the controller port, the machine shall retain as decision and reply evidence only the settlement's status, its outcome-report facts, the receipt disposition with its reason or normalized `{ name, message }` error, and the leaf-state summary.
+Where a settlement returns through the controller port, the machine shall retain as decision and reply evidence only the settlement's status, its outcome-report facts, its optional rejection reason, the receipt disposition with its reason or normalized `{ name, message }` error, and the leaf-state summary.
 It shall retain no playbook session id, call id, child state, stack
 ledger, resume token, or opaque runtime result in Captain-visible
 context, and the result-phase prompt shall carry the settlement facts
@@ -150,8 +145,9 @@ object, an unknown action, a missing or malformed required payload
 field, or an invalid target — the runtime shall issue exactly one
 corrective call that appends the rejection reason and the restated
 reply contract to the same prompt, and shall accept the second reply.
-A second malformed reply shall settle the turn as a Boss-appropriate
-failure reply with no action executed and the engagement stack
+A second malformed reply shall settle the turn through the same
+Boss-appropriate failure-reply and recovery-history path as other
+decision failures, with no action executed and the engagement stack
 untouched, the machine returning to its hub for the next turn.
 A rejected or aborted transport call shall not trigger the corrective
 re-ask; it follows the continuity contract of

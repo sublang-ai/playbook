@@ -7,7 +7,7 @@ export type EnabledPlaybook = {
     readonly command: string;
     readonly intent: string;
 };
-/** The closed controller action set (DR-029 §4; stable machine contract). */
+/** The closed controller action set (DR-029; stable machine contract). */
 export type DecisionAction = 'respond' | 'start' | 'switch' | 'dismiss' | 'deliver' | 'runtime';
 /**
  * A deterministic parse-resolved acting decision injected by the host
@@ -66,7 +66,7 @@ export type CaptainInput = {
 /**
  * Decision-state output: the validated selection under the stable controller
  * guard contract — `respond` | `start` | `switch` | `dismiss` | `deliver` |
- * `runtime`, with the payload fields DR-029 §4 requires — plus the
+ * `runtime`, with the payload fields DR-029 requires — plus the
  * controller-port settlement evidence of the executed submission. The prose
  * states (`answeringCommand`, `reporting`) carry the default single-outcome
  * `done` contract.
@@ -157,9 +157,6 @@ export declare const captainMachine: import("xstate").StateMachine<Context, Boss
     type: "rememberActorError";
     params: import("xstate").NonReducibleUnknown;
 }, {
-    type: "rejected";
-    params: unknown;
-} | {
     type: "start";
     params: unknown;
 } | {

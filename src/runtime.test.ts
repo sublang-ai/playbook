@@ -319,7 +319,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(unionMembers(runtimeDts, 'PlaybookTraceType')).toEqual(
       unionMembers(linkSpec, 'PlaybookTraceType'),
     );
-    // DR-029 §3 / PBRT-52: the optional control-surface pair and its types.
+    // DR-029 / PBRT-52: the optional control-surface pair and its types.
     expect(interfaceProperties(runtimeDts, 'PlaybookControlAction')).toEqual([
       'id:string',
       'label:string',

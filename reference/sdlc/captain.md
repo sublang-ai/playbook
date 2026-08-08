@@ -24,10 +24,10 @@ A turn the host's deterministic command parse resolved enters with its decision 
 Empty or whitespace-only input never reaches the machine.
 These input-provenance rules are host and linker preconditions, not behaviors for Captain to perform and not source items to compile.
 
-Per Boss turn the linked runtime submits at most one validated selection through the host-supplied controller port and treats the returned settlement — status, outcome-report facts, optional receipt, leaf-state summary, and counted activity — as the only evidence of effects.
+Per Boss turn the linked runtime submits at most one validated selection through the host-supplied controller port and treats the returned settlement — status, outcome-report facts, optional rejection reason, optional receipt, and leaf-state summary — as the only evidence of effects; the host supplies its separately counted activity only to the result-phase prompt.
 The host owns validation and execution of effects: `start` needs an idle host; `switch` needs an active engagement and a target absent from the active path; `dismiss`, `deliver`, and `runtime` need an active working leaf; `switch` dismisses the stack then starts the target with no rollback, a failing start settling with both facts.
 A `deliver` selection carries no text payload: the host is authoritative for the delivered text, and any text carried on the selection is ignored and never delivered.
-A settlement with status `ok` is final for its turn: an executed action is never executed again, and continuing or repeating work takes a new Boss turn and a new decision.
+Every settlement is final for its turn: an action is never submitted again after the controller returns `ok`, `rejected`, or `failed`, and continuing or repeating work takes a new Boss turn and a new decision.
 Port submission and settlement delivery are runtime and host mechanics, not behaviors for Captain to perform and not source items to compile.
 
 Every Captain call of this playbook runs hidden on the host's one durable session conversation; the host pins and rotates the conversation token, composes and appends the labeled Boss-message, ControlView digest, and catalog digest blocks the decision prompt references — this playbook composes no digest itself — validates every returned prose reply, and surfaces captain speech to Boss only through its presentation seam, while suppressing this runtime's human status stream.
@@ -48,8 +48,8 @@ When Boss submits a turn that the host's command parse did not resolve, Captain 
 > Continue from the remembered conversation and any supplied conversation summary; do not re-ask for what Boss already told you.
 > Select exactly one action from the closed set `respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`, choosing by the message's addressee and intent, and reply with exactly one JSON object `{ "action": …, … }` and no other text:
 > `{ "action": "respond", "text": … }` — conversation, planning, clarification, a question to Boss, or a progress or status answer grounded in the ControlView digest, leaving the engagement, its parked state, and any pending player question untouched; valid for any turn; `text` is your complete reply to Boss.
-> `{ "action": "start", "playbookId": …, "input": { "origin": …, "text": … } }` — start the enabled playbook `playbookId` names, when none is engaged; `input` is its complete standalone request tagged with its provenance: `"origin": "boss"` is the default and its `text` is this turn's Boss request, while `"origin": "captain"` carries only intent you accumulated across earlier turns and never restates the current turn.
-> `{ "action": "switch", "playbookId": …, "input": { "origin": …, "text": … } }` — replace the active engagement with the enabled playbook `playbookId` names, only on Boss's explicit replacement request; `input` carries the same provenance tagging as `start`.
+> `{ "action": "start", "playbookId": …, "input": … }` — start the enabled playbook `playbookId` names, when none is engaged; `input` is one nonempty complete standalone request synthesized from the remembered Boss conversation and the current Boss turn.
+> `{ "action": "switch", "playbookId": …, "input": … }` — replace the active engagement with the enabled playbook `playbookId` names, only on Boss's explicit replacement request; `input` is the same kind of complete standalone request as for `start`.
 > `{ "action": "dismiss" }` — stop the active engagement, only on Boss's explicit stop request.
 > `{ "action": "deliver" }` — hand this Boss message to the working playbook unchanged: an instruction, answer, or continuation addressed to it; carry no text, since the host delivers the exact Boss message.
 > `{ "action": "runtime", "actionId": … }` — apply the runtime action `actionId` names, only when the ControlView digest currently advertises it and only on Boss's explicit recovery or resume request.
@@ -59,14 +59,14 @@ When Boss submits a turn that the host's command parse did not resolve, Captain 
 
 Results:
 - `respond`: Captain settled the turn in this decision call; the validated text is the turn's captain speech. Output shall include `text: <the complete captain reply>`.
-- `start`: Captain selected starting an enabled playbook. Output shall include `playbookId: <stable catalog id>` and `input: <complete standalone request tagged origin "boss" or "captain">`.
-- `switch`: Captain selected replacing the active engagement. Output shall include `playbookId: <stable catalog id>` and `input: <complete standalone request tagged origin "boss" or "captain">`.
+- `start`: Captain selected starting an enabled playbook. Output shall include `playbookId: <stable catalog id>` and `input: <one nonempty complete standalone request>`.
+- `switch`: Captain selected replacing the active engagement. Output shall include `playbookId: <stable catalog id>` and `input: <one nonempty complete standalone request>`.
 - `dismiss`: Captain selected stopping the active engagement; the selection carries no payload field.
 - `deliver`: Captain selected handing the turn to the working playbook; the host is authoritative for the delivered text, so the selection carries no payload field.
 - `runtime`: Captain selected one advertised runtime action. Output shall include `actionId: <advertised action id>`.
 
 The compiled decision result guards are exactly `respond`, `start`, `switch`, `dismiss`, `deliver`, and `runtime`, respectively, with those payload fields; these names are part of this default playbook's stable machine contract.
-As decision and reply evidence the machine retains only a settlement's status, its outcome-report facts, the receipt disposition with its reason or a compact `{ name, message }` error, and the leaf-state summary; it never retains a playbook session id, call id, child state, stack ledger, resume token, or opaque runtime result.
+As decision and reply evidence the machine retains only a settlement's status, its outcome-report facts, its optional rejection reason, the receipt disposition with its reason or a compact `{ name, message }` error, and the leaf-state summary; it never retains a playbook session id, call id, child state, stack ledger, resume token, or opaque runtime result.
 
 When the host's command parse resolved the Boss turn as `respond` — a bare enabled command, or a command naming an active non-leaf ancestor — Captain shall answer the command turn, using the following prompt:
 > Boss issued a registered command that produces no action this turn: a bare command, or a command naming an active non-leaf playbook.
@@ -76,8 +76,8 @@ When the host's command parse resolved the Boss turn as `respond` — a bare ena
 
 This call's validated text is the turn's captain speech; the host executes no action for the turn regardless of the reply, and the machine returns to its hub.
 
-When an acting turn's selection — parse-resolved or model-decided — was executed and its settlement returns through the controller port as the turn's outcome report, Captain shall compose the turn's closing reply, using the following prompt:
-> An action just executed for the current Boss turn; its outcome report — the settlement facts verbatim, the receipt disposition, and the leaf-state summary — is supplied with this call.
+When an acting turn's selection — parse-resolved or model-decided — settles as `ok`, `rejected`, or `failed` and its settlement returns through the controller port as the turn's outcome report, Captain shall compose the turn's closing reply, using the following prompt:
+> An action just settled for the current Boss turn; its outcome report — the settlement facts verbatim, the receipt disposition, and the leaf-state summary — is supplied with this call.
 > The closing reply is the turn summary: compose the closing reply and turn summary only from the outcome-report facts.
 > State what actually happened — what was dismissed, started, delivered, applied, rejected, or failed — and claim no work the report does not contain.
 > Do not finish with a bare acknowledgement, a promise to act, or an announcement that the round is complete.
@@ -87,4 +87,3 @@ When an acting turn's selection — parse-resolved or model-decided — was exec
 > Write concise human chat prose with no guard names, result property names, control JSON, hidden control data, internal state ids, session ids, call ids, stack data, or private reasoning.
 
 This call's validated text is the turn's captain speech and turn summary; the machine then returns to its hub.
-A rejected selection executes no action: the host surfaces the rejection reason as its own status text, supplies no outcome report, makes no closing-reply call, and the machine returns to its hub.

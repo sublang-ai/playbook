@@ -45,7 +45,7 @@ export const CAPTAIN_SURFACE_MEMBERS = Object.freeze([
   Object.freeze({
     id: 'CaptainContext.emitReply',
     file: 'captain-context-emit-reply.ts',
-    why: 'DR-029 §5 captain speech: every durable call is hidden, so validated Captain prose reaches Boss only through this surface.',
+    why: 'DR-029 captain speech: every durable call is hidden, so validated Captain prose reaches Boss only through this surface.',
     source: `import type { CaptainContext } from '${CAPTAIN_SURFACE_SPECIFIER}';
 
 export const emitCaptainReply: (
@@ -57,7 +57,7 @@ export const emitCaptainReply: (
   Object.freeze({
     id: 'CaptainRunResult.resumeToken',
     file: 'captain-run-result-resume-token.ts',
-    why: "DR-029 §2 continuity: the shell pins this token after every session-Captain call, and its absence is what marks the conversation unsynchronized.",
+    why: "DR-029 continuity: the shell pins this token after every session-Captain call, and its absence is what marks the conversation unsynchronized.",
     source: `import type { CaptainRunResult } from '${CAPTAIN_SURFACE_SPECIFIER}';
 
 export const readResumeToken: (

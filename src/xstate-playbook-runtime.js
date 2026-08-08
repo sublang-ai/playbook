@@ -618,33 +618,15 @@ export function resumableStateIdsFromMachine(machine) {
     return new Set(transitionTargets(bossReply));
 }
 // ---------------------------------------------------------------------------
-// DR-029 §3 control surface: the FSM's explicit-state-jump event and the
+// DR-029 control surface: the FSM's explicit-state-jump event and the
 // source state descriptions that label runtime-advertised actions.
 // ---------------------------------------------------------------------------
 /** The FSM's explicit-state-jump event type (slc/link.md §Boss-event mapping). */
 const JUMP_EVENT_TYPE = 'BOSS_INTERRUPT';
 /**
- * How a multi-region `stateDescription` joins its per-region descriptions
- * (PBRT-52). Region *names* are internal state ids and never appear; only the
- * published meanings do, in the deterministic order of the normalized state
- * value.
- */
-const PARALLEL_REGION_SEPARATOR = ' | ';
-/** Separator of a qualified state path, matching XState's own `.` notation. */
-const QUALIFIED_PATH_SEPARATOR = '.';
-/**
- * Source state descriptions by qualified state path, unqualified state key,
- * node id, and `meta.playbook` state id, read from `machine.config`. Control
- * actions are labeled from these descriptions (DR-029 §3); a state without one
- * falls back to its id.
- *
- * The qualified path is what makes the map usable while the machine occupies a
- * `type: 'parallel'` state (PBRT-52). Unqualified keys are first-wins, and a
- * leaf name such as `idle` or `failed` is exactly the kind a machine reuses in
- * every region — so two regions both at `idle` resolved to one region's
- * description and the runtime published it as the meaning of both. That is the
- * false statement PBRT-52 forbids, and it is undetectable at the receiving end
- * because the carrier is one string.
+ * Source state descriptions by state key, node id, and `meta.playbook`
+ * state id, read from `machine.config`. Control actions are labeled from
+ * these descriptions (DR-029); a state without one has no entry.
  */
 export function stateDescriptionsFromMachine(machine) {
     const descriptions = new Map();
@@ -654,7 +636,7 @@ export function stateDescriptionsFromMachine(machine) {
         if (!descriptions.has(key))
             descriptions.set(key, description);
     };
-    const visit = (key, path, stateDef) => {
+    const visit = (key, stateDef) => {
         if (!isPlainObject(stateDef))
             return;
         const playbook = isPlainObject(stateDef.meta)
@@ -666,7 +648,6 @@ export function stateDescriptionsFromMachine(machine) {
                 ? stateDef.description
                 : undefined;
         if (description !== undefined && description.length > 0) {
-            record(path, description);
             record(key, description);
             record(stateDef.id, description);
             if (isPlainObject(playbook))
@@ -674,14 +655,14 @@ export function stateDescriptionsFromMachine(machine) {
         }
         if (isPlainObject(stateDef.states)) {
             for (const [childKey, child] of Object.entries(stateDef.states)) {
-                visit(childKey, `${path}${QUALIFIED_PATH_SEPARATOR}${childKey}`, child);
+                visit(childKey, child);
             }
         }
     };
     const config = machine.config;
     if (isPlainObject(config) && isPlainObject(config.states)) {
         for (const [key, stateDef] of Object.entries(config.states)) {
-            visit(key, key, stateDef);
+            visit(key, stateDef);
         }
     }
     return descriptions;
@@ -1061,7 +1042,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
     assertRuntimeCompat(spec.compat, label);
     const declaredActors = collectInvokeSources(machine);
     const resumableStateIds = spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
-    // DR-029 §3: source state descriptions label the control actions the
+    // DR-029: source state descriptions label the control actions the
     // runtime advertises through `describe()`.
     const stateDescriptions = stateDescriptionsFromMachine(machine);
     // PBRT-52: the artifact's own ControlView context projection. Nothing is
@@ -1138,13 +1119,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
         let playbookCallSequence = 0;
         let captainCallSequence = 0;
         let applyCallSequence = 0;
-        // DR-029 §3: the last event a public Boss boundary sent into the
+        // DR-029: the last event a public Boss boundary sent into the
         // machine — classified, deterministic entry, or Boss reply — kept with
         // its recorded payload so a failure-state retry action can replay the
         // event that drove the run into `failed`. Process-local: the schema-1
         // parked snapshot does not persist it (PBRT-50: no schema bump).
         let lastBossEvent;
-        // DR-029 §3: at-most-once `apply` execution — the accepted receipt
+        // DR-029: process-local at-most-once `apply` execution — the accepted receipt
         // recorded for each idempotency key, returned verbatim on a repeated
         // key. A key whose call settled `rejected` or threw before reaching
         // acceptance records nothing, so a later call with that key may still
@@ -1478,7 +1459,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         visibility,
                         // The visible workflow form owns its `resume: false` selection;
                         // a hidden controller call's durable-conversation resume
-                        // selection is host-owned (DR-029 §2), so its trace pair carries
+                        // selection is host-owned (DR-029), so its trace pair carries
                         // no resume member and no token.
                         ...(visibility === 'visible' ? { resume: false } : {}),
                         ...(input.allowedTools === undefined
@@ -2153,45 +2134,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // rather than leaving the host to substitute the identifier for it. A
         // state whose source declares no description publishes none: an id is
         // never promoted into a description by default.
-        // The active regions of a normalized state value, leaf-most first and in a
-        // deterministic order. An object node with more than one key is a region
-        // set (a `type: 'parallel'` state) and each key contributes its own leaf;
-        // an object node with a single key is ordinary hierarchy and contributes
-        // one. The same value therefore always yields the same regions.
-        // Each region is carried as its *qualified* path — the region names it sits
-        // under, then its own leaf key — because that is what tells two regions
-        // apart. Reducing them to leaf keys made `{ left: 'idle', right: 'idle' }`
-        // into `['idle', 'idle']`, two lookups of one key, and the join then stated
-        // the first region's meaning twice.
-        function activeRegionKeys(value, prefix = '') {
-            if (typeof value === 'string')
-                return [`${prefix}${value}`];
-            const keys = Object.keys(value).sort();
-            if (keys.length === 0)
-                return [];
-            return keys.flatMap((key) => activeRegionKeys(value[key], `${prefix}${key}${QUALIFIED_PATH_SEPARATOR}`));
-        }
         function stateDescriptionFor(state) {
-            // CAPTAIN-9 / PBRT-52: while the machine occupies a `type: 'parallel'`
-            // state, the published description covers *every* active region. Picking
-            // the first match would state one region's meaning as if it were the
-            // whole state — the same false statement to the controller host as
-            // substituting an id for a description, and one the host cannot detect,
-            // since all it receives is a single string. A region that publishes no
-            // description leaves the whole state unpublished rather than silently
-            // narrowing the line to the regions that did: "a description per active
-            // region" is satisfiable or it is not.
-            const regions = activeRegionKeys(state.value);
-            if (regions.length > 1) {
-                const described = [];
-                for (const key of regions) {
-                    const description = stateDescriptions.get(key);
-                    if (description === undefined)
-                        return undefined;
-                    described.push(description);
-                }
-                return described.join(PARALLEL_REGION_SEPARATOR);
-            }
             const keys = [
                 ...(state.stateId === undefined ? [] : [state.stateId]),
                 ...(typeof state.value === 'string' ? [state.value] : []),
@@ -2361,7 +2304,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         initInFlight = undefined;
                 }
             },
-            // DR-029 §3 / PBRT-52: side-effect-free control view over the live
+            // DR-029 / PBRT-52: side-effect-free control view over the live
             // snapshot, valid at parked quiescence outside an active boundary.
             // The view is detached and frozen; producing it emits nothing and
             // moves nothing.
@@ -2403,7 +2346,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     actions: deriveControlActions(snapshot).map(({ action }) => action),
                 });
             },
-            // DR-029 §3 / PBRT-52: revalidate the named action against the live
+            // DR-029 / PBRT-52: revalidate the named action against the live
             // state and execute it at most once per idempotency key. The receipt
             // discriminates rejected-before-any-effect from executed and from
             // failed-after-effects-may-exist; a repeated key returns the recorded
@@ -2567,7 +2510,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             }
                             catch (error) {
                                 // Effects may exist: a post-acceptance failure is the
-                                // receipt, not a control-plane rejection (DR-029 §3).
+                                // receipt, not a control-plane rejection (DR-029).
                                 receipt = settledReceipt({
                                     disposition: 'failed',
                                     error: normalizeError(error),
@@ -2717,7 +2660,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             suppressInspectionEmissions = false;
                             actor.start();
                         }
-                        // DR-029 §3: keep the classified event with its recorded payload
+                        // DR-029: keep the classified event with its recorded payload
                         // as the retry-replay source. Recording is sanitizing, not
                         // load-bearing: an override classifier's non-JSON-safe event is
                         // simply not recorded, and the turn proceeds unchanged.

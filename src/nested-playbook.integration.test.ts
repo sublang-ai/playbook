@@ -747,7 +747,7 @@ describe('linked nested playbook integration (PBRT-44)', () => {
     await harness.shell.dispose!();
   });
 
-  it('clears a failed finish boundary so Captain can retry without an orphaned child', async () => {
+  it('reports a failed finish boundary so Captain can retry without an orphaned child', async () => {
     const order: string[] = [];
     const parents: LinkedParentRuntime[] = [];
     const children: ScenarioChildRuntime[] = [];
@@ -779,12 +779,13 @@ describe('linked nested playbook integration (PBRT-44)', () => {
       harness.context,
     );
 
+    const repliesBefore = harness.replies.length;
     await expect(
       harness.shell.handleBossTurn(
         turn('finish child with broken trace drain', 2),
         harness.context,
       ),
-    ).rejects.toThrow('finish drain failed');
+    ).resolves.toBeUndefined();
 
     expect(children[0]?.disposeCount).toBe(1);
     expect(parents[0]?.pendingCall()).toBeUndefined();
@@ -795,6 +796,7 @@ describe('linked nested playbook integration (PBRT-44)', () => {
     await vi.waitFor(() => {
       expect(parents[0]?.currentState().stateId).toBe('childError');
     });
+    expect(harness.replies).toHaveLength(repliesBefore + 1);
 
     // The failed child frame was already popped before the parent boundary
     // failed. A fresh explicit parent command therefore reaches the root,

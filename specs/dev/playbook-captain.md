@@ -14,7 +14,7 @@ The shell hosts the session Captain — the compiled default Captain
 playbook ([CAPPLAY](captain-playbook.md)) — for the whole shell
 session as a controller outside the engagement stack, and owns
 host-level validation and effects: stack, registry, presentation,
-and the session journal.
+and the session recovery history.
 The published `@sublang/playbook` module surface is essential to
 this package's intent because tmux-play configs import the shell by
 package specifier.
@@ -57,7 +57,7 @@ frame path and depth, shell mode, latest leaf runtime state descriptor,
 pending Boss questions when mirrored from telemetry, normalized last
 error when mirrored from telemetry, the last validated action and its
 settlement status, the pinned durable-conversation resume token and
-session journal handle ([CAPTAIN-35](#captain-35)), and the session
+recovery-history handle ([CAPTAIN-35](#captain-35)), and the session
 Captain's own playbook session id created at `init`
 ([CAPTAIN-16](#captain-16)).
 The normalized last error shall carry only `{ name, message }`.
@@ -77,7 +77,7 @@ When the shell emits its own FSM telemetry, it shall use topic
 The shell FSM telemetry payload shall carry `from`, `to`, `event`,
 and a snapshot of the bounded control ledger.
 That ledger snapshot shall identify the durable conversation and
-session journal by presence only and shall carry no resume-token
+recovery history by presence only and shall carry no resume-token
 value.
 If engagement initialization fails after entering `engaged.parked`, the shell
 shall pop the broken frame and emit a best-effort recovery transition back to
@@ -128,46 +128,40 @@ a model-decided `respond` carrying the turn's reply prose so a chat
 turn settles in that one decision call.
 The shell shall validate a selection against host state before any
 effect: `start` and `switch` targets shall be enabled registry
-entries; `start` and `switch` inputs shall carry an explicit
-`origin` of `'boss'` or `'captain'`
-([CAPPLAY-9](captain-playbook.md#capplay-9)); `start` shall require
+entries; `start` and `switch` inputs shall be nonempty standalone
+request strings ([CAPPLAY-9](captain-playbook.md#capplay-9)); `start` shall require
 an idle shell; `switch` shall require
 an active root and a target absent from the active path; `dismiss`,
 `deliver`, and `runtime` shall require an active leaf; and `runtime`
 shall require the active leaf's current `describe()` to advertise
 the selected action id.
 An invalid selection shall settle `rejected` with a reason and no
-effect; the shell shall surface that rejection reason to the Boss as
-shell-owned human-readable status message text
-([CAPTAIN-6](#captain-6)), never as captain speech
-([CAPTAIN-9](#captain-9)).
+effect; that result shall return through the same result-phase Captain
+call and closing-reply path as every other non-`respond` selection.
+The shell shall create no separate refusal status or deferred refusal
+notice.
 For a validated `deliver`, the shell shall be authoritative for the
 delivered text — the exact Boss text of the decided turn, or the
 parsed remainder of a same-command turn — and shall ignore, never
 delivering, any text carried on the selection
 ([CAPPLAY-9](captain-playbook.md#capplay-9)).
-For a validated `start` or `switch`, the shell shall resolve the
-child's initial Boss text from the selection's tagged `input`: under
-`origin: 'boss'` it shall be authoritative exactly as for `deliver`,
-starting the target with that same shell-held text and ignoring any
-divergent text carried on the selection, so a model restatement of
-the current turn can never reach the child; under
-`origin: 'captain'` it shall pass the composed text through and
-shall record the Captain origin in the settlement facts and the
-session journal ([CAPTAIN-35](#captain-35)), keeping
-Captain-composed input distinguishable from Boss text downstream.
-A selection reaching the port with a missing or unknown `origin`
-shall settle `rejected` with a reason and no effect — never defaulted
-silently — while a decision reply whose `input` omits `origin` or
-names an unknown one is a malformed required payload field for the
-runtime's own contract validation and its single corrective re-ask
-([CAPPLAY-18](captain-playbook.md#capplay-18)).
-The shell shall execute at most one validated action per Boss turn
-and settle the selection with `status`, the outcome-report facts —
-what was dismissed, started, delivered, applied, or rejected, plus
-the resulting leaf-state summary — the receipt where a `runtime`
-action executed, and the turn's counted activity
-([CAPTAIN-20](#captain-20)); settlements shall carry no prose field.
+For a validated `start` or `switch`, the shell shall pass the scalar
+`input` unchanged as the child's initial request.
+The deterministic command path supplies its parsed remainder, while a
+model-decided path may supply the complete request agreed across the
+remembered conversation; the recovery history retains the original
+Boss turns and the handed-off request ([CAPTAIN-35](#captain-35)).
+A missing, empty, or non-string `input` shall settle `rejected` with a
+reason and no effect at the controller port, and shall be a malformed
+required payload field for decision validation and its corrective
+re-ask ([CAPPLAY-18](captain-playbook.md#capplay-18)).
+The shell shall execute at most one validated action per Boss turn and settle
+the selection with `status`, outcome-report facts, an optional rejection
+reason, the receipt where a `runtime` action executed, and the resulting
+`leafStateSummary` ([CAPTAIN-20](#captain-20)); settlements shall carry no
+reply-prose or counted-activity field.
+The shell shall keep counted activity in its turn report and supply it
+separately to the result-phase prompt under [CAPTAIN-20](#captain-20).
 A settlement with status `ok` shall be final for that turn: the
 shell shall never re-execute the executed action, and retries stay
 phase-local.
@@ -227,25 +221,10 @@ is the grounding a status answer reflects, and an id is not text a
 reply may repeat
 ([CAPPLAY-5](../user/captain-playbook.md#capplay-5)). Where the leaf's
 runtime publishes no description for its current state, the digest
-shall say so and shall not substitute the id for it. That absence is
-also what the digest shall state while the leaf occupies a
-`type: 'parallel'` state whose runtime publishes no description
-covering every active region: the state line shall carry a description
-per active region or none at all, and shall never carry one region's
-description as the meaning of the whole state, which is the same false
-statement to the model as substituting an id for a description and is
-equally undetectable at the receiving end, the carrier being one string
-([PBRT-52](playbook-runtime.md#pbrt-52)). The covering form is the
-runtime's to publish and the digest's to relay unchanged. No runtime
-with a control surface enters a parallel state today — DISCUSS declares
-one and ships without the `describe`/`apply` pair, so it takes the
-degraded path below, while CODE and the session Captain are scalar — so
-only the absent form carries a hermetic row
-([CAPTAIN-37](../test/playbook-captain.md#captain-37)). It also carries
-the context members the
+shall say so and shall not substitute the id for it. It also carries the
+context members the
 leaf's runtime authored into its ControlView projection
-([PBRT-52](playbook-runtime.md#pbrt-52),
-[DR-029 §3](../decisions/029-session-scoped-conversational-captain.md)),
+([PBRT-52](playbook-runtime.md#pbrt-52)),
 pending questions verbatim with their question ids, the last error
 as `{ name, message }`, and the advertised actions as id plus label,
 composed from the active leaf's `describe()`
@@ -294,15 +273,15 @@ not author becomes part of a digest line, so a line added to a digest
 later carries the property without restating it.
 Digests and session-Captain prompts shall exclude session and call
 UUIDs, resume tokens, trace payloads, module specifiers, option
-values, player rosters, raw journal records, and ledger JSON; player
+values, player rosters, raw recovery records, and ledger JSON; player
 output shall enter the conversation only as fenced quotes.
-A raw journal record shall reach no prompt, ever; the sole
-journal-derived text any prompt may carry is the deterministic
+A raw recovery record shall reach no prompt, ever; the sole
+history-derived text any prompt may carry is the deterministic
 reseed digest the shell composes from those records
 ([CAPTAIN-35](#captain-35)), permitted on exactly the first call of a
 replacement conversation and on no other call, so on the healthy
-path — no reseed — no journal-derived text enters any prompt
-([DR-029 §2](../decisions/029-session-scoped-conversational-captain.md)).
+path — no reseed — no history-derived text enters any prompt
+([DR-029](../decisions/029-session-scoped-conversational-captain.md)).
 That digest shall itself observe the exclusions above.
 The shell shall validate every durable call's returned prose with
 the missing-or-empty predicate and its single corrective re-ask
@@ -339,6 +318,9 @@ one [PBRT-52](playbook-runtime.md#pbrt-52) publishes and the fragment
 being what a reply actually repeats. A `jump:<stateId>` id names a
 state the machine is by construction not in, so no live-state check can
 reach it.
+Boss-facing action labels, question text, player names, catalog prose,
+and recovery facts shall not enter that set merely because their text
+resembles an identifier.
 Membership shall follow the prompt and not the composing call site.
 Whichever block placed the id — a read control view's advertised
 actions, the mirrored pending questions of a degraded digest, or the
@@ -369,18 +351,15 @@ the colon of the `<verb>:<target>` action grammar
 and shall not reject a bare lowercase state id such as `ready` or
 `failed`, which Boss may hear in any sentence; keeping even those out
 of visible prose stays that same model instruction.
-Every Boss-visible settlement shall leave the shell through one
-presentation seam and shall pass this same validation there — captain
-speech and the status line of a refused selection alike
-([CAPTAIN-34](../user/playbook-captain.md#captain-34)), host-authored
-text included. Both interpolate text no one validated: the shell's own
-CAPTAIN-34 failure reply quotes settlement facts, and a refusal line
-quotes a reason the runtime authored or a name the model chose. Where
-the composed text fails validation the shell shall speak the fact-free
-form of it — for a reply, the settlement and the next step without the
-facts; for a refusal, that the request was refused, that nothing was
-changed, and the next step without the reason — rather than withhold
-the turn's only remaining settlement or print the unchecked text.
+Every Captain reply shall leave the shell through one presentation
+seam and pass this same validation there, including a normal result
+reply, a rejection reply, and a recovery failure reply
+([CAPTAIN-34](../user/playbook-captain.md#captain-34)).
+The seam shall attempt each reply once; a rejection shall surface as a
+boundary failure and shall not be retried through another channel.
+Where foreign result text prevents a safe factual reply, the Captain
+shall state the established outcome and next step without quoting that
+text rather than print it unchecked.
 The shell's own `callCaptain` implementation is that presentation seam: the
 session Captain runtime returns no prose to its machine and injects no
 presentation field
@@ -484,9 +463,9 @@ shall serialize these calls.
 
 ### CAPTAIN-20
 
-Where the Playbook Captain shell executes a validated action for a
-Boss turn, the shell shall collect turn-summary counts only for the
-duration of that action's execution — the sub-runtime
+Where the Playbook Captain shell settles a non-`respond` selection for
+a Boss turn, the shell shall collect turn-summary counts only for the
+duration of any action execution — the sub-runtime
 `handleBossInput` call, the `apply()` call, or a `switch`'s
 dismissals and start — and only when the active registry entry
 declares a `summaryPolicy`.
@@ -524,7 +503,8 @@ counted.
 The shell shall not count session-Captain decision, reply, or
 result-phase calls, sub-runtime classifier/event JSON, or malformed
 adjudication replies as saved copy-pastes.
-After the executed action settles, the session Captain's one
+After the selection settles, including where it is rejected, fails, or
+partly completes, the session Captain's one
 result-phase closing-reply call
 ([CAPPLAY-6](captain-playbook.md#capplay-6)) runs hidden on the
 durable conversation ([CAPTAIN-31](#captain-31)); the shell shall
@@ -542,7 +522,7 @@ entry's `summaryPolicy` saved-counts line verbatim with the supplied
 counts and natural singular forms when a count is one; when that
 counted activity is zero or the entry declares no `summaryPolicy`,
 it shall instruct Captain to append no saved-counts line.
-When the Boss turn executes no action, the shell shall supply no
+When the Boss turn settles as `respond`, the shell shall supply no
 result-phase outcome report and no result-phase call shall occur
 ([CAPPLAY-6](captain-playbook.md#capplay-6)).
 The result-phase prompt shall instruct Captain not to include counts
@@ -600,7 +580,7 @@ playbook registry entries from `captain.options.playbooks`, derive
 each entry's local-role-to-host-player binding
 ([CAPTAIN-10](#captain-10)) from its generated host player ids,
 validate each entry's own option slice through that entry's
-`validateOptions`, enter `chat`, open the session journal
+`validateOptions`, enter `chat`, open the session recovery history
 ([CAPTAIN-35](#captain-35)), and construct, initialize, and start
 the session Captain runtime — the compiled default Captain
 ([CAPPLAY-6](captain-playbook.md#capplay-6)) — with its own
@@ -672,7 +652,7 @@ previously unissued UUID playbook session id
 shell session and shall never be reissued to an engagement.
 The shell shall include root and leaf session ids in its bounded ledger
 and shell FSM telemetry, keep the pinned durable-conversation token
-and journal handle in the ledger under the [CAPTAIN-5](#captain-5)
+and recovery-history handle in the ledger under the [CAPTAIN-5](#captain-5)
 exclusion rule, pass sub-runtime
 `playbook.trace` telemetry through unchanged, forward every explicit
 player `resume` selection to cligent's `context.callPlayer`, and
@@ -683,7 +663,7 @@ If engagement initialization rejects, the shell shall clear the broken
 engagement, best-effort dispose its partially initialized runtime while
 preserving the original failure, and let a later validated `start`
 construct a new engagement with a new session id; the session Captain,
-its durable conversation, and the journal shall be unaffected.
+its durable conversation, and the recovery history shall be unaffected.
 Its recovery shell telemetry shall show `chat` and an empty stack rather
 than leaving observers at the earlier attempted engagement.
 
@@ -776,172 +756,51 @@ from `captain.options.playbooks` at `init`
 
 ### CAPTAIN-35
 
-Where the shell hosts the session Captain, the shell shall keep one
-host-side session journal per shell session: append-only, JSON-safe
-records
-`{ seq, turnId, kind: 'boss' | 'reply' | 'refusal' | 'action' | 'outcome', payload }`
-covering Boss text, every Boss-visible Captain reply, every Boss-visible
-refusal status line, submitted actions with their targets and whether
-they were refused, and settlement facts.
-The recorded kinds shall cover every Boss-visible settlement
-[CAPTAIN-34](../user/playbook-captain.md#captain-34) enumerates, and no
-kind shall stand in for another: a refusal is the host's own status
-text, so recording it as a `reply` would show a replacement conversation
-the host's words as something the Captain said.
-A `reply` record shall cover every reply the Boss saw, whoever composed
-it — validated model prose and the host's own CAPTAIN-34 failure reply
-alike — and a `refusal` record every refusal line the Boss saw,
-whichever side refused, because the reseed exists to keep the
-replacement conversation in step with the Boss transcript, not to record
-provenance: a settlement the Boss saw and the journal did not hold
-leaves the replacement Captain reading the Boss's next message against a
-turn it was never told about.
-The duty is therefore owed by the Boss-visible seam and not by the
-model-prose one: the shell shall surface every Boss-visible settlement
-through one presentation seam that writes the record and marks the turn
-together ([CAPTAIN-9](#captain-9)), rather than journaling at each
-call site.
-The journal is only the reseed's channel, and a refused selection shall
-also reach a conversation that is *not* reseeded, which carries no
-journal-derived text at all. The model proposed the action, so a session
-that remembers the proposal and not its refusal answers a follow-up such
-as "why?" or "do it anyway" without the preceding fact. The shell shall
-therefore carry a refusal forward itself, on the next session-Captain
-call that opens a Boss turn — a decision call or a command-reply call,
-never a closing reply, which composes only from its outcome report
-([CAPTAIN-20](#captain-20)) — as one shell-composed labeled block naming
-the refused selection, which side refused, the reason, and that nothing
-ran and the stack is unchanged. That block is host-authored rather than
-journal-derived, so it is inside the [CAPTAIN-9](#captain-9) exclusions,
-and it rides a call the turn was making anyway, so a refusal shall cost
-no model call ([CAPTAIN-7](#captain-7)). The shell shall deliver it once
-and shall then clear it, a later refusal composing a fresh one.
-Once is counted in delivered calls. A prompt may be composed more than
-once for the same call — a corrective re-ask of a rejected reply
-([DR-028](../decisions/028-empty-ok-result-re-ask.md)) and a reseeded
-re-issue both recompose it — so the block shall be claimed by the first
-composition that carries it and the notice cleared only when a call that
-carried it returns. Clearing it at composition delivers it twice on a
-turn that needs a corrective and zero times on a turn that then aborts;
-a reseeded re-issue needs no second copy, the reseed digest carrying the
-same refusal from the journal.
-The journal shall never be Boss-visible, shall feed only the
-conversation reseed, and shall be complete for the session lifetime:
-the shell shall drop no record, and the only bounding shall be a
-deterministic truncation applied where the shell quotes long player or
-sub-runtime output into a payload.
-Boss text, Boss-visible captain replies, validated actions, and the
-shell-composed settlement facts surrounding such a quote are
-host-authored, and the reseed digest shall render them whole: a long
-Boss requirement shall reach the replacement conversation complete,
-never abbreviated by a per-record bound the renderer applies without
-knowing whose text it is.
-Every recorded action shall be followed by a record of how that action
-ended — an `outcome` record, or the `refusal` record of a selection the
-host or the runtime refused — including where the executed effect throws
-before reporting; no action record shall stand in the journal without
-that closing record, so a reseeded conversation is never shown a
-dispatched action whose result it is not told.
+Where the shell hosts the session Captain, it shall keep one complete,
+chronological recovery history for the shell session.
+That history shall preserve every accepted Boss turn, every Captain reply
+attempted for presentation together with its delivery result, every submitted
+selection, and every established action result, including rejection, failure,
+and partial completion.
+Boss-authored requests and shell-authored result facts shall be retained
+whole; quoted foreign evidence may be bounded before it enters the
+history.
+
+Every non-`respond` action result shall reach the healthy durable
+conversation through the result-phase call of the same turn
+([CAPTAIN-20](#captain-20)).
+There shall be no separate refusal notice, status-only refusal path, or
+second memory channel.
+The recovery history shall never be Boss-visible and shall be used to
+restore a replacement conversation, not as an additional prompt on a
+healthy one.
 After every durable session-Captain call the shell shall pin the
 returned `resumeToken`, replacing the prior pin.
 When a durable call throws, returns a non-`ok` status, or returns
 `ok` without a token, the shell shall treat the conversation as
-unsynchronized: clear the pin, re-issue that call exactly once on a
-fresh conversation (`resume: false`) seeded with the reseed digest
-plus the current ControlView digest, and pin the new token.
-The conversation shall stay unsynchronized until some call returns a
-token, so where the re-issue also fails, the next durable call of the
-session — on that turn or any later one — shall itself be a seeded
-one, running `resume: false` and carrying the reseed digest.
-Apart from the session's first call, no durable call shall run both
-unpinned and unseeded.
-The reseed shall be the re-issued call's single corrective for the
-fault it answers — an unusable *result*
-([DR-028 §26](../decisions/028-empty-ok-result-re-ask.md)): where the
-reseeded result is itself empty or its prose unusable, the shell shall
-fail that phase and shall issue no further corrective call for it,
-neither the boundary's empty-`ok` re-ask nor its own prose re-ask,
-those being the two correctives that answer the same symptom the reseed
-already answered.
-It shall not spend the corrective of a different fault class. A
-decision reply that arrives whole and is malformed as control JSON is a
-content fault the runtime owns, and it shall keep its own single
-corrective re-ask
-([CAPPLAY-18](captain-playbook.md#capplay-18),
-[DR-029 §4](../decisions/029-session-scoped-conversational-captain.md))
-even on a turn whose transport already spent a reseed — the corrective
-prompt is the only thing that tells the model why its reply was
-rejected, and a transport fault is no evidence about reply quality.
-Each corrective is bounded to one and none is recursive, and every one
-of them is scoped to something smaller than the phase: the reseed to the
-*call* it re-issues, the boundary's empty-`ok` re-ask to the *call*
-whose result was empty
-([DR-028](../decisions/028-empty-ok-result-re-ask.md)), and the
-malformed-control corrective to the *reply* it answers
-([CAPPLAY-18](captain-playbook.md#capplay-18)). Because that last
-corrective is itself a fresh call, it re-arms the two call-scoped
-mechanisms rather than inheriting their spent budgets — which is the
-same rule as "no class may spend another's corrective", read forward.
-One logical decision attempt therefore costs at most three model calls,
-and a decision phase, having at most two logical attempts, at most six.
-Six is a ceiling and not an open product: a result that is both reseeded
-and empty fails the phase rather than feeding the boundary's re-ask, so
-the third call is the last of any attempt, and the second attempt is the
-last of any phase. No item caps the per-turn total across classes, and
-this sentence states that total rather than capping it: the six-call
-turn is the compound-degenerate one in which transport failed twice and
-the model produced unusable control JSON twice, and its right ending is
-the visible [CAPTAIN-34](../user/playbook-captain.md#captain-34)
-settlement with the stack untouched, not a suppressed corrective that
-would kill a turn the model could still settle
-([CAPTAIN-39](../test/playbook-captain.md#captain-39)).
-The reseed digest shall be the shell's own deterministic rendering of
-the journal records — the same records shall always render the same
-digest — and shall be the only journal-derived text any prompt ever
-carries: raw journal records shall enter no prompt, the digest shall
-appear on the seeded call that opens a replacement conversation and on
-no later call of that conversation — so a pinned conversation carries
-no journal-derived text at all — and it shall observe the
-[CAPTAIN-9](#captain-9) prompt exclusions, carrying no session or
-call UUID, resume token, trace payload, module specifier, option
-value, player roster, or ledger JSON
-([DR-029 §2](../decisions/029-session-scoped-conversational-captain.md)).
+unsynchronized and re-issue only that failed call once on a fresh
+conversation seeded from the complete recovery history and current
+runtime observation.
+When reply presentation rejects, the shell shall make no second presentation
+attempt and shall treat the conversation that produced that reply as
+unsynchronized; the next session-Captain call shall start fresh with recovery
+history containing the exact attempted reply and its uncertain delivery.
+The conversation shall remain unsynchronized until a call establishes
+new continuity, so a later turn is seeded when the immediate recovery
+also fails.
+Continuity recovery, empty-result correction
+([DR-028](../decisions/028-empty-ok-result-re-ask.md)), and malformed
+decision correction ([CAPPLAY-18](captain-playbook.md#capplay-18))
+shall each remain bounded to the fault they answer and shall never
+repeat an action or recurse indefinitely.
+The replacement conversation shall receive a deterministic rendering
+of the complete recovery history that observes the prompt exclusions
+of [CAPTAIN-9](#captain-9).
 Only the model-side conversation shall be replaced: the engagement
-stack, player sessions, journal, and the turn's completed work —
-including an already-executed action, which shall never be
-re-executed — shall survive.
-When the re-issued call fails again, the shell shall fail that phase
-without touching the stack, surfacing the
-[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply;
-the underlying diagnostic shall remain available on trace telemetry
-and as the boundary error's `cause` and shall appear in no
-Boss-visible chat or status text.
-Where a parentless external root's delivered turn rejects, the shell
-shall retain the frame for later Boss recovery and shall propagate
-the boundary error unchanged.
-That propagation is scoped to an effect's own boundary error, and which
-errors those are shall be decided by the operation that threw rather
-than by anything the turn did earlier. The shell shall record the
-attribution at the effect invocation itself — the sub-runtime driven,
-the engagement constructed, the stack disposed, the advertised action
-applied — so that only a value which escaped one of those calls is an
-effect error, and shall not infer it from a turn-scoped record that an
-effect was attempted.
-The boundary shall enclose that one operation and nothing else. Shell
-control work performed on the way to an effect — the leaf check, the
-visibility request ([CAPTAIN-22](#captain-22)), the mode change and its
-telemetry — and the processing of what the runtime returned are not
-effects, and a boundary drawn around the sequence containing them files
-their failures as effect failures with the runtime never invoked,
-propagating instead of settling and costing the Boss the settlement the
-turn owes ([CAPTAIN-34](../user/playbook-captain.md#captain-34)). A
-region is not an operation, and the shell shall not treat one as the
-other. A flag set before an attempt is inherited by
-everything after it: a `rejected` receipt is positive proof that no
-effect ran, yet a failure in *presenting* that refusal would still be
-filed as an effect error and propagated, leaving the Boss with no
-settlement at all. A failure to present a Boss-visible settlement is
-shell-owned control-plane work; where a settlement channel remains
-untried, the shell shall settle the turn through it with the
-[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply
-rather than propagate.
+stack, player sessions, recovery history, and completed turn work shall
+survive, and an action whose outcome is already established shall never
+be re-executed.
+When recovery also fails, the shell shall preserve that state for the
+next turn and attempt the truthful failure reply required by
+[CAPTAIN-34](../user/playbook-captain.md#captain-34), while retaining
+the underlying diagnostic outside Boss-visible prose.

@@ -136,7 +136,7 @@ interface ControlLedger {
   lastSettlementStatus?: SettlementEvidence['status'];
 }
 
-/** The closed controller action set (DR-029 §4). */
+/** The closed controller action set (DR-029). */
 type ControllerAction = CaptainControllerSelection['action'];
 
 /**
@@ -146,14 +146,7 @@ type ControllerAction = CaptainControllerSelection['action'];
 interface JournalRecord {
   readonly seq: number;
   readonly turnId: number;
-  /**
-   * `refusal` is the shell status line of a refused selection — the second of
-   * the three Boss-visible settlements CAPTAIN-34 enumerates. It is its own
-   * kind rather than a `reply` because it is not captain speech: rendering it
-   * as one would show a replacement conversation the host's own status text as
-   * something the Captain said.
-   */
-  readonly kind: 'boss' | 'reply' | 'refusal' | 'action' | 'outcome';
+  readonly kind: 'boss' | 'reply' | 'handoff' | 'action' | 'outcome';
   readonly payload: JsonValue;
 }
 
@@ -203,35 +196,31 @@ interface ActiveTurnSummary {
   stateCounts: Map<string, number>;
 }
 
-/** The shell state of one Boss turn (DR-029 §2). */
+/** The shell state of one Boss turn (DR-029). */
 interface ActiveTurn {
   readonly id: number;
   /** The exact Boss text of the turn; never rewritten (CAPTAIN-31). */
   readonly bossText: string;
   /**
-   * The shell-authoritative text for `deliver`, `start`, and `switch` under
-   * `origin: 'boss'`: the exact Boss text, or the parsed remainder of a
-   * same-command turn (CAPTAIN-7).
+   * The shell-authoritative text for `deliver`: the exact Boss text, or the
+   * parsed remainder of a same-command turn. Parsed `start`/`switch` decisions
+   * carry that same remainder in their compiled selection input.
    */
   readonly authoritativeText: string;
   readonly resolution?: CaptainParsedResolution;
-  /** A settlement with status `ok` is final for the turn (DR-029 §2). */
+  /** A settlement with status `ok` is final for the turn (DR-029). */
   settled: boolean;
   /**
-   * Which of CAPTAIN-34's Boss-visible settlements this turn has already
-   * reached — captain speech (the `respond`/closing/failure reply) or the
-   * status line of a refused selection. Set only by `surfaceSettlement`, the
-   * one seam either leaves through, so "the Boss saw something" cannot drift
-   * apart from "the journal holds it".
+   * Presentation is single-attempt. Set before `emitReply`, not after it, so a
+   * rejected or ambiguously failed emission is never followed by a fallback
+   * attempt that could duplicate text the Boss already saw.
    */
-  visibleSettlement?: 'speech' | 'refusal';
+  presentationAttempted: boolean;
+  /** The exact rejected presentation boundary, propagated without retry. */
+  presentationError?: unknown;
+  /** Facts accumulated while the selected action runs, including partial work. */
+  readonly settlementFacts: string[];
   report?: OutcomeReport;
-  /**
-   * A failure raised by the executed effect itself. CAPTAIN-35 keeps the
-   * frame for later Boss recovery and propagates that boundary error
-   * unchanged, rather than replacing it with the control-plane failure reply.
-   */
-  effectError?: unknown;
   /**
    * A shell-owned control-plane failure — an unusable durable reply or a
    * conversation that stayed unsynchronized. CAPTAIN-34 settles that turn
@@ -239,14 +228,6 @@ interface ActiveTurn {
    * Boss's next message settles normally.
    */
   controlFailure?: boolean;
-  /**
-   * Set the moment a selection reaches the controller port, whether it settles
-   * or is rejected. A turn that ends with neither a submitted selection nor
-   * surfaced prose produced nothing at all for the Boss, which CAPTAIN-34 and
-   * CAPPLAY-18 both forbid — the shell settles it as the failure reply rather
-   * than letting the turn end in silence.
-   */
-  selectionSubmitted?: boolean;
   /**
    * Every value that escaped an effect invocation this turn — a runtime
    * driven, an engagement constructed, a stack disposed, an advertised action
@@ -277,6 +258,8 @@ interface ActiveTurn {
    * with no outcome.
    */
   outcomePending?: boolean;
+  /** Whether this turn already has a closing journal outcome. */
+  outcomeRecorded: boolean;
 }
 
 function parseRegisteredCommand(
@@ -312,7 +295,7 @@ function labeledBlock(label: string, body: string): string {
   return `[${label}]\n${body}`;
 }
 
-// CAPTAIN-9 / DR-029 §5: player-authored text enters the conversation only as
+// CAPTAIN-9 / DR-029: player-authored text enters the conversation only as
 // quoted evidence. Every such string is JSON-encoded before it reaches a
 // digest or an outcome-report fact, so its newlines, fences, and `[Label]`
 // sequences cannot forge a second labeled block into the prompt envelope the
@@ -440,10 +423,31 @@ function pendingQuestionLines(pending: unknown): string[] {
   return lines;
 }
 
+function pendingQuestionIds(pending: unknown): string[] {
+  const list = Array.isArray(pending)
+    ? pending
+    : pending === undefined || pending === null
+      ? []
+      : [pending];
+  const ids: string[] = [];
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) continue;
+    const record = item as Record<string, unknown>;
+    const id =
+      typeof record.questionId === 'string'
+        ? record.questionId
+        : typeof record.id === 'string'
+          ? record.id
+          : undefined;
+    if (id !== undefined) ids.push(id);
+  }
+  return ids;
+}
+
 // CAPTAIN-35: the reseed digest is the shell's own deterministic rendering of
 // the journal records, so the same records always render the same digest.
-// Every record renders whole. Boss text, validated captain replies, validated
-// actions, and the shell-composed settlement facts are host-authored and are
+// Every record renders whole. Boss text, validated Captain reply attempts,
+// validated actions, and the shell-composed settlement facts are host-authored and are
 // never bounded here — the renderer cannot tell them apart from quoted player
 // output, so bounding at this seam would silently forget a long Boss
 // requirement. The one bounding CAPTAIN-35 permits is applied where the shell
@@ -507,15 +511,6 @@ function machineShapedIdentifier(id: string): boolean {
   return /[0-9_.:-]/.test(id) || /(?!^)[A-Z]/.test(id);
 }
 
-/**
- * Whether a string is shaped like an identifier at all: one unbroken token
- * whose `.`, `:`, or `-` separators sit between alphanumeric runs. Prose is
- * not, so a published state description or a runtime's error message can never
- * be mistaken for a supplied identifier however many capitals or digits it
- * happens to carry.
- */
-const IDENTIFIER_SHAPE = /^[A-Za-z0-9_$]+(?:[.:-][A-Za-z0-9_$]+)*$/;
-
 /** The identifier-shaped tokens of a text, under that same grammar. */
 const IDENTIFIER_TOKENS = /[A-Za-z0-9_$]+(?:[.:-][A-Za-z0-9_$]+)*/g;
 
@@ -532,41 +527,6 @@ function repeatsIdentifier(prose: string, id: string): boolean {
     if (token === id) return true;
   }
   return false;
-}
-
-/**
- * CAPTAIN-9's supplied set, read out of the artifacts the shell renders into a
- * prompt rather than out of a call each renderer has to remember. Every
- * identifier-shaped, machine-shaped string a structured record carries, at any
- * depth, is one the shell placed in the prompt when it rendered that record —
- * the leaf's ControlView, the mirrored pending questions, the journal action
- * records a reseed recap replays. Registration by remembered call is what left
- * the recap and the degraded question path outside the duty while the two
- * lines someone did remember stayed inside it.
- *
- * Prose members are skipped by construction: a description or a message
- * carries spaces, so it is not identifier-shaped, and the walk cannot turn a
- * sentence the model is meant to speak into a token it may not repeat.
- */
-function collectSuppliedIdentifiers(
-  value: unknown,
-  record: (id: string) => void,
-): void {
-  if (typeof value === 'string') {
-    if (IDENTIFIER_SHAPE.test(value) && machineShapedIdentifier(value)) {
-      record(value);
-    }
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectSuppliedIdentifiers(item, record);
-    return;
-  }
-  if (typeof value === 'object' && value !== null) {
-    for (const member of Object.values(value)) {
-      collectSuppliedIdentifiers(member, record);
-    }
-  }
 }
 
 /**
@@ -609,8 +569,11 @@ function proseRejection(
       return 'the reply leaked hidden control syntax or internal control vocabulary';
     }
   }
+  const caseFoldedProse = prose.toLowerCase();
   for (const sessionId of liveSessionIds) {
-    if (repeatsIdentifier(prose, sessionId)) {
+    // UUID hexadecimal is case-insensitive. A model uppercasing A-F has not
+    // changed the identifier and must not bypass the live-session check.
+    if (repeatsIdentifier(caseFoldedProse, sessionId.toLowerCase())) {
       return 'the reply leaked a live session identifier';
     }
   }
@@ -982,7 +945,7 @@ export function createPlaybookCaptainShell(
     | undefined;
   let lastAction: ControllerAction | undefined;
   let lastSettlementStatus: SettlementEvidence['status'] | undefined;
-  // DR-029 §Contracts 2: a run that lands in the runtime's own failure state
+  // DR-029: a run that lands in the runtime's own failure state
   // is an outcome the report must name. `processFrameResult` records it here
   // and the settling selection folds it into its facts, so the grounding the
   // closing-reply prompt points at never omits the failure.
@@ -1786,6 +1749,15 @@ export function createPlaybookCaptainShell(
       if (error instanceof VisibilityControlError) {
         visibilityControlError = error;
       } else {
+        if (runFailureFacts) {
+          const normalized = normalizeErrorCompact(error) ?? {
+            name: 'Error',
+            message: String(error),
+          };
+          runFailureFacts.push(
+            `Cleanup while removing ${frameLabel(child)} failed: ${normalized.name}: ${compactEvidence(normalized.message)}.`,
+          );
+        }
         effectiveResult = {
           status: context.signal.aborted ? 'aborted' : 'error',
           playbookId: child.entry.id,
@@ -1861,6 +1833,15 @@ export function createPlaybookCaptainShell(
       return;
     }
     assertRetainableResult(frame, result);
+    if (result.outcome === 'aborted' && runFailureFacts) {
+      const stateValue =
+        typeof result.state.value === 'string'
+          ? result.state.value
+          : JSON.stringify(result.state.value);
+      runFailureFacts.push(
+        `${frameLabel(frame)} was aborted at ${stateValue} before its outcome could be confirmed; it was not repeated automatically.`,
+      );
+    }
     if (result.outcome === 'failed' && runFailureFacts) {
       const stateValue =
         typeof result.state.value === 'string'
@@ -2103,7 +2084,7 @@ export function createPlaybookCaptainShell(
   });
 
   // -------------------------------------------------------------------------
-  // Digests (CAPTAIN-9, DR-029 §3): shell-composed, appended as labeled blocks
+  // Digests (CAPTAIN-9, DR-029): shell-composed, appended as labeled blocks
   // inside the hidden-control envelope. The compiled Captain composes none.
   // -------------------------------------------------------------------------
 
@@ -2166,7 +2147,7 @@ export function createPlaybookCaptainShell(
       }
     }
     if (view === undefined) {
-      // Degraded digest (DR-029 §5): the engagement frame plus the leaf facts
+      // Degraded digest (DR-029): the engagement frame plus the leaf facts
       // the shell already mirrors from telemetry, and no context fields.
       lines.push(
         describeFailure === undefined
@@ -2178,13 +2159,12 @@ export function createPlaybookCaptainShell(
           ['Leaf state', stateDigestLine(leaf.state, undefined)].join(': '),
         );
       }
-      // The mirrored questions are this digest's only selection surface, and
-      // the shell renders their ids into the prompt exactly as the read view
-      // renders an advertised action's. Walking the record rather than naming
-      // a field is what keeps the two paths from drifting again: this one had
-      // been reading `id` while both shipping producers emit `questionId`, so
-      // the id reached neither the prompt nor the guarded set.
-      collectSuppliedIdentifiers(pendingBossQuestions, recordSuppliedIdentifier);
+      // The mirrored questions are this digest's only selection surface.
+      // Register the typed id field, not every identifier-looking string in
+      // the record: player names and question prose are speakable evidence.
+      for (const questionId of pendingQuestionIds(pendingBossQuestions)) {
+        recordSuppliedIdentifier(questionId);
+      }
       const pending = pendingQuestionLines(pendingBossQuestions);
       lines.push(
         pending.length === 0
@@ -2212,12 +2192,12 @@ export function createPlaybookCaptainShell(
     // the state's description, its tags, and the projected context members are
     // there precisely so a reply can reflect them, and refusing a reply for
     // repeating its own grounding would refuse the answer the turn asked for.
-    // Walking the two selection records registers every identifier they carry
-    // at any depth, so a field either of them grows later is guarded without
-    // this function being edited — which is how a question id and a recap's
-    // action id came to sit outside a duty the advertised-action id was inside.
-    collectSuppliedIdentifiers(view.actions, recordSuppliedIdentifier);
-    collectSuppliedIdentifiers(view.pendingQuestions, recordSuppliedIdentifier);
+    // Register only the fields the contracts define as selection ids. Labels,
+    // player names, and question text are Boss-facing prose and may be repeated.
+    for (const action of view.actions) recordSuppliedIdentifier(action.id);
+    for (const question of view.pendingQuestions) {
+      recordSuppliedIdentifier(question.questionId);
+    }
     lines.push(
       [
         digestLine`Leaf ${frameLabel(leaf)}: state`,
@@ -2296,43 +2276,77 @@ export function createPlaybookCaptainShell(
 
   const journalOutcome = (payload: JsonValue): void => {
     appendJournal('outcome', payload);
-    if (activeTurn) activeTurn.outcomePending = false;
+    if (activeTurn) {
+      activeTurn.outcomePending = false;
+      activeTurn.outcomeRecorded = true;
+    }
+  };
+
+  const journalOutcomeEvidence = (
+    facts: readonly string[],
+    status: SettlementEvidence['status'],
+    report: OutcomeReport | undefined,
+  ): JsonValue => {
+    const receipt = report?.receipt;
+    if (receipt === undefined) return [...facts];
+    return {
+      status,
+      facts: [...facts],
+      receipt: {
+        disposition: receipt.disposition,
+        ...(receipt.reason === undefined ? {} : { reason: receipt.reason }),
+        ...(receipt.error === undefined
+          ? {}
+          : {
+              error: {
+                name: receipt.error.name,
+                message: receipt.error.message,
+              },
+            }),
+      },
+    };
   };
 
   /**
-   * CAPTAIN-34/CAPTAIN-35: the one seam through which a Boss-visible
-   * settlement leaves the shell — captain speech (a `respond` reply, an acting
-   * turn's closing reply, or the host's own failure reply) and the status line
-   * of a refused selection alike.
-   *
-   * The journal record and the turn mark are written here, at the emission,
-   * rather than beside each caller, because the duty is owed by the
-   * *Boss-visible* seam and not by the model-prose one. Attaching it to prose
-   * left the refused-selection branch silently outside it: the Boss read
-   * "Cannot do that…", the journal held nothing, and a reseeded conversation
-   * met the Boss's "why?" with no record that anything had been refused. One
-   * seam makes "the Boss saw it" and "the session remembers it" the same
-   * statement rather than two that have to be kept in step.
+   * The one Captain-speech presentation seam. A rejected emission is never
+   * followed by another attempt: the Promise cannot prove whether rendering
+   * began, so retrying could duplicate a reply the Boss already saw.
    */
   const surfaceSettlement = async (
-    settlement:
-      | { kind: 'speech'; context: CaptainContext; text: string }
-      | { kind: 'refusal'; text: string },
+    settlement: { context: CaptainContext; text: string },
   ): Promise<void> => {
-    await trackTurnCall(
-      settlement.kind === 'speech'
-        ? settlement.context.emitReply(settlement.text)
-        : requireSession().emitStatus(settlement.text),
-    );
-    appendJournal(
-      settlement.kind === 'speech' ? 'reply' : 'refusal',
-      settlement.text,
-    );
-    if (activeTurn) {
-      activeTurn.visibleSettlement = settlement.kind;
-      // A refusal is also the outcome of the selection that was refused, so it
-      // discharges the action record's standing obligation (CAPTAIN-35).
-      if (settlement.kind === 'refusal') activeTurn.outcomePending = false;
+    const turn = activeTurn;
+    if (turn?.presentationAttempted) {
+      const error = new Error(
+        'Captain speech was already attempted for this Boss turn',
+      );
+      turn.presentationError = error;
+      throw error;
+    }
+    if (turn) turn.presentationAttempted = true;
+    // A rejected presentation cannot prove whether Boss saw none, some, or
+    // all of this prose. Preserve the exact attempt before crossing the
+    // boundary; the uncertainty record below keeps recovery from pretending
+    // delivery was confirmed while still understanding a Boss follow-up.
+    appendJournal('reply', settlement.text);
+    try {
+      await trackTurnCall(settlement.context.emitReply(settlement.text));
+    } catch (error) {
+      const normalized = normalizeErrorCompact(error) ?? {
+        name: 'Error',
+        message: String(error),
+      };
+      if (turn) {
+        turn.presentationError = error;
+        turn.outcomePending = false;
+        turn.outcomeRecorded = true;
+      }
+      appendJournal('outcome', {
+        presentation: 'uncertain',
+        error: { name: normalized.name, message: normalized.message },
+        retried: false,
+      });
+      throw error;
     }
   };
 
@@ -2398,10 +2412,8 @@ export function createPlaybookCaptainShell(
     }
   };
 
-  // The one predicate every Boss-visible settlement passes, host-authored or
-  // model-authored, captain speech or refusal status line, so a rule added to
-  // `proseRejection` reaches every text the shell can surface rather than only
-  // the ones whose call site remembered to pass the new argument.
+  // The one predicate every Boss-visible Captain reply passes, whether the
+  // words came from the model or the shell's conservative failure fallback.
   const replyRejection = (prose: string | undefined): string | undefined =>
     proseRejection(
       prose,
@@ -2422,14 +2434,20 @@ export function createPlaybookCaptainShell(
    * them outside CAPTAIN-9's duty: nothing live named them, so no live check
    * could reach them either, and a reply quoting one back went out.
    *
-   * Only the structured records are walked. A `boss` payload is the Boss's own
-   * words and a `reply` or `refusal` payload is text the Boss already read;
-   * repeating any of those is not repeating an identifier the shell supplied.
+   * Only the typed `actionId` field of an action record is control data. Boss
+   * text, replies, handoffs, playbook ids, facts, labels, and reasons are prose
+   * the Captain may need to repeat.
    */
   const reseedDigest = (): string => {
     for (const record of journal) {
-      if (record.kind === 'action' || record.kind === 'outcome') {
-        collectSuppliedIdentifiers(record.payload, recordSuppliedIdentifier);
+      if (
+        record.kind === 'action' &&
+        typeof record.payload === 'object' &&
+        record.payload !== null &&
+        !Array.isArray(record.payload)
+      ) {
+        const actionId = (record.payload as Record<string, JsonValue>).actionId;
+        if (typeof actionId === 'string') recordSuppliedIdentifier(actionId);
       }
     }
     return renderReseedDigest(journal);
@@ -2542,7 +2560,10 @@ export function createPlaybookCaptainShell(
         resume,
       );
     } catch (error) {
-      if (context.signal.aborted) throw error;
+      if (context.signal.aborted) {
+        conversation = { kind: 'needsSeeding' };
+        throw error;
+      }
       failure = error;
     }
     const unsynchronized =
@@ -2575,7 +2596,10 @@ export function createPlaybookCaptainShell(
         false,
       );
     } catch (error) {
-      if (context.signal.aborted) throw error;
+      if (context.signal.aborted) {
+        conversation = { kind: 'needsSeeding' };
+        throw error;
+      }
       throw markControlFailure(new CaptainContinuityError(error));
     }
     if (reissued.status !== 'ok' || reissued.resumeToken === undefined) {
@@ -2595,7 +2619,7 @@ export function createPlaybookCaptainShell(
     };
   };
 
-  // Captain speech (DR-029 §7): all durable calls are hidden; the shell
+  // Captain speech (DR-029): all durable calls are hidden; the shell
   // validates the returned prose and surfaces it through `emitReply`.
   const surfaceProse = async (
     context: CaptainContext,
@@ -2620,7 +2644,7 @@ export function createPlaybookCaptainShell(
         throw markControlFailure(new CaptainProseError(second));
       }
     }
-    await surfaceSettlement({ kind: 'speech', context, text: text! });
+    await surfaceSettlement({ context, text: text! });
   };
 
   const correctiveProseBlock = (rejection: string): string =>
@@ -2649,39 +2673,12 @@ export function createPlaybookCaptainShell(
       signal.throwIfAborted();
       const kind = servingCall ?? 'decision';
       const turn = activeTurn;
-      // CAPTAIN-35: a refusal owed to the pinned conversation rides the next
-      // call that opens a Boss turn, and the shell delivers it once. A closing
-      // reply is excluded: it composes only from the outcome report
-      // (CAPTAIN-20).
-      //
-      // "Once" is counted in calls, and `compose` runs once per *call*, not
-      // once per port invocation: DR-028's corrective re-ask and CAPTAIN-40's
-      // decision re-ask both recompose this same logical call, and the reseed
-      // re-issues it. Clearing the notice beside the capture therefore cleared
-      // it a call too early — every recomposition still carried the captured
-      // text, so a corrected turn delivered the block twice — while a turn
-      // that aborted after the clear delivered it zero times. The block is
-      // claimed by the first composition that carries it and the notice is
-      // cleared only once that call comes back, so a re-ask inherits the
-      // already-claimed state and an abort leaves the notice standing for the
-      // next turn. A reseeded re-issue carries it through the recap instead,
-      // the journal holding the same refusal record.
-      const pendingRefusal = kind === 'closingReply' ? undefined : refusalNotice;
-      let refusalClaimed = false;
-      const carryRefusal = (): boolean => {
-        if (pendingRefusal === undefined || refusalClaimed) return false;
-        refusalClaimed = true;
-        return true;
-      };
       const compose = (options: {
         reseedDigest?: string;
         proseRejection?: string;
       }): string =>
         sessionCaptainEnvelope(prompt, [
           ...(turn ? [labeledBlock('Boss message', turn.bossText)] : []),
-          ...(carryRefusal()
-            ? [labeledBlock('Refused selection', pendingRefusal!)]
-            : []),
           ...(kind === 'closingReply'
             ? []
             : [labeledBlock('ControlView digest', controlViewDigest())]),
@@ -2702,12 +2699,6 @@ export function createPlaybookCaptainShell(
             : [labeledBlock('Conversation recap', options.reseedDigest)]),
         ]);
       const outcome = await durableCall(context, compose);
-      // Delivered: the call this notice rode came back. A refusal raised later
-      // in the turn writes a fresh notice, so the identity check keeps this
-      // from clearing that one.
-      if (refusalClaimed && refusalNotice === pendingRefusal) {
-        refusalNotice = undefined;
-      }
       if (kind === 'decision') {
         // A model-decided `respond` surfaces this call's own prose, so the
         // shell keeps the composed call reachable for CAPTAIN-40's corrective
@@ -2825,7 +2816,7 @@ export function createPlaybookCaptainShell(
   };
 
   // -------------------------------------------------------------------------
-  // The controller port (DR-029 §2): host validation is the sole effector.
+  // The controller port (DR-029): host validation is the sole effector.
   // -------------------------------------------------------------------------
 
   // The leaf's published state description, read from its control view the
@@ -2853,110 +2844,64 @@ export function createPlaybookCaptainShell(
     )}`;
   };
 
-  // CAPTAIN-7/CAPTAIN-34: the one seam through which a refusal becomes
-  // Boss-visible. A refused selection's status line is one of the three
-  // settlements a Boss turn may end with, so every refusal — the shell's own
-  // pre-validation refusals and a receipt the runtime refused alike — surfaces
-  // through this call rather than only the paths that remembered to.
-  //
-  // It passes the same validation captain speech passes (CAPTAIN-9): what it
-  // interpolates is not host-authored all the way down — a runtime's refusal
-  // reason is foreign text and a model-chosen name is the model's — so a line
-  // that cannot be spoken cleanly degrades to the fact-free form below rather
-  // than being printed unchecked or withheld. Withholding is never an option:
-  // it is the turn's only settlement.
-  const FACT_FREE_REFUSAL =
-    'Cannot do that: that request was refused and nothing was changed. Ask me where things stand and I will report the current state.';
-
-  /**
-   * CAPTAIN-35: what a refused selection leaves behind for the durable
-   * conversation. The reseed path is covered by the journal — the `action`
-   * record the caller opens plus the `refusal` record the seam writes — but a
-   * *pinned* conversation carries no journal-derived text at all (CAPTAIN-9),
-   * so on the healthy path the model would remember proposing an action and
-   * never learn it was refused. The host therefore carries the refusal forward
-   * itself, as a shell-composed labeled block on the next call that opens a
-   * Boss turn: host-authored, inside the prompt exclusions, and costing no
-   * extra model call — the same way an executed settlement reaches the model
-   * through the outcome-report block.
-   */
-  let refusalNotice: string | undefined;
-
-  const surfaceRefusal = async (
-    reason: string,
-    selection: CaptainControllerSelection | undefined,
-    refusedBy: 'host' | 'runtime',
-  ): Promise<void> => {
-    // A rejection reason surfaces as shell-owned status text, never as
-    // captain speech.
-    const composed = `Cannot do that: ${reason}`;
-    // CAPTAIN-35: the pinned conversation's half of the same duty, composed
-    // here so it cannot be owed by one refusal branch and not the other.
-    refusalNotice = [
-      `Your last selection (${selection?.action ?? 'unknown'}) was refused by the ${refusedBy} and executed nothing.`,
-      `Refusal reason: ${compactEvidence(reason)}`,
-      'The engagement stack is unchanged. Decide this turn afresh and do not assume the refused action ran.',
-    ].join('\n');
-    try {
-      await surfaceSettlement({
-        kind: 'refusal',
-        text:
-          replyRejection(composed) === undefined ? composed : FACT_FREE_REFUSAL,
-      });
-    } catch (error) {
-      // The refusal could not be *presented*. That is the shell's own control
-      // plane, not an effect: a refusal is by definition a settlement reached
-      // before any effect, and for a runtime receipt the receipt itself says
-      // so. The captain-reply channel is still untried and the turn still owes
-      // the Boss one settlement (CAPTAIN-34), so the turn settles with the
-      // failure reply instead of escaping as though an effect had failed.
-      throw markControlFailure(error);
-    }
-  };
-
   const rejectSelection = async (
     selection: CaptainControllerSelection | undefined,
     reason: string,
     options: { silent?: boolean } = {},
   ): Promise<SettlementEvidence> => {
-    if (!options.silent) {
-      // The settlement writer's open half: what was proposed, recorded before
-      // the refusal that closes it, so a reseeded conversation is shown the
-      // selection *and* how it ended rather than only that something failed.
-      journalAction({
-        action: selection?.action ?? 'unknown',
-        ...(selection !== undefined && 'playbookId' in selection
-          ? { playbookId: selection.playbookId }
-          : {}),
-        ...(selection !== undefined && 'actionId' in selection
-          ? { actionId: selection.actionId }
-          : {}),
-        refused: true,
-      });
-      await surfaceRefusal(reason, selection, 'host');
-    }
-    lastSettlementStatus = 'rejected';
-    return {
+    const summary = leafStateSummary();
+    const settlement: SettlementEvidence = {
       status: 'rejected',
       facts: [`Rejected: ${reason}.`],
       reason,
-      ...(leafStateSummary() === undefined
-        ? {}
-        : { leafStateSummary: leafStateSummary()! }),
+      ...(summary === undefined ? {} : { leafStateSummary: summary }),
     };
+    if (options.silent) return settlement;
+
+    const turn = activeTurn;
+    if (turn) {
+      turn.settled = true;
+      turn.settlementFacts.splice(
+        0,
+        turn.settlementFacts.length,
+        ...settlement.facts,
+      );
+    }
+    journalAction({
+      action: selection?.action ?? 'unknown',
+      ...(selection !== undefined && 'playbookId' in selection
+        ? { playbookId: selection.playbookId }
+        : {}),
+      ...(selection !== undefined && 'actionId' in selection
+        ? { actionId: selection.actionId }
+        : {}),
+      refused: true,
+    });
+    journalOutcome([...settlement.facts]);
+    if (turn) {
+      turn.report = {
+        ...emptyReport(),
+        facts: [...settlement.facts],
+        status: 'rejected',
+        ...(summary === undefined ? {} : { leafStateSummary: summary }),
+      };
+    }
+    lastSettlementStatus = 'rejected';
+    return settlement;
   };
 
   const dismissStackForSelection = async (
     facts: string[],
-  ): Promise<void> => {
+  ): Promise<boolean> => {
     const root = rootFrame();
-    if (!root) return;
+    if (!root) return false;
     const label = frameLabel(root);
     try {
       await runEffect(() => disposeStack('dismiss'));
       facts.push(`Dismissed the ${label} engagement.`);
+      return false;
     } catch (error) {
-      // A failing dispose never resurrects the engagement (DR-029 §2).
+      // A failing dispose never resurrects the engagement (DR-029).
       const normalized = normalizeErrorCompact(error) ?? {
         name: 'Error',
         message: String(error),
@@ -2964,13 +2909,13 @@ export function createPlaybookCaptainShell(
       facts.push(
         `Dismissed the ${label} engagement; its disposal failed: ${normalized.name}: ${compactEvidence(normalized.message)}.`,
       );
+      return true;
     }
   };
 
   const startTargetForSelection = async (
     entry: PlaybookCaptainRegistryEntry,
     text: string,
-    origin: 'boss' | 'captain',
     facts: string[],
     context: CaptainContext,
   ): Promise<{ frame?: EngagementFrame; report: Omit<OutcomeReport, 'facts' | 'status'>; failed: boolean }> => {
@@ -2987,11 +2932,7 @@ export function createPlaybookCaptainShell(
       );
       return { report: emptyReport(), failed: true };
     }
-    facts.push(
-      origin === 'captain'
-        ? `Started ${frameLabel(frame)} with Captain-composed input.`
-        : `Started ${frameLabel(frame)} with the Boss request.`,
-    );
+    facts.push(`Started ${frameLabel(frame)} with the selected request.`);
     const outcome = await withCounting(frame, async () => {
       await driveAndProcess(frame, text, context);
     });
@@ -3041,34 +2982,90 @@ export function createPlaybookCaptainShell(
     signal: AbortSignal,
   ): Promise<SettlementEvidence> => {
     const turn = activeTurn;
-    if (turn) turn.selectionSubmitted = true;
     runFailureFacts = [];
     try {
       return await executeSelection(selection, signal);
     } catch (error) {
-      // CAPTAIN-35: attribution asks what threw, not what happened earlier in
-      // the turn. Only a value `runEffect` saw escape an effect is an effect
-      // error; everything else is control-plane work that owes the Boss the
-      // CAPTAIN-34 reply instead of an exception.
-      if (turn?.effectThrows.has(error) === true) {
-        turn.effectError = error;
+      if (turn?.presentationError === error) throw error;
+      const aborted = signal.aborted || activeContext?.signal.aborted === true;
+      const normalized = normalizeErrorCompact(error) ?? {
+        name: 'Error',
+        message: String(error),
+      };
+      if (aborted) {
+        conversation = { kind: 'needsSeeding' };
+        if (turn?.outcomePending) {
+          turn.settlementFacts.push(
+            `The ${selection.action} action was aborted before its outcome could be confirmed; it was not repeated automatically.`,
+          );
+          journalOutcome(
+            journalOutcomeEvidence(
+              turn.settlementFacts,
+              'failed',
+              turn.report,
+            ),
+          );
+        }
+        throw error;
       }
-      // CAPTAIN-35: this is the settlement writer's close. An effect that threw
-      // after its action record was written still owes the journal an outcome,
-      // so the reseeded conversation is told how the action it can see ended
-      // rather than being left to infer it.
-      if (turn?.outcomePending) {
-        const normalized = normalizeErrorCompact(error) ?? {
-          name: 'Error',
-          message: String(error),
-        };
-        journalOutcome([
-          `The action did not report an outcome: ${normalized.name}: ${compactEvidence(
-            normalized.message,
-          )}.`,
-        ]);
+
+      if (!turn) throw error;
+      if (runFailureFacts && runFailureFacts.length > 0) {
+        turn.settlementFacts.push(...runFailureFacts.splice(0));
       }
-      throw error;
+      const mayHaveApplied =
+        selection.action !== 'respond' &&
+        (turn.settled || turn.effectThrows.has(error) || turn.outcomePending);
+      turn.settlementFacts.push(
+        mayHaveApplied
+          ? `The ${selection.action} action failed before its complete outcome could be confirmed and may have changed the session: ${normalized.name}: ${compactEvidence(normalized.message)}. It was not repeated automatically.`
+          : `The ${selection.action} action failed before its complete outcome could be confirmed: ${normalized.name}: ${compactEvidence(normalized.message)}. It was not repeated automatically.`,
+      );
+      if (!turn.outcomePending && !turn.outcomeRecorded) {
+        journalAction({
+          action: selection.action,
+          ...('playbookId' in selection
+            ? { playbookId: selection.playbookId }
+            : {}),
+          ...('actionId' in selection ? { actionId: selection.actionId } : {}),
+        });
+      }
+      if (!turn.outcomeRecorded) {
+        journalOutcome(
+          journalOutcomeEvidence(
+            turn.settlementFacts,
+            'failed',
+            turn.report,
+          ),
+        );
+      }
+      const summary = leafStateSummary();
+      const prior = turn.report;
+      const priorFactCount = prior?.facts.length ?? 0;
+      turn.report = {
+        ...(prior ?? emptyReport()),
+        facts: [...turn.settlementFacts],
+        ...(prior?.bossFacts === undefined
+          ? {}
+          : {
+              bossFacts: [
+                ...prior.bossFacts,
+                ...turn.settlementFacts.slice(priorFactCount),
+              ],
+            }),
+        status: 'failed',
+        ...(summary === undefined ? {} : { leafStateSummary: summary }),
+      };
+      turn.settled = true;
+      lastSettlementStatus = 'failed';
+      return {
+        status: 'failed',
+        facts: [...turn.settlementFacts],
+        ...(turn.report.receipt === undefined
+          ? {}
+          : { receipt: turn.report.receipt }),
+        ...(summary === undefined ? {} : { leafStateSummary: summary }),
+      };
     } finally {
       runFailureFacts = undefined;
     }
@@ -3076,10 +3073,10 @@ export function createPlaybookCaptainShell(
 
   // Folds any runtime-failure outcome recorded during this selection's effect
   // into the settlement facts, in the order the runs happened.
-  const drainRunFailureFacts = (facts: string[]): void => {
-    if (runFailureFacts && runFailureFacts.length > 0) {
-      facts.push(...runFailureFacts.splice(0));
-    }
+  const drainRunFailureFacts = (facts: string[]): boolean => {
+    if (!runFailureFacts || runFailureFacts.length === 0) return false;
+    facts.push(...runFailureFacts.splice(0));
+    return true;
   };
 
   const executeSelection = async (
@@ -3100,26 +3097,24 @@ export function createPlaybookCaptainShell(
       );
     }
     lastAction = selection.action;
-    const facts: string[] = [];
+    const facts = turn.settlementFacts;
 
     if (selection.action === 'respond') {
       // One durable call settles a chat turn: its validated text is the
-      // turn's captain speech (DR-029 §4). That text is the decision call's
+      // turn's captain speech (DR-029). That text is the decision call's
       // own returned prose, so CAPTAIN-9's single corrective re-ask applies to
       // it exactly as it does to a closing reply — the decision call spent its
       // re-ask on the reply's control shape, never on its visible prose
       // (CAPTAIN-40).
+      turn.settled = true;
+      journalAction({ action: 'respond' });
       const reask = decisionCall;
       if (reask === undefined) {
         const rejection = replyRejection(selection.text);
         if (rejection !== undefined) {
           throw markControlFailure(new CaptainProseError(rejection));
         }
-        await surfaceSettlement({
-          kind: 'speech',
-          context,
-          text: selection.text,
-        });
+        await surfaceSettlement({ context, text: selection.text });
       } else {
         await surfaceProse(
           context,
@@ -3128,10 +3123,8 @@ export function createPlaybookCaptainShell(
         );
       }
       facts.push('Answered Boss in chat; no engagement changed.');
-      journalAction({ action: 'respond' });
       journalOutcome([...facts]);
-      // DR-029 §Contracts 2: an `ok` settlement is final for the turn.
-      turn.settled = true;
+      // DR-029: an `ok` settlement is final for the turn.
       lastSettlementStatus = 'ok';
       return {
         status: 'ok',
@@ -3143,13 +3136,6 @@ export function createPlaybookCaptainShell(
     }
 
     if (selection.action === 'start' || selection.action === 'switch') {
-      const origin = selection.input?.origin;
-      if (origin !== 'boss' && origin !== 'captain') {
-        return rejectSelection(
-          selection,
-          `a ${selection.action} input must carry an explicit origin of "boss" or "captain"`,
-        );
-      }
       const entry = byId.get(selection.playbookId);
       if (!entry) {
         return rejectSelection(
@@ -3157,9 +3143,12 @@ export function createPlaybookCaptainShell(
           `"${selection.playbookId}" is not an enabled playbook`,
         );
       }
-      const text =
-        origin === 'boss' ? turn.authoritativeText : selection.input.text;
-      if (text.trim().length === 0) {
+      // A model-decided start/switch supplies the complete standalone request
+      // it wants the target playbook to receive. A parsed command reaches this
+      // same field from the shell's exact parsed remainder, so accepting the
+      // field preserves deterministic command delivery as well.
+      const text = selection.input;
+      if (typeof text !== 'string' || text.trim().length === 0) {
         return rejectSelection(
           selection,
           `a ${selection.action} needs request text for the target playbook`,
@@ -3190,24 +3179,28 @@ export function createPlaybookCaptainShell(
       journalAction({
         action: selection.action,
         playbookId: entry.id,
-        origin,
       });
+      // The exact standalone request is recovery evidence, not a control id.
+      // Keep it in its own record so the generic action-id collector never
+      // mistakes a one-token Boss request such as `issue-123` for control data.
+      appendJournal('handoff', text);
+      let dismissalFailed = false;
       if (selection.action === 'switch') {
-        await dismissStackForSelection(facts);
+        dismissalFailed = await dismissStackForSelection(facts);
       }
       const started = await startTargetForSelection(
         entry,
         text,
-        origin,
         facts,
         context,
       );
-      drainRunFailureFacts(facts);
+      const runFailed = drainRunFailureFacts(facts);
+      const failed = dismissalFailed || started.failed || runFailed;
       const summary = leafStateSummary();
       turn.report = {
         ...started.report,
         facts,
-        status: started.failed ? 'failed' : 'ok',
+        status: failed ? 'failed' : 'ok',
         ...(summary === undefined ? {} : { leafStateSummary: summary }),
       };
       journalOutcome([...facts]);
@@ -3232,35 +3225,57 @@ export function createPlaybookCaptainShell(
         // child and drives the parent, and each of those is marked where it
         // happens. A visibility rejection raised on the way back is shell
         // control work and settles rather than propagating (CAPTAIN-22/35).
-        await resumeParent(
-          leaf,
-          {
-            status: 'aborted',
-            playbookId: leaf.entry.id,
-            childSessionId: leaf.sessionId,
-            ...(leaf.state ? { state: leaf.state } : {}),
-          },
-          context,
-          'stopped',
-        );
+        try {
+          await resumeParent(
+            leaf,
+            {
+              status: 'aborted',
+              playbookId: leaf.entry.id,
+              childSessionId: leaf.sessionId,
+              ...(leaf.state ? { state: leaf.state } : {}),
+            },
+            context,
+            'stopped',
+          );
+        } catch (error) {
+          if (!frames.includes(leaf)) {
+            facts.push(`Dismissed ${label} and returned to its caller.`);
+          }
+          throw error;
+        }
         facts.push(`Dismissed ${label} and returned to its caller.`);
+        const runFailed = drainRunFailureFacts(facts);
+        const summary = leafStateSummary();
+        turn.report = {
+          ...emptyReport(),
+          facts,
+          status: runFailed ? 'failed' : 'ok',
+          ...(summary === undefined ? {} : { leafStateSummary: summary }),
+        };
+        journalOutcome([...facts]);
+        lastSettlementStatus = turn.report.status;
+        return {
+          status: turn.report.status,
+          facts: [...facts],
+          ...(summary === undefined ? {} : { leafStateSummary: summary }),
+        };
       } else {
-        await dismissStackForSelection(facts);
+        const dismissalFailed = await dismissStackForSelection(facts);
+        const summary = leafStateSummary();
+        turn.report = {
+          ...emptyReport(),
+          facts,
+          status: dismissalFailed ? 'failed' : 'ok',
+          ...(summary === undefined ? {} : { leafStateSummary: summary }),
+        };
+        journalOutcome([...facts]);
+        lastSettlementStatus = turn.report.status;
+        return {
+          status: turn.report.status,
+          facts: [...facts],
+          ...(summary === undefined ? {} : { leafStateSummary: summary }),
+        };
       }
-      const summary = leafStateSummary();
-      turn.report = {
-        ...emptyReport(),
-        facts,
-        status: 'ok',
-        ...(summary === undefined ? {} : { leafStateSummary: summary }),
-      };
-      journalOutcome([...facts]);
-      lastSettlementStatus = 'ok';
-      return {
-        status: 'ok',
-        facts: [...facts],
-        ...(summary === undefined ? {} : { leafStateSummary: summary }),
-      };
     }
 
     const leaf = leafFrame();
@@ -3289,18 +3304,18 @@ export function createPlaybookCaptainShell(
       if (!frames.includes(leaf)) {
         facts.push(`${frameLabel(leaf)} finished and was disposed.`);
       }
-      drainRunFailureFacts(facts);
+      const runFailed = drainRunFailureFacts(facts);
       const summary = leafStateSummary();
       turn.report = {
         ...outcome.report,
         facts,
-        status: 'ok',
+        status: runFailed ? 'failed' : 'ok',
         ...(summary === undefined ? {} : { leafStateSummary: summary }),
       };
       journalOutcome([...facts]);
-      lastSettlementStatus = 'ok';
+      lastSettlementStatus = turn.report.status;
       return {
-        status: 'ok',
+        status: turn.report.status,
         facts: [...facts],
         ...(summary === undefined ? {} : { leafStateSummary: summary }),
       };
@@ -3345,7 +3360,7 @@ export function createPlaybookCaptainShell(
     }
     if (advertised === undefined) {
       // CAPPLAY-5: the chosen id is control data whether or not the leaf
-      // advertises it, and echoing it teaches the Boss nothing. The refusal
+      // advertises it, and echoing it teaches the Boss nothing. The rejection
       // names the leaf and the fact; which string the model picked is the
       // model's business and stays in the trace.
       return rejectSelection(
@@ -3365,7 +3380,7 @@ export function createPlaybookCaptainShell(
       playbookId: leaf.entry.id,
       actionId,
     });
-    // CAPTAIN-37 / DR-029 §Contracts 1: the idempotency key is stable per
+    // CAPTAIN-37 / DR-029: the idempotency key is stable per
     // Boss turn and action, so the engine's at-most-once replay rule is the
     // guard against re-execution — a repeated selection returns the recorded
     // receipt rather than acting twice.
@@ -3375,22 +3390,46 @@ export function createPlaybookCaptainShell(
     );
     if (outcome.error !== undefined) throw outcome.error;
     const receipt = outcome.result!;
-    const status: SettlementEvidence['status'] =
+    let status: SettlementEvidence['status'] =
       receipt.disposition === 'executed'
         ? 'ok'
         : receipt.disposition === 'rejected'
           ? 'rejected'
           : 'failed';
-    // DR-029 §Contracts 2: only an `ok` settlement — and a `failed` one, whose
-    // effects may exist — is final for the turn. A receipt the runtime refused
-    // before any effect leaves the decision phase retryable. The receipt is
-    // what decides that, so it is decided here, the moment the receipt is in
-    // hand: deciding it after the refusal has been presented would leave a
-    // turn whose presentation failed still claiming work ran, and CAPTAIN-34's
-    // fallback would then tell the Boss so.
-    if (status === 'rejected') turn.settled = false;
+    const receiptEvidence: NonNullable<SettlementEvidence['receipt']> = {
+      disposition: receipt.disposition,
+      ...(receipt.disposition === 'rejected'
+        ? { reason: receipt.reason }
+        : {}),
+      ...(receipt.disposition === 'failed'
+        ? {
+            error: {
+              name: receipt.error.name,
+              message: receipt.error.message,
+            },
+          }
+        : {}),
+    };
     if (receipt.disposition === 'executed') {
       facts.push(`Applied "${actionId}" on ${frameLabel(leaf)}.`);
+      const establishedSummary = leafStateSummary();
+      // Execution is now proven. Preserve that receipt and the counts already
+      // collected before processing the returned run, because disposal,
+      // telemetry, or parent resumption can still fail afterward.
+      turn.report = {
+        ...outcome.report,
+        facts: [...facts],
+        bossFacts: facts.map((fact) =>
+          fact
+            .split(`"${actionId}"`)
+            .join(`"${compactEvidence(actionLabel)}"`),
+        ),
+        status: 'ok',
+        receipt: receiptEvidence,
+        ...(establishedSummary === undefined
+          ? {}
+          : { leafStateSummary: establishedSummary }),
+      };
       if (receipt.run !== undefined) {
         // The same rule as the drive path: processing the run the receipt
         // carried is not itself an effect, and the resume or disposal it may
@@ -3404,24 +3443,13 @@ export function createPlaybookCaptainShell(
       facts.push(
         `The runtime refused "${actionId}": ${compactEvidence(receipt.reason)}.`,
       );
-      // CAPTAIN-34: a refusal the runtime raised ends the turn with no action
-      // and no closing-reply call, so without this line the turn would end
-      // with nothing visible at all. It is the same settlement the shell's own
-      // pre-validation refusals produce, through the same seam — the Boss is
-      // owed one either way, and which side refused is not their concern.
-      // The receipt is also positive proof that no effect ran, which is why
-      // nothing downstream of it may be attributed to an effect (CAPTAIN-35).
-      await surfaceRefusal(
-        `${frameLabel(leaf)} refused "${compactEvidence(actionLabel)}": ${compactEvidence(receipt.reason)}`,
-        selection,
-        'runtime',
-      );
     } else {
       facts.push(
         `Applying "${actionId}" failed: ${receipt.error.name}: ${compactEvidence(receipt.error.message)}.`,
       );
     }
-    drainRunFailureFacts(facts);
+    const runFailed = drainRunFailureFacts(facts);
+    if (runFailed) status = 'failed';
     // The settlement facts above are shell-internal strings composed for the
     // hidden result-phase prompt: they name the action by its id, which is
     // control data. The Boss-facing rendering of the same settlement names it
@@ -3436,23 +3464,10 @@ export function createPlaybookCaptainShell(
       facts,
       bossFacts,
       status,
-      receipt: {
-        disposition: receipt.disposition,
-        ...(receipt.disposition === 'rejected'
-          ? { reason: receipt.reason }
-          : {}),
-        ...(receipt.disposition === 'failed'
-          ? {
-              error: {
-                name: receipt.error.name,
-                message: receipt.error.message,
-              },
-            }
-          : {}),
-      },
+      receipt: receiptEvidence,
       ...(summary === undefined ? {} : { leafStateSummary: summary }),
     };
-    journalOutcome([...facts]);
+    journalOutcome(journalOutcomeEvidence(facts, status, turn.report));
     lastSettlementStatus = status;
     return {
       status,
@@ -3473,31 +3488,36 @@ export function createPlaybookCaptainShell(
   // next step, with no internal control vocabulary.
   // -------------------------------------------------------------------------
 
-  // The reply composes from what the turn actually recorded. A fallback that
-  // cannot know what happened must not assert what happened: the
-  // nothing-was-changed clause and its resend invitation belong only to a turn
-  // that reached no settlement, because after an executed action they would
-  // both be false and the resend would repeat completed work.
+  // The reply composes from the authoritative report, never the early
+  // `settled` guard. That guard closes duplicate submissions before an effect
+  // starts; it is not evidence that anything ran.
   const failureReplyText = (): string => {
     const commands = [...enablementById.values()]
       .map((enablement) => `/${enablement.command} <task>`)
       .join(' or ');
     const turn = activeTurn;
-    if (turn?.settled !== true) {
+    const report = turn?.report;
+    if (report === undefined) {
       return (
-        'I could not finish that turn. Nothing was changed — please send the request again' +
+        'I could not finish deciding that turn. No action was selected or run — please send the request again' +
         (commands ? `, or start a playbook directly with ${commands}` : '') +
         '.'
       );
     }
     const settledPreamble =
-      'I could not finish reporting that turn, but the work already ran — please do not send it again.';
+      report.status === 'ok'
+        ? 'I could not finish reporting that turn, but the reported action completed — please do not send it again.'
+        : report.status === 'rejected'
+          ? 'I could not finish explaining that turn. The requested action was rejected and nothing ran.'
+          : lastAction === 'respond'
+            ? 'I could not finish answering that turn. No playbook action ran — please send the request again.'
+            : 'I could not finish reporting that turn. The action ended with a failure, so I will not repeat it automatically.';
     const closing =
       'Ask me where things stand and I will report the current state.';
     // The Boss-facing rendering of the settlement, never the prompt-side one:
     // `facts` name actions by id and quote runtime-authored text nobody
     // validated.
-    const facts = turn.report?.bossFacts ?? turn.report?.facts ?? [];
+    const facts = report.bossFacts ?? report.facts;
     const composed = [
       settledPreamble,
       ...(facts.length === 0
@@ -3522,24 +3542,20 @@ export function createPlaybookCaptainShell(
     error: unknown,
   ): Promise<void> => {
     if (context.signal.aborted) throw error;
-    // CAPTAIN-34: exactly one visible settlement per turn. A refusal the Boss
-    // already read is one, so the failure reply is owed only where nothing has
-    // been surfaced at all.
-    if (activeTurn?.visibleSettlement !== undefined) return;
-    try {
-      // Through the one presentation seam, so this reply is journaled like
-      // every other Boss-visible Captain reply: a reseeded conversation that
-      // sees the Boss's next message without seeing what the host last told
-      // them can misread "okay, do that" as agreement to work that never ran
-      // (CAPTAIN-35).
-      await surfaceSettlement({
-        kind: 'speech',
-        context,
-        text: failureReplyText(),
-      });
-    } catch {
-      // The turn failure wins; the emission detail stays on telemetry.
-    }
+    // The durable Captain conversation did not receive the shell-authored
+    // fallback. Force its next call through the journal so it cannot interpret
+    // the Boss's follow-up without the reply the Boss was given this turn.
+    conversation = { kind: 'needsSeeding' };
+    // A rejected presentation may already have emitted bytes. It is therefore
+    // final for this turn even though the Promise did not prove it was shown.
+    if (activeTurn?.presentationAttempted === true) return;
+    // Through the one presentation seam, so this reply is journaled like
+    // every other Boss-visible Captain reply. A rejected emission propagates
+    // unchanged: it is never retried and never disguised as an action failure.
+    await surfaceSettlement({
+      context,
+      text: failureReplyText(),
+    });
   };
 
   return {
@@ -3604,8 +3620,11 @@ export function createPlaybookCaptainShell(
         authoritativeText: parsed?.authoritativeText ?? turn.prompt,
         ...(parsed ? { resolution: parsed.resolution } : {}),
         settled: false,
+        presentationAttempted: false,
+        settlementFacts: [],
         effectThrows: new Set<unknown>(),
         suppliedIdentifiers: new Set<string>(),
+        outcomeRecorded: false,
       };
       decisionCall = undefined;
       appendJournal('boss', turn.prompt);
@@ -3614,30 +3633,32 @@ export function createPlaybookCaptainShell(
           text: turn.prompt,
           signal: context.signal,
         });
+        if (activeTurn?.presentationError !== undefined) {
+          throw activeTurn.presentationError;
+        }
         if (result.outcome === 'failed') {
-          // CAPTAIN-35: an effect's own boundary error propagates unchanged
-          // with the frame retained; a control-plane failure settles with the
-          // Boss-appropriate reply instead.
-          const effectError = activeTurn?.effectError;
-          if (effectError !== undefined) throw effectError;
           await settleTurnFailure(
             context,
             result.error ??
               new Error('the session Captain turn failed at its boundary'),
           );
+        } else if (result.outcome === 'aborted') {
+          conversation = { kind: 'needsSeeding' };
+          if (activeTurn && !activeTurn.outcomeRecorded) {
+            activeTurn.settlementFacts.push(
+              'The Boss turn was aborted before it settled; no action was repeated automatically.',
+            );
+            journalOutcome([...activeTurn.settlementFacts]);
+          }
         } else if (
-          result.outcome !== 'aborted' &&
           result.outcome !== 'suspended' &&
           !context.signal.aborted &&
-          activeTurn?.selectionSubmitted !== true &&
-          activeTurn?.visibleSettlement === undefined
+          activeTurn?.presentationAttempted !== true
         ) {
-          // A settled outcome is not by itself evidence the turn produced
-          // anything: a recovery arm that parks the machine back at its hub
-          // reports a healthy settlement while the Boss got no action and no
-          // reply. Every Boss turn owes exactly one visible settlement, so the
-          // shell settles this one itself (CAPTAIN-34, CAPPLAY-18) instead of
-          // ending the turn in silence.
+          // Every non-aborted turn gets one Captain-speech attempt. Normally
+          // the compiled Captain's reporting phase owns it; this is the
+          // fail-safe for a malformed machine outcome or a reporting phase
+          // that ended before it called the presentation seam.
           await settleTurnFailure(
             context,
             new Error(
@@ -3646,14 +3667,28 @@ export function createPlaybookCaptainShell(
           );
         }
       } catch (error) {
-        const effectError = activeTurn?.effectError;
-        if (effectError !== undefined) throw effectError;
+        if (context.signal.aborted) {
+          conversation = { kind: 'needsSeeding' };
+          throw error;
+        }
         const controlFailure = activeTurn?.controlFailure === true;
         await settleTurnFailure(context, error);
+        if (activeTurn?.presentationError !== undefined) {
+          throw activeTurn.presentationError;
+        }
         // A shell-owned control-plane failure is already reported to Boss as
         // the CAPTAIN-34 reply, with the diagnostic left on trace telemetry.
         if (!controlFailure) throw error;
       } finally {
+        if (context.signal.aborted) {
+          conversation = { kind: 'needsSeeding' };
+          if (activeTurn && !activeTurn.outcomeRecorded) {
+            activeTurn.settlementFacts.push(
+              'The Boss turn was aborted before it settled; no action was repeated automatically.',
+            );
+            journalOutcome([...activeTurn.settlementFacts]);
+          }
+        }
         servingCall = undefined;
         decisionCall = undefined;
         activeTurn = undefined;
