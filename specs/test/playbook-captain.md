@@ -557,6 +557,24 @@ empty `ok` with no token gets exactly one corrective call, and that
 corrective call is the journal-seeded reseed — never a reseed plus
 another retry — including when that reseed is itself empty but
 carries a token, which shall cost the turn no third call.
+The suite shall fail unless the same holds inside a *corrective*
+decision attempt, which is a fresh call and re-arms the call-scoped
+mechanisms: a phase whose first reply is whole and malformed and whose
+corrective call is then empty and tokenless shall spend exactly three
+model calls — the original, the corrective, and its one reseed — and no
+fourth when that reseed is empty too.
+The suite shall fail unless the combined worst case is exactly six model
+calls and no seventh
+([CAPTAIN-35](../dev/playbook-captain.md#captain-35)): where the
+original decision call returns empty `ok` with a token, its empty-`ok`
+re-ask fails in transport, its reseed returns whole-but-malformed
+control JSON, and the corrective decision call repeats that same
+sequence, the phase shall spend six calls with exactly two of them
+seeded `resume: false` re-issues and the corrective call carrying the
+rejection reason, shall settle the turn with the
+[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply
+carrying none of the malformed text, and shall leave the engagement
+stack untouched.
 The suite shall fail unless, after a re-issued call also fails, the
 next Boss turn's first durable call is itself seeded — `resume: false`
 carrying the reseed digest — and a fact stated before the failed

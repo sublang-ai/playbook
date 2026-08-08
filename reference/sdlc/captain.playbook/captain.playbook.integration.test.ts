@@ -3050,6 +3050,105 @@ describe('CAPTAIN-39 durable continuity', () => {
     expect(code.runtimes[0]?.disposeCount).toBe(0);
   });
 
+  // The same ceiling from the other side: the *corrective* attempt re-arms the
+  // call-scoped mechanisms, so it too can reseed — and its reseed coming back
+  // empty ends the phase there. This is what makes the third call the last of
+  // any logical attempt, and therefore what makes six a ceiling rather than an
+  // open product (CAPTAIN-35).
+  it('spends no further call when a corrective attempt reseeds into empty', async () => {
+    const code = shellEntry('code', 'code');
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        // Attempt 1: whole but malformed control JSON — a content fault that
+        // keeps its own CAPPLAY-18 corrective.
+        { status: 'ok', finalText: 'not json at all', resumeToken: 'A2' },
+        // Attempt 2 (the corrective call): empty and tokenless at once.
+        { status: 'ok', finalText: '', resumeToken: undefined },
+        // Its single corrective is the reseed, and the reseed is empty too.
+        (prompt, options) => {
+          expect(options.resume).toBe(false);
+          expect(prompt).toContain('[Conversation recap]');
+          return { status: 'ok', finalText: '', resumeToken: 'reseed-1' };
+        },
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const callsAfterTurn1 = harness.captainCalls.length;
+
+    await harness.turn('keep going', 2);
+
+    // Three calls, not four: the corrective attempt's reseed is its last.
+    expect(harness.captainCalls.length - callsAfterTurn1).toBe(3);
+    expect(harness.surfaced.at(-1)).toMatch(/could not finish/i);
+    expect(code.runtimes).toHaveLength(1);
+    expect(code.runtimes[0]?.disposeCount).toBe(0);
+  });
+
+  // Round-7 finding 1. The combined worst case the single-class rows above
+  // never pinned: every corrective is call-scoped, and the CAPPLAY-18
+  // corrective is itself a fresh call, so it re-arms them. One logical
+  // decision attempt therefore costs at most three model calls and a decision
+  // phase — at most two logical attempts — at most six. Six is a determinate
+  // ceiling, not an open product: the row above proves no attempt reaches a
+  // fourth call, and this one proves no phase reaches a seventh.
+  it('costs at most six model calls in a compound-degenerate decision phase', async () => {
+    const code = shellEntry('code', 'code');
+    const malformed = '{"action":';
+    const attempt = (token: string, reseedToken: string) =>
+      [
+        // (1) the attempt's own call: empty `ok` carrying a token, so the
+        // boundary's empty-`ok` re-ask is the fault that fires.
+        { status: 'ok', finalText: '', resumeToken: token },
+        // (2) that re-ask fails in transport, which is a different fault
+        // class and spends the call's own corrective: the reseed.
+        { status: 'error', error: `transport down (${token})` },
+        // (3) the reseed comes back whole and malformed — a content fault the
+        // runtime owns, which is what buys the second logical attempt.
+        {
+          status: 'ok',
+          finalText: malformed,
+          resumeToken: reseedToken,
+        },
+      ] as const;
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        ...attempt('B1', 'B2'),
+        ...attempt('B3', 'B4'),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const before = harness.captainCalls.length;
+
+    await harness.turn('what should we do next?', 2);
+
+    const phase = harness.captainCalls.slice(before);
+    expect(phase).toHaveLength(6);
+    // Exactly two of the six are seeded re-issues: one per logical attempt.
+    const seeded = phase.filter((call) =>
+      call.prompt.includes('[Conversation recap]'),
+    );
+    expect(seeded).toHaveLength(2);
+    expect(seeded.every((call) => call.options.resume === false)).toBe(true);
+    // The second logical attempt is the CAPPLAY-18 corrective: it carries the
+    // rejection reason, which is the only thing that tells the model why its
+    // reply was rejected.
+    expect(phase[3]!.prompt).toContain(
+      'Your previous control reply was rejected:',
+    );
+    // The turn settles visibly and the stack is untouched — no seventh call.
+    expect(harness.surfaced.at(-1)).toMatch(/could not finish/i);
+    expect(harness.surfaced.at(-1)).not.toContain(malformed);
+    expect(code.runtimes).toHaveLength(1);
+    expect(code.runtimes[0]?.disposeCount).toBe(0);
+    expect(code.runtimes[0]?.inputs).toEqual(['fix the parser']);
+  });
+
   // A29-26: CAPPLAY-18 returns the machine to its hub after a second
   // malformed decision reply, which erases the runtime's failure outcome. The
   // turn still owes the Boss a settlement, so the shell settles it.

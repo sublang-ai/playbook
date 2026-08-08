@@ -839,9 +839,29 @@ corrective re-ask
 even on a turn whose transport already spent a reseed — the corrective
 prompt is the only thing that tells the model why its reply was
 rejected, and a transport fault is no evidence about reply quality.
-A decision phase therefore costs at most one original call plus one
-corrective per fault class raised, each class bounded to one and none
-of them recursive; no item caps the per-turn total across classes.
+Each corrective is bounded to one and none is recursive, and every one
+of them is scoped to something smaller than the phase: the reseed to the
+*call* it re-issues, the boundary's empty-`ok` re-ask to the *call*
+whose result was empty
+([DR-028](../decisions/028-empty-ok-result-re-ask.md)), and the
+malformed-control corrective to the *reply* it answers
+([CAPPLAY-18](captain-playbook.md#capplay-18)). Because that last
+corrective is itself a fresh call, it re-arms the two call-scoped
+mechanisms rather than inheriting their spent budgets — which is the
+same rule as "no class may spend another's corrective", read forward.
+One logical decision attempt therefore costs at most three model calls,
+and a decision phase, having at most two logical attempts, at most six.
+Six is a ceiling and not an open product: a result that is both reseeded
+and empty fails the phase rather than feeding the boundary's re-ask, so
+the third call is the last of any attempt, and the second attempt is the
+last of any phase. No item caps the per-turn total across classes, and
+this sentence states that total rather than capping it: the six-call
+turn is the compound-degenerate one in which transport failed twice and
+the model produced unusable control JSON twice, and its right ending is
+the visible [CAPTAIN-34](../user/playbook-captain.md#captain-34)
+settlement with the stack untouched, not a suppressed corrective that
+would kill a turn the model could still settle
+([CAPTAIN-39](../test/playbook-captain.md#captain-39)).
 The reseed digest shall be the shell's own deterministic rendering of
 the journal records — the same records shall always render the same
 digest — and shall be the only journal-derived text any prompt ever
