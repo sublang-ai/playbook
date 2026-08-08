@@ -14,6 +14,7 @@
 // `createXStatePlaybookRuntime` and the shell was never exercised. These
 // cases use the real factory.
 
+import { readFileSync, readdirSync } from 'node:fs';
 import { assign, createMachine } from 'xstate';
 import { describe, expect, it } from 'vitest';
 
@@ -131,12 +132,24 @@ function registryEntry(
   };
 }
 
+interface ShellTransition {
+  from: string;
+  to: string;
+  event: string;
+  ledger: {
+    mode: string;
+    stackDepth: number;
+    latestSubRuntimeState?: { status: string };
+  };
+}
+
 interface Harness {
   shell: ReturnType<typeof createPlaybookCaptainShell>;
   session: CaptainSession;
   context: CaptainContext;
   statuses: string[];
   captainReplies: CaptainRunResult[];
+  shellTransitions: ShellTransition[];
 }
 
 function captainJson(value: unknown): CaptainRunResult {
@@ -170,6 +183,7 @@ function createHarness(
   );
   const statuses: string[] = [];
   const captainReplies: CaptainRunResult[] = [];
+  const shellTransitions: ShellTransition[] = [];
   let captainCalls = 0;
   const controller = new AbortController();
   const session: CaptainSession = {
@@ -178,7 +192,11 @@ function createHarness(
     emitStatus: async (message) => {
       statuses.push(message);
     },
-    emitTelemetry: async () => {},
+    emitTelemetry: async (event) => {
+      if (event.topic === 'playbook.captain.fsm.state') {
+        shellTransitions.push(event.payload as unknown as ShellTransition);
+      }
+    },
     setVisiblePlayers: async () => {},
   };
   const context: CaptainContext = {
@@ -204,7 +222,14 @@ function createHarness(
     emitReply: async () => {},
     setVisiblePlayers: async () => {},
   };
-  return { shell, session, context, statuses, captainReplies };
+  return {
+    shell,
+    session,
+    context,
+    statuses,
+    captainReplies,
+    shellTransitions,
+  };
 }
 
 function turn(prompt: string, id = 1): BossTurn {
@@ -276,4 +301,234 @@ describe('dismissing a parked linked runtime (live-gate regression)', () => {
 
     await harness.shell.dispose!();
   });
+});
+
+// The second half of the same class, and the load-bearing half: whatever a
+// runtime emits on the way down, the shell must not read it as evidence
+// about a live leaf. `disposeStack` selects `chat` *before* it unwinds, and
+// `removeTopFrame` disposes the frame *before* it pops — so a snapshot
+// arriving from inside `dispose()` still finds itself the leaf and, mirrored,
+// re-marks an emptied stack `engaged.parked`. These runtimes are
+// hand-written rather than factory-built on purpose: the guard has to hold
+// for a third-party runtime with no disposal hygiene at all.
+const parkedLeafState = (status: 'active' | 'stopped') => ({
+  value: 'outline',
+  activeStateIds: ['outline'],
+  tags: ['playbook.parked'],
+  status,
+  quiescent: true,
+  stateId: 'outline',
+});
+
+function createDisposalEmittingRuntime(
+  disposalStatus: 'active' | 'stopped',
+): PlaybookRuntime {
+  let emitTelemetry:
+    | ((event: { topic: string; payload: unknown }) => Promise<void>)
+    | undefined;
+  const live = parkedLeafState('active');
+  return {
+    async init(session) {
+      emitTelemetry = session.ports.emitTelemetry;
+      await emitTelemetry({
+        topic: 'playbook.fsm.state',
+        payload: { to: 'outline', state: live },
+      });
+    },
+    async handleBossInput() {
+      return { outcome: 'quiescent' as const, state: live };
+    },
+    async resumePlaybookCall() {
+      throw new Error('unused');
+    },
+    async dispose() {
+      // The phantom: one more snapshot for the unchanged state, emitted
+      // while the shell still holds this frame as its leaf.
+      await emitTelemetry?.({
+        topic: 'playbook.fsm.state',
+        payload: {
+          from: 'outline',
+          to: 'outline',
+          state: parkedLeafState(disposalStatus),
+        },
+      });
+    },
+  };
+}
+
+describe('leaf telemetry mirrored during disposal (shell guard)', () => {
+  it.each([
+    ['a stopped snapshot', 'stopped' as const],
+    ['a still-active snapshot', 'active' as const],
+  ])('leaves the stack empty and the shell in chat after %s', async (
+    _label,
+    disposalStatus,
+  ) => {
+    const harness = createHarness([
+      registryEntry('notes', 'notes', () =>
+        createDisposalEmittingRuntime(disposalStatus),
+      ),
+    ]);
+    await harness.shell.init!(harness.session);
+
+    await harness.shell.handleBossTurn(
+      turn('/notes draft the release notes'),
+      harness.context,
+    );
+    expect(harness.shellTransitions.at(-1)?.ledger.mode).toBe('engaged.parked');
+
+    const beforeDismissal = harness.shellTransitions.length;
+    harness.captainReplies.push(captainJson({ action: 'dismiss' }));
+    await harness.shell.handleBossTurn(
+      turn('That is enough for now — stop what is running and stand by.', 2),
+      harness.context,
+    );
+
+    // Dismissal selected `chat`; nothing the dropped runtime emitted may
+    // move it back. A mode move the leaf mirror caused is tagged
+    // `sub-runtime:<stateId>` — the dismissal turn must contain none.
+    const dismissal = harness.shellTransitions.slice(beforeDismissal);
+    expect(
+      dismissal.filter((transition) => transition.event.startsWith('sub-runtime:')),
+    ).toEqual([]);
+    const settled = harness.shellTransitions.at(-1)!;
+    expect(settled.to).toBe('chat');
+    expect(settled.ledger.mode).toBe('chat');
+    expect(harness.statuses).toEqual(['◇ /notes started', '◇ /notes stopped']);
+
+    await harness.shell.dispose!();
+  });
+
+  // The status half of the same guard, reachable without any disposal: a
+  // runtime that stops and rebuilds its actor mid-turn (DISCUSS does exactly
+  // this when a finished actor must accept a new event) emits the teardown
+  // snapshot while the frame is live. A stopped actor is not a parked
+  // engagement, so it may neither become the mirrored leaf state nor move the
+  // shell's authoritative mode.
+  it('never mirrors a stopped snapshot emitted outside disposal', async () => {
+    let emitTelemetry:
+      | ((event: { topic: string; payload: unknown }) => Promise<void>)
+      | undefined;
+    const live = parkedLeafState('active');
+    const midTurnStopRuntime: PlaybookRuntime = {
+      async init(session) {
+        emitTelemetry = session.ports.emitTelemetry;
+        await emitTelemetry({
+          topic: 'playbook.fsm.state',
+          payload: { to: 'outline', state: live },
+        });
+      },
+      async handleBossInput() {
+        await emitTelemetry?.({
+          topic: 'playbook.fsm.state',
+          payload: {
+            from: 'outline',
+            to: 'outline',
+            state: parkedLeafState('stopped'),
+          },
+        });
+        return { outcome: 'quiescent' as const, state: live };
+      },
+      async resumePlaybookCall() {
+        throw new Error('unused');
+      },
+      async dispose() {},
+    };
+
+    const harness = createHarness([
+      registryEntry('notes', 'notes', () => midTurnStopRuntime),
+    ]);
+    await harness.shell.init!(harness.session);
+    await harness.shell.handleBossTurn(
+      turn('/notes draft the release notes'),
+      harness.context,
+    );
+
+    harness.captainReplies.push(
+      captainJson({ action: 'deliver', text: 'keep going' }),
+    );
+    await harness.shell.handleBossTurn(turn('keep going', 2), harness.context);
+
+    expect(
+      harness.shellTransitions.filter(
+        (transition) =>
+          transition.ledger.latestSubRuntimeState !== undefined &&
+          transition.ledger.latestSubRuntimeState.status !== 'active',
+      ),
+    ).toEqual([]);
+    expect(
+      harness.shellTransitions.filter((transition) =>
+        transition.event.startsWith('sub-runtime:'),
+      ),
+    ).toEqual([]);
+
+    await harness.shell.dispose!();
+  });
+});
+
+// Fat-artifact parity (PBRT-6). "Suppress inspection before stopping the
+// actor" was an unenforced convention duplicated per runtime, which is why
+// the shared factory's fix could not reach DISCUSS's own runtime. Every
+// runtime that builds an XState actor is discovered here rather than listed,
+// so a future fat artifact — or a new stop site in an existing one — is
+// covered without anyone remembering to extend this file.
+function runtimeSourcesBuildingActors(): Array<[string, string]> {
+  const root = new URL('../', import.meta.url);
+  const candidates = ['src/xstate-playbook-runtime.ts'];
+  const artifacts = readdirSync(new URL('reference/sdlc/', root), {
+    withFileTypes: true,
+  });
+  for (const artifact of artifacts) {
+    if (!artifact.isDirectory() || !artifact.name.endsWith('.playbook')) {
+      continue;
+    }
+    const dir = `reference/sdlc/${artifact.name}/`;
+    for (const file of readdirSync(new URL(dir, root))) {
+      if (file.endsWith('.playbook.ts')) candidates.push(`${dir}${file}`);
+    }
+  }
+  return candidates
+    .map(
+      (path) =>
+        [path, readFileSync(new URL(path, root), 'utf8')] as [string, string],
+    )
+    .filter(([, source]) => source.includes('createActor('));
+}
+
+describe('actor stop hygiene across every runtime that builds one', () => {
+  const sources = runtimeSourcesBuildingActors();
+
+  it('discovers the engine and every fat artifact that builds its own actor', () => {
+    expect(sources.map(([path]) => path)).toEqual([
+      'src/xstate-playbook-runtime.ts',
+      'reference/sdlc/discuss.playbook/discuss.playbook.ts',
+    ]);
+  });
+
+  it.each(sources)(
+    '%s stops its actor only inside a suppressing seam',
+    (_path, source) => {
+      const stops = source
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(
+          (line) =>
+            /(^|[^.\w])actor\??\.stop\(\)/.test(line) &&
+            !line.startsWith('//') &&
+            !line.startsWith('*'),
+        );
+      expect(stops).toEqual(['actor.stop();']);
+
+      const seam =
+        /stopActor\s*(?:\(\)\s*:\s*void|=\s*\(\)\s*:\s*void\s*=>)\s*\{([\s\S]*?)\n\s{2,4}\}/.exec(
+          source,
+        );
+      expect(seam).not.toBeNull();
+      const body = seam![1];
+      expect(body).toContain('suppressInspectionEmissions = true;');
+      expect(body.indexOf('suppressInspectionEmissions = true;')).toBeLessThan(
+        body.indexOf('actor.stop()'),
+      );
+    },
+  );
 });

@@ -3239,3 +3239,82 @@ describe('parked-session snapshot (PBRT-46)', () => {
     await restored.dispose();
   });
 });
+
+// PBRT-6: DISCUSS keeps its own runtime, so the shared factory's disposal
+// fix could not reach it. Stopping a still-running actor fires one more
+// `@xstate.snapshot` for the unchanged state with `status: 'stopped'`, which
+// `inspect` cannot tell from a state entry — unsuppressed, disposal adds a
+// phantom transition trace and a phantom state telemetry event beside
+// `session.disposed`, and a host mirroring that telemetry sees a parked leaf
+// that no longer exists.
+describe('disposal emission hygiene (PBRT-6)', () => {
+  function recordingPorts(events: string[]): PlaybookPorts {
+    return {
+      callPlayer: async () => {
+        throw new Error('unexpected player call');
+      },
+      callPlaybook: async () => {
+        throw new Error('unexpected nested playbook call');
+      },
+      callJudge: async () => {
+        throw new Error('unexpected judge call');
+      },
+      emitStatus: async (message) => {
+        events.push(`status:${message}`);
+      },
+      emitTelemetry: async (event) => {
+        events.push(
+          event.topic === 'playbook.trace'
+            ? `trace:${(event.payload as TraceEvent).type}`
+            : `topic:${event.topic}`,
+        );
+      },
+    };
+  }
+
+  it('adds only session.disposed when dispose stops a running actor', async () => {
+    const events: string[] = [];
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(playbookSession(recordingPorts(events), 'dispose-idle'));
+    // The started actor's first snapshot is a real state entry.
+    expect(events).toEqual([
+      'trace:session.started',
+      'trace:fsm.transition',
+      'topic:playbook.fsm.state',
+    ]);
+
+    const afterInit = events.length;
+    await runtime.dispose();
+    expect(events.slice(afterInit)).toEqual(['trace:session.disposed']);
+  });
+
+  it('adds no state telemetry when dispose drops a mid-discussion actor', async () => {
+    const events: string[] = [];
+    const ports: PlaybookPorts = {
+      ...recordingPorts(events),
+      // The proposal round fails, parking the machine at `failed` — a real
+      // parked, non-`ready` state whose stop snapshot repeats it.
+      callPlayer: async () => ({
+        status: 'error',
+        error: 'proposal agent down',
+      }),
+      callJudge: async () =>
+        JSON.stringify({
+          event: 'START_DISCUSSION',
+          topic: 'Decide spec heading case.',
+        }),
+    };
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(playbookSession(ports, 'dispose-parked'));
+    const run = await runtime.handleBossInput({
+      text: 'Decide spec heading case.',
+      signal: signal(),
+    });
+    expect(run.outcome).toBe('failed');
+    expect(run.state.activeStateIds).toContain('failed');
+
+    const afterTurn = events.length;
+    await runtime.dispose();
+    expect(events.slice(afterTurn)).toEqual(['trace:session.disposed']);
+  });
+});

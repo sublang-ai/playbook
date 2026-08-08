@@ -103,8 +103,9 @@ leaving the injection path typed end to end at the artifact.
 `apply?(input: { actionId: string; key: string; signal: AbortSignal }):
 Promise<PlaybookControlReceipt>` — implemented both or neither
 ([slc/link.md](../../slc/link.md#control-surface-optional));
-`PlaybookControlView` shall carry `state`, optional sanitized JSON-safe
-`context`, `pendingQuestions`, optional `lastError`, and `actions` of
+`PlaybookControlView` shall carry `state`, the optional JSON-safe
+`context` projection its runtime authors ([PBRT-52](#pbrt-52)),
+`pendingQuestions`, optional `lastError`, and `actions` of
 `PlaybookControlAction` (`id`, `label`), and `PlaybookControlReceipt`
 shall discriminate exactly `rejected` (with `reason`, before any
 effect), `executed` (with the `run` result), and `failed` (with the
@@ -801,11 +802,26 @@ only verb against it.
 or machine movement — and shall throw before `init`, while another
 public boundary is active, and once disposal begins. It shall return a
 detached view carrying the current normalized state descriptor, the
-sanitized JSON-safe relevant FSM context (raw `Error` values
-normalized, non-JSON-safe entries dropped, first-class-surfaced members
-omitted), the pending Boss questions with their stable ids, the last
-recorded error in normalized `{ name, message, stack? }` form, and the
-currently valid actions.
+runtime-authored context projection defined below, the pending Boss
+questions with their stable ids, the last recorded error in normalized
+`{ name, message, stack? }` form, and the currently valid actions.
+The view's `context` shall be an explicit projection the linked
+runtime authors — the FSM context members it names, in the order it
+names them — and shall never be an allow-by-default serialization of
+the FSM context. Only the runtime knows which of its context members
+are safe and relevant for a controller prompt, while the host that
+receives the view cannot inspect an opaque blob for the player
+rosters, option values, and raw player output its own prompts must
+exclude ([CAPTAIN-9](playbook-captain.md#captain-9)); exporting by
+default therefore makes the two obligations unsatisfiable together,
+and every member added to an FSM later inherits the wrong default. A
+runtime that names no member shall carry no `context`, so a member is
+private until an artifact names it. A named member shall still be
+sanitized — raw `Error` values normalized, a value that cannot be made
+JSON-safe dropped rather than thrown — and the two members the view
+surfaces first-class, the pending Boss question and the last error,
+shall not be nameable; a projection naming either shall fail runtime
+construction rather than be silently ignored.
 Actions shall derive from the live snapshot only at the safe capture
 point of [PBRT-45](#pbrt-45) (actor status `active`, quiescent, no
 pending nested call) and shall be empty anywhere else. While the
@@ -837,7 +853,19 @@ or a post-acceptance control-plane error lands (effects may exist).
 The receipt shall be recorded under its key at acceptance, before the
 settlement emissions, and a repeated key shall return the recorded
 receipt verbatim with no revalidation, no execution, and no new trace
-pair. Only accepted receipts (`executed` or `failed`) shall be recorded
+pair.
+Acceptance is also the line past which `apply` shall not throw: the
+action may have run, and a caller handed an exception instead of a
+receipt is left with an effect it cannot record and a key it will not
+reuse. A settlement failure after acceptance — a rejecting emission
+drain or a rejecting `apply.finished` sink — is therefore one of the
+post-acceptance control-plane errors above and shall settle the
+`failed` receipt carrying its normalized error, replacing the receipt
+recorded at acceptance so that the finish trace, the returned receipt,
+and any later replay of the key all report the same settlement. Only
+failures before acceptance surface by throwing, where no effect exists
+and no receipt is owed. Only accepted receipts (`executed` or
+`failed`) shall be recorded
 and final for their key: a `rejected` receipt settles before acceptance
 and shall record nothing, so a later call with that key revalidates
 against the live state, traces its own pair, and may execute once the

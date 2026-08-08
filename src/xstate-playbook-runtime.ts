@@ -407,6 +407,18 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
   extractRequiredFields?: (description: string) => string[];
   /** Required fields carried verbatim from the player's finalText instead of judge JSON. Default: none. */
   verbatimPayloadFields?: ReadonlySet<string>;
+  /**
+   * DR-029 §3 / PBRT-52: the runtime-authored ControlView context
+   * projection — the exact FSM context members `describe()` may expose,
+   * in the order the view lists them. Only this artifact knows which of
+   * its context members are safe and relevant for a controller prompt, so
+   * the engine exports what is named here and nothing else: a member the
+   * artifact has not named stays private, and a member added to the FSM
+   * later stays private until someone names it. Absent or empty: the view
+   * carries no context at all. `pendingBossQuestion` and `lastError` are
+   * surfaced first-class by the view and shall not be named here.
+   */
+  controlContextFields?: readonly string[];
   /** States that may suspend for a Boss reply. Default: targets of the FSM's `awaitBossReply` BOSS_REPLY transitions. */
   resumableStateIds?: ReadonlySet<string>;
   /** Human status lines for a root transition. Default: entry lines with question/failure surfacing. */
@@ -1647,6 +1659,22 @@ export function createXStatePlaybookRuntime<TOptions>(
   // DR-029 §3: source state descriptions label the control actions the
   // runtime advertises through `describe()`.
   const stateDescriptions = stateDescriptionsFromMachine(machine);
+  // PBRT-52: the artifact's own ControlView context projection. Nothing is
+  // exported by default, so an FSM context member — including one added
+  // after this artifact was linked — is private until named here. The two
+  // members the view surfaces first-class are rejected at construction
+  // rather than silently ignored, so an artifact cannot believe it is
+  // exporting them through this list.
+  const controlContextFields: readonly string[] = spec.controlContextFields
+    ? [...spec.controlContextFields]
+    : [];
+  for (const field of controlContextFields) {
+    if (field === 'pendingBossQuestion' || field === 'lastError') {
+      throw new Error(
+        `${label} controlContextFields must not name ${field}: the control view surfaces it first-class`,
+      );
+    }
+  }
   const resolvePlayerIdSpec = spec.resolvePlayerId;
   const composePlayerPrompt =
     spec.composePlayerPrompt ??
@@ -2600,6 +2628,20 @@ export function createXStatePlaybookRuntime<TOptions>(
       else emissionFailure ??= error;
     }
 
+    // PBRT-6: the single seam that stops this runtime's actor. Stopping a
+    // still-running actor fires one more `@xstate.snapshot` for the
+    // *unchanged* state value with `status: 'stopped'`, which the inspect
+    // callback cannot distinguish from a state entry — unsuppressed it
+    // re-emits the parked state's statuses and a phantom self-loop
+    // transition. Suppression is a property of stopping, not a rule each
+    // caller must remember, so every stop goes through here; a caller that
+    // builds a replacement actor clears the flag before starting it.
+    function stopActor(): void {
+      if (!actor) return;
+      suppressInspectionEmissions = true;
+      actor.stop();
+    }
+
     function buildActor(
       ports: PlaybookPorts,
       machineSnapshot?: JsonValue,
@@ -2750,9 +2792,8 @@ export function createXStatePlaybookRuntime<TOptions>(
           // A state that cannot even normalize has no disposal descriptor.
         }
       }
-      suppressInspectionEmissions = true;
       try {
-        actor?.stop();
+        stopActor();
       } catch {
         // Preserve the original startup failure.
       }
@@ -2909,29 +2950,34 @@ export function createXStatePlaybookRuntime<TOptions>(
       return derived;
     }
 
-    // Sanitized, JSON-safe relevant context for the control view: FSM
-    // context entries that survive strict JSON snapshotting, raw Error
-    // values normalized first, with the members the view surfaces
-    // first-class (pending question, last error) left out. An entry that
-    // cannot be made JSON-safe is dropped, never thrown — `describe` must
-    // stay side-effect free and total.
-    function sanitizeControlContext(
+    // PBRT-52: the control view's context is the artifact's declared
+    // projection, not a serialization of whatever the FSM happens to hold.
+    // Only the runtime knows which of its context members are safe and
+    // relevant for a controller prompt — an allow-by-default export cannot
+    // keep player output, resolved player identities, or option values out
+    // of a prompt whose host is required to exclude them
+    // (CAPTAIN-9) — so nothing is exported unless
+    // `controlContextFields` names it, in the order it names them. Each
+    // named member is still sanitized: raw `Error` values are normalized
+    // and a value that cannot be made JSON-safe is dropped, never thrown,
+    // since `describe` must stay side-effect free and total.
+    function projectControlContext(
       context: Record<string, unknown>,
     ): JsonValue | undefined {
-      const sanitized: Record<string, JsonValue> = {};
-      for (const [key, value] of Object.entries(context)) {
-        if (key === 'pendingBossQuestion' || key === 'lastError') continue;
+      const projected: Record<string, JsonValue> = {};
+      for (const key of controlContextFields) {
+        const value = context[key];
         if (value === undefined) continue;
         try {
-          sanitized[key] = snapshotJsonValue(
+          projected[key] = snapshotJsonValue(
             value instanceof Error ? normalizeError(value) : value,
             `control context ${key}`,
           );
         } catch {
-          // Not JSON-safe — sanitized out.
+          // Declared but not JSON-safe — dropped.
         }
       }
-      return Object.keys(sanitized).length === 0 ? undefined : sanitized;
+      return Object.keys(projected).length === 0 ? undefined : projected;
     }
 
     function receiptTracePayload(
@@ -3127,11 +3173,11 @@ export function createXStatePlaybookRuntime<TOptions>(
           {}) as Record<string, unknown>;
         const pending = pendingBossQuestionFromContext(context);
         const lastError = normalizeErrorFull(context.lastError);
-        const sanitizedContext = sanitizeControlContext(context);
+        const projectedContext = projectControlContext(context);
         return deepFreeze({
           state,
-          ...(sanitizedContext !== undefined
-            ? { context: sanitizedContext }
+          ...(projectedContext !== undefined
+            ? { context: projectedContext }
             : {}),
           pendingQuestions:
             pending === undefined
@@ -3227,6 +3273,28 @@ export function createXStatePlaybookRuntime<TOptions>(
         let receipt: PlaybookControlReceipt | undefined;
         let operationError: unknown;
         let settlementError: unknown;
+        // Acceptance is the line past which this boundary owes a receipt and
+        // can no longer signal by throwing: the action may have run, and a
+        // caller that gets an exception instead of a receipt is left with an
+        // executed effect it cannot record and a key it will not reuse.
+        let accepted = false;
+        // Past acceptance a settlement-emission failure is a post-acceptance
+        // control-plane error, which PBRT-52 settles as the `failed` receipt
+        // rather than as a throw. Folding replaces the receipt recorded at
+        // acceptance, so a replayed key returns the same settlement the
+        // caller saw; the boundary sentinel is still held, so nothing can
+        // observe the intermediate value. Only the first settlement error is
+        // latched, so one fold is all there is to do.
+        let folded = false;
+        const foldSettlementFailure = (): void => {
+          if (!accepted || folded || settlementError === undefined) return;
+          folded = true;
+          receipt = settledReceipt({
+            disposition: 'failed',
+            error: normalizeError(settlementError),
+          });
+          appliedReceipts.set(key, receipt);
+        };
         try {
           try {
             const identity = {
@@ -3293,6 +3361,7 @@ export function createXStatePlaybookRuntime<TOptions>(
             } else {
               // Acceptance: from here every outcome records a receipt under
               // the key, so the action can never execute twice.
+              accepted = true;
               try {
                 actor.send(candidate.event);
                 await waitForPlaybookQuiescence(actor, {
@@ -3341,6 +3410,9 @@ export function createXStatePlaybookRuntime<TOptions>(
           } catch (error) {
             settlementError = error;
           }
+          // Fold before the finish emission so the traced disposition is the
+          // one the caller receives.
+          foldSettlementFailure();
           if (receipt !== undefined) {
             try {
               await emitTrace(
@@ -3358,6 +3430,9 @@ export function createXStatePlaybookRuntime<TOptions>(
             } catch (error) {
               settlementError ??= error;
             }
+            // A finish sink that itself rejected has already lost its pair;
+            // the receipt still has to tell the caller what happened.
+            foldSettlementFailure();
           }
         } finally {
           // Always release the boundary sentinel, even on a path no
@@ -3368,11 +3443,16 @@ export function createXStatePlaybookRuntime<TOptions>(
           activeTurnId = undefined;
           controlPlaneError = undefined;
         }
-        // Settlement failures (a rejecting finish sink, a drain-latched
-        // emission failure) outrank the pre-acceptance operation error,
-        // matching the `drainError ?? operationError` precedence of the
-        // other public boundaries. A start-sink failure is unaffected:
-        // its latched drain error is the start error itself.
+        // Past acceptance every settlement failure has been folded into the
+        // receipt, so nothing is left to throw and the caller always leaves
+        // with the settlement of the effect it may have caused (PBRT-52).
+        if (accepted && receipt !== undefined) return receipt;
+        // Before acceptance no effect exists and no receipt is owed, so a
+        // failure still surfaces by throwing. Settlement failures (a
+        // rejecting finish sink, a drain-latched emission failure) outrank
+        // the operation error, matching the `drainError ?? operationError`
+        // precedence of the other public boundaries. A start-sink failure is
+        // unaffected: its latched drain error is the start error itself.
         const failure = settlementError ?? operationError;
         if (failure !== undefined) throw failure;
         if (receipt === undefined) {
@@ -3457,8 +3537,10 @@ export function createXStatePlaybookRuntime<TOptions>(
             // 3. A final actor cannot accept new events; reconstruct only
             //    after classification produced a real event.
             if (actor.getSnapshot().status === 'done') {
-              actor.stop();
+              stopActor();
               actor = buildActor(runtimePorts!);
+              // The replacement actor's snapshots are real state entries.
+              suppressInspectionEmissions = false;
               actor.start();
             }
             // DR-029 §3: keep the classified event with its recorded payload
@@ -3616,16 +3698,9 @@ export function createXStatePlaybookRuntime<TOptions>(
             const finalState = actor ? currentState() : undefined;
             // Stop the root before settling a suspended child. Its rejection
             // must not re-enter the FSM and start fresh work during disposal.
-            // Suppress inspection first: stopping a still-running actor fires
-            // one more `@xstate.snapshot` for the *unchanged* state value with
-            // `status: 'stopped'`, which is a disposal artifact and not a state
-            // entry — unsuppressed it would re-emit the parked state's statuses
-            // and a phantom self-loop transition, redundant with the
-            // `session.disposed` trace below (PBRT-6).
-            if (actor) {
-              suppressInspectionEmissions = true;
-              actor.stop();
-            }
+            // `stopActor` suppresses inspection first, so the stop snapshot
+            // adds nothing beside the `session.disposed` trace below (PBRT-6).
+            stopActor();
             try {
               await nestedBridge.dispose();
             } catch (error) {

@@ -86,3 +86,24 @@ The implementing IR lists every touched item and carries the detailed contracts.
 - A chat turn costs one model call; an acting turn costs two, plus bounded correctives.
 - Implementation rewrites the Captain playbook source and recompiles; it is blocked on the two upstream cligent contracts; no public surface is removed.
 - Quoted player output inside a durable conversation is a known injection surface; the protections are prompt-level and the residual risk is documented and accepted.
+
+## Addendum A1 (the ControlView context is a runtime-authored projection)
+
+§3 says `describe()` returns a sanitized ControlView carrying "relevant context" and never says who decides what is relevant.
+The engine answered with the only definition available to a generic engine: JSON-safety.
+Every context member that survived strict JSON snapshotting was exported.
+
+That is not a sanitizer, and the gap it leaves is not theoretical.
+CODE's FSM context holds the resolved host player roster, the per-run option values, and raw player output — reviews, rebuttals, and whole prior results — and all of it reached the durable Captain conversation through §3's own view.
+The host receiving that view is required by [CAPTAIN-9](../dev/playbook-captain.md#captain-9) to exclude rosters and option values from every prompt and to admit player output only as fenced quotes, and it cannot honor that against a blob whose members it cannot classify.
+The two obligations are unsatisfiable together, and allow-by-default gives every member added to an FSM later the wrong default.
+
+Relevance is the runtime's to declare, not the engine's to infer:
+
+- A linked runtime shall author an explicit context projection naming the FSM context members its ControlView exposes; the engine shall export those and nothing else.
+- A runtime that names none exposes no context. A member is private until an artifact names it, so extending an FSM leaks nothing by omission.
+- Sanitization stays on top of the projection, not in place of it: named members are still normalized and dropped when they cannot be made JSON-safe, and the members the view surfaces first-class cannot be named.
+- The host keeps its own duty. It composes the prompt block from the projection rather than pasting the projection in, so no runtime's exported value — however long, however structured — can forge a block into an envelope the host owns.
+
+This addendum changes what §3's "relevant context" means; it changes nothing about `describe`/`apply` as a pair, their feature detection, the receipt contract, or the compatibility gate.
+Artifacts that exposed context implicitly must now name what they expose, which is a one-line declaration per artifact and the point of the change.

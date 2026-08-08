@@ -131,7 +131,7 @@ reaches the Boss pane — only the runtime-composed status lines do
 
 ### PBRT-22
 
-Verifies: [PBRT-6](../dev/playbook-runtime.md#pbrt-6)
+Verifies: [PBRT-6](../dev/playbook-runtime.md#pbrt-6), [CAPTAIN-10](../dev/playbook-captain.md#captain-10)
 
 When the runtime is constructed by `createPlaybookRuntime`, `init`
 is awaited, `handleBossInput` is invoked before `init` on a
@@ -149,6 +149,26 @@ through a real Playbook Captain shell — the dismiss and switch
 paths both do — the test suite shall fail unless the runtime emits
 no further status for that disposal, so the parked state's line
 reaches the host exactly once for that engagement.
+The rule binds every linked runtime, not the shared factory alone, so
+the suite shall drive the same disposal against each runtime that
+builds its own actor — DISCUSS today — and shall fail unless that
+disposal likewise appends only `session.disposed`. Because the
+omission is a per-runtime convention rather than a shared code path,
+the suite shall additionally discover, rather than enumerate, every
+runtime source that constructs an actor and shall fail unless each
+stops its actor at exactly one site that suppresses inspection
+emissions first, so a later fat artifact is covered without amending
+the check.
+
+Because the guard cannot rest on runtimes the shell did not author,
+the suite shall also drive the host side against runtimes that
+disregard it ([CAPTAIN-10](../dev/playbook-captain.md#captain-10)): when a
+runtime emits a parked `playbook.fsm.state` payload from inside its
+`dispose()` — with either a stopped or a still-`active` status — the
+suite shall fail unless the dismissed shell settles in `chat` with no
+mode move attributed to the sub-runtime mirror; and when a runtime
+emits a stopped payload outside disposal, it shall fail unless no
+stopped descriptor ever becomes the mirrored leaf state.
 
 ### PBRT-23
 
@@ -561,9 +581,19 @@ and after disposal.
 The suite shall fail unless `describe()` is side-effect free (no
 trace, status, or telemetry; back-to-back views deep-equal; the
 machine snapshot unmoved) and its view carries the normalized state,
-the sanitized JSON-safe context with non-JSON-safe entries dropped and
-raw errors normalized, the pending Boss question with its stable id,
-and the last error as `{ name, message }`-bearing normalized form.
+the runtime-authored context projection, the pending Boss question
+with its stable id, and the last error as `{ name, message }`-bearing
+normalized form.
+The projection shall fail unless a factory runtime that declares no
+context members carries no `context` at all while its FSM context is
+populated; unless a runtime that declares members exports exactly
+those, in declaration order, with a declared member that is absent or
+not JSON-safe dropped and a declared raw `Error` normalized; unless
+the real CODE runtime parked at `failed` exports exactly its four
+declared classification members and none of the resolved player
+roster, option value, or player-authored members its live context
+holds; and unless naming a first-class-surfaced member fails runtime
+construction.
 Action derivation shall fail unless: the real CODE runtime parked in
 `failed` advertises the `retry:<EVENT_TYPE>` action for the recorded
 last classified event with a label written from the source state
@@ -599,9 +629,14 @@ receipt and its key still executing later; unless a key first settled
 `rejected` while its action was not
 advertised records no receipt and executes when re-applied after the
 action becomes advertisable, each of the two calls tracing its own
-pair; unless a crash between acceptance and settlement (a rejecting
-`apply.finished` sink) still records the receipt so the replayed key
-returns it without re-execution; unless an abort mid-execution settles
+pair; unless a settlement failure after acceptance settles rather than
+throws — both a rejecting `apply.finished` sink over an executed
+action and a rejecting emission drain over an otherwise clean run
+shall resolve with a `failed` receipt carrying the sink's normalized
+error while the effects stay visible, the `apply.finished` pair shall
+carry that same `failed` disposition rather than the pre-fold one, and
+the replayed key shall return that receipt verbatim with no
+re-execution and no new pair; unless an abort mid-execution settles
 a `failed` receipt whose error reflects the abort while the boundary
 drains cleanly; and unless every executed or rejected `apply` traces
 as one paired `apply.started`/`apply.finished` carrying the action id,

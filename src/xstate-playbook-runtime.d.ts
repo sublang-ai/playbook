@@ -193,6 +193,18 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
     extractRequiredFields?: (description: string) => string[];
     /** Required fields carried verbatim from the player's finalText instead of judge JSON. Default: none. */
     verbatimPayloadFields?: ReadonlySet<string>;
+    /**
+     * DR-029 §3 / PBRT-52: the runtime-authored ControlView context
+     * projection — the exact FSM context members `describe()` may expose,
+     * in the order the view lists them. Only this artifact knows which of
+     * its context members are safe and relevant for a controller prompt, so
+     * the engine exports what is named here and nothing else: a member the
+     * artifact has not named stays private, and a member added to the FSM
+     * later stays private until someone names it. Absent or empty: the view
+     * carries no context at all. `pendingBossQuestion` and `lastError` are
+     * surfaced first-class by the view and shall not be named here.
+     */
+    controlContextFields?: readonly string[];
     /** States that may suspend for a Boss reply. Default: targets of the FSM's `awaitBossReply` BOSS_REPLY transitions. */
     resumableStateIds?: ReadonlySet<string>;
     /** Human status lines for a root transition. Default: entry lines with question/failure surfacing. */

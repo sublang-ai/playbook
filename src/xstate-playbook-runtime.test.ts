@@ -2166,6 +2166,9 @@ const createConditionalRuntime = createXStatePlaybookRuntime(
     snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
     machineInput: () => ({}),
     entryEvent: { type: 'START', textField: 'task' },
+    // The declared projection names one JSON-safe member and one that is
+    // not, so the sanitize row still has something to drop.
+    controlContextFields: ['task', 'note', 'probe'],
   },
 );
 
@@ -2180,6 +2183,7 @@ const createDiscussControlRuntime = createXStatePlaybookRuntime(
     snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
     machineInput: () => ({}),
     entryEvent: { type: 'START_DISCUSSION', textField: 'topic' },
+    controlContextFields: ['topic'],
     resumableStateIds: new Set([
       'askHostInitial',
       'hostWritesAgreement',
@@ -2217,6 +2221,40 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     };
     expect(capabilityLess.describe).toBeUndefined();
     expect(capabilityLess.apply).toBeUndefined();
+  });
+
+  // PBRT-52: the view's context is an artifact-authored projection, not a
+  // serialization of the FSM context. An artifact that declares none exports
+  // none, so a context member — including one added to the machine after the
+  // artifact was linked — is private until someone names it. Allow-by-default
+  // export is what let CODE's resolved roster and raw player output reach a
+  // session-Captain prompt required to exclude them (CAPTAIN-9).
+  it('exports no control context for a runtime that declares no projection', async () => {
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'error', error: 'agent crashed' }),
+    });
+    // `workflowSpec` declares no `controlContextFields`.
+    const runtime = createWorkflowRuntime({ command: 'true' });
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('build the widget'));
+
+    const view = runtime.describe!();
+    // The live FSM context is full — `task`, `command`, `lastError` — and
+    // the view carries none of it.
+    expect(view.state.stateId).toBe('failed');
+    expect(view.context).toBeUndefined();
+    expect(view.lastError).toMatchObject({ message: 'agent crashed' });
+    expect(view.actions.length).toBeGreaterThan(0);
+    await runtime.dispose();
+  });
+
+  it('refuses a projection naming a member the view surfaces first-class', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        controlContextFields: ['task', 'lastError'],
+      }),
+    ).toThrow(/controlContextFields must not name lastError/);
   });
 
   it('throws from describe and apply before init, during an active boundary, and after disposal', async () => {
@@ -2630,7 +2668,7 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     await runtime.dispose();
   });
 
-  it('keeps the receipt recorded across a crash between acceptance and settlement', async () => {
+  it('settles the receipt instead of throwing when settlement crashes after acceptance', async () => {
     let playerCalls = 0;
     let failFinishSink = false;
     const telemetryEvents: RecordedTelemetry[] = [];
@@ -2660,30 +2698,100 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     await runtime.handleBossInput(turn('build the widget'));
 
     failFinishSink = true;
-    await expect(
-      runtime.apply!({
-        actionId: 'retry:START',
-        key: 'crash',
-        signal: sigOf(),
-      }),
-    ).rejects.toThrow('finish sink offline');
+    // Past acceptance the boundary owes a receipt: the action ran, so a
+    // rejecting settlement sink is a post-acceptance control-plane error
+    // that settles `failed` (effects may exist) rather than a throw that
+    // would leave the caller with an effect it cannot record.
+    const settled = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'crash',
+      signal: sigOf(),
+    });
+    expect(settled.disposition).toBe('failed');
+    expect(
+      settled.disposition === 'failed' ? settled.error.message : undefined,
+    ).toBe('finish sink offline');
     expect(playerCalls).toBe(2);
 
-    // The receipt was recorded at acceptance, before the settlement
-    // emissions: the replayed key returns it with no re-execution and no
-    // new trace pair.
+    // The key is settled and final: the replayed key returns exactly the
+    // settlement the caller saw, with no re-execution and no new trace pair.
     const beforeReplay = applyTraces(telemetryEvents).length;
     const replayed = await runtime.apply!({
       actionId: 'retry:START',
       key: 'crash',
       signal: sigOf(),
     });
-    expect(replayed.disposition).toBe('executed');
-    expect(
-      replayed.disposition === 'executed' ? replayed.run.outcome : undefined,
-    ).toBe('terminal');
+    expect(replayed).toEqual(settled);
     expect(playerCalls).toBe(2);
     expect(applyTraces(telemetryEvents)).toHaveLength(beforeReplay);
+    await runtime.dispose();
+  });
+
+  // The harder half: the action runs to a clean settlement and the
+  // *settlement drain* is what rejects. Before, that escaped the boundary as
+  // a bare throw over a receipt that said `executed`, leaving the shell with
+  // a journalled action and no outcome and a fresh key that re-runs
+  // completed work on the next Boss turn. The failure now settles the
+  // receipt, and the pair reports the same disposition the caller got.
+  it('settles failed and traces it when the drain rejects after a clean run', async () => {
+    let playerCalls = 0;
+    let failTerminalTelemetry = false;
+    const telemetryEvents: RecordedTelemetry[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'error', error: 'agent crashed' }
+          : { status: 'ok', finalText: 'Recovered.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"recovered"}',
+      emitTelemetry: async (event) => {
+        telemetryEvents.push({ topic: event.topic, payload: event.payload });
+        // Reject the last state telemetry of an otherwise clean run, so the
+        // failure is latched for the settlement drain rather than routed
+        // back into the actor.
+        if (
+          failTerminalTelemetry &&
+          event.topic === 'playbook.fsm.state' &&
+          (event.payload as { to?: unknown }).to === 'done'
+        ) {
+          throw new Error('telemetry sink rejected');
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('build the widget'));
+
+    failTerminalTelemetry = true;
+    const settled = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'drain-crash',
+      signal: sigOf(),
+    });
+    expect(settled.disposition).toBe('failed');
+    expect(
+      settled.disposition === 'failed' ? settled.error.message : undefined,
+    ).toBe('telemetry sink rejected');
+    // The run really did execute — this is the `failed`-after-effects
+    // disposition, not a rejection.
+    expect(playerCalls).toBe(2);
+    expect(
+      applyTraces(telemetryEvents)
+        .filter((event) => event.type === 'apply.finished')
+        .map(
+          (event) => (event.payload as { disposition?: string }).disposition,
+        ),
+    ).toEqual(['failed']);
+
+    failTerminalTelemetry = false;
+    const replayed = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'drain-crash',
+      signal: sigOf(),
+    });
+    expect(replayed).toEqual(settled);
+    expect(playerCalls).toBe(2);
     await runtime.dispose();
   });
 
@@ -2958,6 +3066,22 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
       'Resume from: CODE-1: Coder assesses a Boss intent and either ' +
         'implements a single-commit change or drafts an IR.',
     );
+    // PBRT-52: the view carries exactly CODE's declared projection. The
+    // roster members the shell resolved (`coderPlayer`, `reviewerPlayer`,
+    // `committerPlayer`), the option value `intent`, and every
+    // player-authored member (`irNumber`, `taskDescription`, `reviews`,
+    // `challenges`, `lastResult`) are all live in `CodingContext` here and
+    // none of them is exported.
+    expect(Object.keys(view.context as Record<string, unknown>)).toEqual([
+      'workflow',
+      'changeOrigin',
+      'afterReview',
+    ]);
+    expect(view.context).toMatchObject({
+      workflow: 'singleCommit',
+      changeOrigin: 'bossIntent',
+      afterReview: 'done',
+    });
     expect(view.context).not.toHaveProperty('lastError');
     expect(view.context).not.toHaveProperty('pendingBossQuestion');
 

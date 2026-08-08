@@ -665,6 +665,23 @@ const runtimeSpec = {
     extractRequiredFields,
     verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
     resumableStateIds: registeredResumableStateIds,
+    // PBRT-52: CODE's own ControlView context projection. Exactly the four
+    // closed-vocabulary classification members the FSM assigns itself, which
+    // are what a controller needs to see to describe or steer a CODE
+    // engagement. Everything else in `CodingContext` is deliberately absent:
+    // `coderPlayer` / `reviewerPlayer` / `committerPlayer` are the resolved
+    // host player roster, `intent` is an option value, and `irNumber`,
+    // `taskDescription`, `reviews`, `challenges`, and `lastResult` all carry
+    // player-authored text — all of which a session-Captain prompt must
+    // exclude, or may carry only as fenced quotes
+    // (CAPTAIN-9). A member added to `CodingContext`
+    // later stays private until it is named here.
+    controlContextFields: [
+        'workflow',
+        'changeOrigin',
+        'reviewSubject',
+        'afterReview',
+    ],
     classifyBossText: (text, ports, signal, snapshotOrState, boundary) => classifyBossText(text, ports, signal, snapshotOrState, boundary),
     classificationStatus: (event) => formatClassification(event.type),
     statusesForState,

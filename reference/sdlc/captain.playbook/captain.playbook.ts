@@ -836,6 +836,24 @@ const runtimeSpec: XStatePlaybookRuntimeSpec<PlaybookRuntimeOptions> = {
       options,
     ) as Promise<import('xstate').EventObject | undefined>,
   captainStrategy: controllerCaptainStrategy,
+  // CAPPLAY-10 / PBRT-52: the Captain's own ControlView context projection —
+  // the settlement evidence the machine retains for its decision and reply
+  // phases, and nothing else. `enabledPlaybooks` is the host-supplied
+  // catalog (an option value), and `parsedDecision` and `lastError` are
+  // control-plane scratch; none of the three is settlement evidence, so none
+  // is exported. Declaring the list here is what makes "Captain-visible
+  // context" an enumerated set rather than whatever the FSM happens to hold.
+  controlContextFields: [
+    'bossText',
+    'selectedAction',
+    'settlementStatus',
+    'settlementFacts',
+    'settlementReason',
+    'receiptDisposition',
+    'receiptReason',
+    'receiptError',
+    'leafStateSummary',
+  ],
   statusesForState,
 };
 

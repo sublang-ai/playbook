@@ -1048,8 +1048,23 @@ export const createPlaybookRuntime = (options) => {
             inspect,
         });
     };
+    // PBRT-6: the single seam that stops this runtime's actor. Stopping a
+    // still-running actor fires one more `@xstate.snapshot` for the *unchanged*
+    // state value with `status: 'stopped'`; `inspect` cannot tell that disposal
+    // artifact from a state entry, so unsuppressed it re-emits the parked
+    // state's telemetry and a phantom self-loop transition. Suppression is a
+    // property of stopping, not a rule each caller must remember — every stop
+    // goes through here so no later site can reintroduce the omission.
+    const stopActor = () => {
+        if (!actor)
+            return;
+        suppressInspectionEmissions = true;
+        actor.stop();
+    };
     const startActor = () => {
         createRuntimeActor();
+        // A fresh actor's emissions are real state entries again.
+        suppressInspectionEmissions = false;
         actor?.start();
     };
     const driveToQuiescence = async () => {
@@ -1134,9 +1149,8 @@ export const createPlaybookRuntime = (options) => {
                 // A state that cannot even normalize has no disposal descriptor.
             }
         }
-        suppressInspectionEmissions = true;
         try {
-            actor?.stop();
+            stopActor();
         }
         catch {
             // Preserve the original startup failure.
@@ -1347,7 +1361,7 @@ export const createPlaybookRuntime = (options) => {
                     else {
                         await emitBoundaryStatus(event.type, currentState());
                         if (actor.getSnapshot().status === 'done') {
-                            actor.stop();
+                            stopActor();
                             startActor();
                         }
                         actor.send(event);
@@ -1462,9 +1476,7 @@ export const createPlaybookRuntime = (options) => {
                 }
                 const finalState = currentState();
                 const failures = [];
-                if (actor) {
-                    actor.stop();
-                }
+                stopActor();
                 try {
                     await drainBoundaryCallsAndEmissions();
                 }
