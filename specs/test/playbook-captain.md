@@ -594,6 +594,27 @@ re-ask and its reseed both fail in transport shall settle the turn
 visibly, with the Boss turn resolving rather than throwing and the leaf
 neither driven nor disposed — an effect error being one an attempted
 effect raised, never one inferred from a throw escaping the selection.
+The suite shall fail unless the same holds *after* an effect was
+attempted and proven not to have run: where `apply()` returns a
+`rejected` receipt and the emission of the refusal status line then
+throws, the turn shall resolve with the CAPTAIN-34 reply surfaced
+through the reply channel, the leaf neither driven nor disposed and its
+single `apply` call recorded — attribution following the operation that
+threw rather than a turn-scoped record that some effect was attempted
+earlier.
+The suite shall fail unless a refused selection reaches both durable
+memory channels with no model call of its own: the next
+turn-opening decision call shall carry the shell-composed refusal block
+naming the refused selection, which side refused, and the reason; that
+block shall ride exactly one call; and a later reseed digest shall carry
+the refused action record and the refusal line the Boss saw, in order
+between the two Boss messages they stand between.
+The suite shall fail unless the shell's shape makes both duties
+unbranchable rather than enumerated: every Boss-visible settlement shall
+leave through one seam that performs the emission, writes its journal
+record, and marks the turn together, and effect attribution shall be
+recorded at the effect invocation and read by identity of the value that
+threw, with no earlier-set flag anywhere in the shell.
 
 ### CAPTAIN-40
 

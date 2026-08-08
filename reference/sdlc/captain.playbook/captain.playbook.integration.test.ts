@@ -1324,6 +1324,7 @@ function makeShellHarness(
   const surfaced: string[] = [];
   const scripted = [...replies];
   let tokenSequence = 0;
+  let statusFailure: { prefix: string; message: string } | undefined;
   const controller = new AbortController();
   const session = {
     signal: controller.signal,
@@ -1334,6 +1335,12 @@ function makeShellHarness(
       })),
     ),
     emitStatus: async (message: string) => {
+      // A row can make the Boss status pane reject a chosen line, so a
+      // Boss-visible settlement that fails to be *presented* is separable
+      // from one whose effect failed.
+      if (statusFailure && message.startsWith(statusFailure.prefix)) {
+        throw new Error(statusFailure.message);
+      }
       statuses.push(message);
     },
     emitTelemetry: async (event: { topic: string; payload: unknown }) => {
@@ -1392,6 +1399,9 @@ function makeShellHarness(
     playerPrompts,
     surfaced,
     context,
+    failStatusesFrom(prefix: string, message: string) {
+      statusFailure = { prefix, message };
+    },
     async init() {
       await shell.init!(session as never);
     },
@@ -3175,6 +3185,123 @@ describe('CAPTAIN-39 durable continuity', () => {
     );
     expect(failed).not.toMatch(/nothing was changed/i);
   });
+
+  // Round-7 finding 2. A refused selection is a Boss-visible settlement, so
+  // both memory channels must hold it: the journal (which feeds a reseeded
+  // conversation) and the pinned conversation the model is actually on. The
+  // model proposed the action, so a session that remembers only the proposal
+  // reads the Boss's "why?" against a turn it thinks succeeded.
+  it('carries a refused selection into both durable memory channels', async () => {
+    const code = shellEntry('code', 'code');
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        // Turn 2 proposes a second `start` while /code is engaged: refused.
+        decisionReply({
+          action: 'start',
+          playbookId: 'code',
+          input: { origin: 'boss', text: 'start code again' },
+        }),
+        // Turn 3's decision call carries the pinned-conversation notice.
+        decisionReply({ action: 'respond', text: 'It was already running.' }),
+        // Turn 4 forces a reseed so the journal side is observable.
+        { status: 'error', error: 'transport down' },
+        decisionReply({ action: 'respond', text: 'Still running.' }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const statusesBefore = harness.statuses.length;
+
+    await harness.turn('start code again', 2);
+    const refusal =
+      'Cannot do that: a playbook is already engaged; switch or dismiss it first';
+    expect(harness.statuses.slice(statusesBefore)).toEqual([refusal]);
+
+    // Channel 1 — the pinned conversation. The next turn-opening call carries
+    // the host-composed refusal block: no journal text, no extra model call.
+    await harness.turn('why?', 3);
+    const decision = harness.decisionPrompts().at(-1)!;
+    expect(decision).toContain('[Refused selection]');
+    expect(decision).toContain(
+      'Your last selection (start) was refused by the host and executed nothing.',
+    );
+    expect(decision).toContain(
+      'Refusal reason: a playbook is already engaged; switch or dismiss it first',
+    );
+    // Delivered exactly once, counted over every prompt the shell composed:
+    // the block rides one call and the turns after it are clean again. Counted
+    // over the whole prompt rather than its recap tail, since the block sits
+    // above the recap and a tail-only count would pass however often it rode.
+    await harness.turn('and now?', 4);
+    expect(
+      harness.captainCalls.filter((call) =>
+        call.prompt.includes('[Refused selection]'),
+      ),
+      'the refusal block rides exactly one call',
+    ).toHaveLength(1);
+    const seeded = harness.captainCalls.at(-1)!;
+    expect(seeded.options.resume).toBe(false);
+    expect(seeded.prompt).not.toContain('[Refused selection]');
+    const recap =
+      /\[Conversation recap\]\n([\s\S]*)$/.exec(seeded.prompt)?.[1] ?? '';
+
+    // Channel 2 — the journal. The reseed digest holds the proposal and the
+    // refusal the Boss read, between the two Boss messages they stand between.
+    expect(recap).toContain('start code again');
+    expect(recap).toContain('"action":"start"');
+    expect(recap).toContain('"refused":true');
+    expect(recap).toContain(refusal);
+    expect(recap.indexOf('start code again')).toBeLessThan(
+      recap.indexOf(refusal),
+    );
+    expect(recap.indexOf(refusal)).toBeLessThan(recap.indexOf('why?'));
+    // Nothing was engaged twice and no closing-reply call was spent.
+    expect(code.runtimes).toHaveLength(1);
+  });
+
+  // Round-7 finding 3. `apply()` returned a `rejected` receipt — positive
+  // proof that no effect ran — and the refusal emission then failed. The old
+  // shape latched "an effect was attempted" before `apply()` and consulted the
+  // latch at the turn-wide catch, so this presentation failure was filed as an
+  // effect error and propagated, leaving the turn with nothing surfaced at
+  // all. Attribution now follows the operation that threw.
+  it('settles a failing refusal emission after a rejected receipt', async () => {
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        apply: () => ({
+          disposition: 'rejected',
+          reason: 'the recorded event is no longer accepted',
+        }),
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.' },
+        decisionReply({ action: 'runtime', actionId: 'retry:BOSS_TURN' }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const surfacedBefore = harness.surfaced.length;
+    // The Boss pane refuses the status line the refusal has to go out on.
+    harness.failStatusesFrom('Cannot do that:', 'the Boss pane is gone');
+
+    await expect(harness.turn('retry that step', 2)).resolves.toBeUndefined();
+
+    // The turn still reaches a settlement: the CAPTAIN-34 reply, which the
+    // reply channel could carry perfectly well all along.
+    expect(harness.surfaced.slice(surfacedBefore)).toEqual([
+      'I could not finish that turn. Nothing was changed — please send the request again, or start a playbook directly with /code <task>.',
+    ]);
+    // The receipt was right: nothing ran and the frame is untouched.
+    expect(code.runtimes[0]?.appliedKeys).toHaveLength(1);
+    expect(code.runtimes[0]?.disposeCount).toBe(0);
+    expect(code.runtimes[0]?.inputs).toEqual(['fix the parser']);
+  });
 });
 
 // CAPTAIN-9: the shell composes the ControlView block, so it owns what the
@@ -3182,6 +3309,86 @@ describe('CAPTAIN-39 durable continuity', () => {
 // runtime's context object into the durable conversation as an opaque JSON
 // document, and report a control surface that failed to read as a control
 // surface that does not exist.
+// Two properties of the shell's *shape*, not of any one scenario. Both classes
+// below were fixed twice and survived twice on branches the fixes missed —
+// once because the journal writer sat on the model-prose seam instead of the
+// Boss-visible one, and once because effect attribution was latched before the
+// operation rather than read from it. Enumerating branches is what failed, so
+// these rows read the source and fail unless the shape makes the property
+// unbranchable: one presentation seam that journals, one attribution site that
+// is the throw itself. A new settlement path or a new effect is covered here
+// without anyone remembering this file.
+describe('Boss-visible settlement and effect attribution by construction', () => {
+  const shellSource = readFileSync(
+    fileURLToPath(
+      new URL('../code.playbook/playbook-captain.ts', import.meta.url),
+    ),
+    'utf8',
+  );
+
+  const codeLines = (): string[] =>
+    shellSource
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(
+        (line) =>
+          !line.startsWith('//') && !line.startsWith('*') && !line.startsWith('/*'),
+      );
+
+  it('emits every Boss-visible settlement from one seam that journals it', () => {
+    const lines = codeLines();
+    // cligent's reply channel is reached from exactly one place.
+    expect(lines.filter((line) => line.includes('.emitReply('))).toEqual([
+      '? settlement.context.emitReply(settlement.text)',
+    ]);
+    // So is the refusal status line: one composition, one degraded form.
+    expect(
+      lines.filter((line) => line.includes('Cannot do that:')),
+    ).toHaveLength(2);
+    // Both records and the turn mark are written at that seam and nowhere
+    // else, so "the Boss saw it" and "the session remembers it" cannot drift.
+    expect(
+      lines.filter((line) => line.includes("'reply' : 'refusal'")),
+    ).toEqual(["settlement.kind === 'speech' ? 'reply' : 'refusal',"]);
+    expect(
+      lines.filter((line) => /visibleSettlement = [^=]/.test(line)),
+    ).toEqual(['activeTurn.visibleSettlement = settlement.kind;']);
+
+    const seam =
+      /const surfaceSettlement = async \(([\s\S]*?)\n {2}\};/.exec(shellSource);
+    expect(seam).not.toBeNull();
+    const body = seam![1];
+    expect(body).toContain('emitReply');
+    expect(body).toContain('emitStatus');
+    expect(body).toContain('appendJournal');
+    expect(body).toContain('visibleSettlement');
+  });
+
+  it('records an effect error only where the effect threw', () => {
+    const lines = codeLines();
+    // Attribution is produced at one place: the catch inside `runEffect`.
+    expect(lines.filter((line) => line.includes('effectThrows.add('))).toEqual([
+      'activeTurn?.effectThrows.add(error);',
+    ]);
+    // And consumed at one place, by asking whether *this* value escaped an
+    // effect. No latch exists to be set early and inherited late.
+    expect(
+      lines.filter((line) => /\.effectError = [^=]/.test(line)),
+    ).toEqual(['turn.effectError = error;']);
+    expect(
+      lines.filter((line) => line.includes('effectThrows.has(')),
+    ).toEqual(['if (turn?.effectThrows.has(error) === true) {']);
+    expect(shellSource).not.toContain('effectAttempted');
+
+    const marker = /const runEffect = async <T>\(([\s\S]*?)\n {2}\};/.exec(
+      shellSource,
+    );
+    expect(marker).not.toBeNull();
+    expect(marker![1]).toContain('await operation();');
+    expect(marker![1]).toContain('effectThrows.add(error);');
+  });
+});
+
 describe('CAPTAIN-9 ControlView block composition', () => {
   it('renders each exported context member as its own bounded, escaped line', async () => {
     // A projection whose values are long and newline-bearing — the shell

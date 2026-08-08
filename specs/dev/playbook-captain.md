@@ -326,14 +326,18 @@ those carrying an internal capital, digit, underscore, dot, or hyphen —
 and shall not reject a bare lowercase state id such as `ready` or
 `failed`, which Boss may hear in any sentence; keeping even those out
 of visible prose stays that same model instruction.
-Every Boss-visible Captain reply shall leave the shell through one
-presentation seam, host-authored replies included, and shall pass this
-same validation there: the shell's own
-[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply
-interpolates settlement facts that quote runtime-authored text no one
-validated, so where the composed reply fails validation the shell shall
-speak the fact-free form of it rather than withhold the turn's only
-remaining settlement.
+Every Boss-visible settlement shall leave the shell through one
+presentation seam and shall pass this same validation there — captain
+speech and the status line of a refused selection alike
+([CAPTAIN-34](../user/playbook-captain.md#captain-34)), host-authored
+text included. Both interpolate text no one validated: the shell's own
+CAPTAIN-34 failure reply quotes settlement facts, and a refusal line
+quotes a reason the runtime authored or a name the model chose. Where
+the composed text fails validation the shell shall speak the fact-free
+form of it — for a reply, the settlement and the next step without the
+facts; for a refusal, that the request was refused, that nothing was
+changed, and the next step without the reason — rather than withhold
+the turn's only remaining settlement or print the unchecked text.
 The shell's own `callCaptain` implementation is that presentation seam: the
 session Captain runtime returns no prose to its machine and injects no
 presentation field
@@ -732,20 +736,43 @@ from `captain.options.playbooks` at `init`
 Where the shell hosts the session Captain, the shell shall keep one
 host-side session journal per shell session: append-only, JSON-safe
 records
-`{ seq, turnId, kind: 'boss' | 'reply' | 'action' | 'outcome', payload }`
-covering Boss text, every Boss-visible Captain reply, validated actions
-with their targets, and settlement facts.
+`{ seq, turnId, kind: 'boss' | 'reply' | 'refusal' | 'action' | 'outcome', payload }`
+covering Boss text, every Boss-visible Captain reply, every Boss-visible
+refusal status line, submitted actions with their targets and whether
+they were refused, and settlement facts.
+The recorded kinds shall cover every Boss-visible settlement
+[CAPTAIN-34](../user/playbook-captain.md#captain-34) enumerates, and no
+kind shall stand in for another: a refusal is the host's own status
+text, so recording it as a `reply` would show a replacement conversation
+the host's words as something the Captain said.
 A `reply` record shall cover every reply the Boss saw, whoever composed
-it — validated model prose and the host's own
-[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply
-alike — because the reseed exists to keep the replacement conversation
-in step with the Boss transcript, not to record provenance: a reply the
-Boss saw and the journal did not hold leaves the replacement Captain
-reading the Boss's next message against a turn it was never told about.
-The shell shall therefore surface Boss-visible Captain prose through
-one presentation seam that writes the record and marks the turn
+it — validated model prose and the host's own CAPTAIN-34 failure reply
+alike — and a `refusal` record every refusal line the Boss saw,
+whichever side refused, because the reseed exists to keep the
+replacement conversation in step with the Boss transcript, not to record
+provenance: a settlement the Boss saw and the journal did not hold
+leaves the replacement Captain reading the Boss's next message against a
+turn it was never told about.
+The duty is therefore owed by the Boss-visible seam and not by the
+model-prose one: the shell shall surface every Boss-visible settlement
+through one presentation seam that writes the record and marks the turn
 together ([CAPTAIN-9](#captain-9)), rather than journaling at each
 call site.
+The journal is only the reseed's channel, and a refused selection shall
+also reach a conversation that is *not* reseeded, which carries no
+journal-derived text at all. The model proposed the action, so a session
+that remembers the proposal and not its refusal answers a follow-up such
+as "why?" or "do it anyway" without the preceding fact. The shell shall
+therefore carry a refusal forward itself, on the next session-Captain
+call that opens a Boss turn — a decision call or a command-reply call,
+never a closing reply, which composes only from its outcome report
+([CAPTAIN-20](#captain-20)) — as one shell-composed labeled block naming
+the refused selection, which side refused, the reason, and that nothing
+ran and the stack is unchanged. That block is host-authored rather than
+journal-derived, so it is inside the [CAPTAIN-9](#captain-9) exclusions,
+and it rides a call the turn was making anyway, so a refusal shall cost
+no model call ([CAPTAIN-7](#captain-7)). The shell shall deliver it once
+and shall then clear it, a later refusal composing a fresh one.
 The journal shall never be Boss-visible, shall feed only the
 conversation reseed, and shall be complete for the session lifetime:
 the shell shall drop no record, and the only bounding shall be a
@@ -758,10 +785,11 @@ Boss requirement shall reach the replacement conversation complete,
 never abbreviated by a per-record bound the renderer applies without
 knowing whose text it is.
 Every recorded action shall be followed by a record of how that action
-ended, including where the executed effect throws before reporting; no
-action record shall stand in the journal without its outcome record,
-so a reseeded conversation is never shown a dispatched action whose
-result it is not told.
+ended — an `outcome` record, or the `refusal` record of a selection the
+host or the runtime refused — including where the executed effect throws
+before reporting; no action record shall stand in the journal without
+that closing record, so a reseeded conversation is never shown a
+dispatched action whose result it is not told.
 After every durable session-Captain call the shell shall pin the
 returned `resumeToken`, replacing the prior pin.
 When a durable call throws, returns a non-`ok` status, or returns
@@ -819,3 +847,19 @@ Boss-visible chat or status text.
 Where a parentless external root's delivered turn rejects, the shell
 shall retain the frame for later Boss recovery and shall propagate
 the boundary error unchanged.
+That propagation is scoped to an effect's own boundary error, and which
+errors those are shall be decided by the operation that threw rather
+than by anything the turn did earlier. The shell shall record the
+attribution at the effect invocation itself — the sub-runtime driven,
+the engagement constructed, the stack disposed, the advertised action
+applied — so that only a value which escaped one of those calls is an
+effect error, and shall not infer it from a turn-scoped record that an
+effect was attempted. A flag set before an attempt is inherited by
+everything after it: a `rejected` receipt is positive proof that no
+effect ran, yet a failure in *presenting* that refusal would still be
+filed as an effect error and propagated, leaving the Boss with no
+settlement at all. A failure to present a Boss-visible settlement is
+shell-owned control-plane work; where a settlement channel remains
+untried, the shell shall settle the turn through it with the
+[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply
+rather than propagate.

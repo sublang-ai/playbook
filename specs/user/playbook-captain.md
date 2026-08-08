@@ -260,6 +260,19 @@ A selection the active runtime refuses shall reach that same status
 line as one the shell refuses itself: the refusal ends the turn with no
 action and no closing reply, and which side refused is not the Boss's
 concern.
+That status line is a Boss-visible settlement like the other two and
+shall be held to the same rules: it shall carry no internal identifier
+or control vocabulary, and where the refusal cannot be stated that way —
+a runtime-authored reason being foreign text and a rejected name being
+the model's — it shall state that the request was refused, that nothing
+was changed, and the next step, rather than being withheld or printed
+unchecked.
+A refused selection shall also survive in the session's own memory, so
+a follow-up such as "why?" or "do it anyway" is answered against it:
+the next turn shall be able to name what was proposed, that it was
+refused, and why, without the Boss restating any of it, and without the
+refusal having cost a model call
+([CAPTAIN-35](../dev/playbook-captain.md#captain-35)).
 Where a turn ends with no selection submitted and no captain speech
 surfaced — including where the session Captain's machine recovers to
 its hub after a second malformed decision reply and reports a healthy
