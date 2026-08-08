@@ -57,15 +57,28 @@ export interface CaptainControllerPort {
 export interface PlaybookRuntimeOptions {
     readonly enabledPlaybooks: readonly EnabledPlaybook[];
     /**
-     * The host-supplied controller port. Required for every Boss turn
-     * (CAPPLAY-9); optional at the type level only so the pre-DR-029 shell
-     * keeps constructing the runtime until the IR-036 task-4 shell rework
-     * lands — a turn without the port fails fast with a named error.
+     * The host-supplied controller port. Every Boss turn settles through it
+     * (CAPPLAY-9), so it is declared required. It was optional here only until
+     * the IR-036 task-4 shell rework landed; that rework has landed and the
+     * shell now supplies the port on every construction, so a declaration that
+     * still admitted its absence typechecked a runtime that cannot settle a
+     * single turn.
      */
-    readonly controller?: CaptainControllerPort;
+    readonly controller: CaptainControllerPort;
 }
+/**
+ * The validated option record the engine carries. It differs from the public
+ * declaration in exactly one place: `controller` is optional here, because a
+ * construction from untyped JavaScript can still omit it and the shape has to
+ * describe what validation actually accepts. Where that ends is
+ * `requireControllerPort` — the first Boss turn, with a named error rather
+ * than a silent one.
+ */
+type ValidatedCaptainOptions = Omit<PlaybookRuntimeOptions, 'controller'> & {
+    readonly controller?: CaptainControllerPort;
+};
 declare function validateParsedActingDecision(value: unknown): ParsedActingDecision;
-declare function classifyControllerTurn(text: string, _ports: PlaybookPorts, _signal: AbortSignal, _snapshotOrState: unknown, _boundary?: unknown, options?: PlaybookRuntimeOptions): Promise<Record<string, unknown> | undefined>;
+declare function classifyControllerTurn(text: string, _ports: PlaybookPorts, _signal: AbortSignal, _snapshotOrState: unknown, _boundary?: unknown, options?: ValidatedCaptainOptions): Promise<Record<string, unknown> | undefined>;
 declare function correctiveDecisionPrompt(prompt: string, reason: string): string;
 type DecisionReplyReading = {
     readonly selection: CaptainControllerSelection;
@@ -74,7 +87,7 @@ type DecisionReplyReading = {
     readonly selection?: undefined;
     readonly reason: string;
 };
-declare function readDecisionReply(reply: string, options: PlaybookRuntimeOptions, selfPlaybookId: string, declaredActions: ReadonlySet<string>): DecisionReplyReading;
+declare function readDecisionReply(reply: string, options: ValidatedCaptainOptions, selfPlaybookId: string, declaredActions: ReadonlySet<string>): DecisionReplyReading;
 declare function validateSettlement(value: unknown): SettlementEvidence;
 declare function statusesForState(state: PlaybookState, context: Record<string, unknown>): ScheduledStatus[];
 export declare const _internal: {

@@ -173,13 +173,27 @@ export interface CaptainControllerPort {
 export interface PlaybookRuntimeOptions {
   readonly enabledPlaybooks: readonly EnabledPlaybook[];
   /**
-   * The host-supplied controller port. Required for every Boss turn
-   * (CAPPLAY-9); optional at the type level only so the pre-DR-029 shell
-   * keeps constructing the runtime until the IR-036 task-4 shell rework
-   * lands — a turn without the port fails fast with a named error.
+   * The host-supplied controller port. Every Boss turn settles through it
+   * (CAPPLAY-9), so it is declared required. It was optional here only until
+   * the IR-036 task-4 shell rework landed; that rework has landed and the
+   * shell now supplies the port on every construction, so a declaration that
+   * still admitted its absence typechecked a runtime that cannot settle a
+   * single turn.
    */
-  readonly controller?: CaptainControllerPort;
+  readonly controller: CaptainControllerPort;
 }
+
+/**
+ * The validated option record the engine carries. It differs from the public
+ * declaration in exactly one place: `controller` is optional here, because a
+ * construction from untyped JavaScript can still omit it and the shape has to
+ * describe what validation actually accepts. Where that ends is
+ * `requireControllerPort` — the first Boss turn, with a named error rather
+ * than a silent one.
+ */
+type ValidatedCaptainOptions = Omit<PlaybookRuntimeOptions, 'controller'> & {
+  readonly controller?: CaptainControllerPort;
+};
 
 function assertNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -251,7 +265,7 @@ function validateControllerPort(value: unknown): CaptainControllerPort {
   return value as CaptainControllerPort;
 }
 
-function snapshotCaptainOptions(value: unknown): PlaybookRuntimeOptions {
+function snapshotCaptainOptions(value: unknown): ValidatedCaptainOptions {
   if (!isRecord(value)) {
     throw new TypeError('Captain runtime options must be an object');
   }
@@ -315,7 +329,7 @@ function classifyControllerTurn(
   _signal: AbortSignal,
   _snapshotOrState: unknown,
   _boundary?: unknown,
-  options?: PlaybookRuntimeOptions,
+  options?: ValidatedCaptainOptions,
 ): Promise<Record<string, unknown> | undefined> {
   const resolution = options?.controller?.resolveParsedTurn?.(text);
   if (resolution === undefined) {
@@ -376,7 +390,7 @@ type DecisionReplyReading =
 
 function readDecisionReply(
   reply: string,
-  options: PlaybookRuntimeOptions,
+  options: ValidatedCaptainOptions,
   selfPlaybookId: string,
   declaredActions: ReadonlySet<string>,
 ): DecisionReplyReading {
@@ -655,7 +669,7 @@ function validateSettlement(value: unknown): SettlementEvidence {
 const HIDDEN = { visibility: 'hidden' } as const;
 
 async function callHidden(
-  run: XStateCaptainStrategyRun<PlaybookRuntimeOptions>,
+  run: XStateCaptainStrategyRun<ValidatedCaptainOptions>,
   prompt: string,
 ): Promise<CaptainResult> {
   try {
@@ -670,7 +684,7 @@ async function callHidden(
 }
 
 function requireControllerPort(
-  options: PlaybookRuntimeOptions,
+  options: ValidatedCaptainOptions,
 ): CaptainControllerPort {
   if (options.controller === undefined) {
     throw new Error(
@@ -681,7 +695,7 @@ function requireControllerPort(
 }
 
 async function submitSelection(
-  run: XStateCaptainStrategyRun<PlaybookRuntimeOptions>,
+  run: XStateCaptainStrategyRun<ValidatedCaptainOptions>,
   selection: CaptainControllerSelection,
 ): Promise<SettlementEvidence> {
   const port = requireControllerPort(run.options);
@@ -693,7 +707,7 @@ async function submitSelection(
 }
 
 async function runDecisionState(
-  run: XStateCaptainStrategyRun<PlaybookRuntimeOptions>,
+  run: XStateCaptainStrategyRun<ValidatedCaptainOptions>,
 ): Promise<CaptainOutput> {
   const input = run.input as unknown as CaptainInput;
   const declaredActions = new Set(Object.keys(run.input.result));
@@ -752,7 +766,7 @@ async function runDecisionState(
 }
 
 async function controllerCaptainStrategy(
-  run: XStateCaptainStrategyRun<PlaybookRuntimeOptions>,
+  run: XStateCaptainStrategyRun<ValidatedCaptainOptions>,
 ): Promise<PlaybookActorOutput> {
   if (run.input.stateId === 'deciding') {
     return (await runDecisionState(run)) as unknown as PlaybookActorOutput;
@@ -821,7 +835,7 @@ export const _internal = {
 // (slc/link.md §Output, DR-019). Generic machinery — actor wiring, boundary
 // tracing, lifecycle, abort, the parked-session snapshot, and the DR-029
 // describe/apply control surface — lives in @sublang/playbook/xstate-runtime.
-const runtimeSpec: XStatePlaybookRuntimeSpec<PlaybookRuntimeOptions> = {
+const runtimeSpec: XStatePlaybookRuntimeSpec<ValidatedCaptainOptions> = {
   label: 'CAPTAIN',
   compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: snapshotCaptainOptions,
@@ -857,7 +871,7 @@ const runtimeSpec: XStatePlaybookRuntimeSpec<PlaybookRuntimeOptions> = {
   statusesForState,
 };
 
-const createCaptainPlaybookRuntime: PlaybookRuntimeFactory<PlaybookRuntimeOptions> =
+const createCaptainPlaybookRuntime: PlaybookRuntimeFactory<ValidatedCaptainOptions> =
   createXStatePlaybookRuntime(captainMachine, runtimeSpec);
 
 export function createPlaybookRuntime(
