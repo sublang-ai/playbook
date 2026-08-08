@@ -219,11 +219,27 @@ among the packed contents.
 The test suite shall additionally pin the semver-stable unit of each
 public subpath rather than only the subpath entry: it shall fail unless
 the top-level named and default exports of the JavaScript and
-declaration files behind `exports['./captain/playbook']`,
+declaration files behind `exports['./runtime']`,
+`exports['./captain/playbook']`,
 `exports['./code/registry']`, and `exports['./discuss/registry']` are
 exactly the recorded sets, so removing or renaming one goes red at the
 gate and is decided as a [RELEASE-1](../dev/release.md#release-1)
 release event before the tag rather than adjudicated after it.
+The JavaScript and declaration sets shall be recorded separately, since
+one recorded set cannot describe both: a declaration file exports types
+the JavaScript module has no key for, so a single set forces the
+declaration check to see only value declarations and leaves every
+exported interface, type alias, and type re-export unpinned — including
+the entirety of a type-only subpath
+([RELEASE-20](../dev/release.md#release-20)).
+The declaration check shall be proven falsifiable in each of the forms
+it must catch: the suite shall fail unless removing an exported
+interface, an exported type alias, a name from an `export type { … }`
+re-export list, and an exported declared value each changes the recorded
+declaration set, so a check that silently stops seeing one of them turns
+those rows red. It shall also fail on a wildcard re-export in a pinned
+declaration file, which no single-file enumeration can resolve and would
+otherwise leave that subpath unpinned without going red.
 Members reached only through an `_internal` export shall not be pinned.
 
 ## Local release smoke

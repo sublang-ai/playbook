@@ -683,7 +683,19 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   // removal or rename goes red here and is decided as a release event before
   // the tag. `_internal` members are deliberately not pinned — the leading
   // underscore declares them subject to change.
+  //
+  // The JavaScript module and the declaration file are two sets, not one. The
+  // first version of this gate compared one recorded set against both, which
+  // forced its declaration scan to match only the forms the JavaScript also
+  // carries — value declarations — and so left every exported interface, type
+  // alias, and type re-export unpinned. Those are the whole public API of a
+  // type-only subpath such as `./runtime`, and they are what a consumer of
+  // `./captain/playbook` implements: `CaptainControllerPort` is the type of
+  // `PlaybookRuntimeOptions.controller`, which every host must satisfy to
+  // construct the runtime. Removing one breaks a consumer at compile time,
+  // which is the same release event by a different mechanism.
   const PUBLIC_MODULE_EXPORTS: Record<string, readonly string[]> = {
+    './runtime': [],
     './captain/playbook': ['_internal', 'createPlaybookRuntime', 'default'],
     './code/registry': [
       'codeCopyPasteGuardNames',
@@ -705,35 +717,220 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     ],
   };
 
+  const PUBLIC_DECLARATION_EXPORTS: Record<string, readonly string[]> = {
+    // Type-only by construction (`export {}` in the JavaScript): its whole
+    // public API is declarations, so the old gate pinned none of it.
+    './runtime': [
+      'CaptainCallOptions',
+      'CaptainResult',
+      'JsonValue',
+      'NormalizedError',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookControlAction',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
+      'PlaybookPendingBossQuestion',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+    ],
+    './captain/playbook': [
+      'CaptainCallOptions',
+      'CaptainControllerInput',
+      'CaptainControllerPort',
+      'CaptainControllerSelection',
+      'CaptainParsedResolution',
+      'CaptainResult',
+      'DecisionAction',
+      'EnabledPlaybook',
+      'JsonValue',
+      'NormalizedError',
+      'ParsedActingDecision',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeOptions',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+      'SettlementEvidence',
+      'SettlementReceiptEvidence',
+      '_internal',
+      'createPlaybookRuntime',
+      'default',
+    ],
+    './code/registry': [
+      'CodeOptions',
+      'CodePlaybookRegistryEntry',
+      'CreateCodeRuntimeOptions',
+      'PlaybookSummaryPolicy',
+      'RegistryPlayer',
+      'codeCopyPasteGuardNames',
+      'codePlaybookRegistryEntry',
+      'codeSavedCountsLine',
+      'codeStateCountLabels',
+      'codeSummaryPolicy',
+      'createCodeRuntimeOptions',
+      'default',
+      'validateCodeOptions',
+    ],
+    './discuss/registry': [
+      'CreateDiscussRuntimeOptions',
+      'DiscussOptions',
+      'RegistryPlayer',
+      'createDiscussRuntimeOptions',
+      'default',
+      'discussPlaybookRegistryEntry',
+      'discussSavedCountsLine',
+      'discussSummaryPolicy',
+      'validateDiscussOptions',
+    ],
+  };
+
+  // Every top-level export a declaration file declares: value declarations
+  // (`export declare function|const|class|let|var|enum|namespace`), type
+  // declarations (`export interface|type`, with or without `declare`), the
+  // brace re-export lists in both their value and `export type { … }` forms
+  // — where the *exported* name is the one after `as` — and the default.
+  function declaredExports(dts: string): string[] {
+    const declared = new Set<string>();
+    for (const match of dts.matchAll(
+      /^export\s+(?:declare\s+)?(?:abstract\s+)?(?:function|const|class|let|var|enum|namespace|interface|type)\s+(\w+)/gm,
+    )) {
+      declared.add(match[1]);
+    }
+    for (const match of dts.matchAll(/^export\s+(?:type\s+)?\{([\s\S]*?)\}/gm)) {
+      for (const entry of match[1].split(',')) {
+        const raw = entry.trim().replace(/^type\s+/, '');
+        if (raw.length === 0) continue;
+        const parts = raw.split(/\s+as\s+/);
+        declared.add(parts[parts.length - 1]!.trim());
+      }
+    }
+    if (/^export default /m.test(dts)) declared.add('default');
+    return [...declared].sort();
+  }
+
+  const declarationSourceOf = (subpath: string): string =>
+    readFileSync(
+      new URL(
+        `../${(manifest.exports[subpath] as { types: string }).types}`,
+        import.meta.url,
+      ),
+      'utf8',
+    );
+
   it.each(Object.entries(PUBLIC_MODULE_EXPORTS))(
-    '%s declares exactly its recorded public exports',
+    '%s declares exactly its recorded JavaScript exports',
     async (subpath, expected) => {
-      const entry = manifest.exports[subpath] as {
-        types: string;
-        default: string;
-      };
+      const entry = manifest.exports[subpath] as { default: string };
       const loaded = (await import(
         new URL(`../${entry.default}`, import.meta.url).href
       )) as Record<string, unknown>;
       expect(Object.keys(loaded).sort()).toEqual([...expected].sort());
-
-      // The declaration file is the other half of the same public API: a
-      // consumer who imports a name TypeScript declares breaks when it goes,
-      // whether or not the JavaScript still carries it.
-      const dts = readFileSync(
-        new URL(`../${entry.types}`, import.meta.url),
-        'utf8',
-      );
-      const declared = new Set<string>();
-      for (const match of dts.matchAll(
-        /^export\s+declare\s+(?:function|const|class|let|var)\s+(\w+)/gm,
-      )) {
-        declared.add(match[1]);
-      }
-      if (/^export default /m.test(dts)) declared.add('default');
-      expect([...declared].sort()).toEqual([...expected].sort());
     },
   );
+
+  it.each(Object.entries(PUBLIC_DECLARATION_EXPORTS))(
+    '%s declares exactly its recorded declaration exports',
+    (subpath, expected) => {
+      const dts = declarationSourceOf(subpath);
+      // A wildcard re-export cannot be enumerated from one file, so a subpath
+      // that grows one would be silently unpinned rather than red. Fail on it
+      // instead, so adding one is a decision rather than a gap.
+      expect(dts, `${subpath} re-exports by wildcard`).not.toMatch(
+        /^export\s+\*/m,
+      );
+      expect(declaredExports(dts)).toEqual([...expected].sort());
+    },
+  );
+
+  // The gate's own falsifiability (RELEASE-21). The regression it was added
+  // for was a removed export that every check stayed green through, so the
+  // extractor is checked against removals of each form it must catch — the
+  // type-only ones especially, which the first version of this gate could not
+  // see at all.
+  const removeFromDeclaration = (
+    dts: string,
+    pattern: RegExp,
+  ): string => dts.replace(pattern, '');
+
+  it.each([
+    [
+      'an exported interface',
+      'CaptainControllerPort',
+      (dts: string) =>
+        removeFromDeclaration(
+          dts,
+          /^export interface CaptainControllerPort \{[\s\S]*?^\}\n/m,
+        ),
+    ],
+    [
+      'an exported type alias',
+      'CaptainControllerSelection',
+      (dts: string) =>
+        removeFromDeclaration(
+          dts,
+          /^export type CaptainControllerSelection =[\s\S]*?^\};\n/m,
+        ),
+    ],
+    [
+      'a name dropped from a type re-export list',
+      'SettlementEvidence',
+      // Only inside the `export type { … }` list: the same name also appears
+      // on the `import` line above it, and dropping it there changes nothing
+      // about the module's public surface.
+      (dts: string) =>
+        dts.replace(
+          /^export type \{([\s\S]*?)\};$/gm,
+          (_whole, body: string) =>
+            `export type {${body.replace('SettlementEvidence, ', '')}};`,
+        ),
+    ],
+    [
+      'an exported declared value',
+      'createPlaybookRuntime',
+      (dts: string) =>
+        removeFromDeclaration(
+          dts,
+          /^export declare function createPlaybookRuntime\(.*\n/m,
+        ),
+    ],
+  ])('goes red when %s is removed', (_form, name, mutate) => {
+    const dts = declarationSourceOf('./captain/playbook');
+    const recorded = [
+      ...PUBLIC_DECLARATION_EXPORTS['./captain/playbook']!,
+    ].sort();
+    expect(declaredExports(dts)).toEqual(recorded);
+    const without = mutate(dts);
+    expect(without, `the ${name} removal matched nothing`).not.toBe(dts);
+    expect(declaredExports(without)).not.toContain(name);
+    expect(declaredExports(without)).not.toEqual(recorded);
+  });
 
   it('packs the launcher and code.registry artifacts and not the retired files', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));

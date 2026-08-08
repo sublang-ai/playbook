@@ -270,11 +270,18 @@ export shall be released under
 The semver-stable unit of such a subpath is the module's declared public
 API: the subpath entry itself and every top-level named and default
 export of the JavaScript and declaration files it resolves to.
-Removing or renaming any of them is a breaking change under
+Those are two sets and not one. A declaration file's exports include the
+forms the JavaScript has no counterpart for — exported interfaces, type
+aliases, and `export type { … }` re-export lists — and those are the
+whole public API of a type-only subpath such as `./runtime`, as well as
+the types a consumer must implement to use a value export at all, the
+port type of a runtime's own options among them.
+Removing or renaming any export of either set is a breaking change under
 [RELEASE-1](#release-1), whether or not an item, guide, or README names
 that export — a `.d.ts` `export declare` is itself the declaration
-SemVer 2.0.0 speaks of, and a consumer who imported the name compiled
-and ran against it. Members reached only through an `_internal` export
+SemVer 2.0.0 speaks of, `export interface` and `export type` are the
+same declaration in the same file, and a consumer who imported the name
+compiled and ran against it. Members reached only through an `_internal` export
 are not part of that unit: the leading underscore declares them subject
 to change, and they may be added, changed, or removed in any release.
 The removal of the `playbook-code` bin, the
