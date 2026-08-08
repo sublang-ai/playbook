@@ -123,8 +123,11 @@ There is no drop-in replacement, and restoring one would be worse than the remov
 - `composePlayerPrompt` has no meaning under the new machine. The controller Captain makes no player calls at all, so a restored body would describe work the module cannot do.
 - `composeCaptainPrompt` cannot be restored faithfully. The decision prompt is now the shell's labeled Boss / ControlView / catalog envelope ([CAPTAIN-9](../dev/playbook-captain.md#captain-9)) around the engine's shared `defaultComposeCaptainPrompt`. Re-exporting today's builder under the old name would keep an existing caller compiling and hand it prompts for a machine that no longer exists. A shim that silently changes behavior is a worse outcome than a removal stated plainly.
 
-The version number was left open here, between a major and a minor reading.
-It is settled now, and the minor reading is withdrawn as unsound: **the removal is breaking under [RELEASE-1](../dev/release.md#release-1), and the release carrying it shall be a major.**
+One thing is settled and one is not.
+Settled, because it is a fact about what shipped: **the removal is breaking under [RELEASE-1](../dev/release.md#release-1)**, and the earlier minor reading is withdrawn as unsound.
+Open, because it is the Boss's call: **whether to carry the removal at all.**
+Keeping it makes the next release a major; withdrawing it in favour of the compatibility exports below keeps the release a minor.
+No agent may settle that choice — this record states the evidence for it.
 
 What 4.0.0 actually shipped, from the tag:
 
@@ -137,12 +140,12 @@ None of that unships a declared export.
 SemVer 2.0.0 lets a public API be declared "in the code itself", and a `.d.ts` `export declare function` is exactly that declaration; a consumer who wrote `import { composeCaptainPrompt } from '@sublang/playbook/captain/playbook'` compiled and ran at 4.0.0 and breaks at HEAD with no replacement.
 The link.md prop was unsound in the other direction besides: §Output *required* an `_internal` `composePlayerPrompt`, which the controller artifact cannot carry, so link.md could not be cited as the artifact's conformance standard until that clause was corrected (it now asks for the composers each machine uses).
 
-The alternative — restoring the exact 4.0.0 bodies as frozen, deprecated, unused compatibility exports for a 4.x release — is available and is rejected.
-It would ship dead code describing a machine that no longer exists and defer the break rather than remove it, and the reasons above for not restoring either function stand.
-Take it only if a real external consumer is ever found.
+The alternative — restoring the exact 4.0.0 bodies as frozen, deprecated, unused compatibility exports for a 4.x release — is available and remains open for the Boss to take.
+Against it: it ships dead code describing a machine that no longer exists and defers the break rather than removing it, and the reasons above for not restoring either function stand.
+For it: 4.0.0 is published on npm as `latest`, so an unknown external caller can import both names today.
 
 RELEASE-20 now states which unit of a compiled-playbook subpath is semver-stable — the subpath entry plus every top-level named and default export of the JavaScript and declarations it resolves to, with `_internal` members explicitly outside it — and [RELEASE-21](../test/release.md#release-21) pins those export sets, so the next such removal goes red at the gate and is decided before the tag instead of adjudicated afterwards.
-The version number itself belongs to the release checklist ([RELEASE-4](../dev/release.md#release-4)): this record fixes that it is a major.
+The version number belongs to the release checklist ([RELEASE-4](../dev/release.md#release-4)), and follows from the open choice above: a major if the removal stands, a minor if the compatibility exports are restored.
 
 ## Addendum A3 (the control view publishes the state's meaning, not its id)
 
