@@ -607,9 +607,16 @@ state one of whose active regions publishes no description carries no
 `stateDescription` at all rather than the description of the region that
 has one, the normalized value proving the state genuinely multi-region;
 and unless the shared factory refuses a snapshot in which two active
-states declare `meta.playbook`, which is what bounds the covering form
-of the rule to states no factory runtime can reach and what would go red
-if that bound were ever relaxed
+states declare `meta.playbook`, that refusal being recorded as the fact
+it is rather than as a bound on the covering form, which it is not.
+The covering form shall carry live rows, not a comment claiming it
+unreachable: the suite shall fail unless a parallel state whose one
+region publishes through `meta.playbook` and whose other publishes
+through a plain source `description` — one playbook state id, so the
+factory admits it — publishes both meanings joined in the value's order,
+and unless it still does so when the two regions share a leaf state key,
+the leaf-keyed reading having published the first region's meaning twice
+and dropped the second's
 ([PBRT-52](../dev/playbook-runtime.md#pbrt-52)).
 The suite shall discover every linked playbook artifact in the
 repository rather than listing them, and shall fail unless each

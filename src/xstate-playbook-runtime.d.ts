@@ -291,9 +291,18 @@ export declare function defaultBuildCaptainJudgePrompt(input: {
 /** Targets of the FSM's `awaitBossReply` BOSS_REPLY transitions. */
 export declare function resumableStateIdsFromMachine(machine: AnyStateMachine): ReadonlySet<string>;
 /**
- * Source state descriptions by state key, node id, and `meta.playbook`
- * state id, read from `machine.config`. Control actions are labeled from
- * these descriptions (DR-029 §3); a state without one falls back to its id.
+ * Source state descriptions by qualified state path, unqualified state key,
+ * node id, and `meta.playbook` state id, read from `machine.config`. Control
+ * actions are labeled from these descriptions (DR-029 §3); a state without one
+ * falls back to its id.
+ *
+ * The qualified path is what makes the map usable while the machine occupies a
+ * `type: 'parallel'` state (PBRT-52). Unqualified keys are first-wins, and a
+ * leaf name such as `idle` or `failed` is exactly the kind a machine reuses in
+ * every region — so two regions both at `idle` resolved to one region's
+ * description and the runtime published it as the meaning of both. That is the
+ * false statement PBRT-52 forbids, and it is undetectable at the receiving end
+ * because the carrier is one string.
  */
 export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): ReadonlyMap<string, string>;
 /**

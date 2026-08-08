@@ -826,12 +826,22 @@ description the runtime shall publish none for the state: the carrier is
 a single string the host cannot inspect for completeness, so one
 region's description returned as the state's meaning is a false
 statement the host cannot detect and would relay verbatim, and "a
-description per active region" is satisfiable or it is not. The shared
-`createXStatePlaybookRuntime` factory admits at most one active
-`meta.playbook` state id per snapshot, so under that factory the
-covering form is unreachable and the absent form is what a parallel
-snapshot publishes today
-([PBRT-53](../test/playbook-runtime.md#pbrt-53)).
+description per active region" is satisfiable or it is not.
+Each region's description shall be resolved by that region's qualified
+state path and not by its leaf state key, and the active regions shall
+be carried to the lookup qualified the same way. A leaf key such as
+`idle` or `failed` is exactly the name a machine reuses in every region,
+so a leaf-keyed index resolves two regions to one description and
+publishes it as the meaning of both — the same undetectable false
+statement, arrived at from the other end.
+The covering form is reachable under the shared
+`createXStatePlaybookRuntime` factory: the factory admits at most one
+active `meta.playbook` state id per snapshot, and a description is not a
+state id, so one region publishing through `meta.playbook` and another
+through a plain source `description` satisfies that rule and reaches it
+([PBRT-53](../test/playbook-runtime.md#pbrt-53)). No shipping runtime
+with a control surface enters a parallel state today, which bounds the
+consequence and not the reachability.
 The view's `context` shall be an explicit projection the linked
 runtime authors — the FSM context members it names, in the order it
 names them — and shall never be an allow-by-default serialization of

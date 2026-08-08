@@ -3481,14 +3481,17 @@ describe('parallel-state descriptions over the shared factory (PBRT-52)', () => 
     await runtime.dispose();
   });
 
-  it('bounds the covering rule by the factory one-playbook-state-id contract', async () => {
-    // The covering form — one published description per active region, joined
-    // deterministically — is what the rule asks for, and it is what
-    // `stateDescriptionFor` composes. It carries no live row because the
-    // shared factory refuses the only snapshots that could reach it: two
-    // active states both declaring `meta.playbook`. That refusal is pinned
-    // here so the boundary is a checked fact rather than an assumption, and
-    // so relaxing it later fails this row rather than silently going live.
+  // Round-8 finding 4. The row below used to claim the covering form was
+  // unreachable, "because the shared factory refuses the only snapshots that
+  // could reach it: two active states both declaring `meta.playbook`". The
+  // factory refuses two playbook *state ids*; a description is not a state id.
+  // One region declaring `meta.playbook` and another declaring a plain
+  // `description` leaves exactly one playbook state id, passes the factory
+  // check, and reaches the covering branch — so the claim was false, and a
+  // comment asserting a branch is unreachable is worse than no comment,
+  // because it is what stops the next reader looking. The refusal is still
+  // pinned, as the fact it actually is; the covering form now has live rows.
+  it('refuses a snapshot whose active regions declare two playbook state ids', async () => {
     const fullyDescribed = createMachine({
       id: 'fully',
       type: 'parallel',
@@ -3527,6 +3530,71 @@ describe('parallel-state descriptions over the shared factory (PBRT-52)', () => 
     await expect(runtime.init(makeSession(ports))).rejects.toThrow(
       /must expose exactly one playbook state id/,
     );
+  });
+
+  /**
+   * The covering form, live. One region publishes through `meta.playbook` and
+   * the other through a plain `description`, so the snapshot carries one
+   * playbook state id and the factory admits it.
+   */
+  const coveringMachine = (leftKey: string, rightKey: string) =>
+    createMachine({
+      id: 'covering',
+      type: 'parallel',
+      states: {
+        left: {
+          initial: leftKey,
+          states: {
+            [leftKey]: {
+              meta: {
+                playbook: { stateId: 'leftState', description: 'left is idle' },
+              },
+            },
+          },
+        },
+        right: {
+          initial: rightKey,
+          states: { [rightKey]: { description: 'right is idle' } },
+        },
+      },
+    });
+
+  const describeCovering = async (
+    leftKey: string,
+    rightKey: string,
+  ): Promise<{ value: unknown; description: string | undefined }> => {
+    const create = createXStatePlaybookRuntime(
+      coveringMachine(leftKey, rightKey),
+      { label: 'covering', snapshotOptions: () => ({}) },
+    );
+    const { ports } = makeRecordingPorts();
+    const runtime = create({});
+    await runtime.init(makeSession(ports));
+    const view = runtime.describe!();
+    const read = {
+      value: view.state.value,
+      description: view.stateDescription,
+    };
+    await runtime.dispose();
+    return read;
+  };
+
+  it('publishes one description per active region when every region has one', async () => {
+    const read = await describeCovering('leftIdle', 'rightIdle');
+    expect(read.value).toEqual({ left: 'leftIdle', right: 'rightIdle' });
+    expect(read.description).toBe('left is idle | right is idle');
+  });
+
+  it('states each region apart when two regions share a leaf name', async () => {
+    // The regression: descriptions were indexed by unqualified state key and
+    // active regions were reduced to those same keys, so two regions both at
+    // `idle` produced two lookups of one key — and the join stated the left
+    // region's meaning as the meaning of both, losing the right region's
+    // published meaning entirely. Nothing in the string says so to the host.
+    const read = await describeCovering('idle', 'idle');
+    expect(read.value).toEqual({ left: 'idle', right: 'idle' });
+    expect(read.description).toBe('left is idle | right is idle');
+    expect(read.description).not.toBe('left is idle | left is idle');
   });
 });
 

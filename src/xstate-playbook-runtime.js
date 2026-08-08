@@ -630,10 +630,21 @@ const JUMP_EVENT_TYPE = 'BOSS_INTERRUPT';
  * value.
  */
 const PARALLEL_REGION_SEPARATOR = ' | ';
+/** Separator of a qualified state path, matching XState's own `.` notation. */
+const QUALIFIED_PATH_SEPARATOR = '.';
 /**
- * Source state descriptions by state key, node id, and `meta.playbook`
- * state id, read from `machine.config`. Control actions are labeled from
- * these descriptions (DR-029 §3); a state without one falls back to its id.
+ * Source state descriptions by qualified state path, unqualified state key,
+ * node id, and `meta.playbook` state id, read from `machine.config`. Control
+ * actions are labeled from these descriptions (DR-029 §3); a state without one
+ * falls back to its id.
+ *
+ * The qualified path is what makes the map usable while the machine occupies a
+ * `type: 'parallel'` state (PBRT-52). Unqualified keys are first-wins, and a
+ * leaf name such as `idle` or `failed` is exactly the kind a machine reuses in
+ * every region — so two regions both at `idle` resolved to one region's
+ * description and the runtime published it as the meaning of both. That is the
+ * false statement PBRT-52 forbids, and it is undetectable at the receiving end
+ * because the carrier is one string.
  */
 export function stateDescriptionsFromMachine(machine) {
     const descriptions = new Map();
@@ -643,7 +654,7 @@ export function stateDescriptionsFromMachine(machine) {
         if (!descriptions.has(key))
             descriptions.set(key, description);
     };
-    const visit = (key, stateDef) => {
+    const visit = (key, path, stateDef) => {
         if (!isPlainObject(stateDef))
             return;
         const playbook = isPlainObject(stateDef.meta)
@@ -655,6 +666,7 @@ export function stateDescriptionsFromMachine(machine) {
                 ? stateDef.description
                 : undefined;
         if (description !== undefined && description.length > 0) {
+            record(path, description);
             record(key, description);
             record(stateDef.id, description);
             if (isPlainObject(playbook))
@@ -662,14 +674,14 @@ export function stateDescriptionsFromMachine(machine) {
         }
         if (isPlainObject(stateDef.states)) {
             for (const [childKey, child] of Object.entries(stateDef.states)) {
-                visit(childKey, child);
+                visit(childKey, `${path}${QUALIFIED_PATH_SEPARATOR}${childKey}`, child);
             }
         }
     };
     const config = machine.config;
     if (isPlainObject(config) && isPlainObject(config.states)) {
         for (const [key, stateDef] of Object.entries(config.states)) {
-            visit(key, stateDef);
+            visit(key, key, stateDef);
         }
     }
     return descriptions;
@@ -2146,13 +2158,18 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // set (a `type: 'parallel'` state) and each key contributes its own leaf;
         // an object node with a single key is ordinary hierarchy and contributes
         // one. The same value therefore always yields the same regions.
-        function activeRegionKeys(value) {
+        // Each region is carried as its *qualified* path — the region names it sits
+        // under, then its own leaf key — because that is what tells two regions
+        // apart. Reducing them to leaf keys made `{ left: 'idle', right: 'idle' }`
+        // into `['idle', 'idle']`, two lookups of one key, and the join then stated
+        // the first region's meaning twice.
+        function activeRegionKeys(value, prefix = '') {
             if (typeof value === 'string')
-                return [value];
+                return [`${prefix}${value}`];
             const keys = Object.keys(value).sort();
             if (keys.length === 0)
                 return [];
-            return keys.flatMap((key) => activeRegionKeys(value[key]));
+            return keys.flatMap((key) => activeRegionKeys(value[key], `${prefix}${key}${QUALIFIED_PATH_SEPARATOR}`));
         }
         function stateDescriptionFor(state) {
             // CAPTAIN-9 / PBRT-52: while the machine occupies a `type: 'parallel'`
