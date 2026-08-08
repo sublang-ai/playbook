@@ -234,6 +234,15 @@ interface ActiveTurn {
    */
   selectionSubmitted?: boolean;
   /**
+   * Set at the point an effect is attempted — a runtime driven, an engagement
+   * constructed, a stack disposed, an advertised action applied — and never
+   * inferred from where a throw was caught. It is what makes `effectError`
+   * mean "the effect failed" rather than "something inside the selection
+   * failed": everything before the first attempt is control-plane work that
+   * owes the Boss the CAPTAIN-34 reply instead of an exception.
+   */
+  effectAttempted?: boolean;
+  /**
    * CAPTAIN-35: an `action` record is written and its `outcome` record is still
    * owed. The pair is closed by the settlement writer even when the effect
    * throws between them, so a reseeded conversation is never shown an action
@@ -302,12 +311,27 @@ function compactEvidence(text: string): string {
     : `${compacted.slice(0, QUOTED_EVIDENCE_LIMIT)}… (truncated)`;
 }
 
-function stateDigestLine(state: PlaybookState): string {
-  const value =
-    typeof state.value === 'string' ? state.value : JSON.stringify(state.value);
+// CAPTAIN-9: what a prompt is given as the leaf's state is that state's
+// *meaning*, never its internal identifier. The runtime publishes the meaning
+// in its ControlView (PBRT-52), written from the artifact's own source
+// descriptions; a status answer grounded in it says something Boss can read.
+// Where no description is published — a leaf without the control-surface pair,
+// a view that cannot be read this turn, or a state whose source declares none
+// — the digest says so rather than substituting the state id, which is neither
+// Boss-appropriate (CAPPLAY-5) nor separable from ordinary English once a
+// reply repeats it.
+const NO_STATE_DESCRIPTION =
+  '(this runtime publishes no description of its current state)';
+
+function stateDigestLine(
+  state: PlaybookState,
+  description: string | undefined,
+): string {
   const tags = state.tags.length > 0 ? state.tags.join(', ') : 'none';
   return [
-    `state value ${value}`,
+    description === undefined
+      ? NO_STATE_DESCRIPTION
+      : compactEvidence(description),
     `tags ${tags}`,
     state.quiescent ? 'quiescent' : 'busy',
     `status ${state.status}`,
@@ -385,22 +409,38 @@ const CONTROL_VOCABULARY: readonly RegExp[] = [
 ];
 
 /**
- * CAPTAIN-9's session-identifier duty. The rejectable set is read from live
- * shell state rather than from literals, so an identifier minted after this
- * code was written is covered the moment it exists.
+ * Whether an identifier is one the host can tell apart from ordinary English.
+ * An internal capital, digit, underscore, dot, or hyphen has one source and no
+ * place in chat prose; a bare lowercase word such as `ready`, `failed`, or
+ * `done` is a word Boss may hear in any sentence, and refusing a reply for
+ * containing it would refuse plain speech. Only the former is rejectable.
+ */
+function machineShapedIdentifier(id: string): boolean {
+  return id.length >= 3 && /[A-Z0-9_.-]/.test(id);
+}
+
+/**
+ * CAPTAIN-9's identifier duty. Both rejectable sets — live session ids and the
+ * live internal state ids of the engagement stack — are read from live shell
+ * state rather than from literals, so an identifier minted or recompiled after
+ * this code was written is covered the moment it is live.
  *
- * Internal state ids are deliberately NOT in that set. The ControlView digest
- * hands the leaf's state line to the model as the grounding a status answer is
- * supposed to reflect, so rejecting a reply for naming it would make the
- * grounding unusable; keeping visible prose free of state ids is an
- * instruction the compiled decision prompt gives the model, not a fact the
- * host can decide — a live state id such as `ready` or `coding` is
- * indistinguishable from ordinary English. Session ids carry no such
- * ambiguity: they are meaningless to Boss and may never be surfaced.
+ * State ids became a host duty once the grounding stopped depending on them.
+ * The ControlView now publishes the state's *description* and the digest's
+ * state line carries that (PBRT-52), so nothing a status answer is meant to
+ * reflect is an identifier and an id in a visible reply is text the model was
+ * never given. Advertised action ids are the opposite case and are checked
+ * nowhere here: the digest hands them to the model deliberately, because the
+ * decision reply selects by id, so their presence is no evidence of a leak —
+ * keeping them out of visible prose is the compiled prompt's instruction
+ * (CAPPLAY-16), not something the host can decide. It stays narrow in the
+ * other direction too: it never grows a list of literals, and it never
+ * refuses an English word that happens to also name a state.
  */
 function proseRejection(
   prose: string | undefined,
   liveSessionIds: readonly string[] = [],
+  liveStateIds: readonly string[] = [],
 ): string | undefined {
   if (prose === undefined || prose.trim().length === 0) {
     return 'the reply carried no text';
@@ -413,6 +453,11 @@ function proseRejection(
   for (const sessionId of liveSessionIds) {
     if (sessionId.length > 0 && prose.includes(sessionId)) {
       return 'the reply leaked a live session identifier';
+    }
+  }
+  for (const stateId of liveStateIds) {
+    if (prose.includes(stateId)) {
+      return 'the reply leaked an internal state identifier';
     }
   }
   return undefined;
@@ -471,6 +516,14 @@ const hiddenJudgeEnvelope = hiddenControlEnvelope;
 interface OutcomeReport {
   playbookId?: string;
   facts: readonly string[];
+  /**
+   * The Boss-facing rendering of `facts`, present only where the two differ —
+   * today, where a fact names a runtime action by its id and the Boss-facing
+   * form names it by the runtime's own label. `facts` is hidden control text
+   * for the result-phase prompt; this is what the CAPTAIN-34 fallback may
+   * speak.
+   */
+  bossFacts?: readonly string[];
   status: SettlementEvidence['status'];
   receipt?: SettlementEvidence['receipt'];
   leafStateSummary?: string;
@@ -1950,7 +2003,9 @@ export function createPlaybookCaptainShell(
           ? `Leaf ${frameLabel(leaf)} runtime advertises no control surface.`
           : `Leaf ${frameLabel(leaf)} runtime has a control surface, but reading it failed: ${describeFailure.name}: ${compactEvidence(describeFailure.message)}.`,
       );
-      if (leaf.state) lines.push(`Leaf state: ${stateDigestLine(leaf.state)}`);
+      if (leaf.state) {
+        lines.push(`Leaf state: ${stateDigestLine(leaf.state, undefined)}`);
+      }
       const pending = pendingQuestionLines(pendingBossQuestions);
       lines.push(
         pending.length === 0
@@ -1972,7 +2027,12 @@ export function createPlaybookCaptainShell(
       );
       return lines.join('\n');
     }
-    lines.push(`Leaf ${frameLabel(leaf)}: ${stateDigestLine(view.state)}`);
+    lines.push(
+      `Leaf ${frameLabel(leaf)}: state: ${stateDigestLine(
+        view.state,
+        view.stateDescription,
+      )}`,
+    );
     lines.push(...leafContextLines(view.context));
     const pending = view.pendingQuestions.map(
       (question) =>
@@ -2053,6 +2113,39 @@ export function createPlaybookCaptainShell(
     return identifiers;
   };
 
+  // CAPTAIN-9: the live internal state identifiers of the engagement stack,
+  // read the same way — from the state each frame is actually in, so a
+  // recompiled artifact's new state id is covered without editing anything
+  // here. Only machine-shaped ids are rejectable (see `proseRejection`).
+  const liveStateIdentifiers = (): readonly string[] => {
+    const identifiers = new Set<string>();
+    const collect = (value: PlaybookState['value']): void => {
+      if (typeof value === 'string') {
+        identifiers.add(value);
+        return;
+      }
+      for (const [region, child] of Object.entries(value)) {
+        identifiers.add(region);
+        collect(child);
+      }
+    };
+    for (const frame of frames) {
+      const state = frame.state;
+      if (!state) continue;
+      if (state.stateId !== undefined) identifiers.add(state.stateId);
+      for (const id of state.activeStateIds) identifiers.add(id);
+      collect(state.value);
+    }
+    return [...identifiers].filter(machineShapedIdentifier);
+  };
+
+  // The one predicate every Boss-visible reply passes, host-authored or
+  // model-authored, so a rule added to `proseRejection` reaches every reply
+  // the shell can surface rather than only the ones whose call site remembered
+  // to pass the new argument.
+  const replyRejection = (prose: string | undefined): string | undefined =>
+    proseRejection(prose, liveSessionIdentifiers(), liveStateIdentifiers());
+
   // -------------------------------------------------------------------------
   // The durable conversation (CAPTAIN-31, CAPTAIN-35).
   // -------------------------------------------------------------------------
@@ -2060,6 +2153,17 @@ export function createPlaybookCaptainShell(
   const markControlFailure = <E>(error: E): E => {
     if (activeTurn) activeTurn.controlFailure = true;
     return error;
+  };
+
+  // CAPTAIN-34/CAPTAIN-35: an effect error is one raised by an effect that was
+  // attempted, and the only place that can be known is the attempt itself.
+  // Inferring it from where a throw was caught — anything escaping the
+  // selection is post-effect — misfiles every pre-effect control-plane
+  // failure inside that region (a control view that cannot be read, a
+  // rejected status emission) as an effect, and an effect error propagates
+  // instead of settling with the Boss-appropriate reply the turn still owes.
+  const markEffectAttempted = (): void => {
+    if (activeTurn) activeTurn.effectAttempted = true;
   };
 
   class CaptainContinuityError extends Error {
@@ -2188,7 +2292,7 @@ export function createPlaybookCaptainShell(
     compose: (options: { reseedDigest?: string; proseRejection?: string }) => string,
   ): Promise<void> => {
     let text = outcome.finalText;
-    const rejection = proseRejection(text, liveSessionIdentifiers());
+    const rejection = replyRejection(text);
     if (rejection !== undefined) {
       // DR-028 §26: the reseed already was this call's single corrective, so a
       // reseeded reply that is still unusable gets no further re-ask.
@@ -2200,7 +2304,7 @@ export function createPlaybookCaptainShell(
         compose({ ...options, proseRejection: rejection }),
       );
       text = reasked.finalText;
-      const second = proseRejection(text, liveSessionIdentifiers());
+      const second = replyRejection(text);
       if (second !== undefined) {
         throw markControlFailure(new CaptainProseError(second));
       }
@@ -2208,6 +2312,17 @@ export function createPlaybookCaptainShell(
     await emitCaptainReply(context, text!);
   };
 
+  /**
+   * The one seam through which Boss-visible Captain prose leaves the shell —
+   * model-authored speech and the host's own CAPTAIN-34 failure reply alike.
+   *
+   * Journaling belongs here rather than beside each caller because the journal
+   * is what keeps a reseeded conversation in step with the Boss transcript
+   * (CAPTAIN-35). A reply the Boss saw and the journal did not hold leaves the
+   * replacement Captain reading the Boss's next message against a turn it was
+   * never told about — "okay, do that" answering a fallback it cannot see. The
+   * record and the flag are therefore set together, once, at the emission.
+   */
   const emitCaptainReply = async (
     context: CaptainContext,
     text: string,
@@ -2389,11 +2504,40 @@ export function createPlaybookCaptainShell(
   // The controller port (DR-029 §2): host validation is the sole effector.
   // -------------------------------------------------------------------------
 
+  // The leaf's published state description, read from its control view the
+  // same way the digest reads it. A leaf without the pair — or one whose view
+  // cannot be read at this moment — publishes none, and the summary then says
+  // so instead of falling back to the state id.
+  const leafStateDescription = (
+    frame: EngagementFrame,
+  ): string | undefined => {
+    if (typeof frame.runtime.describe !== 'function') return undefined;
+    try {
+      return frame.runtime.describe().stateDescription;
+    } catch {
+      return undefined;
+    }
+  };
+
   const leafStateSummary = (): string | undefined => {
     const leaf = leafFrame();
     if (!leaf) return 'idle: no playbook is engaged';
     if (!leaf.state) return `${frameLabel(leaf)} engaged`;
-    return `${frameLabel(leaf)} at ${stateDigestLine(leaf.state)}`;
+    return `${frameLabel(leaf)} at ${stateDigestLine(
+      leaf.state,
+      leafStateDescription(leaf),
+    )}`;
+  };
+
+  // CAPTAIN-7/CAPTAIN-34: the one seam through which a refusal becomes
+  // Boss-visible. A refused selection's status line is one of the three
+  // settlements a Boss turn may end with, so every refusal — the shell's own
+  // pre-validation refusals and a receipt the runtime refused alike — surfaces
+  // through this call rather than only the paths that remembered to.
+  const surfaceRefusal = async (reason: string): Promise<void> => {
+    // A rejection reason surfaces as shell-owned status text, never as
+    // captain speech.
+    await requireSession().emitStatus(`Cannot do that: ${reason}`);
   };
 
   const rejectSelection = async (
@@ -2401,9 +2545,7 @@ export function createPlaybookCaptainShell(
     options: { silent?: boolean } = {},
   ): Promise<SettlementEvidence> => {
     if (!options.silent) {
-      // CAPTAIN-7: a rejection reason surfaces as shell-owned status text,
-      // never as captain speech.
-      await requireSession().emitStatus(`Cannot do that: ${reason}`);
+      await surfaceRefusal(reason);
     }
     lastSettlementStatus = 'rejected';
     return {
@@ -2423,6 +2565,7 @@ export function createPlaybookCaptainShell(
     if (!root) return;
     const label = frameLabel(root);
     try {
+      markEffectAttempted();
       await disposeStack('dismiss');
       facts.push(`Dismissed the ${label} engagement.`);
     } catch (error) {
@@ -2446,6 +2589,7 @@ export function createPlaybookCaptainShell(
   ): Promise<{ frame?: EngagementFrame; report: Omit<OutcomeReport, 'facts' | 'status'>; failed: boolean }> => {
     let frame: EngagementFrame;
     try {
+      markEffectAttempted();
       frame = await engage(entry);
     } catch (error) {
       const normalized = normalizeErrorCompact(error) ?? {
@@ -2487,6 +2631,7 @@ export function createPlaybookCaptainShell(
     context: CaptainContext,
   ): Promise<void> => {
     try {
+      markEffectAttempted();
       const result = await driveFrame(frame, text, context);
       await processFrameResult(frame, result, context);
     } catch (error) {
@@ -2512,7 +2657,10 @@ export function createPlaybookCaptainShell(
     try {
       return await executeSelection(selection, signal);
     } catch (error) {
-      if (turn && !(error instanceof CaptainProseError)) {
+      if (
+        turn?.effectAttempted === true &&
+        !(error instanceof CaptainProseError)
+      ) {
         turn.effectError = error;
       }
       // CAPTAIN-35: this is the settlement writer's close. An effect that threw
@@ -2572,10 +2720,7 @@ export function createPlaybookCaptainShell(
       // (CAPTAIN-40).
       const reask = decisionCall;
       if (reask === undefined) {
-        const rejection = proseRejection(
-          selection.text,
-          liveSessionIdentifiers(),
-        );
+        const rejection = replyRejection(selection.text);
         if (rejection !== undefined) {
           throw markControlFailure(new CaptainProseError(rejection));
         }
@@ -2680,6 +2825,7 @@ export function createPlaybookCaptainShell(
       journalAction({ action: 'dismiss', playbookId: leaf.entry.id });
       const label = frameLabel(leaf);
       if (leaf.parent) {
+        markEffectAttempted();
         await resumeParent(
           leaf,
           {
@@ -2768,14 +2914,31 @@ export function createPlaybookCaptainShell(
         `${frameLabel(leaf)} advertises no runtime action`,
       );
     }
-    const advertised = leaf.runtime
-      .describe()
-      .actions.some((action) => action.id === actionId);
-    if (!advertised) {
+    // CAPTAIN-9: a `describe()` that exists and throws is a control view the
+    // shell cannot read, which bounds this turn's machine verbs — exactly as
+    // it does when the digest is composed. It is not an effect: nothing has
+    // been attempted, so the selection is refused with a reason rather than
+    // escaping as an effect failure the turn would then propagate unanswered.
+    let advertised: { id: string; label: string } | undefined;
+    try {
+      advertised = leaf.runtime
+        .describe()
+        .actions.find((action) => action.id === actionId);
+    } catch (error) {
+      const normalized = normalizeErrorCompact(error) ?? {
+        name: 'Error',
+        message: String(error),
+      };
+      return rejectSelection(
+        `${frameLabel(leaf)} could not be asked which actions it offers: ${normalized.name}: ${compactEvidence(normalized.message)}`,
+      );
+    }
+    if (advertised === undefined) {
       return rejectSelection(
         `${frameLabel(leaf)} does not advertise the action "${actionId}"`,
       );
     }
+    const actionLabel = advertised.label;
     turn.settled = true;
     journalAction({
       action: 'runtime',
@@ -2787,6 +2950,7 @@ export function createPlaybookCaptainShell(
     // guard against re-execution — a repeated selection returns the recorded
     // receipt rather than acting twice.
     const key = `turn-${turn.id}-apply-${actionId}`;
+    markEffectAttempted();
     const outcome = await withCounting(leaf, async () =>
       leaf.runtime.apply!({ actionId, key, signal }),
     );
@@ -2804,12 +2968,28 @@ export function createPlaybookCaptainShell(
       facts.push(
         `The runtime refused "${actionId}": ${compactEvidence(receipt.reason)}.`,
       );
+      // CAPTAIN-34: a refusal the runtime raised ends the turn with no action
+      // and no closing-reply call, so without this line the turn would end
+      // with nothing visible at all. It is the same settlement the shell's own
+      // pre-validation refusals produce, through the same seam — the Boss is
+      // owed one either way, and which side refused is not their concern.
+      await surfaceRefusal(
+        `${frameLabel(leaf)} refused "${compactEvidence(actionLabel)}": ${compactEvidence(receipt.reason)}`,
+      );
     } else {
       facts.push(
         `Applying "${actionId}" failed: ${receipt.error.name}: ${compactEvidence(receipt.error.message)}.`,
       );
     }
     drainRunFailureFacts(facts);
+    // The settlement facts above are shell-internal strings composed for the
+    // hidden result-phase prompt: they name the action by its id, which is
+    // control data. The Boss-facing rendering of the same settlement names it
+    // by the runtime's own Boss-appropriate label (PBRT-52), for the one place
+    // these facts are spoken rather than prompted — the CAPTAIN-34 fallback.
+    const bossFacts = facts.map((fact) =>
+      fact.split(`"${actionId}"`).join(`"${compactEvidence(actionLabel)}"`),
+    );
     const summary = leafStateSummary();
     const status: SettlementEvidence['status'] =
       receipt.disposition === 'executed'
@@ -2824,6 +3004,7 @@ export function createPlaybookCaptainShell(
     turn.report = {
       ...outcome.report,
       facts,
+      bossFacts,
       status,
       receipt: {
         disposition: receipt.disposition,
@@ -2879,14 +3060,31 @@ export function createPlaybookCaptainShell(
         '.'
       );
     }
-    const facts = turn.report?.facts ?? [];
-    return [
-      'I could not finish reporting that turn, but the work already ran — please do not send it again.',
+    const settledPreamble =
+      'I could not finish reporting that turn, but the work already ran — please do not send it again.';
+    const closing =
+      'Ask me where things stand and I will report the current state.';
+    // The Boss-facing rendering of the settlement, never the prompt-side one:
+    // `facts` name actions by id and quote runtime-authored text nobody
+    // validated.
+    const facts = turn.report?.bossFacts ?? turn.report?.facts ?? [];
+    const composed = [
+      settledPreamble,
       ...(facts.length === 0
         ? []
         : ['Here is what happened:', ...facts.map((fact) => `- ${fact}`)]),
-      'Ask me where things stand and I will report the current state.',
+      closing,
     ].join('\n');
+    // CAPTAIN-34: this reply is host-authored Boss prose and passes the same
+    // validation every model reply passes. What it interpolates is not
+    // host-authored all the way down — a refusal reason and a normalized error
+    // message are foreign text — so a fact set that fails validation is
+    // dropped rather than spoken, and the reply still states the settlement
+    // truthfully and names the next step. It is never withheld: it is the
+    // turn's only remaining settlement.
+    return replyRejection(composed) === undefined
+      ? composed
+      : [settledPreamble, closing].join('\n');
   };
 
   const settleTurnFailure = async (
@@ -2896,7 +3094,12 @@ export function createPlaybookCaptainShell(
     if (context.signal.aborted) throw error;
     if (activeTurn?.proseSurfaced) return;
     try {
-      await trackTurnCall(context.emitReply(failureReplyText()));
+      // Through the one presentation seam, so this reply is journaled like
+      // every other Boss-visible Captain reply: a reseeded conversation that
+      // sees the Boss's next message without seeing what the host last told
+      // them can misread "okay, do that" as agreement to work that never ran
+      // (CAPTAIN-35).
+      await emitCaptainReply(context, failureReplyText());
     } catch {
       // The turn failure wins; the emission detail stays on telemetry.
     }

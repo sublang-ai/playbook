@@ -399,7 +399,11 @@ recorded, or as marked reconstructions — turn 1 —
 `Retry and continue the iteration` — produces exactly one hidden
 decision call on the durable conversation (the pinned resume token
 in the captured options) whose captured prompt carries the exact
-Boss text plus the ControlView digest — the failed leaf state, the
+Boss text plus the ControlView digest — the failed leaf state carried
+as the description CODE's own source publishes for it and never as its
+state id
+([PBRT-52](../dev/playbook-runtime.md#pbrt-52),
+[CAPPLAY-5](../user/captain-playbook.md#capplay-5)), the
 context members CODE's own projection exports rendered one bounded
 line each, with none of its resolved player roster, option value, or
 player-authored members appearing anywhere in the prompt
@@ -408,15 +412,20 @@ player-authored members appearing anywhere in the prompt
 `lastError` `{ name, message }`, and the advertised retry action id
 with its label — the validated `runtime` selection is that retry id,
 exactly one real `apply()` executes with an `executed` receipt, and
-the result-phase prompt carries the settlement facts verbatim, while
+the result-phase prompt carries the settlement facts verbatim and the
+settled leaf's published description in place of its state id, while
 turns 2–4 settle grounded with no dead no-action turn and no
-re-execution (idempotency key honored, the player-call count fixed).
+re-execution (idempotency key honored, the player-call count fixed),
+each of those replies reflecting the state's published meaning and
+carrying no raw state id.
 The suite shall fail unless: with a player question pending, the
 Boss's answer settles as `deliver` and `BOSS_REPLY` resumes the same
 state with the answer in context, the full question having surfaced
 as captain speech; a mid-run status question while busy or parked is
 answered from `describe()` alone — zero `apply` calls, zero FSM
-events, the snapshot identical before and after; and "what went
+events, the snapshot identical before and after, the surfaced reply
+reflecting the state's published meaning and the pending question and
+carrying no raw state id; and "what went
 wrong?" asked twice after a failure carries the engine's
 `ControlView.lastError` in both captured decision prompts with no
 `apply` and the machine untouched.
@@ -441,7 +450,9 @@ no FSM event, the leaf snapshot identical before and after — grounded
 in the degraded ControlView digest the shell composes from the
 engagement frame and its mirrored leaf facts
 ([CAPTAIN-9](../dev/playbook-captain.md#captain-9)), the captured
-decision prompt carrying that digest with its empty action list.
+decision prompt carrying that digest with its empty action list and
+with the leaf state stated as publishing no description rather than
+falling back to the state id the shell holds from telemetry.
 Context-conditional action validity needs no shell fixture here: it
 is engine-pinned on scalar machines with context-conditional guards
 by the landed [PBRT-53](playbook-runtime.md#pbrt-53) rows — a
@@ -500,6 +511,17 @@ from the source state description — the selection is that action,
 real `apply()` lands the snapshot at the target with an `executed`
 receipt, the result-phase prompt carries the jump fact, and the
 scripted closing reply names the state.
+The suite shall fail unless a receipt the runtime refused settles
+visibly: the shell status line names the refusal by the action's
+advertised label and its reason, no closing-reply call is spent, and no
+captain speech is surfaced — the turn ending with exactly the one
+settlement [CAPTAIN-34](../user/playbook-captain.md#captain-34)
+requires rather than in silence.
+The suite shall fail unless a `runtime` selection against a leaf whose
+`describe()` throws at revalidation is refused with that same status
+line naming the read failure — no `apply` call, no effect, and no
+exception escaping the Boss turn, a control view that cannot be read
+being no evidence that an effect was attempted.
 
 ### CAPTAIN-39
 
@@ -550,6 +572,24 @@ The suite shall fail unless, when the closing report of an executed
 dismissal fails twice, the failure reply names the recorded dismissal
 fact and carries neither a nothing-was-changed claim nor a resend
 invitation.
+The suite shall fail unless that failure reply is journaled like every
+other Boss-visible reply: with a turn's decision call and its reseeded
+re-issue both failing, the reply the Boss saw shall appear in the
+reseed digest of the next turn's seeded call, between the two Boss
+messages it stands between.
+The suite shall fail unless the same reply names an executed runtime
+action by its advertised label rather than its action id, and unless a
+settlement whose recorded facts quote runtime-authored text that fails
+prose validation is spoken without those facts — still claiming the
+work ran and still naming the next step, and never printing the
+unvalidated text.
+The suite shall fail unless a continuity failure raised by a submitted
+selection *before* it attempts any effect reaches that same failure
+reply rather than the boundary: a `respond` selection whose prose
+re-ask and its reseed both fail in transport shall settle the turn
+visibly, with the Boss turn resolving rather than throwing and the leaf
+neither driven nor disposed — an effect error being one an attempted
+effect raised, never one inferred from a throw escaping the selection.
 
 ### CAPTAIN-40
 
@@ -574,6 +614,14 @@ clean second answer shall be the surfaced captain speech.
 The suite shall fail unless a reply carrying an engagement's live
 generated session id is refused with one corrective re-ask naming the
 leaked identifier, that id never reaching the Boss surface.
+The suite shall fail unless a reply carrying the live leaf's own
+machine-shaped state id is refused the same way — one corrective
+re-ask naming the leaked internal state identifier, the id never
+reaching the Boss surface and never having reached the decision prompt
+either — and unless a reply naming a live state id that is an ordinary
+English word (`failed`, `ready`) is surfaced unchanged with no
+corrective at all, the duty being narrow by construction rather than a
+list of literals.
 The shell's own composition of the ControlView block shall be pinned
 against whatever a runtime exports: the suite shall fail unless each
 exported context member appears as its own line carrying its name and
@@ -582,6 +630,13 @@ unless a long exported value is truncated like every other quoted
 foreign span, and unless an exported value spelling out a second
 labeled block opens no such block in either the decision or the
 closing-reply prompt.
+The suite shall fail unless a leaf whose control view reads cleanly and
+publishes no description for its current state has that stated as a
+published absence, with the state id the same view carries never
+substituted for it and never reaching the prompt — the missing-member
+branch of the same rule the capability-less leaf covers, and the branch
+that decides whether an identifier the host would later refuse in a
+reply was one the host itself supplied.
 The suite shall fail unless a leaf whose `describe()` is implemented
 and throws is reported as a control view that could not be read —
 naming the normalized failure, reporting the advertised actions as

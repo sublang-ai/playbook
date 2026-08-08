@@ -244,9 +244,22 @@ Where an action already settled, it shall name that settlement's
 recorded facts, shall not state that nothing was changed, and shall
 not name resending as the next step — a resend would repeat completed
 work — naming asking for the current state instead.
+Those facts shall be named in Boss-facing terms: an executed or refused
+runtime action shall be named by the label its runtime advertised for
+it, never by the action id, and the composed reply shall carry no
+internal identifier or control vocabulary
+([CAPTAIN-9](../dev/playbook-captain.md#captain-9)); where the recorded
+facts cannot be stated that way — a runtime-authored refusal reason or
+error message being foreign text — the reply shall omit the facts and
+still state the settlement and the next step, rather than being
+withheld or printed unchecked.
 Every Boss turn shall reach exactly one visible settlement: captain
 speech, the shell status line of a refused selection, or this failure
 reply.
+A selection the active runtime refuses shall reach that same status
+line as one the shell refuses itself: the refusal ends the turn with no
+action and no closing reply, and which side refused is not the Boss's
+concern.
 Where a turn ends with no selection submitted and no captain speech
 surfaced — including where the session Captain's machine recovers to
 its hub after a second malformed decision reply and reports a healthy

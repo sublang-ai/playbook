@@ -220,9 +220,22 @@ shall append, inside that envelope, the exact Boss text as a labeled
 block plus the two shell-composed labeled digest blocks the compiled
 prompt references ([CAPPLAY-7](captain-playbook.md#capplay-7)):
 the ControlView digest — the active path as commands root to leaf,
-the leaf state (`stateId`, tags, quiescence, status; the full
-multi-region state value with every active region readable while the
-leaf occupies a `type: 'parallel'` state), the context members the
+the leaf state as the description its runtime published for that state
+([PBRT-52](playbook-runtime.md#pbrt-52)) together with its tags,
+quiescence, and status, and never the state's internal id: the digest
+is the grounding a status answer reflects, and an id is not text a
+reply may repeat
+([CAPPLAY-5](../user/captain-playbook.md#capplay-5)). Where the leaf's
+runtime publishes no description for its current state, the digest
+shall say so and shall not substitute the id for it. While the leaf
+occupies a `type: 'parallel'` state, that state line shall cover every
+active region rather than one — a published description per active
+region — the readability requirement being unchanged and only its
+carrier having moved from the raw multi-region state value to the
+descriptions; no shipping runtime enters a parallel state, so this
+clause carries no hermetic row
+([CAPTAIN-37](../test/playbook-captain.md#captain-37)). It also carries
+the context members the
 leaf's runtime authored into its ControlView projection
 ([PBRT-52](playbook-runtime.md#pbrt-52),
 [DR-029 §3](../decisions/029-session-scoped-conversational-captain.md)),
@@ -235,7 +248,10 @@ Where the active leaf's runtime implements no control surface, the shell
 shall compose the degraded ControlView digest rather than omit the block:
 the engagement frame — the active path as commands root to leaf — plus the
 facts the shell already mirrors from that leaf's telemetry
-([CAPTAIN-10](#captain-10)): its normalized state descriptor, its pending
+([CAPTAIN-10](#captain-10)): its normalized state descriptor stated as
+publishing no description — a leaf with no control view publishes none,
+and the shell shall say so rather than fall back to the state id it
+holds — its pending
 questions verbatim with their ids, and its last error as
 `{ name, message }`, with an explicitly empty action list and no ControlView
 context fields.
@@ -279,19 +295,38 @@ the missing-or-empty predicate and its single corrective re-ask
 surface exactly two kinds of validated prose as captain speech
 through cligent `CaptainContext.emitReply`: a `respond` selection's
 `text` and an acting turn's closing reply; a reply carrying control
-JSON, internal control vocabulary, or a live session identifier — the
-session Captain's own session id or any engagement frame's — shall not
-be surfaced, and the shell shall read that identifier set from live
-shell state rather than from a fixed list, so an identifier minted
-later is covered without one.
-A reply shall not be withheld for naming the active leaf's state:
-the ControlView digest supplies that state line as the grounding a
-status answer is meant to reflect, and keeping internal state ids out
-of visible prose is an instruction the compiled decision prompt gives
-the model
-([CAPPLAY-16](captain-playbook.md#capplay-16)), not a host
-rejection duty — a live state id is not separable from ordinary
-English by the host.
+JSON, internal control vocabulary, a live session identifier — the
+session Captain's own session id or any engagement frame's — or a live
+internal state identifier of the engagement stack shall not
+be surfaced, and the shell shall read both identifier sets from live
+shell state rather than from a fixed list, so an identifier minted or
+recompiled later is covered without one.
+The state-identifier duty holds only because the grounding no longer
+depends on the identifier: the digest's state line supplies the
+runtime's published state description
+([PBRT-52](playbook-runtime.md#pbrt-52)), so nothing a status answer is
+meant to reflect is an id, and an id in a visible reply is text the
+model was never given. An advertised action still carries its id, which
+the decision reply selects by, so the decision prompt does hand the
+model that id. The shell shall therefore take no rejection duty over
+advertised action ids: presence is no evidence of a leak for text the
+host itself supplied, and keeping an action id out of visible prose
+stays an instruction the compiled decision prompt gives the model
+([CAPPLAY-16](captain-playbook.md#capplay-16)). The duty shall stay
+narrow in the other direction too. The shell
+shall reject only identifiers it can tell apart from ordinary English —
+those carrying an internal capital, digit, underscore, dot, or hyphen —
+and shall not reject a bare lowercase state id such as `ready` or
+`failed`, which Boss may hear in any sentence; keeping even those out
+of visible prose stays that same model instruction.
+Every Boss-visible Captain reply shall leave the shell through one
+presentation seam, host-authored replies included, and shall pass this
+same validation there: the shell's own
+[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply
+interpolates settlement facts that quote runtime-authored text no one
+validated, so where the composed reply fails validation the shell shall
+speak the fact-free form of it rather than withhold the turn's only
+remaining settlement.
 The shell's own `callCaptain` implementation is that presentation seam: the
 session Captain runtime returns no prose to its machine and injects no
 presentation field
@@ -691,14 +726,25 @@ Where the shell hosts the session Captain, the shell shall keep one
 host-side session journal per shell session: append-only, JSON-safe
 records
 `{ seq, turnId, kind: 'boss' | 'reply' | 'action' | 'outcome', payload }`
-covering Boss text, validated captain replies, validated actions
+covering Boss text, every Boss-visible Captain reply, validated actions
 with their targets, and settlement facts.
+A `reply` record shall cover every reply the Boss saw, whoever composed
+it — validated model prose and the host's own
+[CAPTAIN-34](../user/playbook-captain.md#captain-34) failure reply
+alike — because the reseed exists to keep the replacement conversation
+in step with the Boss transcript, not to record provenance: a reply the
+Boss saw and the journal did not hold leaves the replacement Captain
+reading the Boss's next message against a turn it was never told about.
+The shell shall therefore surface Boss-visible Captain prose through
+one presentation seam that writes the record and marks the turn
+together ([CAPTAIN-9](#captain-9)), rather than journaling at each
+call site.
 The journal shall never be Boss-visible, shall feed only the
 conversation reseed, and shall be complete for the session lifetime:
 the shell shall drop no record, and the only bounding shall be a
 deterministic truncation applied where the shell quotes long player or
 sub-runtime output into a payload.
-Boss text, validated captain replies, validated actions, and the
+Boss text, Boss-visible captain replies, validated actions, and the
 shell-composed settlement facts surrounding such a quote are
 host-authored, and the reseed digest shall render them whole: a long
 Boss requirement shall reach the replacement conversation complete,
@@ -722,11 +768,26 @@ session — on that turn or any later one — shall itself be a seeded
 one, running `resume: false` and carrying the reseed digest.
 Apart from the session's first call, no durable call shall run both
 unpinned and unseeded.
-The reseed shall be the re-issued call's single corrective
+The reseed shall be the re-issued call's single corrective for the
+fault it answers — an unusable *result*
 ([DR-028 §26](../decisions/028-empty-ok-result-re-ask.md)): where the
-reseeded result is itself empty or unusable, the shell shall fail that
-phase and shall issue no further corrective call for it, neither the
-boundary's empty-`ok` re-ask nor its own prose re-ask.
+reseeded result is itself empty or its prose unusable, the shell shall
+fail that phase and shall issue no further corrective call for it,
+neither the boundary's empty-`ok` re-ask nor its own prose re-ask,
+those being the two correctives that answer the same symptom the reseed
+already answered.
+It shall not spend the corrective of a different fault class. A
+decision reply that arrives whole and is malformed as control JSON is a
+content fault the runtime owns, and it shall keep its own single
+corrective re-ask
+([CAPPLAY-18](captain-playbook.md#capplay-18),
+[DR-029 §4](../decisions/029-session-scoped-conversational-captain.md))
+even on a turn whose transport already spent a reseed — the corrective
+prompt is the only thing that tells the model why its reply was
+rejected, and a transport fault is no evidence about reply quality.
+A decision phase therefore costs at most one original call plus one
+corrective per fault class raised, each class bounded to one and none
+of them recursive; no item caps the per-turn total across classes.
 The reseed digest shall be the shell's own deterministic rendering of
 the journal records — the same records shall always render the same
 digest — and shall be the only journal-derived text any prompt ever

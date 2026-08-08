@@ -1054,8 +1054,13 @@ interface ShellRuntimeScript {
       actionId: string,
       key: string,
     ) => Promise<PlaybookControlReceipt> | PlaybookControlReceipt;
-    /** A control surface that exists and fails to read (CAPTAIN-9). */
+    /**
+     * A control surface that exists and fails to read (CAPTAIN-9). Returning
+     * `undefined` reads cleanly, so a row can fail only the reads it means to.
+     */
     readonly describeThrows?: () => unknown;
+    /** The runtime-authored, Boss-facing meaning of the current state. */
+    readonly stateDescription?: string;
     readonly context?: Record<string, unknown>;
     readonly lastError?: { name: string; message: string };
     readonly pendingQuestions?: readonly {
@@ -1105,9 +1110,15 @@ class ScriptedRuntime {
 
   describeView(): PlaybookControlView {
     const control = this.script.control!;
-    if (control.describeThrows) throw control.describeThrows();
+    if (control.describeThrows) {
+      const failure = control.describeThrows();
+      if (failure !== undefined) throw failure;
+    }
     return {
       state: this.state(),
+      ...(control.stateDescription === undefined
+        ? {}
+        : { stateDescription: control.stateDescription }),
       ...(control.context === undefined
         ? {}
         : { context: control.context as never }),
@@ -1654,9 +1665,14 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // Durable: the call resumes the pinned token, never a fresh conversation.
     expect(typeof decision!.options.resume).toBe('string');
     // The digest halves: failed leaf, projected context, lastError, action.
+    // The leaf's state reaches the model as the meaning CODE's own source
+    // publishes for it (PBRT-52), never as the state id — grounding is what a
+    // status answer reflects, and an id is not Boss-appropriate text
+    // (CAPPLAY-5). The retired `state value <id>` form appears nowhere.
     expect(decision!.prompt).toContain(
-      'Leaf /code: state value failed; tags playbook.parked; quiescent; status active',
+      'Leaf /code: state: Captures the last Captain error so the runner can report it. Boss may resume from here.; tags playbook.parked; quiescent; status active',
     );
+    expect(decision!.prompt).not.toContain('state value');
     // PBRT-52 / CAPTAIN-9: the context block is CODE's declared projection,
     // rendered one bounded member per line rather than pasted in as a raw
     // JSON document. Every member CODE does not export — the resolved
@@ -1700,7 +1716,11 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     expect(closing).toContain('Settlement status: ok');
     expect(closing).toContain('Runtime action receipt: executed');
     expect(closing).toContain('- Applied "retry:CONTINUE_IR" on /code.');
-    expect(closing).toContain('state value awaitBossReply');
+    // The settled leaf reaches the result phase by its meaning too.
+    expect(closing).toContain(
+      'state: Waiting for Boss to answer a player question.',
+    );
+    expect(closing).not.toContain('awaitBossReply');
     expect(harness.surfaced.at(-1)).toBe(
       'The retry ran; CODE is waiting on your answer.',
     );
@@ -1714,7 +1734,12 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     }
     expect(harness.surfaced).toHaveLength(repliesAfterTurn1 + 3);
     for (const reply of harness.surfaced.slice(repliesAfterTurn1)) {
-      expect(reply).toContain('state value awaitBossReply');
+      // Grounded in the state's meaning, and carrying no raw state id — the
+      // reply reflects what the digest gave it, and the digest gave it prose.
+      expect(reply).toContain(
+        'state: Waiting for Boss to answer a player question.',
+      );
+      expect(reply).not.toContain('awaitBossReply');
     }
     // No re-execution: the player-call count is fixed and the chat turns
     // allocated no closing-reply call at all.
@@ -1816,8 +1841,14 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
           ),
       ).length,
     ).toBe(applyTracesBefore);
-    // The reply reflects the live state and the pending question.
-    expect(harness.surfaced.at(-1)).toContain('state value awaitBossReply');
+    // The reply reflects the state's meaning and the pending question, and
+    // carries no raw state id (CAPPLAY-5): the digest supplied the
+    // description CODE's source publishes, so that is what a grounded answer
+    // can say.
+    expect(harness.surfaced.at(-1)).toContain(
+      'state: Waiting for Boss to answer a player question.',
+    );
+    expect(harness.surfaced.at(-1)).not.toContain('awaitBossReply');
     expect(harness.surfaced.at(-1)).toContain(CODE_PENDING_QUESTION);
     // A chat turn allocates no closing-reply call.
     expect(harness.closingPrompts()).toHaveLength(1);
@@ -1894,6 +1925,13 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
 
     const digest = harness.decisionPrompts().at(-1) ?? '';
     expect(digest).toContain('/discuss runtime advertises no control surface.');
+    // No control view means no published state description, and the shell
+    // says so rather than substituting the state id it holds from telemetry:
+    // grounding is the state's meaning, and where none is published none is
+    // spoken (CAPPLAY-5).
+    expect(digest).toContain(
+      'Leaf state: (this runtime publishes no description of its current state);',
+    );
     expect(digest).toContain('Advertised actions: none.');
     expect(digest).toContain(
       'plain text delivery is the only machine verb against it and a `runtime` selection is invalid',
@@ -2473,6 +2511,76 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     expect(code.runtimes[0]?.inputs).toEqual(['fix the parser']);
     expect(statuses).toEqual(['◇ /code started']);
   });
+
+  // A receipt the runtime refused ends the turn with no action, no closing
+  // reply, and — because a selection was submitted — no silent-turn fallback
+  // either. Every Boss turn owes exactly one visible settlement, and for a
+  // refusal that settlement is the shell's status line, whichever side
+  // refused (CAPTAIN-34).
+  it('surfaces the refusal status line when the runtime refuses the receipt', async () => {
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        apply: () => ({
+          disposition: 'rejected',
+          reason: 'the recorded event is no longer accepted',
+        }),
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.' },
+        decisionReply({ action: 'runtime', actionId: 'retry:BOSS_TURN' }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const statusesBefore = harness.statuses.length;
+    const surfacedBefore = harness.surfaced.length;
+    const closingsBefore = harness.closingPrompts().length;
+
+    await harness.turn('retry that step', 2);
+
+    expect(harness.statuses.slice(statusesBefore)).toEqual([
+      'Cannot do that: /code refused "Retry the failed step": the recorded event is no longer accepted',
+    ]);
+    // A refusal spends no closing-reply call and produces no captain speech:
+    // the status line is the whole settlement.
+    expect(harness.closingPrompts()).toHaveLength(closingsBefore);
+    expect(harness.surfaced).toHaveLength(surfacedBefore);
+  });
+
+  // A `describe()` that exists and throws is a control view the shell cannot
+  // read — the same condition the digest already handles — not an effect. No
+  // effect is attempted at revalidation, so the turn is refused visibly
+  // instead of escaping the shell as an effect failure (CAPTAIN-9/CAPTAIN-34).
+  it('refuses a runtime selection whose control view cannot be read', async () => {
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        describeThrows: () => new TypeError('view read exploded'),
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.' },
+        decisionReply({ action: 'runtime', actionId: 'retry:BOSS_TURN' }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const statusesBefore = harness.statuses.length;
+
+    await expect(harness.turn('retry that step', 2)).resolves.toBeUndefined();
+
+    expect(harness.statuses.slice(statusesBefore)).toEqual([
+      'Cannot do that: /code could not be asked which actions it offers: TypeError: view read exploded',
+    ]);
+    expect(code.runtimes[0]?.appliedKeys).toEqual([]);
+    expect(code.runtimes[0]?.disposeCount).toBe(0);
+  });
 });
 
 describe('CAPTAIN-39 durable continuity', () => {
@@ -2918,6 +3026,155 @@ describe('CAPTAIN-39 durable continuity', () => {
     expect(reply).not.toMatch(/send the request again/i);
     expect(reply).toContain('Dismissed the /code engagement.');
   });
+
+  // The failure reply is a Boss-visible Captain reply, so it is journaled like
+  // every other one. A reseeded Captain shown the Boss's next message but not
+  // what the host last told them reads "okay, do that" against a request the
+  // host actually answered with "send it again" — agreement to work that never
+  // ran.
+  it('journals the failure reply so a later reseed carries it', async () => {
+    const code = shellEntry('code', 'code');
+    const harness = makeShellHarness(
+      [code],
+      [
+        // Turn 1: the decision call and its one reseeded re-issue both fail.
+        { status: 'error', error: 'transport down' },
+        { status: 'error', error: 'transport down again' },
+        // Turn 2 opens on the owed reseed and carries the journal digest.
+        decisionReply({ action: 'respond', text: 'Nothing is running yet.' }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('please dismiss the run', 1);
+    const failureReply = harness.surfaced.at(-1)!;
+    expect(failureReply).toMatch(/could not finish/i);
+
+    await harness.turn('okay, do that', 2);
+    const seeded = harness.captainCalls.at(-1)!;
+    expect(seeded.options.resume).toBe(false);
+    const recap =
+      /\[Conversation recap\]\n([\s\S]*)$/.exec(seeded.prompt)?.[1] ?? '';
+    expect(recap).toContain('please dismiss the run');
+    expect(recap).toContain('okay, do that');
+    // Between the two Boss turns stands what the Boss was actually told.
+    expect(recap).toContain(failureReply);
+    expect(code.runtimes).toHaveLength(0);
+  });
+
+  // An effect error is filed where an effect is attempted, never inferred from
+  // where a throw was caught. Everything a submitted selection does before its
+  // first attempt is control-plane work, and a control-plane failure owes Boss
+  // the CAPTAIN-34 reply rather than escaping the turn as if an effect had
+  // failed. A `respond` selection attempts no effect at all, so a continuity
+  // failure inside its prose re-ask is the clean case: nothing ran, and the
+  // Boss is still owed a settlement.
+  it('settles a pre-effect continuity failure instead of propagating it', async () => {
+    const code = shellEntry('code', 'code');
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        // Well-formed control JSON whose visible prose cannot be surfaced, so
+        // the shell spends its one prose re-ask...
+        decisionReply({
+          action: 'respond',
+          text: 'The adjudicator is still deciding.',
+        }),
+        // ...and the re-ask, with the reseed it triggers, fails in transport.
+        { status: 'error', error: 'transport down' },
+        { status: 'error', error: 'transport down again' },
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const surfacedBefore = harness.surfaced.length;
+
+    // The turn resolves rather than throwing: the failure is the shell's own
+    // control plane, so it is reported to Boss and kept off the boundary.
+    await expect(harness.turn('where are we?', 2)).resolves.toBeUndefined();
+
+    expect(harness.surfaced.slice(surfacedBefore)).toEqual([
+      'I could not finish that turn. Nothing was changed — please send the request again, or start a playbook directly with /code <task>.',
+    ]);
+    // Nothing was attempted against the leaf, and the frame survives.
+    expect(code.runtimes[0]?.inputs).toEqual(['fix the parser']);
+    expect(code.runtimes[0]?.disposeCount).toBe(0);
+  });
+
+  // CAPTAIN-34's fallback is the one place the settlement facts are spoken
+  // rather than prompted. The prompt-side facts name the action by its id and
+  // quote runtime-authored text nobody validated; the spoken form names the
+  // runtime's own label and passes the same validation every reply passes.
+  it('speaks the settlement by label and drops facts that fail validation', async () => {
+    const receipts: PlaybookControlReceipt[] = [
+      {
+        disposition: 'executed',
+        run: {
+          outcome: 'quiescent',
+          state: {
+            value: 'ready',
+            activeStateIds: ['ready'],
+            tags: ['playbook.parked'],
+            status: 'active',
+            quiescent: true,
+            stateId: 'ready',
+          },
+        },
+      },
+      {
+        disposition: 'failed',
+        error: {
+          name: 'Error',
+          message: 'guard lookup exploded while replaying BOSS_REPLY',
+        },
+      },
+    ];
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [{ id: 'retry:BOSS_TURN', label: 'Retry the failed step' }],
+        apply: () => receipts.shift()!,
+      },
+    });
+    const unusableClosing = [
+      { status: 'ok', finalText: '', resumeToken: 'C1' },
+      { status: 'ok', finalText: '  ', resumeToken: 'C2' },
+    ];
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        decisionReply({ action: 'runtime', actionId: 'retry:BOSS_TURN' }),
+        ...unusableClosing,
+        decisionReply({ action: 'runtime', actionId: 'retry:BOSS_TURN' }),
+        ...unusableClosing,
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+
+    // Leg 1: the executed settlement is spoken by the runtime's label, and
+    // the action id — which is control vocabulary in its own right — never
+    // reaches the Boss surface.
+    await harness.turn('retry that step', 2);
+    const executed = harness.surfaced.at(-1)!;
+    expect(executed).toContain('the work already ran');
+    expect(executed).toContain('- Applied "Retry the failed step" on /code.');
+    expect(executed).not.toContain('retry:BOSS_TURN');
+    expect(executed).not.toContain('BOSS_TURN');
+
+    // Leg 2: the same settlement carrying a runtime-authored error message
+    // that is control vocabulary. The facts cannot be spoken, so they are
+    // dropped — the reply still states the settlement and the next step.
+    await harness.turn('try it once more', 3);
+    const failed = harness.surfaced.at(-1)!;
+    expect(failed).not.toContain('BOSS_REPLY');
+    expect(failed).not.toContain('Here is what happened');
+    expect(failed).toContain('the work already ran');
+    expect(failed).toContain(
+      'Ask me where things stand and I will report the current state.',
+    );
+    expect(failed).not.toMatch(/nothing was changed/i);
+  });
 });
 
 // CAPTAIN-9: the shell composes the ControlView block, so it owns what the
@@ -2977,6 +3234,43 @@ describe('CAPTAIN-9 ControlView block composition', () => {
     expect(decision).not.toContain('TAIL');
     // The rest of the block still follows.
     expect(decision).toContain('Pending Boss questions: none.');
+    expect(decision).toContain('- retry:STEP: Retry the failed step');
+  });
+
+  // The other branch of the no-description rule from the capability-less leaf:
+  // a runtime whose control view reads cleanly and publishes no description
+  // for the state it is in. The digest says so; it does not reach past the
+  // absent member for the state id sitting right there in `view.state`, which
+  // is what would put an identifier into the prompt and make a grounded reply
+  // repeating it refusable (CAPTAIN-9, CAPPLAY-5).
+  it('states that a readable view publishes no description, never the state id', async () => {
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [{ id: 'retry:STEP', label: 'Retry the failed step' }],
+      },
+      onInput: (_text, runtime) => {
+        runtime.stateId = 'awaitBossReply';
+        return { outcome: 'quiescent', state: runtime.state() };
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.' },
+        decisionReply({ action: 'respond', text: 'Waiting on the coder.' }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    await harness.turn('where are we?', 2);
+
+    const decision = harness.decisionPrompts().at(-1) ?? '';
+    expect(decision).toContain(
+      'Leaf /code: state: (this runtime publishes no description of its current state); tags playbook.parked',
+    );
+    expect(decision).not.toContain('awaitBossReply');
+    // The rest of the readable view is unaffected: this is a missing member,
+    // not a failed read.
     expect(decision).toContain('- retry:STEP: Retry the failed step');
   });
 
@@ -3261,6 +3555,93 @@ describe('CAPTAIN-40 injection and prose validation', () => {
     );
     expect(harness.surfaced.at(-1)).toBe('The coding run is under way.');
     expect(JSON.stringify(harness.surfaced)).not.toContain(leakedId);
+  });
+
+  // The state-id half of the same duty. It became a host duty only once the
+  // grounding stopped depending on it: the digest now carries the state's
+  // published description, so no prompt hands the model an id and a
+  // machine-shaped id in visible prose is a leak of something the model was
+  // never given. The set is read from the live stack, never listed.
+  it('refuses a reply carrying a live internal state identifier', async () => {
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [],
+        stateDescription: 'Waiting for Boss to answer a player question.',
+      },
+      onInput: (_text, runtime) => {
+        runtime.stateId = 'awaitBossReply';
+        return { outcome: 'quiescent', state: runtime.state() };
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        decisionReply({
+          action: 'respond',
+          text: 'We are parked in awaitBossReply until you answer.',
+        }),
+        {
+          status: 'ok',
+          finalText: 'We are waiting on your answer to the coder.',
+          resumeToken: 'A3',
+        },
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    // The prompt never carried the id: the digest carries the description.
+    expect(harness.decisionPrompts().join('\n')).not.toContain(
+      'awaitBossReply',
+    );
+    await harness.turn('where are we?', 2);
+
+    const correctives = harness.captainCalls.filter((call) =>
+      call.prompt.includes('[Reply rejected]'),
+    );
+    expect(correctives).toHaveLength(1);
+    expect(correctives[0]?.prompt).toContain(
+      'the reply leaked an internal state identifier',
+    );
+    expect(harness.surfaced.at(-1)).toBe(
+      'We are waiting on your answer to the coder.',
+    );
+    expect(JSON.stringify(harness.surfaced)).not.toContain('awaitBossReply');
+  });
+
+  // The other side of the same rule, and the reason it is not a denylist: a
+  // state id that is an ordinary English word is not rejectable, or plain
+  // speech about a run that failed would be refused for saying so.
+  it('surfaces a reply naming an English-word state id unchanged', async () => {
+    const code = shellEntry('code', 'code', {
+      control: { actions: [], stateDescription: 'Idle hub.' },
+      onInput: (_text, runtime) => {
+        runtime.stateId = 'failed';
+        return { outcome: 'quiescent', state: runtime.state() };
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        decisionReply({
+          action: 'respond',
+          text: 'The last run failed; nothing is ready to commit.',
+        }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    await harness.turn('where are we?', 2);
+
+    expect(
+      harness.captainCalls.filter((call) =>
+        call.prompt.includes('[Reply rejected]'),
+      ),
+    ).toHaveLength(0);
+    expect(harness.surfaced.at(-1)).toBe(
+      'The last run failed; nothing is ready to commit.',
+    );
   });
 });
 
