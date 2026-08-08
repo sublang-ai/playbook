@@ -37,6 +37,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  CAPTAIN_SURFACE_SPECIFIER,
+  checkCligentCaptainSurface,
+} from './cligent-captain-surface.mjs';
+
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const keepArtifacts = process.argv.includes('--keep');
 const maxBuffer = 64 * 1024 * 1024;
@@ -417,7 +422,7 @@ async function main() {
     ['drive the hermetic provisioning run', () => stepHermetic(root, state)],
     ['check Captain artifact integrity', () => stepCaptainArtifact(state)],
     ['check compiled-artifact fidelity', () => stepCompiledFidelity(state)],
-    ['guard the nested cligent floor', () => stepCligentFloor(state)],
+    ['guard the nested cligent floor', () => stepCligentFloor(root, state)],
   ];
 
   const startedAt = Date.now();
@@ -816,7 +821,14 @@ function compareAgainstCommitted(packedPackage, roots) {
 // the dependency bump: the shell's durable conversation needs
 // `CaptainRunResult.resumeToken` and `CaptainContext.emitReply`, and a global
 // install resolves cligent from this nested copy alone.
-function stepCligentFloor(state) {
+//
+// The two members are proven by type-checking one fixture apiece against the
+// nested copy (`scripts/cligent-captain-surface.mjs`), not by searching the
+// installed declarations for their names: `resumeToken` names members of four
+// unrelated cligent declarations and `emitReply` survives in a neighboring
+// record type's doc comment, so a name search stays green with both members
+// deleted from the interfaces the shell actually calls.
+function stepCligentFloor(root, state) {
   const declared = state.packedManifest.dependencies?.['@sublang/cligent'];
   if (typeof declared !== 'string') {
     fail('the packed manifest declares no @sublang/cligent dependency');
@@ -835,35 +847,32 @@ function stepCligentFloor(state) {
       `the installed @sublang/cligent ${installedVersion} does not satisfy ${declared}`,
     );
   }
-  const declarations = [];
-  walkFiles(cligentRoot, (path) => {
-    if (path.endsWith('.d.ts')) declarations.push(path);
+  const surface = checkCligentCaptainSurface({
+    cligentRoot,
+    workRoot: join(root, 'cligent-captain-surface'),
   });
-  const wanted = new Map([
-    ['emitReply', 'CaptainContext.emitReply (DR-029 §Contracts 7 captain speech)'],
-    ['resumeToken', 'CaptainRunResult.resumeToken (DR-029 §Contracts 6 continuity)'],
-  ]);
-  const seen = new Set();
-  for (const path of declarations) {
-    const text = readFileSync(path, 'utf8');
-    for (const name of wanted.keys()) {
-      if (text.includes(name)) seen.add(name);
-    }
-  }
-  const absent = [...wanted].filter(([name]) => !seen.has(name));
-  if (absent.length > 0) {
+  if (!surface.ok) {
     fail(
-      `the installed @sublang/cligent ${installedVersion} ships no ` +
-        absent.map(([name]) => name).join(' or '),
-      `${absent.map(([, what]) => what).join('\n')}\n` +
-        `Scanned ${declarations.length} declaration files under ${cligentRoot}.\n` +
+      `the installed @sublang/cligent ${installedVersion} does not carry ` +
+        (surface.unproven.length > 0
+          ? surface.unproven.map((member) => member.id).join(' or ')
+          : `${CAPTAIN_SURFACE_SPECIFIER} as the shell imports it`),
+      [
+        ...surface.unproven.flatMap((member) => [
+          `${member.id} — ${member.why}`,
+          ...member.diagnostics.map((line) => `  ${line}`),
+        ]),
+        ...surface.otherDiagnostics,
+        `Type-checked against ${surface.specifier} resolved from ${cligentRoot}.`,
+        `Fixtures preserved at ${surface.workRoot}.`,
         'The published release the manifest range admits must carry both ' +
-        'surfaces before this candidate can ship.',
+          'surfaces before this candidate can ship.',
+      ].join('\n'),
     );
   }
   return [
     `nested @sublang/cligent ${installedVersion} satisfies ${declared}`,
-    'shipped declarations carry emitReply and resumeToken',
+    `${surface.specifier} type-checks ${surface.proven.join(' and ')}`,
   ];
 }
 

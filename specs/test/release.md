@@ -251,12 +251,26 @@ unless all of the following hold:
   topology suites each named among those that ran; and
 - the nested installed `@sublang/cligent` satisfies the packed manifest's
   caret range and ships both `CaptainContext.emitReply` and
-  `CaptainRunResult.resumeToken`.
+  `CaptainRunResult.resumeToken`, each proven as a member of its own named
+  interface, reached through `@sublang/cligent/tmux-play` resolved from that
+  nested copy, and usable at the type the shell uses it at.
 
 The last clause is a standing guard, not a formality: the shell's durable
 conversation calls both surfaces, a global install resolves cligent from
 that nested copy alone, and a candidate whose declared range admits only
 releases without them would install and then fail at the first Boss turn.
+
+Because that clause is the whole of the gate's protection against an
+incompatible dependency, the normal `pnpm test` suite shall fail unless the
+check backing it is itself falsifiable: for each of the two members, a
+fixture `@sublang/cligent` that declares the member's own interface without
+it shall make the check fail and name that member, while a scan for the two
+member names over that same fixture's declarations finds both — so a check
+that ever drifts back to matching names rather than resolving members fails
+these rows. The same rows shall cover a member kept under a shape the shell
+cannot call and a package that stops exporting the specifier, and one row
+shall run the check against the repository's own installed cligent, so the
+declared floor is proven compatible without a pack or an install.
 
 Nothing here shall be asserted by recompiling a playbook. The SLC pipeline
 is agentic and its output is not reproducible byte-for-byte from the

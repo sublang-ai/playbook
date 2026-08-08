@@ -332,10 +332,21 @@ step below holds of the packed candidate:
    moved, or deleted fails the gate instead of quietly shrinking it.
 8. **Nested cligent floor.** The nested installed `@sublang/cligent`
    satisfies the caret range the packed manifest declares
-   ([RELEASE-14](#release-14)), and its shipped declarations carry the two
-   surfaces the Playbook Captain shell's durable conversation depends on:
+   ([RELEASE-14](#release-14)), and carries the two surfaces the Playbook
+   Captain shell's durable conversation depends on:
    `CaptainContext.emitReply` and `CaptainRunResult.resumeToken`
    ([DR-029](../decisions/029-session-scoped-conversational-captain.md)).
+   Each shall be proven as a member of its own named interface, reached
+   through the same public specifier the shell imports
+   (`@sublang/cligent/tmux-play`) resolved from that nested copy, and usable
+   at the type the shell uses it at — an awaited `emitReply(text)` and a
+   string-valued `resumeToken`. The occurrence of either name elsewhere in
+   the installed declarations shall not discharge this step: each also occurs
+   away from the interface it must be proven on — on unrelated declarations,
+   and inside doc comments — so a check that searches the shipped text cannot
+   fail for the regression this step exists to catch, and a check that reads
+   one declaration file by path cannot see the `exports` entry the shell
+   resolves through.
    A candidate whose declared range admits only published cligent releases
    without both surfaces shall fail here rather than at a Boss turn.
 

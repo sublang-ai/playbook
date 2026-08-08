@@ -27,7 +27,8 @@ The summary call then claimed success that never happened, and printed `Saved yo
    The Captain playbook runs for the whole shell session and receives every Boss turn; it is never a suspended parent inside the stack.
    The engagement stack holds only the working playbooks; the Captain operates them from outside, so [DR-011](011-composable-playbook-execution.md)'s stack semantics stay intact, and DR-011/DR-012 are amended to name this placement.
    Ownership splits three ways: the Captain playbook owns policy, conversation, and action selection; the shell owns host-level validation and effects — stack, registry, presentation, journal; the active runtime owns validation and execution of `runtime` actions.
-   The `@sublang/playbook/captain/playbook` export stays maintained; nothing is removed or deprecated; no major release is needed.
+   The `@sublang/playbook/captain/playbook` subpath stays maintained and keeps carrying the compiled Captain.
+   Two of its named exports do not survive the rewrite — see [Addendum A2](#addendum-a2-the-rewrite-removes-two-named-exports), which withdraws this paragraph's original claim that nothing is removed and no major release is needed.
 
 2. **One durable Captain conversation per shell session.**
    The root's captain calls resume one conversation; each call's returned resume token replaces the pinned one.
@@ -84,7 +85,7 @@ The implementing IR lists every touched item and carries the detailed contracts.
 
 - G1–G3 hold by construction: one remembered conversation with a journal-backed reseed; replies grounded in reported outcomes; choose, clear, and resume as validated actions against runtime-advertised targets.
 - A chat turn costs one model call; an acting turn costs two, plus bounded correctives.
-- Implementation rewrites the Captain playbook source and recompiles; it is blocked on the two upstream cligent contracts; no public surface is removed.
+- Implementation rewrites the Captain playbook source and recompiles; it is blocked on the two upstream cligent contracts; no subpath, bin, or packed file is removed, but two named exports of the `captain/playbook` subpath are ([Addendum A2](#addendum-a2-the-rewrite-removes-two-named-exports)).
 - Quoted player output inside a durable conversation is a known injection surface; the protections are prompt-level and the residual risk is documented and accepted.
 
 ## Addendum A1 (the ControlView context is a runtime-authored projection)
@@ -107,3 +108,26 @@ Relevance is the runtime's to declare, not the engine's to infer:
 
 This addendum changes what §3's "relevant context" means; it changes nothing about `describe`/`apply` as a pair, their feature detection, the receipt contract, or the compatibility gate.
 Artifacts that exposed context implicitly must now name what they expose, which is a one-line declaration per artifact and the point of the change.
+
+## Addendum A2 (the rewrite removes two named exports)
+
+§1 ended with a release posture: the `captain/playbook` export stays maintained, nothing is removed or deprecated, no major release is needed.
+That was a planning assumption written before the rewrite, and the rewrite disproved it.
+The implementation removed two named exports and the `Removed` section of `CHANGELOG.md` says so, while this record went on claiming the opposite — so the only honest account of a public-surface change lived outside the specs, which is the wrong place for it.
+This addendum withdraws that posture and puts the removal on the record.
+
+The compiled Captain artifact no longer declares `composeCaptainPrompt` or `composePlayerPrompt`.
+Both were named exports of `@sublang/playbook/captain/playbook`, a subpath [RELEASE-20](../dev/release.md#release-20) declares public and semver-stable.
+There is no drop-in replacement, and restoring one would be worse than the removal:
+
+- `composePlayerPrompt` has no meaning under the new machine. The controller Captain makes no player calls at all, so a restored body would describe work the module cannot do.
+- `composeCaptainPrompt` cannot be restored faithfully. The decision prompt is now the shell's labeled Boss / ControlView / catalog envelope ([CAPTAIN-9](../dev/playbook-captain.md#captain-9)) around the engine's shared `defaultComposeCaptainPrompt`. Re-exporting today's builder under the old name would keep an existing caller compiling and hand it prompts for a machine that no longer exists. A shim that silently changes behavior is a worse outcome than a removal stated plainly.
+
+The version number is left open here on purpose.
+It does not follow from this decision; it follows from what the semver-stable *unit* of `./captain/playbook` is, which no item states — the gap that let a breaking removal land against a record claiming none.
+The Boss decides it; the evidence is:
+
+- **For a major.** [RELEASE-1](../dev/release.md#release-1) makes MAJOR the release for breaking changes, and RELEASE-20 declares the subpath public and semver-stable without narrowing that to any part of it. A consumer who imported either function by name breaks with nothing to move to. This is the conservative reading, and the one the `Removed` entry in `CHANGELOG.md` is already written for.
+- **For a minor.** Every item naming this surface names the subpath, never its members: RELEASE-20 pins the subpath, and [RELEASE-21](../test/release.md#release-21) pins only that `exports['./captain/playbook']` is declared. [link.md §Output](../../slc/link.md#output) requires a linked module to expose its prompt composers under `_internal` — which this artifact still does, for `composeCaptainPrompt` — and requires no top-level export of them. The sibling compiled artifacts agree: CODE and DISCUSS both declare `composePlayerPrompt` un-exported and reach it only through `_internal`, so the Captain artifact's top-level pair was one compile's departure from the linker contract rather than a designed API. Neither name appears in `README.md`, in `docs/`, or in any item under `specs/user`, `specs/dev`, or `specs/test`. Under this reading nothing semver-stable was removed.
+
+Whichever reading is taken shall be recorded before the release tag ([RELEASE-4](../dev/release.md#release-4)), and RELEASE-20 shall then state which unit of a compiled-playbook subpath is semver-stable, so the next such removal is decided in advance instead of adjudicated afterwards.
