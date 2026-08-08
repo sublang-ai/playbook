@@ -645,6 +645,13 @@ excluded to included once the live context gains its required input;
 and jump events are sent with textual fields omitted, never with
 invented text (an applied retry replays the recorded payload with no
 classification call).
+It shall further fail unless no advertised label is ever an identifier:
+a registered resumable target whose source publishes no description
+shall not be advertised at all — not advertised under its own target id
+— while a described sibling target the same snapshot accepts still is;
+and a retry whose transition target publishes no description shall be
+labeled from its own source state's description, with neither the target
+id nor the replayed event type appearing in the label.
 Receipts shall fail unless the A29-17 engine-level twins hold against
 real `apply()`: an advertised retry from `failed` settles
 `executed` with the run result; the same `actionId` re-applied after

@@ -2040,9 +2040,17 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 recordedTargetId.trim().length > 0
                 ? recordedTargetId
                 : firstTransitionTarget(machine, stateId, lastBossEvent.type);
+            // PBRT-52: a label is written from a source state description, never
+            // from an identifier. Falling back to the target id — or, with no
+            // resolvable target, to the FSM event type — makes the label *be* the
+            // internal name, which defeats the substitution the label exists for
+            // and puts a machine identifier into Boss-facing text
+            // (CAPPLAY-5). A candidate whose label can only be an id is excluded
+            // exactly like one whose payload cannot be sourced.
             const description = (target === undefined ? undefined : stateDescriptions.get(target)) ??
-                target ??
-                lastBossEvent.type;
+                stateDescriptions.get(stateId);
+            if (description === undefined)
+                return undefined;
             return {
                 action: {
                     id: `retry:${lastBossEvent.type}`,
@@ -2081,10 +2089,17 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const event = { type: JUMP_EVENT_TYPE, targetId };
                 if (!snapshotCan(snapshot, event))
                     continue;
+                // PBRT-52: no published description for the target, no Boss-appropriate
+                // label. A jump cannot borrow another state's meaning without naming
+                // the wrong state, so the entry is not advertised at all rather than
+                // labeled with its own target id.
+                const description = stateDescriptions.get(targetId);
+                if (description === undefined)
+                    continue;
                 derived.push({
                     action: {
                         id: `jump:${targetId}`,
-                        label: `Resume from: ${stateDescriptions.get(targetId) ?? targetId}`,
+                        label: `Resume from: ${description}`,
                     },
                     event,
                 });

@@ -2379,10 +2379,16 @@ describe('CAPTAIN-38 validated actions and command table', () => {
           ? { action: 'respond', text: 'I cannot resume from there.' }
           : { action: 'runtime', actionId: jump };
       },
+      // CAPTAIN-9: the model is handed `jump:planAndImplement` on purpose —
+      // the reply selects by id — so it may well narrate the id back. The
+      // first closing reply does exactly that and must be refused; the
+      // corrective one names the state's meaning instead.
       closing: (prompt) =>
-        prompt.includes('jump:planAndImplement')
-          ? 'Resumed from planAndImplement; the coder has a question.'
-          : 'Nothing was resumed.',
+        prompt.includes('[Reply rejected]')
+          ? 'Resumed the run from where the coder assesses your intent; it now has a question for you.'
+          : prompt.includes('Applied "jump:')
+            ? 'Resumed from planAndImplement; the coder has a question.'
+            : 'Started the run.',
     });
     await harness.init();
     await harness.turn('/code continue IR-036 task 4', 1);
@@ -2398,9 +2404,23 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     const closing = harness.closingPrompts().at(-1) ?? '';
     expect(closing).toContain('Runtime action receipt: executed');
     expect(closing).toContain('- Applied "jump:planAndImplement" on /code.');
-    expect(harness.surfaced.at(-1)).toBe(
-      'Resumed from planAndImplement; the coder has a question.',
+    // The reply that repeated the id the host itself supplied got exactly one
+    // corrective re-ask naming that leak, and only the corrected prose reached
+    // the Boss. A jump target is by construction *not* the active state, so no
+    // live-state check could ever have caught this: the host catches it because
+    // it knows which strings it put into this turn's prompts.
+    const closings = harness.closingPrompts();
+    expect(closings.at(-1)).toContain(
+      'the reply repeated an internal identifier the host supplied for selection only',
     );
+    expect(
+      closings.filter((prompt) => prompt.includes('[Reply rejected]')),
+    ).toHaveLength(1);
+    expect(harness.surfaced.at(-1)).toBe(
+      'Resumed the run from where the coder assesses your intent; it now has a question for you.',
+    );
+    expect(harness.surfaced.join('\n')).not.toContain('planAndImplement');
+    expect(harness.surfaced.join('\n')).not.toContain('jump:');
     // The snapshot landed at the target: the suspension it produced records
     // `planAndImplement` as the state the Boss reply resumes.
     const view = code.runtimes[0]!.describe!();
@@ -2558,6 +2578,54 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     // A refusal spends no closing-reply call and produces no captain speech:
     // the status line is the whole settlement.
     expect(harness.closingPrompts()).toHaveLength(closingsBefore);
+    expect(harness.surfaced).toHaveLength(surfacedBefore);
+  });
+
+  // Round-7 finding 4, seam half. The refusal status line is one of the three
+  // Boss-visible settlements, and it was the only one passing through no
+  // validation at all — while interpolating the most foreign text of the
+  // three: a reason the runtime authored. It now passes the same predicate
+  // captain speech passes, and degrades rather than printing unchecked or
+  // withholding the turn's only settlement.
+  it('degrades a refusal whose runtime reason carries an internal identifier', async () => {
+    const code = shellEntry('code', 'code', {
+      control: {
+        actions: [
+          {
+            id: 'jump:awaitBossReply',
+            label: 'Resume from: the coder waits on your answer',
+          },
+        ],
+        apply: () => ({
+          disposition: 'rejected',
+          // Runtime-authored, and it names the state the advertised id
+          // embeds — a state the machine is by construction *not* in, so no
+          // live-state check could reach it.
+          reason: 'awaitBossReply is not reachable from the current state',
+        }),
+      },
+    });
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.' },
+        decisionReply({ action: 'runtime', actionId: 'jump:awaitBossReply' }),
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const statusesBefore = harness.statuses.length;
+    const surfacedBefore = harness.surfaced.length;
+
+    await harness.turn('resume that step', 2);
+
+    // The settlement is still reached, and it still says a refusal happened
+    // and what to do next — without the unspeakable reason.
+    expect(harness.statuses.slice(statusesBefore)).toEqual([
+      'Cannot do that: that request was refused and nothing was changed. Ask me where things stand and I will report the current state.',
+    ]);
+    expect(harness.statuses.join('\n')).not.toContain('awaitBossReply');
+    // Still a refusal: no closing-reply call, no captain speech.
     expect(harness.surfaced).toHaveLength(surfacedBefore);
   });
 

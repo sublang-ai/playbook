@@ -303,10 +303,12 @@ surface exactly two kinds of validated prose as captain speech
 through cligent `CaptainContext.emitReply`: a `respond` selection's
 `text` and an acting turn's closing reply; a reply carrying control
 JSON, internal control vocabulary, a live session identifier — the
-session Captain's own session id or any engagement frame's — or a live
-internal state identifier of the engagement stack shall not
-be surfaced, and the shell shall read both identifier sets from live
-shell state rather than from a fixed list, so an identifier minted or
+session Captain's own session id or any engagement frame's — a live
+internal state identifier of the engagement stack, or a machine-shaped
+identifier the shell itself placed in one of this turn's prompts shall
+not be surfaced, and the shell shall read all three identifier sets
+from live shell state and from its own record of what it composed this
+turn rather than from a fixed list, so an identifier minted or
 recompiled later is covered without one.
 The state-identifier duty holds only because the grounding no longer
 depends on the identifier: the digest's state line supplies the
@@ -315,14 +317,31 @@ runtime's published state description
 meant to reflect is an id, and an id in a visible reply is text the
 model was never given. An advertised action still carries its id, which
 the decision reply selects by, so the decision prompt does hand the
-model that id. The shell shall therefore take no rejection duty over
-advertised action ids: presence is no evidence of a leak for text the
-host itself supplied, and keeping an action id out of visible prose
-stays an instruction the compiled decision prompt gives the model
-([CAPPLAY-16](captain-playbook.md#capplay-16)). The duty shall stay
+model that id, as it hands it each pending question's id. That the host
+supplied a string is evidence it is not confidential; it is no evidence
+that it is Boss-appropriate, which is the property
+[CAPPLAY-5](../user/captain-playbook.md#capplay-5) and
+[CAPTAIN-34](../user/playbook-captain.md#captain-34) regulate — the
+same shell that composes the outcome report replaces an action id with
+its advertised label there precisely because the id is control data.
+The supplied set shall therefore be rejectable: the exact advertised
+action ids and pending-question ids of this turn's digests, plus the
+fragment each id carries after its `<verb>:` prefix, that grammar being
+one [PBRT-52](playbook-runtime.md#pbrt-52) publishes and the fragment
+being what a reply actually repeats. A `jump:<stateId>` id names a
+state the machine is by construction not in, so no live-state check can
+reach it. This takes no interpretation the shell is not allowed: it is
+a string-identity test over the shell's own supply, exactly the form
+the live-session-id check already takes, and the shell still need not
+know what any id means. Keeping an action id out of visible prose stays
+a compiled-prompt instruction as well
+([CAPPLAY-16](captain-playbook.md#capplay-16)); the host check is what
+makes it verifiable. The duty shall stay
 narrow in the other direction too. The shell
 shall reject only identifiers it can tell apart from ordinary English —
-those carrying an internal capital, digit, underscore, dot, or hyphen —
+those carrying an internal capital, digit, underscore, dot, hyphen, or
+the colon of the `<verb>:<target>` action grammar
+([PBRT-52](playbook-runtime.md#pbrt-52)) —
 and shall not reject a bare lowercase state id such as `ready` or
 `failed`, which Boss may hear in any sentence; keeping even those out
 of visible prose stays that same model instruction.

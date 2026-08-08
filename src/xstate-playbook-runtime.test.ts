@@ -3529,3 +3529,100 @@ describe('parallel-state descriptions over the shared factory (PBRT-52)', () => 
     );
   });
 });
+
+// Round-7 finding 4, producer half. PBRT-52 already required every action
+// label to be "written from the source state descriptions"; both derivation
+// families quietly fell back to an identifier when no description existed —
+// the jump to its own target id, the retry to the target id and then to the
+// FSM event type. That defeats the substitution the label exists for: the
+// controller host names an executed or refused action by its label precisely
+// so no identifier is spoken (CAPTAIN-34), so a label that *is* an identifier
+// makes the substitution a no-op.
+describe('action labels never fall back to an identifier (PBRT-52)', () => {
+  it('does not advertise a jump whose target publishes no description', async () => {
+    const jumpMachine = createMachine({
+      id: 'jm',
+      initial: 'ready',
+      on: {
+        BOSS_INTERRUPT: [
+          {
+            guard: ({ event }) =>
+              (event as { targetId?: string }).targetId === 'described',
+            target: '#described',
+          },
+          {
+            guard: ({ event }) =>
+              (event as { targetId?: string }).targetId === 'undescribed',
+            target: '#undescribed',
+          },
+        ],
+      },
+      states: {
+        ready: { meta: meta('ready') },
+        awaitBossReply: {
+          meta: meta('awaitBossReply'),
+          on: {
+            BOSS_REPLY: [{ target: '#described' }, { target: '#undescribed' }],
+          },
+        },
+        described: { id: 'described', meta: meta('described') },
+        // A resumable target whose source declares no description at all.
+        undescribed: { id: 'undescribed' },
+      },
+    });
+    const createJump = createXStatePlaybookRuntime(jumpMachine, {
+      label: 'jump',
+      snapshotOptions: () => ({}),
+    });
+    const { ports } = makeRecordingPorts();
+    const runtime = createJump({});
+    await runtime.init(makeSession(ports));
+
+    // Both targets are registered resumable states and the live snapshot
+    // accepts both jump events; only the described one is advertised.
+    expect(resumableStateIdsFromMachine(jumpMachine)).toEqual(
+      new Set(['described', 'undescribed']),
+    );
+    const view = runtime.describe!();
+    expect(view.actions).toEqual([
+      { id: 'jump:described', label: 'Resume from: described state' },
+    ]);
+    await runtime.dispose();
+  });
+
+  it('labels a retry from its source description rather than the target id', async () => {
+    const retryMachine = createMachine({
+      id: 'rm',
+      initial: 'ready',
+      states: {
+        ready: { meta: meta('ready'), on: { START: 'failed' } },
+        failed: {
+          meta: meta('failed'),
+          tags: ['playbook.parked'],
+          on: { START: 'plain' },
+        },
+        // The state the retry re-enters publishes nothing, so the only names
+        // available for it are its own id and the replayed event type.
+        plain: {},
+      },
+    });
+    const createRetry = createXStatePlaybookRuntime(retryMachine, {
+      label: 'retry',
+      snapshotOptions: () => ({}),
+      entryEvent: { type: 'START', textField: 'task' },
+    });
+    const { ports } = makeRecordingPorts();
+    const runtime = createRetry({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('do the thing'));
+
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('failed');
+    expect(view.actions).toEqual([
+      { id: 'retry:START', label: 'Retry: failed state' },
+    ]);
+    expect(view.actions[0]!.label).not.toContain('plain');
+    expect(view.actions[0]!.label).not.toContain('START');
+    await runtime.dispose();
+  });
+});

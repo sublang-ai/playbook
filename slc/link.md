@@ -1363,7 +1363,15 @@ descriptions:
 
 A candidate whose event requires a payload the runtime cannot source from
 recorded state shall be excluded from `actions` — `apply` never invents free
-text and never enters Boss-input classification.
+text and never enters Boss-input classification. A candidate whose *label*
+could only be an identifier is excluded on the same terms: a label never falls
+back to a target id or to the replayed event type, because a controller host
+names an executed or refused action by its label and never by its id, so an
+identifier used as a label defeats that substitution. A jump whose target
+publishes no description is therefore not advertised — borrowing another
+state's description would name the wrong state — and a retry falls back from
+its target's description to its own source state's, and is not advertised when
+neither exists.
 
 `apply({ actionId, key, signal })` shall revalidate the action against the
 live state and settle `{ disposition: 'rejected', reason }` with no effect

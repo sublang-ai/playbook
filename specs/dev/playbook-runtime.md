@@ -869,6 +869,19 @@ whose event requires a payload the
 runtime cannot source from recorded state shall be excluded — `apply`
 shall never invent free text and shall never enter Boss-input
 classification.
+A label shall never fall back to an identifier, and a candidate whose
+label could only be one shall be excluded on the same terms as one whose
+payload cannot be sourced. The label is the only Boss-facing name the
+action has: a controller host is required to name an executed or refused
+action by it and never by the action id
+([CAPTAIN-34](../user/playbook-captain.md#captain-34)), so a label that
+*is* the target id or the replayed event type makes that substitution a
+no-op and puts a machine identifier into Boss-facing text
+([CAPPLAY-5](../user/captain-playbook.md#capplay-5)). A jump whose
+target publishes no description shall therefore not be advertised —
+borrowing another state's description would name the wrong state — and a
+retry shall fall back from its target's description to its own source
+state's, and shall not be advertised when neither exists.
 `apply({ actionId, key, signal })` shall revalidate against the live
 state and settle `{ disposition: 'rejected', reason }` with no effect
 when the action is not currently advertised; an accepted action shall

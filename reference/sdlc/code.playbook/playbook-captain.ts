@@ -262,6 +262,15 @@ interface ActiveTurn {
    */
   readonly effectThrows: Set<unknown>;
   /**
+   * The machine-shaped identifiers the shell itself put into this turn's
+   * prompts — the advertised action ids of every digest it composed, the
+   * `<verb>:<target>` fragment each carries, and the pending questions' ids.
+   * CAPTAIN-9 forbids them in Boss-visible text; the host supplied them, so
+   * the host can recognize them by string identity without interpreting what
+   * any of them means.
+   */
+  readonly suppliedIdentifiers: Set<string>;
+  /**
    * CAPTAIN-35: an `action` record is written and its `outcome` record is still
    * owed. The pair is closed by the settlement writer even when the effect
    * throws between them, so a reseeded conversation is never shown an action
@@ -429,13 +438,18 @@ const CONTROL_VOCABULARY: readonly RegExp[] = [
 
 /**
  * Whether an identifier is one the host can tell apart from ordinary English.
- * An internal capital, digit, underscore, dot, or hyphen has one source and no
- * place in chat prose; a bare lowercase word such as `ready`, `failed`, or
- * `done` is a word Boss may hear in any sentence, and refusing a reply for
+ * An internal capital, digit, underscore, dot, hyphen, or colon has one source
+ * and no place in chat prose; a bare lowercase word such as `ready`, `failed`,
+ * or `done` is a word Boss may hear in any sentence, and refusing a reply for
  * containing it would refuse plain speech. Only the former is rejectable.
+ *
+ * The colon belongs to the same list because PBRT-52's advertised-action
+ * grammar is `<verb>:<target>`: without it, `jump:ready` — an identifier by
+ * construction — would read as ordinary English while its own fragment is
+ * correctly left alone.
  */
 function machineShapedIdentifier(id: string): boolean {
-  return id.length >= 3 && /[A-Z0-9_.-]/.test(id);
+  return id.length >= 3 && /[A-Z0-9_.:-]/.test(id);
 }
 
 /**
@@ -448,18 +462,27 @@ function machineShapedIdentifier(id: string): boolean {
  * The ControlView now publishes the state's *description* and the digest's
  * state line carries that (PBRT-52), so nothing a status answer is meant to
  * reflect is an identifier and an id in a visible reply is text the model was
- * never given. Advertised action ids are the opposite case and are checked
- * nowhere here: the digest hands them to the model deliberately, because the
- * decision reply selects by id, so their presence is no evidence of a leak —
- * keeping them out of visible prose is the compiled prompt's instruction
- * (CAPPLAY-16), not something the host can decide. It stays narrow in the
- * other direction too: it never grows a list of literals, and it never
- * refuses an English word that happens to also name a state.
+ * never given.
+ *
+ * Advertised action ids and pending-question ids are the third set, and they
+ * are the reason the duty cannot stop at the live ones. The digest hands the
+ * model those ids deliberately — the decision reply selects by one — but that
+ * they are not *confidential* is no evidence that they are Boss-appropriate,
+ * and CAPPLAY-5 regulates the latter. A jump id embeds a state the machine is
+ * by construction not in, so no live-state check can ever reach it. The host
+ * knows exactly which strings it supplied this turn, and rejecting one is a
+ * string-identity test rather than an interpretation: the shell still need not
+ * know that `jump:` means jump or that its tail names a state.
+ *
+ * It stays narrow in the other direction too: it never grows a list of
+ * literals, and it never refuses an English word that happens to also name a
+ * state.
  */
 function proseRejection(
   prose: string | undefined,
   liveSessionIds: readonly string[] = [],
   liveStateIds: readonly string[] = [],
+  suppliedIds: readonly string[] = [],
 ): string | undefined {
   if (prose === undefined || prose.trim().length === 0) {
     return 'the reply carried no text';
@@ -477,6 +500,11 @@ function proseRejection(
   for (const stateId of liveStateIds) {
     if (prose.includes(stateId)) {
       return 'the reply leaked an internal state identifier';
+    }
+  }
+  for (const suppliedId of suppliedIds) {
+    if (prose.includes(suppliedId)) {
+      return 'the reply repeated an internal identifier the host supplied for selection only';
     }
   }
   return undefined;
@@ -2053,12 +2081,12 @@ export function createPlaybookCaptainShell(
       )}`,
     );
     lines.push(...leafContextLines(view.context));
-    const pending = view.pendingQuestions.map(
-      (question) =>
-        `- (${quoteEvidence(question.questionId)}) ${quoteEvidence(
-          question.player,
-        )} asks: ${quoteEvidence(question.question)}`,
-    );
+    const pending = view.pendingQuestions.map((question) => {
+      recordSuppliedIdentifier(question.questionId);
+      return `- (${quoteEvidence(question.questionId)}) ${quoteEvidence(
+        question.player,
+      )} asks: ${quoteEvidence(question.question)}`;
+    });
     lines.push(
       pending.length === 0
         ? 'Pending Boss questions: none.'
@@ -2077,7 +2105,10 @@ export function createPlaybookCaptainShell(
         ? 'Advertised actions: none.'
         : [
             'Advertised actions:',
-            ...view.actions.map((action) => `- ${action.id}: ${action.label}`),
+            ...view.actions.map((action) => {
+              recordSuppliedIdentifier(action.id);
+              return `- ${action.id}: ${action.label}`;
+            }),
           ].join('\n'),
     );
     return lines.join('\n');
@@ -2195,12 +2226,42 @@ export function createPlaybookCaptainShell(
     return [...identifiers].filter(machineShapedIdentifier);
   };
 
+  // CAPTAIN-9: the machine-shaped identifiers this turn's prompts carried
+  // because the shell put them there. `<verb>:<target>` is the id grammar
+  // PBRT-52 publishes, so the fragment after the first colon is supplied text
+  // just as literally as the whole id — and it is the half a reply actually
+  // repeats, since the model narrates "resumed from planAndImplement" rather
+  // than quoting `jump:planAndImplement`. Read from the turn's own record of
+  // what it composed, never from a literal list.
+  const suppliedIdentifiers = (): readonly string[] =>
+    [...(activeTurn?.suppliedIdentifiers ?? [])].filter(
+      machineShapedIdentifier,
+    );
+
+  // Records one identifier the shell is about to hand the model. Called where
+  // the digest is composed, so an identifier reaches a prompt and this set in
+  // the same statement and cannot reach one without the other.
+  const recordSuppliedIdentifier = (id: string): void => {
+    const turn = activeTurn;
+    if (!turn || id.length === 0) return;
+    turn.suppliedIdentifiers.add(id);
+    const colon = id.indexOf(':');
+    if (colon > 0 && colon < id.length - 1) {
+      turn.suppliedIdentifiers.add(id.slice(colon + 1));
+    }
+  };
+
   // The one predicate every Boss-visible settlement passes, host-authored or
   // model-authored, captain speech or refusal status line, so a rule added to
   // `proseRejection` reaches every text the shell can surface rather than only
   // the ones whose call site remembered to pass the new argument.
   const replyRejection = (prose: string | undefined): string | undefined =>
-    proseRejection(prose, liveSessionIdentifiers(), liveStateIdentifiers());
+    proseRejection(
+      prose,
+      liveSessionIdentifiers(),
+      liveStateIdentifiers(),
+      suppliedIdentifiers(),
+    );
 
   // -------------------------------------------------------------------------
   // The durable conversation (CAPTAIN-31, CAPTAIN-35).
@@ -3074,12 +3135,21 @@ export function createPlaybookCaptainShell(
       );
     }
     if (advertised === undefined) {
+      // CAPPLAY-5: the chosen id is control data whether or not the leaf
+      // advertises it, and echoing it teaches the Boss nothing. The refusal
+      // names the leaf and the fact; which string the model picked is the
+      // model's business and stays in the trace.
       return rejectSelection(
         selection,
-        `${frameLabel(leaf)} does not advertise the action "${actionId}"`,
+        `${frameLabel(leaf)} does not advertise that action`,
       );
     }
     const actionLabel = advertised.label;
+    // The id the digest advertised and the reply selected by is now also the
+    // id this turn's outcome-report facts carry (CAPTAIN-9): recording it here
+    // keeps the closing-reply prompt's copy inside the same supplied set the
+    // reply is checked against, whatever the leaf advertises by then.
+    recordSuppliedIdentifier(actionId);
     turn.settled = true;
     journalAction({
       action: 'runtime',
@@ -3325,6 +3395,7 @@ export function createPlaybookCaptainShell(
         ...(parsed ? { resolution: parsed.resolution } : {}),
         settled: false,
         effectThrows: new Set<unknown>(),
+        suppliedIdentifiers: new Set<string>(),
       };
       decisionCall = undefined;
       appendJournal('boss', turn.prompt);

@@ -647,6 +647,21 @@ either — and unless a reply naming a live state id that is an ordinary
 English word (`failed`, `ready`) is surfaced unchanged with no
 corrective at all, the duty being narrow by construction rather than a
 list of literals.
+The suite shall fail unless the refusal status line passes this same
+validation, being a Boss-visible settlement like the other two: with the
+runtime's refusal reason naming the internal state its advertised jump
+id embeds, the line shall degrade to the fact-free refusal — stating
+that the request was refused, that nothing changed, and the next step —
+with the identifier absent from the Boss surface, no closing-reply call
+spent, and no captain speech surfaced.
+The suite shall fail unless the same holds for a machine-shaped
+identifier the host itself supplied this turn, which no live-state check
+can reach: with the real CODE artifact parked in its failure state and
+the digest advertising `jump:<stateId>`, a closing reply repeating that
+target name shall get exactly one corrective re-ask naming the repeated
+supplied identifier, only the corrected prose shall reach the Boss
+surface, and neither the id nor its `<verb>:`-stripped fragment shall
+appear in any surfaced reply.
 The shell's own composition of the ControlView block shall be pinned
 against whatever a runtime exports: the suite shall fail unless each
 exported context member appears as its own line carrying its name and
