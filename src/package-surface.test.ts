@@ -2,7 +2,13 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -694,9 +700,69 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   // `PlaybookRuntimeOptions.controller`, which every host must satisfy to
   // construct the runtime. Removing one breaks a consumer at compile time,
   // which is the same release event by a different mechanism.
+  //
+  // *Which* subpaths are pinned is derived from the manifest rather than
+  // listed, because a literal list is the same bug one level up. Four
+  // subpaths were named here while `./xstate-runtime` — a public,
+  // semver-stable surface by RELEASE-15, with `createXStatePlaybookRuntime`
+  // and `RUNTIME_ABI` on it — sat outside the gate entirely, along with
+  // `./code/playbook`, `./playbook-captain`, and `./discuss/playbook`. Adding
+  // the missing name would have repeated the mistake; deriving the set makes
+  // a subpath added to `package.json` go red until it is recorded.
+  const UNPINNABLE_SUBPATHS: Record<string, string> = {
+    './slc/*':
+      'a wildcard directory mapping to authored specs, not a module with an export set',
+  };
+
+  const publicSubpaths = (): string[] =>
+    Object.keys(manifest.exports)
+      .filter((subpath) => !(subpath in UNPINNABLE_SUBPATHS))
+      .sort();
+
   const PUBLIC_MODULE_EXPORTS: Record<string, readonly string[]> = {
     './runtime': [],
+    './xstate-runtime': [
+      'BOSS_REPLY_ERRORS',
+      'NestedPlaybookCallError',
+      'RUNTIME_ABI',
+      'SUPPORTED_ARTIFACT_SCHEMAS',
+      'activePlaybookStateMetadata',
+      'adjudicatePlayerOutput',
+      'assertJsonSafe',
+      'assertPlaybookRuntimeSnapshot',
+      'combineAbortSignals',
+      'createNestedPlaybookBridge',
+      'createPlayerBridge',
+      'createXStatePlaybookRuntime',
+      'defaultBuildCaptainJudgePrompt',
+      'defaultBuildJudgePrompt',
+      'defaultComposeCaptainPrompt',
+      'defaultComposePlayerPrompt',
+      'defaultExtractRequiredFields',
+      'defaultResolvePlayerId',
+      'detachPersistedMachineSnapshot',
+      'extractJsonValue',
+      'hiddenControlEnvelope',
+      'normalizeError',
+      'normalizeErrorCompact',
+      'normalizeErrorFull',
+      'normalizePlaybookSnapshot',
+      'parseJudgeJson',
+      'pendingBossQuestionFromContext',
+      'registerPlaybookAbortCleanup',
+      'resumableStateIdsFromMachine',
+      'snapshotJsonValue',
+      'snapshotPlaybookSession',
+      'stateDescriptionsFromMachine',
+      'stripCodeFence',
+      'validateCaptainResult',
+      'validatePlaybookCallResult',
+      'validatePlaybookCallStart',
+      'validatePlayerResult',
+      'waitForPlaybookQuiescence',
+    ],
     './captain/playbook': ['_internal', 'createPlaybookRuntime', 'default'],
+    './code/playbook': ['_internal', 'default'],
     './code/registry': [
       'codeCopyPasteGuardNames',
       'codePlaybookRegistryEntry',
@@ -707,6 +773,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'default',
       'validateCodeOptions',
     ],
+    './playbook-captain': ['createPlaybookCaptainShell', 'default'],
+    './discuss/playbook': ['_internal', 'createPlaybookRuntime', 'default'],
     './discuss/registry': [
       'createDiscussRuntimeOptions',
       'default',
@@ -746,6 +814,75 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlayerCallOptions',
       'PlayerResult',
     ],
+    // Reached through the one resolved wildcard in the package: this file
+    // re-exports the engine module whole, so the engine's declarations are
+    // part of this subpath's semver-stable surface and are recorded here.
+    './xstate-runtime': [
+      'BOSS_REPLY_ERRORS',
+      'JudgePurpose',
+      'NestedPlaybookBridge',
+      'NestedPlaybookBridgeOptions',
+      'NestedPlaybookCallError',
+      'NestedPlaybookInput',
+      'PendingCallObserver',
+      'PlaybookActorOutput',
+      'PlaybookCallFinished',
+      'PlaybookCallStarted',
+      'PlaybookCaptainInput',
+      'PlaybookPendingBossQuestionContext',
+      'PlaybookPlayerInput',
+      'PlaybookScriptInput',
+      'PlaybookStateMetadata',
+      'PlayerAdjudicationSpec',
+      'PlayerBridgeSpec',
+      'RUNTIME_ABI',
+      'RuntimeBoundaryCalls',
+      'SUPPORTED_ARTIFACT_SCHEMAS',
+      'ScheduledStatus',
+      'SnapshotNormalizationOptions',
+      'WaitForPlaybookQuiescenceOptions',
+      'XStateBossEventFieldSpec',
+      'XStateBossEventSpec',
+      'XStateCaptainCallOptions',
+      'XStateCaptainStrategy',
+      'XStateCaptainStrategyRun',
+      'XStatePlaybookRuntimeCompat',
+      'XStatePlaybookRuntimeSpec',
+      'activePlaybookStateMetadata',
+      'adjudicatePlayerOutput',
+      'assertJsonSafe',
+      'assertPlaybookRuntimeSnapshot',
+      'combineAbortSignals',
+      'createNestedPlaybookBridge',
+      'createPlayerBridge',
+      'createXStatePlaybookRuntime',
+      'defaultBuildCaptainJudgePrompt',
+      'defaultBuildJudgePrompt',
+      'defaultComposeCaptainPrompt',
+      'defaultComposePlayerPrompt',
+      'defaultExtractRequiredFields',
+      'defaultResolvePlayerId',
+      'detachPersistedMachineSnapshot',
+      'extractJsonValue',
+      'hiddenControlEnvelope',
+      'normalizeError',
+      'normalizeErrorCompact',
+      'normalizeErrorFull',
+      'normalizePlaybookSnapshot',
+      'parseJudgeJson',
+      'pendingBossQuestionFromContext',
+      'registerPlaybookAbortCleanup',
+      'resumableStateIdsFromMachine',
+      'snapshotJsonValue',
+      'snapshotPlaybookSession',
+      'stateDescriptionsFromMachine',
+      'stripCodeFence',
+      'validateCaptainResult',
+      'validatePlaybookCallResult',
+      'validatePlaybookCallStart',
+      'validatePlayerResult',
+      'waitForPlaybookQuiescence',
+    ],
     './captain/playbook': [
       'CaptainCallOptions',
       'CaptainControllerInput',
@@ -783,6 +920,31 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'createPlaybookRuntime',
       'default',
     ],
+    './code/playbook': [
+      'CaptainCallOptions',
+      'CaptainResult',
+      'CodePlaybookOptions',
+      'JsonValue',
+      'NormalizedError',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+      '_internal',
+      'default',
+    ],
     './code/registry': [
       'CodeOptions',
       'CodePlaybookRegistryEntry',
@@ -798,6 +960,39 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'default',
       'validateCodeOptions',
     ],
+    './playbook-captain': [
+      'CreatePlaybookRuntimeOptions',
+      'PlaybookCaptainDeps',
+      'PlaybookCaptainRegistryEntry',
+      'createPlaybookCaptainShell',
+      'default',
+    ],
+    './discuss/playbook': [
+      'CaptainCallOptions',
+      'CaptainResult',
+      'JsonValue',
+      'NormalizedError',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeOptions',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+      '_internal',
+      'createPlaybookRuntime',
+      'default',
+    ],
     './discuss/registry': [
       'CreateDiscussRuntimeOptions',
       'DiscussOptions',
@@ -811,6 +1006,19 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     ],
   };
 
+  it('pins every public subpath the manifest declares', () => {
+    const pinned = publicSubpaths();
+    expect(Object.keys(PUBLIC_MODULE_EXPORTS).sort()).toEqual(pinned);
+    expect(Object.keys(PUBLIC_DECLARATION_EXPORTS).sort()).toEqual(pinned);
+    // An exclusion is a recorded decision with a stated reason, not a gap.
+    for (const [subpath, reason] of Object.entries(UNPINNABLE_SUBPATHS)) {
+      expect(manifest.exports, `${subpath} is no longer declared`).toHaveProperty(
+        subpath,
+      );
+      expect(reason.length).toBeGreaterThan(0);
+    }
+  });
+
   // Every top-level export a declaration file declares: value declarations
   // (`export declare function|const|class|let|var|enum|namespace`), type
   // declarations (`export interface|type`, with or without `declare`), the
@@ -821,10 +1029,10 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     for (const match of dts.matchAll(
       /^export\s+(?:declare\s+)?(?:abstract\s+)?(?:function|const|class|let|var|enum|namespace|interface|type)\s+(\w+)/gm,
     )) {
-      declared.add(match[1]);
+      declared.add(match[1]!);
     }
     for (const match of dts.matchAll(/^export\s+(?:type\s+)?\{([\s\S]*?)\}/gm)) {
-      for (const entry of match[1].split(',')) {
+      for (const entry of match[1]!.split(',')) {
         const raw = entry.trim().replace(/^type\s+/, '');
         if (raw.length === 0) continue;
         const parts = raw.split(/\s+as\s+/);
@@ -835,14 +1043,59 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     return [...declared].sort();
   }
 
-  const declarationSourceOf = (subpath: string): string =>
-    readFileSync(
-      new URL(
-        `../${(manifest.exports[subpath] as { types: string }).types}`,
-        import.meta.url,
-      ),
-      'utf8',
+  /**
+   * Wildcard re-exports, in both the value form and the `export type *` form
+   * TypeScript 5.0 added. The type form is the one that matters in a
+   * *declaration* file, and the gate used to reject only the value form —
+   * `export type * from './x.js'` matched neither the rejection nor the
+   * extractor, so it added an unbounded type surface with every row green.
+   *
+   * A wildcard whose target is a relative path inside the package is resolved
+   * and enumerated, so the re-exported names are recorded like any others. One
+   * that is not — a bare package specifier, or a relative target that is
+   * missing — is what no single-file enumeration can resolve, and it fails.
+   */
+  const WILDCARD_REEXPORT = /^export\s+(?:type\s+)?\*\s+from\s+'([^']+)';/gm;
+
+  function resolveDeclarationExports(
+    file: URL,
+    seen: ReadonlySet<string> = new Set(),
+  ): string[] {
+    const href = file.href;
+    if (seen.has(href)) return [];
+    const dts = readFileSync(file, 'utf8');
+    const names = new Set(declaredExports(dts));
+    for (const match of dts.matchAll(WILDCARD_REEXPORT)) {
+      const specifier = match[1]!;
+      if (!specifier.startsWith('.')) {
+        throw new Error(
+          `${href} re-exports by wildcard from "${specifier}", which no single-file enumeration can resolve`,
+        );
+      }
+      const target = new URL(specifier.replace(/\.js$/, '.d.ts'), file);
+      if (!existsSync(target)) {
+        throw new Error(
+          `${href} re-exports by wildcard from "${specifier}", whose declaration file is missing`,
+        );
+      }
+      for (const name of resolveDeclarationExports(
+        target,
+        new Set([...seen, href]),
+      )) {
+        names.add(name);
+      }
+    }
+    return [...names].sort();
+  }
+
+  const declarationUrlOf = (subpath: string): URL =>
+    new URL(
+      `../${(manifest.exports[subpath] as { types: string }).types}`,
+      import.meta.url,
     );
+
+  const declarationSourceOf = (subpath: string): string =>
+    readFileSync(declarationUrlOf(subpath), 'utf8');
 
   it.each(Object.entries(PUBLIC_MODULE_EXPORTS))(
     '%s declares exactly its recorded JavaScript exports',
@@ -858,14 +1111,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   it.each(Object.entries(PUBLIC_DECLARATION_EXPORTS))(
     '%s declares exactly its recorded declaration exports',
     (subpath, expected) => {
-      const dts = declarationSourceOf(subpath);
-      // A wildcard re-export cannot be enumerated from one file, so a subpath
-      // that grows one would be silently unpinned rather than red. Fail on it
-      // instead, so adding one is a decision rather than a gap.
-      expect(dts, `${subpath} re-exports by wildcard`).not.toMatch(
-        /^export\s+\*/m,
+      expect(resolveDeclarationExports(declarationUrlOf(subpath))).toEqual(
+        [...expected].sort(),
       );
-      expect(declaredExports(dts)).toEqual([...expected].sort());
     },
   );
 
@@ -931,6 +1179,50 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(declaredExports(without)).not.toContain(name);
     expect(declaredExports(without)).not.toEqual(recorded);
   });
+
+  // RELEASE-21's wildcard clause, in both forms. A wildcard the resolver can
+  // follow contributes its names, so growing one cannot enlarge a pinned
+  // surface silently; one it cannot follow fails, so it cannot be used to slip
+  // past the pin either.
+  it.each(['export *', 'export type *'])(
+    'refuses an unresolvable `%s` re-export in a pinned declaration file',
+    (form) => {
+      const scratch = mkdtempSync(join(tmpdir(), 'playbook-wildcard-'));
+      try {
+        const file = join(scratch, 'entry.d.ts');
+        writeFileSync(file, `${form} from '@somewhere/else';\n`);
+        expect(() =>
+          resolveDeclarationExports(new URL(`file://${file}`)),
+        ).toThrow(/no single-file enumeration can resolve/);
+        writeFileSync(file, `${form} from './missing.js';\n`);
+        expect(() =>
+          resolveDeclarationExports(new URL(`file://${file}`)),
+        ).toThrow(/declaration file is missing/);
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each(['export *', 'export type *'])(
+    'enumerates a resolvable `%s` re-export rather than ignoring it',
+    (form) => {
+      const scratch = mkdtempSync(join(tmpdir(), 'playbook-wildcard-'));
+      try {
+        writeFileSync(
+          join(scratch, 'inner.d.ts'),
+          'export interface Hidden {\n    member: string;\n}\n',
+        );
+        const file = join(scratch, 'entry.d.ts');
+        writeFileSync(file, `${form} from './inner.js';\n`);
+        expect(resolveDeclarationExports(new URL(`file://${file}`))).toEqual([
+          'Hidden',
+        ]);
+      } finally {
+        rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('packs the launcher and code.registry artifacts and not the retired files', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));

@@ -219,12 +219,22 @@ among the packed contents.
 The test suite shall additionally pin the semver-stable unit of each
 public subpath rather than only the subpath entry: it shall fail unless
 the top-level named and default exports of the JavaScript and
-declaration files behind `exports['./runtime']`,
-`exports['./captain/playbook']`,
-`exports['./code/registry']`, and `exports['./discuss/registry']` are
-exactly the recorded sets, so removing or renaming one goes red at the
-gate and is decided as a [RELEASE-1](../dev/release.md#release-1)
-release event before the tag rather than adjudicated after it.
+declaration files behind every public subpath are exactly the recorded
+sets, so removing or renaming one goes red at the gate and is decided as
+a [RELEASE-1](../dev/release.md#release-1) release event before the tag
+rather than adjudicated after it.
+Which subpaths those are shall be derived from `package.json`'s
+`exports` map minus a recorded exclusion carrying its reason, and the
+suite shall fail unless the recorded sets cover exactly that derivation.
+An enumeration written here is the same defect one level up: it named
+four subpaths while `exports['./xstate-runtime']` — public and
+semver-stable by [RELEASE-15](../dev/release.md#release-15) — was
+unpinned along with `exports['./code/playbook']`,
+`exports['./playbook-captain']`, and `exports['./discuss/playbook']`,
+and a fifth name added here would have left the sixth to the next
+reviewer. Deriving it turns a subpath added to the manifest red until it
+is recorded. `exports['./slc/*']` is the recorded exclusion: a wildcard
+directory mapping to authored specs, not a module with an export set.
 The JavaScript and declaration sets shall be recorded separately, since
 one recorded set cannot describe both: a declaration file exports types
 the JavaScript module has no key for, so a single set forces the
@@ -237,9 +247,18 @@ it must catch: the suite shall fail unless removing an exported
 interface, an exported type alias, a name from an `export type { … }`
 re-export list, and an exported declared value each changes the recorded
 declaration set, so a check that silently stops seeing one of them turns
-those rows red. It shall also fail on a wildcard re-export in a pinned
-declaration file, which no single-file enumeration can resolve and would
-otherwise leave that subpath unpinned without going red.
+those rows red.
+A wildcard re-export in a pinned declaration file shall leave nothing
+unpinned, in the `export *` form and in the `export type *` form alike —
+the latter being the one that matters in a declaration file, and the one
+a rejection written for the former neither rejects nor enumerates, so a
+type wildcard added an unbounded type surface with every row green. Where
+the wildcard names a relative target inside the package the suite shall
+resolve it and enumerate the re-exported names into that subpath's
+recorded set, so growing one cannot enlarge a public surface silently;
+where it names anything else the suite shall fail, that being the case no
+enumeration can resolve. Both dispositions shall be proven for both
+forms.
 Members reached only through an `_internal` export shall not be pinned.
 
 ## Local release smoke
