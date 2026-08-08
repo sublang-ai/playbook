@@ -459,14 +459,18 @@ by the landed [PBRT-53](playbook-runtime.md#pbrt-53) rows — a
 guard-refused target excluded from `describe()` and included once
 the live context allows, and `apply()` of an id not currently
 advertised settling `rejected` before any effect.
-Shared-factory entry into a `type: 'parallel'` state is explicit
-future scope, not verified by this item: the shared factory's
-scalar-state contract rejects a parallel snapshot and no shipping
-artifact needs one (CODE and the session Captain are scalar; DISCUSS
-keeps its bespoke runtime), so the
+The covering form of the
 [CAPTAIN-9](../dev/playbook-captain.md#captain-9) parallel-digest
-clause carries no hermetic row until a parallel-capable
-control-surface runtime exists.
+clause carries no hermetic row here: the shared factory admits at most
+one active `meta.playbook` state id per snapshot, so a state whose every
+region publishes a description is unreachable through it, and no runtime
+with a control surface enters a parallel state (CODE and the session
+Captain are scalar; DISCUSS declares one and keeps a bespoke runtime
+with no control surface, so it takes the degraded path). The reachable
+half — a parallel state one of whose regions publishes no description,
+which the factory does admit — is engine-pinned by
+[PBRT-53](playbook-runtime.md#pbrt-53), together with the refusal that
+bounds the other half.
 The suite shall fail unless a full Boss turn through the real shell
 and real CODE artifact with a scripted empty-then-text player
 recovers with normal lifecycle markers and exactly one turn summary,

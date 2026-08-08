@@ -1094,6 +1094,14 @@ export function resumableStateIdsFromMachine(
 const JUMP_EVENT_TYPE = 'BOSS_INTERRUPT';
 
 /**
+ * How a multi-region `stateDescription` joins its per-region descriptions
+ * (PBRT-52). Region *names* are internal state ids and never appear; only the
+ * published meanings do, in the deterministic order of the normalized state
+ * value.
+ */
+const PARALLEL_REGION_SEPARATOR = ' | ';
+
+/**
  * Source state descriptions by state key, node id, and `meta.playbook`
  * state id, read from `machine.config`. Control actions are labeled from
  * these descriptions (DR-029 §3); a state without one falls back to its id.
@@ -2989,7 +2997,38 @@ export function createXStatePlaybookRuntime<TOptions>(
     // rather than leaving the host to substitute the identifier for it. A
     // state whose source declares no description publishes none: an id is
     // never promoted into a description by default.
+    // The active regions of a normalized state value, leaf-most first and in a
+    // deterministic order. An object node with more than one key is a region
+    // set (a `type: 'parallel'` state) and each key contributes its own leaf;
+    // an object node with a single key is ordinary hierarchy and contributes
+    // one. The same value therefore always yields the same regions.
+    function activeRegionKeys(value: PlaybookState['value']): string[] {
+      if (typeof value === 'string') return [value];
+      const keys = Object.keys(value).sort();
+      if (keys.length === 0) return [];
+      return keys.flatMap((key) => activeRegionKeys(value[key]!));
+    }
+
     function stateDescriptionFor(state: PlaybookState): string | undefined {
+      // CAPTAIN-9 / PBRT-52: while the machine occupies a `type: 'parallel'`
+      // state, the published description covers *every* active region. Picking
+      // the first match would state one region's meaning as if it were the
+      // whole state — the same false statement to the controller host as
+      // substituting an id for a description, and one the host cannot detect,
+      // since all it receives is a single string. A region that publishes no
+      // description leaves the whole state unpublished rather than silently
+      // narrowing the line to the regions that did: "a description per active
+      // region" is satisfiable or it is not.
+      const regions = activeRegionKeys(state.value);
+      if (regions.length > 1) {
+        const described: string[] = [];
+        for (const key of regions) {
+          const description = stateDescriptions.get(key);
+          if (description === undefined) return undefined;
+          described.push(description);
+        }
+        return described.join(PARALLEL_REGION_SEPARATOR);
+      }
       const keys = [
         ...(state.stateId === undefined ? [] : [state.stateId]),
         ...(typeof state.value === 'string' ? [state.value] : []),

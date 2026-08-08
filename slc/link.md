@@ -1308,7 +1308,14 @@ status answer, and an internal state id is not text a reply may repeat, so the
 runtime publishes the meaning rather than leaving the host to substitute the
 identifier for it. A state whose source declares no description carries no
 `stateDescription`: an id is never promoted into a description, so a host is
-never handed an identifier dressed as meaning.
+never handed an identifier dressed as meaning. While more than one region is
+active — a `type: 'parallel'` state — the statement covers every active
+region, one published description per region in a deterministic order taken
+from the normalized state value, and carries no region name, which is itself a
+state id; where any active region publishes none, the state publishes none,
+since the carrier is one string the host cannot inspect for completeness and a
+single region's description returned as the whole would be a false statement it
+cannot detect.
 
 The view's `context` is an explicit projection the linked runtime **authors**,
 never an allow-by-default serialization of the FSM context (DR-029 Addendum

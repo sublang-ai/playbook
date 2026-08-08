@@ -3413,3 +3413,119 @@ describe('control surface over the shared factory (DR-029 §3 / PBRT-52 / PBRT-5
     await restored.dispose();
   });
 });
+
+// Round-7 finding 5. `stateDescription` is the *only* carrier a controller
+// host has for what the machine is doing — one string, which the host cannot
+// inspect for completeness. While more than one region is active, returning
+// the first region's description states a fraction as if it were the whole,
+// and the host publishes it verbatim to its model. The representation is
+// fixed here, while the v5 control contract is still being set.
+describe('parallel-state descriptions over the shared factory (PBRT-52)', () => {
+  // Reachable today: a parallel state in which exactly one active state
+  // declares `meta.playbook`. The factory admits it — its one-playbook-state-id
+  // rule is satisfied — and the old pick-first reading published that one
+  // region's meaning as the meaning of the whole state.
+  const partlyDescribed = createMachine({
+    id: 'partly',
+    initial: 'ready',
+    states: {
+      ready: {
+        meta: { playbook: { stateId: 'ready', description: 'ready state' } },
+        on: { SPLIT: 'split' },
+      },
+      split: {
+        type: 'parallel',
+        states: {
+          left: {
+            initial: 'leftIdle',
+            states: {
+              leftIdle: {
+                meta: {
+                  playbook: {
+                    stateId: 'leftIdle',
+                    description: 'the left region is idle',
+                  },
+                },
+              },
+            },
+          },
+          right: { initial: 'rightIdle', states: { rightIdle: {} } },
+        },
+      },
+    },
+  });
+
+  const createPartly = createXStatePlaybookRuntime(partlyDescribed, {
+    label: 'partly',
+    snapshotOptions: () => ({}),
+    entryEvent: { type: 'SPLIT' },
+  });
+
+  it('publishes nothing while an active region publishes no description', async () => {
+    const { ports } = makeRecordingPorts();
+    const runtime = createPartly({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('split the work'));
+
+    const view = runtime.describe!();
+    // Genuinely multi-region, and the factory accepted it.
+    expect(view.state.value).toEqual({
+      split: { left: 'leftIdle', right: 'rightIdle' },
+    });
+    expect(view.state.activeStateIds).toEqual(['leftIdle']);
+    // "A published description per active region" is unsatisfiable here, so
+    // the view publishes none rather than narrowing to the region that has
+    // one. The host then states the absence, exactly as it does for a state
+    // whose source declares no description at all.
+    expect(view.stateDescription).toBeUndefined();
+    await runtime.dispose();
+  });
+
+  it('bounds the covering rule by the factory one-playbook-state-id contract', async () => {
+    // The covering form — one published description per active region, joined
+    // deterministically — is what the rule asks for, and it is what
+    // `stateDescriptionFor` composes. It carries no live row because the
+    // shared factory refuses the only snapshots that could reach it: two
+    // active states both declaring `meta.playbook`. That refusal is pinned
+    // here so the boundary is a checked fact rather than an assumption, and
+    // so relaxing it later fails this row rather than silently going live.
+    const fullyDescribed = createMachine({
+      id: 'fully',
+      type: 'parallel',
+      states: {
+        left: {
+          initial: 'leftIdle',
+          states: {
+            leftIdle: {
+              meta: {
+                playbook: { stateId: 'leftIdle', description: 'left is idle' },
+              },
+            },
+          },
+        },
+        right: {
+          initial: 'rightIdle',
+          states: {
+            rightIdle: {
+              meta: {
+                playbook: {
+                  stateId: 'rightIdle',
+                  description: 'right is idle',
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const createFully = createXStatePlaybookRuntime(fullyDescribed, {
+      label: 'fully',
+      snapshotOptions: () => ({}),
+    });
+    const { ports } = makeRecordingPorts();
+    const runtime = createFully({});
+    await expect(runtime.init(makeSession(ports))).rejects.toThrow(
+      /must expose exactly one playbook state id/,
+    );
+  });
+});

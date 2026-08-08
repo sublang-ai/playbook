@@ -227,13 +227,20 @@ is the grounding a status answer reflects, and an id is not text a
 reply may repeat
 ([CAPPLAY-5](../user/captain-playbook.md#capplay-5)). Where the leaf's
 runtime publishes no description for its current state, the digest
-shall say so and shall not substitute the id for it. While the leaf
-occupies a `type: 'parallel'` state, that state line shall cover every
-active region rather than one — a published description per active
-region — the readability requirement being unchanged and only its
-carrier having moved from the raw multi-region state value to the
-descriptions; no shipping runtime enters a parallel state, so this
-clause carries no hermetic row
+shall say so and shall not substitute the id for it. That absence is
+also what the digest shall state while the leaf occupies a
+`type: 'parallel'` state whose runtime publishes no description
+covering every active region: the state line shall carry a description
+per active region or none at all, and shall never carry one region's
+description as the meaning of the whole state, which is the same false
+statement to the model as substituting an id for a description and is
+equally undetectable at the receiving end, the carrier being one string
+([PBRT-52](playbook-runtime.md#pbrt-52)). The covering form is the
+runtime's to publish and the digest's to relay unchanged. No runtime
+with a control surface enters a parallel state today — DISCUSS declares
+one and ships without the `describe`/`apply` pair, so it takes the
+degraded path below, while CODE and the session Captain are scalar — so
+only the absent form carries a hermetic row
 ([CAPTAIN-37](../test/playbook-captain.md#captain-37)). It also carries
 the context members the
 leaf's runtime authored into its ControlView projection

@@ -602,6 +602,15 @@ on synthetic machines and on the real CODE runtime parked at `failed`
 alike — the runtime-authored context projection, the pending Boss
 question with its stable id, and the last error as
 `{ name, message }`-bearing normalized form.
+The suite shall fail unless a machine parked in a `type: 'parallel'`
+state one of whose active regions publishes no description carries no
+`stateDescription` at all rather than the description of the region that
+has one, the normalized value proving the state genuinely multi-region;
+and unless the shared factory refuses a snapshot in which two active
+states declare `meta.playbook`, which is what bounds the covering form
+of the rule to states no factory runtime can reach and what would go red
+if that bound were ever relaxed
+([PBRT-52](../dev/playbook-runtime.md#pbrt-52)).
 The suite shall discover every linked playbook artifact in the
 repository rather than listing them, and shall fail unless each
 artifact built on the shared factory declares a `controlContextFields`

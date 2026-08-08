@@ -817,6 +817,21 @@ identifier ([CAPPLAY-5](../user/captain-playbook.md#capplay-5),
 declares no description shall carry no `stateDescription`: the runtime
 shall not promote a state id into a description, so a host is never
 handed an identifier dressed as meaning.
+While more than one region is active — a `type: 'parallel'` state — the
+published statement shall cover every active region, one published
+description per region in a deterministic order derived from the
+normalized state value, and shall carry no region *name*, a region name
+being an internal state id. Where any active region publishes no
+description the runtime shall publish none for the state: the carrier is
+a single string the host cannot inspect for completeness, so one
+region's description returned as the state's meaning is a false
+statement the host cannot detect and would relay verbatim, and "a
+description per active region" is satisfiable or it is not. The shared
+`createXStatePlaybookRuntime` factory admits at most one active
+`meta.playbook` state id per snapshot, so under that factory the
+covering form is unreachable and the absent form is what a parallel
+snapshot publishes today
+([PBRT-53](../test/playbook-runtime.md#pbrt-53)).
 The view's `context` shall be an explicit projection the linked
 runtime authors — the FSM context members it names, in the order it
 names them — and shall never be an allow-by-default serialization of
