@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0] - 2026-08-09
+
 ### Added
 
 - **A broken markdown cross-reference now fails the suite.** `pnpm test` resolves every relative link in `specs/`, `CHANGELOG.md`, and `README.md`: the target file must exist, and any `#` fragment must match an anchor the target actually renders. Anchors are derived exactly as GitHub derives them, which is the part that matters — a character dropped from between two spaces leaves both spaces behind, so `### 11. Host adapter — tmux-play` answers only to `#11-host-adapter--tmux-play` with two hyphens, and any derivation that collapses repeated hyphens accepts the broken single-hyphen spelling silently; a near miss of that shape is reported with the spelling that would have worked. File existence alone is not enough either: the link that prompted this resolved to a file that *did* exist, in the wrong spec group, and only the anchor check caught it. Duplicate slugs take `-1` / `-2` suffixes, explicit HTML `id` / `name` anchors resolve, and reference definitions are checked like inline links, while text inside a fenced code block or an inline code span is not treated as a link at all — so a document may quote link syntax as prose, as DR-018 and `meta.md` both do. A target that resolves outside the project directory is a failure rather than a pass, so a link that only worked because a sibling checkout happened to sit beside this one can no longer ship — two links into `../../../cligent/` did exactly that and are now repointed at cligent's published URL, the form DR-004, DR-009, and DR-027 already use. The check also runs standalone as `pnpm check:links` ([IR-037](specs/iterations/037-markdown-cross-reference-check.md), [XREF-1](specs/dev/cross-references.md#xref-1), [XREF-2](specs/dev/cross-references.md#xref-2), [XREF-3](specs/test/cross-references.md#xref-3), [XREF-4](specs/test/cross-references.md#xref-4)).
@@ -343,7 +345,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v4.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v5.0.0...HEAD
+[5.0.0]: https://github.com/sublang-ai/playbook/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/sublang-ai/playbook/compare/v3.1.0...v4.0.0
 [3.1.0]: https://github.com/sublang-ai/playbook/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/sublang-ai/playbook/compare/v2.0.0...v3.0.0
