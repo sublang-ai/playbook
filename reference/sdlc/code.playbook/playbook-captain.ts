@@ -3298,7 +3298,16 @@ export function createPlaybookCaptainShell(
           facts.push(`Delivered the Boss text to ${frameLabel(leaf)}.`);
         });
       });
-      if (outcome.error !== undefined) throw outcome.error;
+      if (outcome.error !== undefined) {
+        // Delivery and its counted activity are already established. Preserve
+        // both before the settlement catch adds the later shell failure.
+        turn.report = {
+          ...outcome.report,
+          facts: [...facts],
+          status: 'failed',
+        };
+        throw outcome.error;
+      }
       if (!frames.includes(leaf)) {
         facts.push(`${frameLabel(leaf)} finished and was disposed.`);
       }

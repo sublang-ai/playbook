@@ -4606,7 +4606,24 @@ describe('CAPTAIN-39 a faulting host port still settles the Boss turn', () => {
   });
 
   it('preserves a completed delivery when later parking telemetry rejects', async () => {
-    const code = shellEntry('code', 'code');
+    const code = shellEntry(
+      'code',
+      'code',
+      {
+        onInput: async (text, runtime) => {
+          if (text === 'hand it to the coder') {
+            await runtime.ports!.callPlayer(
+              'worker',
+              'continue the task',
+              new AbortController().signal,
+              { resume: false },
+            );
+          }
+          return { outcome: 'quiescent', state: runtime.state() };
+        },
+      },
+      codeRegistryEntry.summaryPolicy,
+    );
     const harness = makeShellHarness(
       [code],
       [
@@ -4648,6 +4665,17 @@ describe('CAPTAIN-39 a faulting host port still settles the Boss turn', () => {
     expect(closing).toContain('Delivered the Boss text to /code.');
     expect(closing).toContain('parking telemetry unavailable');
     expect(closing).toContain('Settlement status: failed');
+    expect(closing).toContain(
+      'Counts: {"interruptions":1,"copyPastes":0,"progressRounds":0}',
+    );
+    expect(closing).toContain(
+      'Saved-counts line supplied for this turn; append it verbatim: ' +
+        'Saved you 1 interruption and 0 copy-pastes across 0 rounds ' +
+        'of reviews/rebuttals.',
+    );
+    expect(closing).not.toContain(
+      'No saved-counts line is supplied for this turn',
+    );
     expect(closing).not.toContain('may have changed the session');
     expect(harness.surfaced.slice(surfacedBefore)).toEqual([
       'The coder received that turn, but the session update failed afterward.',
