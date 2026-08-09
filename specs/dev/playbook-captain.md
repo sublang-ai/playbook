@@ -800,6 +800,11 @@ Only the model-side conversation shall be replaced: the engagement
 stack, player sessions, recovery history, and completed turn work shall
 survive, and an action whose outcome is already established shall never
 be re-executed.
+An error shall be attributed to an effect only when that same error
+escaped the effect invocation itself. Validation, presentation, and
+result-processing failures shall not inherit effect attribution from an
+earlier selection or effect attempt; completed sub-steps remain reported
+as their own established facts.
 When recovery also fails, the shell shall preserve that state for the
 next turn and attempt the truthful failure reply required by
 [CAPTAIN-34](../user/playbook-captain.md#captain-34), while retaining

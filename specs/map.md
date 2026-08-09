@@ -53,7 +53,6 @@ meta.md     The spec of specs
 | DR-027 | [027-runtime-compatibility-from-cligent.md](decisions/027-runtime-compatibility-from-cligent.md) | Delegate all agent-runtime version knowledge to cligent: the gate derives runtimes, floors, and pinned repairs from cligent's shipped descriptor and renders its structured verdict, unsupported is reported distinctly from absent, `gemini`'s exemption ends, and no agent-SDK peer range is declared here |
 | DR-028 | [028-empty-ok-result-re-ask.md](decisions/028-empty-ok-result-re-ask.md) | One corrective re-ask on an empty `ok` player or direct-Captain result before failure-sink routing, with both boundaries unified on the missing-or-empty/whitespace-only predicate |
 | DR-029 | [029-session-scoped-conversational-captain.md](decisions/029-session-scoped-conversational-captain.md) | The compiled Captain becomes a session-long conversational controller outside the working stack: one recoverable conversation, at most one validated action per turn, one result-and-reply path for success/rejection/failure/partial completion, faithful multi-turn handoff, and factual nonzero summaries |
-| DR-030 | [030-turn-transaction-and-prompt-provenance.md](decisions/030-turn-transaction-and-prompt-provenance.md) | Superseded: transaction states, log cursors, delivery states, and prompt provenance are implementation choices rather than Captain architecture; DR-029 defines the required behavior |
 
 ## Iterations
 

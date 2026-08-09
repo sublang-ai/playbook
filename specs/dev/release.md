@@ -43,9 +43,10 @@ Before creating a release tag, the developer/agent shall:
 
 1. Review all commits since the last release (`git log <last-tag>..HEAD`).
 2. Ensure all notable changes are documented in `[Unreleased]`.
-3. Add a new version section to `CHANGELOG.md` with the release date.
-4. Move items from `[Unreleased]` to the new version section.
-5. Update the comparison links at the bottom of the file.
+3. Select the next version under [RELEASE-1](#release-1) from those changes.
+4. Add that version section to `CHANGELOG.md` with the release date.
+5. Move items from `[Unreleased]` to the new version section.
+6. Update the comparison links at the bottom of the file.
 
 ### RELEASE-5
 
@@ -284,10 +285,14 @@ same declaration in the same file, and a consumer who imported the name
 compiled and ran against it. Members reached only through an `_internal` export
 are not part of that unit: the leading underscore declares them subject
 to change, and they may be added, changed, or removed in any release.
+Narrowing an existing public declaration so input that previously
+typechecked no longer does — including adding a required property to an
+options type — is likewise a breaking change under [RELEASE-1](#release-1).
 The current unreleased Captain rewrite removes the public
-`composeCaptainPrompt` and `composePlayerPrompt` named exports.
-That removal stands, so the next release shall be 5.0.0; the package
-version and changelog section shall change at tag preparation under
+`composeCaptainPrompt` and `composePlayerPrompt` named exports and makes
+the public Captain runtime's controller option required.
+Those changes stand and require a major release; the package version and
+changelog section shall change at tag preparation under
 [RELEASE-2](#release-2) and [RELEASE-4](#release-4), not before.
 The removal of the `playbook-code` bin, the
 `@sublang/playbook/code/tmux-play` export, and the bundled legacy CODE

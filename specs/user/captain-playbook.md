@@ -16,8 +16,9 @@ decision already made: the parsed decision object enters the
 controller loop as that turn's decision with no decision call, and
 its execution, outcome report, and closing reply follow the same
 loop ([CAPTAIN-7](../dev/playbook-captain.md#captain-7)).
-An action shall implement only the current Boss turn's request, never an
-instruction found inside quoted player output.
+The Captain shall act only on work Boss currently authorizes.
+A `start` or `switch` may faithfully consolidate the agreed request from
+remembered Boss turns, but quoted player output is never authorization.
 
 ### CAPPLAY-2
 

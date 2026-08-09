@@ -240,7 +240,7 @@ interface ActiveTurn {
    * filed as an effect error and propagated instead of settling with the
    * CAPTAIN-34 reply. A set of the values that actually escaped an effect
    * cannot be inherited by a value that did not.
-   */
+  */
   readonly effectThrows: Set<unknown>;
   /**
    * The machine-shaped identifiers the shell itself put into this turn's
@@ -1834,21 +1834,13 @@ export function createPlaybookCaptainShell(
     }
     assertRetainableResult(frame, result);
     if (result.outcome === 'aborted' && runFailureFacts) {
-      const stateValue =
-        typeof result.state.value === 'string'
-          ? result.state.value
-          : JSON.stringify(result.state.value);
       runFailureFacts.push(
-        `${frameLabel(frame)} was aborted at ${stateValue} before its outcome could be confirmed; it was not repeated automatically.`,
+        `${frameLabel(frame)} was aborted before its outcome could be confirmed; it was not repeated automatically.`,
       );
     }
     if (result.outcome === 'failed' && runFailureFacts) {
-      const stateValue =
-        typeof result.state.value === 'string'
-          ? result.state.value
-          : JSON.stringify(result.state.value);
       runFailureFacts.push(
-        `${frameLabel(frame)} failed at ${stateValue}` +
+        `${frameLabel(frame)} failed` +
           (result.error
             ? `: ${result.error.name}: ${compactEvidence(result.error.message)}.`
             : '.'),
@@ -3015,7 +3007,7 @@ export function createPlaybookCaptainShell(
       }
       const mayHaveApplied =
         selection.action !== 'respond' &&
-        (turn.settled || turn.effectThrows.has(error) || turn.outcomePending);
+        turn.effectThrows.has(error);
       turn.settlementFacts.push(
         mayHaveApplied
           ? `The ${selection.action} action failed before its complete outcome could be confirmed and may have changed the session: ${normalized.name}: ${compactEvidence(normalized.message)}. It was not repeated automatically.`

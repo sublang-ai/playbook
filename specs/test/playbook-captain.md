@@ -540,6 +540,10 @@ conversation whose transcript may disagree with Boss.
 A partial switch shall remain remembered as its separate dismissal and
 start results, and its recovery reply shall claim neither rollback nor
 unperformed work.
+The suite shall fail unless a shell or presentation failure before a
+runtime invocation is reported without claiming that the runtime may
+have changed the session, while an error that escapes the runtime
+invocation is reported as an uncertain effect and is not repeated.
 
 The suite shall fail unless a rejected selection returns through the
 same result-phase conversation as any other selection, appears in the
