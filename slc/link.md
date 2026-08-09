@@ -1486,6 +1486,10 @@ The `playbook.trace` copies are the host-agnostic runtime-boundary record requir
 ## Output
 
 The link compiler emits **one thin** TypeScript module per playbook.
+Before emitting that module, it shall reject an FSM that declares any
+`type: 'parallel'` state: the shared factory supports only single-region
+FSMs under [DR-019](../specs/decisions/019-shared-linked-runtime-factory.md),
+while parallel playbooks require bespoke linked machinery.
 The FSM-interpreter machinery — actor wiring, boundary tracing, Boss-event
 mapping, adjudication, script execution, nested-playbook bridging, session
 lifecycle, abort handling, and the optional parked-session snapshot

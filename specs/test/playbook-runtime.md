@@ -588,12 +588,13 @@ a parked branch question through the same export/restore surface.
 Verifies: [PBRT-52](../dev/playbook-runtime.md#pbrt-52)
 
 Where the integration suite drives shared-factory runtimes — synthetic
-workflow machines plus the real linked CODE runtime and the real
-DISCUSS FSM at the bare runtime surface, under fake ports with
-scripted per-call results — the test suite shall fail unless every
+workflow machines plus the real linked CODE runtime, under fake ports
+with scripted per-call results — the test suite shall fail unless every
 factory-built runtime exposes `describe` and `apply` together, and
 unless both members throw before `init`, during an active boundary,
 and after disposal.
+The suite shall also fail unless factory construction rejects the real
+DISCUSS FSM because it declares parallel states.
 The suite shall fail unless `describe()` is side-effect free (no
 trace, status, or telemetry; back-to-back views deep-equal; the
 machine snapshot unmoved) and its view carries the normalized state,
@@ -629,10 +630,8 @@ never from the first configured arm — plus the `jump:<stateId>`
 entries its live snapshot
 accepts; a recorded event the current state does not accept produces
 no retry entry; outside the failure state no retry entry appears; the
-real DISCUSS FSM at fresh `ready` excludes every context-conditional
-jump target its guards refuse and excludes resumable-but-not-jumpable
-branch leaves, while a synthetic context-conditional target flips from
-excluded to included once the live context gains its required input;
+synthetic context-conditional target flips from excluded to included
+once the live context gains its required input;
 and jump events are sent with textual fields omitted, never with
 invented text (an applied retry replays the recorded payload with no
 classification call).

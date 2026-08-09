@@ -4605,6 +4605,55 @@ describe('CAPTAIN-39 a faulting host port still settles the Boss turn', () => {
     expect(settlement[0]).not.toContain('engaged.driving');
   });
 
+  it('preserves a completed delivery when later parking telemetry rejects', async () => {
+    const code = shellEntry('code', 'code');
+    const harness = makeShellHarness(
+      [code],
+      [
+        { status: 'ok', finalText: 'Started CODE.', resumeToken: 'A1' },
+        decisionReply({ action: 'deliver' }),
+        {
+          status: 'ok',
+          finalText: 'The coder received that turn, but the session update failed afterward.',
+          resumeToken: 'A2',
+        },
+      ],
+    );
+    await harness.init();
+    await harness.turn('/code fix the parser', 1);
+    const surfacedBefore = harness.surfaced.length;
+
+    const sink = harness.session.emitTelemetry;
+    harness.session.emitTelemetry = async (event: {
+      topic: string;
+      payload: unknown;
+    }) => {
+      const payload = event.payload as { event?: unknown; to?: unknown };
+      if (
+        payload.event === 'turn:quiescent' &&
+        payload.to === 'engaged.parked'
+      ) {
+        throw new Error('parking telemetry unavailable');
+      }
+      await sink(event);
+    };
+
+    await harness.turn('hand it to the coder', 2);
+
+    expect(code.runtimes[0]!.inputs).toEqual([
+      'fix the parser',
+      'hand it to the coder',
+    ]);
+    const closing = harness.closingPrompts().at(-1) ?? '';
+    expect(closing).toContain('Delivered the Boss text to /code.');
+    expect(closing).toContain('parking telemetry unavailable');
+    expect(closing).toContain('Settlement status: failed');
+    expect(closing).not.toContain('may have changed the session');
+    expect(harness.surfaced.slice(surfacedBefore)).toEqual([
+      'The coder received that turn, but the session update failed afterward.',
+    ]);
+  });
+
   it('reports uncertainty when the runtime invocation itself throws', async () => {
     let driveCount = 0;
     const code = shellEntry('code', 'code', {

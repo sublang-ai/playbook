@@ -2193,13 +2193,17 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
         return { frame, report: outcome.report, failed: false };
     };
-    const driveAndProcess = async (frame, text, context) => {
+    const driveAndProcess = async (frame, text, context, onDriven) => {
         try {
             // CAPTAIN-35: no boundary here. `driveFrame` marks the runtime call and
             // `processFrameResult` marks the resume and disposal it performs, each
             // at the operation itself; a boundary drawn around the whole sequence
             // would file this frame's shell work as an effect too.
             const result = await driveFrame(frame, text, context);
+            // The runtime accepted the input. Record any caller-owned established
+            // fact before result processing, disposal, or parking telemetry can
+            // fail, so later shell trouble cannot erase completed work.
+            onDriven?.();
             await processFrameResult(frame, result, context);
         }
         catch (error) {
@@ -2477,11 +2481,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 playbookId: leaf.entry.id,
             });
             const outcome = await withCounting(leaf, async () => {
-                await driveAndProcess(leaf, turn.authoritativeText, context);
+                await driveAndProcess(leaf, turn.authoritativeText, context, () => {
+                    facts.push(`Delivered the Boss text to ${frameLabel(leaf)}.`);
+                });
             });
             if (outcome.error !== undefined)
                 throw outcome.error;
-            facts.push(`Delivered the Boss text to ${frameLabel(leaf)}.`);
             if (!frames.includes(leaf)) {
                 facts.push(`${frameLabel(leaf)} finished and was disposed.`);
             }

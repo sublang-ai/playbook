@@ -800,6 +800,9 @@ like the parked-session snapshot capability, changing no runtime ABI
 and no artifact or snapshot schema ([PBRT-50](#pbrt-50)); a runtime
 without the pair advertises no actions and plain text delivery is the
 only verb against it.
+Per [DR-019](../decisions/019-shared-linked-runtime-factory.md), the
+shared factory supports only single-region FSMs and shall reject at
+construction any machine that declares a `type: 'parallel'` state.
 `describe()` shall be side-effect free — no trace, status, telemetry,
 or machine movement — and shall throw before `init`, while another
 public boundary is active, and once disposal begins. It shall return a

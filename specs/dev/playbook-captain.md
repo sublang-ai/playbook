@@ -529,9 +529,10 @@ The result-phase prompt shall instruct Captain not to include counts
 for state ids the `summaryPolicy` does not label and not to repeat
 the exact summary-visible progress round count outside the
 saved-counts line.
-The result-phase prompt shall not include shell ledger JSON or raw
-state ids for states that are not counted in the summary-visible
-progress phrase.
+The result-phase prompt shall include no shell ledger JSON and shall
+not render the current or resulting runtime state by raw state id;
+state meaning shall come from the runtime-published description and
+the `summaryPolicy` labels above.
 
 ## Lifecycle
 
@@ -800,11 +801,11 @@ Only the model-side conversation shall be replaced: the engagement
 stack, player sessions, recovery history, and completed turn work shall
 survive, and an action whose outcome is already established shall never
 be re-executed.
-An error shall be attributed to an effect only when that same error
-escaped the effect invocation itself. Validation, presentation, and
-result-processing failures shall not inherit effect attribution from an
-earlier selection or effect attempt; completed sub-steps remain reported
-as their own established facts.
+When a selected action's turn fails, its outcome-report facts shall say
+the action may have changed the session only when that same error
+escaped the effect invocation itself. A failure outside that invocation
+shall make no such claim, and every completed sub-step shall remain an
+explicit established fact.
 When recovery also fails, the shell shall preserve that state for the
 next turn and attempt the truthful failure reply required by
 [CAPTAIN-34](../user/playbook-captain.md#captain-34), while retaining

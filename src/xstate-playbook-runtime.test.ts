@@ -13,10 +13,9 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { assign, createActor, createMachine, fromPromise, waitFor } from 'xstate';
+import { assign, createMachine } from 'xstate';
 
 import type {
-  JsonValue,
   PlaybookPorts,
   PlaybookRunResult,
   PlaybookRuntime,
@@ -2046,13 +2045,30 @@ describe('runtime compatibility declaration (DR-022)', () => {
       }),
     ).toThrow(/spec\.compat\.runtimeAbi must be an integer/);
   });
+
+  it('checks compatibility before rejecting an unsupported parallel machine', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(discussMachine, {
+        label: 'discuss-control',
+        snapshotOptions: (value) =>
+          (value ?? {}) as Record<string, never>,
+        machineInput: () => ({}),
+        compat: { artifactSchema: 99, runtimeAbi: RUNTIME_ABI },
+      }),
+    ).toThrow(
+      new TypeError(
+        'discuss-control artifact declares schema 99, but this ' +
+          '@sublang/playbook/xstate-runtime engine supports [1]',
+      ),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
 // DR-029 control surface (PBRT-52 / PBRT-53): describe/apply over the
 // shared factory — synthetic workflow machines plus the real linked CODE
-// runtime and the real DISCUSS FSM at the bare runtime surface, under fake
-// ports with scripted per-call results.
+// runtime, with the parallel DISCUSS FSM held outside the factory's supported
+// domain, under fake ports with scripted per-call results.
 // ---------------------------------------------------------------------------
 
 function deferredValue<T>(): {
@@ -2173,34 +2189,12 @@ const createConditionalRuntime = createXStatePlaybookRuntime(
   },
 );
 
-// The real DISCUSS FSM at the bare runtime surface: the shared factory over
-// the compiled machine, registering the PBRT-40 category exemplars — a
-// resumable-but-not-jumpable branch leaf, two context-conditional jumpable
-// targets, and the context-conditional parallel parent.
-const createDiscussControlRuntime = createXStatePlaybookRuntime(
-  discussMachine,
-  {
-    label: 'discuss-control',
-    snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
-    machineInput: () => ({}),
-    entryEvent: { type: 'START_DISCUSSION', textField: 'topic' },
-    controlContextFields: ['topic'],
-    resumableStateIds: new Set([
-      'askHostInitial',
-      'hostWritesAgreement',
-      'commitInitialChanges',
-      'initialProposalRound',
-    ]),
-  },
-);
-
 describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)', () => {
   it('exposes describe and apply together on every factory runtime and detects a pair-less runtime distinctly', () => {
     const factoryRuntimes: PlaybookRuntime[] = [
       createWorkflowRuntime({}),
       createConditionalRuntime({}),
       createCodePlaybookRuntime({}),
-      createDiscussControlRuntime({}),
     ];
     for (const runtime of factoryRuntimes) {
       expect(typeof runtime.describe).toBe('function');
@@ -3340,77 +3334,19 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     await runtime.dispose();
   });
 
-  it('excludes refused DISCUSS targets at the bare runtime surface and includes them once context allows', async () => {
-    // Fresh ready: every registered candidate is excluded — the branch leaf
-    // is resumable but not jumpable, and the jumpable targets'
-    // context-conditional guards refuse an empty context (PBRT-40).
-    const runtime = createDiscussControlRuntime({});
-    await runtime.init(makeSession(makeRecordingPorts().ports));
-    const fresh = runtime.describe!();
-    expect(fresh.state.stateId).toBe('ready');
-    expect(fresh.actions).toEqual([]);
-    await runtime.dispose();
-
-    // Seed the real machine to `failed` with the round's input in context —
-    // outside any runtime, since the shared factory's singular-state
-    // telemetry contract does not drive this parallel FSM — and restore the
-    // parked capture at the bare runtime surface.
-    const seed = createActor(
-      discussMachine.provide({
-        actors: {
-          player: fromPromise(async () => {
-            throw 'proposal agent down';
-          }),
-        } as never,
+  it('rejects the parallel DISCUSS machine at factory construction', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(discussMachine, {
+        label: 'discuss-control',
+        snapshotOptions: (value) =>
+          (value ?? {}) as Record<string, never>,
+        machineInput: () => ({}),
+        entryEvent: { type: 'START_DISCUSSION', textField: 'topic' },
+        controlContextFields: ['topic'],
       }),
-      { input: {} },
+    ).toThrow(
+      'discuss-control uses a parallel state; the shared runtime supports only single-region FSMs',
     );
-    seed.start();
-    seed.send({
-      type: 'START_DISCUSSION',
-      topic: 'Should we adopt X or Y?',
-    });
-    await waitFor(seed, (snapshot) => snapshot.value === 'failed');
-    const machineSnapshot = JSON.parse(
-      JSON.stringify(seed.getPersistedSnapshot()),
-    ) as JsonValue;
-    const state = normalizePlaybookSnapshot(seed.getSnapshot());
-    seed.stop();
-
-    const restored = createDiscussControlRuntime({});
-    const session = makeSession(makeRecordingPorts().ports);
-    await restored.restore!(session, {
-      schemaVersion: 1,
-      playbookId: session.playbookId,
-      machine: machineSnapshot,
-      playerResumeTokens: {},
-      sequences: {
-        trace: 0,
-        turn: 0,
-        judgeCall: 0,
-        playerCall: 0,
-        playbookCall: 0,
-      },
-      state,
-      pendingBossQuestions: [],
-    });
-
-    // The live context now holds the round's required input, so exactly the
-    // context-conditional parallel parent flips to included; the other
-    // registered candidates stay excluded. No retry appears: the recorded
-    // last classified event is process-local and never restores.
-    const view = restored.describe!();
-    expect(view.state.stateId).toBe('failed');
-    expect(view.lastError).toMatchObject({ message: 'proposal agent down' });
-    expect(view.context).toMatchObject({ topic: 'Should we adopt X or Y?' });
-    expect(view.actions).toEqual([
-      {
-        id: 'jump:initialProposalRound',
-        label:
-          'Resume from: Host and Participant independently propose designs.',
-      },
-    ]);
-    await restored.dispose();
   });
 });
 

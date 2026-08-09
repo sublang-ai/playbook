@@ -1025,6 +1025,18 @@ function makeDefaultClassifyBossText(machine, entryEvent, bossEvents) {
         return event;
     };
 }
+function machineDeclaresParallelState(machine) {
+    const visit = (stateDef) => {
+        if (!isPlainObject(stateDef))
+            return false;
+        if (stateDef.type === 'parallel')
+            return true;
+        if (!isPlainObject(stateDef.states))
+            return false;
+        return Object.values(stateDef.states).some(visit);
+    };
+    return visit(machine.config);
+}
 /**
  * Build a `PlaybookRuntimeFactory` that interprets the given FSM artifact
  * under the slc/link.md contract. The factory provides every actor kind the
@@ -1032,14 +1044,18 @@ function makeDefaultClassifyBossText(machine, entryEvent, bossEvents) {
  * (literal and dynamic) — and implements the full runtime lifecycle including
  * the optional parked-session snapshot capability (DR-014).
  *
- * Scope: single-region root machines (each snapshot exposes exactly one
- * playbook state id). Parallel-region FSMs keep their own linked runtimes.
+ * Scope: machines that declare no parallel state (each snapshot exposes
+ * exactly one playbook state id). Parallel-region FSMs keep their own linked
+ * runtimes.
  */
 export function createXStatePlaybookRuntime(machine, spec) {
     const label = spec.label ?? 'playbook';
     // DR-022 / PBRT-50: reject an incompatible artifact declaration before any
     // machine interpretation, against this loaded engine's own self-report.
     assertRuntimeCompat(spec.compat, label);
+    if (machineDeclaresParallelState(machine)) {
+        throw new Error(`${label} uses a parallel state; the shared runtime supports only single-region FSMs`);
+    }
     const declaredActors = collectInvokeSources(machine);
     const resumableStateIds = spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
     // DR-029: source state descriptions label the control actions the
