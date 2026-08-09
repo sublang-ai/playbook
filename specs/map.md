@@ -118,7 +118,7 @@ meta.md     The spec of specs
 
 | Group | File | Summary |
 | --- | --- | --- |
-| dev | [git.md](dev/git.md) | Commit message format and AI co-authorship trailers |
+| dev | [git.md](packages/git.md) | Commit message format and AI co-authorship trailers |
 
 ### LIC
 

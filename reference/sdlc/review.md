@@ -1,0 +1,73 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# Review
+
+Players:
+
+- Author
+- Reviewer
+
+The caller supplies the initial intent or any specific context and relevant run results.
+
+`review` examines committed work only.
+Every review round begins with a new or existing commit.
+
+At the first review round, Captain shall relay to Reviewer the complete initial review request in quotes (`>`).
+
+At the first review round and after every review-fix commit, Captain shall give Reviewer the following instruction:
+
+```markdown
+Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.
+```
+
+When Author rejects every finding and makes no commit, Captain shall give Reviewer the following instruction:
+
+```markdown
+No new commit was made because Author rejected every finding.
+For any rebuttal, accept or challenge it.
+State which findings, if any, remain.
+```
+
+At the start of *every* review round, Captain shall relay to Reviewer any Author feedback from the preceding round and any relevant run results, in quotes (`>`) after the instruction.
+
+At the start of *every* review round, Captain shall append the following instruction to the end of the prompt:
+
+```markdown
+Understand the full picture and think systematically about the underlying design.
+Continue to identify issues or improvements, if any (numbered; no duplication).
+Treat as settled, and do not raise again, any finding rejected twice with reasoning.
+Flag only what materially affects correctness, behavior, or spec quality — not style, equally valid alternatives, or theoretical threats.
+For specs, flag stale, missing, over-specified, or under-specified ones.
+Avoid unnecessary complexity in code or tests, but flag any fundamental design flaw when leaving it would cost more in later patches than fixing it now.
+
+Do not re-run tests or builds whose inputs have not changed since any previous reported run.
+Do not edit files or commit; report findings only.
+
+Consult @specs/map.md for context if needed; verify it remains accurate.
+Consult @specs/meta.md for spec requirements if needed; verify affected specs follow it.
+```
+
+When Reviewer raises or keeps any finding, Captain shall relay the Reviewer's findings and any relevant run results to Author, in quotes (`>`), along with the following prompt:
+
+```markdown
+For each review item, accept or reject it.
+Before deciding, understand the full picture and think systematically about the underlying design.
+Reject anything that is not essential or is not worth fixing now.
+If you accept an item, fix its root cause, including any fundamental design flaw - do not patch around it.
+If you reject an item, give the reasoning and cite code or test output that supports it.
+Do not re-run tests or builds whose inputs have not changed since any previous reported run.
+
+If you accept any item, make minimal changes and commit them as one new commit; never amend the reviewed commit.
+Follow @specs/packages/git.md.
+Make the commit message explain concisely what changed and why, including relevant verification.
+Author is <author-llm>; Reviewer is <reviewer-llm>; format model tokens in conventional human form.
+
+If you reject every item, change nothing and make no commit.
+Report every disposition, all relevant run results, and every rebuttal.
+```
+
+When Author makes a new commit or decides to reject all findings, Captain shall relay the above required context to Reviewer and begin the next review round.
+Reviewer shall read the context information and follow the corresponding instructions.
+Rounds continue until Reviewer raises no unsettled findings.
+`review` then returns the approved latest commit and the fact that no findings remain to its caller.
