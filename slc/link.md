@@ -875,9 +875,9 @@ independent cleanup evidence.
 ## Script execution
 
 Where the FSM declares the typed `script` actor from
-[gears2fsm "Setup"](gears2fsm.md#setup), the linked runtime shall provide
-its implementation through the shared factory (§Output); the linker shall
-not regenerate a script executor inside each emitted module.
+[gears2fsm "Setup"](gears2fsm.md#setup), a factory-backed linked runtime shall
+provide its implementation through the shared factory (§Output); the linker
+shall not regenerate a script executor inside a factory-backed emitted module.
 A script invocation is the one actor kind that runs without any agent:
 it makes no `callPlayer`, `callCaptain`, or `callJudge` call and needs no
 adjudication.
@@ -1485,23 +1485,25 @@ The `playbook.trace` copies are the host-agnostic runtime-boundary record requir
 
 ## Output
 
-The link compiler emits **one thin** TypeScript module per playbook.
-Before emitting that module, it shall reject an FSM that declares any
-`type: 'parallel'` state: the shared factory supports only single-region
-FSMs under [DR-019](../specs/decisions/019-shared-linked-runtime-factory.md),
-while parallel playbooks require bespoke linked machinery.
+The link compiler emits one TypeScript module per playbook.
+For an FSM that declares no `type: 'parallel'` state, it shall emit the thin
+shared-factory module defined below.
+For an FSM that declares a parallel state, it shall emit bespoke linked
+machinery satisfying this document's runtime contract and shall not invoke
+`createXStatePlaybookRuntime`, whose supported domain is single-region FSMs
+under [DR-019](../specs/decisions/019-shared-linked-runtime-factory.md).
 The FSM-interpreter machinery — actor wiring, boundary tracing, Boss-event
 mapping, adjudication, script execution, nested-playbook bridging, session
 lifecycle, abort handling, and the optional parked-session snapshot
-capability — is not regenerated per artifact: it ships once as the shared
-`createXStatePlaybookRuntime(machine, spec)` factory exported by
+capability — is not regenerated for a factory-backed artifact: it ships once
+as the shared `createXStatePlaybookRuntime(machine, spec)` factory exported by
 `@sublang/playbook/xstate-runtime`, and the emitted module hands its FSM and
 a small per-playbook `spec` to that factory. Every behavioral section of
 this definition still binds the emitted module's runtime; the shared factory
 is how the emitted module satisfies them, so a runtime fix ships as a
 package release instead of a re-link of every artifact.
 
-The emitted module:
+The thin emitted module:
 
 - Imports the FSM artifact by relative path with an extension-bearing
   runtime specifier. When the linked TypeScript is part of a package that
@@ -1637,6 +1639,9 @@ The emitted module:
   definition. The shared modules import no FSM or host types, so the
   dependency runs one way — from each linked module to the shared
   engine and contract, never the reverse.
+
+Both output profiles remain subject to the behavioral sections above and the
+verification requirements below.
 
 When a co-located integration test for the linked runtime already exists, the
 link compiler shall run it before reporting success and treat any failure as a

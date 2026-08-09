@@ -32,9 +32,9 @@ Accepted.
 - Optional strategy members, each with a generic default derived from the FSM artifact's own data per `slc/link.md`: `label`, `machineInput`, `entryEvent` (deterministic textual entry), `bossEvents` (the exact judge-vs-runtime field metadata erased with the FSM's TypeScript event union), `classifyBossText`, `classificationStatus`, `resolvePlayerId` (default: lowercased player name), `composePlayerPrompt` / `composeCaptainPrompt` (default: continuation blocks plus canonical kebab-token-to-camel-field placeholder substitution), `placeholderFields` (linker-known exceptions such as an authored alias), `buildJudgePrompt`, `extractRequiredFields` (default: bilingual `Output shall include` clause scan), `verbatimPayloadFields`, `resumableStateIds` (default: the FSM's `awaitBossReply` BOSS_REPLY targets), `statusesForState`, `normalizeTransitionEvent` / `transitionEventFields`, and `scriptCwd` (default: the validated options' `cwd`).
 - A linker-emitted thin module therefore normally supplies only `snapshotOptions`, `entryEvent`, any additional `bossEvents` contracts and `placeholderFields` exceptions that cannot survive TypeScript erasure, and `transitionEventFields`; hand-maintained artifacts override members to preserve their existing observable behavior exactly. The shared classifier always uses the flat exact `{ type, ...declaredFields }` wire shape, keeps textual fields runtime-owned, and permits applicable entry/interrupt directives while parked. Supplied metadata may extend a runtime-derived contract but shall not replace or weaken an entry text field or derived closed interrupt target; conflicting duplicates fail factory construction.
 
-### 3. The linker emits thin modules
+### 3. The linker emits thin modules for factory-backed FSMs
 
-- `slc/link.md` §Output now specifies the thin artifact: the relative FSM import, the derived `PlaybookRuntimeOptions` interface (plus `cwd` when a script state exists), the shared-contract type re-exports, the `_internal` composer surface, and the default-exported factory call.
+- For an FSM in the shared factory's single-region domain, `slc/link.md` §Output specifies the thin artifact: the relative FSM import, the derived `PlaybookRuntimeOptions` interface (plus `cwd` when a script state exists), the shared-contract type re-exports, the `_internal` composer surface, and the default-exported factory call.
 - Emitted output stays erasable TypeScript with a source-only relative FSM import and bare package specifiers for the shared engine and contract modules.
 
 ### 4. Additive compatibility
@@ -42,12 +42,11 @@ Accepted.
 - Every pre-existing export of `@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` keeps working unchanged, so previously linked fat artifacts continue to run against this package.
 - The reference CODE artifact is ported to the thin form under its unchanged test suites.
   The DISCUSS runtime keeps its own machinery: it interprets a parallel-region FSM with observably different boundary tracking, failure aggregation, and status scheduling that its suites pin.
-  The default Captain runtime keeps its hand-authored machinery: [DR-012](012-default-captain-playbook.md)/[DR-013](013-routing-only-captain-control.md) fix a distinct visible-adjudication and dynamic-routing architecture.
-  Converging either onto the shared factory is future work under its own record.
+  Converging DISCUSS onto the shared factory is future work under its own record.
 
 ## Consequences
 
-- A runtime fix ships by releasing `@sublang/playbook`; consumers adopt through their normal atomic version-bump cycle without re-linking any artifact.
-- A linked artifact collapses to its per-workflow spec — roughly two orders of magnitude fewer generated lines — and the expensive agent link step no longer re-derives interpreter machinery it can get wrong.
+- A shared-factory runtime fix ships by releasing `@sublang/playbook`; consumers adopt through their normal atomic version-bump cycle without re-linking any factory-backed artifact.
+- A factory-backed linked artifact collapses to its per-workflow spec — roughly two orders of magnitude fewer generated lines — and the expensive agent link step no longer re-derives interpreter machinery it can get wrong.
 - The generic strategy defaults are directly unit-tested in `src/xstate-playbook-runtime.test.ts` over synthetic FSMs covering all four actor kinds.
 - Parallel-region FSMs still require their own linked machinery until the shared factory grows a parallel profile.
