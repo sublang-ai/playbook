@@ -325,7 +325,7 @@ Order keeps `main` both building and test-green throughout: specs land first to 
   command abandon does not clear both context fields, or if a
   follow-up `needsBossReply` does not clear the prior
   `bossReply`.
-- `specs/map.md` lists IR-006 in the Iterations table.
+- `specs/map.md` lists IR-006 in the Intents table.
 - DR-005 stays Proposed only until task 9; if no substantive
   delta is recorded as an addendum, the close-out commit
   promotes DR-005 to Accepted in the same commit that updates

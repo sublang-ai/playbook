@@ -51,4 +51,4 @@ The CAPTAIN and CAPPLAY item packages define the observable and implementation c
 - The Captain can chat while a playbook is active without moving it, and can act on a current runtime only through validated choices.
 - A lost model conversation is recoverable without forgetting the session or repeating completed work.
 - One result path keeps the Boss-visible reply and the Captain's remembered outcome aligned.
-- Runtime APIs, recovery-history representation, prompt construction, retry mechanics, and test structure belong to item specs and iteration records rather than this decision.
+- Runtime APIs, recovery-history representation, prompt construction, retry mechanics, and test structure belong to item specs and intent records rather than this decision.

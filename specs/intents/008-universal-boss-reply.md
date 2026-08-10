@@ -69,5 +69,5 @@ Order keeps `main` building and test-green: spec amendments land first to give t
 - Every captain state's composed player prompt carries the standard Boss-question instruction immediately before the domain prompt body; no GEARS blockquote carries that instruction.
 - `needsBossReply` end-to-end behavior is unchanged: a player question lands at `awaitBossReply`, `BOSS_REPLY` resumes the originating state, and the DR-005 §8 failure modes still route to `failed`.
 - The CODE Committer states retain `needsBossInput` alongside `needsBossReply`.
-- `specs/iterations/007-resumable-state-annotation.md` no longer exists, and `map.md` has no IR-007 row.
+- `specs/intents/007-resumable-state-annotation.md` does not exist, and `map.md` has no IR-007 row.
 - `pnpm test` from the repo root is green.

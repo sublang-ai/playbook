@@ -187,4 +187,4 @@ Order keeps `main` building at every commit.
   (`intent` / `reviews` / `challenges` / `taskDescription`) or fails
   to substitute a declared placeholder.
 - `specs/map.md` lists `test/playbook.md` under a new `PLAYBOOK`
-  package, and the Iterations table has the IR-005 row.
+  package, and the Intents table has the IR-005 row.

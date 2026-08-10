@@ -18,7 +18,7 @@ Specifications (specs) need a standardized format and structure to support itera
 Spex organizes specs around three essential elements of software development:
 
 - **Decisions**. The choices made in product and system *design*.
-- **Iterations**. The incremental plans for *implementation*.
+- **Intents**. The incremental plans for *implementation*.
 - **Requirements**. The *behaviors* and *constraints* of the product and system.
 
 ### Forms
@@ -26,9 +26,9 @@ Spex organizes specs around three essential elements of software development:
 Spex uses two forms of specs to balance unification and flexibility.
 
 - **Records** must follow specified formats and may use free-form content within those formats.
-Decisions and iterations are stored as records.
+Decisions and intents are stored as records.
   - Decision records (DRs) follow the ADR (Architectural Decision Record) format [[1]].
-  - Iteration records (IRs) contain four sections: Goal, Deliverables, Tasks, and Acceptance criteria.
+  - Intent records (IRs) contain four sections: Goal, Deliverables, Tasks, and Acceptance criteria.
 - **Items** must follow the GEARS pattern [[2]] to specify behaviors and constraints.
 Each item file must include an intent statement.
 
@@ -39,7 +39,7 @@ Spex creates the default `specs/` directory under the repo root, with the follow
 | Path | Content | File Naming |
 | --------- | ------- | ------ |
 | `decisions/` | DRs. Design decisions and rationale. | \<NNN\>-\<kebab-case\>.md |
-| `iterations/` | IRs. Implementation plans. | \<NNN\>-\<kebab-case\>.md |
+| `intents/` | IRs. Implementation plans. | \<NNN\>-\<kebab-case\>.md |
 | `user/` | item files for user-visible behavior. What the system does. | [\<path\>/]\<kebab-case\>.md |
 | `dev/` | item files for system internal behavior. How the system is built. | [\<path\>/]\<kebab-case\>.md |
 | `test/` | item files for acceptance testing. Quality guard for user and dev items. | [\<path\>/]\<kebab-case\>.md |

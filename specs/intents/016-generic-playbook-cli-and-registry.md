@@ -44,7 +44,7 @@ Each task is one commit.
 Order lands specs before behavior, generalizes the shell and reshapes the CODE entry before introducing the new config contract, adds the generic launcher and the registry-loading path additively beside the legacy path so `main` builds and the suite passes after every task, and isolates the breaking removal of `playbook-code` / `code/tmux-play` / `captain.options.code` into a single late commit.
 
 1. **Land IR-016 + map.md row.** _[done]_
-   Add this doc and its `map.md` Iterations row.
+   Add this doc and its `map.md` Intents row.
    No code or behavior change.
    Implementation note: committed as `5638d75` (the decomposition stop-point); marked done at close-out now that the full IR has landed.
 
