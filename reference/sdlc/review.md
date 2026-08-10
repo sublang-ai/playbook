@@ -16,7 +16,14 @@ Every review round begins with a new or existing commit.
 
 At the first review round, Captain shall relay to Reviewer the complete initial review request in quotes (`>`).
 
-At the first review round and after every review-fix commit, Captain shall give Reviewer the following instruction:
+At the first review round, Captain shall give Reviewer the following instruction:
+
+```markdown
+A new review begins on the latest commit.
+Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.
+```
+
+After every review-fix commit, Captain shall give Reviewer the following instruction:
 
 ```markdown
 Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.
@@ -37,7 +44,7 @@ At the start of *every* review round, Captain shall append the following instruc
 ```markdown
 Understand the full picture and think systematically about the underlying design.
 Continue to identify issues or improvements, if any (numbered; no duplication).
-Treat as settled, and do not raise again, any finding rejected twice with reasoning.
+Treat as settled, and do not raise again, any finding in this review rejected twice with reasoning.
 Flag only what materially affects correctness, behavior, or spec quality — not style, equally valid alternatives, or theoretical threats.
 For specs, flag stale, missing, over-specified, or under-specified ones.
 Avoid unnecessary complexity in code or tests, but flag any fundamental design flaw when leaving it would cost more in later patches than fixing it now.
