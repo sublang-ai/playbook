@@ -18,9 +18,11 @@ The existing host instead gives every playbook a separate namespaced player and 
 - Runtime frames and playbook-session identities remain distinct.
 - A nested child role with the same role id as an ancestor role inherits the nearest ancestor's host-player binding.
 - A child role with no matching ancestor uses its own namespaced host-player binding.
+- An inherited binding is authoritative for that frame; the child's configured same-role agent is its standalone fallback and is not applied to the already-running ancestor conversation.
 - One root engagement tree owns continuation for every effective binding, including bindings first introduced by a child.
 - A new root engagement starts with fresh continuation, while child return or disposal does not erase continuation retained by its root tree.
-- The runtime shall select and update continuation through the host-supplied binding before it traces or calls the player, so trace data records the exact resume selection used.
+- A composed frame shall read its root-owned continuation before the player-start trace and call, then update or clear it from the validated result before the player-finish trace and result interpretation.
+- A standalone runtime shall retain its private continuation store.
 - Player identity metadata and visible panes shall follow each frame's effective bindings.
 - Exact role-name inheritance needs no source syntax; explicit role renaming remains outside this decision.
 

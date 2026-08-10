@@ -18,14 +18,17 @@ Compile the maintained CODE, REVIEW, and DECIDE sources into releasable nested p
 
 ## Tasks
 
-1. Migrate the canonical item corpus to `specs/packages/`, update the governing meta law and map, and record the shared-continuity decision.
-2. Refine the SLC definitions so the maintained source fragments and verbatim relay fields survive compilation and are mechanically checked.
-3. Add host-supplied player-continuation storage to the runtime contract and shared engine, with focused contract and snapshot tests.
-4. Bind nested frames to inherited same-role players in the interactive shell, with effective visibility, identity metadata, and continuity tests.
-5. Compile and register REVIEW from `reference/sdlc/review.md`.
-6. Recompile CODE from `reference/sdlc/code.md` and replace DISCUSS with DECIDE compiled from `reference/sdlc/decide.md`.
-7. Update package exports, config, docs, release checks, smoke, and acceptance for CODE, REVIEW, and DECIDE.
-8. Run the complete deterministic release workflow and nonblocking real-agent CLI acceptance, then audit the packed candidate without publishing it.
+1. Record the shared mapped-player continuity decision and this implementation sequence.
+2. Migrate the canonical item corpus to `specs/packages/` and update the governing meta law, citations, and map.
+3. Refine the SLC definitions so the maintained source fragments and verbatim relay fields survive compilation and are mechanically checked.
+4. Add host-supplied player-continuation storage to the runtime contract and shared engine, with focused contract and snapshot tests.
+5. Bind nested frames to inherited same-role players in the interactive shell, with effective visibility, identity metadata, summary counting, and continuity tests.
+6. Compile and register REVIEW from `reference/sdlc/review.md`.
+7. Recompile and register CODE from `reference/sdlc/code.md`.
+8. Replace DISCUSS with DECIDE compiled from `reference/sdlc/decide.md` and record the breaking public-surface change.
+9. Update package exports, starter config, and user documentation for CODE, REVIEW, and DECIDE.
+10. Update deterministic release checks, smoke, and acceptance for the compiled workflows.
+11. Run the complete deterministic release workflow and nonblocking real-agent CLI acceptance, then audit the packed candidate without publishing it.
 
 ## Acceptance criteria
 

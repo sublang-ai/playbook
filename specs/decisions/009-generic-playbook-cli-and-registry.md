@@ -134,6 +134,7 @@ The generic user-facing config shall not support binding a role to a player from
 Profiles reuse configuration, not player instances.
 When two playbooks reference the same profile, the launcher shall still create separate namespaced host players in the static roster.
 When a nested child declares a role id present on its active ancestor path, the child frame shall use the nearest ancestor's effective host-player binding for that role.
+A mapped ancestor binding is authoritative, so that nested frame ignores its own same-role agent block; the block remains the fallback for a root or a frame with no matching ancestor.
 A child-only role shall use the child's namespaced host player.
 All effective bindings shall retain their player continuation for the lifetime of the root engagement tree and start fresh for a replacement root engagement ([DR-030](030-shared-mapped-player-continuity.md)).
 

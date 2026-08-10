@@ -25,7 +25,8 @@ Run `playbook` for an interactive tmux UI powered by [cligent](https://github.co
 
 ## Quick start
 
-Out of the box, Playbook includes **CODE**, a coding-and-review loop, and **DISCUSS**, in which two agents develop, reconcile, and review a specification.
+Out of the box, Playbook includes **CODE** for implementation, **REVIEW** for commit-based review and fixes, and **DECIDE** for independently proposed and reviewed specification decisions.
+CODE and DECIDE call REVIEW as a nested playbook.
 
 The interactive starter config uses Claude as both Captain and Coder, and Codex as Reviewer.
 
@@ -56,11 +57,13 @@ Type a task, or enter `/code <task>` to select CODE directly.
 On first launch, Playbook writes its config to `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`.
 
 One-shot runs use separate defaults instead of the interactive lineup.
-Without configured `run` defaults, the Captain and every player use Claude; retain the Codex Reviewer with:
+Without configured `run` defaults, the Captain and every player use Claude; run standalone REVIEW with a Codex Reviewer using:
 
 ```sh
-playbook run @sublang/playbook/code/registry "add a test for parseArgs" --player reviewer=codex --json
+playbook run @sublang/playbook/review/registry "review the latest commit" --player reviewer=codex --json
 ```
+
+CODE and DECIDE require interactive `playbook` because the one-shot host does not drive nested calls.
 
 See [Using the CLI](docs/cli.md) for flags and session resume, [Configuring agents](docs/configuration.md) for lineups, [Embedding](docs/embedding.md) for custom hosts, and the [changelog](CHANGELOG.md) for releases.
 
