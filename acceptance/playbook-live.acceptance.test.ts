@@ -8,6 +8,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from 'node:child_process';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -45,13 +46,14 @@ const diagnosticTailCharacters = 8 * 1024;
 const liveCommandMaxBufferBytes = 20 * 1024 * 1024;
 const liveTerminationGraceMs = 5_000;
 const failureSnapshotName = 'acceptance-failure.txt';
-// One scenario spends at most five startup-length waits — new session,
-// attached client, `boss>`, the started marker, and the pane shape — plus
-// the live turn itself. Under-budgeting here is worse than a slow failure:
+// One scenario spends at most six startup-length waits — new session,
+// attached client, `boss>`, the started marker, and the root and nested pane
+// shapes — plus the live turn itself. Under-budgeting here is worse than a
+// slow failure:
 // vitest's own timeout fires outside the try/finally, so teardown never
 // runs and `afterAll` would delete the artifacts while the agents are
 // still live.
-const scenarioTimeoutMs = liveTimeoutMs + 5 * startupTimeoutMs + 60_000;
+const scenarioTimeoutMs = liveTimeoutMs + 6 * startupTimeoutMs + 60_000;
 const turnFailureMarkers = [
   '◆ failed',
   '[turn aborted]',
@@ -117,15 +119,24 @@ function adapterSdkSpecs(): string[] {
 const codeCommand =
   '/code Implement the existing ACCEPT-1 requirement exactly. ' +
   'This is one small complete change. Do not broaden the requirement.';
-const discussCommand =
-  '/discuss Add one minimal packages-layout spec item named ACCEPT-2. ' +
-  'It shall require the repository-root file acceptance-discuss.txt to ' +
-  'contain exactly DISCUSS_ACCEPTANCE_OK followed by a newline. ' +
+const decideCommand =
+  '/decide Add one minimal packages-layout spec item named ACCEPT-2. ' +
+  'It shall require the repository-root file acceptance-decide.txt to ' +
+  'contain exactly DECIDE_ACCEPTANCE_OK followed by a newline. ' +
   'This run is documentation-only: do not create the implementation file. ' +
   'The specs/map.md index already lists the file, so leave it untouched. ' +
-  'Converge quickly and commit only the agreed spec item file.';
-const headlessTask = 'Run the installed non-interactive acceptance probe.';
-const headlessToken = 'HEADLESS_ACCEPTANCE_OK';
+  'Converge quickly and commit only the agreed spec item file. ' +
+  'For this acceptance fixture only, Reviewer shall invent one unique ' +
+  'continuity marker in the independent proposal: REVIEW_CONTINUITY_ ' +
+  'followed immediately by exactly 12 uppercase ASCII letters or digits. ' +
+  'Reviewer shall put the complete marker on a line of its own. ' +
+  'Coder shall not invent, guess, or include a continuity marker in the ' +
+  'independent proposal or initial commit. The final ACCEPT-2 item shall ' +
+  "also contain Reviewer's exact marker, added only through REVIEW feedback.";
+const reviewTask =
+  'Review the latest commit and resulting repository state against its ' +
+  'documented requirements. Resolve only material findings.';
+const reviewToken = 'REVIEW_ACCEPTANCE_OK';
 const hermeticTask = 'Echo the hermetic acceptance token.';
 const hermeticToken = 'HERMETIC_ACCEPTANCE_OK';
 
@@ -195,21 +206,24 @@ describe.sequential('installed playbook live acceptance', () => {
   });
 
   it(
-    'runs playbook run with a real Claude player and Codex judge',
+    'runs bundled REVIEW headlessly with real Coder and Reviewer agents',
     async () => {
-      const scenario = createScenario('headless');
+      const scenario = createScenario('review');
       let commandOutput = '';
       try {
         const sessionsBefore = [...listTmuxSessions()].sort();
+        const tmuxGuard = createNoTmuxGuard(scenario.root);
         const models = liveModels();
         const result = await execLiveTextAsync(
           candidateBin,
           [
             'run',
-            './headless.registry.mjs',
-            headlessTask,
+            '@sublang/playbook/review/registry',
+            reviewTask,
             '--player',
-            `worker=claude:${models.claude}@low`,
+            `coder=claude:${models.claude}@low`,
+            '--player',
+            `reviewer=codex:${models.codex}@low`,
             '--captain',
             `codex:${models.codex}@low`,
             '--cwd',
@@ -220,6 +234,9 @@ describe.sequential('installed playbook live acceptance', () => {
           privateTmuxEnv({
             XDG_CONFIG_HOME: scenario.configHome,
             XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
+            PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
+            PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
+            PLAYBOOK_ACCEPTANCE_REAL_TMUX: tmuxGuard.realTmux,
           }),
         );
         commandOutput =
@@ -233,15 +250,21 @@ describe.sequential('installed playbook live acceptance', () => {
             /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
           ),
           output: {
-            playerToken: headlessToken,
-            judge: { accepted: true, token: headlessToken },
+            approvedCommit: 'latest',
+            noUnsettledFindings: true,
           },
         });
-        expect(result.stderr).toContain('◇ headless smoke started');
-        expect(result.stderr).toContain('◇ headless smoke finished');
         expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
-        expect(headRevision(scenario.repo)).toBe(scenario.baselineCommit);
-        expect(changedPaths(scenario)).toEqual([]);
+        expect(existsSync(tmuxGuard.marker)).toBe(false);
+        expect(
+          readFileSync(join(scenario.repo, 'acceptance-review.txt'), 'utf8'),
+        ).toBe(`${reviewToken}\n`);
+        expect(headFile(scenario.repo, 'acceptance-review.txt')).toBe(
+          `${reviewToken}\n`,
+        );
+        expect(changedPaths(scenario)).toEqual(['acceptance-review.txt']);
+        expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
+        expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
         expect(gitStatus(scenario.repo)).toBe('');
         expect(ignoredUntracked(scenario.repo)).toBe('');
       } catch (error) {
@@ -261,6 +284,139 @@ describe.sequential('installed playbook live acceptance', () => {
       }
     },
     liveTimeoutMs + 60_000,
+  );
+
+  it(
+    'runs /code with real Claude and Codex agents in a fresh repository',
+    async () => {
+      const scenario = createScenario('code');
+      try {
+        await drivePlaybookTurn(scenario, codeCommand, {
+          started: '◇ /code started',
+          nestedCalled: '◇ /review called by /code',
+          nestedReturned: '◇ /review returned to /code',
+          finished: '◇ /code finished',
+          rootPaneTitles: [
+            'Captain · claude',
+            'Code-coder · claude',
+          ],
+          // REVIEW inherits CODE's Coder instead of exposing a replacement
+          // Review-coder, while its unmatched Reviewer stays child-owned.
+          nestedPaneTitles: [
+            'Captain · claude',
+            'Code-coder · claude',
+            'Review-reviewer · codex',
+          ],
+          nestedActivity: {
+            paneTitle: 'Review-reviewer · codex',
+            text: 'A new review begins on the latest commit.',
+          },
+        });
+        expect(
+          readFileSync(join(scenario.repo, 'acceptance-code.txt'), 'utf8'),
+        ).toBe('CODE_ACCEPTANCE_OK\n');
+        expect(headFile(scenario.repo, 'acceptance-code.txt')).toBe(
+          'CODE_ACCEPTANCE_OK\n',
+        );
+        expect(changedPaths(scenario)).toEqual(['acceptance-code.txt']);
+        expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
+        expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
+        expect(gitStatus(scenario.repo)).toBe('');
+        expect(ignoredUntracked(scenario.repo)).toBe('');
+      } catch (error) {
+        preserveArtifacts = true;
+        writeFailureSnapshot(
+          scenario.root,
+          undefined,
+          undefined,
+          error,
+          scenario,
+        );
+        throw withArtifactPath(error, scenario.root);
+      }
+    },
+    scenarioTimeoutMs,
+  );
+
+  it(
+    'runs /decide with real Claude and Codex agents in a fresh repository',
+    async () => {
+      const scenario = createScenario('decide');
+      try {
+        const observation = await drivePlaybookTurn(
+          scenario,
+          decideCommand,
+          {
+            started: '◇ /decide started',
+            nestedCalled: '◇ /review called by /decide',
+            nestedReturned: '◇ /review returned to /decide',
+            finished: '◇ /decide finished',
+            rootPaneTitles: [
+              'Captain · claude',
+              'Decide-coder · claude',
+              'Decide-reviewer · codex',
+            ],
+            // Both exact same-name REVIEW roles keep DECIDE's effective
+            // mappings; neither Review-coder nor Review-reviewer may appear.
+            nestedPaneTitles: [
+              'Captain · claude',
+              'Decide-coder · claude',
+              'Decide-reviewer · codex',
+            ],
+            nestedActivity: {
+              paneTitle: 'Decide-reviewer · codex',
+              text: 'A new review begins on the latest commit.',
+            },
+            continuity: {
+              paneTitle: 'Decide-reviewer · codex',
+              pattern: /REVIEW_CONTINUITY_[A-Z0-9]{12}/,
+            },
+          },
+        );
+        const acceptanceSpec = readFileSync(
+          join(scenario.repo, 'specs/packages/acceptance.md'),
+          'utf8',
+        );
+        expect(acceptanceSpec).toContain('### ACCEPT-2');
+        expect(acceptanceSpec).toContain('DECIDE_ACCEPTANCE_OK');
+        const headAcceptanceSpec = headFile(
+          scenario.repo,
+          'specs/packages/acceptance.md',
+        );
+        expect(headAcceptanceSpec).toContain('### ACCEPT-2');
+        expect(headAcceptanceSpec).toContain('DECIDE_ACCEPTANCE_OK');
+        const continuityMarker = observation.continuityMarker;
+        if (continuityMarker === undefined) {
+          throw new Error('DECIDE produced no Reviewer continuity marker');
+        }
+        expect(continuityMarker).toMatch(
+          /^REVIEW_CONTINUITY_[A-Z0-9]{12}$/,
+        );
+        expect(headAcceptanceSpec).toContain(continuityMarker);
+        expect(existsSync(join(scenario.repo, 'acceptance-decide.txt'))).toBe(
+          false,
+        );
+        expect(headHasPath(scenario.repo, 'acceptance-decide.txt')).toBe(false);
+        expect(changedPaths(scenario)).toEqual([
+          'specs/packages/acceptance.md',
+        ]);
+        expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
+        expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
+        expect(gitStatus(scenario.repo)).toBe('');
+        expect(ignoredUntracked(scenario.repo)).toBe('');
+      } catch (error) {
+        preserveArtifacts = true;
+        writeFailureSnapshot(
+          scenario.root,
+          undefined,
+          undefined,
+          error,
+          scenario,
+        );
+        throw withArtifactPath(error, scenario.root);
+      }
+    },
+    scenarioTimeoutMs,
   );
 
   it(
@@ -369,100 +525,6 @@ describe.sequential('installed playbook live acceptance', () => {
       }
     },
     2 * liveTimeoutMs + 120_000,
-  );
-
-  it(
-    'runs /code with real Claude and Codex agents in a fresh repository',
-    async () => {
-      const scenario = createScenario('code');
-      try {
-        await drivePlaybookTurn(scenario, codeCommand, {
-          started: '◇ /code started',
-          finished: '◇ /code finished',
-          paneTitles: [
-            'Captain · claude',
-            'Code-coder · claude',
-            'Code-reviewer · codex',
-          ],
-        });
-        expect(
-          readFileSync(join(scenario.repo, 'acceptance-code.txt'), 'utf8'),
-        ).toBe('CODE_ACCEPTANCE_OK\n');
-        expect(headFile(scenario.repo, 'acceptance-code.txt')).toBe(
-          'CODE_ACCEPTANCE_OK\n',
-        );
-        expect(changedPaths(scenario)).toEqual(['acceptance-code.txt']);
-        expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
-        expect(gitStatus(scenario.repo)).toBe('');
-        expect(ignoredUntracked(scenario.repo)).toBe('');
-      } catch (error) {
-        preserveArtifacts = true;
-        writeFailureSnapshot(
-          scenario.root,
-          undefined,
-          undefined,
-          error,
-          scenario,
-        );
-        throw withArtifactPath(error, scenario.root);
-      }
-    },
-    scenarioTimeoutMs,
-  );
-
-  it(
-    'runs /discuss with real Claude and Codex agents in a fresh repository',
-    async () => {
-      const scenario = createScenario('discuss');
-      try {
-        await drivePlaybookTurn(
-          scenario,
-          discussCommand,
-          {
-            started: '◇ /discuss started',
-            finished: '◇ /discuss finished',
-            paneTitles: [
-              'Captain · claude',
-              'Discuss-host · claude',
-              'Discuss-participant · codex',
-            ],
-          },
-        );
-        const acceptanceSpec = readFileSync(
-          join(scenario.repo, 'specs/packages/acceptance.md'),
-          'utf8',
-        );
-        expect(acceptanceSpec).toContain('### ACCEPT-2');
-        expect(acceptanceSpec).toContain('DISCUSS_ACCEPTANCE_OK');
-        const headAcceptanceSpec = headFile(
-          scenario.repo,
-          'specs/packages/acceptance.md',
-        );
-        expect(headAcceptanceSpec).toContain('### ACCEPT-2');
-        expect(headAcceptanceSpec).toContain('DISCUSS_ACCEPTANCE_OK');
-        expect(existsSync(join(scenario.repo, 'acceptance-discuss.txt'))).toBe(
-          false,
-        );
-        expect(headHasPath(scenario.repo, 'acceptance-discuss.txt')).toBe(false);
-        expect(changedPaths(scenario)).toEqual([
-          'specs/packages/acceptance.md',
-        ]);
-        expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
-        expect(gitStatus(scenario.repo)).toBe('');
-        expect(ignoredUntracked(scenario.repo)).toBe('');
-      } catch (error) {
-        preserveArtifacts = true;
-        writeFailureSnapshot(
-          scenario.root,
-          undefined,
-          undefined,
-          error,
-          scenario,
-        );
-        throw withArtifactPath(error, scenario.root);
-      }
-    },
-    scenarioTimeoutMs,
   );
 
   // RELEASE-25 fifth case (DR-029): one session, one durable conversation,
@@ -721,8 +783,23 @@ interface Scenario {
 
 interface TurnExpectation {
   started: string;
+  nestedCalled: string;
+  nestedReturned: string;
   finished: string;
-  paneTitles: readonly string[];
+  rootPaneTitles: readonly string[];
+  nestedPaneTitles: readonly string[];
+  nestedActivity: {
+    paneTitle: string;
+    text: string;
+  };
+  continuity?: {
+    paneTitle: string;
+    pattern: RegExp;
+  };
+}
+
+interface TurnObservation {
+  continuityMarker?: string;
 }
 
 interface Launcher {
@@ -938,7 +1015,7 @@ async function installGlobalCandidate(): Promise<string> {
 }
 
 function createScenario(
-  name: 'headless' | 'code' | 'discuss' | 'hermetic' | 'conversation',
+  name: 'review' | 'code' | 'decide' | 'hermetic' | 'conversation',
 ): Scenario {
   // Every fixture path derives from `suiteRoot`. A relative value here would
   // silently build the fixture tree inside the real repository instead.
@@ -947,17 +1024,15 @@ function createScenario(
       `live acceptance suite root must be an absolute path, got "${suiteRoot}"`,
     );
   }
-  // PBCLI-36: the headless fixture nests under the candidate consumer tree
-  // so its registry module resolves the engine from an ancestor
-  // node_modules — the project-local-install-wins path — and the run
-  // provisions nothing, keeping the repository byte-clean. The hermetic
+  // PBCLI-36: standalone REVIEW nests under the candidate consumer tree so
+  // its package subpath resolves from an ancestor node_modules. The hermetic
   // fixture stays outside every node_modules ancestry on purpose.
   // The conversational fixtures nest under the same consumer tree for the
   // same reason: their registry modules import `xstate` and
   // `@sublang/playbook/xstate-runtime` by bare specifier, and the installed
   // candidate is what must satisfy those imports.
   const root =
-    name === 'headless' || name === 'conversation'
+    name === 'review' || name === 'conversation'
       ? join(suiteRoot, 'candidate', 'fixtures', name)
       : join(suiteRoot, name);
   const repo = join(root, 'repo');
@@ -1006,15 +1081,26 @@ function createScenario(
   );
   writeFileSync(
     join(repo, 'specs/packages/acceptance.md'),
-    [
-      '# ACCEPT: Live acceptance fixture',
-      '',
-      '### ACCEPT-1',
-      '',
-      'The repository root shall contain `acceptance-code.txt` whose entire',
-      'content is `CODE_ACCEPTANCE_OK` followed by one newline.',
-      '',
-    ].join('\n'),
+    (name === 'review'
+      ? [
+          '# ACCEPT: Live acceptance fixture',
+          '',
+          '### ACCEPT-1',
+          '',
+          'The repository root shall contain `acceptance-review.txt` whose',
+          `entire content is \`${reviewToken}\` followed by one newline.`,
+          '',
+        ]
+      : [
+          '# ACCEPT: Live acceptance fixture',
+          '',
+          '### ACCEPT-1',
+          '',
+          'The repository root shall contain `acceptance-code.txt` whose entire',
+          'content is `CODE_ACCEPTANCE_OK` followed by one newline.',
+          '',
+        ]
+    ).join('\n'),
   );
   writeFileSync(
     join(repo, 'specs/packages/git.md'),
@@ -1034,10 +1120,10 @@ function createScenario(
   );
   if (name === 'conversation') {
     // Only the two deterministic fixtures are enabled here. The scenario's
-    // subject is the Captain's own decisions, and a real CODE or DISCUSS
+    // subject is the Captain's own decisions, and a real CODE or DECIDE
     // target would spend a full multi-player workflow on the switch turn —
     // which also runs to terminal, leaving nothing for the dismissal turn
-    // to dismiss. The command-mapped `/discuss x` switch stays a hermetic
+    // to dismiss. A command-mapped workflow switch stays a hermetic
     // A29-7 row; what is live here is the model-decided one.
     writeFileSync(
       join(configHome, 'playbook/playbook.config.yaml'),
@@ -1052,16 +1138,6 @@ function createScenario(
     writeFileSync(
       join(configHome, 'playbook/playbook.config.yaml'),
       liveConfig(),
-    );
-  }
-  if (name === 'headless') {
-    writeFileSync(
-      join(repo, 'acceptance-headless-token.txt'),
-      `${headlessToken}\n`,
-    );
-    writeFileSync(
-      join(repo, 'headless.registry.mjs'),
-      headlessRegistrySource(),
     );
   }
   if (name === 'hermetic') {
@@ -1092,20 +1168,54 @@ function createScenario(
   return { root, repo, configHome, baselineCommit };
 }
 
+function createNoTmuxGuard(root: string): {
+  binDir: string;
+  marker: string;
+  realTmux: string;
+} {
+  const binDir = join(root, 'no-tmux-bin');
+  const marker = join(root, 'tmux-was-called');
+  const shim = join(binDir, 'tmux');
+  mkdirSync(binDir, { recursive: true });
+  writeFileSync(
+    shim,
+    [
+      '#!/bin/sh',
+      'for argument in "$@"; do',
+      '  case "$argument" in',
+      '    new|new-s*)',
+      '      printf "%s\\n" "$*" > "$PLAYBOOK_ACCEPTANCE_TMUX_CALLED"',
+      '      exit 97',
+      '      ;;',
+      '  esac',
+      'done',
+      'exec "$PLAYBOOK_ACCEPTANCE_REAL_TMUX" "$@"',
+      '',
+    ].join('\n'),
+  );
+  chmodSync(shim, 0o755);
+  return { binDir, marker, realTmux: execText('which', ['tmux']) };
+}
+
 async function drivePlaybookTurn(
   scenario: Scenario,
   command: string,
   expectation: TurnExpectation,
-): Promise<void> {
+): Promise<TurnObservation> {
   const sessionsBefore = new Set(listTmuxSessions());
   const launcher = spawnLauncher(scenario);
   let sessionName: string | undefined;
+  let continuityMarker: string | undefined;
   try {
     sessionName = await waitForNewSession(sessionsBefore, launcher);
     const target = `${sessionName}:0.0`;
     await waitForAttachedClient(sessionName, startupTimeoutMs, launcher);
     await waitForPaneText(target, 'boss>', startupTimeoutMs, launcher);
     console.info(`[acceptance] ${scenario.root.split('/').at(-1)}: ${command}`);
+    // Bound the whole real-agent workflow, not each nested milestone. A
+    // stalled call must not multiply the model-call budget by three merely
+    // because the gate observes call, return, and finish separately.
+    const liveDeadline = Date.now() + liveTimeoutMs;
     tmuxText(['send-keys', '-t', target, '-l', command]);
     tmuxText(['send-keys', '-t', target, 'Enter']);
     await waitForPaneText(
@@ -1117,20 +1227,57 @@ async function drivePlaybookTurn(
     );
     await waitForPaneShape(
       sessionName,
-      expectation.paneTitles,
+      expectation.rootPaneTitles,
       startupTimeoutMs,
+      launcher,
+    );
+    if (expectation.continuity !== undefined) {
+      continuityMarker = await waitForPlayerPaneMatch(
+        sessionName,
+        expectation.continuity.paneTitle,
+        expectation.continuity.pattern,
+        remainingTime(liveDeadline),
+        launcher,
+      );
+    }
+    await waitForPaneText(
+      target,
+      expectation.nestedCalled,
+      remainingTime(liveDeadline),
+      launcher,
+      turnFailureMarkers,
+    );
+    await waitForPaneShape(
+      sessionName,
+      expectation.nestedPaneTitles,
+      startupTimeoutMs,
+      launcher,
+    );
+    await waitForPlayerPaneText(
+      sessionName,
+      expectation.nestedActivity.paneTitle,
+      expectation.nestedActivity.text,
+      remainingTime(liveDeadline),
       launcher,
     );
     await waitForPaneText(
       target,
+      expectation.nestedReturned,
+      remainingTime(liveDeadline),
+      launcher,
+      turnFailureMarkers,
+    );
+    await waitForPaneText(
+      target,
       expectation.finished,
-      liveTimeoutMs,
+      remainingTime(liveDeadline),
       launcher,
       turnFailureMarkers,
     );
     console.info(
       `[acceptance] ${scenario.root.split('/').at(-1)}: ${expectation.finished}`,
     );
+    return continuityMarker === undefined ? {} : { continuityMarker };
   } catch (error) {
     writeFailureSnapshot(
       scenario.root,
@@ -1497,6 +1644,108 @@ function assertLauncherAlive(
   }
 }
 
+async function waitForPlayerPaneText(
+  sessionName: string,
+  paneTitle: string,
+  expected: string,
+  timeoutMs: number,
+  launcher: Launcher,
+): Promise<void> {
+  await waitForPlayerPaneValue(
+    sessionName,
+    paneTitle,
+    JSON.stringify(expected),
+    timeoutMs,
+    launcher,
+    (pane) => (paneContains(pane, expected) ? true : undefined),
+  );
+}
+
+async function waitForPlayerPaneMatch(
+  sessionName: string,
+  paneTitle: string,
+  pattern: RegExp,
+  timeoutMs: number,
+  launcher: Launcher,
+): Promise<string> {
+  return waitForPlayerPaneValue(
+    sessionName,
+    paneTitle,
+    String(pattern),
+    timeoutMs,
+    launcher,
+    (pane) => {
+      pattern.lastIndex = 0;
+      return pattern.exec(pane.replace(/\s+/g, ''))?.[0];
+    },
+  );
+}
+
+async function waitForPlayerPaneValue<T>(
+  sessionName: string,
+  paneTitle: string,
+  expected: string,
+  timeoutMs: number,
+  launcher: Launcher,
+  valueFromPane: (pane: string) => T | undefined,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let lastPane = '';
+  let lastShape = '';
+  while (Date.now() < deadline) {
+    try {
+      lastShape = tmuxText([
+        'list-panes',
+        '-t',
+        `${sessionName}:0`,
+        '-F',
+        '#{pane_id}|#{pane_title}',
+      ]);
+      const matches = lastShape
+        .split('\n')
+        .map((line) => line.split('|'))
+        .filter(([, title]) => title === paneTitle);
+      if (matches.length > 1) {
+        throw new Error(`multiple panes have title ${JSON.stringify(paneTitle)}`);
+      }
+      const paneId = matches[0]?.[0];
+      if (paneId !== undefined) {
+        lastPane = capturePane(paneId);
+        const value = valueFromPane(lastPane);
+        if (value !== undefined) return value;
+      }
+    } catch {
+      // Visibility reconciliation briefly destroys and rebuilds player panes.
+    }
+    let bossPane = '';
+    try {
+      bossPane = capturePane(`${sessionName}:0.0`);
+    } catch (error) {
+      throw new Error(
+        `tmux session ended while waiting for ${expected} in ${paneTitle}: ` +
+          `${errorMessage(error)}\n${launcher.output()}`,
+      );
+    }
+    assertNoFailureMarker(
+      bossPane,
+      turnFailureMarkers,
+      `${expected} in ${paneTitle}`,
+      launcher,
+    );
+    assertLauncherAlive(
+      launcher,
+      `${expected} in ${paneTitle}`,
+      bossPane,
+    );
+    await delay(pollIntervalMs);
+  }
+  throw new Error(
+    `timed out waiting for ${expected} in ${paneTitle}\n` +
+      `${launcher.output()}\nLast pane shape:\n${lastShape}\n` +
+      `Last ${paneTitle} pane:\n${diagnosticTail(lastPane)}`,
+  );
+}
+
 async function waitForPaneShape(
   sessionName: string,
   expectedTitles: readonly string[],
@@ -1579,6 +1828,15 @@ function listTmuxSessions(): string[] {
 
 function headRevision(repo: string): string {
   return execText('git', ['rev-parse', 'HEAD'], repo);
+}
+
+function isAncestor(repo: string, ancestor: string): boolean {
+  try {
+    execText('git', ['merge-base', '--is-ancestor', ancestor, 'HEAD'], repo);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function gitStatus(repo: string): string {
@@ -1947,86 +2205,6 @@ export default {
 `;
 }
 
-function headlessRegistrySource(): string {
-  return [
-    `const expectedTask = ${JSON.stringify(headlessTask)};`,
-    `const expectedToken = ${JSON.stringify(headlessToken)};`,
-    '',
-    'export default {',
-    "  id: 'headless-smoke',",
-    "  command: 'headless-smoke',",
-    "  intent: 'verify the installed non-interactive host with real agents',",
-    "  requiredRoleIds: ['worker'],",
-    '  validateOptions(options) {',
-    '    return options ?? {};',
-    '  },',
-    '  createRuntime() {',
-    '    let ports;',
-    '    return {',
-    '      async init(session) {',
-    '        ports = session.ports;',
-    '      },',
-    '      async handleBossInput({ text, signal }) {',
-    '        if (text !== expectedTask) throw new Error("headless task changed");',
-    "        await ports.emitStatus('headless smoke started');",
-    '        const player = await ports.callPlayer(',
-    "          'worker',",
-    '          [',
-    "            'Read acceptance-headless-token.txt from the working directory using your tools.',",
-    "            'Do not modify any file.',",
-    "            'Return exactly the file token with no prose or Markdown.',",
-    "          ].join('\\n'),",
-    '          signal,',
-    '          { resume: false },',
-    '        );',
-    "        if (player.status !== 'ok' || typeof player.finalText !== 'string') {",
-    "          throw new Error(player.error ?? 'headless player call failed');",
-    '        }',
-    '        const playerToken = player.finalText.trim();',
-    '        if (playerToken !== expectedToken) {',
-    '          throw new Error(`unexpected player token: ${JSON.stringify(playerToken)}`);',
-    '        }',
-    '        const judged = await ports.callJudge(',
-    '          [',
-    "            'Return exactly one JSON object with keys accepted and token.',",
-    "            'Set accepted to true and token to the expected token only when the player output matches it exactly.',",
-    '            `Expected token: ${JSON.stringify(expectedToken)}`,',
-    '            `Player output: ${JSON.stringify(playerToken)}`,',
-    "          ].join('\\n'),",
-    '          signal,',
-    '        );',
-    '        const decision = JSON.parse(judged);',
-    '        if (',
-    '          decision.accepted !== true ||',
-    '          decision.token !== expectedToken ||',
-    "          Object.keys(decision).sort().join(',') !== 'accepted,token'",
-    '        ) {',
-    '          throw new Error(`unexpected judge decision: ${judged}`);',
-    '        }',
-    "        await ports.emitStatus('headless smoke finished');",
-    '        return {',
-    "          outcome: 'terminal',",
-    '          state: {',
-    "            value: 'done',",
-    '            activeStateIds: [],',
-    '            tags: [],',
-    "            status: 'done',",
-    '            quiescent: true,',
-    '          },',
-    '          output: { playerToken, judge: decision },',
-    '        };',
-    '      },',
-    '      async resumePlaybookCall() {',
-    '        throw new Error("headless smoke cannot resume a nested call");',
-    '      },',
-    '      async dispose() {},',
-    '    };',
-    '  },',
-    '};',
-    '',
-  ].join('\n');
-}
-
 function positiveIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined) return fallback;
@@ -2061,6 +2239,10 @@ function errorMessage(error: unknown): string {
 
 function delay(milliseconds: number): Promise<void> {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+function remainingTime(deadline: number): number {
+  return Math.max(1, deadline - Date.now());
 }
 
 function appendTail(current: string, next: string): string {
