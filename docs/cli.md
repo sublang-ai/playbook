@@ -87,29 +87,31 @@ exits `127` when it cannot launch at all
 ### Running a Boss turn
 
 The Boss pane starts at the Playbook Captain shell, where the session
-Captain runs for the whole session and sees every turn. Use
-`/code <task>` to select the CODE playbook explicitly — a registered
-command resolves deterministically, with no model call parsing it: at
-idle it starts that playbook, at its own leaf it delivers the rest of
-the line, an enabled command absent from the active path switches to it,
-and a bare `/code` answers with status or a clarification instead of
-restarting anything. Type ordinary text and the session Captain decides
-the turn instead: it chats back, starts or switches a playbook, hands
-the text to the working playbook, dismisses it, or applies one recovery
-action the running playbook currently offers. It never does the
-specialized work itself, and a conversational turn — including a
-progress or status question — leaves the engagement, its parked state,
-and any pending player question untouched
+Captain runs for the whole session and sees every turn. Use `/code`,
+`/review`, or `/decide` followed by a task to select one of the bundled
+playbooks explicitly. A registered command resolves deterministically,
+with no model call parsing it: at idle it starts that playbook, at its
+own leaf it delivers the rest of the line, an enabled command absent
+from the active path switches to it, and a bare command answers with
+status or a clarification instead of restarting anything. Type ordinary
+text and the session Captain decides the turn instead: it chats back,
+starts or switches a playbook, hands the text to the working playbook,
+dismisses it, or applies one recovery action the running playbook
+currently offers. It never does the specialized work itself, and a
+conversational turn — including a progress or status question — leaves
+the engagement, its parked state, and any pending player question
+untouched
 ([[playbook-captain-1](../specs/packages/playbook-captain.md#playbook-captain-1)],
 [[playbook-captain-2](../specs/packages/playbook-captain.md#playbook-captain-2)]).
 
-Once a turn reaches CODE, the CODE judge classifies it into an FSM event
-— start a coding turn, continue or summarize an iteration, interrupt to
-a named state, or nothing
-([[playbook-runtime-1](../specs/packages/playbook-runtime.md#playbook-runtime-1)]). When a player
-surfaces a clarifying question the FSM parks, the pane shows the
-question, and your next turn is normally classified as the reply — a
-fresh directive abandons it
+The current CODE, REVIEW, and DECIDE workflows take their deterministic
+initial event from the selecting Boss turn. CODE and DECIDE then call
+REVIEW as a nested playbook: an exact same-name child role continues the
+ancestor's player pane and backend conversation, while any additional
+role uses REVIEW's configured fallback. When a player surfaces a
+clarifying question the FSM parks, the pane shows the question, and a
+judge classifies your next turn as its reply or a fresh directive that
+abandons it
 ([[playbook-runtime-2](../specs/packages/playbook-runtime.md#playbook-runtime-2)]).
 
 The Captain pane shows start/stop/finished status with `◇` lines and
@@ -124,10 +126,11 @@ ordinary reply and no saved-counts line
 ## Non-interactive
 
 `playbook run <from> [task]` runs one playbook once, without tmux-play
-and without a config entry — point it straight at a registry module:
+and without an interactive config entry. For example, run REVIEW
+directly against the latest commit:
 
 ```sh
-playbook run @sublang/playbook/code/registry "add a test for parseArgs" \
+playbook run @sublang/playbook/review/registry "review the latest commit" \
   --player coder=claude --player reviewer=codex --cwd ./my-repo
 ```
 
@@ -138,7 +141,7 @@ intents the same way you would to `claude -p` or `codex exec`.
 | --- | --- |
 | `--player <role>=<agent>` | bind a required role |
 | `--captain <agent>` | set the captain/judge agent |
-| `--option <key>=<value>` | a playbook option (CODE's `committer`) |
+| `--option <key>=<value>` | a registry-defined playbook option (none in the current bundled workflows) |
 | `--cwd <dir>` | the agents' working directory |
 | `--json` | one envelope: `outcome`, `sessionId`, output or questions |
 | `--no-provision` | never create engine links beside a filesystem `<from>` |

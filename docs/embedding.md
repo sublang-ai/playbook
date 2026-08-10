@@ -8,7 +8,7 @@ one host, and [spex](https://github.com/sublang-ai/spex) (the desktop
 app) is another. This guide shows how to wire a playbook runtime into
 your own host.
 
-> **Release note:** this guide targets the semver-stable 1.0 six-port
+> **Release note:** this guide targets the current semver-stable six-port
 > contract; see the [CHANGELOG](../CHANGELOG.md) for migration details.
 
 ## The runtime contract
@@ -17,11 +17,11 @@ The port and runtime contracts live in the type-only module
 [`@sublang/playbook/runtime`](../src/runtime.ts) — a public,
 semver-stable surface (`PlayerResult`, `PlaybookPorts`,
 `PlaybookRuntime`, `PlaybookSession`, `PlayerCallOptions`,
-`CaptainCallOptions`, `CaptainResult`, `PlaybookTraceEvent`, and
-`PlaybookRuntimeFactory`) that imports no CODE or FSM types, so a host
-satisfies it once and inherits every playbook. The CODE runtime
-re-exports `PlayerResult`, `PlaybookPorts`, `PlaybookSession`, and
-`PlaybookRuntime` from `@sublang/playbook/code/playbook`;
+`PlayerSessionStore`, `CaptainCallOptions`, `CaptainResult`,
+`PlaybookTraceEvent`, and `PlaybookRuntimeFactory`) that imports no CODE
+or FSM types, so a host satisfies it once and inherits every playbook.
+The generated CODE, REVIEW, and DECIDE modules re-export their shared
+runtime contract types from their public `playbook` subpaths;
 `PlaybookRuntimeFactory` is available from `@sublang/playbook/runtime`.
 
 Generated linked runtimes reuse the XState integration engine exposed
@@ -32,7 +32,7 @@ nested-playbook bridge.
 ## Constructing a runtime against your own ports
 
 ```ts
-import createPlaybookRuntime from '@sublang/playbook/code/playbook';
+import createPlaybookRuntime from '@sublang/playbook/review/playbook';
 import type {
   CaptainCallOptions,
   CaptainResult,
@@ -104,20 +104,20 @@ const ports: PlaybookPorts = {
 };
 
 const runtime = createPlaybookRuntime({
-  coderPlayer: 'claude',
-  reviewerPlayer: 'codex',
+  coderLlm: 'claude-opus-4-8[1m]',
+  reviewerLlm: 'gpt-5.5',
 });
 
 const playbookSessionId = randomUUID();
 await runtime.init({
   sessionId: playbookSessionId,
-  playbookId: 'code',
+  playbookId: 'review',
   rootSessionId: playbookSessionId,
   depth: 0,
   ports,
 });
 await runtime.handleBossInput({
-  text: 'Start fixing the bug',
+  text: 'Review the latest commit against the requested intent',
   signal: new AbortController().signal,
 });
 await runtime.dispose();
@@ -129,11 +129,19 @@ Every init-to-dispose lifecycle is one playbook session. Its
 `playbook.trace` telemetry carries that immutable ID plus a contiguous
 sequence across exact Boss input, judge/player calls, FSM transitions,
 visible Captain work, nested playbook calls, status, settlement, and
-disposal. Each resolved player starts fresh in a new playbook session
-and then resumes only from the latest opaque `resumeToken` its adapter
-returned; trace data and tokens never enter Boss-visible status text.
-Because trace observers do receive opaque resume tokens, persisted
-traces should be protected as sensitive data.
+disposal. Without `PlaybookSession.playerSessions`, a standalone runtime
+starts each player fresh and privately retains the latest opaque
+`resumeToken` its adapter returned.
+
+A composing host can instead supply a frame-local `PlayerSessionStore`
+view over one root-owned continuation map. The host maps each local role
+to its effective binding, so a nested exact same-name role selects and
+updates the ancestor conversation while an unmatched child role gets
+its own binding. Child return or disposal does not clear the root's
+token, and a new root engagement starts fresh. Trace data and tokens
+never enter Boss-visible status text. Because trace observers do receive
+opaque resume tokens, persisted traces should be protected as sensitive
+data.
 
 See
 [`code.playbook.test.ts`](../reference/sdlc/code.playbook/code.playbook.test.ts)

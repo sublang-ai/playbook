@@ -41,6 +41,19 @@ const CAPTAIN_GENERATED_BUNDLE = [
   `${CAPTAIN_BASE}.slc-verify/verify-coverage.js`,
   `${CAPTAIN_BASE}.slc-verify/verify-coverage.d.ts`,
 ] as const;
+const BUNDLED_WORKFLOW_IDS = ['code', 'review', 'decide'] as const;
+const REQUIRED_WORKFLOW_ARTIFACT_SUFFIXES = [
+  'gears.md',
+  'fsm.ts',
+  'fsm.js',
+  'fsm.d.ts',
+  'playbook.ts',
+  'playbook.js',
+  'playbook.d.ts',
+  'registry.ts',
+  'registry.js',
+  'registry.d.ts',
+] as const;
 
 // The manifest dependency groups pnpm records in the root importer.
 const DEPENDENCY_GROUPS = [
@@ -619,6 +632,12 @@ describe('packed tarball contents (RELEASE-18)', () => {
     const packed: string[] = JSON.parse(out)[0].files.map(
       (f: { path: string }) => f.path,
     );
+    const requiredWorkflowArtifacts = BUNDLED_WORKFLOW_IDS.flatMap((id) => [
+      `reference/sdlc/${id}.md`,
+      ...REQUIRED_WORKFLOW_ARTIFACT_SUFFIXES.map(
+        (suffix) => `reference/sdlc/${id}.playbook/${id}.${suffix}`,
+      ),
+    ]);
     for (const artifact of [
       'src/runtime.js',
       'src/runtime.d.ts',
@@ -627,8 +646,6 @@ describe('packed tarball contents (RELEASE-18)', () => {
       'src/xstate-playbook-runtime.js',
       'src/xstate-playbook-runtime.d.ts',
       'reference/sdlc/captain.md',
-      'reference/sdlc/code.md',
-      'reference/sdlc/discuss.md',
       `${CAPTAIN_BASE}captain.gears.md`,
       `${CAPTAIN_BASE}captain.fsm.ts`,
       `${CAPTAIN_BASE}captain.fsm.js`,
@@ -636,9 +653,17 @@ describe('packed tarball contents (RELEASE-18)', () => {
       `${CAPTAIN_BASE}captain.playbook.ts`,
       `${CAPTAIN_BASE}captain.playbook.js`,
       `${CAPTAIN_BASE}captain.playbook.d.ts`,
+      ...requiredWorkflowArtifacts,
     ]) {
       expect(packed, `tarball missing ${artifact}`).toContain(artifact);
     }
+    expect(packed).not.toContain('reference/sdlc/discuss.md');
+    expect(
+      packed.filter((path) =>
+        path.startsWith('reference/sdlc/discuss.playbook/'),
+      ),
+      'tarball still carries retired DISCUSS artifacts',
+    ).toEqual([]);
     // RELEASE-18/20: the README delegates usage to docs/, so an installed
     // copy must carry every guide it links to — otherwise those links point
     // at content the tarball does not have.
@@ -670,6 +695,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
   ) as { bin: Record<string, string>; exports: Record<string, unknown> };
   const CODE_BASE = 'reference/sdlc/code.playbook/';
+  const REVIEW_BASE = 'reference/sdlc/review.playbook/';
+  const DECIDE_BASE = 'reference/sdlc/decide.playbook/';
 
   it('declares the playbook bin and registry exports, not the retired surfaces', () => {
     expect(manifest.bin).toHaveProperty('playbook');
@@ -677,8 +704,11 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).toHaveProperty('./runtime');
     expect(manifest.exports).toHaveProperty('./xstate-runtime');
     expect(manifest.exports).toHaveProperty('./code/registry');
-    expect(manifest.exports).toHaveProperty('./discuss/registry');
+    expect(manifest.exports).toHaveProperty('./review/registry');
+    expect(manifest.exports).toHaveProperty('./decide/registry');
     expect(manifest.exports).toHaveProperty('./captain/playbook');
+    expect(manifest.exports).not.toHaveProperty('./discuss/playbook');
+    expect(manifest.exports).not.toHaveProperty('./discuss/registry');
     expect(manifest.exports).not.toHaveProperty('./captain/registry');
     expect(manifest.exports).not.toHaveProperty('./code/tmux-play');
   });
@@ -708,8 +738,9 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
   // subpaths were named here while `./xstate-runtime` — a public,
   // semver-stable surface by RELEASE-15, with `createXStatePlaybookRuntime`
   // and `RUNTIME_ABI` on it — sat outside the gate entirely, along with
-  // `./code/playbook`, `./playbook-captain`, and `./discuss/playbook`. Adding
-  // the missing name would have repeated the mistake; deriving the set makes
+  // `./code/playbook`, `./playbook-captain`, and the bundled workflow
+  // playbooks. Adding the missing name would have repeated the mistake;
+  // deriving the set makes
   // a subpath added to `package.json` go red until it is recorded.
   const UNPINNABLE_SUBPATHS: Record<string, string> = {
     './slc/*':
@@ -776,14 +807,27 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'validateCodeOptions',
     ],
     './playbook-captain': ['createPlaybookCaptainShell', 'default'],
-    './discuss/playbook': ['_internal', 'createPlaybookRuntime', 'default'],
-    './discuss/registry': [
-      'createDiscussRuntimeOptions',
+    './review/playbook': ['_internal', 'default'],
+    './review/registry': [
+      'createReviewRuntimeOptions',
       'default',
-      'discussPlaybookRegistryEntry',
-      'discussSavedCountsLine',
-      'discussSummaryPolicy',
-      'validateDiscussOptions',
+      'reviewCopyPasteGuardNames',
+      'reviewPlaybookRegistryEntry',
+      'reviewSavedCountsLine',
+      'reviewStateCountLabels',
+      'reviewSummaryPolicy',
+      'validateReviewOptions',
+    ],
+    './decide/playbook': ['_internal', 'createPlaybookRuntime', 'default'],
+    './decide/registry': [
+      'createDecideRuntimeOptions',
+      'decideCopyPasteGuardNames',
+      'decidePlaybookRegistryEntry',
+      'decideSavedCountsLine',
+      'decideStateCountLabels',
+      'decideSummaryPolicy',
+      'default',
+      'validateDecideOptions',
     ],
   };
 
@@ -815,6 +859,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookTraceType',
       'PlayerCallOptions',
       'PlayerResult',
+      'PlayerSessionStore',
     ],
     // Reached through the one resolved wildcard in the package: this file
     // re-exports the engine module whole, so the engine's declarations are
@@ -848,6 +893,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'XStateCaptainCallOptions',
       'XStateCaptainStrategy',
       'XStateCaptainStrategyRun',
+      'XStatePlayerStateStatus',
       'XStatePlaybookRuntimeCompat',
       'XStatePlaybookRuntimeSpec',
       'activePlaybookStateMetadata',
@@ -931,6 +977,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCallRequest',
       'PlaybookCallResult',
       'PlaybookCallStart',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
       'PlaybookPendingCall',
       'PlaybookPorts',
       'PlaybookRunResult',
@@ -944,6 +992,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookTraceType',
       'PlayerCallOptions',
       'PlayerResult',
+      'PlayerSessionStore',
       '_internal',
       'default',
     ],
@@ -969,7 +1018,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'createPlaybookCaptainShell',
       'default',
     ],
-    './discuss/playbook': [
+    './review/playbook': [
       'CaptainCallOptions',
       'CaptainResult',
       'JsonValue',
@@ -977,6 +1026,52 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCallRequest',
       'PlaybookCallResult',
       'PlaybookCallStart',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
+      'PlaybookPendingCall',
+      'PlaybookPorts',
+      'PlaybookRunResult',
+      'PlaybookRuntime',
+      'PlaybookRuntimeFactory',
+      'PlaybookRuntimeSnapshot',
+      'PlaybookSession',
+      'PlaybookState',
+      'PlaybookStateValue',
+      'PlaybookTraceEvent',
+      'PlaybookTraceType',
+      'PlayerCallOptions',
+      'PlayerResult',
+      'PlayerSessionStore',
+      'ReviewPlaybookOptions',
+      '_internal',
+      'default',
+    ],
+    './review/registry': [
+      'CreateReviewRuntimeOptions',
+      'PlaybookSummaryPolicy',
+      'RegistryPlayer',
+      'ReviewOptions',
+      'ReviewPlaybookRegistryEntry',
+      'createReviewRuntimeOptions',
+      'default',
+      'reviewCopyPasteGuardNames',
+      'reviewPlaybookRegistryEntry',
+      'reviewSavedCountsLine',
+      'reviewStateCountLabels',
+      'reviewSummaryPolicy',
+      'validateReviewOptions',
+    ],
+    './decide/playbook': [
+      'CaptainCallOptions',
+      'CaptainResult',
+      'JsonValue',
+      'NormalizedError',
+      'PlaybookCallRequest',
+      'PlaybookCallResult',
+      'PlaybookCallStart',
+      'PlaybookControlAction',
+      'PlaybookControlReceipt',
+      'PlaybookControlView',
       'PlaybookPendingCall',
       'PlaybookPorts',
       'PlaybookRunResult',
@@ -991,20 +1086,25 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookTraceType',
       'PlayerCallOptions',
       'PlayerResult',
+      'PlayerSessionStore',
       '_internal',
       'createPlaybookRuntime',
       'default',
     ],
-    './discuss/registry': [
-      'CreateDiscussRuntimeOptions',
-      'DiscussOptions',
+    './decide/registry': [
+      'CreateDecideRuntimeOptions',
+      'DecideOptions',
+      'DecidePlaybookRegistryEntry',
+      'PlaybookSummaryPolicy',
       'RegistryPlayer',
-      'createDiscussRuntimeOptions',
+      'createDecideRuntimeOptions',
+      'decideCopyPasteGuardNames',
+      'decidePlaybookRegistryEntry',
+      'decideSavedCountsLine',
+      'decideStateCountLabels',
+      'decideSummaryPolicy',
       'default',
-      'discussPlaybookRegistryEntry',
-      'discussSavedCountsLine',
-      'discussSummaryPolicy',
-      'validateDiscussOptions',
+      'validateDecideOptions',
     ],
   };
 
@@ -1133,6 +1233,33 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     (subpath, expected) => {
       expect(resolveDeclarationExports(declarationUrlOf(subpath))).toEqual(
         [...expected].sort(),
+      );
+    },
+  );
+
+  it.each(BUNDLED_WORKFLOW_IDS)(
+    '%s visibly re-exports PlayerSessionStore from the shared contract',
+    (id) => {
+      const dts = declarationSourceOf(`./${id}/playbook`);
+      const imported = dts.match(
+        /import type \{([\s\S]*?)\} from '@sublang\/playbook\/runtime';/,
+      );
+      const reexported = dts.match(/^export type \{([\s\S]*?)\};$/m);
+      const names = (body: string | undefined): string[] =>
+        (body ?? '')
+          .split(',')
+          .map((entry) => entry.trim().split(/\s+as\s+/).at(-1) ?? '')
+          .filter((entry) => entry.length > 0);
+
+      expect(names(imported?.[1]), `${id} shared-contract import`).toContain(
+        'PlayerSessionStore',
+      );
+      expect(
+        names(reexported?.[1]),
+        `${id} shared-contract re-export`,
+      ).toContain('PlayerSessionStore');
+      expect(dts).not.toMatch(
+        /^export\s+(?:interface|type)\s+PlayerSessionStore\b/m,
       );
     },
   );
@@ -1282,7 +1409,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     }
   });
 
-  it('packs the launcher and code.registry artifacts and not the retired files', () => {
+  it('packs the launcher and bundled registry artifacts, not retired surfaces', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
     let out: string;
     try {
@@ -1305,8 +1432,14 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       `${CODE_BASE}bin/adapter-sdk.js`,
       `${CODE_BASE}code.registry.js`,
       `${CODE_BASE}code.registry.d.ts`,
-      'reference/sdlc/discuss.playbook/discuss.registry.js',
-      'reference/sdlc/discuss.playbook/discuss.registry.d.ts',
+      `${REVIEW_BASE}review.playbook.js`,
+      `${REVIEW_BASE}review.playbook.d.ts`,
+      `${REVIEW_BASE}review.registry.js`,
+      `${REVIEW_BASE}review.registry.d.ts`,
+      `${DECIDE_BASE}decide.playbook.js`,
+      `${DECIDE_BASE}decide.playbook.d.ts`,
+      `${DECIDE_BASE}decide.registry.js`,
+      `${DECIDE_BASE}decide.registry.d.ts`,
     ]) {
       expect(packed, `tarball missing ${artifact}`).toContain(artifact);
     }

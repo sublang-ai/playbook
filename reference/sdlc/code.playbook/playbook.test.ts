@@ -371,15 +371,20 @@ describe('live acceptance gate config (PBCLI-32)', () => {
       (specifier: string) => import(specifier),
     );
 
-    expect(playbooks.map((p: any) => p.id).sort()).toEqual(['code', 'discuss']);
+    expect(playbooks.map((p: any) => p.id).sort()).toEqual([
+      'code',
+      'decide',
+      'review',
+    ]);
     expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(config.captain.adapter).toBe('claude');
     // The pane titles the gate asserts derive from these generated ids.
     expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
       'code-coder claude',
-      'code-reviewer codex',
-      'discuss-host claude',
-      'discuss-participant codex',
+      'review-coder claude',
+      'review-reviewer codex',
+      'decide-coder claude',
+      'decide-reviewer codex',
     ]);
   });
 
@@ -633,9 +638,11 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(result).toEqual({ code: 0 });
     const seeded = await readFile(configPath, 'utf8');
     expect(seeded).toContain('@sublang/playbook/code/registry');
+    expect(seeded).toContain('@sublang/playbook/review/registry');
+    expect(seeded).toContain('@sublang/playbook/decide/registry');
     expect(seeded).toContain('claude-opus-4-8[1m]');
     expect(seeded).toContain('gpt-5.5');
-    expect(seeded).toContain('committer: coder');
+    expect(seeded).not.toContain('committer:');
     expect(seeded).toContain('.git');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
@@ -656,6 +663,14 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         effort: 'xhigh',
         permissions: { mode: 'auto' },
       },
+    });
+    expect(seededParsed.playbooks.review.players).toEqual({
+      coder: {
+        adapter: 'claude',
+        model: 'claude-opus-4-8[1m]',
+        effort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
       reviewer: {
         adapter: 'codex',
         model: 'gpt-5.5',
@@ -663,6 +678,9 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
     });
+    expect(seededParsed.playbooks.decide.players).toEqual(
+      seededParsed.playbooks.review.players,
+    );
 
     expect(spawn.calls).toHaveLength(1);
     const composed = parseYaml(spawn.configs[0].content);
@@ -685,20 +703,38 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         permissions: { mode: 'auto' },
       },
       {
-        id: 'code-reviewer',
+        id: 'review-coder',
+        adapter: 'claude',
+        model: 'claude-opus-4-8[1m]',
+        effort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
+      {
+        id: 'review-reviewer',
+        adapter: 'codex',
+        model: 'gpt-5.5',
+        effort: 'xhigh',
+        permissions: { mode: 'auto', writablePaths: ['.git'] },
+      },
+      {
+        id: 'decide-coder',
+        adapter: 'claude',
+        model: 'claude-opus-4-8[1m]',
+        effort: 'xhigh',
+        permissions: { mode: 'auto' },
+      },
+      {
+        id: 'decide-reviewer',
         adapter: 'codex',
         model: 'gpt-5.5',
         effort: 'xhigh',
         permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
     ]);
-    expect(composed.layout.initialVisible).toEqual([
-      'code-coder',
-      'code-reviewer',
-    ]);
+    expect(composed.layout.initialVisible).toEqual(['code-coder']);
     expect(composed.captain.options.playbooks.code).toEqual({
       from: '@sublang/playbook/code/registry',
-      options: { committer: 'coder' },
+      options: {},
     });
 
     // The composed config is valid input to cligent's own loader.
@@ -706,7 +742,10 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(loaded.config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(loaded.config.players.map((p: { id: string }) => p.id)).toEqual([
       'code-coder',
-      'code-reviewer',
+      'review-coder',
+      'review-reviewer',
+      'decide-coder',
+      'decide-reviewer',
     ]);
   });
 
@@ -1225,7 +1264,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(result).toEqual({ code: 0 });
     expect(stdout.text()).toContain('/code');
     expect(stdout.text()).toContain('code');
-    expect(stdout.text()).toContain('SDLC');
+    expect(stdout.text()).toContain('coding intent');
     expect(spawn.calls).toHaveLength(0);
   });
 

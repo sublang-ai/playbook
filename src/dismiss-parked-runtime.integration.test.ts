@@ -400,7 +400,7 @@ describe('leaf telemetry mirrored during disposal (shell guard)', () => {
   });
 
   // The status half of the same guard, reachable without any disposal: a
-  // runtime that stops and rebuilds its actor mid-turn (DISCUSS does exactly
+  // runtime that stops and rebuilds its actor mid-turn (DECIDE does exactly
   // this when a finished actor must accept a new event) emits the teardown
   // snapshot while the frame is live. A stopped actor is not a parked
   // engagement, so it may neither become the mirrored leaf state nor move the
@@ -468,7 +468,7 @@ describe('leaf telemetry mirrored during disposal (shell guard)', () => {
 
 // Fat-artifact parity (PBRT-6). "Suppress inspection before stopping the
 // actor" was an unenforced convention duplicated per runtime, which is why
-// the shared factory's fix could not reach DISCUSS's own runtime. Every
+// the shared factory's fix could not reach DECIDE's own runtime. Every
 // runtime that builds an XState actor is discovered here rather than listed,
 // so a future fat artifact — or a new stop site in an existing one — is
 // covered without anyone remembering to extend this file.
@@ -501,7 +501,7 @@ describe('actor stop hygiene across every runtime that builds one', () => {
   it('discovers the engine and every fat artifact that builds its own actor', () => {
     expect(sources.map(([path]) => path)).toEqual([
       'src/xstate-playbook-runtime.ts',
-      'reference/sdlc/discuss.playbook/discuss.playbook.ts',
+      'reference/sdlc/decide.playbook/decide.playbook.ts',
     ]);
   });
 

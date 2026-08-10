@@ -52,7 +52,8 @@ cd /path/to/your/project
 playbook
 ```
 
-Type a task, or enter `/code <task>` to select CODE directly.
+Type a task, enter `/code <task>` for implementation, or enter
+`/decide <question>` for an independently proposed and reviewed decision.
 
 On first launch, Playbook writes its config to `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`.
 

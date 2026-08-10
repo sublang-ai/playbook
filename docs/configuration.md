@@ -33,8 +33,8 @@ Within a `playbooks.<id>` block, `from` (the registry module), `command`
 every other key is that playbook's option slice. The launcher injects
 the rest — you do not write host wiring by hand.
 
-The seeded config runs the Coder on Claude Opus 4.8 1m and the Reviewer
-on GPT-5.5:
+The seeded config runs each Coder on Claude Opus 4.8 1m and each
+Reviewer on GPT-5.5:
 
 ```yaml
 captain:
@@ -54,6 +54,16 @@ playbooks:
         effort: xhigh
         permissions:
           mode: auto # protected auto mode for the Claude Coder
+
+  review:
+    from: '@sublang/playbook/review/registry'
+    players:
+      coder:
+        adapter: claude
+        model: claude-opus-4-8[1m]
+        effort: xhigh
+        permissions:
+          mode: auto
       reviewer:
         adapter: codex
         model: gpt-5.5
@@ -62,15 +72,47 @@ playbooks:
           mode: auto
           writablePaths:
             - .git # allow git metadata writes under Codex auto mode
-    committer: coder # which role commits — `coder` or `reviewer`
+
+  decide:
+    from: '@sublang/playbook/decide/registry'
+    players:
+      coder:
+        adapter: claude
+        model: claude-opus-4-8[1m]
+        effort: xhigh
+        permissions:
+          mode: auto
+      reviewer:
+        adapter: codex
+        model: gpt-5.5
+        effort: xhigh
+        permissions:
+          mode: auto
+          writablePaths:
+            - .git
 ```
 
-`committer` is CODE's one option: an alias naming which role runs the
-commit turn (fallback semantics:
-[[playbook-runtime-8](../specs/packages/playbook-runtime.md#playbook-runtime-8)]). Each role's per-run
-prompt names its pinned `model`, else its `adapter`
-([[playbook-runtime-4](../specs/packages/playbook-runtime.md#playbook-runtime-4)]), so commit trailers
-credit the concrete model rather than the adapter family.
+The current bundled workflows accept no workflow-specific options.
+Each role's per-run prompt names its pinned `model`, else its `adapter`
+([[playbook-runtime-4](../specs/packages/playbook-runtime.md#playbook-runtime-4)]),
+so commit trailers credit the concrete model rather than the adapter
+family.
+
+## Nested roles and sessions
+
+The launcher creates a namespaced fallback player for every configured
+playbook role, but a nested call maps an exact same-name role to the
+nearest ancestor's effective player and backend conversation. CODE's
+nested REVIEW therefore continues CODE's `coder` and uses REVIEW's
+configured `reviewer`; DECIDE's nested REVIEW continues both of
+DECIDE's roles. A standalone REVIEW starts with REVIEW's own configured
+players, and every new root engagement starts fresh
+([DR-030](../specs/decisions/030-shared-mapped-player-continuity.md)).
+
+The separate fallback entries are still required because tmux creates
+its roster at launch time. The host changes which existing panes are
+visible as the active nested leaf changes; it does not create a new
+host player or backend agent session for a mapped role.
 
 ## Choosing the Captain agent
 
@@ -109,8 +151,8 @@ playbooks:
         effort: medium
         permissions:
           mode: auto
-          # The seeded `committer` is `coder`, so this role runs the commit
-          # turn; a Codex agent needs the `.git` grant to write git metadata.
+          # CODE's Coder commits, so Codex needs the `.git` grant to write
+          # repository metadata.
           writablePaths:
             - .git
 ```
@@ -139,6 +181,7 @@ run:
   captain: claude:claude-opus-4-8@high
   players:
     coder: claude:claude-opus-4-8[1m]@xhigh
+    reviewer: codex:gpt-5.5@xhigh
 ```
 
 ## Migrating from `profiles`

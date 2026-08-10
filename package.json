@@ -2,7 +2,7 @@
   "name": "@sublang/playbook",
   "version": "5.0.0",
   "type": "module",
-  "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, and DISCUSS workflows driven by GEARS specs.",
+  "description": "Composable XState v5 playbook runtime with compiled Captain, CODE, REVIEW, and DECIDE workflows driven by GEARS specs.",
   "license": "Apache-2.0",
   "homepage": "https://github.com/sublang-ai/playbook#readme",
   "repository": {
@@ -40,7 +40,8 @@
     "slc/optimize.md",
     "reference/sdlc/captain.md",
     "reference/sdlc/code.md",
-    "reference/sdlc/discuss.md",
+    "reference/sdlc/review.md",
+    "reference/sdlc/decide.md",
     "reference/sdlc/captain.playbook/captain.gears.md",
     "reference/sdlc/captain.playbook/captain.fsm.ts",
     "reference/sdlc/captain.playbook/captain.fsm.js",
@@ -69,16 +70,26 @@
     "reference/sdlc/code.playbook/bin/run.js",
     "reference/sdlc/code.playbook/bin/provision.js",
     "reference/sdlc/code.playbook/bin/adapter-sdk.js",
-    "reference/sdlc/discuss.playbook/discuss.gears.md",
-    "reference/sdlc/discuss.playbook/discuss.fsm.ts",
-    "reference/sdlc/discuss.playbook/discuss.fsm.js",
-    "reference/sdlc/discuss.playbook/discuss.fsm.d.ts",
-    "reference/sdlc/discuss.playbook/discuss.playbook.ts",
-    "reference/sdlc/discuss.playbook/discuss.playbook.js",
-    "reference/sdlc/discuss.playbook/discuss.playbook.d.ts",
-    "reference/sdlc/discuss.playbook/discuss.registry.ts",
-    "reference/sdlc/discuss.playbook/discuss.registry.js",
-    "reference/sdlc/discuss.playbook/discuss.registry.d.ts",
+    "reference/sdlc/review.playbook/review.gears.md",
+    "reference/sdlc/review.playbook/review.fsm.ts",
+    "reference/sdlc/review.playbook/review.fsm.js",
+    "reference/sdlc/review.playbook/review.fsm.d.ts",
+    "reference/sdlc/review.playbook/review.playbook.ts",
+    "reference/sdlc/review.playbook/review.playbook.js",
+    "reference/sdlc/review.playbook/review.playbook.d.ts",
+    "reference/sdlc/review.playbook/review.registry.ts",
+    "reference/sdlc/review.playbook/review.registry.js",
+    "reference/sdlc/review.playbook/review.registry.d.ts",
+    "reference/sdlc/decide.playbook/decide.gears.md",
+    "reference/sdlc/decide.playbook/decide.fsm.ts",
+    "reference/sdlc/decide.playbook/decide.fsm.js",
+    "reference/sdlc/decide.playbook/decide.fsm.d.ts",
+    "reference/sdlc/decide.playbook/decide.playbook.ts",
+    "reference/sdlc/decide.playbook/decide.playbook.js",
+    "reference/sdlc/decide.playbook/decide.playbook.d.ts",
+    "reference/sdlc/decide.playbook/decide.registry.ts",
+    "reference/sdlc/decide.playbook/decide.registry.js",
+    "reference/sdlc/decide.playbook/decide.registry.d.ts",
     "docs"
   ],
   "bin": {
@@ -110,13 +121,21 @@
       "default": "./reference/sdlc/code.playbook/playbook-captain.js"
     },
     "./slc/*": "./slc/*",
-    "./discuss/playbook": {
-      "types": "./reference/sdlc/discuss.playbook/discuss.playbook.d.ts",
-      "default": "./reference/sdlc/discuss.playbook/discuss.playbook.js"
+    "./review/playbook": {
+      "types": "./reference/sdlc/review.playbook/review.playbook.d.ts",
+      "default": "./reference/sdlc/review.playbook/review.playbook.js"
     },
-    "./discuss/registry": {
-      "types": "./reference/sdlc/discuss.playbook/discuss.registry.d.ts",
-      "default": "./reference/sdlc/discuss.playbook/discuss.registry.js"
+    "./review/registry": {
+      "types": "./reference/sdlc/review.playbook/review.registry.d.ts",
+      "default": "./reference/sdlc/review.playbook/review.registry.js"
+    },
+    "./decide/playbook": {
+      "types": "./reference/sdlc/decide.playbook/decide.playbook.d.ts",
+      "default": "./reference/sdlc/decide.playbook/decide.playbook.js"
+    },
+    "./decide/registry": {
+      "types": "./reference/sdlc/decide.playbook/decide.registry.d.ts",
+      "default": "./reference/sdlc/decide.playbook/decide.registry.js"
     }
   },
   "scripts": {

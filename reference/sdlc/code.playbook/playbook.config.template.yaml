@@ -20,7 +20,7 @@
 # Every seeded agent runs in cligent's protected auto mode
 # (permissions.mode: auto): claude maps it to permissionMode auto, codex to
 # on-request + auto_review. Codex roles also grant writablePaths: ['.git']
-# so commit turns can write git metadata under the codex sandbox.
+# so they can inspect and work with repository metadata under the sandbox.
 
 # The Captain/Judge agent.
 # Captain routing/adjudication calls run tool-free. Claude enforces that at
@@ -40,11 +40,25 @@ notifications:
 
 # Enabled playbooks. Each is loaded from its explicit `from` module; the
 # `<id>` key must equal that module's manifest id. `from`, `command`, and
-# `players` are launcher-owned; every other key (e.g. CODE's `committer`)
-# is that playbook's option slice.
+# `players` are launcher-owned; every other key is that playbook's option
+# slice.
+#
+# Nested calls map roles by exact id. CODE and DECIDE call REVIEW with the
+# same `coder` and `reviewer` ids, so those child roles continue the nearest
+# ancestor sessions. A standalone REVIEW uses its own bindings below.
 playbooks:
   code:
     from: "@sublang/playbook/code/registry"
+    players:
+      coder:
+        adapter: claude
+        model: claude-opus-4-8[1m]
+        effort: xhigh
+        permissions:
+          mode: auto
+
+  review:
+    from: "@sublang/playbook/review/registry"
     players:
       coder:
         adapter: claude
@@ -59,26 +73,23 @@ playbooks:
         permissions:
           mode: auto
           writablePaths: ['.git']
-    committer: coder
 
-# The DISCUSS playbook: two agents converge on spec items or decision
-# records. `committer` picks which player runs Committer commits
-# (default: host).
-#  discuss:
-#    from: "@sublang/playbook/discuss/registry"
-#    players:
-#      host:
-#        adapter: claude
-#        model: claude-opus-4-8
-#        permissions:
-#          mode: auto
-#      participant:
-#        adapter: codex
-#        model: gpt-5.5
-#        permissions:
-#          mode: auto
-#          writablePaths: ['.git']
-#    committer: host
+  decide:
+    from: "@sublang/playbook/decide/registry"
+    players:
+      coder:
+        adapter: claude
+        model: claude-opus-4-8[1m]
+        effort: xhigh
+        permissions:
+          mode: auto
+      reviewer:
+        adapter: codex
+        model: gpt-5.5
+        effort: xhigh
+        permissions:
+          mode: auto
+          writablePaths: ['.git']
 
 # Non-interactive `playbook run` defaults (optional). Each value is an
 # agent string <adapter>[:<model>][@<effort>]; `player` is the catch-all

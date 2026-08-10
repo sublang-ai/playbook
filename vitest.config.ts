@@ -47,7 +47,8 @@ export default defineConfig({
       'src/*.test.ts',
       'reference/sdlc/captain.playbook/*.test.ts',
       'reference/sdlc/code.playbook/*.test.ts',
-      'reference/sdlc/discuss.playbook/*.test.ts',
+      'reference/sdlc/review.playbook/*.test.ts',
+      'reference/sdlc/decide.playbook/*.test.ts',
     ],
   },
 });

@@ -62,8 +62,10 @@ jobs:
             'reference/sdlc/code.playbook/code.*.d.ts' \
             'reference/sdlc/code.playbook/playbook-captain.js' \
             'reference/sdlc/code.playbook/playbook-captain.d.ts' \
-            'reference/sdlc/discuss.playbook/discuss.*.js' \
-            'reference/sdlc/discuss.playbook/discuss.*.d.ts' \
+            'reference/sdlc/review.playbook/review.*.js' \
+            'reference/sdlc/review.playbook/review.*.d.ts' \
+            'reference/sdlc/decide.playbook/decide.*.js' \
+            'reference/sdlc/decide.playbook/decide.*.d.ts' \
             'src/runtime.js' \
             'src/runtime.d.ts' \
             'src/xstate-runtime.js' \
@@ -73,7 +75,8 @@ jobs:
           if [ -n "$(git status --porcelain -- \
             'reference/sdlc/captain.playbook' \
             'reference/sdlc/code.playbook' \
-            'reference/sdlc/discuss.playbook' \
+            'reference/sdlc/review.playbook' \
+            'reference/sdlc/decide.playbook' \
             'src/runtime.js' \
             'src/runtime.d.ts' \
             'src/xstate-runtime.js' \
@@ -83,7 +86,8 @@ jobs:
             git status --short -- \
               'reference/sdlc/captain.playbook' \
               'reference/sdlc/code.playbook' \
-              'reference/sdlc/discuss.playbook' \
+              'reference/sdlc/review.playbook' \
+              'reference/sdlc/decide.playbook' \
               'src/runtime.js' \
               'src/runtime.d.ts' \
               'src/xstate-runtime.js' \

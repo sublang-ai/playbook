@@ -24,6 +24,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/*.ts", "reference/sdlc/captain.playbook/*.ts", "reference/sdlc/code.playbook/*.ts", "reference/sdlc/discuss.playbook/*.ts"],
+  "include": ["src/*.ts", "reference/sdlc/captain.playbook/*.ts", "reference/sdlc/code.playbook/*.ts", "reference/sdlc/review.playbook/*.ts", "reference/sdlc/decide.playbook/*.ts"],
   "exclude": ["**/*.test.ts", "vitest.config.ts", "node_modules"]
 }
