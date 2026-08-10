@@ -167,6 +167,7 @@ The default never applies to an item carrying a `Results:` label, and it does
 not license inferring any richer contract from prose.
 The item's blockquote alone becomes `invoke.input.prompt`; the `Results:`
 label and bullets shall never enter that prompt.
+A `>` that remains at the start of a prompt line after removing the outer GEARS blockquote marker is literal quoted-context content and shall remain in `invoke.input.prompt` unchanged.
 Each result description shall name every additional output field its accepting
 guard requires, using the exact case-sensitive property names. For example, a
 delegation or continuing-call description whose guard reads the planned child
@@ -642,6 +643,7 @@ decision state would add a seventh outcome to a closed six-action contract
 whose guard discriminants [Setup](#setup) fixes, and is nonconformant.
 There is no source-level opt-in annotation and no `needsBossReply` result metadata in GEARS output.
 The FSM compiler shall preserve the GEARS blockquote as the state's domain `prompt` body and shall not inject any Boss-question instruction into `invoke.input.prompt`.
+This preservation includes every literal leading `>` carried inside the outer GEARS blockquote for quoted runtime context.
 
 For every captain- and player-invoking state outside a controller machine,
 the compiler shall add

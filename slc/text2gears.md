@@ -65,6 +65,20 @@ Those requirements remain in the item's condition or `Results:` metadata.
 Adding control-oriented prompt lines merely to restate them changes the
 Boss-visible contract and is nonconformant.
 
+### Authored prompt fragments
+
+Source may compose one acting prompt from authored Markdown instruction blocks and runtime context that it explicitly says to relay in quotes (`>`).
+A fenced `markdown` block introduced as an instruction or prompt is an authored static prompt fragment: its fence delimiters are Source syntax, while every interior line and blank line is prompt content preserved after documented Markdown unescaping.
+
+An instruction fence and a relayed-context fragment that apply to one behavior shall appear in the target blockquote in their Source order.
+Distinct non-empty fragments shall be separated by one blank prompt line unless Source explicitly supplies a different boundary.
+text2gears shall not move a shared instruction ahead of behavior-specific context, move quoted evidence after an instruction that Source says follows the evidence, or otherwise regroup fragments for convenience.
+
+Where Source says that a runtime value is relayed in quotes, the leading `>` is prompt content rather than Source-only blockquote syntax.
+If Source supplies a blockquoted template for that relay, text2gears shall keep one literal leading `>` on every quoted line; the target GEARS line therefore uses its outer blockquote marker followed by the literal marker, such as `> > Coder output: <coder-output>`.
+If Source names the relayed value but supplies no template, text2gears shall emit its canonical typed placeholder on a line beginning with literal `> ` and shall not summarize, paraphrase, or invent a value in its place.
+An ordinary Source blockquote that specifies a complete acting prompt without requiring quoted relay retains the existing rule above: its one leading marker is Source syntax and is not prompt content.
+
 Source statements that assign active-leaf routing, call identity, suspension,
 or return matching to the host describe execution preconditions rather than
 behaviors for Captain to perform. text2gears shall use such a statement only as
@@ -138,6 +152,10 @@ through typed context.
 A single-outcome producer then declares exactly one bullet naming the
 property; this consumed-output case is the sole one in which a
 single-outcome behavior carries a `Results:` label.
+
+Where a later prompt relays a delegated player's output as quoted context, the producer shall declare that property in the exact annotated form `` `<field>: <verbatim final text>` ``.
+The annotation makes the field runtime-owned: the adjudicator selects the result guard, while the linked runtime carries the player's canonical final text into that field instead of asking a judge to reproduce it.
+One property name shall not be annotated as verbatim in one result contract and judge-authored in another; text2gears shall choose distinct properties or report that the Source cannot be represented by the current contract.
 
 Result metadata is compiler control data, not part of the acting agent's
 prompt.
@@ -306,6 +324,7 @@ Prompts shall carry the specification's normative requirements as instructions t
 
 Source snippets may overlap or duplicate.
 When composing them into a spec item, text2gears shall deduplicate identical prompt lines.
+It shall not deduplicate across distinct authored fragments when doing so would erase a fragment boundary or change the Source-ordered prompt.
 
 Each spec item addresses one state behavior and carries its full final prompt (the static part).
 Cross-item duplication is acceptable: spec items are compiled artifacts; Source is what users maintain.

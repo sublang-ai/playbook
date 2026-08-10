@@ -531,6 +531,7 @@ decides only the `callPlayer` invocation.
 The runtime shall compose the actual player prompt from the state's
 `PlayerInput`.
 `input.prompt` is the GEARS-derived domain prompt body and shall not be mutated, re-flowed, or treated as a place to store framework control instructions.
+A leading `>` inside that body is authored quoted-context content and shall reach the player unchanged.
 
 The composer may prepend structured labelled blocks from typed `PlayerInput`
 fields the FSM exposes (for example `Boss intent:`, `Review items:`,
@@ -731,6 +732,9 @@ clause (or equivalent typed output metadata). Backticked prose before that
 clause can name statuses, guards, or concepts such as `ok`, `aborted`, and
 `error`; those names are not output properties and shall never become required
 judge fields.
+For a delegated-player field annotated exactly `` `<field>: <verbatim final text>` ``, the judge shall select the guard but the runtime shall replace any judge-supplied value with the player's canonical non-empty final text before returning the actor output.
+The linker shall derive the complete `verbatimPayloadFields` set from those annotations across the FSM result maps.
+A field name that is annotated in one result map and unannotated in another is a link error because the shared adjudication strategy cannot give one property both ownership policies.
 For a direct Captain result, `question` and `response` are human-presentation
 fields owned by the visible call rather than fields authored by the hidden
 judge.
@@ -1544,6 +1548,7 @@ The thin emitted module:
   and the canonical `<#>` → `irNumber` special case; the
   transition-event payload fields the FSM's Boss union declares; a
   non-default player binding where the linker inputs supplied one; the
+  `verbatimPayloadFields` set derived from annotated result fields above; the
   `controlContextFields` projection of §Control surface; and any
   per-playbook strategy override (classifier, prompt composers,
   required-field extraction, status formatting) an earlier section of this
