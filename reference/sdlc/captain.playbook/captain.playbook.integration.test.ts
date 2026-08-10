@@ -1322,6 +1322,8 @@ function makeShellHarness(
     [];
   const playerCalls: string[] = [];
   const playerPrompts: string[] = [];
+  const playerResumes: Array<string | false> = [];
+  const visiblePlayerSets: string[][] = [];
   const surfaced: string[] = [];
   const replyAttempts: string[] = [];
   const scripted = [...replies];
@@ -1342,15 +1344,22 @@ function makeShellHarness(
     emitTelemetry: async (event: { topic: string; payload: unknown }) => {
       telemetry.push(event);
     },
-    setVisiblePlayers: async () => {},
+    setVisiblePlayers: async (playerIds: readonly string[]) => {
+      visiblePlayerSets.push([...playerIds]);
+    },
   };
   const context = {
     signal: controller.signal,
     players: [],
-    callPlayer: async (playerId: string, prompt: string) => {
+    callPlayer: async (
+      playerId: string,
+      prompt: string,
+      options: { resume: string | false },
+    ) => {
       const callIndex = playerCalls.length;
       playerCalls.push(playerId);
       playerPrompts.push(prompt);
+      playerResumes.push(options.resume);
       const scriptedResult = harnessOptions.players?.(
         playerId,
         prompt,
@@ -1388,7 +1397,9 @@ function makeShellHarness(
       }
       surfaced.push(text);
     },
-    setVisiblePlayers: async () => {},
+    setVisiblePlayers: async (playerIds: readonly string[]) => {
+      visiblePlayerSets.push([...playerIds]);
+    },
   };
   return {
     shell,
@@ -1397,6 +1408,8 @@ function makeShellHarness(
     captainCalls,
     playerCalls,
     playerPrompts,
+    playerResumes,
+    visiblePlayerSets,
     surfaced,
     replyAttempts,
     context,
@@ -2097,6 +2110,111 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     expect(child.runtimes[0]?.inputs).toEqual(['do it']);
     expect(harness.decisionPrompts()).toEqual([]);
     expect(harness.surfaced.at(-1)).toBe('Done.');
+  });
+
+  it('shares a mapped player through a nested call and resets at the next root', async () => {
+    const callWorker = async (
+      runtime: ScriptedRuntime,
+      prompt: string,
+    ): Promise<void> => {
+      const store = runtime.session?.playerSessions;
+      if (!store) throw new Error('composed runtime needs a player store');
+      const resume = store.select('worker');
+      const result = await runtime.ports!.callPlayer(
+        'worker',
+        prompt,
+        new AbortController().signal,
+        { resume },
+      );
+      store.update('worker', result.resumeToken);
+    };
+    const child = shellEntry('child', 'child', {
+      onInput: async (_text, runtime) => {
+        await callWorker(runtime, 'review the committed change');
+        return {
+          outcome: 'terminal',
+          state: { ...runtime.state(), status: 'done' },
+          output: { approved: true },
+        };
+      },
+    });
+    let nestedCall = 0;
+    const summaryPolicy = {
+      stateCountLabels: {},
+      copyPasteGuardNames: [],
+      savedCountsLine: (counts: { interruptions: number }) =>
+        `Nested activity: ${counts.interruptions} player calls.`,
+    };
+    const parent = shellEntry(
+      'parent',
+      'parent',
+      {
+        onInput: async (_text, runtime) => {
+          await callWorker(runtime, 'prepare the committed change');
+          const start = await runtime.ports!.callPlaybook(
+            {
+              callId: `parent:child:${++nestedCall}`,
+              playbookId: 'child',
+              text: 'review it',
+            },
+            new AbortController().signal,
+          );
+          if (start.state !== 'settled') {
+            throw new Error('child should finish within the parent turn');
+          }
+          await callWorker(runtime, 'address the completed review');
+          return {
+            outcome: 'terminal',
+            state: { ...runtime.state(), status: 'done' },
+          };
+        },
+      },
+      summaryPolicy,
+    );
+    const harness = makeShellHarness([parent, child], [], {
+      players: (_playerId, _prompt, callIndex) => ({
+        status: 'ok',
+        finalText: `player result ${callIndex + 1}`,
+        resumeToken: `player-token-${callIndex + 1}`,
+      }),
+    });
+    await harness.init();
+
+    await harness.turn('/parent first root', 1);
+    await harness.turn('/parent second root', 2);
+
+    expect(harness.playerCalls).toEqual([
+      'parent-worker',
+      'parent-worker',
+      'parent-worker',
+      'parent-worker',
+      'parent-worker',
+      'parent-worker',
+    ]);
+    expect(harness.playerResumes).toEqual([
+      false,
+      'player-token-1',
+      'player-token-2',
+      false,
+      'player-token-4',
+      'player-token-5',
+    ]);
+    expect(harness.visiblePlayerSets).not.toContainEqual(['child-worker']);
+    expect(
+      harness.visiblePlayerSets.every(
+        (playerIds) =>
+          playerIds.length === 1 && playerIds[0] === 'parent-worker',
+      ),
+    ).toBe(true);
+    expect(harness.closingPrompts()).toHaveLength(2);
+    for (const closing of harness.closingPrompts()) {
+      expect(closing).toContain(
+        'Counts: {"interruptions":3,"copyPastes":0,"progressRounds":0}',
+      );
+      expect(closing).toContain(
+        'Saved-counts line supplied for this turn; append it verbatim: Nested activity: 3 player calls.',
+      );
+    }
   });
 
   // A29-2: "clear this and start <target> on X" settles as one switch —

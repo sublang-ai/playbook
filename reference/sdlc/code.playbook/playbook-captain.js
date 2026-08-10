@@ -495,7 +495,6 @@ async function buildEnablements(options, players, loadModule) {
             optionInput: record.options,
             boundPlayers,
             hostPlayerId: (localRole) => `${entry.id}-${localRole}`,
-            visiblePlayerIds: entry.requiredRoleIds.map((role) => `${entry.id}-${role}`),
         });
     }
     return { entries, byCommand, byId, enablementById };
@@ -555,6 +554,24 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const rootFrame = () => frames[0];
     const leafFrame = () => frames.at(-1);
     const frameLabel = (frame) => `/${frame.enablement.command}`;
+    const bindingFor = (frame, localRole) => {
+        const binding = frame.playerBindings.get(localRole);
+        if (!binding) {
+            throw new Error(`${frameLabel(frame)} resolved undeclared player role ${JSON.stringify(localRole)}`);
+        }
+        return binding;
+    };
+    const summaryIncludes = (frame) => {
+        const owner = activeTurnSummary?.owner;
+        if (!owner)
+            return false;
+        for (let current = frame; current;) {
+            if (current === owner)
+                return true;
+            current = current.parent?.frame;
+        }
+        return false;
+    };
     const requireSession = () => {
         if (!session) {
             throw new Error('init must be called first');
@@ -717,7 +734,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return;
         const previousActiveIds = new Set(frame.state?.activeStateIds ?? []);
         frame.state = state;
-        if (activeTurnSummary?.owner === frame) {
+        const summary = activeTurnSummary;
+        if (summary && summaryIncludes(frame)) {
             for (const stateId of state.activeStateIds) {
                 const newlyActive = !previousActiveIds.has(stateId);
                 const structuredEntry = stateValueContains(record.to, stateId) &&
@@ -726,7 +744,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     continue;
                 const countLabel = stateCountLabel(stateId, frame.entry);
                 if (countLabel) {
-                    activeTurnSummary.stateCounts.set(countLabel, (activeTurnSummary.stateCounts.get(countLabel) ?? 0) + 1);
+                    summary.stateCounts.set(countLabel, (summary.stateCounts.get(countLabel) ?? 0) + 1);
                 }
             }
         }
@@ -747,7 +765,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
             const context = activeContext;
             signal.throwIfAborted();
-            const hostPlayerId = frame.enablement.hostPlayerId(playerId);
+            const hostPlayerId = bindingFor(frame, playerId).hostPlayerId;
             const result = await trackHostCall(frame, context.callPlayer(hostPlayerId, prompt, {
                 resume: options.resume,
             }));
@@ -759,8 +777,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             // CAPTAIN-20: only a player call that actually produced work is an
             // interruption the Boss was spared. A call that errored or aborted
             // saved nothing, so it never feeds the saved-counts gate.
-            if (activeTurnSummary?.owner === frame && result.status === 'ok') {
-                activeTurnSummary.counts.interruptions++;
+            const summary = activeTurnSummary;
+            if (summary && summaryIncludes(frame) && result.status === 'ok') {
+                summary.counts.interruptions++;
             }
             return {
                 status: result.status,
@@ -806,10 +825,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 throw new Error('callCaptain returned status=ok with no finalText');
             }
             const guard = guardFromJudgeReply(result.finalText);
+            const summary = activeTurnSummary;
             if (guard &&
-                activeTurnSummary?.owner === frame &&
+                summary &&
+                summaryIncludes(frame) &&
                 frame.entry.summaryPolicy?.copyPasteGuardNames.includes(guard)) {
-                activeTurnSummary.counts.copyPastes++;
+                summary.counts.copyPastes++;
             }
             return result.finalText;
         },
@@ -841,8 +862,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     // visibility for that playbook's generated host players. A pane
     // reconciliation failure is display-only in tmux-play and does not
     // reject; the legacy path carries no generated set and skips this.
-    const requestVisibility = async (enablement) => {
-        const ids = enablement.visiblePlayerIds;
+    const requestVisibility = async (frame) => {
+        const ids = [...new Set([...frame.playerBindings.values()].map(({ hostPlayerId }) => hostPlayerId))];
         if (!ids || ids.length === 0 || !activeContext)
             return;
         try {
@@ -878,9 +899,30 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const makeFrame = (enablement, parent) => {
         const entry = enablement.entry;
         const sessionId = allocateSessionId();
+        const playerBindings = new Map();
+        for (const role of entry.requiredRoleIds) {
+            let inherited;
+            for (let ancestor = parent?.frame; ancestor && inherited === undefined; ancestor = ancestor.parent?.frame) {
+                inherited = ancestor.playerBindings.get(role);
+            }
+            if (inherited) {
+                playerBindings.set(role, inherited);
+                continue;
+            }
+            const configured = enablement.boundPlayers.find((player) => player.id === role) ?? { id: role };
+            playerBindings.set(role, {
+                hostPlayerId: enablement.hostPlayerId(role),
+                player: configured,
+            });
+        }
+        const playerResumeTokens = parent?.frame.playerResumeTokens ?? new Map();
         const runtime = entry.createRuntime({
             captainOptions: enablement.optionInput,
-            players: enablement.boundPlayers,
+            players: [...playerBindings].map(([role, { player }]) => ({
+                id: role,
+                ...(player.adapter === undefined ? {} : { adapter: player.adapter }),
+                ...(player.model === undefined ? {} : { model: player.model }),
+            })),
         });
         return {
             entry,
@@ -889,10 +931,45 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             sessionId,
             rootSessionId: parent?.frame.rootSessionId ?? sessionId,
             depth: parent ? parent.frame.depth + 1 : 0,
+            playerBindings,
+            playerResumeTokens,
             ...(parent ? { parent } : {}),
             inFlightHostCalls: new Set(),
         };
     };
+    const playerSessionStore = (frame) => ({
+        select(playerId) {
+            const binding = bindingFor(frame, playerId);
+            return frame.playerResumeTokens.get(binding.hostPlayerId) ?? false;
+        },
+        update(playerId, resumeToken) {
+            const binding = bindingFor(frame, playerId);
+            if (resumeToken === undefined) {
+                frame.playerResumeTokens.delete(binding.hostPlayerId);
+            }
+            else {
+                frame.playerResumeTokens.set(binding.hostPlayerId, resumeToken);
+            }
+        },
+        snapshot() {
+            const tokens = {};
+            for (const [playerId, binding] of frame.playerBindings) {
+                const token = frame.playerResumeTokens.get(binding.hostPlayerId);
+                if (token !== undefined)
+                    tokens[playerId] = token;
+            }
+            return tokens;
+        },
+        restore(tokens) {
+            for (const binding of frame.playerBindings.values()) {
+                frame.playerResumeTokens.delete(binding.hostPlayerId);
+            }
+            for (const [playerId, token] of Object.entries(tokens)) {
+                const binding = bindingFor(frame, playerId);
+                frame.playerResumeTokens.set(binding.hostPlayerId, token);
+            }
+        },
+    });
     const initFrame = async (frame) => {
         await frame.runtime.init({
             sessionId: frame.sessionId,
@@ -905,6 +982,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 }
                 : {}),
             depth: frame.depth,
+            playerSessions: playerSessionStore(frame),
             ports: createPorts(frame),
         });
     };
@@ -1076,7 +1154,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
         let visibilityError;
         try {
-            await requestVisibility(parent.enablement);
+            await requestVisibility(parent);
         }
         catch (error) {
             visibilityError = error;
@@ -1184,7 +1262,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         // boundary — a `setVisiblePlayers` or telemetry rejection here leaves the
         // runtime uninvoked and owes the Boss the CAPTAIN-34 reply rather than an
         // exception filed against an effect that never ran.
-        await requestVisibility(frame.enablement);
+        await requestVisibility(frame);
         await setMode('engaged.driving', 'submit');
         const result = await runEffect(() => frame.runtime.handleBossInput({ text, signal }));
         frame.state = result.state;
@@ -1306,7 +1384,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             cleanupError = error;
         }
         if (frames.includes(parent)) {
-            await requestVisibility(parent.enablement);
+            await requestVisibility(parent);
         }
         if (cleanupError !== undefined)
             throw cleanupError;
@@ -1418,7 +1496,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
             if (frames.includes(parent)) {
                 try {
-                    await requestVisibility(parent.enablement);
+                    await requestVisibility(parent);
                 }
                 catch (visibilityError) {
                     visibilityControlFailure = true;
