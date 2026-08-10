@@ -84,6 +84,16 @@ const runtimeSpec = {
     compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI },
     snapshotOptions: snapshotCodeOptions,
     entryEvent: { type: 'START_CODE', textField: 'callerInput' },
+    playerStates: {
+        runFirstPhase: {
+            player: 'Coder',
+            label: 'Coder is implementing one direct phase or committing a new intent record.',
+        },
+        runIrTask: {
+            player: 'Coder',
+            label: 'Coder is implementing exactly one unfinished intent-record task.',
+        },
+    },
     placeholderFields: { 'coder-llm': 'coderPlayer' },
     composePlayerPrompt: (input) => composePlayerPrompt(input),
     verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,

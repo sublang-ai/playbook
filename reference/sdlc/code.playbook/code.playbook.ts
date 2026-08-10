@@ -45,6 +45,7 @@ import type {
   PlaybookTraceEvent,
   PlaybookTraceType,
   PlayerResult,
+  PlayerSessionStore,
 } from '@sublang/playbook/runtime';
 
 export type {
@@ -70,6 +71,7 @@ export type {
   PlaybookTraceEvent,
   PlaybookTraceType,
   PlayerResult,
+  PlayerSessionStore,
 };
 
 export type CodePlaybookOptions = CodingInput;
@@ -163,6 +165,17 @@ const runtimeSpec: XStatePlaybookRuntimeSpec<CodePlaybookOptions> = {
   compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: snapshotCodeOptions,
   entryEvent: { type: 'START_CODE', textField: 'callerInput' },
+  playerStates: {
+    runFirstPhase: {
+      player: 'Coder',
+      label:
+        'Coder is implementing one direct phase or committing a new intent record.',
+    },
+    runIrTask: {
+      player: 'Coder',
+      label: 'Coder is implementing exactly one unfinished intent-record task.',
+    },
+  },
   placeholderFields: { 'coder-llm': 'coderPlayer' },
   composePlayerPrompt: (input: PlaybookPlayerInput) =>
     composePlayerPrompt(input as PlayerInput),

@@ -36,10 +36,14 @@ import {
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
 import createCodePlaybookRuntime from '../reference/sdlc/code.playbook/code.playbook.js';
-import { discussMachine } from '../reference/sdlc/discuss.playbook/discuss.fsm.js';
+import { decideMachine } from '../reference/sdlc/decide.playbook/decide.fsm.js';
 
 const meta = (stateId: string) => ({
   playbook: { stateId, description: `${stateId} state` },
+});
+
+const playerMeta = (stateId: string, player: string) => ({
+  playbook: { ...meta(stateId).playbook, player },
 });
 
 interface RecordedStatus {
@@ -162,7 +166,7 @@ const workflowMachine = createMachine({
     },
     implement: {
       id: 'implement',
-      meta: meta('implement'),
+      meta: playerMeta('implement', 'Coder'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
@@ -302,6 +306,9 @@ const workflowSpec: XStatePlaybookRuntimeSpec<WorkflowOptions> = {
   machineInput: (options) =>
     options.command === undefined ? {} : { command: options.command },
   entryEvent: { type: 'START', textField: 'task' },
+  playerStates: {
+    implement: { player: 'Coder', label: 'implement state' },
+  },
 };
 
 const createWorkflowRuntime = createXStatePlaybookRuntime(
@@ -484,9 +491,98 @@ describe('generic strategy defaults', () => {
       }),
     ).toThrow(/conflicts with the runtime-derived contract/);
   });
+
+  it.each([
+    [
+      'an omitted player state',
+      {},
+      /must declare player state implement/,
+    ],
+    [
+      'a non-player state',
+      {
+        implement: { player: 'Coder', label: 'implement state' },
+        verify: { player: 'Coder', label: 'verify state' },
+      },
+      /playerStates\.verify does not name a player state/,
+    ],
+    [
+      'a label that diverges from the FSM',
+      { implement: { player: 'Coder', label: 'Implement the task' } },
+      /playerStates\.implement\.label must equal its FSM description/,
+    ],
+    [
+      'a player that diverges from the FSM',
+      { implement: { player: 'Reviewer', label: 'implement state' } },
+      /playerStates\.implement\.player must equal its FSM player/,
+    ],
+  ])('rejects playerStates metadata with %s', (_label, playerStates, error) => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        playerStates,
+      }),
+    ).toThrow(error);
+  });
 });
 
 describe('player + script workflow over the shared factory', () => {
+  it('preserves the schema-1 legacy entry and failure status profile', async () => {
+    const { ports, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () =>
+        '{"guard":"implemented","summary":"done"}',
+    });
+    const createLegacyRuntime = createXStatePlaybookRuntime(workflowMachine, {
+      ...workflowSpec,
+      playerStates: undefined,
+    });
+    const runtime = createLegacyRuntime({ command: 'false' });
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('legacy task'));
+
+    expect(statuses.map(({ message }) => message)).toEqual([
+      'Entered implement.',
+      'Entered verify.',
+      'Executed script for verify (exit 1).',
+      'Workflow failed; awaiting Boss recovery.',
+    ]);
+    expect(statuses.at(-1)).toMatchObject({
+      data: {
+        lastError: {
+          name: 'Error',
+          message: 'verification failed',
+          stack: expect.any(String),
+        },
+      },
+    });
+    await runtime.dispose();
+  });
+
+  it('preserves the schema-1 legacy single question line', async () => {
+    const { ports, statuses } = makeRecordingPorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'Which database?',
+      }),
+      callJudge: async () =>
+        '{"guard":"needsBossReply","question":"Which database?"}',
+    });
+    const createLegacyRuntime = createXStatePlaybookRuntime(workflowMachine, {
+      ...workflowSpec,
+      playerStates: undefined,
+    });
+    const runtime = createLegacyRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('legacy question'));
+
+    expect(statuses.map(({ message }) => message)).toEqual([
+      'Entered implement.',
+      'Coder asks: Which database?',
+    ]);
+    await runtime.dispose();
+  });
+
   it('runs deterministic entry, default composition, adjudication, and script execution to terminal', async () => {
     const judgePrompts: string[] = [];
     const playerPrompts: string[] = [];
@@ -524,11 +620,14 @@ describe('player + script workflow over the shared factory', () => {
       'output' in result ? result.output : undefined,
     ).toEqual({ summary: 'shipped the task' });
 
-    // Default entry statuses plus the script record.
+    // Default classification, player-entry, and settling-guard statuses plus
+    // the script record. No raw state id is used as Boss-facing fallback.
     expect(statuses.map(({ message }) => message)).toEqual([
-      'Entered implement.',
-      'Entered verify.',
+      'START',
+      '⤷ Coder: implement state',
+      '→ implemented',
       'Executed script for verify (exit 0).',
+      '→ verified',
     ]);
     const scriptEvents = telemetry.filter(
       ({ topic }) => topic === 'playbook.script',
@@ -562,11 +661,19 @@ describe('player + script workflow over the shared factory', () => {
       expect(result.outcome).toBe('failed');
       expect(result.state.stateId).toBe('failed');
       expect(statuses.map(({ message }) => message)).toEqual([
-        'Entered implement.',
-        'Entered verify.',
+        'START',
+        '⤷ Coder: implement state',
+        '→ implemented',
         'Executed script for verify (exit 1).',
-        'Workflow failed; awaiting Boss recovery.',
+        '→ verificationFailed',
+        '◆ workflow failed; awaiting Boss recovery.',
       ]);
+      expect(statuses.at(-1)).toEqual({
+        message: '◆ workflow failed; awaiting Boss recovery.',
+        data: {
+          lastError: { name: 'Error', message: 'verification failed' },
+        },
+      });
       await runtime.dispose();
     } finally {
       await rm(workDir, { recursive: true, force: true });
@@ -600,9 +707,13 @@ describe('player + script workflow over the shared factory', () => {
     const suspended = await runtime.handleBossInput(turn('build storage'));
     expect(suspended.outcome).toBe('quiescent');
     expect(suspended.state.stateId).toBe('awaitBossReply');
-    expect(statuses.map(({ message }) => message)).toContain(
-      'Coder asks: Which database?',
-    );
+    expect(statuses.slice(-3)).toEqual([
+      { message: '→ needsBossReply' },
+      { message: 'Coder asks: Which database?' },
+      {
+        message: '◆ awaiting Boss reply · implement · Coder · WF-1',
+      },
+    ]);
 
     const resumed = await runtime.handleBossInput(turn('use sqlite'));
     expect(resumed.outcome).toBe('terminal');
@@ -2376,16 +2487,16 @@ describe('runtime compatibility declaration (DR-022)', () => {
 
   it('checks compatibility before rejecting an unsupported parallel machine', () => {
     expect(() =>
-      createXStatePlaybookRuntime(discussMachine, {
-        label: 'discuss-control',
+      createXStatePlaybookRuntime(decideMachine, {
+        label: 'decide-control',
         snapshotOptions: (value) =>
           (value ?? {}) as Record<string, never>,
-        machineInput: () => ({}),
+        machineInput: () => ({ coderLlm: 'Coder' }),
         compat: { artifactSchema: 99, runtimeAbi: RUNTIME_ABI },
       }),
     ).toThrow(
       new TypeError(
-        'discuss-control artifact declares schema 99, but this ' +
+        'decide-control artifact declares schema 99, but this ' +
           '@sublang/playbook/xstate-runtime engine supports [1]',
       ),
     );
@@ -2395,7 +2506,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
 // ---------------------------------------------------------------------------
 // DR-029 control surface (PBRT-52 / PBRT-53): describe/apply over the
 // shared factory — synthetic workflow machines plus the real linked CODE
-// runtime, with the parallel DISCUSS FSM held outside the factory's supported
+// runtime, with the parallel DECIDE FSM held outside the factory's supported
 // domain, under fake ports with scripted per-call results.
 // ---------------------------------------------------------------------------
 
@@ -2601,7 +2712,8 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       expect(artifacts.map(([path]) => path).sort()).toEqual([
         'reference/sdlc/captain.playbook/captain.playbook.ts',
         'reference/sdlc/code.playbook/code.playbook.ts',
-        'reference/sdlc/discuss.playbook/discuss.playbook.ts',
+        'reference/sdlc/decide.playbook/decide.playbook.ts',
+        'reference/sdlc/review.playbook/review.playbook.ts',
       ]);
     });
 
@@ -2610,7 +2722,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       source,
     ) => {
       // Only a shared-factory artifact carries a spec; a fat artifact owns its
-      // own `describe` — or, like DISCUSS, ships without the pair at all.
+      // own `describe` — or, like DECIDE, ships without the pair at all.
       if (!source.includes('createXStatePlaybookRuntime(')) return;
       expect(source).toContain('controlContextFields:');
     });
@@ -2619,14 +2731,21 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // actually does: a playbook that calls players exposes the player
     // composer; a controller that calls none exposes no stub under that name.
     it.each(artifacts)('%s exposes the composers its machine uses', (
-      _path,
+      path,
       source,
     ) => {
       const internal = /export const _internal = \{([\s\S]*?)\n\};/.exec(
         source,
       )?.[1];
       expect(internal).toBeDefined();
-      const callsPlayers = /ports\.callPlayer|callPlayer\(/.test(source);
+      const fsmSource = readFileSync(
+        new URL(path.replace('.playbook.ts', '.fsm.ts'), root),
+        'utf8',
+      );
+      const callsPlayers = /src:\s*['"]player['"]/.test(fsmSource);
+      if (source.includes('createXStatePlaybookRuntime(') && callsPlayers) {
+        expect(source).toContain('playerStates:');
+      }
       expect(/compose\w*Prompt/.test(internal!)).toBe(true);
       expect(internal!.includes('composePlayerPrompt')).toBe(callsPlayers);
     });
@@ -3419,12 +3538,8 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         playerCalls.push({ playerId, prompt });
         return next;
       },
-      callJudge: async (prompt) => {
-        if (prompt.includes('Classify the following Boss message')) {
-          return '{"event":"START_CODING","payload":{"intent":"add a button"}}';
-        }
-        return '{"guard":"needsBossReply","question":"Which repo should I touch?"}';
-      },
+      callJudge: async () =>
+        '{"guard":"needsBossReply","question":"Which repo should I touch?"}',
     });
     const runtime = createCodePlaybookRuntime({});
     await runtime.init(makeSession(ports));
@@ -3443,72 +3558,30 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // grounding a controller host speaks a status answer from, in place of the
     // state id it used to be handed.
     expect(view.stateDescription).toBe(
-      'Captures the last Captain error so the runner can report it. Boss may resume from here.',
+      'The coding workflow failed and is waiting for a new coding intent.',
     );
     expect(view.lastError).toMatchObject({
       name: 'Error',
       message: 'coder is down',
     });
     expect(view.actions[0]).toEqual({
-      id: 'retry:START_CODING',
+      id: 'retry:START_CODE',
       label:
-        'Retry: CODE-1: Coder assesses a Boss intent and either implements ' +
-        'a single-commit change or drafts an IR.',
+        'Retry: Coder is implementing one direct phase or committing a new ' +
+        'intent record.',
     });
     expect(view.actions.map(({ id }) => id)).toEqual([
-      'retry:START_CODING',
-      'jump:adjudicateChallenges',
-      'jump:commitCoderInitial',
-      'jump:commitJoint',
-      'jump:continueIr',
-      // CODE registers `failed` itself among its Boss-reply targets (the
-      // empty-reply arm), and its interrupt guard accepts it live.
-      'jump:failed',
-      'jump:planAndImplement',
-      'jump:respondToReview',
-      'jump:reviewBossCommitCode',
-      'jump:reviewBossCommitMixed',
-      'jump:reviewBossCommitSpecs',
-      'jump:reviewChangesAndChallengesCode',
-      'jump:reviewChangesAndChallengesMixed',
-      'jump:reviewChangesAndChallengesSpecs',
-      'jump:reviewChangesCode',
-      'jump:reviewChangesMixed',
-      'jump:reviewChangesSpecs',
-      'jump:reviewIrTaskCommitCode',
-      'jump:reviewIrTaskCommitMixed',
-      'jump:reviewIrTaskCommitSpecs',
-      'jump:summarizeSpecs',
+      'retry:START_CODE',
     ]);
-    expect(
-      view.actions.find(({ id }) => id === 'jump:planAndImplement')?.label,
-    ).toBe(
-      'Resume from: CODE-1: Coder assesses a Boss intent and either ' +
-        'implements a single-commit change or drafts an IR.',
-    );
-    // PBRT-52: the view carries exactly CODE's declared projection. The
-    // roster members the shell resolved (`coderPlayer`, `reviewerPlayer`,
-    // `committerPlayer`), the option value `intent`, and every
-    // player-authored member (`irNumber`, `taskDescription`, `reviews`,
-    // `challenges`, `lastResult`) are all live in `CodingContext` here and
-    // none of them is exported.
-    expect(Object.keys(view.context as Record<string, unknown>)).toEqual([
-      'workflow',
-      'changeOrigin',
-      'afterReview',
-    ]);
-    expect(view.context).toMatchObject({
-      workflow: 'singleCommit',
-      changeOrigin: 'bossIntent',
-      afterReview: 'done',
-    });
-    expect(view.context).not.toHaveProperty('lastError');
-    expect(view.context).not.toHaveProperty('pendingBossQuestion');
+    // PBRT-52: CODE exposes only its declared phase. The initial player
+    // failed before selecting one, so the projection is empty rather than
+    // leaking caller or player-authored context.
+    expect(view.context).toBeUndefined();
 
     // A29-17 leg (c): a scripted player error mid-action settles `failed`
     // with the normalized error while its effects stay visible in traces.
     const failedReceipt = await runtime.apply!({
-      actionId: 'retry:START_CODING',
+      actionId: 'retry:START_CODE',
       key: 'code-k1',
       signal: sigOf(),
     });
@@ -3523,7 +3596,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // A29-17 leg (a): the advertised retry from failed settles `executed`
     // with the run result.
     const executedReceipt = await runtime.apply!({
-      actionId: 'retry:START_CODING',
+      actionId: 'retry:START_CODE',
       key: 'code-k2',
       signal: sigOf(),
     });
@@ -3543,7 +3616,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const parkedView = runtime.describe!();
     expect(parkedView.pendingQuestions).toEqual([
       {
-        questionId: 'planAndImplement',
+        questionId: 'runFirstPhase',
         player: 'Coder',
         question: 'Which repo should I touch?',
         sourceItem: 'CODE-1',
@@ -3558,13 +3631,13 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // player calls.
     const machineBefore = runtime.exportSnapshot!()!.machine;
     const rejectedReceipt = await runtime.apply!({
-      actionId: 'retry:START_CODING',
+      actionId: 'retry:START_CODE',
       key: 'code-k3',
       signal: sigOf(),
     });
     expect(rejectedReceipt).toEqual({
       disposition: 'rejected',
-      reason: 'action "retry:START_CODING" is not currently advertised',
+      reason: 'action "retry:START_CODE" is not currently advertised',
     });
     expect(runtime.exportSnapshot!()!.machine).toEqual(machineBefore);
     expect(playerCalls).toHaveLength(3);
@@ -3573,7 +3646,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     // receipt with exactly one execution in total and no new trace pair.
     const pairsBeforeReplay = applyTraces(telemetry);
     const replayed = await runtime.apply!({
-      actionId: 'retry:START_CODING',
+      actionId: 'retry:START_CODE',
       key: 'code-k2',
       signal: sigOf(),
     });
@@ -3599,7 +3672,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       'apply-3',
     ]);
     expect(pairs[0].payload).toMatchObject({
-      actionId: 'retry:START_CODING',
+      actionId: 'retry:START_CODE',
       key: 'code-k1',
       stateId: 'failed',
     });
@@ -3611,7 +3684,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(pairs[4].payload).toMatchObject({ stateId: 'awaitBossReply' });
     expect(pairs[5].payload).toMatchObject({
       disposition: 'rejected',
-      reason: 'action "retry:START_CODING" is not currently advertised',
+      reason: 'action "retry:START_CODE" is not currently advertised',
     });
     // The player call executed by apply-1 traces inside that boundary.
     const applyTurnIds = new Set(
@@ -3630,50 +3703,18 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     await runtime.dispose();
   });
 
-  it('labels the failure-state retry from the recorded BOSS_INTERRUPT targetId, not the first configured arm', async () => {
-    // CODE's root BOSS_INTERRUPT is a guarded multi-arm list whose first
-    // configured arm targets `ready`. The replay resumes the recorded
-    // event's own targetId, so the label must name that state's
-    // description — never the first arm's.
-    let playerCalls = 0;
-    const { ports } = makeRecordingPorts({
-      callPlayer: async () => {
-        playerCalls += 1;
-        return { status: 'error', error: 'coder is down' };
-      },
-      callJudge: async () =>
-        '{"event":"BOSS_INTERRUPT","payload":{"targetId":"respondToReview"}}',
-    });
-    const runtime = createCodePlaybookRuntime({});
-    await runtime.init(makeSession(ports));
-    const failedRun = await runtime.handleBossInput(
-      turn('address the review findings'),
-    );
-    expect(failedRun.outcome).toBe('failed');
-    expect(playerCalls).toBe(1);
-
-    const view = runtime.describe!();
-    expect(view.state.stateId).toBe('failed');
-    expect(view.actions[0]).toEqual({
-      id: 'retry:BOSS_INTERRUPT',
-      label:
-        'Retry: CODE-2: Coder addresses or challenges Reviewer findings.',
-    });
-    await runtime.dispose();
-  });
-
-  it('rejects the parallel DISCUSS machine at factory construction', () => {
+  it('rejects the parallel DECIDE machine at factory construction', () => {
     expect(() =>
-      createXStatePlaybookRuntime(discussMachine, {
-        label: 'discuss-control',
+      createXStatePlaybookRuntime(decideMachine, {
+        label: 'decide-control',
         snapshotOptions: (value) =>
           (value ?? {}) as Record<string, never>,
-        machineInput: () => ({}),
-        entryEvent: { type: 'START_DISCUSSION', textField: 'topic' },
-        controlContextFields: ['topic'],
+        machineInput: () => ({ coderLlm: 'Coder' }),
+        entryEvent: { type: 'START_DECIDE', textField: 'callerTopic' },
+        controlContextFields: ['callerTopic'],
       }),
     ).toThrow(
-      'discuss-control uses a parallel state; the shared runtime supports only single-region FSMs',
+      'decide-control uses a parallel state; the shared runtime supports only single-region FSMs',
     );
   });
 });

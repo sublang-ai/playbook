@@ -18,6 +18,7 @@ const SHARED_TYPES = [
   'NormalizedError',
   'PlayerCallOptions',
   'PlayerResult',
+  'PlayerSessionStore',
   'PlaybookCallRequest',
   'PlaybookCallResult',
   'PlaybookCallStart',

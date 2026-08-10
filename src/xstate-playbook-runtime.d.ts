@@ -67,6 +67,11 @@ export interface ScheduledStatus {
     message: string;
     data?: JsonValue;
 }
+/** Boss-facing identity for one FSM state whose invoked actor is `player`. */
+export interface XStatePlayerStateStatus {
+    player: string;
+    label: string;
+}
 export interface XStateBossEventFieldSpec {
     /** The judge supplies routing data; the runtime supplies exact Boss text. */
     source: 'judge' | 'text';
@@ -177,8 +182,10 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
      * recoverable FSM-result failures instead.
      */
     captainStrategy?: XStateCaptainStrategy<TOptions>;
-    /** Status line emitted after classification names an event. Default: none. */
+    /** Status line emitted after classification; canonical metadata defaults to the event type, legacy artifacts to none. */
     classificationStatus?: (event: EventObject) => string | undefined;
+    /** Complete FSM-derived Boss-facing metadata for every `player` state; its presence selects the canonical status profile. */
+    playerStates?: Readonly<Record<string, XStatePlayerStateStatus>>;
     /** Map a player-invoking state's input to the host player id. Default: lowercased player name. */
     resolvePlayerId?: (input: PlaybookPlayerInput, options: TOptions) => string;
     /** Compose the player prompt. Default: continuation blocks + `<field>` placeholder substitution. */
@@ -207,7 +214,7 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
     controlContextFields?: readonly string[];
     /** States that may suspend for a Boss reply. Default: targets of the FSM's `awaitBossReply` BOSS_REPLY transitions. */
     resumableStateIds?: ReadonlySet<string>;
-    /** Human status lines for a root transition. Default: entry lines with question/failure surfacing. */
+    /** Human status lines for a root transition. Default: guard, declared-player, question, and failure lines. */
     statusesForState?: (state: PlaybookState, context: Record<string, unknown>, event: unknown) => readonly ScheduledStatus[];
     /** Detached JSON-safe transition-event descriptor. Default: `type` + `transitionEventFields` strings + validated output + normalized error. */
     normalizeTransitionEvent?: (event: unknown) => JsonValue | undefined;

@@ -184,10 +184,12 @@ const stateDescriptions = {
 
 const playbookMeta = <StateId extends keyof typeof stateDescriptions>(
   stateId: StateId,
+  player?: Player,
 ) => ({
   playbook: {
     stateId,
     description: stateDescriptions[stateId],
+    ...(player === undefined ? {} : { player }),
   },
 });
 
@@ -419,7 +421,7 @@ export const reviewMachine = setup({
     reviewInitial: {
       id: 'reviewInitial',
       description: stateDescriptions.reviewInitial,
-      meta: playbookMeta('reviewInitial'),
+      meta: playbookMeta('reviewInitial', 'Reviewer'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
@@ -459,7 +461,7 @@ export const reviewMachine = setup({
     addressFindings: {
       id: 'addressFindings',
       description: stateDescriptions.addressFindings,
-      meta: playbookMeta('addressFindings'),
+      meta: playbookMeta('addressFindings', 'Coder'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
@@ -501,7 +503,7 @@ export const reviewMachine = setup({
     reviewAfterCommit: {
       id: 'reviewAfterCommit',
       description: stateDescriptions.reviewAfterCommit,
-      meta: playbookMeta('reviewAfterCommit'),
+      meta: playbookMeta('reviewAfterCommit', 'Reviewer'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
@@ -541,7 +543,7 @@ export const reviewMachine = setup({
     reviewAfterRebuttal: {
       id: 'reviewAfterRebuttal',
       description: stateDescriptions.reviewAfterRebuttal,
-      meta: playbookMeta('reviewAfterRebuttal'),
+      meta: playbookMeta('reviewAfterRebuttal', 'Reviewer'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',

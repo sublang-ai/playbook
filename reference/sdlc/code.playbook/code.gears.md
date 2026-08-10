@@ -29,8 +29,8 @@ When the first coding phase begins, Captain shall prompt Coder:
 > Coder is <coder-llm>; format the model token in conventional human form.
 
 Results:
-- `directCommit`: Coder completed and committed the direct implementation phase. Output shall include `coderOutput: <verbatim final text>`.
-- `irCommit`: Coder created and committed a new IR without implementing an IR task. Output shall include `coderOutput: <verbatim final text>`, `irNumber`, and `irTask` naming the exact next unfinished task.
+- `directCommit`: Coder completed and committed the direct implementation phase. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.
+- `irCommit`: Coder created and committed a new IR without implementing an IR task. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber`, and `irTask` naming the exact next unfinished task.
 
 ### CODE-2
 
@@ -57,8 +57,8 @@ When a reviewed IR has a next unfinished task, Captain shall prompt Coder:
 > Coder is <coder-llm>; format the model token in conventional human form.
 
 Results:
-- `moreTasks`: Coder completed and committed the current IR task and at least one task remains. Output shall include `coderOutput: <verbatim final text>` and `irTask` naming the exact next unfinished task.
-- `finalTask`: Coder completed and committed the final IR task. Output shall include `coderOutput: <verbatim final text>`.
+- `moreTasks`: Coder completed and committed the current IR task and at least one task remains. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, and `irTask` naming the exact next unfinished task.
+- `finalTask`: Coder completed and committed the final IR task. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.
 
 ### CODE-4
 

@@ -520,6 +520,8 @@ const runtimeSpec = {
     snapshotOptions: snapshotCaptainOptions,
     machineInput: (options) => ({ enabledPlaybooks: options.enabledPlaybooks }),
     classifyBossText: (text, ports, signal, snapshotOrState, boundary, options) => classifyControllerTurn(text, ports, signal, snapshotOrState, boundary, options),
+    playerStates: {},
+    classificationStatus: () => undefined,
     captainStrategy: controllerCaptainStrategy,
     // CAPPLAY-10 / PBRT-52: the Captain's own ControlView context projection —
     // the settlement evidence the machine retains for its decision and reply

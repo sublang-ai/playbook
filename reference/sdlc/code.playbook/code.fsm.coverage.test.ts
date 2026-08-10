@@ -56,7 +56,13 @@ function createWorkflow(
 describe('CODE FSM transition coverage', () => {
   it('completes one direct phase only after exact REVIEW approval', async () => {
     const workflow = createWorkflow(
-      [{ guard: 'directCommit', coderOutput: 'Committed abc123.' }],
+      [
+        {
+          guard: 'directCommit',
+          coderOutput: 'Committed abc123.',
+          latestCommit: 'abc123',
+        },
+      ],
       [APPROVED],
     );
     workflow.actor.send({ type: 'START_CODE', callerInput: 'Fix the bug.' });
@@ -66,6 +72,7 @@ describe('CODE FSM transition coverage', () => {
     );
     expect(snapshot.output).toEqual({
       status: 'complete',
+      lastCodeCommit: 'abc123',
       lastCodeOutput: 'Committed abc123.',
     });
     expect(workflow.reviewInputs[0]?.text).toBe(
@@ -79,15 +86,21 @@ describe('CODE FSM transition coverage', () => {
         {
           guard: 'irCommit',
           coderOutput: 'Created IR-040.',
+          latestCommit: 'ir040',
           irNumber: '040',
           irTask: 'Implement task 1.',
         },
         {
           guard: 'moreTasks',
           coderOutput: 'Committed task 1.',
+          latestCommit: 'task1',
           irTask: 'Implement task 2.',
         },
-        { guard: 'finalTask', coderOutput: 'Committed task 2.' },
+        {
+          guard: 'finalTask',
+          coderOutput: 'Committed task 2.',
+          latestCommit: 'task2',
+        },
       ],
       [APPROVED, APPROVED, APPROVED],
     );
@@ -98,6 +111,7 @@ describe('CODE FSM transition coverage', () => {
     );
     expect(snapshot.output).toEqual({
       status: 'complete',
+      lastCodeCommit: 'task2',
       lastCodeOutput: 'Committed task 2.',
     });
     expect(workflow.playerInputs.map(({ stateId }) => stateId)).toEqual([
@@ -119,7 +133,11 @@ describe('CODE FSM transition coverage', () => {
     const workflow = createWorkflow(
       [
         { guard: 'needsBossReply', question: 'Which branch?' },
-        { guard: 'directCommit', coderOutput: 'Committed with the answer.' },
+        {
+          guard: 'directCommit',
+          coderOutput: 'Committed with the answer.',
+          latestCommit: 'def456',
+        },
       ],
       [APPROVED],
     );
@@ -141,7 +159,13 @@ describe('CODE FSM transition coverage', () => {
 
   it('reports a terminal REVIEW result that does not prove approval', async () => {
     const workflow = createWorkflow(
-      [{ guard: 'directCommit', coderOutput: 'Committed abc123.' }],
+      [
+        {
+          guard: 'directCommit',
+          coderOutput: 'Committed abc123.',
+          latestCommit: 'abc123',
+        },
+      ],
       [{ approvedCommit: 'previous', noUnsettledFindings: true }],
     );
     workflow.actor.send({ type: 'START_CODE', callerInput: 'Fix it.' });
@@ -151,6 +175,7 @@ describe('CODE FSM transition coverage', () => {
     );
     expect(snapshot.output).toEqual({
       status: 'review-failed',
+      lastCodeCommit: 'abc123',
       lastCodeOutput: 'Committed abc123.',
       error: {
         name: 'ReviewContractError',
@@ -163,7 +188,13 @@ describe('CODE FSM transition coverage', () => {
 
   it('reports a terminal failure when the REVIEW call itself fails', async () => {
     const workflow = createWorkflow(
-      [{ guard: 'directCommit', coderOutput: 'Committed abc123.' }],
+      [
+        {
+          guard: 'directCommit',
+          coderOutput: 'Committed abc123.',
+          latestCommit: 'abc123',
+        },
+      ],
       [new Error('REVIEW transport failed.')],
     );
     workflow.actor.send({ type: 'START_CODE', callerInput: 'Fix it.' });
@@ -173,6 +204,7 @@ describe('CODE FSM transition coverage', () => {
     );
     expect(snapshot.output).toEqual({
       status: 'review-failed',
+      lastCodeCommit: 'abc123',
       lastCodeOutput: 'Committed abc123.',
       error: { name: 'Error', message: 'REVIEW transport failed.' },
     });

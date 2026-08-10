@@ -221,11 +221,11 @@ next phase cannot compile.
 Example:
 
 ```markdown
-### DISCUSS-1
+### DECIDE-1
 
 Parallel group: initial-proposals
 
-When Boss gives a topic, Captain shall prompt Host:
+When Boss gives a topic, Captain shall prompt Coder:
 
 > Propose your design independently.
 ```

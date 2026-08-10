@@ -244,13 +244,15 @@ Each state shall declare:
 - a stable `id` (for `#id` targeting and Boss interrupts);
 - an intuitive state key (the property name under `states: { ... }`);
 - a one-line `description` (for inspector tools and documentation);
-- JSON-safe `meta: { playbook: { stateId, description } }` repeating its
-  stable id and description so linked runtimes can discover active public
-  identities through `snapshot.getMeta()` without private XState nodes;
+- JSON-safe `meta: { playbook: { stateId, description, player? } }` repeating
+  its stable id and description so linked runtimes can discover active public
+  identities through `snapshot.getMeta()` without private XState nodes. A
+  delegated-player state shall also carry the exact source player in
+  `meta.playbook.player`; every other state shall omit `player`;
 - if it invokes the direct `captain` actor: `invoke.input` carrying
   `sourceItem`, `prompt`, and `result` (per [Setup](#setup));
 - if it invokes the delegated `player` actor: `invoke.input` additionally
-  carrying `player`;
+  carrying the same source-derived `player` as `meta.playbook.player`;
 - if it invokes the `script` actor: `invoke.input` carrying `stateId`,
   `sourceItem`, `command`, and `result` (per [Setup](#setup)) — no `prompt`
   and no `player`.

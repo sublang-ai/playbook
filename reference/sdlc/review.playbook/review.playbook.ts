@@ -45,6 +45,7 @@ import type {
   PlaybookTraceEvent,
   PlaybookTraceType,
   PlayerResult,
+  PlayerSessionStore,
 } from '@sublang/playbook/runtime';
 
 export type {
@@ -70,6 +71,7 @@ export type {
   PlaybookTraceEvent,
   PlaybookTraceType,
   PlayerResult,
+  PlayerSessionStore,
 };
 
 export type ReviewPlaybookOptions = ReviewInput;
@@ -159,9 +161,31 @@ const runtimeSpec: XStatePlaybookRuntimeSpec<ReviewPlaybookOptions> = {
   compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: snapshotReviewOptions,
   entryEvent: { type: 'START_REVIEW', textField: 'callerInput' },
+  playerStates: {
+    reviewInitial: {
+      player: 'Reviewer',
+      label:
+        'REVIEW-1: Reviewer examines the latest commit against the caller input.',
+    },
+    addressFindings: {
+      player: 'Coder',
+      label: 'REVIEW-2: Coder accepts or rejects every current review finding.',
+    },
+    reviewAfterCommit: {
+      player: 'Reviewer',
+      label:
+        'REVIEW-3: Reviewer examines the new review-fix commit and repository state.',
+    },
+    reviewAfterRebuttal: {
+      player: 'Reviewer',
+      label:
+        'REVIEW-4: Reviewer adjudicates an all-rejected Coder disposition.',
+    },
+  },
   composePlayerPrompt: (input: PlaybookPlayerInput) =>
     composePlayerPrompt(input as PlayerInput),
   verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
+  controlContextFields: [],
   transitionEventFields: [
     'callerInput',
     'bossIntent',

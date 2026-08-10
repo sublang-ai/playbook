@@ -589,6 +589,48 @@ function collectInvokeSources(machine) {
     visit(machine.config);
     return sources;
 }
+function collectPlayerStatePlayers(machine) {
+    const players = new Map();
+    const visit = (stateDef, stateKey) => {
+        if (!isPlainObject(stateDef))
+            return;
+        const invoke = stateDef.invoke;
+        const invokes = Array.isArray(invoke) ? invoke : invoke ? [invoke] : [];
+        if (invokes.some((entry) => isPlainObject(entry) && entry.src === 'player')) {
+            const playbookMeta = isPlainObject(stateDef.meta)
+                ? stateDef.meta.playbook
+                : undefined;
+            const stateId = isPlainObject(playbookMeta) &&
+                typeof playbookMeta.stateId === 'string'
+                ? playbookMeta.stateId
+                : typeof stateDef.id === 'string'
+                    ? stateDef.id
+                    : stateKey;
+            if (stateId.trim().length === 0) {
+                throw new TypeError('player state metadata must use a non-empty state id');
+            }
+            const player = isPlainObject(playbookMeta)
+                ? playbookMeta.player
+                : undefined;
+            if (typeof player !== 'string' || player.trim().length === 0) {
+                throw new TypeError(`player state ${stateId} meta.playbook.player must be a non-empty string`);
+            }
+            players.set(stateId, player);
+        }
+        if (isPlainObject(stateDef.states)) {
+            for (const [childKey, child] of Object.entries(stateDef.states)) {
+                visit(child, childKey);
+            }
+        }
+    };
+    const config = machine.config;
+    if (isPlainObject(config) && isPlainObject(config.states)) {
+        for (const [stateKey, stateDef] of Object.entries(config.states)) {
+            visit(stateDef, stateKey);
+        }
+    }
+    return players;
+}
 function transitionTargets(transition) {
     const arms = Array.isArray(transition) ? transition : [transition];
     const targets = [];
@@ -732,16 +774,65 @@ function makeDefaultNormalizeTransitionEvent(transitionEventFields) {
         return snapshotJsonValue(out, 'FSM event');
     };
 }
-function defaultStatusesForState(state, context) {
+function snapshotPlayerStateStatuses(value, label, machine, stateDescriptions) {
+    if (value === undefined)
+        return new Map();
+    if (!isPlainObject(value)) {
+        throw new TypeError(`${label} playerStates must be an object`);
+    }
+    const declared = collectPlayerStatePlayers(machine);
+    const statuses = new Map();
+    for (const [stateId, candidate] of Object.entries(value)) {
+        if (!declared.has(stateId)) {
+            throw new TypeError(`${label} playerStates.${stateId} does not name a player state`);
+        }
+        if (!isPlainObject(candidate) ||
+            typeof candidate.player !== 'string' ||
+            candidate.player.trim().length === 0 ||
+            typeof candidate.label !== 'string' ||
+            candidate.label.trim().length === 0) {
+            throw new TypeError(`${label} playerStates.${stateId} must carry non-empty player and label strings`);
+        }
+        const expectedLabel = stateDescriptions.get(stateId);
+        if (candidate.label !== expectedLabel) {
+            throw new TypeError(`${label} playerStates.${stateId}.label must equal its FSM description`);
+        }
+        if (candidate.player !== declared.get(stateId)) {
+            throw new TypeError(`${label} playerStates.${stateId}.player must equal its FSM player`);
+        }
+        statuses.set(stateId, {
+            player: candidate.player,
+            label: candidate.label,
+        });
+    }
+    for (const stateId of declared.keys()) {
+        if (!statuses.has(stateId)) {
+            throw new TypeError(`${label} playerStates must declare player state ${stateId}`);
+        }
+    }
+    return statuses;
+}
+function settlingGuard(event) {
+    if (!isPlainObject(event) || !isPlainObject(event.output))
+        return undefined;
+    const guard = event.output.guard;
+    return typeof guard === 'string' && guard.trim().length > 0
+        ? guard
+        : undefined;
+}
+function legacyStatusesForState(state, context) {
     const stateId = state.stateId;
     if (stateId === undefined || SUPPRESSED_ENTRY_STATES.has(stateId))
         return [];
     if (stateId === 'awaitBossReply') {
         const pending = pendingBossQuestionFromContext(context);
-        const message = pending === undefined
-            ? 'Awaiting Boss reply.'
-            : `${pending.player} asks: ${pending.question}`;
-        return [{ message }];
+        return [
+            {
+                message: pending === undefined
+                    ? 'Awaiting Boss reply.'
+                    : `${pending.player} asks: ${pending.question}`,
+            },
+        ];
     }
     if (stateId === 'failed') {
         const lastError = normalizeErrorFull(context.lastError);
@@ -755,6 +846,53 @@ function defaultStatusesForState(state, context) {
         ];
     }
     return [{ message: `Entered ${stateId}.` }];
+}
+function makeDefaultStatusesForState(playerStates) {
+    return (state, context, event) => {
+        const statuses = [];
+        const guard = settlingGuard(event);
+        if (guard !== undefined)
+            statuses.push({ message: `→ ${guard}` });
+        const stateId = state.stateId;
+        if (stateId === undefined || SUPPRESSED_ENTRY_STATES.has(stateId)) {
+            return statuses;
+        }
+        if (stateId === 'awaitBossReply') {
+            const pending = pendingBossQuestionFromContext(context);
+            if (pending === undefined) {
+                return [...statuses, { message: 'Awaiting Boss reply.' }];
+            }
+            return [
+                ...statuses,
+                { message: `${pending.player} asks: ${pending.question}` },
+                {
+                    message: `◆ awaiting Boss reply · ${pending.resumeStateId} · ` +
+                        `${pending.player} · ${pending.sourceItem}`,
+                },
+            ];
+        }
+        if (stateId === 'failed') {
+            const lastError = normalizeErrorCompact(context.lastError);
+            return [
+                ...statuses,
+                {
+                    message: '◆ workflow failed; awaiting Boss recovery.',
+                    ...(lastError === undefined
+                        ? {}
+                        : {
+                            data: snapshotJsonValue({ lastError }, 'failed status data'),
+                        }),
+                },
+            ];
+        }
+        const playerState = playerStates.get(stateId);
+        if (playerState !== undefined) {
+            statuses.push({
+                message: `⤷ ${playerState.player}: ${playerState.label}`,
+            });
+        }
+        return statuses;
+    };
 }
 function classifierState(snapshotOrState) {
     if (snapshotOrState !== null &&
@@ -1061,6 +1199,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
     // DR-029: source state descriptions label the control actions the
     // runtime advertises through `describe()`.
     const stateDescriptions = stateDescriptionsFromMachine(machine);
+    const hasCanonicalStatusProfile = spec.playerStates !== undefined;
+    const playerStates = snapshotPlayerStateStatuses(spec.playerStates, label, machine, stateDescriptions);
     // PBRT-52: the artifact's own ControlView context projection. Nothing is
     // exported by default, so an FSM context member — including one added
     // after this artifact was linked — is private until named here. The two
@@ -1100,7 +1240,14 @@ export function createXStatePlaybookRuntime(machine, spec) {
     const classifyBossText = spec.classifyBossText ?? derivedClassifyBossText;
     const normalizeTransitionEvent = spec.normalizeTransitionEvent ??
         makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
-    const statusesForState = spec.statusesForState ?? defaultStatusesForState;
+    const statusesForState = spec.statusesForState ??
+        (hasCanonicalStatusProfile
+            ? makeDefaultStatusesForState(playerStates)
+            : legacyStatusesForState);
+    const classificationStatus = spec.classificationStatus ??
+        (hasCanonicalStatusProfile
+            ? (event) => event.type
+            : () => undefined);
     const machineInput = spec.machineInput ?? ((options) => options);
     const scriptCwd = spec.scriptCwd ??
         ((options) => {
@@ -2744,7 +2891,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     else {
                         // 2. Optional Captain-pane classification line: the bare FSM
                         //    event type, emitted before the FSM advances.
-                        const statusLine = spec.classificationStatus?.(event);
+                        const statusLine = classificationStatus(event);
                         if (statusLine !== undefined) {
                             await runtimePorts.emitStatus(statusLine);
                         }

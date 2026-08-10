@@ -123,7 +123,7 @@ describe('linked CODE runtime', () => {
           resumeToken: 'coder-1',
         },
       ],
-      judges: [{ guard: 'directCommit' }],
+      judges: [{ guard: 'directCommit', latestCommit: 'abc123' }],
       children: [approvedChild(1)],
     });
     const runtime = createPlaybookRuntime({ coderPlayer: 'GPT-5.6 Sol' });
@@ -137,6 +137,7 @@ describe('linked CODE runtime', () => {
     expect(result.outcome).toBe('terminal');
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'complete',
+      lastCodeCommit: 'abc123',
       lastCodeOutput: 'Committed abc123.\nTests passed.',
     });
     expect(host.playerCalls).toHaveLength(1);
@@ -157,6 +158,51 @@ describe('linked CODE runtime', () => {
         '> Coder output: Committed abc123.\n' +
         '> Tests passed.',
     });
+    await runtime.dispose();
+  });
+
+  it('requires a nonempty commit identity before calling REVIEW', async () => {
+    const host = harness({
+      players: [{ status: 'ok', finalText: 'Committed without an identity.' }],
+      judges: [{ guard: 'directCommit', latestCommit: '   ' }],
+    });
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Fix it.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+      error: {
+        message: 'Coder result for CODE-1 did not match a declared outcome.',
+      },
+    });
+    expect(host.childRequests).toEqual([]);
+    await runtime.dispose();
+  });
+
+  it('makes the commit identity a required adjudication field', async () => {
+    const host = harness({
+      players: [{ status: 'ok', finalText: 'Committed abc123.' }],
+      judges: [{ guard: 'directCommit' }],
+    });
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(rootSession(host.ports));
+
+    await expect(
+      runtime.handleBossInput({
+        text: 'Fix it.',
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow(
+      'adjudicate: judge response missing required field "latestCommit" ' +
+        'for guard "directCommit"',
+    );
+    expect(host.childRequests).toEqual([]);
     await runtime.dispose();
   });
 
@@ -182,11 +228,16 @@ describe('linked CODE runtime', () => {
       judges: [
         {
           guard: 'irCommit',
+          latestCommit: 'ir040',
           irNumber: '040',
           irTask: 'Implement task 1.',
         },
-        { guard: 'moreTasks', irTask: 'Implement task 2.' },
-        { guard: 'finalTask' },
+        {
+          guard: 'moreTasks',
+          latestCommit: 'task1',
+          irTask: 'Implement task 2.',
+        },
+        { guard: 'finalTask', latestCommit: 'task2' },
       ],
       children: [approvedChild(1), approvedChild(2), approvedChild(3)],
     });
@@ -199,6 +250,11 @@ describe('linked CODE runtime', () => {
     });
 
     expect(result.outcome).toBe('terminal');
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'complete',
+      lastCodeCommit: 'task2',
+      lastCodeOutput: 'Committed task 2.',
+    });
     expect(host.playerCalls.map(({ resume }) => resume)).toEqual([
       false,
       'coder-1',
@@ -221,7 +277,7 @@ describe('linked CODE runtime', () => {
   it('suspends on REVIEW and validates its exact approval on resume', async () => {
     const host = harness({
       players: [{ status: 'ok', finalText: 'Committed abc123.' }],
-      judges: [{ guard: 'directCommit' }],
+      judges: [{ guard: 'directCommit', latestCommit: 'abc123' }],
       children: [
         { state: 'suspended', childSessionId: 'review-suspended' },
       ],
@@ -252,7 +308,7 @@ describe('linked CODE runtime', () => {
   it('reports valid REVIEW abort/error results with the last CODE evidence', async () => {
     const host = harness({
       players: [{ status: 'ok', finalText: 'Committed abc123.' }],
-      judges: [{ guard: 'directCommit' }],
+      judges: [{ guard: 'directCommit', latestCommit: 'abc123' }],
       children: [
         {
           state: 'settled',
@@ -274,6 +330,7 @@ describe('linked CODE runtime', () => {
     expect(result.outcome).toBe('terminal');
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'review-failed',
+      lastCodeCommit: 'abc123',
       lastCodeOutput: 'Committed abc123.',
       error: { name: 'ReviewError', message: 'Reviewer unavailable.' },
     });
@@ -281,10 +338,117 @@ describe('linked CODE runtime', () => {
     await runtime.dispose();
   });
 
+  it('reports the new-IR commit and starts no task after REVIEW fails', async () => {
+    const host = harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Created IR-041.',
+          resumeToken: 'coder-ir',
+        },
+      ],
+      judges: [
+        {
+          guard: 'irCommit',
+          latestCommit: 'ir041',
+          irNumber: '041',
+          irTask: 'Implement task 1.',
+        },
+      ],
+      children: [
+        {
+          state: 'settled',
+          result: {
+            status: 'error',
+            playbookId: 'review',
+            childSessionId: 'review-ir-error',
+            error: { name: 'ReviewError', message: 'IR review failed.' },
+          },
+        },
+      ],
+    });
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Implement a large change.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'review-failed',
+      lastCodeCommit: 'ir041',
+      lastCodeOutput: 'Created IR-041.',
+      error: { name: 'ReviewError', message: 'IR review failed.' },
+    });
+    expect(host.playerCalls).toHaveLength(1);
+    expect(host.childRequests).toHaveLength(1);
+    await runtime.dispose();
+  });
+
+  it('reports the current task commit and starts no next task after REVIEW fails', async () => {
+    const host = harness({
+      players: [
+        {
+          status: 'ok',
+          finalText: 'Created IR-041.',
+          resumeToken: 'coder-ir',
+        },
+        {
+          status: 'ok',
+          finalText: 'Committed task 1.',
+          resumeToken: 'coder-task-1',
+        },
+      ],
+      judges: [
+        {
+          guard: 'irCommit',
+          latestCommit: 'ir041',
+          irNumber: '041',
+          irTask: 'Implement task 1.',
+        },
+        {
+          guard: 'moreTasks',
+          latestCommit: 'task1',
+          irTask: 'Implement task 2.',
+        },
+      ],
+      children: [
+        approvedChild(1),
+        {
+          state: 'settled',
+          result: {
+            status: 'error',
+            playbookId: 'review',
+            childSessionId: 'review-task-error',
+            error: { name: 'ReviewError', message: 'Task review failed.' },
+          },
+        },
+      ],
+    });
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(rootSession(host.ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Implement a large change.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
+      status: 'review-failed',
+      lastCodeCommit: 'task1',
+      lastCodeOutput: 'Committed task 1.',
+      error: { name: 'ReviewError', message: 'Task review failed.' },
+    });
+    expect(host.playerCalls).toHaveLength(2);
+    expect(host.childRequests).toHaveLength(2);
+    await runtime.dispose();
+  });
+
   it('treats an invalid REVIEW success result as terminal failure', async () => {
     const host = harness({
       players: [{ status: 'ok', finalText: 'Committed abc123.' }],
-      judges: [{ guard: 'directCommit' }],
+      judges: [{ guard: 'directCommit', latestCommit: 'abc123' }],
       children: [
         {
           state: 'settled',
@@ -307,6 +471,7 @@ describe('linked CODE runtime', () => {
     const output = result.outcome === 'terminal' ? result.output : undefined;
     expect(output).toMatchObject({
       status: 'review-failed',
+      lastCodeCommit: 'abc123',
       lastCodeOutput: 'Committed abc123.',
       error: { name: 'ReviewContractError' },
     });
@@ -333,7 +498,7 @@ describe('linked CODE runtime', () => {
           question: 'Which branch should I use?',
         },
         { type: 'BOSS_REPLY' },
-        { guard: 'directCommit' },
+        { guard: 'directCommit', latestCommit: 'def456' },
       ],
       children: [approvedChild(1)],
     });
@@ -377,7 +542,7 @@ describe('linked CODE runtime', () => {
   it('emits a complete trace pair around every nested REVIEW call', async () => {
     const host = harness({
       players: [{ status: 'ok', finalText: 'Committed abc123.' }],
-      judges: [{ guard: 'directCommit' }],
+      judges: [{ guard: 'directCommit', latestCommit: 'abc123' }],
       children: [approvedChild(1)],
     });
     const runtime = createPlaybookRuntime({});

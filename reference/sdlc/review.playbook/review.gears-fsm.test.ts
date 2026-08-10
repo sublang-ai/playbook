@@ -18,6 +18,7 @@ interface GearsItem {
 
 interface RawState {
   tags?: readonly string[];
+  meta?: unknown;
   invoke?: {
     src?: unknown;
     input?: (args: { context: ReviewContext }) => PlayerInput;
@@ -97,6 +98,13 @@ describe('REVIEW GEARS to FSM compilation', () => {
       expect(input?.player).toBe(player);
       expect(input?.prompt).toBe(gears.get(sourceItem)?.prompt);
       expect(states[stateId]?.tags).toContain('playbook.busy');
+      expect(states[stateId]?.meta).toEqual({
+        playbook: {
+          stateId,
+          description: expect.any(String),
+          player,
+        },
+      });
     }
   });
 

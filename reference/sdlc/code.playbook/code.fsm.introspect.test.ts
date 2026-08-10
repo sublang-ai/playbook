@@ -16,6 +16,7 @@ const CONTEXT: CodingContext = {
   runResults: 'unit tests passed',
   callerInput: 'Implement the intent.',
   coderOutput: 'Committed abc123.',
+  latestCommit: 'abc123',
   irNumber: '040',
   irTask: 'Implement task 1.',
 };

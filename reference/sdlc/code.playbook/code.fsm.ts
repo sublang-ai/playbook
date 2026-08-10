@@ -54,21 +54,25 @@ export type PlayerOutput =
   | {
       readonly guard: 'directCommit';
       readonly coderOutput: string;
+      readonly latestCommit: string;
     }
   | {
       readonly guard: 'irCommit';
       readonly coderOutput: string;
+      readonly latestCommit: string;
       readonly irNumber: string;
       readonly irTask: string;
     }
   | {
       readonly guard: 'moreTasks';
       readonly coderOutput: string;
+      readonly latestCommit: string;
       readonly irTask: string;
     }
   | {
       readonly guard: 'finalTask';
       readonly coderOutput: string;
+      readonly latestCommit: string;
     }
   | {
       readonly guard: 'needsBossReply';
@@ -95,16 +99,16 @@ export type CompactError = {
 export type CodePlaybookOutput =
   | {
       readonly status: 'complete';
-      /**
-       * Exact Coder final text produced immediately after CODE's latest
-       * phase commit. The Source declares no separate commit-id channel, so
-       * this is the artifact's truthful evidence for that CODE-owned commit.
-       */
+      /** Exact identity of the latest CODE-owned commit. */
+      readonly lastCodeCommit: string;
+      /** Exact Coder final text produced after that commit. */
       readonly lastCodeOutput: string;
     }
   | {
       readonly status: 'review-failed';
-      /** Exact evidence for the immediately preceding CODE-owned commit. */
+      /** Exact identity of the latest CODE-owned commit. */
+      readonly lastCodeCommit: string;
+      /** Exact Coder final text produced after that commit. */
       readonly lastCodeOutput: string;
       readonly error: CompactError;
     };
@@ -119,6 +123,7 @@ export type CodingContext = {
   readonly runResults: string;
   readonly callerInput?: string;
   readonly coderOutput?: string;
+  readonly latestCommit?: string;
   readonly irNumber?: string;
   readonly irTask?: string;
   readonly nextIrTask?: string;
@@ -172,18 +177,18 @@ const IR_TASK_PROMPT = [
 
 const FIRST_PHASE_RESULTS = {
   directCommit:
-    'Coder completed and committed the direct implementation phase. Output shall include `coderOutput: <verbatim final text>`.',
+    'Coder completed and committed the direct implementation phase. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.',
   irCommit:
-    'Coder created and committed a new IR without implementing an IR task. Output shall include `coderOutput: <verbatim final text>`, `irNumber`, and `irTask` naming the exact next unfinished task.',
+    'Coder created and committed a new IR without implementing an IR task. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, `irNumber`, and `irTask` naming the exact next unfinished task.',
   needsBossReply:
     "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
 } as const;
 
 const IR_TASK_RESULTS = {
   moreTasks:
-    'Coder completed and committed the current IR task and at least one task remains. Output shall include `coderOutput: <verbatim final text>` and `irTask` naming the exact next unfinished task.',
+    'Coder completed and committed the current IR task and at least one task remains. Output shall include `coderOutput: <verbatim final text>`, `latestCommit: <commit identity>`, and `irTask` naming the exact next unfinished task.',
   finalTask:
-    'Coder completed and committed the final IR task. Output shall include `coderOutput: <verbatim final text>`.',
+    'Coder completed and committed the final IR task. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.',
   needsBossReply:
     "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
 } as const;
@@ -203,11 +208,13 @@ const STATE_DESCRIPTIONS = {
 
 function playbookMeta<StateId extends keyof typeof STATE_DESCRIPTIONS>(
   stateId: StateId,
+  player?: 'Coder',
 ) {
   return {
     playbook: {
       stateId,
       description: STATE_DESCRIPTIONS[stateId],
+      ...(player === undefined ? {} : { player }),
     },
   };
 }
@@ -241,7 +248,8 @@ function outputString(event: unknown, field: string): string | undefined {
 function isDirectCommit({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'directCommit') &&
-    outputString(event, 'coderOutput') !== undefined
+    outputString(event, 'coderOutput') !== undefined &&
+    outputString(event, 'latestCommit') !== undefined
   );
 }
 
@@ -249,6 +257,7 @@ function isIrCommit({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'irCommit') &&
     outputString(event, 'coderOutput') !== undefined &&
+    outputString(event, 'latestCommit') !== undefined &&
     outputString(event, 'irNumber') !== undefined &&
     outputString(event, 'irTask') !== undefined
   );
@@ -258,6 +267,7 @@ function isMoreTasks({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'moreTasks') &&
     outputString(event, 'coderOutput') !== undefined &&
+    outputString(event, 'latestCommit') !== undefined &&
     outputString(event, 'irTask') !== undefined
   );
 }
@@ -265,7 +275,8 @@ function isMoreTasks({ event }: { event: unknown }): boolean {
 function isFinalTask({ event }: { event: unknown }): boolean {
   return (
     outputGuard(event, 'finalTask') &&
-    outputString(event, 'coderOutput') !== undefined
+    outputString(event, 'coderOutput') !== undefined &&
+    outputString(event, 'latestCommit') !== undefined
   );
 }
 
@@ -395,6 +406,7 @@ const machineSetup = setup({
         runResults: context.runResults,
         callerInput: event.callerInput,
         coderOutput: undefined,
+        latestCommit: undefined,
         irNumber: undefined,
         irTask: undefined,
         nextIrTask: undefined,
@@ -408,12 +420,14 @@ const machineSetup = setup({
     }),
     rememberDirectCommit: assign(({ event }) => ({
       coderOutput: outputString(event, 'coderOutput'),
+      latestCommit: outputString(event, 'latestCommit'),
       phase: 'direct' as const,
       pendingBossQuestion: undefined,
       bossReply: undefined,
     })),
     rememberIrCommit: assign(({ event }) => ({
       coderOutput: outputString(event, 'coderOutput'),
+      latestCommit: outputString(event, 'latestCommit'),
       irNumber: outputString(event, 'irNumber'),
       irTask: outputString(event, 'irTask'),
       nextIrTask: undefined,
@@ -423,6 +437,7 @@ const machineSetup = setup({
     })),
     rememberMoreTasks: assign(({ event }) => ({
       coderOutput: outputString(event, 'coderOutput'),
+      latestCommit: outputString(event, 'latestCommit'),
       nextIrTask: outputString(event, 'irTask'),
       phase: 'ir-task-more' as const,
       pendingBossQuestion: undefined,
@@ -430,6 +445,7 @@ const machineSetup = setup({
     })),
     rememberFinalTask: assign(({ event }) => ({
       coderOutput: outputString(event, 'coderOutput'),
+      latestCommit: outputString(event, 'latestCommit'),
       nextIrTask: undefined,
       phase: 'ir-task-final' as const,
       pendingBossQuestion: undefined,
@@ -481,6 +497,12 @@ const machineSetup = setup({
     rememberActorError: assign(({ event }) => ({
       lastError: (event as unknown as { readonly error?: unknown }).error,
     })),
+    rememberMalformedPlayerOutput: assign(({ context }) => ({
+      lastError: new Error(
+        `Coder result for ${context.irNumber === undefined ? 'CODE-1' : 'CODE-3'} ` +
+          'did not match a declared outcome.',
+      ),
+    })),
   },
 });
 
@@ -493,10 +515,15 @@ export const codingMachine = machineSetup.createMachine({
     runResults: typeof input.runResults === 'string' ? input.runResults : '',
   }),
   output: ({ context }): CodePlaybookOutput => {
+    const lastCodeCommit = context.latestCommit;
+    if (!isNonEmptyString(lastCodeCommit)) {
+      throw new Error('CODE reached a final state without a commit identity');
+    }
     const lastCodeOutput = context.coderOutput ?? '';
     if (context.completion === 'review-failed') {
       return {
         status: 'review-failed',
+        lastCodeCommit,
         lastCodeOutput,
         error:
           context.reviewError ?? {
@@ -505,7 +532,7 @@ export const codingMachine = machineSetup.createMachine({
           },
       };
     }
-    return { status: 'complete', lastCodeOutput };
+    return { status: 'complete', lastCodeCommit, lastCodeOutput };
   },
   states: {
     ready: {
@@ -520,7 +547,7 @@ export const codingMachine = machineSetup.createMachine({
     runFirstPhase: {
       id: 'runFirstPhase',
       description: STATE_DESCRIPTIONS.runFirstPhase,
-      meta: playbookMeta('runFirstPhase'),
+      meta: playbookMeta('runFirstPhase', 'Coder'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
@@ -555,6 +582,10 @@ export const codingMachine = machineSetup.createMachine({
             guard: 'needsBossReply',
             target: 'awaitBossReply',
             actions: 'rememberPendingQuestion',
+          },
+          {
+            target: 'failed',
+            actions: 'rememberMalformedPlayerOutput',
           },
         ],
         onError: { target: 'failed', actions: 'rememberActorError' },
@@ -597,7 +628,7 @@ export const codingMachine = machineSetup.createMachine({
     runIrTask: {
       id: 'runIrTask',
       description: STATE_DESCRIPTIONS.runIrTask,
-      meta: playbookMeta('runIrTask'),
+      meta: playbookMeta('runIrTask', 'Coder'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
@@ -636,6 +667,10 @@ export const codingMachine = machineSetup.createMachine({
             guard: 'needsBossReply',
             target: 'awaitBossReply',
             actions: 'rememberPendingQuestion',
+          },
+          {
+            target: 'failed',
+            actions: 'rememberMalformedPlayerOutput',
           },
         ],
         onError: { target: 'failed', actions: 'rememberActorError' },

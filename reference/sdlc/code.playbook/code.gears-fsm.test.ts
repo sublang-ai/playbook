@@ -31,6 +31,7 @@ const CONTEXT: CodingContext = {
   runResults: '',
   callerInput: 'Implement the request.',
   coderOutput: 'Committed abc123.',
+  latestCommit: 'abc123',
   irNumber: '040',
   irTask: 'Implement task 1.',
 };
@@ -100,10 +101,15 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     for (const id of ['ready', 'awaitBossReply', 'failed']) {
       expect(states[id]?.tags).toContain('playbook.parked');
     }
+    const delegatedStateIds = new Set(['runFirstPhase', 'runIrTask']);
     for (const [id, state] of Object.entries(states)) {
       expect(state.description, id).toBeTruthy();
       expect(state.meta, id).toEqual({
-        playbook: { stateId: id, description: state.description },
+        playbook: {
+          stateId: id,
+          description: state.description,
+          ...(delegatedStateIds.has(id) ? { player: 'Coder' } : {}),
+        },
       });
     }
   });

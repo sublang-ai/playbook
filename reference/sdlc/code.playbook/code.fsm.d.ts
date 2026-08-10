@@ -28,18 +28,22 @@ export type PlayerInput = {
 export type PlayerOutput = {
     readonly guard: 'directCommit';
     readonly coderOutput: string;
+    readonly latestCommit: string;
 } | {
     readonly guard: 'irCommit';
     readonly coderOutput: string;
+    readonly latestCommit: string;
     readonly irNumber: string;
     readonly irTask: string;
 } | {
     readonly guard: 'moreTasks';
     readonly coderOutput: string;
+    readonly latestCommit: string;
     readonly irTask: string;
 } | {
     readonly guard: 'finalTask';
     readonly coderOutput: string;
+    readonly latestCommit: string;
 } | {
     readonly guard: 'needsBossReply';
     readonly question: string;
@@ -60,15 +64,15 @@ export type CompactError = {
 };
 export type CodePlaybookOutput = {
     readonly status: 'complete';
-    /**
-     * Exact Coder final text produced immediately after CODE's latest
-     * phase commit. The Source declares no separate commit-id channel, so
-     * this is the artifact's truthful evidence for that CODE-owned commit.
-     */
+    /** Exact identity of the latest CODE-owned commit. */
+    readonly lastCodeCommit: string;
+    /** Exact Coder final text produced after that commit. */
     readonly lastCodeOutput: string;
 } | {
     readonly status: 'review-failed';
-    /** Exact evidence for the immediately preceding CODE-owned commit. */
+    /** Exact identity of the latest CODE-owned commit. */
+    readonly lastCodeCommit: string;
+    /** Exact Coder final text produced after that commit. */
     readonly lastCodeOutput: string;
     readonly error: CompactError;
 };
@@ -81,6 +85,7 @@ export type CodingContext = {
     readonly runResults: string;
     readonly callerInput?: string;
     readonly coderOutput?: string;
+    readonly latestCommit?: string;
     readonly irNumber?: string;
     readonly irTask?: string;
     readonly nextIrTask?: string;
@@ -152,6 +157,9 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
 } | {
     type: "rememberActorError";
     params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "rememberMalformedPlayerOutput";
+    params: import("xstate").NonReducibleUnknown;
 }, {
     type: "needsBossReply";
     params: unknown;
@@ -187,15 +195,15 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     params: unknown;
 }, never, "runFirstPhase" | "reviewFirstCommit" | "runIrTask" | "reviewIrTask" | "ready" | "awaitBossReply" | "failed" | "done", string, CodingInput, {
     readonly status: "complete";
-    /**
-     * Exact Coder final text produced immediately after CODE's latest
-     * phase commit. The Source declares no separate commit-id channel, so
-     * this is the artifact's truthful evidence for that CODE-owned commit.
-     */
+    /** Exact identity of the latest CODE-owned commit. */
+    readonly lastCodeCommit: string;
+    /** Exact Coder final text produced after that commit. */
     readonly lastCodeOutput: string;
 } | {
     readonly status: "review-failed";
-    /** Exact evidence for the immediately preceding CODE-owned commit. */
+    /** Exact identity of the latest CODE-owned commit. */
+    readonly lastCodeCommit: string;
+    /** Exact Coder final text produced after that commit. */
     readonly lastCodeOutput: string;
     readonly error: CompactError;
 }, import("xstate").EventObject, import("xstate").MetaObject, {

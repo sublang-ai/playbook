@@ -801,8 +801,8 @@ structured adjudication merely to present the same response.
 That visible-call presentation — visible Captain prose as the Boss
 presentation, a separate hidden adjudicator that never authors the
 `question`/`response` fields, and runtime injection of the visible
-`finalText` — stays scoped to visible-presentation playbooks such as CODE
-and DISCUSS. For a controller playbook, whose FSM declares the controller
+`finalText` — stays scoped to a working playbook whose FSM declares a visible
+direct-Captain state. For a controller playbook, whose FSM declares the controller
 decision-state class of [gears2fsm "Setup"](gears2fsm.md#setup), the
 Captain-call presentation admits the hidden controller form instead
 (DR-029): the decision and closing-reply Captain calls run
@@ -1191,6 +1191,23 @@ The `PlaybookRuntime` shall:
   failure cannot skip the parent disposal boundary or leave the runtime bound.
 
 The actor's `lastError` field shall be surfaced via `emitStatus` when the machine enters its `failed` state.
+Presence of linker-emitted `playerStates` selects the canonical
+factory-backed status profile. That profile shall emit the selected Boss event type
+before sending that event, exactly `→ <guard>` (with no payload-count or tally
+rider) when a settling actor output carries a guard, and
+`⤷ <Player>: <label>` only when the entered state appears in the
+linked module's `playerStates` metadata. It shall emit no raw state-id fallback
+for any other state. `playerStates` shall be a complete map of the FSM states
+that invoke the typed `player` actor; each value carries the exact player from
+that state's source-derived `meta.playbook.player` and the state's exact FSM
+description as `{ player, label }`. The factory shall reject an incomplete
+entry, a non-player state, or a player or label that differs from the FSM
+metadata. A schema-1 legacy module that predates this metadata
+shall preserve the prior factory status defaults, including no classification
+line, `Entered <stateId>.` for ordinary state entry, the single question line,
+and the unglyphed failure line. The new profile is opt-in so adding the seam
+does not silently reinterpret an already-linked artifact without an ABI or
+artifact-schema bump.
 For the default Captain runtime, an initial `ready` state and a terminal `done`
 state shall not emit human status. The terminal response is already visible
 Captain prose; a synthetic “entered done” message would present it twice.
@@ -1561,6 +1578,10 @@ The thin emitted module:
   and the canonical `<#>` → `irNumber` special case; the
   transition-event payload fields the FSM's Boss union declares; a
   non-default player binding where the linker inputs supplied one; the
+  complete `playerStates` status map derived from every FSM state that invokes
+  the typed `player` actor, with each `player` copied from that state's
+  source-derived `meta.playbook.player` (an empty map when there is no such
+  state); the
   `verbatimPayloadFields` set derived from annotated result fields above; the
   `controlContextFields` projection of §Control surface; and any
   per-playbook strategy override (classifier, prompt composers,
@@ -1597,7 +1618,13 @@ The thin emitted module:
     fields?: Readonly<Record<string, XStateBossEventFieldSpec>>;
   }
 
+  interface XStatePlayerStateStatus {
+    player: string;
+    label: string;
+  }
+
   bossEvents?: readonly XStateBossEventSpec[];
+  playerStates?: Readonly<Record<string, XStatePlayerStateStatus>>;
   placeholderFields?: Readonly<Record<string, string>>;
   ```
 
@@ -1647,6 +1674,7 @@ The thin emitted module:
   top-of-file header comment so the file is reproducible from the same
   inputs.
 - Sources the contract types (`PlayerResult`, `PlayerCallOptions`,
+  `PlayerSessionStore`,
   `CaptainResult`, `CaptainCallOptions`, `PlaybookPorts`, `PlaybookSession`,
   `PlaybookTraceEvent`,
   `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,

@@ -10,7 +10,7 @@
 // (CAPPLAY-8/14/17), the decision-reply validation with its single
 // corrective re-ask (CAPPLAY-18/19), and the six CAPPLAY-20
 // prompt-contract re-pins. The A-29 / A-28 rows of IR-036 task 4 follow
-// them, driving the real shell over the shipped CODE and DISCUSS registry
+// them, driving the real shell over the shipped CODE and DECIDE registry
 // entries.
 
 import { readFileSync } from 'node:fs';
@@ -39,10 +39,10 @@ import createPlaybookRuntime, {
 } from './captain.playbook.js';
 import { captainMachine } from './captain.fsm.js';
 // The shipped registry entries the A-29 rows drive for real (IR-036 task 4):
-// the linked CODE artifact over the shared factory, and the bespoke DISCUSS
+// the linked CODE artifact over the shared factory, and the bespoke DECIDE
 // runtime that ships without the control-surface pair.
 import codeRegistryEntry from '../code.playbook/code.registry.js';
-import discussRegistryEntry from '../discuss.playbook/discuss.registry.js';
+import decideRegistryEntry from '../decide.playbook/decide.registry.js';
 import { INCIDENT_BOSS_TURNS } from './acceptance-fixtures/incident-boss-turns.js';
 
 const ENABLED_PLAYBOOKS = [
@@ -1209,7 +1209,7 @@ function isShellClosingPrompt(prompt: string): boolean {
 
 // A registry entry the shell can load, paired with whatever handle the row
 // needs to inspect it. `shellEntry` builds a scripted fake; `realEntry` wraps
-// an already-built entry — the shipped CODE and DISCUSS registry defaults —
+// an already-built entry — the shipped CODE and DECIDE registry defaults —
 // so the same harness drives both (IR-036 task 4 harness extension).
 interface RegisteredEntry {
   readonly runtimes?: readonly unknown[];
@@ -1464,20 +1464,14 @@ function bossMessageOf(prompt: string): string {
 
 function classifyFromPrompt(prompt: string): unknown {
   const state = /\nCurrent state: (.*)\n/.exec(prompt)?.[1] ?? '';
-  const text = /\nBoss message:\n```\n([\s\S]*?)\n```/.exec(prompt)?.[1] ?? '';
   if (state === 'awaitBossReply') {
     const questionId = /\nPending question id: (.*)\n/.exec(prompt)?.[1];
     return {
-      event: 'BOSS_REPLY',
-      payload: {
-        answer: text,
-        ...(questionId === undefined ? {} : { questionId }),
-      },
+      type: 'BOSS_REPLY',
+      ...(questionId === undefined ? {} : { questionId }),
     };
   }
-  const ir = /IR-(\d+)/.exec(text);
-  if (ir) return { event: 'CONTINUE_IR', payload: { irNumber: ir[1] } };
-  return { event: 'START_CODING', payload: { intent: text } };
+  return { type: 'START_CODE' };
 }
 
 interface RealArtifactScript {
@@ -1531,7 +1525,7 @@ function realArtifactHarness(
 
 /** The pending question the A29-1 / A29-4 retry parks CODE on. */
 const CODE_PENDING_QUESTION =
-  'Should task 4 land the DISCUSS row too, or only the CODE rows?';
+  'Should task 4 land the DECIDE row too, or only the CODE rows?';
 
 /**
  * `retry` when the digest advertises one and the Boss asked to retry;
@@ -1558,7 +1552,7 @@ function retryOrGroundedReply(
 // A-29 / A-28 rows over the real Playbook Captain shell (IR-036 task 4):
 // CAPTAIN-37…-40 and the amended CAPTAIN-21. Rows whose asserts read genuine
 // engine state run on the shipped registry entries — the linked CODE
-// artifact over the shared factory and the bespoke DISCUSS runtime — with
+// artifact over the shared factory and the bespoke DECIDE runtime — with
 // per-call scripted players, the `acceptance-fixtures/incident-boss-turns.ts`
 // fixture, and a scripted model that reads its answer out of the prompt the
 // shell composed. FakeRuntime entries carry the rows that need injected
@@ -1673,7 +1667,13 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // Setup: a parse-resolved `/code` start whose first player call errors,
     // parking the real CODE machine in its own `failed` state.
     await harness.turn('/code continue IR-036 task 4', 1);
-    expect(harness.statuses).toContain('◆ failed');
+    expect(harness.statuses).toContain('START_CODE');
+    expect(harness.statuses).toContain(
+      '⤷ Coder: Coder is implementing one direct phase or committing a new intent record.',
+    );
+    expect(harness.statuses).toContain(
+      '◆ workflow failed; awaiting Boss recovery.',
+    );
     expect(harness.playerCalls).toHaveLength(1);
     expect(code.runtimes[0]?.describe?.().state.stateId).toBe('failed');
     // The failure is named in the grounding the closing prompt points at,
@@ -1704,7 +1704,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // status answer reflects, and an id is not Boss-appropriate text
     // (CAPPLAY-5). The retired `state value <id>` form appears nowhere.
     expect(decision!.prompt).toContain(
-      'Leaf /code: state: Captures the last Captain error so the runner can report it. Boss may resume from here.; tags playbook.parked; quiescent; status active',
+      'Leaf /code: state: The coding workflow failed and is waiting for a new coding intent.; tags playbook.parked; quiescent; status active',
     );
     expect(decision!.prompt).not.toContain('state value');
     // PBRT-52 / CAPTAIN-9: the context block is CODE's declared projection,
@@ -1712,25 +1712,19 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // JSON document. Every member CODE does not export — the resolved
     // roster, the option value, and the player-authored text — stays out of
     // the durable conversation entirely.
-    expect(decision!.prompt).toContain(
-      [
-        'Leaf context:',
-        '- workflow: "iteration"',
-        '- changeOrigin: "irTask"',
-        '- afterReview: "continueIr"',
-        // The block ends there: nothing else in `CodingContext` follows.
-        'Pending Boss questions: none.',
-      ].join('\n'),
-    );
+    // The only declared projection, `phase`, is unset at this first-phase
+    // failure, so the shell omits the context block instead of exposing the
+    // rest of `CodeContext`.
+    expect(decision!.prompt).not.toContain('Leaf context:');
     for (const excluded of [
       'irNumber',
-      'taskDescription',
+      'irTask',
+      'nextIrTask',
+      'callerInput',
+      'runResults',
       'coderPlayer',
-      'reviewerPlayer',
-      'committerPlayer',
-      'lastResult',
+      'coderOutput',
       'code-coder',
-      'code-reviewer',
     ]) {
       expect(decision!.prompt).not.toContain(excluded);
     }
@@ -1738,21 +1732,21 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       'Last error: {"name":"Error","message":"coder exploded"}',
     );
     expect(decision!.prompt).toContain(
-      '- retry:CONTINUE_IR: Retry: CODE-3: Coder continues an IR',
+      '- retry:START_CODE: Retry: Coder is implementing one direct phase or committing a new intent record.',
     );
     // The healthy path carries no journal-derived recap.
     expect(decision!.prompt).not.toContain('[Conversation recap]');
 
-    // The selection was applied for real: the retry replayed CONTINUE_IR and
+    // The selection was applied for real: the retry replayed START_CODE and
     // the coder ran again — a genuine recovery attempt, not a dead turn.
     expect(harness.playerCalls).toHaveLength(2);
     const closing = harness.closingPrompts().at(-1) ?? '';
     expect(closing).toContain('Settlement status: ok');
     expect(closing).toContain('Runtime action receipt: executed');
-    expect(closing).toContain('- Applied "retry:CONTINUE_IR" on /code.');
+    expect(closing).toContain('- Applied "retry:START_CODE" on /code.');
     // The settled leaf reaches the result phase by its meaning too.
     expect(closing).toContain(
-      'state: Waiting for Boss to answer a player question.',
+      'state: Waiting for Boss to answer Coder.',
     );
     expect(closing).not.toContain('awaitBossReply');
     expect(harness.surfaced.at(-1)).toBe(
@@ -1771,7 +1765,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
       // Grounded in the state's meaning, and carrying no raw state id — the
       // reply reflects what the digest gave it, and the digest gave it prose.
       expect(reply).toContain(
-        'state: Waiting for Boss to answer a player question.',
+        'state: Waiting for Boss to answer Coder.',
       );
       expect(reply).not.toContain('awaitBossReply');
     }
@@ -1795,7 +1789,10 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
           : { status: 'ok', finalText: `Resumed with: ${prompt.length} chars` },
       adjudicate: (prompt) =>
         prompt.includes(CODE_PENDING_QUESTION)
-          ? { guard: 'taskReady' }
+          ? {
+              guard: 'directCommit',
+              coderOutput: 'Committed the direct implementation phase.',
+            }
           : { guard: 'needsBossReply', question: CODE_PENDING_QUESTION },
       // A digest carrying a pending question and a Boss message that answers
       // it: hand the turn to the working playbook unchanged.
@@ -1811,7 +1808,15 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // The suspension surfaced the player's full question as captain speech,
     // then the rider-less suspension marker (DR-007 path).
     expect(harness.statuses).toContain(`Coder asks: ${CODE_PENDING_QUESTION}`);
-    expect(harness.statuses.at(-1)).toContain('◆ awaiting Boss reply');
+    expect(harness.statuses).toContain(
+      '◆ awaiting Boss reply · runFirstPhase · Coder · CODE-1',
+    );
+    const statusTail = harness.statuses.slice(-3);
+    expect(statusTail).toEqual([
+      '→ needsBossReply',
+      `Coder asks: ${CODE_PENDING_QUESTION}`,
+      '◆ awaiting Boss reply · runFirstPhase · Coder · CODE-1',
+    ]);
     const parked = code.runtimes[0]!.describe!();
     expect(parked.state.stateId).toBe('awaitBossReply');
     expect(parked.pendingQuestions).toHaveLength(1);
@@ -1880,7 +1885,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     // description CODE's source publishes, so that is what a grounded answer
     // can say.
     expect(harness.surfaced.at(-1)).toContain(
-      'state: Waiting for Boss to answer a player question.',
+      'state: Waiting for Boss to answer Coder.',
     );
     expect(harness.surfaced.at(-1)).not.toContain('awaitBossReply');
     expect(harness.surfaced.at(-1)).toContain(CODE_PENDING_QUESTION);
@@ -1928,13 +1933,13 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     expect(JSON.stringify(runtime.describe!())).toBe(before);
   });
 
-  // A29-19: the real compiled DISCUSS artifact ships its bespoke runtime
+  // A29-19: the real compiled DECIDE artifact ships its bespoke runtime
   // without the control-surface pair. Capability absence bounds the machine
   // verbs against that leaf; it never bounds the conversation.
-  it('bounds only the machine verbs on the capability-less DISCUSS leaf', async () => {
-    const discuss = realEntry(discussRegistryEntry);
-    const harness = realArtifactHarness([discuss], {
-      players: () => ({ status: 'ok', finalText: 'Proposal drafted.' }),
+  it('bounds only the machine verbs on the capability-less DECIDE leaf', async () => {
+    const decide = realEntry(decideRegistryEntry);
+    const harness = realArtifactHarness([decide], {
+      players: () => ({ status: 'error', error: 'proposal agent stopped' }),
       decide: (prompt, advertised) =>
         advertised.length > 0
           ? { action: 'runtime', actionId: advertised[0] }
@@ -1946,11 +1951,11 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
             },
     });
     await harness.init();
-    await harness.turn('/discuss the retry policy', 1);
+    await harness.turn('/decide the retry policy', 1);
 
     // The DR-022 gate: the pair is absent, distinctly — neither member is
     // implemented, so the shell composes the degraded digest.
-    const runtime = discuss.runtimes[0]!;
+    const runtime = decide.runtimes[0]!;
     expect(runtime.describe).toBeUndefined();
     expect(runtime.apply).toBeUndefined();
 
@@ -1958,7 +1963,7 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     await harness.turn('Where are we right now?', 2);
 
     const digest = harness.decisionPrompts().at(-1) ?? '';
-    expect(digest).toContain('/discuss runtime advertises no control surface.');
+    expect(digest).toContain('/decide runtime advertises no control surface.');
     // No control view means no published state description, and the shell
     // says so rather than substituting the state id it holds from telemetry:
     // grounding is the state's meaning, and where none is published none is
@@ -2470,7 +2475,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     const executedKey = (
       (applyStarts[0]!.payload as { payload: { key: string } }).payload
     ).key;
-    expect(executedKey).toBe('turn-2-apply-retry:CONTINUE_IR');
+    expect(executedKey).toBe('turn-2-apply-retry:START_CODE');
     expect(harness.closingPrompts().at(-1)).toContain(
       'Runtime action receipt: executed',
     );
@@ -2481,7 +2486,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     // reason, before any effect — snapshot unchanged, zero player calls.
     const snapshotBefore = JSON.stringify(runtime.describe!());
     const rejected = await runtime.apply!({
-      actionId: 'retry:CONTINUE_IR',
+      actionId: 'retry:START_CODE',
       key: 'a29-17-leg-b',
       signal: new AbortController().signal,
     });
@@ -2495,7 +2500,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     // (d) leg (a)'s key repeated returns the recorded receipt with exactly
     // one execution in total — no revalidation, no second effect.
     const replayed = await runtime.apply!({
-      actionId: 'retry:CONTINUE_IR',
+      actionId: 'retry:START_CODE',
       key: executedKey,
       signal: new AbortController().signal,
     });
@@ -2533,7 +2538,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
       'Receipt error: {"name":"Error","message":"coder exploded"}',
     );
     expect(closing).toContain(
-      '- Applying "retry:CONTINUE_IR" failed: Error: coder exploded.',
+      '- Applying "retry:START_CODE" failed: Error: coder exploded.',
     );
     // The effects are in the traces: the action started, ran a player, and
     // finished carrying the `failed` disposition.
@@ -2554,78 +2559,56 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     expect(harness.playerCalls).toHaveLength(2);
   });
 
-  // A29-20 (DR-029 G3): with CODE parked in `failed`, "resume from <named
-  // state>" is decided from the advertised jump action, applied for real,
-  // and reported with the jump fact.
-  it('applies an advertised jump action and lands the snapshot at the target', async () => {
+  // The current CODE machine exposes no BOSS_INTERRUPT jump target. A named
+  // state therefore cannot become a machine action unless the runtime
+  // advertises it; the session Captain keeps the failed run untouched.
+  it('does not invent a jump action for an unadvertised state', async () => {
     const code = realEntry(codeRegistryEntry);
     const harness = realArtifactHarness([code], {
-      players: (_playerId, _prompt, index) =>
-        index === 0
-          ? { status: 'error', error: 'coder exploded' }
-          : { status: 'ok', finalText: 'Planned; one question for Boss.' },
-      adjudicate: () => ({
-        guard: 'needsBossReply',
-        question: CODE_PENDING_QUESTION,
-      }),
-      // Pick the advertised jump whose id names the state the Boss named.
+      players: () => ({ status: 'error', error: 'coder exploded' }),
       decide: (_prompt, advertised, boss) => {
         const named = /resume from (\w+)/i.exec(boss)?.[1];
         const jump = advertised.find((id) => id === `jump:${named}`);
         return jump === undefined
-          ? { action: 'respond', text: 'I cannot resume from there.' }
+          ? {
+              action: 'respond',
+              text: 'Only the advertised retry is available for this run.',
+            }
           : { action: 'runtime', actionId: jump };
       },
-      // CAPTAIN-9: the model is handed `jump:planAndImplement` on purpose —
-      // the reply selects by id — so it may well narrate the id back. The
-      // first closing reply does exactly that and must be refused; the
-      // corrective one names the state's meaning instead.
-      closing: (prompt) =>
-        prompt.includes('[Reply rejected]')
-          ? 'Resumed the run from where the coder assesses your intent; it now has a question for you.'
-          : prompt.includes('Applied "jump:')
-            ? 'Resumed from planAndImplement; the coder has a question.'
-            : 'Started the run.',
     });
     await harness.init();
     await harness.turn('/code continue IR-036 task 4', 1);
-    await harness.turn('resume from planAndImplement', 2);
+    const runtime = code.runtimes[0]!;
+    const snapshotBefore = JSON.stringify(runtime.describe!());
+    const playerCallsBefore = harness.playerCalls.length;
+    const applyCallsBefore = harness.telemetry.filter(
+      (event) =>
+        event.topic === 'playbook.trace' &&
+        (event.payload as { type?: unknown }).type === 'apply.started',
+    ).length;
 
-    // The digest advertised the jump with its resumable-target id and the
-    // source state's own description as its label.
+    await harness.turn('resume from runFirstPhase', 2);
+
+    // The digest carries only the retry derived from the recorded entry
+    // event, so the prompt-reading controller selects `respond`.
     const digest = harness.decisionPrompts().at(-1) ?? '';
     expect(digest).toContain(
-      '- jump:planAndImplement: Resume from: CODE-1: Coder assesses a Boss intent',
+      '- retry:START_CODE: Retry: Coder is implementing one direct phase or committing a new intent record.',
     );
-    // Real apply, executed receipt, and the jump fact in the result phase.
-    const closing = harness.closingPrompts().at(-1) ?? '';
-    expect(closing).toContain('Runtime action receipt: executed');
-    expect(closing).toContain('- Applied "jump:planAndImplement" on /code.');
-    // The reply that repeated the id the host itself supplied got exactly one
-    // corrective re-ask naming that leak, and only the corrected prose reached
-    // the Boss. A jump target is by construction *not* the active state, so no
-    // live-state check could ever have caught this: the host catches it because
-    // it knows which strings it put into this turn's prompts.
-    const closings = harness.closingPrompts();
-    expect(closings.at(-1)).toContain(
-      'the reply repeated an internal identifier the host supplied for selection only',
-    );
-    expect(
-      closings.filter((prompt) => prompt.includes('[Reply rejected]')),
-    ).toHaveLength(1);
+    expect(digest).not.toContain('jump:');
     expect(harness.surfaced.at(-1)).toBe(
-      'Resumed the run from where the coder assesses your intent; it now has a question for you.',
+      'Only the advertised retry is available for this run.',
     );
-    expect(harness.surfaced.join('\n')).not.toContain('planAndImplement');
-    expect(harness.surfaced.join('\n')).not.toContain('jump:');
-    // The snapshot landed at the target: the suspension it produced records
-    // `planAndImplement` as the state the Boss reply resumes.
-    const view = code.runtimes[0]!.describe!();
-    expect(view.state.stateId).toBe('awaitBossReply');
-    expect(view.pendingQuestions[0]?.questionId).toBe('planAndImplement');
-    expect(harness.statuses).toContain(
-      '◆ awaiting Boss reply · planAndImplement · Coder · CODE-1',
-    );
+    expect(JSON.stringify(runtime.describe!())).toBe(snapshotBefore);
+    expect(harness.playerCalls).toHaveLength(playerCallsBefore);
+    expect(
+      harness.telemetry.filter(
+        (event) =>
+          event.topic === 'playbook.trace' &&
+          (event.payload as { type?: unknown }).type === 'apply.started',
+      ),
+    ).toHaveLength(applyCallsBefore);
   });
 
   // The completed-action ledger (DR-029): a settlement that
