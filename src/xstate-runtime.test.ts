@@ -1521,6 +1521,75 @@ describe('JSON boundary validation', () => {
     expect(getter).not.toHaveBeenCalled();
   });
 
+  it('captures an optional player session store from own methods once', () => {
+    const ports = {
+      callPlayer: vi.fn(),
+      callCaptain: vi.fn(),
+      callJudge: vi.fn(),
+      callPlaybook: vi.fn(),
+      emitStatus: vi.fn(),
+      emitTelemetry: vi.fn(),
+    };
+    const store = {
+      select: vi.fn(() => false as const),
+      update: vi.fn(),
+      snapshot: vi.fn(() => ({})),
+      restore: vi.fn(),
+    };
+    const storeGet = vi.fn(() => {
+      throw new Error('store member was re-read');
+    });
+    const session = snapshotPlaybookSession({
+      sessionId: 'root-store',
+      playbookId: 'captain',
+      rootSessionId: 'root-store',
+      depth: 0,
+      playerSessions: new Proxy(store, { get: storeGet }),
+      ports,
+    });
+
+    expect(session.playerSessions).not.toBe(store);
+    expect(session.playerSessions?.select).toBe(store.select);
+    expect(session.playerSessions?.update).toBe(store.update);
+    expect(session.playerSessions?.snapshot).toBe(store.snapshot);
+    expect(session.playerSessions?.restore).toBe(store.restore);
+    expect(storeGet).not.toHaveBeenCalled();
+    expect(Object.isFrozen(session.playerSessions)).toBe(true);
+
+    const accessorStore = {
+      update: store.update,
+      snapshot: store.snapshot,
+      restore: store.restore,
+    } as Record<string, unknown>;
+    const selectGetter = vi.fn(() => store.select);
+    Object.defineProperty(accessorStore, 'select', {
+      enumerable: true,
+      get: selectGetter,
+    });
+    expect(() =>
+      snapshotPlaybookSession({
+        sessionId: 'root-accessor-store',
+        playbookId: 'captain',
+        rootSessionId: 'root-accessor-store',
+        depth: 0,
+        playerSessions: accessorStore as never,
+        ports,
+      }),
+    ).toThrow('playerSessions.select must be an own data property');
+    expect(selectGetter).not.toHaveBeenCalled();
+
+    expect(() =>
+      snapshotPlaybookSession({
+        sessionId: 'root-invalid-store',
+        playbookId: 'captain',
+        rootSessionId: 'root-invalid-store',
+        depth: 0,
+        playerSessions: { ...store, restore: undefined } as never,
+        ports,
+      }),
+    ).toThrow('playerSessions.restore must be a function');
+  });
+
   it('validates, detaches, and freezes exact host actor results', () => {
     const captainInput = {
       status: 'ok' as const,

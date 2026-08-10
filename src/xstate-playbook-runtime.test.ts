@@ -21,6 +21,7 @@ import type {
   PlaybookRuntime,
   PlaybookSession,
   PlaybookTraceEvent,
+  PlayerSessionStore,
   PlayerResult,
 } from './runtime.js';
 import {
@@ -82,13 +83,17 @@ function makeRecordingPorts(overrides: Partial<PlaybookPorts> = {}): {
 
 let sessionSequence = 0;
 
-function makeSession(ports: PlaybookPorts): PlaybookSession {
+function makeSession(
+  ports: PlaybookPorts,
+  playerSessions?: PlayerSessionStore,
+): PlaybookSession {
   const sessionId = `factory-test-session-${++sessionSequence}`;
   return {
     sessionId,
     playbookId: 'factory-test',
     rootSessionId: sessionId,
     depth: 0,
+    ...(playerSessions === undefined ? {} : { playerSessions }),
     ports,
   };
 }
@@ -1707,6 +1712,329 @@ describe('empty ok player result corrective re-ask (DR-028 / PBRT-51)', () => {
       'player.call.finished',
     ]);
     expect(corrective[1].payload).toMatchObject({ status: 'aborted' });
+    await runtime.dispose();
+  });
+});
+
+describe('host-owned player continuation (DR-030)', () => {
+  it('selects and advances the shared token before the matching traces', async () => {
+    const tokens = new Map<string, string>([['coder', 'parent-token']]);
+    const operations: string[] = [];
+    const store: PlayerSessionStore = {
+      select(playerId) {
+        operations.push(`select:${playerId}:${tokens.get(playerId) ?? 'fresh'}`);
+        return tokens.get(playerId) ?? false;
+      },
+      update(playerId, resumeToken) {
+        operations.push(`update:${playerId}:${resumeToken ?? 'clear'}`);
+        if (resumeToken === undefined) tokens.delete(playerId);
+        else tokens.set(playerId, resumeToken);
+      },
+      snapshot() {
+        operations.push('snapshot');
+        return Object.fromEntries(tokens);
+      },
+      restore(next) {
+        operations.push('restore');
+        tokens.clear();
+        for (const [playerId, token] of Object.entries(next)) {
+          tokens.set(playerId, token);
+        }
+      },
+    };
+    const resumes: Array<string | false> = [];
+    let calls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, _prompt, _signal, options) => {
+        calls += 1;
+        resumes.push(options.resume);
+        return calls === 1
+          ? { status: 'ok', finalText: '', resumeToken: 'child-token' }
+          : {
+              status: 'ok',
+              finalText: 'All done, boss.',
+              resumeToken: 'final-token',
+            };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"shipped"}',
+      emitTelemetry: async (event) => {
+        if (
+          event.topic === 'playbook.trace' &&
+          (event.payload as PlaybookTraceEvent).type === 'player.call.started'
+        ) {
+          operations.push(
+            `started:${String(
+              ((event.payload as PlaybookTraceEvent).payload as { resume?: unknown })
+                .resume,
+            )}`,
+          );
+        }
+        if (
+          event.topic === 'playbook.trace' &&
+          (event.payload as PlaybookTraceEvent).type === 'player.call.finished'
+        ) {
+          operations.push(`finished:${tokens.get('coder') ?? 'clear'}`);
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports, store));
+
+    const result = await runtime.handleBossInput(turn('build the widget'));
+
+    expect(result.outcome).toBe('terminal');
+    expect(resumes).toEqual(['parent-token', 'child-token']);
+    expect(operations).toEqual([
+      'select:coder:parent-token',
+      'started:parent-token',
+      'update:coder:child-token',
+      'finished:child-token',
+      'select:coder:child-token',
+      'started:child-token',
+      'update:coder:final-token',
+      'finished:final-token',
+    ]);
+    await runtime.dispose();
+    expect(tokens.get('coder')).toBe('final-token');
+  });
+
+  it('exports and restores through the supplied store', async () => {
+    const firstTokens = new Map<string, string>();
+    const firstStore: PlayerSessionStore = {
+      select: (playerId) => firstTokens.get(playerId) ?? false,
+      update(playerId, resumeToken) {
+        if (resumeToken === undefined) firstTokens.delete(playerId);
+        else firstTokens.set(playerId, resumeToken);
+      },
+      snapshot: () => Object.fromEntries(firstTokens),
+      restore(next) {
+        firstTokens.clear();
+        for (const [playerId, token] of Object.entries(next)) {
+          firstTokens.set(playerId, token);
+        }
+      },
+    };
+    let calls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        calls += 1;
+        return {
+          status: 'ok',
+          finalText: 'Which database should I use?',
+          resumeToken: 'parked-token',
+        };
+      },
+      callJudge: async () =>
+        '{"guard":"needsBossReply","question":"Which database?"}',
+    });
+    const first = createWorkflowRuntime({});
+    const firstSession = makeSession(ports, firstStore);
+    await first.init(firstSession);
+    const parked = await first.handleBossInput(turn('build storage'));
+    expect(parked.state.stateId).toBe('awaitBossReply');
+    const snapshot = first.exportSnapshot!();
+    expect(snapshot?.playerResumeTokens).toEqual({ coder: 'parked-token' });
+    await first.dispose();
+    expect(firstTokens.get('coder')).toBe('parked-token');
+
+    const restoredTokens = new Map<string, string>();
+    const restoreCalls: Readonly<Record<string, string>>[] = [];
+    const restoredStore: PlayerSessionStore = {
+      select: (playerId) => restoredTokens.get(playerId) ?? false,
+      update(playerId, resumeToken) {
+        if (resumeToken === undefined) restoredTokens.delete(playerId);
+        else restoredTokens.set(playerId, resumeToken);
+      },
+      snapshot: () => Object.fromEntries(restoredTokens),
+      restore(next) {
+        restoreCalls.push(next);
+        restoredTokens.clear();
+        for (const [playerId, token] of Object.entries(next)) {
+          restoredTokens.set(playerId, token);
+        }
+      },
+    };
+    const second = createWorkflowRuntime({});
+    await second.restore!(makeSession(ports, restoredStore), snapshot!);
+
+    expect(restoreCalls).toEqual([{ coder: 'parked-token' }]);
+    expect(restoredTokens.get('coder')).toBe('parked-token');
+    await second.dispose();
+  });
+
+  it('rejects a store selection failure before allocating or tracing a call', async () => {
+    const storeError = new Error('continuation selection unavailable');
+    const tokens = new Map<string, string>([['coder', 'prior-token']]);
+    let selections = 0;
+    const store: PlayerSessionStore = {
+      select(playerId) {
+        selections += 1;
+        if (selections === 1) throw storeError;
+        return tokens.get(playerId) ?? false;
+      },
+      update(playerId, resumeToken) {
+        if (resumeToken === undefined) tokens.delete(playerId);
+        else tokens.set(playerId, resumeToken);
+      },
+      snapshot: () => Object.fromEntries(tokens),
+      restore(next) {
+        tokens.clear();
+        for (const [playerId, token] of Object.entries(next)) {
+          tokens.set(playerId, token);
+        }
+      },
+    };
+    const resumes: Array<string | false> = [];
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, _prompt, _signal, options) => {
+        resumes.push(options.resume);
+        return {
+          status: 'ok',
+          finalText: 'Recovered.',
+          resumeToken: 'next-token',
+        };
+      },
+      callJudge: async (prompt) =>
+        prompt.includes('Classify the following Boss message')
+          ? '{"type":"START"}'
+          : '{"guard":"implemented","summary":"recovered"}',
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          traces.push(event.payload as PlaybookTraceEvent);
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports, store));
+
+    await expect(runtime.handleBossInput(turn('first try'))).rejects.toBe(
+      storeError,
+    );
+    expect(resumes).toEqual([]);
+    expect(tokens.get('coder')).toBe('prior-token');
+    expect(
+      traces.filter(({ type }) => type.startsWith('player.call.')),
+    ).toEqual([]);
+
+    const recovered = await runtime.handleBossInput(turn('try again'));
+    expect(recovered.outcome).toBe('terminal');
+    expect(resumes).toEqual(['prior-token']);
+    expect(
+      traces.find(({ type }) => type === 'player.call.started')?.callId,
+    ).toBe('player-1');
+    await runtime.dispose();
+  });
+
+  it('rolls a shared store back when runtime restore does not bind', async () => {
+    const sourceTokens = new Map<string, string>();
+    const sourceStore: PlayerSessionStore = {
+      select: (playerId) => sourceTokens.get(playerId) ?? false,
+      update(playerId, resumeToken) {
+        if (resumeToken === undefined) sourceTokens.delete(playerId);
+        else sourceTokens.set(playerId, resumeToken);
+      },
+      snapshot: () => Object.fromEntries(sourceTokens),
+      restore(next) {
+        sourceTokens.clear();
+        for (const [playerId, token] of Object.entries(next)) {
+          sourceTokens.set(playerId, token);
+        }
+      },
+    };
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'Which database should I use?',
+        resumeToken: 'snapshot-token',
+      }),
+      callJudge: async () =>
+        '{"guard":"needsBossReply","question":"Which database?"}',
+    });
+    const source = createWorkflowRuntime({});
+    await source.init(makeSession(ports, sourceStore));
+    await source.handleBossInput(turn('build storage'));
+    const snapshot = source.exportSnapshot!()!;
+    await source.dispose();
+
+    const restoredTokens = new Map<string, string>([
+      ['coder', 'original-token'],
+    ]);
+    const restoreStore: PlayerSessionStore = {
+      select: (playerId) => restoredTokens.get(playerId) ?? false,
+      update(playerId, resumeToken) {
+        if (resumeToken === undefined) restoredTokens.delete(playerId);
+        else restoredTokens.set(playerId, resumeToken);
+      },
+      snapshot: () => Object.fromEntries(restoredTokens),
+      restore(next) {
+        restoredTokens.clear();
+        for (const [playerId, token] of Object.entries(next)) {
+          restoredTokens.set(playerId, token);
+        }
+      },
+    };
+    const brokenSnapshot = {
+      ...snapshot,
+      machine: { ...snapshot.machine, status: 'done' },
+    };
+    const restored = createWorkflowRuntime({});
+
+    await expect(
+      restored.restore!(makeSession(ports, restoreStore), brokenSnapshot),
+    ).rejects.toBeDefined();
+    expect(Object.fromEntries(restoredTokens)).toEqual({
+      coder: 'original-token',
+    });
+    await restored.dispose();
+  });
+
+  it('pairs a continuation-store update failure and never interprets the result', async () => {
+    const traces: PlaybookTraceEvent[] = [];
+    const storeError = new Error('continuation store unavailable');
+    const store: PlayerSessionStore = {
+      select: () => false,
+      update: () => {
+        throw storeError;
+      },
+      snapshot: () => ({}),
+      restore: () => undefined,
+    };
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({
+        status: 'ok',
+        finalText: 'Implemented.',
+        resumeToken: 'new-token',
+      }),
+      callJudge: async () => {
+        throw new Error('judge must not run');
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          traces.push(event.payload as PlaybookTraceEvent);
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports, store));
+
+    await expect(
+      runtime.handleBossInput(turn('build the widget')),
+    ).rejects.toBe(storeError);
+    expect(
+      traces
+        .filter(({ callId }) => callId === 'player-1')
+        .map(({ type }) => type),
+    ).toEqual(['player.call.started', 'player.call.finished']);
+    expect(
+      traces.find(
+        ({ callId, type }) =>
+          callId === 'player-1' && type === 'player.call.finished',
+      )?.payload,
+    ).toMatchObject({
+      status: 'error',
+      error: { message: 'continuation store unavailable' },
+    });
     await runtime.dispose();
   });
 });

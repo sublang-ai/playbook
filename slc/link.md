@@ -59,7 +59,15 @@ interface PlaybookSession {
   parentSessionId?: string;
   parentCallId?: string;
   depth: number;
+  playerSessions?: PlayerSessionStore;
   ports: PlaybookPorts;
+}
+
+interface PlayerSessionStore {
+  select(playerId: string): string | false;
+  update(playerId: string, resumeToken?: string): void;
+  snapshot(): Readonly<Record<string, string>>;
+  restore(tokens: Readonly<Record<string, string>>): void;
 }
 
 type JsonValue =
@@ -378,6 +386,11 @@ interface PlaybookTraceEvent {
   payload: JsonValue;
 }
 ```
+
+A composing host may supply `playerSessions` as a frame-local view of player continuation owned by the root engagement tree.
+The runtime shall select through that view before allocating or tracing a player call and shall update or clear it from a validated player result before emitting the matching finish trace.
+Snapshot export and restore shall use the same view, failed restore shall leave its prior contents unchanged, and child disposal shall not clear host-owned continuation.
+A host that omits the view retains the runtime's private per-session continuation behavior.
 
 The trace types are `session.started`, `boss.input.received`,
 `judge.call.started`, `judge.call.finished`, `player.call.started`,

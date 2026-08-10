@@ -342,6 +342,49 @@ function capturedPort<K extends keyof PlaybookSession['ports']>(
   return value as PlaybookSession['ports'][K];
 }
 
+function capturedSessionStore(
+  descriptors: PropertyDescriptorMap,
+): PlaybookSession['playerSessions'] {
+  const captured = capturedDataValue(
+    descriptors,
+    'playerSessions',
+    'playbook session playerSessions',
+  );
+  if (!isRecord(captured)) {
+    throw new TypeError('playbook session playerSessions must be an object');
+  }
+  const storeDescriptors = Object.getOwnPropertyDescriptors(captured);
+  const method = (
+    name: keyof NonNullable<PlaybookSession['playerSessions']>,
+  ): ((...args: never[]) => unknown) => {
+    const value = capturedDataValue(
+      storeDescriptors,
+      name,
+      `playbook session playerSessions.${name}`,
+    );
+    if (typeof value !== 'function') {
+      throw new TypeError(
+        `playbook session playerSessions.${name} must be a function`,
+      );
+    }
+    return value as (...args: never[]) => unknown;
+  };
+  return Object.freeze({
+    select: method('select') as NonNullable<
+      PlaybookSession['playerSessions']
+    >['select'],
+    update: method('update') as NonNullable<
+      PlaybookSession['playerSessions']
+    >['update'],
+    snapshot: method('snapshot') as NonNullable<
+      PlaybookSession['playerSessions']
+    >['snapshot'],
+    restore: method('restore') as NonNullable<
+      PlaybookSession['playerSessions']
+    >['restore'],
+  });
+}
+
 /** Validate session causality and detach its immutable identity from the host. */
 export function snapshotPlaybookSession(
   session: PlaybookSession,
@@ -405,6 +448,10 @@ export function snapshotPlaybookSession(
     sessionDescriptors,
     'parentCallId',
   );
+  const hasPlayerSessions = Object.prototype.hasOwnProperty.call(
+    sessionDescriptors,
+    'playerSessions',
+  );
   let parentSessionId: string | undefined;
   let parentCallId: string | undefined;
   if (depth === 0) {
@@ -450,6 +497,9 @@ export function snapshotPlaybookSession(
     emitStatus: capturedPort(portDescriptors, 'emitStatus'),
     emitTelemetry: capturedPort(portDescriptors, 'emitTelemetry'),
   });
+  const playerSessions = hasPlayerSessions
+    ? capturedSessionStore(sessionDescriptors)
+    : undefined;
   return Object.freeze({
     sessionId,
     playbookId,
@@ -457,6 +507,7 @@ export function snapshotPlaybookSession(
     ...(parentSessionId === undefined ? {} : { parentSessionId }),
     ...(parentCallId === undefined ? {} : { parentCallId }),
     depth,
+    ...(playerSessions === undefined ? {} : { playerSessions }),
     ports,
   });
 }

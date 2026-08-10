@@ -248,6 +248,26 @@ function capturedPort(descriptors, name) {
     }
     return value;
 }
+function capturedSessionStore(descriptors) {
+    const captured = capturedDataValue(descriptors, 'playerSessions', 'playbook session playerSessions');
+    if (!isRecord(captured)) {
+        throw new TypeError('playbook session playerSessions must be an object');
+    }
+    const storeDescriptors = Object.getOwnPropertyDescriptors(captured);
+    const method = (name) => {
+        const value = capturedDataValue(storeDescriptors, name, `playbook session playerSessions.${name}`);
+        if (typeof value !== 'function') {
+            throw new TypeError(`playbook session playerSessions.${name} must be a function`);
+        }
+        return value;
+    };
+    return Object.freeze({
+        select: method('select'),
+        update: method('update'),
+        snapshot: method('snapshot'),
+        restore: method('restore'),
+    });
+}
 /** Validate session causality and detach its immutable identity from the host. */
 export function snapshotPlaybookSession(session) {
     if (!isRecord(session)) {
@@ -266,6 +286,7 @@ export function snapshotPlaybookSession(session) {
     const capturedParentCallId = capturedDataValue(sessionDescriptors, 'parentCallId', 'playbook session parentCallId', false);
     const hasParentSessionId = Object.prototype.hasOwnProperty.call(sessionDescriptors, 'parentSessionId');
     const hasParentCallId = Object.prototype.hasOwnProperty.call(sessionDescriptors, 'parentCallId');
+    const hasPlayerSessions = Object.prototype.hasOwnProperty.call(sessionDescriptors, 'playerSessions');
     let parentSessionId;
     let parentCallId;
     if (depth === 0) {
@@ -296,6 +317,9 @@ export function snapshotPlaybookSession(session) {
         emitStatus: capturedPort(portDescriptors, 'emitStatus'),
         emitTelemetry: capturedPort(portDescriptors, 'emitTelemetry'),
     });
+    const playerSessions = hasPlayerSessions
+        ? capturedSessionStore(sessionDescriptors)
+        : undefined;
     return Object.freeze({
         sessionId,
         playbookId,
@@ -303,6 +327,7 @@ export function snapshotPlaybookSession(session) {
         ...(parentSessionId === undefined ? {} : { parentSessionId }),
         ...(parentCallId === undefined ? {} : { parentCallId }),
         depth,
+        ...(playerSessions === undefined ? {} : { playerSessions }),
         ports,
     });
 }

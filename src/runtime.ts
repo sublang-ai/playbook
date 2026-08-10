@@ -19,6 +19,17 @@ export interface PlayerCallOptions {
   resume: string | false;
 }
 
+// DR-030: a composing host may supply one frame-local view of the root
+// engagement's player continuation. The runtime selects through this store
+// before tracing/calling and updates it from the validated result. Hosts that
+// omit it retain the runtime's private per-session store.
+export interface PlayerSessionStore {
+  select(playerId: string): string | false;
+  update(playerId: string, resumeToken?: string): void;
+  snapshot(): Readonly<Record<string, string>>;
+  restore(tokens: Readonly<Record<string, string>>): void;
+}
+
 export interface CaptainCallOptions {
   visibility: 'visible' | 'hidden';
   resume: string | false;
@@ -143,6 +154,7 @@ export interface PlaybookSession {
   parentSessionId?: string;
   parentCallId?: string;
   depth: number;
+  playerSessions?: PlayerSessionStore;
   ports: PlaybookPorts;
 }
 

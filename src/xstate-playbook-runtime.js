@@ -1159,6 +1159,56 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // Inspection callbacks enqueue a complete ordered batch synchronously;
         // imperative boundaries await their queued work directly.
         let emissionFailure;
+        function selectPlayerResume(playerId) {
+            const selected = session?.playerSessions
+                ? session.playerSessions.select(playerId)
+                : playerResumeTokens.get(playerId) ?? false;
+            if (selected !== false &&
+                (typeof selected !== 'string' || selected.trim().length === 0)) {
+                throw new TypeError(`player session store returned an invalid resume token for ${playerId}`);
+            }
+            return selected;
+        }
+        function updatePlayerResume(playerId, resumeToken) {
+            if (session?.playerSessions) {
+                session.playerSessions.update(playerId, resumeToken);
+            }
+            else if (resumeToken !== undefined && resumeToken.trim().length > 0) {
+                playerResumeTokens.set(playerId, resumeToken);
+            }
+            else {
+                playerResumeTokens.delete(playerId);
+            }
+        }
+        function snapshotPlayerResumeTokens() {
+            const raw = session?.playerSessions
+                ? session.playerSessions.snapshot()
+                : Object.fromEntries(playerResumeTokens);
+            if (!isPlainObject(raw)) {
+                throw new TypeError('player session store snapshot must be an object');
+            }
+            const detached = {};
+            for (const [playerId, token] of Object.entries(raw)) {
+                if (playerId.trim().length === 0) {
+                    throw new TypeError('player session store snapshot player ids must be non-empty');
+                }
+                if (typeof token !== 'string' || token.trim().length === 0) {
+                    throw new TypeError(`player session store snapshot token for ${playerId} must be a non-empty string`);
+                }
+                detached[playerId] = token;
+            }
+            return detached;
+        }
+        function restorePlayerResumeTokens(tokens) {
+            if (session?.playerSessions) {
+                session.playerSessions.restore(tokens);
+                return;
+            }
+            playerResumeTokens.clear();
+            for (const [playerId, token] of Object.entries(tokens)) {
+                playerResumeTokens.set(playerId, token);
+            }
+        }
         function enqueueEmission(fn) {
             const queued = emissionQueue.add(fn).then(() => undefined);
             activeEmissionCalls.add(queued);
@@ -1315,9 +1365,18 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // State-entry telemetry/status must precede the call they describe.
                 await drainEmissions();
                 const turnId = activeTurnId;
-                const callId = `player-${++playerCallSequence}`;
                 const stateId = input.stateId;
-                const resume = playerResumeTokens.get(playerId) ?? false;
+                let resume;
+                try {
+                    signal.throwIfAborted();
+                    resume = selectPlayerResume(playerId);
+                }
+                catch (error) {
+                    if (!signal.aborted)
+                        controlPlaneError ??= error;
+                    throw error;
+                }
+                const callId = `player-${++playerCallSequence}`;
                 const identity = {
                     purpose: 'captain',
                     ...stateIdentity(stateId),
@@ -1382,12 +1441,22 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         }
                         throw error;
                     }
-                    if (typeof result.resumeToken === 'string' &&
-                        result.resumeToken.trim().length > 0) {
-                        playerResumeTokens.set(playerId, result.resumeToken);
+                    try {
+                        updatePlayerResume(playerId, typeof result.resumeToken === 'string' &&
+                            result.resumeToken.trim().length > 0
+                            ? result.resumeToken
+                            : undefined);
                     }
-                    else {
-                        playerResumeTokens.delete(playerId);
+                    catch (error) {
+                        if (!signal.aborted)
+                            controlPlaneError ??= error;
+                        try {
+                            await emitTrace('player.call.finished', { ...identity, status: 'error', error: normalizeError(error) }, position);
+                        }
+                        catch {
+                            // The continuation-store failure remains authoritative.
+                        }
+                        throw error;
                     }
                     await emitTrace('player.call.finished', {
                         ...identity,
@@ -2231,7 +2300,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     schemaVersion: 1,
                     playbookId: session.playbookId,
                     machine: machineSnapshot,
-                    playerResumeTokens: Object.fromEntries(playerResumeTokens),
+                    playerResumeTokens: snapshotPlayerResumeTokens(),
                     sequences: {
                         trace: traceSequence,
                         turn: turnSequence,
@@ -2266,6 +2335,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 const boundSession = snapshotPlaybookSession(nextSession);
                 const boundSnapshot = assertPlaybookRuntimeSnapshot(snapshot, boundSession.playbookId);
+                let priorExternalPlayerTokens;
+                let externalStoreRestoreAttempted = false;
                 initialized = true;
                 let finishInitialization;
                 const initialization = new Promise((resolve) => {
@@ -2292,10 +2363,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     // the persisted trace counter is a collision-safe id floor here
                     // too, keeping `apply-<n>` call ids unique across restore.
                     applyCallSequence = boundSnapshot.sequences.trace;
-                    playerResumeTokens.clear();
-                    for (const [playerId, token] of Object.entries(boundSnapshot.playerResumeTokens)) {
-                        playerResumeTokens.set(playerId, token);
+                    if (boundSession.playerSessions) {
+                        priorExternalPlayerTokens = snapshotPlayerResumeTokens();
+                        externalStoreRestoreAttempted = true;
                     }
+                    restorePlayerResumeTokens(boundSnapshot.playerResumeTokens);
                     suppressInspectionEmissions = true;
                     actor = buildActor(runtimePorts, boundSnapshot.machine);
                     actor.start();
@@ -2311,8 +2383,18 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     await initTask;
                 }
                 catch (error) {
-                    await cleanupFailedStart(error, { emitDisposal: false });
-                    throw error;
+                    let failure = error;
+                    if (externalStoreRestoreAttempted &&
+                        priorExternalPlayerTokens !== undefined) {
+                        try {
+                            boundSession.playerSessions.restore(priorExternalPlayerTokens);
+                        }
+                        catch (rollbackError) {
+                            failure = new AggregateError([error, rollbackError], 'createPlaybookRuntime.restore and player continuation rollback failed');
+                        }
+                    }
+                    await cleanupFailedStart(failure, { emitDisposal: false });
+                    throw failure;
                 }
                 finally {
                     finishInitialization();
@@ -2843,7 +2925,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         }
                     }
                     finally {
-                        playerResumeTokens.clear();
+                        // A composing host owns the shared store for the complete root
+                        // engagement tree. Child disposal must not erase a token its
+                        // caller will resume. The private fallback remains runtime-owned.
+                        if (session?.playerSessions === undefined) {
+                            playerResumeTokens.clear();
+                        }
                         activePlayerIds.clear();
                         playbookCallTurnIds.clear();
                         activeEmissionCalls.clear();

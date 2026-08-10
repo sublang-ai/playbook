@@ -7,6 +7,12 @@ export interface PlayerResult {
 export interface PlayerCallOptions {
     resume: string | false;
 }
+export interface PlayerSessionStore {
+    select(playerId: string): string | false;
+    update(playerId: string, resumeToken?: string): void;
+    snapshot(): Readonly<Record<string, string>>;
+    restore(tokens: Readonly<Record<string, string>>): void;
+}
 export interface CaptainCallOptions {
     visibility: 'visible' | 'hidden';
     resume: string | false;
@@ -106,6 +112,7 @@ export interface PlaybookSession {
     parentSessionId?: string;
     parentCallId?: string;
     depth: number;
+    playerSessions?: PlayerSessionStore;
     ports: PlaybookPorts;
 }
 export type PlaybookTraceType = 'session.started' | 'boss.input.received' | 'judge.call.started' | 'judge.call.finished' | 'player.call.started' | 'player.call.finished' | 'captain.call.started' | 'captain.call.finished' | 'playbook.call.started' | 'playbook.call.finished' | 'apply.started' | 'apply.finished' | 'fsm.transition' | 'status.emitted' | 'boss.input.settled' | 'session.disposed';

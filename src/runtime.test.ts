@@ -142,6 +142,23 @@ function methodSignature(
   };
 }
 
+function syncMethodSignature(
+  src: string,
+  interfaceName: string,
+  methodName: string,
+): { parameters: string; result: string } {
+  const signature = interfaceBody(src, interfaceName).match(
+    new RegExp(`${methodName}\\s*\\(([\\s\\S]*?)\\)\\s*:\\s*([^;]+);`),
+  );
+  if (!signature) {
+    throw new Error(`${interfaceName}.${methodName} not found`);
+  }
+  return {
+    parameters: normalizeType(signature[1]).replace(/,$/, ''),
+    result: normalizeType(signature[2]),
+  };
+}
+
 const TRACE_TYPES = [
   'apply.finished',
   'apply.started',
@@ -308,6 +325,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'parentCallId?:string',
       'parentSessionId?:string',
       'playbookId:string',
+      'playerSessions?:PlayerSessionStore',
       'ports:PlaybookPorts',
       'rootSessionId:string',
       'sessionId:string',
@@ -315,6 +333,29 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(interfaceProperties(runtimeDts, 'PlaybookSession')).toEqual(
       interfaceProperties(linkSpec, 'PlaybookSession'),
     );
+    const storeMethods = {
+      restore: {
+        parameters: 'tokens:Readonly<Record<string,string>>',
+        result: 'void',
+      },
+      select: { parameters: 'playerId:string', result: 'string|false' },
+      snapshot: {
+        parameters: '',
+        result: 'Readonly<Record<string,string>>',
+      },
+      update: {
+        parameters: 'playerId:string,resumeToken?:string',
+        result: 'void',
+      },
+    };
+    for (const [method, expected] of Object.entries(storeMethods)) {
+      expect(syncMethodSignature(runtimeDts, 'PlayerSessionStore', method)).toEqual(
+        expected,
+      );
+      expect(syncMethodSignature(linkSpec, 'PlayerSessionStore', method)).toEqual(
+        expected,
+      );
+    }
     expect(unionMembers(runtimeDts, 'PlaybookTraceType')).toEqual(TRACE_TYPES);
     expect(unionMembers(runtimeDts, 'PlaybookTraceType')).toEqual(
       unionMembers(linkSpec, 'PlaybookTraceType'),
@@ -445,6 +486,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     for (const name of [
       'PlayerResult',
       'PlayerCallOptions',
+      'PlayerSessionStore',
       'CaptainResult',
       'CaptainCallOptions',
       'NormalizedError',
