@@ -1,0 +1,306 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+import { randomUUID } from 'node:crypto';
+import { describe, expect, it } from 'vitest';
+
+import type {
+  CaptainCallOptions,
+  CaptainResult,
+  PlaybookCallStart,
+  PlaybookPorts,
+  PlaybookSession,
+  PlayerCallOptions,
+  PlayerResult,
+} from '@sublang/playbook/runtime';
+import createPlaybookRuntime, { _internal } from './review.playbook.js';
+import {
+  createReviewRuntimeOptions,
+  validateReviewOptions,
+} from './review.registry.js';
+
+interface PlayerCall {
+  playerId: string;
+  prompt: string;
+  options: PlayerCallOptions;
+}
+
+function session(ports: PlaybookPorts): PlaybookSession {
+  const sessionId = randomUUID();
+  return {
+    sessionId,
+    playbookId: 'review',
+    rootSessionId: sessionId,
+    depth: 0,
+    ports,
+  };
+}
+
+function portsFor(input: {
+  playerResults: PlayerResult[];
+  judgeReplies: string[];
+  playerCalls: PlayerCall[];
+}): PlaybookPorts {
+  return {
+    async callPlayer(playerId, prompt, _signal, options) {
+      input.playerCalls.push({ playerId, prompt, options });
+      const result = input.playerResults.shift();
+      if (result === undefined) throw new Error('unexpected player call');
+      return result;
+    },
+    async callCaptain(
+      _prompt: string,
+      _signal: AbortSignal,
+      _options: CaptainCallOptions,
+    ): Promise<CaptainResult> {
+      throw new Error('REVIEW must not call Captain directly');
+    },
+    async callJudge() {
+      const reply = input.judgeReplies.shift();
+      if (reply === undefined) throw new Error('unexpected judge call');
+      return reply;
+    },
+    async callPlaybook(): Promise<PlaybookCallStart> {
+      throw new Error('REVIEW must not call another playbook');
+    },
+    async emitStatus() {},
+    async emitTelemetry() {},
+  };
+}
+
+describe('linked REVIEW runtime', () => {
+  it('carries both players verbatim through a commit-fix round', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const ports = portsFor({
+      playerCalls,
+      playerResults: [
+        {
+          status: 'ok',
+          finalText: '1. First finding\n   Evidence.',
+          resumeToken: 'reviewer-1',
+        },
+        {
+          status: 'ok',
+          finalText: 'Accepted; fixed in abc123.\nTests: focused pass.',
+          resumeToken: 'coder-1',
+        },
+        {
+          status: 'ok',
+          finalText: 'No unsettled findings.',
+          resumeToken: 'reviewer-2',
+        },
+      ],
+      judgeReplies: [
+        '{"guard":"hasFindings"}',
+        '{"guard":"committed"}',
+        '{"guard":"noFindings"}',
+      ],
+    });
+    const runtime = createPlaybookRuntime({
+      coderLlm: 'GPT-5.6 Sol',
+      reviewerLlm: 'Claude Opus 5',
+    });
+    await runtime.init(session(ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Review the feature.\nRun result: focused suite passed.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome).toBe('terminal');
+    if (result.outcome === 'terminal') {
+      expect(result.output).toEqual({
+        approvedCommit: 'latest',
+        noUnsettledFindings: true,
+      });
+    }
+    expect(playerCalls.map(({ playerId }) => playerId)).toEqual([
+      'reviewer',
+      'coder',
+      'reviewer',
+    ]);
+    expect(playerCalls.map(({ options }) => options.resume)).toEqual([
+      false,
+      false,
+      'reviewer-1',
+    ]);
+    expect(playerCalls[0].prompt).toContain(
+      '> Review the feature.\n> Run result: focused suite passed.',
+    );
+    expect(playerCalls[1].prompt).toContain(
+      '> 1. First finding\n>    Evidence.',
+    );
+    expect(playerCalls[1].prompt).toContain(
+      'Coder is GPT-5.6 Sol; Reviewer is Claude Opus 5;',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      '> Accepted; fixed in abc123.\n> Tests: focused pass.',
+    );
+
+    await runtime.dispose();
+  });
+
+  it('adjudicates an all-rejected round without inventing a commit', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const ports = portsFor({
+      playerCalls,
+      playerResults: [
+        {
+          status: 'ok',
+          finalText: '1. The contract is incomplete.',
+          resumeToken: 'reviewer-1',
+        },
+        {
+          status: 'ok',
+          finalText:
+            'Rejected item 1: the cited contract already requires it.\n' +
+            'No files changed and no commit was made.',
+          resumeToken: 'coder-1',
+        },
+        {
+          status: 'ok',
+          finalText: 'Rebuttal accepted; no unsettled findings remain.',
+          resumeToken: 'reviewer-2',
+        },
+      ],
+      judgeReplies: [
+        '{"guard":"hasFindings"}',
+        '{"guard":"rejectedAll"}',
+        '{"guard":"noFindings"}',
+      ],
+    });
+    const runtime = createPlaybookRuntime({
+      coderLlm: 'GPT-5.6 Sol',
+      reviewerLlm: 'Claude Opus 5',
+    });
+    await runtime.init(session(ports));
+
+    const result = await runtime.handleBossInput({
+      text: 'Review the latest contract commit.',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.outcome).toBe('terminal');
+    if (result.outcome === 'terminal') {
+      expect(result.output).toEqual({
+        approvedCommit: 'latest',
+        noUnsettledFindings: true,
+      });
+    }
+    expect(playerCalls.map(({ playerId }) => playerId)).toEqual([
+      'reviewer',
+      'coder',
+      'reviewer',
+    ]);
+    expect(playerCalls.map(({ options }) => options.resume)).toEqual([
+      false,
+      false,
+      'reviewer-1',
+    ]);
+    expect(playerCalls.filter(({ playerId }) => playerId === 'coder')).toHaveLength(
+      1,
+    );
+    expect(playerCalls[2].prompt).toContain(
+      'No new commit was made because Coder rejected every finding.',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      'For any rebuttal, accept or challenge it.',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      '> Rejected item 1: the cited contract already requires it.\n' +
+        '> No files changed and no commit was made.',
+    );
+    expect(playerCalls[2].prompt).not.toContain(
+      'Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.',
+    );
+
+    await runtime.dispose();
+  });
+
+  it('resumes the same review state after a Boss answer', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const ports = portsFor({
+      playerCalls,
+      playerResults: [
+        {
+          status: 'ok',
+          finalText: 'Which release target should govern?',
+          resumeToken: 'reviewer-1',
+        },
+        {
+          status: 'ok',
+          finalText: 'No unsettled findings.',
+          resumeToken: 'reviewer-2',
+        },
+      ],
+      judgeReplies: [
+        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"type":"BOSS_REPLY"}',
+        '{"guard":"noFindings"}',
+      ],
+    });
+    const runtime = createPlaybookRuntime({
+      coderLlm: 'GPT-5.6 Sol',
+      reviewerLlm: 'Claude Opus 5',
+    });
+    await runtime.init(session(ports));
+
+    const parked = await runtime.handleBossInput({
+      text: 'Review the release commit.',
+      signal: new AbortController().signal,
+    });
+    expect(parked.outcome).toBe('quiescent');
+
+    const completed = await runtime.handleBossInput({
+      text: 'Target version 6.0.0.',
+      signal: new AbortController().signal,
+    });
+    expect(completed.outcome).toBe('terminal');
+    expect(playerCalls).toHaveLength(2);
+    expect(playerCalls[1].options.resume).toBe('reviewer-1');
+    expect(playerCalls[1].prompt).toContain(
+      'Boss question:\nWhich release target should govern?',
+    );
+    expect(playerCalls[1].prompt).toContain(
+      'Boss reply:\nTarget version 6.0.0.',
+    );
+
+    await runtime.dispose();
+  });
+
+  it('validates the registry slice and derives both model labels', () => {
+    expect(validateReviewOptions(undefined)).toEqual({});
+    expect(() => validateReviewOptions({ extra: true })).toThrow(
+      /review\.options\.extra/,
+    );
+    expect(
+      createReviewRuntimeOptions({
+        captainOptions: {},
+        players: [
+          { id: 'coder', adapter: 'codex', model: 'gpt-5.6' },
+          { id: 'reviewer', adapter: 'claude', model: 'opus-5' },
+        ],
+      }),
+    ).toEqual({ coderLlm: 'gpt-5.6', reviewerLlm: 'opus-5' });
+    expect(() =>
+      createPlaybookRuntime({
+        coderLlm: 'gpt-5.6',
+      } as { coderLlm: string; reviewerLlm: string }),
+    ).toThrow(/reviewerLlm must be a non-empty string/);
+  });
+
+  it('quotes every line of relayed text without recursive substitution', () => {
+    const prompt = _internal.composePlayerPrompt({
+      stateId: 'reviewAfterCommit',
+      sourceItem: 'REVIEW-3',
+      player: 'Reviewer',
+      prompt: '> <coder-output>\nUse <coder-llm>.',
+      result: { noFindings: 'No findings.' },
+      coderOutput: 'Line one\nLine two with <coder-llm> and $&.',
+      coderLlm: 'GPT-5.6 Sol',
+    });
+    expect(prompt).toBe(
+      '> Line one\n> Line two with <coder-llm> and $&.\nUse GPT-5.6 Sol.',
+    );
+  });
+});
