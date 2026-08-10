@@ -1,196 +1,147 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// FSM introspection helpers — IR-005 Task 2.
-// Static walkers over `codingMachine.config` consumed by the
-// conformance, coverage, and prompt-contract tests landing in
-// Tasks 3–5. Reaching into `machine.config` is internal but stable
-// in xstate v5: it preserves the literal `createMachine` argument,
-// so `invoke.input` is still the original `({ context }) =>
-// PlayerInput` function and `invoke.onDone` is still the per-arm
-// array with `guard` / `target` / `actions` keys.
-
 import type {
   CodingContext,
+  PlaybookInput,
   PlayerInput,
   codingMachine,
 } from './code.fsm.js';
-
-export interface CaptainStateInfo {
-  readonly stateId: string;
-  readonly sourceItem: string;
-  readonly getInput: (context: Partial<CodingContext>) => PlayerInput;
-  readonly transitions: ReadonlyArray<CaptainTransition>;
-}
-
-export interface CaptainTransition {
-  // Position in the state's `invoke.onDone` array. Stable per FSM
-  // source — the coverage test's fixture table keys
-  // `(stateId, index)` to address each arm uniquely, since
-  // `(stateId, target)` collides for arms that share a target
-  // (e.g., `commitReviewerCleared` and `commitJoint` each route
-  // both `committed && afterReview === 'done'` and
-  // `noRelevantChanges` to `done`).
-  readonly index: number;
-  readonly target: string;
-  readonly guard: TransitionGuard;
-  readonly actions: unknown;
-}
-
-export interface AwaitBossReplyInfo {
-  readonly stateId: string;
-  readonly bossReplyTransitions: ReadonlyArray<BossReplyTransition>;
-  readonly transitions: ReadonlyArray<AwaitBossReplyTransition>;
-}
-
-export interface BossReplyTransition {
-  readonly index: number;
-  readonly target: string;
-  readonly guard: TransitionGuard;
-  readonly actions: unknown;
-}
-
-export interface AwaitBossReplyTransition {
-  readonly eventType: string;
-  readonly index: number;
-  readonly target: string;
-  readonly guard: TransitionGuard;
-  readonly actions: unknown;
-}
 
 export type TransitionGuard = (args: {
   context: CodingContext;
   event: unknown;
 }) => boolean;
 
-export interface RootEventTable {
-  readonly startCoding: { readonly target: string };
-  readonly continueIr: { readonly target: string };
-  readonly summarizeIr: { readonly target: string };
-  readonly bossInterruptTargets: ReadonlyArray<string>;
-  readonly bossInterruptTargetDescriptions: ReadonlyArray<{
-    readonly stateId: string;
-    readonly description: string;
-  }>;
+export interface InvokingTransition {
+  readonly index: number;
+  readonly target: string;
+  readonly guard?: TransitionGuard;
+  readonly actions: unknown;
+}
+
+export interface PlayerStateInfo {
+  readonly stateId: string;
+  readonly sourceItem: string;
+  readonly getInput: (context: CodingContext) => PlayerInput;
+  readonly transitions: readonly InvokingTransition[];
+}
+
+export interface NestedPlaybookStateInfo {
+  readonly stateId: string;
+  readonly sourceItem: string;
+  readonly getInput: (context: CodingContext) => PlaybookInput;
+  readonly transitions: readonly InvokingTransition[];
+}
+
+export interface AwaitBossReplyInfo {
+  readonly stateId: 'awaitBossReply';
+  readonly bossReplyTransitions: readonly InvokingTransition[];
 }
 
 type RawInvoke = {
   src?: unknown;
-  input?: (args: { context: Partial<CodingContext> }) => PlayerInput;
+  input?: (args: { context: CodingContext }) => PlayerInput | PlaybookInput;
   onDone?: unknown;
 };
 
-type RawStateDef = {
-  description?: unknown;
+type RawState = {
   invoke?: RawInvoke;
-  on?: Record<string, unknown>;
+  on?: Readonly<Record<string, unknown>>;
 };
 
-type RawArm = { target?: unknown; guard?: TransitionGuard };
-type RawArmWithActions = RawArm & { actions?: unknown };
+type RawArm = {
+  target?: unknown;
+  guard?: TransitionGuard;
+  actions?: unknown;
+};
 
 type RawConfig = {
-  states?: Record<string, RawStateDef>;
-  on?: Record<string, unknown>;
+  states?: Readonly<Record<string, RawState>>;
 };
 
-export function enumerateCaptainStates(
-  machine: typeof codingMachine,
-): readonly CaptainStateInfo[] {
-  const states = getRawConfig(machine).states ?? {};
-  const out: CaptainStateInfo[] = [];
-  for (const [stateId, def] of Object.entries(states)) {
-    const invoke = def.invoke;
-    if (!invoke || invoke.src !== 'player' || typeof invoke.input !== 'function') {
-      continue;
-    }
-    const inputFn = invoke.input;
-    const getInput = (context: Partial<CodingContext>): PlayerInput =>
-      inputFn({ context });
-    const probe = getInput({});
-    const transitions = toArmArray(invoke.onDone).map(
-      (arm, index): CaptainTransition => ({
-        index,
-        target: stripIdPrefix(String(arm.target ?? '')),
-        guard: arm.guard ?? alwaysTrue,
-        actions: arm.actions,
-      }),
-    );
-    out.push({
-      stateId,
-      sourceItem: probe.sourceItem,
-      getInput,
-      transitions,
-    });
-  }
-  return out;
+function rawConfig(machine: typeof codingMachine): RawConfig {
+  return (machine as unknown as { config: RawConfig }).config;
 }
 
-export function enumerateRootEvents(
+function arms(value: unknown): readonly RawArm[] {
+  if (value === undefined || value === null) return [];
+  return (Array.isArray(value) ? value : [value]) as readonly RawArm[];
+}
+
+function targetName(target: unknown): string {
+  const value = String(target ?? '');
+  return value.startsWith('#') ? value.slice(1) : value;
+}
+
+function transitions(value: unknown): readonly InvokingTransition[] {
+  return arms(value).map((arm, index) => ({
+    index,
+    target: targetName(arm.target),
+    ...(arm.guard === undefined ? {} : { guard: arm.guard }),
+    actions: arm.actions,
+  }));
+}
+
+export function enumeratePlayerStates(
   machine: typeof codingMachine,
-): RootEventTable {
-  const cfg = getRawConfig(machine);
-  const readyOn = (cfg.states?.ready?.on ?? {}) as Record<
-    string,
-    { target?: string }
-  >;
-  const rootOn = (cfg.on ?? {}) as Record<string, unknown>;
-  const bossInterruptTargets = toArmArray(rootOn.BOSS_INTERRUPT).map((arm) =>
-    stripIdPrefix(String(arm.target ?? '')),
-  );
-  return {
-    startCoding: { target: stripIdPrefix(String(readyOn.START_CODING?.target ?? '')) },
-    continueIr: { target: stripIdPrefix(String(readyOn.CONTINUE_IR?.target ?? '')) },
-    summarizeIr: { target: stripIdPrefix(String(readyOn.SUMMARIZE_IR?.target ?? '')) },
-    bossInterruptTargets,
-    bossInterruptTargetDescriptions: bossInterruptTargets.map((stateId) => {
-      const description = cfg.states?.[stateId]?.description;
-      return {
+): readonly PlayerStateInfo[] {
+  const states = rawConfig(machine).states ?? {};
+  return Object.entries(states).flatMap(([stateId, state]) => {
+    const invoke = state.invoke;
+    if (invoke?.src !== 'player' || invoke.input === undefined) return [];
+    const getInput = (context: CodingContext): PlayerInput =>
+      invoke.input?.({ context }) as PlayerInput;
+    const input = getInput({ coderPlayer: 'Coder', runResults: '' });
+    return [
+      {
         stateId,
-        description: typeof description === 'string' ? description : '',
-      };
-    }),
-  };
+        sourceItem: input.sourceItem,
+        getInput,
+        transitions: transitions(invoke.onDone),
+      },
+    ];
+  });
+}
+
+// Backward-compatible internal name retained for repository conformance tools.
+export const enumerateCaptainStates = enumeratePlayerStates;
+
+export function enumerateNestedPlaybookStates(
+  machine: typeof codingMachine,
+): readonly NestedPlaybookStateInfo[] {
+  const states = rawConfig(machine).states ?? {};
+  return Object.entries(states).flatMap(([stateId, state]) => {
+    const invoke = state.invoke;
+    if (invoke?.src !== 'playbook' || invoke.input === undefined) return [];
+    const getInput = (context: CodingContext): PlaybookInput =>
+      invoke.input?.({ context }) as PlaybookInput;
+    const input = getInput({ coderPlayer: 'Coder', runResults: '' });
+    return [
+      {
+        stateId,
+        sourceItem: input.sourceItem,
+        getInput,
+        transitions: transitions(invoke.onDone),
+      },
+    ];
+  });
 }
 
 export function enumerateAwaitBossReply(
   machine: typeof codingMachine,
 ): AwaitBossReplyInfo {
-  const stateId = 'awaitBossReply';
-  const awaitOn = getRawConfig(machine).states?.[stateId]?.on ?? {};
-  const transitions = Object.entries(awaitOn).flatMap(([eventType, value]) =>
-    toArmArray(value).map(
-      (arm, index): AwaitBossReplyTransition => ({
-        eventType,
-        index,
-        target: stripIdPrefix(String(arm.target ?? '')),
-        guard: arm.guard ?? alwaysTrue,
-        actions: arm.actions,
-      }),
-    ),
-  );
-  const bossReplyTransitions = toArmArray(awaitOn.BOSS_REPLY).map(
-    (arm, index): BossReplyTransition => ({
-      index,
-      target: stripIdPrefix(String(arm.target ?? '')),
-      guard: arm.guard ?? alwaysTrue,
-      actions: arm.actions,
-    }),
-  );
-  return { stateId, bossReplyTransitions, transitions };
+  const on = rawConfig(machine).states?.awaitBossReply?.on ?? {};
+  return {
+    stateId: 'awaitBossReply',
+    bossReplyTransitions: transitions(on.BOSS_REPLY),
+  };
 }
 
-function getRawConfig(machine: typeof codingMachine): RawConfig {
-  return (machine as unknown as { config: RawConfig }).config;
+export function enumerateRootEvents(machine: typeof codingMachine): {
+  readonly startCode: { readonly target: string };
+} {
+  const on = rawConfig(machine).states?.ready?.on ?? {};
+  const start = arms(on.START_CODE)[0];
+  return { startCode: { target: targetName(start?.target) } };
 }
-
-function toArmArray(value: unknown): RawArmWithActions[] {
-  if (value === undefined || value === null) return [];
-  return (Array.isArray(value) ? value : [value]) as RawArmWithActions[];
-}
-
-function stripIdPrefix(target: string): string {
-  return target.startsWith('#') ? target.slice(1) : target;
-}
-
-const alwaysTrue: TransitionGuard = () => true;

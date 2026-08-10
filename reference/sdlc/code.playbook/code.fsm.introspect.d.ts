@@ -1,54 +1,36 @@
-import type { CodingContext, PlayerInput, codingMachine } from './code.fsm.js';
-export interface CaptainStateInfo {
-    readonly stateId: string;
-    readonly sourceItem: string;
-    readonly getInput: (context: Partial<CodingContext>) => PlayerInput;
-    readonly transitions: ReadonlyArray<CaptainTransition>;
-}
-export interface CaptainTransition {
-    readonly index: number;
-    readonly target: string;
-    readonly guard: TransitionGuard;
-    readonly actions: unknown;
-}
-export interface AwaitBossReplyInfo {
-    readonly stateId: string;
-    readonly bossReplyTransitions: ReadonlyArray<BossReplyTransition>;
-    readonly transitions: ReadonlyArray<AwaitBossReplyTransition>;
-}
-export interface BossReplyTransition {
-    readonly index: number;
-    readonly target: string;
-    readonly guard: TransitionGuard;
-    readonly actions: unknown;
-}
-export interface AwaitBossReplyTransition {
-    readonly eventType: string;
-    readonly index: number;
-    readonly target: string;
-    readonly guard: TransitionGuard;
-    readonly actions: unknown;
-}
+import type { CodingContext, PlaybookInput, PlayerInput, codingMachine } from './code.fsm.js';
 export type TransitionGuard = (args: {
     context: CodingContext;
     event: unknown;
 }) => boolean;
-export interface RootEventTable {
-    readonly startCoding: {
-        readonly target: string;
-    };
-    readonly continueIr: {
-        readonly target: string;
-    };
-    readonly summarizeIr: {
-        readonly target: string;
-    };
-    readonly bossInterruptTargets: ReadonlyArray<string>;
-    readonly bossInterruptTargetDescriptions: ReadonlyArray<{
-        readonly stateId: string;
-        readonly description: string;
-    }>;
+export interface InvokingTransition {
+    readonly index: number;
+    readonly target: string;
+    readonly guard?: TransitionGuard;
+    readonly actions: unknown;
 }
-export declare function enumerateCaptainStates(machine: typeof codingMachine): readonly CaptainStateInfo[];
-export declare function enumerateRootEvents(machine: typeof codingMachine): RootEventTable;
+export interface PlayerStateInfo {
+    readonly stateId: string;
+    readonly sourceItem: string;
+    readonly getInput: (context: CodingContext) => PlayerInput;
+    readonly transitions: readonly InvokingTransition[];
+}
+export interface NestedPlaybookStateInfo {
+    readonly stateId: string;
+    readonly sourceItem: string;
+    readonly getInput: (context: CodingContext) => PlaybookInput;
+    readonly transitions: readonly InvokingTransition[];
+}
+export interface AwaitBossReplyInfo {
+    readonly stateId: 'awaitBossReply';
+    readonly bossReplyTransitions: readonly InvokingTransition[];
+}
+export declare function enumeratePlayerStates(machine: typeof codingMachine): readonly PlayerStateInfo[];
+export declare const enumerateCaptainStates: typeof enumeratePlayerStates;
+export declare function enumerateNestedPlaybookStates(machine: typeof codingMachine): readonly NestedPlaybookStateInfo[];
 export declare function enumerateAwaitBossReply(machine: typeof codingMachine): AwaitBossReplyInfo;
+export declare function enumerateRootEvents(machine: typeof codingMachine): {
+    readonly startCode: {
+        readonly target: string;
+    };
+};
