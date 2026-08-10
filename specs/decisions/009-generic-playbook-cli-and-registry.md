@@ -11,6 +11,7 @@ Accepted.
 The registry, CLI, role-binding, enabled-external-playbook visibility, and summary-policy constraints remain in force where later decisions have not amended them.
 [DR-029](029-session-scoped-conversational-captain.md) amends §5: summary wording stays registry-owned while composition becomes outcome-grounded and the saved-counts line is gated to nonzero counted activity.
 DR-029 also supersedes §7 in part — different-command ask-first is replaced by the validated `switch`, and telemetry-only state observation is joined by `describe()`; §1's `summaryPolicy` registry surface stands.
+[DR-030](030-shared-mapped-player-continuity.md) amends §4 for nested frames: the static namespaced roster remains, while an exact same-name child role inherits its nearest ancestor binding and its root engagement's continuation.
 
 ## Context
 
@@ -126,12 +127,15 @@ The generic launcher shall treat each playbook's `players` map as the source of 
 It shall compile those playbook-local player declarations into the top-level tmux-play player roster.
 That roster is a launch-time union of every enabled playbook's generated players, because tmux-play visibility can change panes but cannot create, delete, or reconfigure runtime player identities after startup [[2]].
 
-The binding for local role `<role>` in playbook `<id>` shall be `<id>-<role>`.
+The default binding for local role `<role>` in playbook `<id>` shall be `<id>-<role>`.
 A hyphen joins the two because cligent tmux-play player ids must match `^[a-z][a-z0-9_-]*$`, which excludes a `.` separator.
 The generic user-facing config shall not support binding a role to a player from another playbook or to a shared top-level host player.
 
 Profiles reuse configuration, not player instances.
-When two playbooks reference the same profile, the launcher shall still create separate playbook-scoped host players.
+When two playbooks reference the same profile, the launcher shall still create separate namespaced host players in the static roster.
+When a nested child declares a role id present on its active ancestor path, the child frame shall use the nearest ancestor's effective host-player binding for that role.
+A child-only role shall use the child's namespaced host player.
+All effective bindings shall retain their player continuation for the lifetime of the root engagement tree and start fresh for a replacement root engagement ([DR-030](030-shared-mapped-player-continuity.md)).
 
 The shell shall apply the binding at two boundaries:
 
@@ -149,7 +153,7 @@ The generic config may use tmux-play layout window and column-weight fields, inc
 Column-weight fields are session-level per visible-column shape, not per playbook.
 Raw tmux-play configs launched through `--config` pass-through retain direct access to `layout.initialVisible`.
 
-When the shell selects, resumes, or routes to an enabled registry playbook, it shall request tmux-play visibility for that playbook's generated host player ids before dispatching Boss text to the playbook runtime.
+When the shell selects, resumes, or routes to an enabled registry playbook, it shall request tmux-play visibility for that frame's effective host player ids before dispatching Boss text to the playbook runtime.
 The shell shall not request an empty visible set and shall make no visibility request for the internal default Captain root.
 Because the launcher has already validated generated player ids, a `setVisiblePlayers` validation rejection is an internal shell or composition error.
 tmux pane reconciliation failures are display-only in tmux-play, so they shall not block dispatch to the playbook runtime.
@@ -219,8 +223,8 @@ The implementing specs shall reconcile this DR with released CODE runtime and la
 - DR-008's deferral of a generic `playbook` binary and multi-playbook discovery is superseded by this design.
 - `playbook-code` and `@sublang/playbook/code/tmux-play` compatibility surfaces are retired.
 - Third-party playbooks can be added by configuration without forking `@sublang/playbook`.
-- Role names no longer collide across playbooks because local runtime roles always bind to namespaced host player ids.
-- Profiles let users reuse adapter, model, reasoning, and permission settings without sharing player instances or crossing playbook boundaries.
+- Default role names do not collide because the static roster remains namespaced, while nested exact-role inheritance is explicit frame behavior.
+- Inline agent settings remain independent configuration even when a nested frame inherits an ancestor's player conversation.
 - CODE-specific shell assumptions move into CODE's registry entry.
 - tmux-play sessions still allocate every enabled playbook player at startup, but only the active playbook's players need to occupy visible panes.
 - The generic launcher needs new user/dev/test specs before implementation, and CAPTAIN/PBCODE/PBRT specs need amendments for enablement, binding, options migration, summary policy, and compatibility behavior.

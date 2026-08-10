@@ -8,6 +8,7 @@
 Accepted.
 [DR-029](029-session-scoped-conversational-captain.md) amends §4: the Captain is placed outside the engagement stack as an always-present controller, the manual-slash-selection sentence is superseded by the absent-from-path `switch`, and leaf-only Boss input is recast as leaf-only *delivery* — the Captain receives every turn.
 The stack semantics themselves stay intact.
+[DR-030](030-shared-mapped-player-continuity.md) amends §4 and the player-isolation consequence: runtime frames remain distinct, while exact same-name nested roles inherit player bindings and continuation from their active ancestor path.
 
 ## Context
 
@@ -97,6 +98,8 @@ This is an intentional pre-1.0 breaking change.
 The Playbook Captain shell shall treat one Boss-selected engagement and its nested descendants as one active call stack.
 Each frame shall own a distinct runtime instance and immutable playbook-session UUID.
 Only the top frame receives Boss input and owns visible player panes.
+For each child role, the shell shall inherit the nearest same-name ancestor binding or use the child's namespaced binding when no ancestor declares that role.
+The root engagement shall own continuation for those effective bindings, so child return preserves mapped conversations and root replacement starts fresh ([DR-030](030-shared-mapped-player-continuity.md)).
 
 Opening a child shall push a frame whose session records `rootSessionId`, `parentSessionId`, `parentCallId`, and depth.
 Child terminal completion shall pop and dispose that frame, then resume and drive its parent in the same live Captain turn.
@@ -153,7 +156,7 @@ XState deep persistence can preserve invoked child actors in a future durable de
 - DISCUSS can overlap independent Host and Participant work without race-dependent prompts.
 - One branch can wait for Boss without discarding a completed sibling result.
 - A playbook can call an enabled child, pause across Boss turns, and continue from the child's output like a function return.
-- Every nested runtime retains independent player sessions and a causally linked trace.
+- Every nested runtime retains an independent runtime session and a causally linked trace, while explicitly mapped roles share player continuation within the root engagement.
 - Hosts and linked runtimes must understand structured state descriptors and the new nested-call protocol.
 - Direct child-machine invocation within one XState actor system remains the preferred future architecture when the public runtime factory exposes actor logic; the live stack bridge preserves current dynamic registry and free-text runtime boundaries without deadlocking interactive children.
 

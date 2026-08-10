@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+[DR-030](030-shared-mapped-player-continuity.md) amends §3: a composing host may supply the continuation authority shared by mapped roles across nested runtime frames.
 
 ## Context
 
@@ -89,8 +90,9 @@ Resume tokens are opaque credentials for backend conversations; observers that p
 
 The shared contract shall add `PlayerCallOptions { resume: string | false }`, require it on every `PlaybookPorts.callPlayer` call, and add optional `resumeToken` to `PlayerResult`.
 
-Each runtime shall keep a bounded map from resolved local player id to the latest non-empty resume token.
-For the first call to a player in a playbook session, the runtime shall pass `resume: false`; omission is not permitted because a host may otherwise auto-resume an older conversation.
+Each runtime shall use a bounded continuation store from resolved local player id to the latest non-empty resume token.
+The store is runtime-owned unless a composing host supplies the frame's view of its root engagement store ([DR-030](030-shared-mapped-player-continuity.md)).
+For the first call to a fresh binding, the runtime shall pass `resume: false`; omission is not permitted because a host may otherwise auto-resume an older conversation.
 For a later call, the runtime shall pass the exact stored token.
 
 After every resolved player call, the runtime shall replace the stored token when the result carries a non-empty `resumeToken`, or clear it when the result omits one, before interpreting the result status.
@@ -99,7 +101,8 @@ A thrown port call with no result shall leave the prior token unchanged.
 The runtime shall not retry fresh after an invalid resume token.
 
 The map key shall be the resolved player id, so a composite role such as Committer shares the Coder or Reviewer session it actually invokes.
-The map survives parked Boss turns and an actor rebuild inside the same runtime, and is discarded on runtime disposal.
+Runtime-owned continuation survives parked Boss turns and an actor rebuild inside that runtime, and is discarded on runtime disposal.
+Host-owned continuation survives child return and disposal, is shared only by frames mapped to the same effective binding, and is discarded with the root engagement.
 
 ### 4. tmux-play bridge
 
@@ -126,7 +129,7 @@ A host observer may persist `playbook.trace`; durable storage and cross-process 
 ## Consequences
 
 - A playbook engagement has one immutable correlation id across Boss turns, runtime telemetry, player calls, and disposal.
-- New engagements start every player fresh instead of inheriting tmux-play's prior host-player conversation.
-- Parked engagements resume each resolved player explicitly from the last authoritative adapter token.
+- New root engagements start every effective player fresh instead of inheriting tmux-play's prior host-player conversation.
+- Parked and nested mapped engagements resume each resolved player explicitly from the last authoritative adapter token.
 - The public runtime contract and authored linker contract change incompatibly before 1.0.
 - Trace sinks can reconstruct the complete runtime-boundary history without an unbounded conversation ledger in the Captain shell.

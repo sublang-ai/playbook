@@ -85,7 +85,7 @@ SLC's `playbook` pipeline has three phases:
 3. **FSM → runtime** ([slc/link.md](slc/link.md)) — links the machine to a host-independent interface for user input, agent calls, status, and telemetry.
 
 The default [optimization pass](slc/optimize.md) replaces eligible mechanical steps with local shell scripts; `--no-optimize` skips it.
-Inspect the complete [Captain](reference/sdlc/captain.md), [CODE](reference/sdlc/code.md), and [DISCUSS](reference/sdlc/discuss.md) examples.
+Inspect the complete [Captain](reference/sdlc/captain.md), [CODE](reference/sdlc/code.md), [REVIEW](reference/sdlc/review.md), and [DECIDE](reference/sdlc/decide.md) examples.
 
 ## Contributing
 

@@ -53,6 +53,7 @@ meta.md     The spec of specs
 | DR-027 | [027-runtime-compatibility-from-cligent.md](decisions/027-runtime-compatibility-from-cligent.md) | Delegate all agent-runtime version knowledge to cligent: the gate derives runtimes, floors, and pinned repairs from cligent's shipped descriptor and renders its structured verdict, unsupported is reported distinctly from absent, `gemini`'s exemption ends, and no agent-SDK peer range is declared here |
 | DR-028 | [028-empty-ok-result-re-ask.md](decisions/028-empty-ok-result-re-ask.md) | One corrective re-ask on an empty `ok` player or direct-Captain result before failure-sink routing, with both boundaries unified on the missing-or-empty/whitespace-only predicate |
 | DR-029 | [029-session-scoped-conversational-captain.md](decisions/029-session-scoped-conversational-captain.md) | The compiled Captain becomes a session-long conversational controller outside the working stack: one recoverable conversation, at most one validated action per turn, one result-and-reply path for success/rejection/failure/partial completion, faithful multi-turn handoff, and factual nonzero summaries |
+| DR-030 | [030-shared-mapped-player-continuity.md](decisions/030-shared-mapped-player-continuity.md) | Nested exact same-name roles inherit the nearest ancestor player binding and share truthful continuation within one root engagement, while runtime frames and new roots remain isolated |
 
 ## Intents
 
@@ -95,6 +96,7 @@ meta.md     The spec of specs
 | IR-037 | [037-markdown-cross-reference-check.md](intents/037-markdown-cross-reference-check.md) | Fail the suite on a broken spec cross-reference: the XREF package, a dependency-free link/anchor checker with GitHub's slug rules, and the repointing of two links into a sibling checkout |
 | IR-038 | [038-conversational-gate-config-coverage.md](intents/038-conversational-gate-config-coverage.md) | Bring the live gate's conversational config under `pnpm test`: its config and fixture playbook sources moved out of the excluded acceptance suite into `acceptance/live-config.ts` and `acceptance/live-fixtures.ts`, and the amended PBCLI-32 composing it through the real launcher over the real fixture modules |
 | IR-039 | [039-unified-captain-results.md](intents/039-unified-captain-results.md) | Complete DR-029 with one conversational result path, complete recovery history, action-safe recovery, and faithful multi-turn task handoff |
+| IR-040 | [040-compiled-composed-workflows.md](intents/040-compiled-composed-workflows.md) | Compile and release-gate CODE, REVIEW, and DECIDE with shared mapped-player continuity, current SLC preservation rules, and package-only specs |
 
 ## Packages
 
