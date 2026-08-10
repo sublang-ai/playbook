@@ -83,6 +83,12 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     logic: import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>;
     id: string | undefined;
 }, {
+    type: "rememberActorError";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "rememberBossReply";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "copyStartInput";
     params: import("xstate").NonReducibleUnknown;
 } | {
@@ -96,12 +102,6 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "clearBossReplyContext";
-    params: import("xstate").NonReducibleUnknown;
-} | {
-    type: "rememberBossReply";
-    params: import("xstate").NonReducibleUnknown;
-} | {
-    type: "rememberActorError";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "rememberEmptyBossReplyError";
@@ -119,6 +119,9 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     type: "setPendingReviewAfterRebuttal";
     params: import("xstate").NonReducibleUnknown;
 }, {
+    type: "needsBossReply";
+    params: unknown;
+} | {
     type: "hasFindings";
     params: unknown;
 } | {
@@ -129,9 +132,6 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     params: unknown;
 } | {
     type: "rejectedAll";
-    params: unknown;
-} | {
-    type: "needsBossReply";
     params: unknown;
 } | {
     type: "emptyBossReply";
@@ -151,7 +151,7 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
 } | {
     type: "restartInitialReview";
     params: unknown;
-}, never, "reviewInitial" | "addressFindings" | "reviewAfterCommit" | "reviewAfterRebuttal" | "ready" | "awaitBossReply" | "failed" | "done", string, ReviewInput, ReviewOutput, import("xstate").EventObject, import("xstate").MetaObject, {
+}, never, "done" | "failed" | "awaitBossReply" | "ready" | "reviewInitial" | "addressFindings" | "reviewAfterCommit" | "reviewAfterRebuttal", string, ReviewInput, ReviewOutput, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "review";
     states: {
         readonly ready: {

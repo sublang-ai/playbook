@@ -112,16 +112,19 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     readonly answer: string;
     readonly questionId?: "runFirstPhase" | "runIrTask";
 }, {
-    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>> | import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<JsonValue | undefined, PlaybookInput, import("xstate").EventObject>> | undefined;
+    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<JsonValue | undefined, PlaybookInput, import("xstate").EventObject>> | import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>> | undefined;
 }, {
-    src: "player";
-    logic: import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>;
-    id: string | undefined;
-} | {
     src: "playbook";
     logic: import("xstate").PromiseActorLogic<JsonValue | undefined, PlaybookInput, import("xstate").EventObject>;
     id: string | undefined;
+} | {
+    src: "player";
+    logic: import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>;
+    id: string | undefined;
 }, {
+    type: "rememberActorError";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "startCoding";
     params: import("xstate").NonReducibleUnknown;
 } | {
@@ -153,9 +156,6 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "completeWithInvalidReviewOutput";
-    params: import("xstate").NonReducibleUnknown;
-} | {
-    type: "rememberActorError";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "rememberMalformedPlayerOutput";
@@ -193,7 +193,7 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
 } | {
     type: "resumesIrTask";
     params: unknown;
-}, never, "runFirstPhase" | "reviewFirstCommit" | "runIrTask" | "reviewIrTask" | "ready" | "awaitBossReply" | "failed" | "done", string, CodingInput, {
+}, never, "done" | "failed" | "awaitBossReply" | "ready" | "runFirstPhase" | "reviewFirstCommit" | "runIrTask" | "reviewIrTask", string, CodingInput, {
     readonly status: "complete";
     /** Exact identity of the latest CODE-owned commit. */
     readonly lastCodeCommit: string;

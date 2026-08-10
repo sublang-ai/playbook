@@ -115,20 +115,26 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
     questionId?: ResumableStateId;
     answer: string;
 }, {
-    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>> | import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<JsonValue | undefined, PlaybookInput, import("xstate").EventObject>> | undefined;
+    [x: string]: import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<JsonValue | undefined, PlaybookInput, import("xstate").EventObject>> | import("xstate").ActorRefFromLogic<import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>> | undefined;
 }, {
-    src: "player";
-    logic: import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>;
-    id: string | undefined;
-} | {
     src: "playbook";
     logic: import("xstate").PromiseActorLogic<JsonValue | undefined, PlaybookInput, import("xstate").EventObject>;
     id: string | undefined;
+} | {
+    src: "player";
+    logic: import("xstate").PromiseActorLogic<PlayerOutput, PlayerInput, import("xstate").EventObject>;
+    id: string | undefined;
 }, {
-    type: "copyInterruptedTopic";
+    type: "rememberActorError";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "rememberBossReply";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "clearBossReplyContext";
+    params: import("xstate").NonReducibleUnknown;
+} | {
+    type: "copyInterruptedTopic";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "copyStartTopic";
@@ -155,9 +161,6 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
     type: "rememberReviewProtocolFailure";
     params: import("xstate").NonReducibleUnknown;
 } | {
-    type: "rememberActorError";
-    params: import("xstate").NonReducibleUnknown;
-} | {
     type: "rememberMalformedActorOutput";
     params: import("xstate").NonReducibleUnknown;
 } | {
@@ -173,9 +176,6 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
     };
 } | {
     type: "clearProposalRoundContext";
-    params: import("xstate").NonReducibleUnknown;
-} | {
-    type: "clearBossReplyContext";
     params: import("xstate").NonReducibleUnknown;
 }, {
     type: "committed";
@@ -198,10 +198,10 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
 } | {
     type: "authoredReviewFailure";
     params: unknown;
-}, never, "commitCoderProposal" | "reviewCommit" | "done" | "ready" | "awaitBossReply" | "failed" | "reportedReviewFailure" | {
+}, never, "done" | "failed" | "awaitBossReply" | "ready" | "commitCoderProposal" | "reviewCommit" | "reportedReviewFailure" | {
     independentProposals: {
-        coder: "working" | "waiting" | "complete";
-        reviewer: "working" | "waiting" | "complete";
+        coder: "complete" | "working" | "waiting";
+        reviewer: "complete" | "working" | "waiting";
     };
 }, string, DecideInput, ReviewSuccessOutput | DecideFailureOutput, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "decide";
