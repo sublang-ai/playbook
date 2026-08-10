@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **REVIEW and DECIDE are bundled compiled playbooks.** REVIEW provides the committed-work review loop as both a standalone workflow and a child of other playbooks, while DECIDE obtains independent Coder and Reviewer proposals before committing a design and delegating its review; both ship maintained sources, GEARS, FSM, linked-runtime, and public playbook and registry subpaths ([[playbook-21](specs/packages/playbook.md#playbook-21)], [[playbook-22](specs/packages/playbook.md#playbook-22)], [[release-20](specs/packages/release.md#release-20)]).
+
+### Changed
+
+- **CODE delegates every committed phase to REVIEW, and nested same-role players keep one root-engagement conversation.** CODE now owns only its coding commits and cannot advance until REVIEW returns the approved latest commit with no findings, while exact same-role child mappings inherit the nearest ancestor's host binding and root-owned continuation instead of starting replacement sessions ([DR-030](specs/decisions/030-shared-mapped-player-continuity.md), [[playbook-20](specs/packages/playbook.md#playbook-20)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)]).
+
+### Removed
+
+- **Breaking: DISCUSS and its public playbook and registry subpaths are replaced by REVIEW and DECIDE.** Call REVIEW for iterative committed-work review and DECIDE for independent design proposals followed by REVIEW; the `discuss` command and `@sublang/playbook/discuss/{playbook,registry}` imports no longer exist ([[release-20](specs/packages/release.md#release-20)]).
+
 ## [5.0.0] - 2026-08-09
 
 ### Added
@@ -125,7 +137,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Hidden adjudicators stay on JSON-only control work.** A live `/code` release smoke reached the correct commit, but its fresh tool-free judge ignored the requested control shape and returned a fabricated Bash transcript with no `guard`, so the runtime correctly failed closed. CODE, DISCUSS, and the shared default adjudicator now explicitly prohibit tool/file inspection and external evidence, require a decision solely from the supplied output and declared outcomes, and demand exactly one JSON object with no prose. The Captain shell additionally preserves that runtime request verbatim inside a hostile-evidence control envelope that forbids real or simulated tool transcripts ([[playbook-captain-9](specs/packages/playbook-captain.md#playbook-captain-9)], [[playbook-captain-32](specs/packages/playbook-captain.md#playbook-captain-32)], [[playbook-runtime-10](specs/packages/playbook-runtime.md#playbook-runtime-10)], [[playbook-runtime-23](specs/packages/playbook-runtime.md#playbook-runtime-23)]).
 
-- **DISCUSS initial commits no longer let a prose summary masquerade as `reviewScope`.** The live release smoke exposed a real Committer adjudication failure: its optional `reviewScope` result metadata named the field but not its domain, so the judge returned `"Only the spec/documentation file was committed…"` and the runtime correctly rejected it instead of entering spec review. The source and compiled result contract now give the hidden adjudicator the exact `specItems | decisionRecords | mixed` choices while preserving fail-closed validation ([[playbook-runtime-48](specs/packages/playbook-runtime.md#playbook-runtime-48)], [[playbook-runtime-49](specs/packages/playbook-runtime.md#playbook-runtime-49)]).
+- **DISCUSS initial commits no longer let a prose summary masquerade as `reviewScope`.** The live release smoke exposed a real Committer adjudication failure: its optional `reviewScope` result metadata named the field but not its domain, so the judge returned `"Only the spec/documentation file was committed…"` and the runtime correctly rejected it instead of entering spec review. The source and compiled result contract now give the hidden adjudicator the exact `specItems | decisionRecords | mixed` choices while preserving fail-closed validation ([[playbook-runtime-48](https://github.com/sublang-ai/playbook/blob/v5.0.0/specs/packages/playbook-runtime.md#playbook-runtime-48)], [[playbook-runtime-49](https://github.com/sublang-ai/playbook/blob/v5.0.0/specs/packages/playbook-runtime.md#playbook-runtime-49)]).
 
 - **The CODE Committer prompt now cites the packages-layout git spec.** The commit prompt in [`reference/sdlc/code.md`](reference/sdlc/code.md) (CODE-18/CODE-19) pointed at the legacy `specs/dev/git.md`; current packages-layout specs trees keep git conventions at `specs/packages/git.md`, so committer agents wasted turns hunting for a nonexistent file — sometimes searching outside the project. The prompt now cites the current path, then the legacy `specs/dev/git.md` — still the layout shipped by supported legacy scaffolds, including the pinned `@sublang/spex` 0.3 line — and only when neither git-conventions spec exists falls back to the repository's existing commit conventions without searching elsewhere. The GEARS and FSM artifacts are recompiled in lockstep.
 

@@ -13,193 +13,59 @@ This package specifies the host-facing and internal contracts of linked playbook
 
 #### playbook-runtime-1
 
-Where a Boss turn reaches the CODE runtime, when the Boss submits
-a non-empty turn while the runtime is not waiting for a Boss reply,
-the runtime shall classify the text by consulting the judge.
-The judge shall resolve it to one FSM Boss event — `START_CODING`,
-`CONTINUE_IR`, `SUMMARIZE_IR`, or
-`BOSS_INTERRUPT` — with the required payload, or to no FSM action.
-For `BOSS_INTERRUPT`, the judge shall select the target from the
-FSM's jumpable states.
-
-The runtime shall define and recognize no in-playbook slash
-commands.
-Any `/command` playbook-selection UX happens before text
-reaches the runtime; text beginning with `/` that does reach the
-runtime is classified as ordinary Boss text.
+Where a fresh nonempty Boss turn reaches CODE, REVIEW, or DECIDE while the runtime is ready, failed, or terminal and has no pending Boss question, the runtime shall send the artifact's deterministic initial event with the exact Boss text in its declared input field: `START_CODE.callerInput`, `START_REVIEW.callerInput`, or `START_DECIDE.callerTopic`.
+The runtime shall make no judge call for that entry and shall treat slash-prefixed text that reaches it as ordinary Boss text.
 
 #### playbook-runtime-2
 
-Where a Boss turn reaches the CODE runtime, when the Boss submits
-a non-empty turn while the actor is in the `awaitBossReply`
-Boss-reply suspension state, the runtime shall classify the text by
-consulting the judge with the pending question as context.
-The judge shall resolve the text either to
-`BOSS_REPLY` with the verbatim answer for the pending question, or
-to a fresh Boss directive event that abandons the pending question
-via `clearBossReplyContext`.
-
-When the text is empty or whitespace-only, the runtime shall take
-no FSM action and make no judge call.
-When the judge does not resolve the text to a valid event and payload, the runtime shall
-report the reason to the Boss and take no FSM action.
+Where a nonempty Boss turn reaches a runtime with one or more pending Boss questions, the runtime shall ask the judge to select `BOSS_REPLY` for one identified question, an artifact-declared interrupt for a fresh directive, or no action, while the runtime itself supplies the Boss text verbatim as the answer or replacement intent.
+When the text is empty or whitespace-only, the runtime shall take no FSM action and make no judge call.
+When the judge returns no valid event and payload, the runtime shall report the reason and take no FSM action.
 
 ### Turn progress
 
 #### playbook-runtime-3
 
-While a Boss turn is in progress, the runtime shall surface a
-human-readable status stream that lets the Boss follow the FSM
-without reading the player panes. The runtime composes each line
-as the meaningful content only; the host pane (e.g., tmux-play)
-owns any speaker chrome, line wrapping, and visual nesting.
-The judge's own JSON replies — classification and adjudication —
-shall not appear on this stream; the runtime composes every line,
-so the pane stays human-readable (the host runs judge calls
-hidden per [[playbook-runtime-15](playbook-runtime.md#playbook-runtime-15)]).
+Where a factory-backed artifact supplies linker-emitted `playerStates` and no artifact-specific status override, while a Boss turn is in progress, the runtime shall surface the canonical human-readable status stream below without exposing judge JSON, raw state-id fallbacks, or the Boss text already visible at the prompt:
 
-The stream uses three glyphs and two captain-speech acts so each
-line is parseable at a glance:
+- Before sending a selected Boss event, emit its bare type such as `START_CODE` as Captain speech.
+- Whenever a settling actor output carries a guard, emit exactly `→ <guard>` with no payload tally, rider, or leading whitespace.
+- On entry to a state named by `playerStates`, emit `⤷ <Player>: <label>` from that metadata with no source-item or context rider.
+- On entry to a Boss-reply wait, emit the untruncated `<player> asks: <question>` as Captain speech followed by `◆ awaiting Boss reply · <resumeStateId> · <player> · <sourceItem>` with no question excerpt.
+- On entry to failure, emit `◆ workflow failed; awaiting Boss recovery.` with the compact normalized error as status data.
+- Emit no canonical status on entry to an idle, terminal, or other unlisted state.
 
-- Captain classification carries only the FSM event type the Boss
-  turn was classified to (e.g., `START_CODING`), with no glyph.
-  The host renders it as captain speech (e.g., prefixed
-  `captain>`). The runtime shall not echo the verbatim Boss text —
-  the Boss readline already shows it.
-- A player question carries the full pending question attributed to
-  the asking player, formatted `<player> asks: <question>`, with no
-  glyph. The host renders it as captain speech. It is emitted only
-  on entry to `awaitBossReply` (see the `◆` bullet) and carries the
-  question verbatim and in full — not truncated — since the judge
-  JSON that produced it is hidden.
-- `⤷` for entry into any player-invoking state — the Coder,
-  Reviewer, and Committer states — carrying `<Player>: <label>`
-  where `<label>` is the state's human-readable label. The line
-  shall carry no source-item tag and no FSM-context rider fields.
-- `→` for the transition that drove the FSM into a new
-  player-invoking state, carrying the guard that fired and
-  `· <field>=<count>` tallies for any payload fields the guard
-  populated. Visual nesting under the preceding `⤷` entry is the
-  host presenter's concern; the runtime emits no leading
-  whitespace.
-- `◆` for entry into the failure state and into the
-  `awaitBossReply` Boss-reply suspension state. The runtime shall
-  emit no status line on entry to the idle state or the terminal
-  state — the next `boss>` prompt is the implicit signal. On
-  entry to the failure state the line shall additionally carry
-  the error that caused it. On entry to `awaitBossReply` the
-  runtime shall emit two lines: first the full pending question as
-  the captain-speech act above (`<player> asks: <question>`), so
-  the Boss sees exactly what's being asked; then the marker line
-  `◆ awaiting Boss reply · <resumeStateId> · <player> ·
-  <sourceItem>` carrying the routing metadata with no `q=` excerpt
-  rider. The Boss replies with plain text that the runtime
-  classifies as `BOSS_REPLY`.
+The runtime shall compose only each line's meaningful content, while the host owns speaker chrome, wrapping, and visual nesting and keeps judge calls hidden per [[playbook-runtime-15](#playbook-runtime-15)].
 
 ### Host configuration
 
 #### playbook-runtime-4
 
-Where CODE runs under tmux-play through the Playbook Captain shell,
-the shell shall bind CODE's local roles `coder` and `reviewer` to
-the host players `code-coder` and `code-reviewer` and route each
-CODE player call to the bound host player.
-The host roster declaring those `code-coder` / `code-reviewer`
-players and the `captain.from` value pointing at the published
-Playbook Captain shell adapter `@sublang/playbook/playbook-captain`
-are generated by the generic `playbook` launcher, so the user does
-not write them by hand.
-The CODE registry entry shall derive the per-run player identity
-strings (`coderPlayer`, `reviewerPlayer`) from the bound host
-player's `model` when pinned and fall back to its `adapter` when no
-model is set, so player prompts carry the concrete model identity
-(e.g. `claude-opus-4-8`) rather than the adapter family name (e.g.
-`claude`) whenever the host has pinned a model.
+Where CODE, REVIEW, or DECIDE runs through the Playbook Captain shell, the shell shall bind each local role through that frame's effective player binding and route each player call to the resulting host player per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
+The CODE registry shall require `coder`, and the REVIEW and DECIDE registries shall require `coder` and `reviewer`.
+Each registry shall derive a prompt's player identity from the effective binding's model when present and its adapter otherwise.
 
 #### playbook-runtime-29
 
-Where CODE runs under tmux-play through the Playbook Captain shell,
-CODE-specific runtime options shall be carried under
-`captain.options.playbooks.code.options` as a namespaced object, and
-no CODE option shall be placed elsewhere in the config.
-A setting that changes host-observable behavior — theme, layout,
-notifications, permissions, model or adapter routing, or timing —
-shall be expressed through tmux-play's own top-level `theme` /
-`layout` / `notifications` fields or its `captain` / `players`
-fields rather than the CODE option slice.
-The Committer alias is not such a setting: tmux-play models no
-`Committer` player, so the alias selects which of the two existing
-CODE roles the composite `Committer` binds to — CODE-internal role
-resolution, not host pane/adapter/model routing — and is therefore
-a legitimate `committer` member of the CODE option slice. It adds no
-tmux-play player and changes no pane's adapter or model; the two
-panes keep the `players` adapters they already declare.
-CODE is enabled by an explicit `from: @sublang/playbook/code/registry`
-module specifier the user keeps in the top-level generic config
-(`playbooks.code.from`), which the generic `playbook` launcher
-normalizes into `captain.options.playbooks.code.from`; this explicit
-`from` is the local-configuration trust boundary
-([DR-009](../decisions/009-generic-playbook-cli-and-registry.md) §2)
-and the launcher shall neither invent nor hide it.
-The `captain.from` adapter-module path and the `code-coder` /
-`code-reviewer` host player ids, by contrast, are generated by the
-launcher and shall not be required to appear in the user-edited
-generic config; this supersedes the user-maintained-invariant framing
-of [[playbook-runtime-4](#playbook-runtime-4)].
-The generated `captain.from` value shall point at the published
-Playbook Captain shell adapter specifier
-`@sublang/playbook/playbook-captain`, not at a direct CODE adapter.
-The package shall provide no `@sublang/playbook/code/tmux-play`
-compatibility shim and no legacy `captain.options.code` host-config
-contract.
+Where CODE, REVIEW, or DECIDE is enabled through the Playbook Captain shell, its user config shall name the corresponding public registry module explicitly and the launcher shall normalize the playbook's non-launcher fields into that entry's namespaced option slice.
+The current CODE, REVIEW, and DECIDE registries accept no workflow-specific options and shall reject every nonempty option slice.
+Host-observable agent, layout, notification, permission, and presentation settings shall remain host configuration rather than workflow options.
 
 ### Module boundary
 
 #### playbook-runtime-5
 
-The runtime module shall import the FSM artifact, XState, and the
-shared runtime contract types from `@sublang/playbook/runtime`
-([[playbook-runtime-34](#playbook-runtime-34)]), hold no host-specific types, and interact
-with its host exclusively through the `PlaybookPorts` interface
-(`callPlayer`, `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`,
-`emitTelemetry`). It shall
-re-export the shared player, Captain-call, playbook-call, session, state, trace, and
-runtime contract types from that module rather than redefining them,
-so consumers of
-`@sublang/playbook/code/playbook` resolve the same contract types. It
-shall default-export a `createPlaybookRuntime(options)` factory
-returning a `PlaybookRuntime` (`init`, `handleBossInput`,
-`resumePlaybookCall`, `dispose`, and the optional control-surface pair
-`describe`/`apply` of
-[slc/link.md](../../slc/link.md#control-surface-optional), which every
-runtime obtained from the shared factory implements),
-typed `PlaybookRuntimeFactory<CodePlaybookOptions>`. The options shall
-carry only per-run identity strings; the mapping from FSM players to
-player-id strings shall be fixed in the runtime, not supplied at run
-time.
-The module shall obtain that runtime by passing the FSM machine and the
-CODE-specific spec — options validation, player binding, prompt
-composition, Boss-event classification, adjudication strategy, and
-Captain-pane status formatting — to the shared
-`createXStatePlaybookRuntime` factory of
-`@sublang/playbook/xstate-runtime`
-([DR-019](../decisions/019-shared-linked-runtime-factory.md)); it shall
-not carry a per-artifact copy of the generic FSM-interpreter machinery.
-This item binds the CODE runtime module, whose policy needs no host seam
-beyond the six ports.
-Where another compiled playbook's policy does need one — the session
-Captain's controller port
-([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]) — it shall arrive as a
-linker-exposed option member the artifact itself types, never as a seventh
-`PlaybookPorts` member and never as a widened
-`handleBossInput` ([[playbook-runtime-34](#playbook-runtime-34)]).
+Each linked workflow runtime shall import its FSM and the shared runtime contract types from `@sublang/playbook/runtime`, hold no host-specific type, and interact with its host only through `PlaybookPorts`.
+Each public workflow module shall default-export a `createPlaybookRuntime(options)` factory and shall re-export rather than redefine the shared runtime types.
+A single-region artifact shall use `createXStatePlaybookRuntime` from `@sublang/playbook/xstate-runtime`, while a parallel artifact may emit bespoke linked machinery that implements the same public contract per [DR-019](../decisions/019-shared-linked-runtime-factory.md).
+An artifact-specific host capability shall enter through that artifact's typed options and shall not widen `PlaybookPorts` or `handleBossInput`.
 
 #### playbook-runtime-34
 
 The package shall provide a type-only module resolvable as
 `@sublang/playbook/runtime` that is the single authored source of the
 runtime contract types `PlayerResult`, `PlayerCallOptions`,
-`CaptainResult`, `CaptainCallOptions`,
+`PlayerSessionStore`, `CaptainResult`, `CaptainCallOptions`,
 `JsonValue`, `NormalizedError`,
 `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
 `PlaybookStateValue`, `PlaybookState`, `PlaybookPendingCall`,
@@ -217,7 +83,7 @@ same union without a resume token, `CaptainCallOptions` shall require
 expose optional `allowedTools?: readonly string[]` so an explicit empty list
 requests tool isolation while omission preserves the host Captain's configured
 tools. `PlaybookRuntime.init` shall
-accept a `PlaybookSession`, and `PlaybookPorts` shall declare exactly
+accept a `PlaybookSession` whose optional `playerSessions` implements the exact synchronous store contract in [[playbook-runtime-59](#playbook-runtime-59)], and `PlaybookPorts` shall declare exactly
 the members `callPlayer`,
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
 `emitTelemetry`.
@@ -253,6 +119,18 @@ the dependency runs one way, from `code.playbook` to this module
 ([[playbook-runtime-5](#playbook-runtime-5)]).
 The module shall carry only type declarations and shall add no runtime
 engine, linker, or host primitives.
+
+#### playbook-runtime-59
+
+Where `PlaybookSession.playerSessions` is supplied, the `PlayerSessionStore` shall expose exactly four synchronous operations keyed by the runtime-resolved frame-local role id:
+
+| Operation | Contract |
+| --- | --- |
+| `select(playerId: string): string \| false` | Return the current nonempty resume token for that local role or `false` when none exists. |
+| `update(playerId: string, resumeToken?: string): void` | Replace that local role's token with the supplied nonempty token, or clear it when the token is omitted. |
+| `snapshot(): Readonly<Record<string, string>>` | Return the complete current view as local-role keys mapped to nonempty tokens. |
+| `restore(tokens: Readonly<Record<string, string>>): void` | Replace the complete current view by clearing every binding visible to the frame and then installing exactly the supplied local-role entries. |
+| Host-provided frame view | Reject an unknown local role, map every accepted local role through the frame's effective host-player binding before accessing the root-owned token map, and leave effective bindings outside that frame view unchanged during `restore`. |
 
 ### Runtime compatibility
 
@@ -304,75 +182,17 @@ or `resumePlaybookCall` is called before `init`, the runtime shall throw.
 
 #### playbook-runtime-7
 
-When the runtime classifies a Boss turn, empty or whitespace-only
-text shall produce no event, judge call, player call, status emission,
-or FSM transition; session trace telemetry under [[playbook-runtime-37](#playbook-runtime-37)]
-shall still record and settle that Boss input.
-For every non-empty Boss turn, the runtime shall call `callJudge` with a fixed prompt that
-names the current FSM state, the valid Boss-event types for that
-state, and every required payload field.
-The prompt shall require a JSON reply that either names a valid event with its payload or
-names no FSM action.
-
-Outside any scalar or branch-local Boss-reply wait (per
-[[playbook-runtime-11](#playbook-runtime-11)]), the valid
-Boss-event types are `START_CODING`, `CONTINUE_IR`,
-`SUMMARIZE_IR`, and `BOSS_INTERRUPT`.
-For `BOSS_INTERRUPT`, the prompt shall list the FSM's jumpable state ids and descriptions,
-and the reply shall carry a valid `targetId`.
-
-While the actor has one or more pending Boss questions, the prompt
-shall include each question and its stable question id.
-`BOSS_REPLY` is then a valid classification result and shall carry the
-verbatim answer; it may omit `questionId` only when exactly one question
-is pending, in which case the runtime shall fill that sole id.
-When several questions are pending, an omitted or unknown question id
-shall produce no FSM event.
-The judge may instead return a fresh directive event, including
-`BOSS_INTERRUPT`; the fresh transition shall clear the scalar pending
-context or all pending branch context owned by the exited group.
-
-The runtime shall parse the judge reply with the same tolerance
-defined for adjudication ([[playbook-runtime-10](#playbook-runtime-10)]) — recovering the
-intended JSON object even when it is wrapped in surrounding prose
-or a Markdown code fence (including when the prose contains other
-bracketed fragments), carries a trailing comma, or is truncated —
-before validating the event.
-A reply that does not name a valid event for the current state,
-omits a required payload field, or from which no JSON value can be
-recovered, shall produce one `emitStatus` call and no event;
-classification thus degrades gracefully where adjudication
-([[playbook-runtime-10](#playbook-runtime-10)]) instead throws.
-The runtime shall define no slash-prefix fast path:
-text beginning with `/` shall be sent to `callJudge` like any other
-non-empty Boss text.
-
-`BOSS_REPLY` shall be synthesized only while at least one scalar or
-branch-local question is pending.
+When a runtime receives empty or whitespace-only Boss text, it shall record and settle the input trace but shall produce no event, judge call, player call, status emission, or FSM transition.
+When no Boss question is pending, the current CODE, REVIEW, and DECIDE runtimes shall use their deterministic initial event under [[playbook-runtime-1](#playbook-runtime-1)].
+While one or more Boss questions are pending, the runtime shall call `callJudge` with the current structured state, every pending question and stable id, and the artifact-declared reply, interrupt, and no-action contracts.
+The runtime shall accept an omitted `questionId` only when exactly one question is pending, attach the Boss text verbatim to the selected event, and clear pending context abandoned by an interrupt.
+The runtime shall parse the judge reply with the tolerance of [[playbook-runtime-10](#playbook-runtime-10)] and shall emit one status with no FSM event when the reply is malformed or invalid for the live state.
 
 ### Player binding
 
 #### playbook-runtime-8
 
-When resolving the player id for an FSM player invocation, the
-runtime shall map `Coder` to `coder` and `Reviewer` to
-`reviewer`. For the composite `Committer`, when a configured
-committer alias is present — the validated
-`captain.options.playbooks.code.options.committer`
-([[playbook-runtime-30](#playbook-runtime-30)]) threaded into the runtime as
-`CaptainInput.committerPlayer` — it shall resolve to that player id
-(`coder` or `reviewer`). Absent a
-configured alias it shall fall back to the
-[DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2
-baked binding: `coder` when `CaptainInput.coderPlayer` is
-populated, `reviewer` when only `reviewerPlayer` is populated, and
-`coder` when neither is populated.
-The alias selects only which host pane runs the commit; it is a
-player id, not a [[playbook-runtime-4](playbook-runtime.md#playbook-runtime-4)]
-identity string, so it shall not
-affect the `<coder-llm>` / `<reviewer-llm>` substitutions, and the
-state's `input.player` stays `Committer`
-([[playbook-3](playbook.md#playbook-3)]).
+When resolving a compiled workflow's player invocation, the runtime shall map source role `Coder` to local role `coder` and source role `Reviewer` to local role `reviewer`, while leaving the host to resolve that local role to the frame's effective binding per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
 
 ### Captain bridge
 
@@ -380,7 +200,7 @@ state's `input.player` stays `Committer`
 
 While driving a Boss turn, for each FSM player invocation the
 runtime shall resolve the player id ([[playbook-runtime-8](#playbook-runtime-8)]), compose
-the player prompt ([[playbook-5](playbook.md#playbook-5)],
+the player prompt ([[playbook-5](playbook.md#playbook-5)] and
 [[playbook-6](playbook.md#playbook-6)]), and call
 `callPlayer(playerId, prompt, signal, options)` with the explicit
 resume selection required by [[playbook-runtime-38](#playbook-runtime-38)]. When the result status is
@@ -452,15 +272,12 @@ the player's output verbatim, and lists every guard key of the
 FSM state's `result` map with its description verbatim. It shall
 require a JSON object reply carrying a `guard` field equal to one
 of those keys, and a string value for every payload field the
-chosen guard's description marks as required, except for the
-verbatim payload fields `reviews` and `challenges` — for those
-the runtime shall carry `finalText.trim()` into the resulting
-`CaptainOutput` regardless of any judge-supplied value, so the
-long-form prose is not round-tripped through judge JSON.
-Short extracted fields such as `question` and `taskDescription`
-shall stay judge-extracted (the judge supplies the value; the
-runtime validates it is a string). The judge prompt shall direct
-the judge not to populate the verbatim fields. It shall identify the call as
+chosen guard's description marks as required, except for each field
+marked `<verbatim final text>` — for such a field the runtime shall carry
+`finalText.trim()` into the resulting `CaptainOutput` regardless of any
+judge-supplied value, so player prose is not round-tripped through judge JSON.
+Other declared fields shall stay judge-extracted and type-validated.
+The judge prompt shall direct the judge not to populate verbatim fields. It shall identify the call as
 hidden control work, prohibit tool use, file inspection, and external evidence,
 direct the judge to decide only from the supplied player output and declared
 outcomes, and require exactly one JSON object with no prose.
@@ -482,16 +299,6 @@ A reply that is malformed, names an undeclared guard, or omits a
 required extracted (non-verbatim) field shall cause the runtime to
 throw.
 
-#### playbook-runtime-48
-
-Where DISCUSS adjudicates the Committer result after the initial-discussion
-commit, the `committed` guard description shall constrain an optional
-`reviewScope` payload to exactly `specItems`, `decisionRecords`, or `mixed`.
-The adjudicator prompt shall carry that domain verbatim, and the runtime shall
-continue to reject any other supplied value rather than allowing free-form
-prose to override the valid review scope already established when Host wrote
-the agreed changes.
-
 ### Drive to quiescence
 
 #### playbook-runtime-11
@@ -508,11 +315,10 @@ port emissions and return the matching `PlaybookRunResult`.
 #### playbook-runtime-12
 
 When `handleBossInput` is called while the actor is in the
-terminal state, the runtime shall classify the non-empty input first and shall
-dispose and reconstruct the actor only after classification produces a real
-event, so that event starts from the idle state. `NO_ACTION`, a classifier
-failure, or malformed classification shall leave the terminal actor untouched.
-Under the Playbook Captain shell, final CODE engagements are
+terminal state, the runtime shall leave the actor untouched for empty input and shall
+dispose and reconstruct it only after a nonempty input produces the artifact's valid
+initial event, so that event starts from the idle state.
+Under the Playbook Captain shell, final root engagements are
 disposed per [[playbook-captain-11](playbook-captain.md#playbook-captain-11)], so this
 item remains the direct-runtime behavior.
 
@@ -560,152 +366,35 @@ can debug fail-stop paths without losing the original stack.
 instance for downstream FSM consumers; normalization happens only
 at emission boundaries.
 
-For transitions into a Boss-relevant state
-([[playbook-runtime-3](playbook-runtime.md#playbook-runtime-3)]) the runtime shall
-call `emitStatus` to render the Captain pane line for that event,
-using the glyph vocabulary in playbook-runtime-3. Player-invoking state
-entries shall be formatted `⤷ <Player>: <label>` carrying only
-the player and the state's human-readable label, with no
-source-item tag and no FSM-context rider fields. Transition
-emissions shall be formatted `→ <guard>[ · <field>=<count>]…`,
-with `· reviews=N` / `· challenges=N` tallies when the guard's
-payload populates those fields, and shall carry no leading
-whitespace — visual nesting under the preceding state entry is
-the host presenter's concern. Entry to the failure state shall
-pass `lastError` as the `emitStatus` data argument normalized to
-a compact `{ name, message }` shape so the Captain pane never
-leaks a raw Error instance. The runtime shall not call
-`emitStatus` on entry to the idle state or the terminal state.
-
-For each Boss turn whose text classifies to an FSM event, the
-runtime shall additionally call `emitStatus` once with the bare
-FSM event type (e.g., `START_CODING`), before the FSM advances,
-so the host can render it as captain speech. The runtime shall not
-echo the verbatim Boss text.
-
-On entry to the scalar `awaitBossReply` state or a parallel
-branch-local wait, the runtime shall call `emitStatus` twice, in order:
-first with the full pending question as a captain-speech act attributed to the asking player,
-formatted `<player> asks: <question>` (no glyph, the host renders
-it as captain speech), carrying the selected pending question verbatim
-and in full; then with the routing marker
-`◆ awaiting Boss reply · <resumeStateId> · <player> ·
-<sourceItem>` carrying no `q=` excerpt rider. It shall
-additionally call `emitTelemetry` with topic `playbook.fsm.state`
-carrying the selected pending question verbatim alongside the other
-transition fields, so non-tmux-play hosts can render their
-own prompt.
+Where a factory-backed artifact supplies linker-emitted `playerStates` and no artifact-specific status override, the runtime shall emit the canonical stream of [[playbook-runtime-3](#playbook-runtime-3)]: the selected event type before dispatch, exact `→ <guard>` for every settling actor output carrying a guard, metadata-derived player entry, failure, and two-line Boss-wait statuses, with no payload tally or raw state-id fallback.
+The canonical failure status shall carry `lastError` as compact `{ name, message }` data rather than a raw Error.
+The corresponding Boss-wait telemetry shall carry the selected pending question verbatim alongside the other transition fields so a non-tmux host can render it.
 
 All trace, status, and state-telemetry emissions shall use one runtime-owned
 concurrency-one queue, be issued in order, each awaited before the next, and
 never dropped. Sequence allocation and enqueueing shall be atomic; every public
 runtime method shall drain the queue before resolving or rejecting.
 
+#### playbook-runtime-57
+
+Where a factory-backed artifact supplies neither `playerStates` nor an artifact-specific status override, the runtime shall preserve the metadata-absent legacy defaults: no classification line or settling-guard line, `Entered <stateId>.` for each ordinary non-suppressed state, one untruncated `<player> asks: <question>` line with no routing marker, and the unglyphed `Workflow failed; awaiting Boss recovery.` line carrying full normalized `lastError` data.
+
 ### Host adapter and registry
 
 #### playbook-runtime-15
 
-Where CODE runs under tmux-play through the Playbook Captain shell,
-the CODE registry entry shall derive `coderPlayer` and
-`reviewerPlayer` from the host players bound to its local roles
-`coder` and `reviewer` per the active binding
-([[playbook-captain-10](playbook-captain.md#playbook-captain-10)]): for the host player
-bound to each role, the registry entry shall use that player's
-`model` when set and shall fall back to its `adapter` otherwise.
-When the shell constructs a CODE engagement, the CODE registry
-entry shall construct the runtime from the validated CODE options
-merged with those derived identity strings.
-Any `coderPlayer` / `reviewerPlayer` keys in the forwarded CODE
-options shall be overridden by the derived values.
-The CODE registry entry shall declare a `summaryPolicy`
-([[playbook-captain-20](playbook-captain.md#playbook-captain-20)]) providing the
-Playbook Captain shell's turn-summary aggregation labels:
-`adjudicateChallenges` as `rebuttal`, and every CODE review state id
-as `review round`.
-The CODE `summaryPolicy` shall provide no summary-visible label for
-any other state id, including `planAndImplement` or any tests-green
-state id.
-The CODE review state ids are `reviewBossCommitSpecs`,
-`reviewBossCommitCode`, `reviewBossCommitMixed`,
-`reviewIrTaskCommitSpecs`, `reviewIrTaskCommitCode`,
-`reviewIrTaskCommitMixed`, `reviewChangesSpecs`,
-`reviewChangesCode`, `reviewChangesMixed`,
-`reviewChangesAndChallengesSpecs`,
-`reviewChangesAndChallengesCode`, and
-`reviewChangesAndChallengesMixed`.
-The CODE `summaryPolicy` copy-paste guard names shall be exactly
-`accepted`, `approved`, `challengeAccepted`, `challengeRejected`,
-`challengesRaised`, `changesMadeCode`,
-`changesMadeCodeAndChallenged`, `changesMadeMixed`,
-`changesMadeMixedAndChallenged`, `changesMadeSpecs`,
-`changesMadeSpecsAndChallenged`, `hasFindings`, `needsRevision`,
-`noFindings`, and `noOpenItems`.
-The CODE `summaryPolicy` shall supply the saved-counts line template
-`Saved you X interruptions and Y copy-pastes across Z rounds of reviews/rebuttals.`
-([[playbook-captain-19](playbook-captain.md#playbook-captain-19)]).
-These labels and guard names refer to CODE FSM state ids and state
-`result`-map guard keys transition-covered under
-[[playbook-4](playbook.md#playbook-4)], adjudicated under
-[[playbook-runtime-10](#playbook-runtime-10)], and emitted as telemetry under
-[[playbook-runtime-14](#playbook-runtime-14)].
-CODE port wiring under tmux-play is owned by the Playbook Captain
-shell and specified in [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
+Where the shell constructs CODE, REVIEW, or DECIDE, the registry shall derive each player-identity prompt field from the frame's effective role bindings per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)] and shall override any caller-supplied identity value.
+Each registry shall publish only the summary labels and handoff guards its current FSM owns, with CODE excluding REVIEW's child rounds, REVIEW labeling its review and rebuttal rounds, and DECIDE labeling its independent-proposal round.
 
 #### playbook-runtime-16
 
-Where CODE runs under tmux-play through composed config, the
-compiled module imported by the host's `captain.from` shall be the
-published Playbook Captain shell adapter specifier
-`@sublang/playbook/playbook-captain`, whose behavior is specified
-by [[playbook-captain-16](playbook-captain.md#playbook-captain-16)] and
-[[playbook-captain-17](playbook-captain.md#playbook-captain-17)].
-CODE shall be enabled like any other playbook through a
-`captain.options.playbooks.code` entry whose `from` module specifier
-is the published `@sublang/playbook/code/registry` export, whose
-default export is the CODE registry entry the shell loads
-([[playbook-captain-16](playbook-captain.md#playbook-captain-16)]).
-When that shell dispatches a Boss turn to CODE, the CODE registry
-entry shall map the dispatch to
-`runtime.handleBossInput({ text, signal: context.signal })`.
-The package shall provide no `@sublang/playbook/code/tmux-play`
-compatibility shim and no legacy direct CODE adapter; the retired
-shim and its exported CODE registry entry, label map, options
-derivation helper, and validator are superseded by the
-`@sublang/playbook/code/registry` module ([[playbook-runtime-30](#playbook-runtime-30)]).
+Where CODE, REVIEW, or DECIDE runs through composed config, the host Captain module shall be `@sublang/playbook/playbook-captain` and the enabled entry shall use the matching public `@sublang/playbook/<id>/registry` module per [[playbook-captain-16](playbook-captain.md#playbook-captain-16)] and [[playbook-captain-17](playbook-captain.md#playbook-captain-17)].
+Each registry shall map a dispatched Boss turn to `runtime.handleBossInput({ text, signal })` and shall expose no direct tmux-play adapter.
 
 #### playbook-runtime-30
 
-During Playbook Captain shell `init`, the CODE registry entry shall
-validate the normalized option slice the shell passes it — the
-entry's `captain.options.playbooks.code.options` — against the CODE
-options schema, reject unknown keys with an error that names the
-offending path, and store the validated options for later CODE
-engagements.
-The CODE registry entry shall not extract its own namespace from the
-full Captain options bag; the shell passes it only its own option
-slice ([DR-009](../decisions/009-generic-playbook-cli-and-registry.md) §3).
-When constructing the CODE runtime for an engagement, the CODE
-registry entry shall pass those validated options into
-`createPlaybookRuntime`.
-The CODE options schema defines one key, `committer`: an optional
-string whose value is the resolved Committer-alias player id and
-shall be one of the baked local role ids `coder` or `reviewer`.
-The registry entry shall reject any other value, and any unknown
-key, with an error that names the offending path (e.g.
-`captain.options.playbooks.code.options.committer`). A valid option
-slice is absent, an empty object, or
-`{ committer: 'coder' | 'reviewer' }`; the registry entry threads the
-validated `committer` into `createPlaybookRuntime` as the runtime's
-Committer player id ([[playbook-runtime-8](#playbook-runtime-8)]).
-A further CODE option shall be introduced as its own
-higher-numbered item that extends this schema; the validator still
-fails closed on stray keys.
-The external `@sublang/cligent` package shall not validate the CODE
-option slice; the CODE registry entry is the sole validator.
-The derived `coderPlayer` / `reviewerPlayer` identity strings
-([[playbook-runtime-15](#playbook-runtime-15)]) shall continue to come from the host players
-bound to the CODE local roles and override any same-named keys,
-independent of the CODE option slice.
+During shell initialization, each CODE, REVIEW, and DECIDE registry shall accept an absent or empty object as its option slice and shall reject a non-object or any unknown key with a diagnostic naming `captain.options.playbooks.<id>.options` and the offending key when present.
+The registry shall validate only the option slice the shell passes it and shall retain the validated value for later runtime construction.
 
 ### Session trace and player continuation
 
@@ -764,6 +453,12 @@ The runtime shall key tokens by the resolved player id, keep separate
 players independent, preserve the map across parked turns and actor
 reconstruction within the runtime session, and discard it on dispose.
 
+#### playbook-runtime-55
+
+Where `PlaybookSession.playerSessions` is supplied, when a linked runtime invokes a player, the runtime shall call the synchronous store with that frame's resolved local role id, select continuity before the player-start trace and host call, then update or clear it from the validated host result before the player-finish trace and result interpretation.
+Where the runtime exports or restores its parked snapshot with that store supplied, it shall use the store's snapshot and restore operations instead of a private token map.
+Where no store is supplied, the runtime shall retain the private per-session continuity of [[playbook-runtime-38](#playbook-runtime-38)].
+
 ### Structured and composed execution
 
 #### playbook-runtime-40
@@ -780,21 +475,9 @@ shall serialize its concurrent hidden `callJudge` operations through one local
 abort-aware FIFO with concurrency one. The host shall additionally serialize
 all direct `callCaptain` and hidden `callJudge` port operations together
 through its one Captain-session FIFO.
-DISCUSS initial proposals and reconciliation rounds shall run Host and
-Participant in parallel, stage each result independently, and promote
-both results at the join so the next round receives one completed prior
-round rather than completion-order-dependent inputs.
-The `initialProposalRound` and `reconciliationRound` parallel parents shall be
-Boss-interrupt targets; their four branch working leaves shall remain
-branch-reply resume destinations but shall not be independently jumpable.
-An interrupt may reenter either parent only when context already contains its
-complete input: a non-empty topic for initial proposals, or both promoted
-proposals for reconciliation. The scalar or branch-local wait state itself
-shall never be an interrupt target.
-Where one parallel DISCUSS branch needs a Boss reply, that branch shall
-park in its own waiting state while its sibling continues; a reply shall
-resume only the identified branch, and multiple pending branch questions
-shall remain independently addressable.
+DECIDE's independent-proposal state shall invoke Coder and Reviewer in parallel, stage their results separately, and join only after both finish so neither prompt receives the other's proposal.
+When a Boss interrupt replaces the topic during that state, DECIDE shall restart the complete parallel pair with the new topic and shall retain neither prior branch result.
+Where one parallel branch needs a Boss reply, that branch shall park independently while its sibling continues, and a reply shall resume only the identified branch.
 
 #### playbook-runtime-41
 
@@ -915,8 +598,7 @@ public boundary continues the session's contiguous trace sequence.
 whose restored actor is not `active`, and reuse of an initialized,
 disposing, or disposed runtime, following the same failed-start cleanup
 as `init` so `dispose` remains callable.
-The compiled default Captain runtime shall not expose the capability
-([DR-014](../decisions/014-durable-one-shot-run-sessions.md) §5).
+The compiled default Captain runtime shall expose the shared factory's snapshot methods, while the interactive shell shall neither persist nor restore Captain snapshots ([DR-014](../decisions/014-durable-one-shot-run-sessions.md) §5).
 
 ### Control surface
 
@@ -1082,11 +764,7 @@ persists neither.
 #### playbook-runtime-17
 
 
-When a free-text coding turn is driven through `createPlaybookRuntime`
-with fake ports that classify the Boss text as `START_CODING` and
-then return a valid guard from the judge, the test suite shall fail
-unless `handleBossInput` drives the FSM through one captain
-invocation and returns with the FSM at the idle state (verifying [[playbook-runtime-11](#playbook-runtime-11)]).
+When a fresh nonempty turn is driven through CODE, REVIEW, or DECIDE with fake ports, the test suite shall fail unless the runtime sends its deterministic initial event with the exact Boss text, makes no classifier call, and drives to a quiescent, suspended, failed, aborted, or terminal result (verifying [[playbook-runtime-1](#playbook-runtime-1)] and [[playbook-runtime-11](#playbook-runtime-11)]).
 
 #### playbook-runtime-18
 
@@ -1112,60 +790,18 @@ to the named state and `handleBossInput` returns (verifying [[playbook-runtime-1
 #### playbook-runtime-20
 
 
-When a Boss turn is driven through the runtime, the test suite
-shall fail unless: telemetry is emitted for every transition
-under the `playbook.fsm.state` topic; the Captain-pane status
-emits cover the bare classification line (the FSM event type with
-no glyph and no echo of the verbatim Boss text), every
-player-invoking state entry as `⤷ <Player>: <label>` with no
-source-item tag and no FSM-context rider field, every transition
-guard that drove an entry as `→ <guard>` with `· <field>=<count>`
-tallies when applicable and no leading whitespace, the
-failure-state marker, and each scalar or branch-local Boss-reply wait's
-two lines;
-entry to the idle state or the terminal state emits no status
-line; the failure-state status carries `lastError` normalized to
-the compact `{ name, message }` shape (never a raw Error
-instance); the failure-state telemetry payload carries both a
-full `{ name, message, stack }` form of `lastError` and a
-normalized `event.error` with the same full shape; entry to a
-Boss-reply wait emits two status lines — the full pending
-question as captain speech `<player> asks: <question>` (verbatim
-and untruncated) followed by the rider-less marker `◆ awaiting
-Boss reply · <resumeStateId> · <player> · <sourceItem>` with no
-`q=` excerpt — and the corresponding `playbook.fsm.state`
-telemetry carries the selected pending question verbatim
-alongside the other transition fields; and emissions are observed
-in enqueue order with at most one host emission in flight, contiguous trace
-sequence, and the entering-state trace observed before its actor-call start (verifying [[playbook-runtime-14](#playbook-runtime-14)]).
+When the integration suite drives transition and status profiles, it shall fail unless every case in this matrix holds:
+
+- Every runtime emits `playbook.fsm.state` telemetry for each transition, normalizes transition and failure errors, and preserves enqueue order, single-flight emission, contiguous trace sequence, and trace-before-actor-call ordering (verifying [[playbook-runtime-14](#playbook-runtime-14)]).
+- A factory-backed fixture with complete `playerStates` and no status override emits the bare classification before dispatch, only metadata-backed `⤷ <Player>: <label>` entries, exact `→ <guard>` for every settling actor output carrying a guard with no tally, rider, or leading whitespace, the compact-data failure marker, and both exact Boss-wait lines, while idle, terminal, and unlisted states produce no canonical fallback (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-14](#playbook-runtime-14)]).
+- A factory-backed schema-1 fixture with neither `playerStates` nor a status override emits no classification or settling-guard line, preserves `Entered <stateId>.` for ordinary entries, emits only the single question line for a Boss wait, and emits the unglyphed legacy failure line with full normalized error data (verifying [[playbook-runtime-57](#playbook-runtime-57)]).
 
 ### Host adapter
 
 #### playbook-runtime-21
 
 
-When CODE is driven through the Playbook Captain shell with CODE
-enabled via a `captain.options.playbooks.code` entry whose `from`
-resolves the `@sublang/playbook/code/registry` module, over stubbed
-cligent `CaptainContext` / `CaptainSession` primitives, the test
-suite shall fail unless the shell loads the CODE registry entry from
-that module, player calls reach `context.callPlayer` with the bound
-host player ids `code-coder` (via the free-text coding happy path)
-and `code-reviewer` (via a multi-stage flow that drives the FSM
-through a Reviewer state), adjudication reaches
-`context.callCaptain`, every CODE `callCaptain` invocation —
-classification and adjudication alike — passes
-`{ visibility: 'hidden' }`, status and telemetry reach the
-session, the per-turn `signal` flows into the runtime, the per-run
-player identity strings substituted into the Committer prompt's
-`<coder-llm>` / `<reviewer-llm>` placeholders come from the bound
-host player's `model` when it pins a model and fall back to its
-`adapter` when no model is pinned (both branches exercised), and the
-CODE registry entry's `summaryPolicy` carries the labels specified
-by [[playbook-runtime-15](playbook-runtime.md#playbook-runtime-15)], including
-every CODE review state id as `review round` and
-`adjudicateChallenges` as `rebuttal`, with no labels for any other
-state id, including `planAndImplement` or any tests-green state id (verifying [[playbook-runtime-4](#playbook-runtime-4)], [[playbook-runtime-15](#playbook-runtime-15)], [[playbook-runtime-16](#playbook-runtime-16)]).
+When CODE, REVIEW, and DECIDE are driven through the shell from their real registry modules, the test suite shall fail unless each registry declares its current required roles, player calls reach the frame's effective host bindings, model-or-adapter identities reach the compiled placeholders, hidden adjudication reaches the shared Captain queue, and each registry exposes only its own current summary labels and handoff guards (verifying [[playbook-runtime-4](#playbook-runtime-4)], [[playbook-runtime-15](#playbook-runtime-15)], and [[playbook-runtime-16](#playbook-runtime-16)]).
 
 #### playbook-runtime-32
 
@@ -1173,9 +809,8 @@ state id, including `planAndImplement` or any tests-green state id (verifying [[
 When the Playbook Captain shell adapter is driven end to end
 against a real `createTmuxPlayRuntime` instance — over fake player
 and captain adapters with a `RecordObserver` capturing the full
-record trace — through a `/code` Boss turn that triggers both CODE
-classification and adjudication judge calls, the test suite shall
-fail unless every CODE judge Captain-call record (`captain_prompt`,
+record trace — through a workflow turn that triggers adjudication,
+the test suite shall fail unless every judge Captain-call record (`captain_prompt`,
 `captain_event`, `captain_finished`) carries `visibility: 'hidden'`
 and no Boss-pane-visible record carries a raw judge reply.
 Hidden-tagged records are exactly the ones the tmux pane presenter
@@ -1206,7 +841,7 @@ no further status for that disposal, so the parked state's line
 reaches the host exactly once for that engagement.
 The rule binds every linked runtime, not the shared factory alone, so
 the suite shall drive the same disposal against each runtime that
-builds its own actor — DISCUSS today — and shall fail unless that
+builds its own actor — DECIDE today — and shall fail unless that
 disposal likewise appends only `session.disposed`. Because the
 omission is a per-runtime convention rather than a shared code path,
 the suite shall additionally discover, rather than enumerate, every
@@ -1235,13 +870,11 @@ under fake ports, the test suite shall fail unless (verifying [[playbook-runtime
   [[playbook-runtime-9](playbook-runtime.md#playbook-runtime-9)] returns a second
   such result;
 - a `callJudge` reply that is malformed JSON, names an undeclared
-  guard, or omits a required extracted (non-verbatim) payload
-  field — for example `taskDescription` on `taskReady` or
-  `question` on `needsBossReply` — lets XState route internally to the
+  guard, or omits a required extracted non-verbatim payload field
+  lets XState route internally to the
   failure state for cleanup but then rejects the public runtime method with
   the original adjudicator control error;
-- a `callJudge` reply that omits a verbatim payload field
-  (`reviews` or `challenges`) does _not_ throw: the runtime
+- a `callJudge` reply that omits a field marked `<verbatim final text>` does _not_ throw: the runtime
   substitutes the player's `finalText.trim()` into that field
   and the FSM advances; any judge-supplied value for those
   fields is overwritten by the verbatim text.
@@ -1279,14 +912,6 @@ test suite shall fail unless (verifying [[playbook-runtime-9](#playbook-runtime-
   token the empty result carried and starts fresh when that result
   cleared the stored token.
 
-#### playbook-runtime-49
-
-
-The DISCUSS runtime suite shall fail unless the initial-discussion Committer
-result metadata and resulting adjudicator prompt name all three exact
-`reviewScope` values, each value is accepted when supplied, and a prose or
-otherwise undeclared scope is rejected before it can select a review branch (verifying [[playbook-runtime-48](#playbook-runtime-48)]).
-
 #### playbook-runtime-33
 
 
@@ -1297,14 +922,12 @@ wrapped in a Markdown code fence amid prose, carries a trailing
 comma before a closing brace or bracket, or is truncated with an
 unclosed object or an unterminated string, the test suite shall
 fail unless the runtime recovers the intended object and advances:
-a messy adjudication reply driven through the captain bridge as an
-xstate actor advances the FSM under the named guard, and a messy
-classification reply driven through `handleBossInput` maps to the
-named FSM event and advances the actor. When a reply carries no
+a messy adjudication reply driven through the captain bridge advances
+the FSM under the named guard, and a messy pending-question classifier
+reply maps to the named reply or interrupt event. When a reply carries no
 recoverable JSON value, the test suite shall fail unless
 adjudication driven through the captain bridge lets the FSM settle at the
-failure state and then rejects the public runtime method, while classification driven through
-`handleBossInput` produces exactly one `emitStatus` call, makes no
+failure state and then rejects the public runtime method, while pending-question classification produces exactly one `emitStatus` call, makes no
 player call, sends no event, and leaves the actor unmoved (verifying [[playbook-runtime-7](#playbook-runtime-7)], [[playbook-runtime-10](#playbook-runtime-10)]).
 
 ### Classification and flow
@@ -1312,60 +935,24 @@ player call, sends no event, and leaves the actor unmoved (verifying [[playbook-
 #### playbook-runtime-24
 
 
-When the integration suite drives non-empty Boss turns whose
-classifier replies name `START_CODING`, `CONTINUE_IR`,
-`SUMMARIZE_IR`, and `BOSS_INTERRUPT`, the test suite shall fail
-unless each reply maps to its declared FSM event with the
-classifier-supplied payload.
-For `BOSS_INTERRUPT`, the suite shall fail unless each reply
-carries a valid `targetId` selected from the FSM's jumpable
-states (verifying [[playbook-runtime-1](#playbook-runtime-1)]).
+When the integration suite drives a fresh nonempty Boss turn through CODE, REVIEW, and DECIDE, it shall fail unless each runtime sends its declared deterministic initial event with the exact Boss text and no judge call (verifying [[playbook-runtime-1](#playbook-runtime-1)]).
 
 #### playbook-runtime-25
 
 
-When the runtime is driven through `handleBossInput` while the
-actor is outside `awaitBossReply`, with non-empty text, with text
-beginning with `/`, with a classifier reply that names no valid event type, with a
-classifier reply that names a valid event type but omits a
-required payload field, with a `BOSS_INTERRUPT` reply lacking a
-target state, and with empty or whitespace-only text, the test
-suite shall fail unless every non-empty text routes through
-`callJudge` and lands on the classifier-named FSM event, text
-beginning with `/` receives no special parsing, each invalid reply
-surfaces one `emitStatus` call and leaves the FSM unmoved, and
-empty text makes no judge call, player call, status emission, or FSM
-transition while still emitting the received/settled session trace (verifying [[playbook-runtime-1](#playbook-runtime-1)], [[playbook-runtime-7](#playbook-runtime-7)]).
+When a runtime is driven outside a Boss-reply wait with nonempty ordinary or slash-prefixed text and with empty or whitespace-only text, the test suite shall fail unless every nonempty input enters through the artifact's deterministic event with no classifier call and every empty input produces only the received and settled trace pair (verifying [[playbook-runtime-1](#playbook-runtime-1)] and [[playbook-runtime-7](#playbook-runtime-7)]).
 
 #### playbook-runtime-26
 
 
-When the runtime is driven through full multi-stage Boss turns
-that reach each player-invoking state involved in player
-binding — the single-commit flow (Coder, Committer CODE-15,
-Reviewer, ending at the terminal state), the Reviewer-cleared
-flow (CODE-16 with only `reviewerPlayer` populated), and the
-joint-commit flow (CODE-17 with both `coderPlayer` and
-`reviewerPlayer` populated) — the test suite shall fail unless
-each player invocation resolves to the expected `playerId`:
-`coder` for Coder, `reviewer` for Reviewer, `coder` for CODE-15,
-`reviewer` for CODE-16, and `coder` for CODE-17.
-In addition, when a configured committer alias
-(`CaptainInput.committerPlayer`) is present, the test suite shall
-fail unless every `Committer` state resolves to that player id
-(`coder` or `reviewer`) regardless of which of `coderPlayer` /
-`reviewerPlayer` is populated, while `input.player` stays
-`Committer` (verifying [[playbook-runtime-8](#playbook-runtime-8)]).
+When the CODE, REVIEW, and DECIDE suites drive every player-invoking state, they shall fail unless every Coder invocation uses local role `coder` and every Reviewer invocation uses local role `reviewer` (verifying [[playbook-runtime-8](#playbook-runtime-8)]).
 
 #### playbook-runtime-27
 
 
 When the runtime is driven to the FSM's terminal state and a
 further Boss turn is submitted, the test suite shall fail unless
-the runtime disposes and reconstructs the actor only after a real classified
-event so the new turn is processed from the idle state. `NO_ACTION`, classifier
-throw, and malformed classification shall leave the same terminal actor and
-shall emit no reconstruction transition.
+the runtime leaves the terminal actor unchanged for empty input and disposes and reconstructs it only for the artifact's valid initial event so the new nonempty turn is processed from idle.
 The direct runtime test verifies [[playbook-runtime-12](#playbook-runtime-12)].
 
 #### playbook-runtime-28
@@ -1397,26 +984,7 @@ Q+A continuation blocks (verifying [[playbook-runtime-2](#playbook-runtime-2)], 
 #### playbook-runtime-31
 
 
-When the Playbook Captain shell initializes the CODE registry entry
-with the option slice `captain.options.playbooks.code.options` set to
-the empty object `{}`, set to `{ committer: 'coder' }` and
-`{ committer: 'reviewer' }`, set to a `committer` value that is
-neither `coder` nor `reviewer`, set to an object carrying an unknown
-key, and absent, the test suite shall fail unless the `{}` and
-absent cases initialize and record an empty validated options set
-for the next CODE engagement; the valid-`committer` cases record
-that role id to pass into `createPlaybookRuntime` as the Committer
-player id when CODE is engaged; the invalid-`committer` case and the
-unknown-key case each cause `init` to reject with an error naming
-the offending path
-(`captain.options.playbooks.code.options.committer` for the invalid
-value); and the derived `coderPlayer` / `reviewerPlayer` identity
-strings still come from the host players bound to the CODE local
-roles regardless of the option slice.
-The test suite shall also fail unless the
-`@sublang/playbook/code/registry` module exposes the CODE registry
-entry — with its `summaryPolicy` and `validateOptions` — used by
-these assertions (verifying [[playbook-runtime-29](#playbook-runtime-29)], [[playbook-runtime-30](#playbook-runtime-30)]).
+When the shell initializes each real CODE, REVIEW, and DECIDE registry with an absent slice, `{}`, a non-object, and an object carrying an unknown key, the test suite shall fail unless only the absent and empty slices pass and every rejection names that playbook's option path and offending key when present (verifying [[playbook-runtime-29](#playbook-runtime-29)] and [[playbook-runtime-30](#playbook-runtime-30)]).
 
 ### Runtime contract module
 
@@ -1431,7 +999,7 @@ contract agrees with
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
 `emitTelemetry`.
 The test suite shall additionally fail unless the module exports
-the player-call, Captain-call, nested-call, JSON value/error, structured-state,
+the player-call, player-session-store, Captain-call, nested-call, JSON value/error, structured-state,
 session, trace, run-result, runtime, and runtime-factory contract types,
 unless `PlayerResult`
 exposes optional `resumeToken`, unless `callPlayer` requires explicit
@@ -1441,7 +1009,7 @@ requires visible-or-hidden visibility plus explicit resume selection and
 exposes an optional tool allowlist whose omission is distinct from an explicit
 empty list,
 unless `PlaybookRuntime.init` accepts a causal
-`PlaybookSession`, and unless `handleBossInput` and
+`PlaybookSession` with the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-59](#playbook-runtime-59)], and unless `handleBossInput` and
 `resumePlaybookCall` return `PlaybookRunResult`; its import graph
 includes no CODE or FSM module.
 The test suite shall additionally fail unless the linker contract
@@ -1453,95 +1021,51 @@ the linked runtime authors, shall name the `controlContextFields` spec
 member that carries it, shall state that a runtime naming no member
 carries no `context`, and shall no longer describe the view as a
 sanitized serialization of the FSM context; and its output section
-shall list `controlContextFields` among the members an emitted module
-supplies, shall state that its default is nothing rather than
+shall list `controlContextFields` and complete `playerStates` among the members an emitted module
+supplies, shall state that the context projection's default is nothing rather than
 everything, and shall require the `_internal` composers the artifact's
 own machine uses rather than a fixed player-and-Captain pair.
 Matching type shapes shall not satisfy this: the retired text declared
 the same optional `context` while describing the behavior the
-projection replaced (verifying [[playbook-runtime-34](#playbook-runtime-34)]).
+projection replaced (verifying [[playbook-runtime-34](#playbook-runtime-34)] and [[playbook-runtime-59](#playbook-runtime-59)]).
 
 #### playbook-runtime-36
 
 
-The test suite shall fail unless `@sublang/playbook/code/playbook`
-obtains and re-exports its shared player, Captain-call, nested-call, state, session,
-trace, result, and runtime contract types from
-`@sublang/playbook/runtime` rather than declaring its own.
-The check shall rest on observable declaration evidence: the shipped
-`code.playbook.d.ts` shall import those names from the shared module and
-shall carry no local declaration for them. A
+The test suite shall fail unless each public CODE, REVIEW, and DECIDE playbook module obtains and re-exports its shared player, player-session-store, Captain-call, nested-call, state, session, trace, result, and runtime contract types from `@sublang/playbook/runtime` rather than declaring its own.
+The check shall rest on observable declaration evidence in each shipped `*.playbook.d.ts` and not on mutual assignability alone.
+A
 mutual-assignability check alone shall not satisfy this item, because
 TypeScript's structural typing makes a same-shaped local redefinition
-assignable to the shared types and would therefore pass while CODE
-still violated the re-export requirement of
-[[playbook-runtime-5](playbook-runtime.md#playbook-runtime-5)] and
-[DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) Addendum A4 (verifying [[playbook-runtime-5](#playbook-runtime-5)]).
+assignable to the shared types and would therefore pass while an artifact still violated [[playbook-runtime-5](#playbook-runtime-5)] (verifying [[playbook-runtime-5](#playbook-runtime-5)]).
 
 ### Session Trace and Player Continuation Coverage
 
 #### playbook-runtime-39
 
 
-Where the integration suite drives CODE, DISCUSS, and a direct-Captain linked
-runtime through real or generated runtimes with fake ports, the test suite shall fail unless each
-init-to-dispose session keeps its supplied id immutable, two sessions
-use distinct ids, and every trace event carries the session/playbook
-ids, schema version, contiguous sequence, timestamp, and the required
-turn/call ids.
-The trace shall fail unless session, exact Boss input, judge/player/Captain
-call pairs, FSM transitions, status emissions, settlement, normalized
-failures, and disposal are present in boundary order; empty input shall
-produce only its Boss received/settled trace around no runtime action.
-Mutating the caller's session object after `init` shall not change later trace
-identity, and invalid root/child causality, including a child reusing its root
-or parent session id, shall reject before session start.
-When a session-start sink records and rejects while the best-effort disposal
-sink also rejects, CODE and DISCUSS shall each reject with the original start
-error, record one start/disposal pair, clear the failed binding, and start a
-replacement session with trace sequence one.
-For each CODE, DISCUSS, and direct-Captain linked runtime, disposal requested
-during initialization shall share one retained teardown promise, wait for
-initialization cleanup, record at most one disposal boundary, and reject every
-later initialization after teardown begins. Disposal before initialization
-shall be terminal, and every later disposal shall return that same promise.
-The player calls shall fail unless the first call for each resolved
-player passes `resume: false`, the next same-player call passes the
-last returned token, a rotated token replaces it, an omitted token
-clears it, an aborted or error result can preserve a returned token,
-separate players retain independent tokens, a Committer alias shares
-the selected player's token, and a new runtime session starts fresh
-rather than inheriting a prior token.
-Host `PlayerResult` and `CaptainResult` objects shall fail unless they are
-validated as exact JSON-safe shapes, detached, and frozen before final text,
-errors, or resume tokens are consumed. A non-cooperative player promise that
-resolves after its combined signal aborts shall be drained without adopting
-its token or tracing success. A first non-abort port or result-validation
-error shall remain the public failure when a coincident abort or the matching
-finish-trace sink also fails, while each started call still has only one
-finished boundary (verifying [[playbook-runtime-37](#playbook-runtime-37)], [[playbook-runtime-38](#playbook-runtime-38)]).
+Where the integration suite drives CODE, REVIEW, DECIDE, and a direct-Captain runtime through complete sessions, it shall fail unless session identity is immutable, causality is validated, trace sequences are contiguous and boundary-complete, initialization and disposal faults preserve their first causal error, and every started call has exactly one finish (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
+The suite shall fail unless a standalone runtime starts each player fresh, resumes and rotates that player's validated token, clears an omitted token, keeps different players independent, preserves continuity across parked turns, and discards it on disposal (verifying [[playbook-runtime-38](#playbook-runtime-38)]).
+Host results shall fail unless they are validated, detached, and frozen before any final text, error, or resume token is consumed, and a late result after abort shall not mutate continuity or trace success (verifying [[playbook-runtime-37](#playbook-runtime-37)] and [[playbook-runtime-38](#playbook-runtime-38)]).
+
+#### playbook-runtime-56
+
+Where the integration suite initializes a runtime with a fake `PlayerSessionStore` and drives a host-mapped nested frame, it shall fail unless the declared store methods have the exact synchronous signatures of [[playbook-runtime-59](#playbook-runtime-59)], every call uses the frame-local role key, the host view maps that key to the effective root binding, selection occurs before the player-start trace and call, update or clearing occurs before the player-finish trace and adjudication, snapshot returns local-role keys, restore replaces exactly the frame view without clearing another binding, and a rejected host call preserves the prior selection (verifying [[playbook-runtime-55](#playbook-runtime-55)] and [[playbook-runtime-59](#playbook-runtime-59)]).
 
 ### Structured and Composed Execution Coverage
 
 #### playbook-runtime-43
 
 
-Where the integration suite drives DISCUSS through its real linked
-runtime with gated Host and Participant ports, the test suite shall
-fail unless both players enter each initial and reconciliation round
-before either result is required, both completion orders yield the same
-joined next-round inputs, and no next round begins before both prior
-branches finish.
+Where the integration suite drives DECIDE through its real linked
+runtime with gated Coder and Reviewer ports, the test suite shall
+fail unless both independent proposals start before either result is required, both completion orders yield the same joined inputs, neither proposal prompt contains the other's output, and the Coder commit starts only after both finish.
 The test suite shall fail unless one or two branch-local Boss questions
 park and resume independently without restarting a completed or still
 waiting sibling, a branch failure stops its sibling and reaches
 `failed`, distinct players overlap, same-player overlap rejects, and
 direct Captain and hidden judge calls never overlap.
-It shall fail unless the four parallel branch working leaves are absent from
-the Boss-interrupt catalog and interrupting either parallel round parent starts
-both of that round's branches intentionally only after the required topic or
-promoted proposals exist; a contextless parent interrupt and an interrupt that
-targets a wait state shall leave the machine unmoved.
+It shall fail unless a Boss interrupt restarts both proposal branches with the replacement topic, clears both prior branch results and questions, and does not target an individual branch or wait state.
 Structured state telemetry and trace shall remain JSON-safe, identify
 all active leaves and tags, contain no `[object Object]` classifier
 state, use contiguous trace sequence numbers, and settle only after all
@@ -1605,8 +1129,9 @@ sequence numbers across the export/restore boundary.
 It shall fail unless `exportSnapshot` returns `undefined` during an
 active turn and after disposal; unless `restore` rejects a
 schema-version mismatch, a playbook-id mismatch, and an already
-initialized instance; and unless the DISCUSS linked runtime round-trips
+initialized instance; and unless the DECIDE linked runtime round-trips
 a parked branch question through the same export/restore surface (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
+The suite shall also fail unless the compiled default Captain exposes both snapshot methods while its shell performs no Captain snapshot persistence (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 
 ### Control Surface Coverage
 
@@ -1620,7 +1145,7 @@ factory-built runtime exposes `describe` and `apply` together, and
 unless both members throw before `init`, during an active boundary,
 and after disposal.
 The suite shall also fail unless factory construction rejects the real
-DISCUSS FSM because it declares parallel states.
+DECIDE FSM because it declares parallel states.
 The suite shall fail unless `describe()` is side-effect free (no
 trace, status, or telemetry; back-to-back views deep-equal; the
 machine snapshot unmoved) and its view carries the normalized state,

@@ -78,7 +78,7 @@ The resume surface follows the Codex/Claude conventions [[1]] [[2]]:
 - No resume for a runtime suspended on a nested playbook call; the one-shot host still cannot answer it, and its state cannot be safely persisted (§1).
 - No trace persistence and no trace-replay reconstruction; the boundary trace remains observer-facing ([DR-010](010-playbook-session-tracing-and-resume.md) §6).
 - No cross-process resume for the interactive Playbook Captain shell; its parked engagements remain in-memory ([DR-008](008-playbook-captain-shell.md)).
-- No snapshot surface on the compiled default Captain runtime; it is shell-internal and never runs one-shot.
+- The compiled default Captain exposes the shared factory's snapshot methods, but the interactive shell does not persist or restore Captain snapshots and Captain never runs one-shot.
 
 ## Consequences
 

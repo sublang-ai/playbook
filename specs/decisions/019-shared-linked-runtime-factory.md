@@ -29,20 +29,23 @@ Accepted.
 ### 2. The `spec` parameter surface
 
 - Required: `snapshotOptions` — validate and JSON-snapshot the caller's per-run options.
-- Optional strategy members, each with a generic default derived from the FSM artifact's own data per `slc/link.md`: `label`, `machineInput`, `entryEvent` (deterministic textual entry), `bossEvents` (the exact judge-vs-runtime field metadata erased with the FSM's TypeScript event union), `classifyBossText`, `classificationStatus`, `resolvePlayerId` (default: lowercased player name), `composePlayerPrompt` / `composeCaptainPrompt` (default: continuation blocks plus canonical kebab-token-to-camel-field placeholder substitution), `placeholderFields` (linker-known exceptions such as an authored alias), `buildJudgePrompt`, `extractRequiredFields` (default: bilingual `Output shall include` clause scan), `verbatimPayloadFields`, `resumableStateIds` (default: the FSM's `awaitBossReply` BOSS_REPLY targets), `statusesForState`, `normalizeTransitionEvent` / `transitionEventFields`, and `scriptCwd` (default: the validated options' `cwd`).
-- A linker-emitted thin module therefore normally supplies only `snapshotOptions`, `entryEvent`, any additional `bossEvents` contracts and `placeholderFields` exceptions that cannot survive TypeScript erasure, and `transitionEventFields`; hand-maintained artifacts override members to preserve their existing observable behavior exactly. The shared classifier always uses the flat exact `{ type, ...declaredFields }` wire shape, keeps textual fields runtime-owned, and permits applicable entry/interrupt directives while parked. Supplied metadata may extend a runtime-derived contract but shall not replace or weaken an entry text field or derived closed interrupt target; conflicting duplicates fail factory construction.
+- Optional strategy members, each with a generic default derived from the FSM artifact's own data per `slc/link.md`: `label`, `machineInput`, `entryEvent` (deterministic textual entry), `bossEvents` (the exact judge-vs-runtime field metadata erased with the FSM's TypeScript event union), `classifyBossText`, `classificationStatus`, `resolvePlayerId` (default: lowercased player name), `composePlayerPrompt` / `composeCaptainPrompt` (default: continuation blocks plus canonical kebab-token-to-camel-field placeholder substitution), `placeholderFields` (linker-known exceptions such as an authored alias), `buildJudgePrompt`, `extractRequiredFields` (default: bilingual `Output shall include` clause scan), `verbatimPayloadFields`, `resumableStateIds` (default: the FSM's `awaitBossReply` BOSS_REPLY targets), `playerStates` (complete player and display-label metadata that selects the canonical status and classification defaults unless explicitly overridden; omission preserves the metadata-absent legacy defaults), `statusesForState`, `normalizeTransitionEvent` / `transitionEventFields`, and `scriptCwd` (default: the validated options' `cwd`).
+- A linker-emitted thin module therefore normally supplies `snapshotOptions`, `entryEvent`, complete `playerStates`, any additional `bossEvents` contracts and `placeholderFields` exceptions that cannot survive TypeScript erasure, and `transitionEventFields`; hand-maintained artifacts override members to preserve their existing observable behavior exactly.
+- The shared classifier always uses the flat exact `{ type, ...declaredFields }` wire shape, keeps textual fields runtime-owned, and permits applicable entry or interrupt directives while parked.
+- Supplied metadata may extend a runtime-derived contract but shall not replace or weaken an entry text field or derived closed interrupt target; conflicting duplicates fail factory construction.
 
 ### 3. The linker emits thin modules for factory-backed FSMs
 
 - For an FSM in the shared factory's single-region domain, `slc/link.md` §Output specifies the thin artifact: the relative FSM import, the derived `PlaybookRuntimeOptions` interface (plus `cwd` when a script state exists), the shared-contract type re-exports, the `_internal` composer surface, and the default-exported factory call.
+- Every newly emitted thin artifact shall include `playerStates` as the complete map of its typed player-invoking states to the GEARS player and exact FSM description, using an empty map when no such state exists.
 - Emitted output stays erasable TypeScript with a source-only relative FSM import and bare package specifiers for the shared engine and contract modules.
 
 ### 4. Additive compatibility
 
 - Every pre-existing export of `@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` keeps working unchanged, so previously linked fat artifacts continue to run against this package.
 - The reference CODE artifact is ported to the thin form under its unchanged test suites.
-  The DISCUSS runtime keeps its own machinery: it interprets a parallel-region FSM with observably different boundary tracking, failure aggregation, and status scheduling that its suites pin.
-  Converging DISCUSS onto the shared factory is future work under its own record.
+  The DECIDE runtime keeps its own machinery because it interprets a parallel proposal pair with observably different boundary tracking, cancellation, and status scheduling that its suites pin.
+  Converging DECIDE onto the shared factory requires a future parallel profile.
 
 ## Consequences
 
@@ -50,3 +53,8 @@ Accepted.
 - A factory-backed linked artifact collapses to its per-workflow spec — roughly two orders of magnitude fewer generated lines — and the expensive agent link step no longer re-derives interpreter machinery it can get wrong.
 - The generic strategy defaults are directly unit-tested in `src/xstate-playbook-runtime.test.ts` over synthetic FSMs covering all four actor kinds.
 - Parallel-region FSMs still require their own linked machinery until the shared factory grows a parallel profile.
+
+## References
+
+- [SLC linker contract](../../slc/link.md)
+- [[playbook-runtime-5](../packages/playbook-runtime.md#playbook-runtime-5)] defines the public linked-runtime profile.

@@ -13,9 +13,9 @@ Compile the maintained CODE, REVIEW, and DECIDE sources into releasable nested p
 
 ## Deliverables
 
-- [ ] Canonical specs use the package-only item layout and describe the three current workflows.
-- [ ] Nested same-role players retain one truthful backend conversation within a root engagement.
-- [ ] SLC preserves authored instruction blocks, quoted relayed context, and verbatim player outputs.
+- [x] Canonical specs use the package-only item layout and describe the three current workflows.
+- [x] Nested same-role players retain one truthful backend conversation within a root engagement.
+- [x] SLC preserves authored instruction blocks, quoted relayed context, and verbatim player outputs.
 - [ ] CODE, REVIEW, and DECIDE sources, GEARS, FSMs, linked runtimes, registries, and generated verification agree.
 - [ ] Package exports, configuration, documentation, smoke, and acceptance cover the current workflows.
 - [ ] Deterministic and real-agent release gates pass without publishing or tagging.

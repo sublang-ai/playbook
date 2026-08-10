@@ -18,7 +18,7 @@ The Playbook Captain shell creates a replacement runtime after final completion 
 This can leak an earlier engagement's player context into a new playbook session.
 
 cligent distinguishes its transport `AgentEvent.sessionId` from the opaque backend `resumeToken` used for continuation.
-Only the latter is safe for resume.
+Only the latter is safe for resume [[1]].
 
 ## Decision
 
@@ -100,7 +100,7 @@ An aborted or error result may therefore preserve a returned token.
 A thrown port call with no result shall leave the prior token unchanged.
 The runtime shall not retry fresh after an invalid resume token.
 
-The map key shall be the resolved player id, so a composite role such as Committer shares the Coder or Reviewer session it actually invokes.
+The map key shall be the resolved player id for a private store and the effective host-player binding for a host-owned root store, so exact same-role nested frames share only the conversation they actually invoke.
 Runtime-owned continuation survives parked Boss turns and an actor rebuild inside that runtime, and is discarded on runtime disposal.
 Host-owned continuation survives child return and disposal, is shared only by frames mapped to the same effective binding, and is discarded with the root engagement.
 
@@ -116,7 +116,7 @@ The shell shall use cligent's live-session `Captain.prepareDispose()` hook to di
 
 ### 5. Boss-question continuation
 
-[DR-005](005-boss-reply-suspension-path.md) §7 is amended: the labelled Boss question and answer blocks remain mandatory, and the resumed state may additionally continue the same backend player session under this decision.
+[DR-005](005-boss-reply-suspension-path.md) §5 is amended: the labelled Boss question and answer blocks remain mandatory, and the resumed state may additionally continue the same backend player session under this decision.
 The explicit Q+A remains deterministic input and an adapter-independent fallback; backend resume preserves conversation and tool context.
 
 ### 6. Preserved scope
@@ -133,3 +133,7 @@ A host observer may persist `playbook.trace`; durable storage and cross-process 
 - Parked and nested mapped engagements resume each resolved player explicitly from the last authoritative adapter token.
 - The public runtime contract and authored linker contract change incompatibly before 1.0.
 - Trace sinks can reconstruct the complete runtime-boundary history without an unbounded conversation ledger in the Captain shell.
+
+## References
+
+[1]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-033 "cligent player-result continuation contract"

@@ -6,231 +6,64 @@
 ## Status
 
 Accepted.
-[DR-012](012-default-captain-playbook.md) amends this record by routing ordinary idle intent through a compiled non-registry Captain, reserving `captain` as a playbook id and effective command, and exempting that internal root from player visibility.
-[DR-021](021-inline-agent-settings.md) supersedes the top-level `profiles` map, the profile-id scalar, and the agent-block `profile` key below: every captain and player now carries its own settings inline.
-The registry, CLI, role-binding, enabled-external-playbook visibility, and summary-policy constraints remain in force where later decisions have not amended them.
-[DR-029](029-session-scoped-conversational-captain.md) amends §5: summary wording stays registry-owned while composition becomes outcome-grounded and the saved-counts line is gated to nonzero counted activity.
-DR-029 also supersedes §7 in part — different-command ask-first is replaced by the validated `switch`, and telemetry-only state observation is joined by `describe()`; §1's `summaryPolicy` registry surface stands.
-[DR-030](030-shared-mapped-player-continuity.md) amends §4 for nested frames: the static namespaced roster remains, while an exact same-name child role inherits its nearest ancestor binding and its root engagement's continuation.
+[DR-021](021-inline-agent-settings.md) replaces the former profile model with inline agent settings.
+[DR-029](029-session-scoped-conversational-captain.md) places the compiled session Captain outside the engagement stack and owns ordinary-language routing and outcome-grounded replies.
+[DR-030](030-shared-mapped-player-continuity.md) adds exact same-role inheritance and root-owned continuation to nested frames.
 
 ## Context
 
-[DR-008](008-playbook-captain-shell.md) introduced the Playbook Captain shell over registered `PlaybookRuntime` factories.
-Its first implementation registered only CODE and explicitly deferred multiple parked engagements, multi-playbook discovery, and a generic `playbook` executable.
-
-DR-004 links CODE into a host-agnostic `PlaybookRuntime` ([DR-004](004-link-code-fsm-to-playbook-runtime.md)), and playbook-runtime-5 pins the runtime boundary: no host-specific types and interaction exclusively through `PlaybookPorts` ([[playbook-runtime-5](../packages/playbook-runtime.md#playbook-runtime-5)]).
-The shell registry shape is therefore the right integration point for additional FSM workflows.
-
-The current `playbook-code` launcher remains CODE-specific.
-It seeds a CODE overlay, maps fixed CODE roles to tmux-play players, writes CODE options under `captain.options.code`, and launches the Playbook Captain shell with CODE registered.
-The generic `playbook` command replaces that path rather than preserving a CODE-specific preset.
-This is an intentional pre-1.0 breaking simplification: one executable and one config model avoid maintaining a parallel CODE-only composer, default registry path, and option namespace.
-
-cligent 0.13.0 adds tmux-play dynamic player visibility: the configured player roster remains fixed for a session, while `layout.initialVisible` and Captain-side `setVisiblePlayers` calls control which configured players have visible panes [[2]].
-This lets the generic `playbook` command target tmux-play without showing every enabled playbook's players at once.
-
-The desired next surface is a generic `playbook` command that can enable multiple playbooks, expose deterministic commands such as `/code`, route ordinary intent through the Captain shell, and still keep each selected playbook responsible for classifying its own Boss turns.
+The original launcher and shell were tied to CODE, fixed role names, and one runtime.
+A public playbook host needs explicit enablement, independently compiled workflows, deterministic commands, and static tmux players whose visible subset can follow a nested active leaf.
+The configuration must remain inspectable and must not grant an imported registry authority over another playbook's settings.
 
 ## Decision
 
-### 1. Registry entries become the playbook manifest
+### 1. Registry manifests
 
-Each registered playbook shall be represented by a registry entry with these design fields:
+Each enabled playbook shall be loaded from an explicit user-configured module whose default export declares its stable id, default command, routing intent, required local roles, optional summary policy, option validator, and runtime factory.
+The shell shall validate each registry against only that playbook's namespaced option slice and shall derive lifecycle from runtime results and structured descriptors rather than registry state ids.
+The bundled external registries are CODE with role `coder`, REVIEW with roles `coder` and `reviewer`, and DECIDE with roles `coder` and `reviewer`.
+The internal session Captain is not a registry entry, and `captain` is reserved as a playbook id, command, and local role.
 
-| Field | Meaning |
-| --- | --- |
-| `id` | Stable playbook id and default options namespace key. |
-| `command` | Default slash command without `/`; may be overridden by config. |
-| `intent` | Routing description for the compiled default Captain's sanitized catalog. |
-| `requiredRoleIds` | Local role ids the runtime may pass to `callPlayer`. |
-| `summaryPolicy` | Optional declaration for visible turn summaries and wording. |
-| `validateOptions` | Validator for that playbook's own option slice. |
-| `createRuntime` | Factory for the linked `PlaybookRuntime`. |
+### 2. Generic configuration
 
-The CODE registry module shall declare `id: "code"`, command `code`, and
-required roles `coder` and `reviewer`.
-CODE's Committer alias shall remain a CODE-owned option, not a global shell concept.
+The user config shall keep host fields at the top level and shall enable playbooks under `playbooks.<id>` with `from`, optional `command`, `players`, and that entry's remaining option fields.
+Captain and player values shall be adapter shorthands or self-contained inline agent blocks under [DR-021](021-inline-agent-settings.md).
+The launcher shall normalize each enablement into `captain.options.playbooks.<id>` and shall pass only its option slice to the registry.
+Missing or invalid modules, id mismatches, duplicate ids or effective commands, reserved names, missing required roles, and a playbook with no visible effective player shall fail before launch.
 
-[DR-011](011-composable-playbook-execution.md) supersedes registry-owned
-lifecycle state ids with `PlaybookRunResult` outcomes and normalized XState
-descriptor tags.
-Registry entries shall no longer declare `idleStateId`, `finalStateId`, or
-`parkStateIds`; the shell shall not hardcode CODE state ids such as `failed`,
-`awaitBossReply`, or `done`.
+### 3. Static roster and nested bindings
 
-### 2. Registry loading uses explicit `from` modules
+The launcher shall create the static tmux roster as the union of each configured playbook's namespaced `<id>-<role>` fallback players because tmux can change visibility but cannot create or reconfigure player identities after startup [[1]].
+Distinct playbook declarations shall remain distinct configured players even when their agent settings are equal.
+At runtime, a nested exact same-role child shall inherit the nearest ancestor's effective host player and root-owned continuation, while an unmatched child role shall use its own namespaced fallback under [DR-030](030-shared-mapped-player-continuity.md).
+Registry identity metadata and visible panes shall follow these effective bindings rather than the unused fallback.
 
-The generic `playbook` command shall load every enabled playbook from an explicit module specifier.
-CODE shall be configured with `from: "@sublang/playbook/code/registry"` like any other playbook.
-The loader shall reject missing `from`, failed imports, modules without a valid registry entry, duplicate playbook ids, duplicate effective commands, and any configured playbook id or effective command equal to the reserved internal name `captain`.
+### 4. Active visibility
 
-tmux-play custom Captain configuration already uses user-supplied module specifiers for `captain.from` [[1]].
-Registry `from` modules reuse that executable local-configuration trust boundary.
+The launcher shall set `layout.initialVisible` from the first enabled playbook and shall preserve the user's other host layout, notification, and theme fields.
+When the shell selects, resumes, pushes, or returns to an external leaf, it shall request that leaf's distinct effective players before dispatching Boss text.
+The internal session Captain shall request no player visibility, and a display-only tmux reconciliation failure shall not block runtime dispatch.
 
-### 3. Enablement normalizes into `captain.options.playbooks`
+### 5. Summary ownership
 
-The generic launcher shall compile its top-level config into a tmux-play config whose Captain is `@sublang/playbook/playbook-captain`.
+Each registry may declare only the state labels, adjudication guards, and saved-count wording its workflow owns.
+During a root turn, descendant activity shall be included but each frame's events shall be interpreted by that frame's policy, so CODE does not duplicate REVIEW's nested review rounds.
+The result reply shall remain grounded in the shell's outcome report under [DR-029](029-session-scoped-conversational-captain.md), and a zero-activity turn shall carry no saved-counts line.
 
-> Superseded by [DR-021](021-inline-agent-settings.md): the `profiles` map and every profile reference in this section and its example are retired; agent settings are inline per captain and player.
+### 6. CLI surface
 
-Users shall configure reusable agent settings with a top-level `profiles` map and enabled playbooks with a top-level `playbooks` map.
-The launcher shall normalize those user-facing maps into the shell's internal `captain.options.playbooks` map.
-
-An example generic config is:
-
-```yaml
-profiles:
-  claude-code:
-    adapter: claude
-    reasoningEffort: high
-
-captain: claude-code
-
-playbooks:
-  code:
-    from: "@sublang/playbook/code/registry"
-    players:
-      coder: codex
-      reviewer: claude-code
-    committer: reviewer
-```
-
-Scalar `captain` and player values shall resolve as profile ids or adapter shorthands.
-Profile ids shall not collide with known adapter shorthand ids such as `claude` or `codex`; the launcher shall reject a colliding profile id rather than let a profile silently shadow an adapter shorthand.
-Full captain and player blocks shall follow the host tmux-play agent-block schema ([DR-006](006-code-config-composition.md) §2) and may reference a profile.
-
-Within a playbook block, `from`, `command`, and `players` are launcher-owned keys.
-Every other key belongs to that playbook's option slice.
-This keeps common options such as CODE's `committer` at the level users expect, while the launcher still passes a clean option slice to the registry entry.
-
-The normalized internal shell configuration shall have this shape, excluding the generated top-level tmux-play player roster:
-
-```yaml
-captain:
-  options:
-    playbooks:
-      code:
-        from: "@sublang/playbook/code/registry"
-        command: code                           # optional; defaults from entry
-        options:
-          committer: reviewer
-```
-
-The shell shall pass each registry entry only its normalized option slice; entries shall validate that slice and shall not extract their own namespace from the full Captain options bag.
-
-The generic `playbook` command shall compile user-facing CODE options into `captain.options.playbooks.code.options`.
-The shell shall require `captain.options.playbooks` and shall not infer a CODE-only default from `captain.options.code`.
-
-### 4. Player instances are static; visible panes follow the active playbook
-
-The generic launcher shall treat each playbook's `players` map as the source of host players for that playbook.
-It shall compile those playbook-local player declarations into the top-level tmux-play player roster.
-That roster is a launch-time union of every enabled playbook's generated players, because tmux-play visibility can change panes but cannot create, delete, or reconfigure runtime player identities after startup [[2]].
-
-The default binding for local role `<role>` in playbook `<id>` shall be `<id>-<role>`.
-A hyphen joins the two because cligent tmux-play player ids must match `^[a-z][a-z0-9_-]*$`, which excludes a `.` separator.
-The generic user-facing config shall not support binding a role to a player from another playbook or to a shared top-level host player.
-
-Profiles reuse configuration, not player instances.
-When two playbooks reference the same profile, the launcher shall still create separate namespaced host players in the static roster.
-When a nested child declares a role id present on its active ancestor path, the child frame shall use the nearest ancestor's effective host-player binding for that role.
-A mapped ancestor binding is authoritative, so that nested frame ignores its own same-role agent block; the block remains the fallback for a root or a frame with no matching ancestor.
-A child-only role shall use the child's namespaced host player.
-All effective bindings shall retain their player continuation for the lifetime of the root engagement tree and start fresh for a replacement root engagement ([DR-030](030-shared-mapped-player-continuity.md)).
-
-The shell shall apply the binding at two boundaries:
-
-- At the shell port boundary between sub-runtime local roles and tmux-play host players.
-- In the metadata passed to `createRuntime`, so playbooks such as CODE can derive prompt identity strings from the host player actually bound to each local role.
-
-The generic launcher shall validate that every enabled playbook's required local roles resolve to generated host player ids present in the composed tmux-play roster.
-
-For the tmux-play host, the first generic design requires each enabled registry playbook to resolve at least one visible local role.
-Pure Captain-only registry playbooks are deferred until a host supports a zero-player visible state or a later design defines a fallback visible set.
-The compiled default Captain of [DR-012](012-default-captain-playbook.md) is an internal non-registry root, so it is exempt and makes no visibility request.
-
-The generic launcher shall set the composed tmux-play `layout.initialVisible` to the generated players for the first enabled playbook in config order.
-The generic config may use tmux-play layout window and column-weight fields, including the cligent 0.13.0 shape-specific `singlePlayerColumnWeights` and `multiPlayerColumnWeights` fields, but the generic launcher owns `layout.initialVisible`.
-Column-weight fields are session-level per visible-column shape, not per playbook.
-Raw tmux-play configs launched through `--config` pass-through retain direct access to `layout.initialVisible`.
-
-When the shell selects, resumes, or routes to an enabled registry playbook, it shall request tmux-play visibility for that frame's effective host player ids before dispatching Boss text to the playbook runtime.
-The shell shall not request an empty visible set and shall make no visibility request for the internal default Captain root.
-Because the launcher has already validated generated player ids, a `setVisiblePlayers` validation rejection is an internal shell or composition error.
-tmux pane reconciliation failures are display-only in tmux-play, so they shall not block dispatch to the playbook runtime.
-After a playbook reaches final completion or is dismissed, the visible panes may remain on the last selected playbook until the next selection.
-
-### 5. Summary policy is registry-owned and opt-in
-
-The shell may keep generic count collection for player interruptions, inter-player copy-pastes, and summary-visible state counts.
-The wording of visible summaries shall not be CODE-specific.
-
-Each registry entry may declare a `summaryPolicy` that maps counted state ids and guard names to Boss-visible labels and provides the saved-counts line template or equivalent wording policy.
-When an entry declares no summary policy, the shell shall skip the visible turn-summary block for that playbook.
-
-CODE shall provide the existing review/rebuttal summary policy through its registry entry.
-Generalizing summaries shall require CAPTAIN user/dev/test spec updates because [[playbook-captain-19](../packages/playbook-captain.md#playbook-captain-19)] currently pins CODE-specific saved-count wording.
-
-### 6. Generic launcher
-
-The package shall add a generic `playbook` executable.
-Without `--config`, it shall read a top-level config at `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`, compose a tmux-play config, run launcher-owned adapter readiness checks, and launch tmux-play.
-When that config is absent, the launcher shall seed a starter generic config that enables CODE through explicit `from`, then continue.
-With `--config`, it shall preserve the current pass-through behavior by launching that config directly.
-
-The generic config shall keep host fields top-level.
-It shall not introduce a `config:` wrapper around `layout`, `notifications`, `captain`, `profiles`, or `playbooks`.
-The generic user-facing config shall not expose a top-level `players` roster because such a roster invites cross-playbook player sharing.
-Top-level `players` remains available only in raw tmux-play configs launched through `--config` pass-through.
-
-The generic `playbook --list` command shall print configured playbooks with their ids, effective commands, and intents.
-Pre-engagement forms such as `playbook code "task"` are deferred until tmux-play exposes or documents a clean initial Boss-turn injection surface.
-
-### 7. Preserved DR-008 constraints
-
-The shell shall still support only one Boss-selected root engagement.
-[DR-011](011-composable-playbook-execution.md) supersedes the one-runtime
-limit by allowing that root to own a LIFO stack of nested child
-sessions.
-When one root engagement is active, a different registered command shall ask Boss to finish, dismiss, or resolve the current call stack before dispatching another root.
-
-The shell shall continue to call a selected runtime's `handleBossInput` with text.
-It shall not pre-classify in-playbook events, choose interrupt targets, expose jumpable state lists, or add a `handleBossEvent` API.
-
-`PlaybookRuntime.getSnapshot()` remains deferred.
-Telemetry mirroring remains the first design's state-observation mechanism.
-
-Adapter readiness remains launcher-owned or owned by a dedicated adapter-readiness registry.
-Playbook registry entries shall not define credential or adapter readiness predicates.
-
-### 8. Contract amendments for implementation
-
-The implementing specs shall reconcile this DR with released CODE runtime and launcher items.
-
-- [[playbook-runtime-15](../packages/playbook-runtime.md#playbook-runtime-15)] shall be amended so CODE identity derivation uses the active role binding rather than raw `session.players` ids `coder` and `reviewer`.
-- [[playbook-runtime-30](../packages/playbook-runtime.md#playbook-runtime-30)] shall be amended so CODE validates the shell-selected `captain.options.playbooks.code.options` slice.
-- [[playbook-runtime-16](../packages/playbook-runtime.md#playbook-runtime-16)] and [[playbook-runtime-29](../packages/playbook-runtime.md#playbook-runtime-29)] shall be amended to remove the `@sublang/playbook/code/tmux-play` compatibility-shim and legacy `captain.options.code` host-config contracts.
-- [[playbook-captain-5](../packages/playbook-captain.md#playbook-captain-5)], [[playbook-captain-10](../packages/playbook-captain.md#playbook-captain-10)], and [[playbook-captain-11](../packages/playbook-captain.md#playbook-captain-11)] were amended for registry-loaded entries, local-role-to-host-player binding, active-playbook visibility, and entry-owned lifecycle ids; DR-011 later retires those lifecycle ids in favor of run outcomes and descriptor tags.
-- [[playbook-captain-19](../packages/playbook-captain.md#playbook-captain-19)] and [[playbook-captain-20](../packages/playbook-captain.md#playbook-captain-20)] shall be amended so summary policy and saved-count wording are registry-owned and optional rather than CODE-specific shell behavior.
-- [[playbook-captain-16](../packages/playbook-captain.md#playbook-captain-16)] shall be amended so shell initialization loads enabled registry entries from `captain.options.playbooks` and rejects missing enablement.
-- PBCODE user/dev/test specs shall be retired.
-- Package metadata and release specs shall add `@sublang/playbook/code/registry` as a public export for the CODE registry module.
-- RELEASE specs and package metadata shall treat removal of the `playbook-code` bin, `./code/tmux-play` export, and legacy CODE tmux-play configs as breaking public-surface changes under [[release-1](../packages/release.md#release-1)] and [[release-4](../packages/release.md#release-4)].
-- [[release-14](../packages/release.md#release-14)] shall be satisfied with a cligent dependency range that includes the tmux-play dynamic visibility surface, first expected in `@sublang/cligent` 0.13.0.
-- A follow-up IR shall add generic `playbook` user/dev/test items covering launcher behavior, starter-config seeding, generated roster composition, `layout.initialVisible`, active-playbook visibility switching, validation-rejection handling, and display-only pane reconciliation failures.
+The package shall expose one generic `playbook` executable that resolves or seeds its generic config, composes the tmux-play host, checks configured adapters, and launches the shell.
+The starter config shall enable CODE, REVIEW, and DECIDE through explicit registry modules with the same `coder` and `reviewer` role names required for nested inheritance.
+`playbook --list` shall print each configured id, effective command, and intent, while `--config` shall remain a raw tmux-play pass-through.
 
 ## Consequences
 
-- DR-008's deferral of a generic `playbook` binary and multi-playbook discovery is superseded by this design.
-- `playbook-code` and `@sublang/playbook/code/tmux-play` compatibility surfaces are retired.
-- Third-party playbooks can be added by configuration without forking `@sublang/playbook`.
-- Default role names do not collide because the static roster remains namespaced, while nested exact-role inheritance is explicit frame behavior.
-- Inline agent settings remain independent configuration even when a nested frame inherits an ancestor's player conversation.
-- CODE-specific shell assumptions move into CODE's registry entry.
-- tmux-play sessions still allocate every enabled playbook player at startup, but only the active playbook's players need to occupy visible panes.
-- The generic launcher needs new user/dev/test specs before implementation, and CAPTAIN/PBCODE/PBRT specs need amendments for enablement, binding, options migration, summary policy, and compatibility behavior.
+- Third-party playbooks can be enabled without changing the package or shell.
+- Static configuration stays namespaced, while nested same-role execution reuses the conversation already holding the workflow context.
+- CODE and DECIDE can call REVIEW without role aliases or reconstructed same-player context.
+- Replacing a published registry or command remains a public-surface change governed by the release package.
 
 ## References
 
-[1]: https://github.com/sublang-ai/cligent/blob/main/docs/tmux-play.md#custom-captains "cligent tmux-play custom Captains"
-[2]: https://github.com/sublang-ai/cligent/blob/main/docs/tmux-play.md#layout "cligent tmux-play dynamic visible player panes"
+[1]: https://github.com/sublang-ai/cligent/blob/main/docs/tmux-play.md#layout "cligent tmux-play dynamic visible player panes"

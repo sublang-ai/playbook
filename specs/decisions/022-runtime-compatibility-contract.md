@@ -37,10 +37,15 @@ Consumers that vendor and pin the `slc/link.md` text and adopt playbook releases
 
 - No entry-registry-level compatibility fields are added in this iteration: the factory call is on every execution path — `playbook run`, test suites, embedding hosts — so the factory check already covers them all; a registry-level advertisement can be layered on later without changing this contract.
 - `playbook run` gains no flags: a construction-time throw from an entry's `createRuntime` surfaces through the existing `playbook run: <message>` diagnostic and exit `1` path ([[playbook-cli-20](../packages/playbook-cli.md#playbook-cli-20)]).
-- Runtimes that do not use the shared factory (the DISCUSS parallel-region runtime, the compiled default Captain) carry no declaration and are out of scope until they converge on the factory under their own record.
+- The DECIDE parallel-region runtime does not use the shared factory, carries no declaration, and remains out of scope until it converges on a compatible engine profile under its own record.
 
 ## Consequences
 
 - A skew-linked artifact fails loudly at load with a diagnostic naming both sides, instead of running under semantics it was not linked against.
 - The metadata is additive: every existing artifact, host, and export keeps working, so this ships as a minor release.
 - Future format changes have a signal: a new artifact schema or engine ABI is declared by number, checked by the loaded engine, and rejected by name ([DR-023](023-data-only-machine-ir.md) stages the first planned use).
+
+## References
+
+- [SLC linker contract](../../slc/link.md)
+- [[release-1](../packages/release.md#release-1)] defines the package's compatibility policy.

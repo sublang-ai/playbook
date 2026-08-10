@@ -259,12 +259,7 @@ runtime may pass to `callPlayer`), an optional `summaryPolicy`
 ([[playbook-captain-20](#playbook-captain-20)]), a `validateOptions` function for that
 entry's own option slice, and a `createRuntime` factory for the
 linked runtime.
-The CODE entry shall declare `id` `code`, `command` `code`, intent
-text for a software-development / SDLC coding workflow,
-and `requiredRoleIds` `coder` and `reviewer`.
-CODE's Committer alias shall remain a CODE-owned option validated by
-the CODE entry ([[playbook-runtime-30](playbook-runtime.md#playbook-runtime-30)]), not a
-shell-level concept.
+The CODE entry shall declare `id` and command `code` with required role `coder`, while REVIEW shall declare `review` with roles `coder` and `reviewer`, and DECIDE shall declare `decide` with roles `coder` and `reviewer`.
 The shell shall take each playbook's required roles, summary policy,
 option validator, and runtime factory
 from its manifest entry.
@@ -612,12 +607,11 @@ object with no prose, Markdown, code fence, or transcript.
 
 Where the Playbook Captain shell constructs a sub-runtime, the
 shell shall wrap that runtime's `PlaybookPorts` and shall apply the
-active entry's local-role-to-host-player binding.
-The binding for local role `<role>` in playbook `<id>` shall be the
-host player id `<id>-<role>`, so CODE's `coder` and `reviewer` bind
-to host players `code-coder` and `code-reviewer`.
+active frame's effective local-role-to-host-player binding.
+A root role and a child role absent from its ancestor path shall bind to host player `<id>-<role>`.
+A child role whose exact role id appears on its ancestor path shall inherit the nearest ancestor's effective host-player binding per [DR-030](../decisions/030-shared-mapped-player-continuity.md).
 The wrapper shall route a sub-runtime `callPlayer(localRole, …,
-{ resume })` to `context.callPlayer(<id>-<localRole>, …,
+{ resume })` to `context.callPlayer(<effectiveHostPlayerId>, …,
 { resume })`, return the host result's `resumeToken`, route sub-runtime
 `callCaptain(prompt, signal, options)` through the shared Captain queue to
 `context.callCaptain(prompt, options)`, preserving the required `visibility`
@@ -631,10 +625,7 @@ in [[playbook-captain-29](#playbook-captain-29)], and pass sub-runtime
 Hidden sub-runtime judge calls shall stay fresh and isolated and
 shall never resume or replace the pinned durable-conversation token
 ([[playbook-captain-31](#playbook-captain-31)]).
-The shell shall also pass the resolved binding in the metadata given
-to the entry's `createRuntime`, so a playbook such as CODE can derive
-prompt identity strings from the host player actually bound to each
-local role ([[playbook-runtime-15](playbook-runtime.md#playbook-runtime-15)]).
+The shell shall pass each effective role binding in the metadata given to the entry's `createRuntime`, so compiled prompts identify the host player that actually owns the conversation ([[playbook-runtime-15](playbook-runtime.md#playbook-runtime-15)]).
 When hidden `context.callCaptain` returns a non-`ok` status or an
 `ok` status without `finalText`, the wrapper shall throw for that
 sub-runtime `callJudge`; otherwise it shall return `finalText`.
@@ -702,22 +693,20 @@ names to Boss-visible labels and supplies the saved-counts line
 template or equivalent wording policy.
 For that same duration, the shell shall aggregate sub-runtime
 `playbook.fsm.state` telemetry into a summary-visible progress
-phrase for the result-phase prompt, counting only state ids that the
-active registry entry's `summaryPolicy` labels.
+phrase for the result-phase prompt, including descendant frames but counting each state only under the registry entry of the frame that emitted it.
 The summary-visible progress phrase shall be `none` when no
 summary-visible state occurred.
 The summary-visible progress round total shall be the sum of all
 summary-visible state counts collected for the turn.
-When the active registry entry's `summaryPolicy` provides a
-state-count label for a state id, the shell shall count that state
+When the emitting frame's `summaryPolicy` provides a state-count label for a state id, the shell shall count that state
 under the provided label.
-When the `summaryPolicy` does not provide a state-count label for a
+When that frame's `summaryPolicy` does not provide a state-count label for a
 state id, the shell shall not count that state in the result-phase
 prompt and shall not derive a fallback label from the state id.
 When a wrapped sub-runtime `callPlayer` call returns a player
 reply, the shell shall count one saved interruption for that reply.
 When a wrapped hidden sub-runtime adjudication call returns a guard
-whose name appears in the active registry entry's `summaryPolicy`
+whose name appears in that frame registry entry's `summaryPolicy`
 copy-paste guard names, the shell shall count one saved copy-paste
 for that inter-player handoff.
 The shell shall count one saved copy-paste per adjudicated
@@ -884,6 +873,8 @@ exclusion rule, pass sub-runtime
 `playbook.trace` telemetry through unchanged, forward every explicit
 player `resume` selection to cligent's `context.callPlayer`, and
 return the authoritative host `resumeToken` unchanged.
+Each root engagement shall own one continuation map keyed by effective host-player id, and the shell shall initialize every frame runtime with a `PlayerSessionStore` view that resolves its local roles through that shared map per [[playbook-runtime-55](playbook-runtime.md#playbook-runtime-55)].
+A child return or disposal shall retain that map for its root tree, while disposing the root shall discard it and a later root engagement shall start fresh.
 The shell shall put neither resume tokens nor trace payloads in model
 prompts, visible status messages, or turn summaries.
 If engagement initialization rejects, the shell shall clear the broken
@@ -903,6 +894,7 @@ target id names an enabled registry entry and does not form an
 active-path cycle, the shell shall construct and initialize a distinct child
 runtime, push it above its caller, switch visibility to the child's
 players, and submit the call input as the child's initial Boss text.
+The child shall retain its own runtime and `PlaybookSession` identity while inheriting same-role bindings and root-owned continuation through [[playbook-captain-10](#playbook-captain-10)] and [[playbook-captain-26](#playbook-captain-26)].
 The child `PlaybookSession` shall receive a fresh UUID plus
 `rootSessionId`, `parentSessionId`, `parentCallId`, and depth; the root
 shall use its own UUID as root id and depth zero.
@@ -951,7 +943,7 @@ pushes, or returns to an enabled external leaf, the shell shall request tmux-pla
 visibility for that leaf playbook's generated host player ids through
 `setVisiblePlayers` before dispatching Boss text to the playbook
 runtime.
-The requested visible set shall be the external leaf's generated
+The requested visible set shall be the external leaf's distinct effective
 host player ids and shall never be empty.
 The playerless session Captain shall make no visibility request;
 when an external child is active, that child's non-empty generated set
@@ -1132,26 +1124,8 @@ Captain and its durable conversation live (verifying [[playbook-captain-3](#play
 #### playbook-captain-15
 
 
-Where the test suite initializes the Playbook Captain shell with
-CODE enabled through a `captain.options.playbooks.code` entry whose
-`from` resolves the CODE registry module, the test suite shall fail
-unless the loaded CODE registry entry carries id `code`, command
-`code`, `requiredRoleIds` `coder` and `reviewer`, and no manifest
-lifecycle state-id fields; lifecycle behavior shall follow runtime
-results and descriptors; the entry's option slice
-(`captain.options.playbooks.code.options`) is validated by the entry
-during shell `init`; invalid CODE options cause `init` to reject;
-valid CODE options do not construct a runtime until engagement;
-`handleBossTurn` before `init` rejects; CODE player calls reach
-`context.callPlayer` with the bound host player ids `code-coder` /
-`code-reviewer`; CODE judge calls reach `context.callCaptain` with
-their requested hidden visibility and isolation options; a runtime
-`callCaptain` reaches `context.callCaptain` with its exact prompt and
-requested visibility and resume, preserving either an explicit tool allowlist
-or its omission, and
-returns Captain status, final text, or error without a player resume token;
-and durable session-Captain calls and sub-runtime judge calls use
-the same Captain configuration and queue and never overlap (verifying [[playbook-captain-5](#playbook-captain-5)], [[playbook-captain-9](#playbook-captain-9)], [[playbook-captain-10](#playbook-captain-10)], [[playbook-captain-16](#playbook-captain-16)]).
+Where the test suite initializes the shell with the real CODE, REVIEW, and DECIDE registries, it shall fail unless CODE declares role `coder`, REVIEW and DECIDE declare `coder` and `reviewer`, each current empty option schema is validated without constructing a runtime, and each later player call reaches its frame's effective host binding.
+The suite shall also fail unless runtime Captain and judge calls preserve their visibility, resume, and optional tool-isolation selections through the shared single-flight Captain queue (verifying [[playbook-captain-5](#playbook-captain-5)], [[playbook-captain-9](#playbook-captain-9)], [[playbook-captain-10](#playbook-captain-10)], and [[playbook-captain-16](#playbook-captain-16)]).
 
 #### playbook-captain-32
 
@@ -1187,11 +1161,9 @@ module exposing no valid registry entry, a map key differing from its
 module's manifest `id`, two enabled playbooks sharing an `id`, and two
 enabled playbooks resolving to the same effective command, or any
 configured id or effective command equal to reserved `captain` each
-reject `init`; each enabled playbook's local
-roles bind to host players `<id>-<role>` so a sub-runtime
-`callPlayer(<role>, …)` reaches `context.callPlayer(<id>-<role>, …)`;
+reject `init`; each root or unmatched child role binds to `<id>-<role>`, while an exact same-role child inherits its nearest ancestor binding so `callPlayer(<role>, …)` reaches that effective host player;
 on engaging, resuming, or routing to an enabled external playbook the shell
-calls `setVisiblePlayers` with that playbook's generated host player ids,
+calls `setVisiblePlayers` with that playbook's distinct effective host player ids,
 never an empty set, before dispatching Boss text; the session Captain
 causes no visibility request; a
 `setVisiblePlayers` validation rejection surfaces as an internal
@@ -1258,7 +1230,7 @@ A zero-activity accepted action and an entry without a `summaryPolicy`
 shall likewise produce no saved-counts line.
 The suite shall fail unless completed
 sub-runtime player replies increment the interruption count by one
-per reply; adjudicated guards named by the active registry entry's
+per reply; adjudicated guards named by their emitting frame's
 `summaryPolicy` copy-paste guard list increment the copy-paste count
 by one per handoff; guards absent from that list,
 classifier/event JSON, session-Captain decision and result-phase
@@ -1266,7 +1238,7 @@ calls, and
 malformed adjudication replies do not increment the copy-paste
 count; sub-runtime state telemetry during the turn contributes only
 an aggregate summary-visible progress phrase and round total,
-counting active registry entry `summaryPolicy` labels exactly as
+counting each root or descendant frame under its own registry `summaryPolicy` labels exactly as
 supplied and deriving no fallback label from state ids; unlabeled plan or
 implementation steps, tests-green state ids, and other internal
 states do not contribute to that phrase or total; and the prompt
@@ -1297,8 +1269,10 @@ session and root-session id with depth zero.
 The shell bridge shall forward `resume: false` and explicit tokens to
 the bound host player and preserve the host's returned `resumeToken`;
 a real tmux-play integration shall prove an old host-player token is
-not inherited by a new playbook session and that the next call in that
-session resumes its own returned token. The real host shall also prove
+not inherited by a new root engagement and that the next call in that
+root tree resumes its own returned token.
+The suite shall fail unless CODE to REVIEW shares Coder continuity, DECIDE to REVIEW shares both Coder and Reviewer continuity, a role first introduced by a child remains continuous after return, and child disposal does not clear the root tree's store while root disposal does.
+The real host shall also prove
 that final completion and active host teardown each deliver exactly one
 `session.disposed` trace before session emissions close, without a
 second disposal from the post-close Captain hook.
@@ -1334,6 +1308,7 @@ Every frame shall fail unless it receives a distinct UUID and the
 correct root, parent, call, and depth fields; trace pass-through shall
 preserve those fields and order child disposal before the parent's call
 finish.
+The suite shall fail unless the child's same-role bindings inherit the nearest ancestor, its unmatched roles retain their own bindings, its visible panes equal the distinct effective bindings, and its separate runtime identity shares only the root-owned player continuation required by [[playbook-captain-26](#playbook-captain-26)].
 The test suite shall fail unless disabled targets, active-path cycles,
 a second child from one frame, initialization failure, and stale return
 ids reject without corrupting the caller; child dismissal
@@ -1436,7 +1411,7 @@ validated prose surfaced through `emitReply`.
 The suite shall fail unless a pure chat turn settles in exactly one
 durable call (`respond`) with no separate summary call, while an
 acting turn costs two durable calls plus bounded correctives.
-The suite shall fail unless the real compiled DISCUSS artifact
+The suite shall fail unless the real compiled DECIDE artifact
 engaged as leaf — its bespoke runtime shipping without the
 `describe`/`apply` pair — is reported by the DR-022 gate as lacking
 the pair, advertises no actions, and bounds only the machine verbs
@@ -1472,7 +1447,7 @@ failure and whether the target started, the shell landing in the
 stated recoverable state and the next Boss turn settling.
 The suite shall fail unless the command table holds with no model
 call parsing any command: idle `/code x` starts; `/code x` at the
-leaf delivers; `/discuss x` absent from the path switches; bare
+leaf delivers; `/decide x` absent from the path switches; bare
 `/code` produces a reply only; a command naming an active non-leaf
 ancestor produces a reply only.
 The suite shall fail unless a fake runtime without the

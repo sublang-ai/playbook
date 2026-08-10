@@ -238,20 +238,12 @@ Removing or renaming a published `slc/*` path shall be released under
 
 #### release-20
 
-The published package shall expose the generic `playbook` executable
-through `package.json` `bin` and each bundled playbook's registry
-module — CODE and DISCUSS — through public
-`exports['./code/registry']` and `exports['./discuss/registry']`
-subpaths, all backed by files listed in `files`, as public,
-semver-stable surfaces.
+The published package shall expose the generic `playbook` executable through `package.json` `bin` and the CODE, REVIEW, and DECIDE playbook and registry modules through public `exports['./<id>/playbook']` and `exports['./<id>/registry']` subpaths, all backed by files listed in `files`, as public semver-stable surfaces.
 The package shall also ship `reference/sdlc/captain.md` and the default
 Captain's GEARS, FSM, and linked-runtime TypeScript, JavaScript, and declaration
 artifacts, and shall expose the compiled runtime through the public semver-stable
 `exports['./captain/playbook']` subpath.
-The package shall also ship the authored CODE and DISCUSS playbook sources
-`reference/sdlc/code.md` and `reference/sdlc/discuss.md` as package files
-beside their compiled artifacts, so a host can display or recompile the
-bundled playbooks from source.
+The package shall also ship the authored CODE, REVIEW, and DECIDE sources `reference/sdlc/code.md`, `reference/sdlc/review.md`, and `reference/sdlc/decide.md` beside their compiled artifacts, so a host can display or recompile the bundled playbooks from source.
 The package shall also ship the `docs/` guides the README delegates to, so
 an installed copy resolves its own links to the version it shipped with
 rather than to whatever the repository currently documents.
@@ -293,6 +285,7 @@ tmux-play configs are breaking public-surface changes under
 [[release-1](#release-1)] and shall be recorded in the `Removed` section
 of `CHANGELOG.md` per [[release-4](#release-4)] and
 [[release-5](#release-5)].
+The current unreleased replacement of DISCUSS and its public subpaths with REVIEW and DECIDE is a breaking public-surface change and shall be released in the same next major version under [[release-1](#release-1)].
 
 ### Pre-release Checklist
 
@@ -323,8 +316,8 @@ step below holds of the packed candidate:
    **available** when probed from that same location
    ([DR-026](../decisions/026-optional-adapter-sdks.md) §3).
 4. **Installed CLI.** The installed `playbook` executable prints its usage
-   and resolved config path for `--help`, and for `--list` names both the
-   `code` and the `discuss` entry of a config enabling the two bundled
+   and resolved config path for `--help`, and for `--list` names the
+   `code`, `review`, and `decide` entries of a config enabling the bundled
    registries ([[release-20](#release-20)]).
 5. **Hermetic provisioning.** The deterministic variant of the
    [DR-024](../decisions/024-runtime-engine-provisioning.md) §7
@@ -338,18 +331,8 @@ step below holds of the packed candidate:
    into the isolated prefix, and returns its terminal JSON envelope; a
    second run provisions nothing further; the fixture repository stays
    clean.
-6. **Captain artifact integrity.** The installed
-   `@sublang/playbook/captain/playbook` subpath imports and constructs a
-   runtime carrying the full contract surface, and every packed
-   `reference/sdlc/captain.playbook/` artifact — the compiled
-   `captain.gears.md` among them — is byte-identical to the repository's
-   own.
-7. **Compiled-artifact fidelity.** That byte-equality extends to every
-   packed file the manifest is not, and the committed artifact-conformance
-   suites (`pnpm vitest run reference/sdlc/captain.playbook`) pass with the
-   GEARS ↔ FSM conformance, declared-transition coverage, and pinned
-   topology suites each named among those that ran, so a suite renamed,
-   moved, or deleted fails the gate instead of quietly shrinking it.
+6. **Compiled runtime integrity.** The installed Captain, CODE, REVIEW, and DECIDE playbook subpaths import and construct runtimes carrying the declared contract surface.
+7. **Compiled-artifact fidelity.** Every packed file other than the manifest is byte-identical to the repository's own, and the committed Captain, CODE, REVIEW, and DECIDE artifact-conformance suites pass with their source/GEARS/FSM, transition, prompt, and topology checks named among those that ran.
 8. **Nested cligent floor.** The nested installed `@sublang/cligent`
    satisfies the caret range the packed manifest declares
    ([[release-14](#release-14)]), and carries the two surfaces the Playbook
@@ -372,13 +355,9 @@ step below holds of the packed candidate:
 
 Step 7 shall claim no more than it proves. The SLC pipeline is agentic, so
 this gate shall not attempt to re-derive the compiled artifacts and shall
-not treat their reproduction as a release condition; the conformance chain
-it reruns is rooted at the compiled `captain.gears.md`, not at the
-maintained `reference/sdlc/captain.md`, so it establishes GEARS ↔ FSM ↔
-runtime fidelity only, and the byte-equality of step 6 is what carries that
-verdict from the repository tree onto the tarball. Agreement between the
-maintained source and the compiled GEARS is established by the text2gears
-pass alone and is asserted nowhere here. That byte-equality is a transfer
+not treat byte-for-byte reproduction as a release condition.
+The deterministic source contract check shall establish that each GEARS artifact preserves the maintained source's instruction blocks, quoted relay fragments, and verbatim-output declarations, while the artifact suites establish GEARS ↔ FSM ↔ runtime fidelity.
+The byte-equality check is a transfer
 argument and not a drift check either: `npm pack` copies the working tree,
 so agreement between the committed sources and their built siblings stays
 the CI sibling check of [[release-10](#release-10)].
@@ -395,13 +374,8 @@ suite's real model calls.
 Before tagging a release, the developer/agent shall run
 `pnpm test:acceptance` locally. This live acceptance suite shall pack and
 install the candidate package once and create isolated fresh git repositories.
-It shall launch the installed `playbook` executable through real attached
-tmux-play sessions and complete both `/code` and `/discuss` using the locally
-authenticated real Claude and Codex adapters.
-It shall also run the installed executable's non-interactive
-`playbook run` path over a small fixture playbook that makes one real Claude
-player call and one real Codex-Captain judge call, using `--json` and no
-tmux-play session.
+It shall launch the installed `playbook` executable through real attached tmux-play sessions and complete `/code` and `/decide`, including their nested REVIEW calls, using the locally authenticated real Claude and Codex adapters.
+It shall also run the installed executable's non-interactive `playbook run` path over the bundled REVIEW registry with real Coder and Reviewer agents, using `--json` and no tmux-play session.
 It shall additionally run the hermetic global-only case
 ([DR-024](../decisions/024-runtime-engine-provisioning.md) §7):
 install the packed candidate globally into an isolated npm prefix and
@@ -433,12 +407,8 @@ It shall fail unless the literal `Saved you 0` appears nowhere in the
 whole session, no turn-failure marker appears beyond the two engineered
 script failures, and the fixture repository is left clean.
 
-The suite shall fail unless `/code` implements and commits its fixture
-requirement with a clean worktree, and `/discuss` adds and commits its fixture
-spec item without implementing it, also with a clean worktree.
-The non-interactive case shall fail unless it returns a terminal JSON envelope
-with the expected verified player and judge results, leaves the fixture
-repository and `HEAD` unchanged and clean, and creates no tmux session.
+The suite shall fail unless `/code` implements and commits its fixture requirement, reaches nested REVIEW approval, and leaves a clean worktree, and unless `/decide` commits and reaches nested REVIEW approval for its fixture design without implementing that design, also with a clean worktree.
+The non-interactive REVIEW case shall fail unless it returns the approved terminal JSON envelope, leaves the fixture repository clean, and creates no tmux session.
 Missing local authentication or required executables shall be a clear failure,
 not a skip.
 Because these checks spend real model calls and require local credentials and
@@ -457,7 +427,7 @@ Before tagging a release, the developer/agent shall verify, in this order:
 - [ ] The local model-free release smoke passes (`pnpm smoke:release`;
       [[release-28](#release-28)]).
 - [ ] The local real-agent acceptance suite passes, covering both attached
-      tmux workflows and non-interactive `playbook run`
+      CODE and DECIDE workflows and standalone REVIEW through non-interactive `playbook run`
       (`pnpm test:acceptance`; [[release-24](#release-24)]).
 - [ ] If the release changes the interactive CLI presentation or layout, or
       changes the declared or locked `@sublang/cligent` version, the
@@ -646,18 +616,8 @@ The test suite shall fail unless each of
 #### release-18
 
 
-The test suite shall fail unless `npm pack --dry-run` lists the
-`@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` `.js` and
-`.d.ts` artifacts — including the `xstate-playbook-runtime` factory
-siblings backing the engine subpath — and all four
-`slc/*.md` files among the packed contents, plus
-`reference/sdlc/captain.md`, the authored `reference/sdlc/code.md` and
-`reference/sdlc/discuss.md` playbook sources, every `docs/*.md` guide the
-README links to, `captain.gears.md`, and the
-Captain FSM and linked-runtime `.ts`, `.js`, and `.d.ts` artifacts under
-`reference/sdlc/captain.playbook/`; the complete generated Captain verification
-bundle, including its `.slc-verify` support modules, shall remain canonical
-repository artifacts, but those verification files need not be packed (verifying [[release-15](#release-15)], [[release-16](#release-16)], [[release-20](#release-20)]).
+The test suite shall fail unless `npm pack --dry-run` lists the `@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` `.js` and `.d.ts` artifacts — including the `xstate-playbook-runtime` factory siblings backing the engine subpath — and all four `slc/*.md` files among the packed contents, plus the authored Captain, CODE, REVIEW, and DECIDE sources, every `docs/*.md` guide the README links to, each workflow's GEARS, FSM, and linked-runtime `.ts`, `.js`, and `.d.ts` artifacts, and the CODE, REVIEW, and DECIDE registry `.ts`, `.js`, and `.d.ts` artifacts under `reference/sdlc/<id>.playbook/`.
+Generated verification support shall remain canonical repository content but need not be packed (verifying [[release-15](#release-15)], [[release-16](#release-16)], and [[release-20](#release-20)]).
 
 #### release-21
 
@@ -665,11 +625,11 @@ repository artifacts, but those verification files need not be packed (verifying
 The test suite shall fail unless `package.json` declares a `playbook`
 bin and no `playbook-code` bin, declares
 `exports['./runtime']` and `exports['./xstate-runtime']`, declares
-`exports['./code/registry']` and `exports['./discuss/registry']`
-subpaths, declares `exports['./captain/playbook']`, declares neither
+the playbook and registry subpaths for CODE, REVIEW, and DECIDE,
+declares `exports['./captain/playbook']`, declares neither
 `exports['./captain/registry']` nor `exports['./code/tmux-play']`, and
 `npm pack --dry-run` lists the `playbook` launcher entry and the
-`code.registry` and `discuss.registry` `.js` and `.d.ts` artifacts
+three workflow registry `.js` and `.d.ts` artifacts
 among the packed contents.
 The test suite shall additionally pin the semver-stable unit of each
 public subpath rather than only the subpath entry: it shall fail unless
@@ -685,7 +645,7 @@ An enumeration written here is the same defect one level up: it named
 four subpaths while `exports['./xstate-runtime']` — public and
 semver-stable by [[release-15](release.md#release-15)] — was
 unpinned along with `exports['./code/playbook']`,
-`exports['./playbook-captain']`, and `exports['./discuss/playbook']`,
+`exports['./playbook-captain']`, and other compiled-workflow subpaths,
 and a fifth name added here would have left the sixth to the next
 reviewer. Deriving it turns a subpath added to the manifest red until it
 is recorded. `exports['./slc/*']` is the recorded exclusion: a wildcard
@@ -735,16 +695,12 @@ unless all of the following hold:
   install root, and the lean closure carries no `@anthropic-ai` or
   `@openai` directory at any depth;
 - the installed executable answers `--help` and `--list`, the latter naming
-  both bundled registries;
+  the CODE, REVIEW, and DECIDE registries;
 - the hermetic fixture resolves neither engine import before the run, is
   provisioned exactly once into the isolated prefix, returns its terminal
   JSON envelope from a script-actor-only artifact, provisions nothing on a
   second run, and is left clean;
-- the installed `captain/playbook` subpath constructs, every packed file
-  other than the manifest is byte-identical to the repository's own, and
-  the `reference/sdlc/captain.playbook` conformance suites pass with the
-  GEARS ↔ FSM conformance, declared-transition coverage, and pinned
-  topology suites each named among those that ran; and
+- the installed Captain, CODE, REVIEW, and DECIDE playbook subpaths construct, every packed file other than the manifest is byte-identical to the repository's own, the deterministic source-preservation check passes, and each compiled artifact's conformance suites pass with their declared coverage named among those that ran; and
 - the nested installed `@sublang/cligent` satisfies the packed manifest's
   caret range and ships both `CaptainContext.emitReply` and
   `CaptainRunResult.resumeToken`, each proven as a member of its own named
@@ -768,13 +724,8 @@ cannot call and a package that stops exporting the specifier, and one row
 shall run the check against the repository's own installed cligent, so the
 declared floor is proven compatible without a pack or an install.
 
-Nothing here shall be asserted by recompiling a playbook. The SLC pipeline
-is agentic and its output is not reproducible byte-for-byte from the
-maintained source, so a reproduction check would fail on a correct
-candidate; byte-equality against the repository's own artifacts plus the
-conformance suites rooted at the compiled `captain.gears.md` are what this
-gate asserts, and agreement between `reference/sdlc/captain.md` and that
-compiled GEARS is outside it.
+Nothing here shall be asserted by recompiling a playbook.
+The SLC pipeline is agentic and its output is not reproducible byte-for-byte from the maintained source, so the gate shall instead run the deterministic source-preservation contract and the committed artifact suites before transferring their result to the packed candidate by byte equality.
 
 Because it spends no model call and needs no authentication, this gate
 shall be runnable by any maintainer with registry access, and shall not be
@@ -788,22 +739,12 @@ selected by the normal `pnpm test` configuration or by GitHub CI.
 The opt-in local `pnpm test:acceptance` suite shall pack and install the
 candidate package once, then exercise five independent fresh git repositories
 through the installed npm `playbook` command shim.
-The first case shall invoke `playbook run` with `--json` over a small fixture
-playbook using one real Claude player and a real Codex captain for one hidden
-judge call. It shall fail unless the installed headless host returns the exact
-terminal JSON result, emits its start and finish statuses, creates no tmux
-session, leaves `HEAD` unchanged, and leaves the repository clean with no
-ignored or untracked artifacts.
+The first case shall invoke `playbook run @sublang/playbook/review/registry` with `--json` over a prepared commit using real Coder and Reviewer agents.
+It shall fail unless REVIEW returns its approved terminal result, creates no tmux session, and leaves the repository clean.
 The second case shall submit `/code` to real Claude and Codex agents and fail
-unless the start and finish lifecycle markers appear, only the requested file
-changes, its exact content is present in `HEAD`, and the worktree is clean.
-The third, independent `/discuss` case shall fail unless the start and finish
-lifecycle markers appear, only the requested spec item file changes, its
-content is present in `HEAD`, its deliberately unimplemented file is absent
-from both `HEAD` and the worktree, and the worktree is clean.
-Each interactive case shall also fail unless the selected playbook leaves
-exactly the Captain and its two namespaced role panes visible with their
-expected adapters and the Boss/Captain pane focused.
+unless the start, nested REVIEW call/return, and finish lifecycle markers appear, only the requested implementation changes, the approved result is present in `HEAD`, and the worktree is clean.
+The third, independent `/decide` case shall fail unless its start, nested REVIEW call/return, and finish markers appear, only the requested spec-design files change, the design is committed without implementation, and the worktree is clean.
+Each interactive case shall also fail unless the nested REVIEW leaf exposes its distinct effective players: CODE's inherited Coder plus REVIEW's Reviewer, or DECIDE's inherited Coder and Reviewer, with no replacement same-role session and with the Boss/Captain pane focused.
 The fourth, hermetic global-only case shall install the packed
 candidate into an isolated npm global prefix with inherited npm prefix
 configuration neutralized, place a compiled thin fixture playbook —
@@ -849,7 +790,7 @@ It shall further fail unless, across the whole session, the literal
 `Saved you 0` never appears on the Boss surface, no turn-failure marker
 appears beyond the two engineered script failures, and the fixture
 repository is left clean with no ignored or untracked artifacts. The
-deterministic `/discuss <task>` command mapping is not this case's subject
+deterministic `/decide <task>` command mapping is not this case's subject
 and stays in the hermetic tier; what this case exercises is the
 model-decided switch against a still-active engagement.
 

@@ -32,3 +32,8 @@ The existing host instead gives every playbook a separate namespaced player and 
 - DECIDE to REVIEW shares both Coder and Reviewer, so REVIEW can use their independent proposals without replaying them as reconstructed context.
 - Unrelated root engagements and unrelated role names remain isolated.
 - cligent needs no change because its player-call boundary already accepts an explicit fresh-or-resume selection.
+
+## References
+
+- [DR-010](010-playbook-session-tracing-and-resume.md) defines runtime-local player continuation.
+- [[playbook-runtime-59](../packages/playbook-runtime.md#playbook-runtime-59)] defines the shared store boundary.

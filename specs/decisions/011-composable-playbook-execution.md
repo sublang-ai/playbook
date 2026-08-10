@@ -12,8 +12,8 @@ The stack semantics themselves stay intact.
 
 ## Context
 
-Linked playbooks currently assume one active atomic FSM state, one player call at a time, and one runtime engagement in the Captain shell.
-DISCUSS therefore asks Host and Participant serially even when both prompts depend only on the prior completed round.
+Linked playbooks originally assumed one active atomic FSM state, one player call at a time, and one runtime engagement in the Captain shell.
+DECIDE requires Coder and Reviewer to form independent proposals from the same topic before either sees the other's work.
 
 XState v5 provides parallel states whose regions enter together and whose parent `onDone` transition fires only after every region reaches a final state [[1]].
 Its invoked actors also bind asynchronous work to a state: entry starts the actor, exit stops it, and `onDone` or `onError` receives the result [[2]].
@@ -34,19 +34,17 @@ Each working leaf shall invoke an actor, and each successful region shall reach 
 The parallel parent's `onDone` transition is the join.
 Async actions and runtime-owned `Promise.all` joins shall not model workflow state because XState does not await actions [[2]].
 
-DISCUSS shall use this structure for both initial proposals and later reconciliation rounds.
-Host and Participant shall receive the same completed prior-round inputs and run independently.
-Their results shall be staged per branch and promoted together at the join, so completion order cannot affect the next round.
+DECIDE shall use this structure for its independent proposal pair.
+Coder and Reviewer shall receive the same topic concurrently, and neither prompt shall contain the other's proposal.
+Their results shall be staged per branch and promoted together at the join, so completion order cannot affect the later Coder commit.
 
 A branch that asks Boss shall enter a branch-local waiting state while sibling regions continue.
 Answering the question shall re-enter only that branch's working leaf.
 If both branches ask, their questions shall remain independently addressable.
 A branch failure shall exit the parallel parent to the workflow's failure state, which stops sibling invocations through XState lifecycle semantics.
 
-The fixed parallel parent is one Boss-interrupt unit. An interrupt may restart
-the whole parent, but shall not target one branch working leaf and implicitly
-restart its siblings. A branch-local Boss reply remains narrower: it resumes
-only the identified waiting branch.
+The fixed parallel parent is one Boss-interrupt unit.
+An interrupt shall restart the whole pair with the replacement topic and clear both staged results and questions, while a branch-local Boss reply shall resume only the identified waiting branch.
 
 Parallel calls may target distinct resolved players.
 A linked runtime shall reject simultaneous calls that resolve to the same player id because one backend resume-token chain cannot be forked deterministically.
@@ -153,7 +151,7 @@ XState deep persistence can preserve invoked child actors in a future durable de
 
 ## Consequences
 
-- DISCUSS can overlap independent Host and Participant work without race-dependent prompts.
+- DECIDE can overlap independent Coder and Reviewer proposals without race-dependent prompts or premature disclosure.
 - One branch can wait for Boss without discarding a completed sibling result.
 - A playbook can call an enabled child, pause across Boss turns, and continue from the child's output like a function return.
 - Every nested runtime retains an independent runtime session and a causally linked trace, while explicitly mapped roles share player continuation within the root engagement.

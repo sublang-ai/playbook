@@ -1,195 +1,132 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
 
-# playbook: CODE Playbook Conformance
+# playbook: Compiled Workflow Conformance
 
 ## Intent
 
-This project-local package specifies and verifies agreement among the maintained CODE source, its GEARS and FSM artifacts, and its compiled prompts and transitions.
+This package specifies agreement among the maintained CODE, REVIEW, and DECIDE sources, their GEARS and FSM artifacts, and their compiled workflow behavior.
 
 ## External Behavior
 
-### Source agreement
+### Source and artifact agreement
 
 #### playbook-1
 
-The set of CODE-N identifiers declared in `code.gears.md` under
-`### CODE-N` headings shall equal the set of `sourceItem` values
-across player-invoking states in `code.fsm.ts`.
+Where a maintained workflow source declares player instructions, nested playbook calls, or terminal outcomes, its compiled GEARS shall preserve every instruction and outcome in source order and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, or `DECIDE-1` through `DECIDE-4`, respectively.
 
 #### playbook-2
 
-Where a player-invoking state references CODE-N via `sourceItem`,
-the state's `input.prompt` body shall equal the CODE-N blockquote
-body in `code.gears.md` verbatim, including any `<#>`,
-`<coder-llm>`, and `<reviewer-llm>` placeholder tokens.
+Where a player-invoking FSM state references a GEARS item through `sourceItem`, its authored prompt body shall equal that item's blockquote body verbatim, including fenced instruction text, quoted relay fragments, and placeholder tokens.
 
 #### playbook-3
 
-Where a player-invoking state references CODE-N via `sourceItem`,
-the state's `input.player` shall equal the section heading
-(`Coder` / `Reviewer` / `Committer`) under which CODE-N is declared
-in `code.gears.md`.
-A configured Committer alias
-([[playbook-runtime-8](playbook-runtime.md#playbook-runtime-8)]) changes only the player id
-`resolvePlayerId` returns for a `Committer` state; it shall not
-change `input.player`, which stays `Committer` for every
-Committer-section CODE-N, so the gears `Committer = Coder |
-Reviewer` agreement holds.
-
-### Transition coverage
+Where a player-invoking FSM state references a GEARS item, its `input.player` shall equal the `Coder` or `Reviewer` section under which that item is declared.
 
 #### playbook-4
 
-Where `code.fsm.ts` declares an `onDone` arm for a player-invoking
-state, the arm shall be exercisable by some
-`(context, CaptainOutput)` pair that satisfies its guard and
-falsifies every earlier arm in the same state's `onDone` list,
-honoring xstate's first-match-wins semantics.
+Where a workflow FSM declares an ordered transition arm, the arm shall be reachable by an input and context that satisfy its guard and falsify every earlier arm under XState first-match semantics.
 
 ### Prompt composition
 
 #### playbook-5
 
-Where a player-invoking state wires a structured field (`intent`,
-`taskDescription`, `reviews`, or `challenges`) into the
-`CaptainInput`, the composer shall emit a labelled block
-(`Boss intent:`, `Task description:`, `Review items:`, or
-`Rebuttals:`) carrying that field's value, ordered
-Boss intent → Task description → prompt body → Review items →
-Rebuttals. Context blocks the prompt body refers to as prior
-material (`Boss intent:`, `Task description:`) precede the body;
-action blocks the prompt body refers to as material below
-(`Review items:`, `Rebuttals:`) follow the body so the CODE-N
-"review item below" / "rebuttal below" phrasing matches the
-rendered layout.
+Where a compiled prompt combines authored instruction blocks and relayed runtime values, the composer shall retain their source order, preserve each quoted relay value as a blockquote, and keep a literal quote marker that the source authors outside a substituted value.
 
 #### playbook-6
 
-Where a player-invoking state's prompt body contains a placeholder
-(`<#>`, `<coder-llm>`, or `<reviewer-llm>`), the state shall wire
-the corresponding source field (`irNumber`, `coderPlayer`, or
-`reviewerPlayer`) into the `CaptainInput`, and the composer shall
-substitute the placeholder with the wired field's value.
+Where a compiled prompt contains a placeholder token, the FSM shall supply its declared field and the composer shall substitute exactly that field, using the canonical kebab-token-to-camel-field mapping unless the compiler contract declares an explicit exception.
 
 #### playbook-16
 
-Every Reviewer player-invoking prompt in `code.gears.md` and
-`code.fsm.ts` shall include the line
-`Do not edit files or commit; report findings only.`.
+Every REVIEW prompt that invokes Reviewer shall forbid Reviewer from editing files or committing and shall instruct Reviewer to review committed work and report findings only.
 
 #### playbook-18
 
-Where a Reviewer player-invoking prompt in `code.gears.md` or
-`code.fsm.ts` includes `Verify any affected spec items are:`,
-the prompt shall include the complete spec-review checklist:
+Where a REVIEW prompt asks Reviewer to assess affected specs, the prompt shall require checks for correctness and coherence, appropriate behavioral scope, minimality, organization, `specs/map.md` accuracy, and `specs/meta.md` conformance without naming a retired spec layout.
 
-- `Complete & coherent: sufficient for you to reimplement code.`
-- `Right level: external behavior users rely on or internal system behavior (organized per @specs/meta.md), not implementation specifics; integration/system testing, not unit testing.`
-- `Minimal: essential and concise; every item earns its place; also check with other items.`
-- `Well organized: spec packages are finely scoped, with high cohesion and low coupling.`
+### Workflow behavior
 
-The prompt shall not include either legacy line
-`Right level: user requirements (in @specs/user) or system behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.` or
-`Right level: user requirements (in @specs/user) or behavior (in @specs/dev), not implementation specifics; integration/system testing (in @specs/test), not unit testing.`
-([DR-020](../decisions/020-spec-layout-agnostic-code-prompts.md)).
+#### playbook-20
+
+When CODE receives a coding intent, CODE shall obtain and retain the exact Coder commit for each direct or IR phase, call REVIEW after each CODE-owned commit, start no later phase until REVIEW passes, and after REVIEW passes the direct phase or final IR task report the latest CODE-owned commit and terminate successfully.
+
+#### playbook-24
+
+When REVIEW aborts, fails, or returns an invalid success result, CODE shall start no later phase and shall terminate with the failure and the exact last CODE-owned commit.
+
+#### playbook-21
+
+When REVIEW receives its initial request, REVIEW shall ask Reviewer to inspect the latest commit, ask Coder to address or rebut every finding, and begin a new Reviewer round after each review-fix commit or all-rejected rebuttal until Reviewer reports no unsettled findings.
+
+#### playbook-26
+
+When Reviewer reports no unsettled findings, REVIEW shall terminate successfully with `{ approvedCommit: 'latest', noUnsettledFindings: true }`, where `latest` denotes the commit most recently reviewed in that workflow.
+
+#### playbook-22
+
+When DECIDE receives a topic, DECIDE shall request independent Coder and Reviewer proposals concurrently, reveal neither proposal before both finish and Coder commits Coder's own proposal, and then call REVIEW with the initial intent and both proposal contexts available through the authored prompt and shared Reviewer conversation.
+
+#### playbook-25
+
+When REVIEW aborts, fails, or returns an invalid success result, DECIDE shall terminate with the failure and the exact last DECIDE-owned commit.
 
 ### Boss-reply suspension
 
 #### playbook-12
 
-Every player-invoking state shall declare `needsBossReply` in its
-`result` map (per
-[slc/gears2fsm.md "Boss-reply suspension"](../../slc/gears2fsm.md#boss-reply-suspension)),
-and the FSM shall declare a matching arm in
-`awaitBossReply.on.BOSS_REPLY` guarded on
-`context.pendingBossQuestion?.resumeStateId === '<state-id>'`
-that targets `'#<state-id>'` with `reenter: true`.
+Where a player-invoking state can return `needsBossReply`, the FSM shall declare the result guard and a matching `BOSS_REPLY` resume arm that reenters that same state with the answer in context.
 
 #### playbook-13
 
-For every player-invoking state, every
-non-`needsBossReply` arm in that state's `onDone` shall carry
-`actions: clearBossReplyContext`. Where the FSM declares the
-`awaitBossReply` state, every transition out of it other than a
-`BOSS_REPLY` resume arm shall carry
-`actions: clearBossReplyContext`.
+Where execution leaves a player-invoking state without suspending for its Boss question, or abandons a Boss-reply wait through another transition, the FSM shall clear the pending reply context.
 
 ## Verification
 
-### Source Agreement Coverage
+### Source and artifact coverage
 
 #### playbook-7
 
-When `pnpm test` runs from the repo root, the
-test suite shall fail if any player-invoking state's `sourceItem`
-is not a known CODE-N declared in `code.gears.md`, or if any
-CODE-N declared in `code.gears.md` has no player-invoking state
-with matching `sourceItem` (verifying [[playbook-1](#playbook-1)]).
+When the workflow conformance suites run, they shall fail unless each protected source instruction and terminal outcome has exactly one corresponding GEARS item in the required ordered set and no compiled item lacks source authority (verifying [[playbook-1](#playbook-1)]).
 
 #### playbook-8
 
-When `pnpm test` runs, the test suite shall fail if any
-player-invoking state's `input.prompt` body diverges from the
-corresponding CODE-N blockquote body in `code.gears.md` (verifying [[playbook-2](#playbook-2)]).
+When the workflow conformance suites run, they shall fail if a player-invoking state's prompt body differs from its GEARS item, including any fenced instruction, quote marker, relayed blockquote, or placeholder (verifying [[playbook-2](#playbook-2)]).
 
 #### playbook-9
 
-When `pnpm test` runs, the test suite shall fail if any
-player-invoking state's `input.player` does not match the section
-heading under which the state's `sourceItem` CODE-N is declared in
-`code.gears.md` (verifying [[playbook-3](#playbook-3)]).
-
-### Verification transition coverage
+When the workflow conformance suites run, they shall fail if any player-invoking state's declared player differs from its GEARS section (verifying [[playbook-3](#playbook-3)]).
 
 #### playbook-10
 
-When `pnpm test` runs, the test suite shall fail if any declared
-`onDone` arm in `code.fsm.ts` lacks an exercising fixture, or if
-any declared fixture is unused by the helper's structural
-enumeration (verifying [[playbook-4](#playbook-4)]).
+When the workflow conformance suites run, they shall fail if an ordered FSM transition lacks an exercising fixture or a declared fixture is unused (verifying [[playbook-4](#playbook-4)]).
 
-### Prompt Composition Coverage
+### Prompt coverage
 
 #### playbook-11
 
-When `pnpm test` runs, the test suite shall fail if a
-player-invoking state's composed prompt drops a labelled block
-whose source field is wired, fails to substitute a declared
-placeholder with its wired source field's value, or emits labelled
-blocks out of DR-004 §6 order (verifying [[playbook-5](#playbook-5)], [[playbook-6](#playbook-6)]).
+When the workflow prompt-contract suites run, they shall fail if composition reorders an authored fragment, drops or dequotes a relayed value, loses a literal quote marker, or substitutes a placeholder from the wrong field (verifying [[playbook-5](#playbook-5)] and [[playbook-6](#playbook-6)]).
 
 #### playbook-17
 
-When `pnpm test` runs, the test suite shall fail if any Reviewer
-player-invoking prompt in `code.gears.md` or `code.fsm.ts` omits
-the review-only instruction that forbids editing files or
-committing (verifying [[playbook-16](#playbook-16)]).
+When the REVIEW prompt-contract suite runs, it shall fail if a Reviewer prompt permits editing or committing or omits its committed-work review posture (verifying [[playbook-16](#playbook-16)]).
 
 #### playbook-19
 
-When `pnpm test` runs, the test suite shall fail if any Reviewer
-player-invoking prompt in `code.gears.md` or `code.fsm.ts` asks
-Reviewer to verify affected spec items but omits any item from the
-current spec-review checklist, or if it includes either retired
-`Right level` wording that names the legacy
-`@specs/{user,dev,test}` folders (verifying [[playbook-18](#playbook-18)]).
+When the REVIEW prompt-contract suite runs, it shall fail if an affected-spec review omits a required quality check or names the retired `specs/{user,dev,test}` layout (verifying [[playbook-18](#playbook-18)]).
 
-### Boss-reply Suspension Coverage
+### Workflow coverage
+
+#### playbook-23
+
+When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CODE sequences each retained commit through nested REVIEW, REVIEW covers findings-fixed, findings-rebutted, and no-findings paths with the declared success result, DECIDE preserves blind parallel proposals before its own commit, and each parent reports a child failure or invalid success with its exact last owned commit and without starting further work (verifying [[playbook-20](#playbook-20)], [[playbook-21](#playbook-21)], [[playbook-22](#playbook-22)], [[playbook-24](#playbook-24)], [[playbook-25](#playbook-25)], and [[playbook-26](#playbook-26)]).
+
+### Boss-reply suspension coverage
 
 #### playbook-14
 
-When `pnpm test` runs, the test suite shall fail if any
-player-invoking state does not declare `needsBossReply` in its
-`result` map, if any player-invoking state lacks a matching arm
-in `awaitBossReply.on.BOSS_REPLY` keyed by `resumeStateId`, or
-if any arm in `awaitBossReply.on.BOSS_REPLY` targets a state that
-is not player-invoking or does not declare `needsBossReply` (verifying [[playbook-12](#playbook-12)]).
+When a workflow FSM can receive a player question, its conformance suite shall fail unless the question parks execution and a matching Boss reply reenters only the originating state with the answer in context (verifying [[playbook-12](#playbook-12)]).
 
 #### playbook-15
 
-When `pnpm test` runs, the test suite shall fail if any
-non-`needsBossReply` arm in a player-invoking state's `onDone` omits
-`actions: clearBossReplyContext`, or if any transition out of
-`awaitBossReply` other than its `BOSS_REPLY` resume arm omits
-`actions: clearBossReplyContext` (verifying [[playbook-13](#playbook-13)]).
+When a workflow FSM leaves or abandons a Boss-reply path, its conformance suite shall fail unless pending reply context is cleared on every non-resume transition (verifying [[playbook-13](#playbook-13)]).

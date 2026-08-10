@@ -47,8 +47,7 @@ when the file at the resolved path is absent, the command shall create
 it from the bundled starter generic config, creating parent
 directories as needed, print one stderr line naming the resolved path,
 and then continue with that seeded config.
-The seeded starter config shall enable CODE through an explicit
-`playbooks.code.from` set to `@sublang/playbook/code/registry` and
+The seeded starter config shall enable CODE, REVIEW, and DECIDE through their explicit public registry modules and
 carry the default agent lineup defined by
 [[playbook-cli-11](playbook-cli.md#playbook-cli-11)].
 When the file at the resolved path is already present, the command
@@ -65,7 +64,7 @@ The config shall declare enabled playbooks under a top-level
 roster nor a top-level `profiles` map
 ([DR-021](../decisions/021-inline-agent-settings.md)).
 Within a `playbooks.<id>` block, `from`, `command`, and `players` are
-launcher-owned keys and every other key (such as CODE's `committer`)
+launcher-owned keys and every other key
 is that playbook's option slice; `from` is the explicit registry
 module specifier, `command` optionally overrides the playbook's
 default slash command, and the `<id>` key shall be the enabled
@@ -143,6 +142,10 @@ malformed argument shall print a diagnostic and exit `1`.
 `playbook run --help` and `playbook run -h` shall print `run` usage —
 including the `resume` form — and exit `0`.
 
+#### playbook-cli-44
+
+When the user invokes `playbook run @sublang/playbook/review/registry <request>` with Coder and Reviewer bindings, the command shall run REVIEW as a standalone root workflow and print its approved terminal result without requiring CODE or DECIDE to be enabled.
+
 #### playbook-cli-19
 
 Where `playbook run` binds agents, every required role and the captain
@@ -156,8 +159,7 @@ may itself contain colons), optionally followed by `@` and an
 adapter-scoped reasoning effort; `claude@high` shall select the
 adapter's default model while still setting effort, and an `@` with an
 empty effort shall be rejected.
-`--option <key>=<value>` shall supply the playbook's option slice (such
-as CODE's `committer=coder`), and `--cwd <dir>` shall set the agents'
+`--option <key>=<value>` shall supply the playbook's option slice, and `--cwd <dir>` shall set the agents'
 working directory, defaulting to the process working directory.
 The command shall validate every supplied effort against the adapter's
 supported values before running any agent; an unsupported effort shall
@@ -356,8 +358,7 @@ allowlist can be enforced
 ([DR-013](../decisions/013-routing-only-captain-control.md) A1).
 Each normalized `captain.options.playbooks.<id>` entry shall carry the
 `playbooks.<id>` block's `from`, its optional `command`, and an
-`options` slice built from every non-launcher key of the block (such
-as CODE's `committer`); `from`, `command`, and `players` shall not
+`options` slice built from every non-launcher key of the block; `from`, `command`, and `players` shall not
 appear in the option slice.
 The command shall resolve a scalar `captain` or `players.<role>` value
 as an adapter shorthand, and a full block as a self-contained tmux-play
@@ -436,9 +437,8 @@ access to `layout.initialVisible`
 
 Where `playbook` seeds the starter generic config
 ([[playbook-cli-3](playbook-cli.md#playbook-cli-3)]), the bundled starter
-config shall enable CODE with `playbooks.code.from` set to
-`@sublang/playbook/code/registry`, a `players` map carrying `coder`
-and `reviewer` roles, and `committer: coder` as CODE's option slice.
+config shall enable CODE, REVIEW, and DECIDE with their `playbooks.<id>.from` values set to the matching public registry modules.
+CODE shall configure `coder`, while REVIEW and DECIDE shall each configure `coder` and `reviewer` under the same role names used for nested inheritance.
 The seeded lineup shall configure Captain with adapter `claude`, model
 `claude-opus-4-8`, and reasoning effort `high`; Coder with adapter
 `claude`, model `claude-opus-4-8[1m]`, and reasoning effort `xhigh`;
@@ -446,7 +446,7 @@ and Reviewer with adapter `codex`, model `gpt-5.5`, and reasoning
 effort `xhigh`.
 The starter config shall carry no `profiles` map: each agent's
 settings are written inline under the top-level `captain` and each
-`playbooks.code.players.<role>` block
+`playbooks.<id>.players.<role>` block
 ([DR-021](../decisions/021-inline-agent-settings.md)), so retuning one
 player cannot change another.
 Every seeded agent — the Captain and both roles — shall set
@@ -777,13 +777,11 @@ Where the test suite invokes `playbook` without `--config` against a
 config root with no `playbook/playbook.config.yaml`, the test suite
 shall fail unless the command creates that file from the bundled
 starter config, prints the resolved path to stderr, and the seeded
-file enables CODE through `playbooks.code.from`
-`@sublang/playbook/code/registry` with the
+file enables CODE, REVIEW, and DECIDE through their matching public registry modules with the
 [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup (Captain
 `claude` / `claude-opus-4-8`, Coder `claude` / `claude-opus-4-8[1m]`,
 Reviewer `codex` / `gpt-5.5`, each written inline under `captain` and
 the `coder` / `reviewer` roles with no `profiles` map,
-`committer: coder`,
 `permissions.mode: auto` on every seeded agent with the Codex
 Reviewer's additional `.git` writable path, and the notification
 defaults).
@@ -799,8 +797,7 @@ playbooks, the test suite shall fail unless the composed tmux-play
 config sets `captain.from` to `@sublang/playbook/playbook-captain`;
 carries one `captain.options.playbooks.<id>` entry per playbook with
 that block's `from`, optional `command`, and an `options` slice built
-from the block's non-launcher keys (CODE's `committer` among them and
-no `from` / `command` / `players` in the slice); resolves scalar
+from the block's non-launcher keys with no `from` / `command` / `players` in the slice; resolves scalar
 `captain` and `players.<role>` values as adapter shorthands and
 carries a full inline agent block through as authored; generates the
 top-level roster as the union of each playbook's `<id>-<role>` host
@@ -971,10 +968,7 @@ Where the live release gate writes top-level configs for its fixture repositorie
 test suite runs, the test suite shall fail unless each of those exact
 configs composes through the launcher against the real modules it
 enables.
-It shall fail unless the workflow config composes against the real CODE
-and DISCUSS registry modules, enabling both playbooks and generating the
-`code-coder` / `code-reviewer` / `discuss-host` / `discuss-participant`
-roster with their expected adapters.
+It shall fail unless the workflow config composes against the real CODE, REVIEW, and DECIDE registry modules and generates `code-coder`, `review-coder`, `review-reviewer`, `decide-coder`, and `decide-reviewer` with their expected adapters.
 It shall further fail unless the conversational config composes against
 the fixture playbook modules the gate generates from its own sources,
 written to the paths that config names, enabling `checklist` and `notes`
@@ -1076,3 +1070,7 @@ rather than after it (verifying [[playbook-cli-40](#playbook-cli-40)], [[playboo
 #### playbook-cli-42
 
 Where a packed candidate is installed without a top-level `tmux-play` executable, when the model-free installed-CLI gate invokes `playbook --help`, the gate shall fail unless the command resolves `@sublang/cligent/tmux-play` from the candidate's own dependency tree and the package declares the Node `>=20.6.0` floor required by its synchronous `import.meta.resolve` call (verifying [[playbook-cli-7](#playbook-cli-7)] and [[playbook-cli-43](#playbook-cli-43)]).
+
+#### playbook-cli-45
+
+When the CLI integration suite drives the real REVIEW registry through `playbook run`, it shall fail unless both required roles are bound, REVIEW reaches its approved terminal output, no tmux session is created, and the run needs no interactive playbook configuration (verifying [[playbook-cli-44](#playbook-cli-44)]).

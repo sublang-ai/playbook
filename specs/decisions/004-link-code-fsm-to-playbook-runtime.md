@@ -1,448 +1,50 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
 
-# DR-004: CODE Playbook — Linker Bindings and Host Adapter
+# DR-004: CODE linker bindings and host integration
 
 ## Status
 
 Accepted.
-Pins the CODE-specific bindings that [slc/link.md](../../slc/link.md) leaves open.
-[DR-007](007-hidden-judge-captain-pane.md) amends §11's `callJudge` port wiring to run the judge call hidden (`{ visibility: 'hidden' }`); the original row below is retained as the historical decision and carries an inline pointer.
-[Addendum A2](#a2-committer-composite-binding-made-configurable) amends §2's baked Committer binding to be config-driven (a `captain.options.code.committer` alias resolved in the `playbook-code` composer and the CODE runtime, with no cligent change).
-[Addendum A4](#a4-runtime-contract-types-sourced-from-a-shared-module) amends §10 so the emitted runtime imports and re-exports the contract types `PlayerResult` / `PlaybookPorts` / `PlaybookRuntime` from the shared `@sublang/playbook/runtime` module instead of redefining them.
-[DR-029](029-session-scoped-conversational-captain.md) amends §3's Boss-event mapping: the `BOSS_INTERRUPT`-is-reached-only-when-the-judge-picks-it sentence is scoped to `handleBossInput` classification, with `apply()` of a runtime-advertised action a second, runtime-validated path to the same events that still involves no host-fabricated event.
+[DR-019](019-shared-linked-runtime-factory.md) moves CODE's single-region interpreter into the shared runtime factory.
+[DR-011](011-composable-playbook-execution.md) supplies nested playbook-call semantics, and [DR-030](030-shared-mapped-player-continuity.md) supplies same-role continuity for CODE to REVIEW.
 
 ## Context
 
-[slc/link.md](../../slc/link.md) is host- and FSM-agnostic.
-The CODE playbook needs concrete choices for player binding, Boss-event mapping, adjudication, session lifecycle, prompt composition, captain-actor bridge, abort behavior, telemetry, and the tmux-play host adapter (the only host this repo ships).
-This DR pins those choices so any implementation iteration builds against a stable contract without re-deciding.
-
-The host adapter ships in this repo, not in cligent.
-cligent stays a lower-layer primitive (tmux launcher, Captain contract, player cligents, observer dispatch) with no awareness of playbooks, XState, or `PlaybookRuntime`; this repo imports cligent as a dependency and supplies the small adapter that satisfies cligent's `Captain` interface.
+CODE must compile from its maintained workflow source into a host-agnostic runtime while preserving exact Coder instructions and delegating every commit review to REVIEW.
+The generic Playbook Captain shell owns tmux integration, registry loading, player binding, and nested runtime sessions [[1]], so CODE must not carry a direct host adapter or duplicate those policies.
 
 ## Decision
 
-### 1. Linker inputs
+### 1. Runtime profile
 
-| Input | Value |
-| --- | --- |
-| FSM artifact | `code.fsm.ts` (imports `codingMachine`, `CaptainInput`, `CaptainOutput`, `CodingInput`, `CodingEvent`) |
-| Player binding | Link-time, baked: `Coder → coder`, `Reviewer → reviewer`; composite `Committer = Coder \| Reviewer` resolved per source item (see §2) |
-| Boss-event mapping | Free-text judge classification (see §3) |
-| Adjudication strategy | LLM-judge for every state; marker-parse off |
+CODE shall compile as a single-region XState workflow backed by `createXStatePlaybookRuntime` under [DR-019](019-shared-linked-runtime-factory.md).
+Its public module shall use the shared runtime types and six ports and shall contain no tmux-play host type or direct adapter.
 
-All four are recorded verbatim in the emitted file's top-of-file header per [link.md §Output](../../slc/link.md#output).
+### 2. Player and entry bindings
 
-`PlaybookRuntimeOptions` carries only per-run identity strings (`coderPlayer`, `reviewerPlayer`) substituted into `<coder-llm>` / `<reviewer-llm>` placeholders.
-Player binding is *not* a runtime option; future per-run remapping would be a separate DR/IR.
+Source role `Coder` shall map to local role `coder`, which the shell resolves to the frame's effective host binding.
+A fresh nonempty input shall enter through deterministic event `START_CODE` with the exact text in `callerInput`, without a classifier call.
+CODE shall declare only the Coder player because review work belongs to the nested REVIEW workflow.
 
-### 2. Player binding for CODE
+### 3. Nested REVIEW boundary
 
-> Amended by [Addendum A2](#a2-committer-composite-binding-made-configurable): the composite `Committer` binding is now config-driven via a `captain.options.code.committer` alias. The per-source-item table below is the fallback when no alias is configured.
+After each CODE-owned Coder commit, CODE shall invoke enabled playbook `review` with the authored request and suspend until the child returns under [DR-011](011-composable-playbook-execution.md).
+The child Coder shall inherit CODE's effective `coder` binding and continuation, while the child's `reviewer` role shall use its own fallback unless an ancestor already supplies that role under [DR-030](030-shared-mapped-player-continuity.md).
+CODE shall validate REVIEW's declared success output before advancing and shall terminate with the child failure and exact last CODE-owned commit on an abort, error, or invalid success.
+After REVIEW passes the direct phase or final IR task, CODE shall report its exact last CODE-owned commit rather than a later review-fix commit.
 
-CODE declares `Coder`, `Reviewer`, and the alias `Committer = Coder | Reviewer` ([code.gears.md](../../reference/sdlc/code.playbook/code.gears.md)).
-Non-composite states bind trivially (Coder → `coder`, Reviewer → `reviewer`).
-Composite states resolve `Committer` per source item via the populated `<playerName>Player` field on `CaptainInput`:
+### 4. Registry boundary
 
-| Source item | Populated field | Resolved | playerId |
-| --- | --- | --- | --- |
-| CODE-15 | `coderPlayer` | Coder | `coder` |
-| CODE-16 | `reviewerPlayer` | Reviewer | `reviewer` |
-| CODE-17 | both, `coderPlayer` first | Coder | `coder` |
-
-The runtime never speaks any host player id beyond the baked `playerId`; `coder` / `reviewer` are opaque strings the host adapter routes to its primitives.
-
-### 3. Boss-event mapping for CODE
-
-CODE's `events` union:
-
-```ts
-| { type: 'START_CODING'; intent: string }
-| { type: 'CONTINUE_IR'; irNumber: string }
-| { type: 'SUMMARIZE_IR'; irNumber: string }
-| { type: 'BOSS_INTERRUPT'; targetId: JumpableStateId; intent?; irNumber? }
-| { type: 'BOSS_REPLY'; answer: string }
-```
-
-Every non-empty Boss line is classified by `callJudge`.
-The classifier prompt is fixed text the linker emits once: names the valid event types for the current state, the placeholder set for each payload field, the valid `BOSS_INTERRUPT.targetId` values from the FSM's jumpable states, and enough state context to distinguish a fresh directive from a Boss reply while the actor is in `awaitBossReply`.
-It demands JSON carrying either one of the typed events and its payload, or an explicit no-action result.
-Empty or whitespace-only text produces no FSM event and no port call.
-`BOSS_REPLY` is valid only while the actor is in `awaitBossReply`, per [DR-005](./005-boss-reply-suspension-path.md) §6.
-
-CODE defines no in-playbook slash commands.
-The `/command` namespace is reserved for host-level playbook selection before input reaches the CODE runtime.
-If text beginning with `/` is forwarded to the runtime, it is classified as ordinary Boss text through `callJudge`.
-
-`BOSS_INTERRUPT` is reached only when the judge picks it and supplies a valid target.
-It is not the abort surface — see §8.
-
-### 4. Captain adjudication
-
-Per [link.md §Captain adjudication](../../slc/link.md#captain-adjudication) the runtime invokes one adjudicator per source item via `callJudge`.
-CODE's `result` maps are self-describing (gears2fsm round-2 review made them so), so each invocation's judge prompt is the literal `result` map XState hands the call via `CaptainInput.result`.
-
-Example (CODE-2 / `respondToReview`):
-
-> The player just produced this output, replying to a review of the
-> latest commit:
->
-> ```
-> <player output verbatim>
-> ```
->
-> Pick exactly one outcome by `guard` and return JSON
-> `{ guard, …payloadFields }`.
-> Required payload fields are named in the outcome description.
->
-> - `changesMadeSpecs` — Coder accepted items and produced unstaged/untracked
->   edits in `@specs/{user,dev,test}/` only.
-> - `changesMadeCode` — Coder accepted items and produced unstaged/untracked
->   edits outside `@specs/{user,dev,test}/` only.
-> - `changesMadeMixed` — both.
-> - `challengesRaised` — Coder challenged one or more items; output includes
->   `challenges: <numbered rebuttals>`.
-> - `accepted` — Coder accepted without further edits.
-
-The runtime does not paraphrase or shorten result descriptions; every CODE state uses LLM-judge.
-
-### 5. Session lifecycle
-
-Per [link.md §Session lifecycle](../../slc/link.md#session-lifecycle):
-
-- **`init(ports)`** — construct the actor with `input` derived from
-  `options.coderPlayer` / `options.reviewerPlayer`; subscribe to
-  snapshots; start.
-  Initial state: `ready`.
-
-  ```ts
-  createActor(
-    codingMachine.provide({ actors: { captain: captainBridge(ports) } }),
-    { input: { coderPlayer: options.coderPlayer, reviewerPlayer: options.reviewerPlayer } },
-  );
-  ```
-
-- **`handleBossInput({ text, signal })`**:
-  1. Classify `text`; non-empty text goes through `callJudge`, while
-     empty text produces no event and no port call.
-  2. If no event is produced, return after draining port emissions.
-  3. If the actor is in a final state (`done`), dispose and reconstruct.
-  4. `actor.send(event)`.
-  5. Drive to quiescence (set in §8): invoke `captain` → build prompt →
-     `callPlayer` → adjudicate → resolve.
-     Honor `signal` between resolves.
-- **`dispose()`** — stop the actor and drain pending port emissions.
-
-### 6. Player prompt composition
-
-Each FSM state hands the runtime a `CaptainInput` whose `prompt` is the source-item prompt verbatim (placeholders intact per gears2fsm).
-The runtime substitutes:
-
-| Token | From |
-| --- | --- |
-| `<#>` | `input.irNumber` |
-| `<coder-llm>` | `input.coderPlayer` |
-| `<reviewer-llm>` | `input.reviewerPlayer` |
-
-Substitution is literal string replace with no escaping.
-Boss intent and task description are prepended as labelled context blocks above the prompt body, and review items and rebuttals are appended as labelled action blocks below it.
-The split matches the CODE-N prompts' "above changes" / "review item below" / "rebuttal below" phrasing — context the body references as prior material reads above, material the body instructs the player to act on reads below.
-
-```
-Boss intent:
-<input.intent>
-
-Task description:
-<input.taskDescription>
-
-<input.prompt with placeholders substituted>
-
-Review items:
-<input.reviews>
-
-Rebuttals:
-<input.challenges>
-```
-
-The FSM's prompt body is never modified or re-flowed.
-
-### 7. Captain-actor bridge
-
-For each FSM invocation, the runtime's `captain` actor:
-
-1. Reads `input: CaptainInput`.
-2. Resolves `playerId` from `input.player` via the binding table
-   (composite tiebreak per §2).
-3. Builds the player prompt per §6.
-4. Awaits `ports.callPlayer(playerId, prompt, signal)`; the host adapter
-   cancels its own primitive on `signal`.
-5. On `result.status === 'ok'`, adjudicates `result.finalText` via §4.
-   On `'error'` / `'aborted'`, throws — `fromPromise` rejects, XState
-   routes through `onError: captainError → #failed`, the drive-loop sees
-   the quiescent `failed` snapshot and returns.
-   `failed` is the single fail-stop sink for both Captain errors and
-   player failures; no `BOSS_INTERRUPT` special case.
-6. Returns the adjudicator JSON; XState routes via `onDone` and the FSM
-   advances.
-
-`callJudge` is the runtime's adjudication / classification primitive — never used for player turns.
-Hosts typically wire it to the host's Captain LLM (cligent: `context.callCaptain`).
-
-### 8. Quiescence and abort
-
-- **Quiescent values** for CODE: `'ready'`, `'failed'`, `'done'`.
-  `handleBossInput` returns when the snapshot matches.
-- **`signal` abort** uses the natural-rejection strategy from
-  [link.md §Abort](../../slc/link.md#abort): host adapter cancels
-  in-flight `callPlayer` / `callJudge`; port resolves with
-  `PlayerResult { status: 'aborted' }` (or rejects); step 5 throws;
-  XState routes via `onError → #failed`; drive-loop exits.
-- **No synthetic `BOSS_INTERRUPT` on signal** — the FSM's
-  `bossInterrupts` helper has `reenter: true`, so a synthetic interrupt
-  to the active state would respawn the player call.
-- **`BOSS_INTERRUPT` is reserved for explicit Boss redirects** (the
-  gears2fsm contract — *"jumps into an active machine, pre-empting
-  whichever state is running"*).
-  The supported path is the free-text classifier returning
-  `BOSS_INTERRUPT` with a valid `targetId`.
-- **Re-entry from `failed`** — the runtime accepts another Boss turn
-  from `failed` per the FSM's `readyEvents`.
-  Whether the host allows it is the host's decision (tmux-play's SIGINT
-  is terminal per TMUX-026 [[3]]).
-
-### 9. Status and telemetry
-
-Per [link.md §Status and telemetry](../../slc/link.md#status-and-telemetry):
-
-- One `emitStatus` per transition into a Boss-relevant state.
-  For CODE: `ready`, every review state, every commit state, `failed`,
-  `done`.
-  Status lines are short (`State → reviewBossCommitSpecs`).
-  The actor's `lastError` is surfaced via `emitStatus` on entry to
-  `failed`.
-- One `emitTelemetry({ topic: 'playbook.fsm.state', payload: { from, to, event } })`
-  per transition.
-  The visualizer (`views/sketch`) listens for these.
-
-Player prompts and adjudicator JSON ride the host's record channels (cligent's `captain_*` / `player_*`); the runtime shall not duplicate them as telemetry.
-
-### 10. Emitted module — `code.playbook.ts`
-
-> Amended by [Addendum A4](#a4-runtime-contract-types-sourced-from-a-shared-module): the contract types `PlayerResult` / `PlaybookPorts` / `PlaybookRuntime` are imported and re-exported from the shared `@sublang/playbook/runtime` module ([slc/link.md §Output](../../slc/link.md#output)) rather than redefined in `code.playbook.ts`.
-
-The link compiler emits exactly one file at `code.playbook.ts` with a top-of-file header recording the linker invocation:
-
-```text
-// SPDX-License-Identifier: Apache-2.0
-// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
-//
-// Generated by slc/link.md (FSM-to-Runtime linker).
-// Source FSM:    ./code.fsm.ts
-// Player bind:   Coder→coder, Reviewer→reviewer,
-//                Committer→{coder per CODE-15/17, reviewer per CODE-16}
-// Boss event:    free-text judge classification
-// Adjudication:  LLM-judge per state
-```
-
-Contract surface:
-
-- Imports `./code.fsm.js` (`codingMachine`, `CaptainInput`,
-  `CaptainOutput`, `CodingInput`, `CodingEvent`) and `xstate`
-  (`createActor`, `fromPromise`).
-- Exports `CodePlaybookOptions extends CodingInput` (carries
-  `coderPlayer` / `reviewerPlayer` and any future per-run knobs).
-- Exports `PlaybookPorts` and `PlaybookRuntime` per
-  [slc/link.md](../../slc/link.md).
-- Default-exports
-  `createPlaybookRuntime(options: CodePlaybookOptions): PlaybookRuntime`.
-- Holds no host-specific types and makes no host primitive calls; speaks
-  only `PlaybookPorts`.
-
-Internal capabilities (names illustrative): player-prompt composer, Boss-event classifier, LLM judge, player-id resolver, captain bridge.
-
-### 11. Host adapter — tmux-play
-
-**Addendum A3 (DR-008 shell target).**
-For tmux-play launch after [DR-008](008-playbook-captain-shell.md), the host's `captain.from` target is the Playbook Captain shell adapter with CODE registered.
-The public `./code/tmux-play` export remains as a compatibility shim that delegates to that shell.
-This section remains the direct CODE runtime port-wiring contract where not superseded by DR-008.
-
-Adapter file `code.tmux-play.ts`:
-
-- Imports `./code.playbook.js` and types from
-  `@sublang/cligent/tmux-play` (`Captain`, `BossTurn`, `CaptainContext`,
-  `CaptainSession`, `PlayerRunResult`).
-- Default-exports a Captain factory `(options: unknown) => Captain` per
-  TMUX-014 [[2]].
-- In `init(session)` constructs the runtime with `options` forwarded
-  from `captain.options` and builds `PlaybookPorts`.
-- Forwards `handleBossTurn(turn, context) →
-  runtime.handleBossInput({ text: turn.prompt, signal: context.signal })`.
-- In `dispose()` calls `runtime.dispose()`.
-
-Port wiring (the entire mapping):
-
-| `PlaybookPorts` | cligent primitive |
-| --- | --- |
-| `callPlayer(playerId, prompt, signal)` | `context.callPlayer(playerId, prompt)` — pass through; `signal` lives on `context`. Build `PlayerResult` from `PlayerRunResult` (`{ status, finalText, error }`) per TMUX-033 [[4]] |
-| `callJudge(prompt, signal)` | `context.callCaptain(prompt)` → return `finalText`; throw on `status !== 'ok'`. Amended by [DR-007](007-hidden-judge-captain-pane.md): pass `{ visibility: 'hidden' }` so the judge's JSON never streams to the Boss pane |
-| `emitStatus(message, data?)` | `session.emitStatus(message, data)` |
-| `emitTelemetry({ topic, payload })` | `session.emitTelemetry({ topic, payload })` |
-
-The adapter is ~40 lines once helpers factor out and is playbook-specific only via the `./code.playbook.js` import.
-
-**Player-id constraint.**
-Because the player binding is baked at link time (§1), the user's `tmux-play.config.yaml` `players[]` shall declare player IDs that match the baked `playerId` strings (`coder`, `reviewer`).
-The adapter does not remap.
-
-**Build / ESM constraint.**
-cligent's session imports `captain.from` via native `import()`, and native ESM rejects `.ts` without a loader hook, so the adapter must exist as compiled `.js` at the path `captain.from` references.
-The package satisfies this with:
-
-- A TypeScript → ESM `.js` build emitting `code.playbook.js` and
-  `code.tmux-play.js` next to the `.ts` sources.
-- `package.json` declaring `"type": "module"`.
-- `.ts` sources using NodeNext-style `import './code.fsm.js'`
-  specifiers that resolve to the compiled sibling.
-
-Example config (dev form, sibling path per TMUX-013 [[1]]):
-
-```yaml
-captain:
-  from: ./code.tmux-play.js
-  adapter: claude
-  model: claude-opus-4-7
-  options:
-    coderPlayer: claude            # substitutes <coder-llm>
-    reviewerPlayer: codex          # substitutes <reviewer-llm>
-players:
-  - id: coder                      # matches baked playerId
-    adapter: claude
-  - id: reviewer
-    adapter: codex
-```
-
-After release as `@sublang/playbook`, `captain.from` swaps to the package specifier (e.g. `'@sublang/playbook/code/tmux-play'`, final form confirmed at publish time).
-Players, options, and the rest of the config are unchanged.
+CODE shall be enabled through the public `@sublang/playbook/code/registry` manifest under [DR-009](009-generic-playbook-cli-and-registry.md).
+The registry shall declare only role `coder`, reject nonempty workflow options, derive Coder identity from the effective binding, and let the generic shell own ports, visibility, summaries, and lifecycle.
 
 ## Consequences
 
-- The runtime is host-agnostic; future hosts (web, Electron, CI) get
-  their own ~30-line adapter against `PlaybookPorts`.
-- Player binding is baked at link time; per-run remapping would be a
-  separate DR/IR.
-- The adapter's `./code.playbook.js` direct-import is the only
-  host-specific seam in the runtime emission flow.
-  A future second playbook either copies the adapter file with the
-  import swapped or, if duplication earns it, graduates to a shared
-  generic adapter under `slc/` that reads a `bridge` path from
-  `captain.options`.
-- cligent stays unaware of playbooks, XState, and `PlaybookRuntime`.
-  Bugs blocking integration are filed and fixed in cligent's repo per
-  the maintainer agreement, not patched around from this repo.
-
-### Out of scope
-
-- Building a second host (web/Electron/CI runner).
-- Generalizing `code.tmux-play.ts` into a shared `slc/` adapter — not
-  needed until a second playbook ships from this repo.
-- Patching cligent or tmux-play from this repo.
-- Re-deriving FSM behavior, prompts, guard keys, or result semantics —
-  those live in `code.gears.md` and `code.fsm.ts`.
-- Visualizer rendering.
-- Persisting FSM context across runtime sessions.
-
-## Addenda
-
-### A1. §8 quiescent values extended for Boss-reply suspension (per DR-005)
-
-[DR-005](./005-boss-reply-suspension-path.md) introduces an
-`awaitBossReply` quiescent state for the CODE FSM. §8's
-quiescent-values list (`'ready'`, `'failed'`, `'done'`) is
-extended to `'ready' | 'failed' | 'done' | 'awaitBossReply'`,
-matching [[playbook-runtime-11](../packages/playbook-runtime.md#playbook-runtime-11)]'s
-amended drive-loop check. The matching constant in
-`code.playbook.ts` shall be kept in sync — drift between the
-spec list and the implementation constant would re-introduce a
-drive-loop deadlock on `awaitBossReply`.
-
-### A2. Committer composite binding made configurable
-
-This addendum makes the composite `Committer` binding config-driven,
-partially relaxing §1's "player binding is *not* a runtime option"
-for this one composite.
-
-- **Where it lives.** The CODE overlay carries an optional
-  `players.committer` string aliasing an existing role (`coder` or
-  `reviewer`). The `playbook-code` composer resolves it into the
-  composed config's `captain.options.code.committer` and emits **no**
-  extra `players[]` entry; the roster stays `coder` + `reviewer`.
-- **Why not cligent.** `Committer` is a CODE-internal role tmux-play
-  does not model, and the alias reuses an existing pane, so it is
-  resolved entirely in the playbook composer + CODE runtime. cligent
-  is **not** changed and the lockfile is **not** bumped; a generic
-  tmux-play alias is rejected as speculative (DR-006's CODE-agnostic
-  boundary).
-- **How it reaches the resolver.** The adapter validates
-  `captain.options.code.committer` ([[playbook-runtime-30](../packages/playbook-runtime.md#playbook-runtime-30)])
-  and threads it into `createPlaybookRuntime`, which carries it onto
-  the `Committer` states' `CaptainInput.committerPlayer`. The §2 table
-  becomes the fallback used only when no alias is configured
-  ([[playbook-runtime-8](../packages/playbook-runtime.md#playbook-runtime-8)]).
-- **Identity strings unaffected.** The alias is a player **id**
-  (`coder` / `reviewer`), independent of the §1 `coderPlayer` /
-  `reviewerPlayer` identity strings, so `<coder-llm>` /
-  `<reviewer-llm>` substitutions are unchanged, and `input.player`
-  stays `Committer` ([[playbook-3](../packages/playbook.md#playbook-3)]).
-
-### A4. Runtime contract types sourced from a shared module
-
-This addendum amends §10 so the emitted `code.playbook.ts` imports the
-runtime contract types from a single shared, published type-only module
-instead of redefining them.
-
-- **Shared source.** `PlayerResult`, `PlayerCallOptions`,
-  `PlaybookPorts`, `PlaybookSession`, `PlaybookTraceEvent`, and
-  `PlaybookRuntime` are authored once in `@sublang/playbook/runtime` —
-  the TypeScript projection of
-  [slc/link.md §Output](../../slc/link.md#output). `code.playbook.ts`
-  imports the shared types it references directly (with call options
-  still flowing through the shared `PlaybookPorts` signature) and
-  re-exports `PlayerResult`, `PlaybookPorts`, `PlaybookSession`, and
-  `PlaybookRuntime` so existing `@sublang/playbook/code/playbook`
-  consumers keep resolving those contract names.
-- **Factory type.** The default export's type is
-  `PlaybookRuntimeFactory<CodePlaybookOptions>`, the generic factory
-  type the shared module exposes; `CodePlaybookOptions` is unchanged.
-- **One-way dependency.** The shared module imports no CODE or FSM
-  types, so `@sublang/playbook/runtime` stays free of the CODE playbook;
-  only `code.playbook.ts` depends on it, never the reverse.
-- **Original behavior.** At the time of this addendum, player binding
-  (§1/§2), prompts, guards, and the runtime engine were unchanged.
-  [A5](#a5-playbook-session-tracing-and-player-resume) later extends
-  the shared shapes and emitted engine behavior.
-
-### A5. Playbook session tracing and player resume
-
-[DR-010](010-playbook-session-tracing-and-resume.md) amends the linked
-runtime contract and engine for explicit session identity, ordered
-runtime-boundary tracing, and player continuation.
-
-- `PlaybookRuntime.init` receives a `PlaybookSession` carrying the host's
-  unique playbook-session id, playbook id, and ports.
-- `PlaybookPorts.callPlayer` receives required
-  `PlayerCallOptions.resume`, and `PlayerResult` may return the
-  authoritative opaque `resumeToken`.
-- The emitted runtime explicitly starts each resolved player fresh,
-  retains tokens only within that runtime session, and emits the
-  `playbook.trace` stream specified by [slc/link.md](../../slc/link.md#playbook-trace).
-- Persisted FSM snapshots and cross-process runtime rehydration remain
-  out of scope.
+- CODE's machine describes coding phases and child calls without duplicating the review protocol.
+- REVIEW can evolve as one reusable workflow for CODE, DECIDE, and standalone runs.
+- The reviewed commit is never amended, and a later CODE phase cannot begin after an unsettled child failure.
 
 ## References
 
-[1]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-013 "TMUX-013 — `captain.from` path resolution"
-[2]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-014 "TMUX-014 — Captain factory contract"
-[3]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-026 "TMUX-026 — SIGINT terminal teardown"
-[4]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-033 "TMUX-033 — `PlayerRunResult` shape"
+[1]: https://github.com/sublang-ai/cligent/blob/main/docs/tmux-play.md#custom-captains "cligent tmux-play custom Captains"
