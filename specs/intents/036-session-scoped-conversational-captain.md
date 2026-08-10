@@ -3,7 +3,11 @@
 
 # IR-036: Session-Scoped Conversational Captain
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Implement [DR-029](../decisions/029-session-scoped-conversational-captain.md): make the compiled Captain a session-long conversational controller outside the working-playbook stack, backed by a recoverable conversation and runtime-owned recovery actions.
 
@@ -29,7 +33,7 @@ Implement [DR-029](../decisions/029-session-scoped-conversational-captain.md): m
 The later review found that separate refusal, failure, and recovery branches still broke the intended single result path and that conversational handoff could omit earlier intent.
 [IR-039](039-unified-captain-results.md) records that focused correction.
 
-## Acceptance criteria
+## Verification
 
 - The Captain can chat while a working playbook is parked without moving it.
 - It can start, switch, dismiss, deliver to, or apply an advertised recovery action to the working stack.

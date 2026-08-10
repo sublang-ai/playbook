@@ -3,7 +3,11 @@
 
 # IR-015: SLC-facing runtime contract and slc specs as package surface
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Expose the SLC-facing public surface of `@sublang/playbook` in reviewable slices.
 
@@ -21,7 +25,7 @@ The end state is:
 - `/runtime` and `slc/*` documented as public, semver-stable surfaces.
 
 This extends [slc/link.md §Output](../../slc/link.md#output) and
-[DR-004 §10](../decisions/004-link-code-fsm-to-playbook-runtime.md) — the
+[DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §10 — the
 runtime contract types become a shared authored module the emitted CODE
 module imports, rather than types each artifact redefines.
 `slc/link.md` stays the authored spec contract; `src/runtime.ts` is the
@@ -39,7 +43,7 @@ TypeScript projection of it.
 - [x] IR-015 doc and its `map.md` row.
 - [x] Spec amendments: `slc/link.md` §Output and DR-004 §10 record the
       shared `@sublang/playbook/runtime` source and the
-      `PlaybookRuntimeFactory<Options = unknown>` contract; PBRT-5
+      `PlaybookRuntimeFactory<Options = unknown>` contract; playbook-runtime-5
       relaxed so the runtime module may also import the shared runtime
       type contract; RELEASE items add `/runtime` and `slc/*` as public
       semver-stable surfaces shipped via `files`/`exports` plus the
@@ -83,7 +87,7 @@ before refactoring CODE onto it, and publishes the slc specs last so
    `@sublang/playbook/runtime` source, the
    `PlaybookRuntimeFactory<Options = unknown>` contract, and that the
    emitted CODE module imports/re-exports the contract types.
-   Relax PBRT-5 so the runtime module may import the shared runtime type
+   Relax playbook-runtime-5 so the runtime module may import the shared runtime type
    contract in addition to the FSM artifact and XState, while still
    holding no host-specific types.
    Add RELEASE items marking `/runtime` and `slc/*` as public,
@@ -95,11 +99,11 @@ before refactoring CODE onto it, and publishes the slc specs last so
    resolution and `npm pack` inclusion.
    Implementation note: `slc/link.md` adds `PlaybookRuntimeFactory<Options = unknown>`
    to the contract and a shared-source §Output bullet; DR-004 gains
-   Addendum A4 with a §10 pointer and Status note; PBRT-5 relaxed and
-   PBRT-34 added for the shared `@sublang/playbook/runtime` module;
-   PBRT-35 (consistency vs `slc/link.md` + no CODE/FSM import) and
-   PBRT-36 (CODE type-identity) added; RELEASE-15/16 (public `/runtime`
-   and `slc/*` surfaces) and RELEASE-17/18 (slc resolution + `npm pack`
+   Addendum A4 with a §10 pointer and Status note; playbook-runtime-5 relaxed and
+   playbook-runtime-34 added for the shared `@sublang/playbook/runtime` module;
+   playbook-runtime-35 (consistency vs `slc/link.md` + no CODE/FSM import) and
+   playbook-runtime-36 (CODE type-identity) added; release-15/16 (public `/runtime`
+   and `slc/*` surfaces) and release-17/18 (slc resolution + `npm pack`
    inclusion) added; `map.md` decision/package summaries updated.
 3. **Add `@sublang/playbook/runtime` (additive).** _[done]_
    Author `src/runtime.ts` with the four type-only contracts, commit its
@@ -117,7 +121,7 @@ before refactoring CODE onto it, and publishes the slc specs last so
    `slc/link.md` consistency (PlayerResult.status + the four
    PlaybookPorts members), the four exported types, the standalone
    no-import guarantee, the `./runtime` export wiring, and ESM
-   loadability (PBRT-35). PBRT-36 (CODE type-identity) is deferred to
+   loadability (playbook-runtime-35). playbook-runtime-36 (CODE type-identity) is deferred to
    Task 4 because CODE still declares the types locally. Full suite
    green (714 tests).
 4. **Refactor CODE onto the shared types + type-identity test.** _[done]_
@@ -138,7 +142,7 @@ before refactoring CODE onto it, and publishes the slc specs last so
    `@sublang/playbook/runtime` specifier and the published `exports` map
    is unchanged. No vitest alias is needed — the type-only import/export
    is erased by esbuild, so nothing resolves the specifier at test
-   runtime. `code.playbook.contract.test.ts` implements PBRT-36 via
+   runtime. `code.playbook.contract.test.ts` implements playbook-runtime-36 via
    declaration evidence (imports the three from the shared module, no
    local declaration, one re-export statement). Build is idempotent and
    the drift globs stay satisfied; full suite green (717 tests).
@@ -156,9 +160,9 @@ before refactoring CODE onto it, and publishes the slc specs last so
    serves them. README's embedding example now imports the contract from
    `@sublang/playbook/runtime`, and a new section shows
    `import.meta.resolve('@sublang/playbook/slc/<name>.md')` + `fs`
-   reading. `src/package-surface.test.ts` implements RELEASE-17
+   reading. `src/package-surface.test.ts` implements release-17
    (resolve all three via Node's resolver through `./slc/*`) and
-   RELEASE-18 (`npm pack --dry-run --json` lists the `/runtime`
+   release-18 (`npm pack --dry-run --json` lists the `/runtime`
    artifacts and the three `slc/*.md`). Full suite green (719 tests).
 6. **Close-out.** _[done]_
    Run the relevant test suite, re-verify `specs/map.md`, and record any
@@ -173,13 +177,13 @@ before refactoring CODE onto it, and publishes the slc specs last so
    engine stays emitted in `code.playbook.js`.
    Close-out note (mechanisms worth recording): the `tsc` self-import
    needs a build-only `paths` redirect to `src/runtime.ts` to avoid
-   TS5055; RELEASE-17 runs `import.meta.resolve` in a Node subprocess
+   TS5055; release-17 runs `import.meta.resolve` in a Node subprocess
    because vitest does not provide it; `files` lists the three
-   `slc/*.md` explicitly per the repo's no-glob convention; and PBRT-36
+   `slc/*.md` explicitly per the repo's no-glob convention; and playbook-runtime-36
    was tightened in review from a structural assignability check to
    declaration evidence.
 
-## Acceptance criteria
+## Verification
 
 - Downstream code imports `PlayerResult`, `PlaybookPorts`,
   `PlaybookRuntime`, and `PlaybookRuntimeFactory<Options = unknown>` from

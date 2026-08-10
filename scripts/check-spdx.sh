@@ -2,17 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-# Verify LIC-3 and LIC-4 from specs/test/licensing.md: every git-tracked
+# Verify licensing-3 and licensing-4 from specs/packages/licensing.md: every git-tracked
 # file with comment syntax that is not in the exclusions list from
-# specs/dev/licensing.md must contain SPDX-FileCopyrightText (LIC-3) in
+# specs/packages/licensing.md must contain SPDX-FileCopyrightText (licensing-3) in
 # its first comment block after any shebang, and SPDX-License-Identifier
-# (LIC-4) when a license file is present at project root.
+# (licensing-4) when a license file is present at project root.
 
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
-# License-file detection per specs/dev/licensing.md §License File
+# License-file detection per specs/packages/licensing.md §License File
 # Detection. Sets license_present=1 if any matching artifact exists at
 # the project root.
 license_present=0
@@ -23,7 +23,7 @@ done
 shopt -u nullglob
 [[ -d LICENSES ]] && license_present=1
 
-# Exclusions per specs/dev/licensing.md §Exclusions. Returns 0 (true)
+# Exclusions per specs/packages/licensing.md §Exclusions. Returns 0 (true)
 # when the path is out of scope for header checking.
 is_excluded() {
   local f="$1"
@@ -40,7 +40,7 @@ is_excluded() {
     .gitignore|.gitattributes|.editorconfig|.npmrc|.nvmrc|.node-version|.gitkeep|AGENTS.md|CLAUDE.md|settings.json|*.lock|pnpm-lock.yaml|pnpm-workspace.yaml|package-lock.json|yarn.lock) return 0 ;;
   esac
 
-  # CI workflow YAML (specs/dev/licensing.md names ci.yml as an
+  # CI workflow YAML (specs/packages/licensing.md names ci.yml as an
   # example exclusion; the rule covers any workflow file).
   case "$f" in
     .github/workflows/*.yml|.github/workflows/*.yaml) return 0 ;;
@@ -60,7 +60,7 @@ is_excluded() {
     *.d.ts) return 0 ;;
   esac
 
-  # License / legal documents (per specs/dev/licensing.md §License
+  # License / legal documents (per specs/packages/licensing.md §License
   # File Detection — includes dash-named variants like LICENSE-APACHE
   # alongside LICENSE.txt / LICENSE.md).
   case "$base" in
@@ -74,7 +74,7 @@ is_excluded() {
 }
 
 # Extract the first comment block after any shebang.
-# LIC-3 / LIC-4 require the SPDX directives to live in that block,
+# licensing-3 / licensing-4 require the SPDX directives to live in that block,
 # not merely somewhere in the file's prologue: a file may not put
 # code before the SPDX header and still claim compliance. The block
 # is the run of consecutive comment-marker lines that begins at the
@@ -169,12 +169,12 @@ done < <(git ls-files)
 
 status=0
 if [[ ${#missing_copyright[@]} -gt 0 ]]; then
-  echo "FAIL (LIC-3): ${#missing_copyright[@]} file(s) missing SPDX-FileCopyrightText:" >&2
+  echo "FAIL (licensing-3): ${#missing_copyright[@]} file(s) missing SPDX-FileCopyrightText:" >&2
   printf '  %s\n' "${missing_copyright[@]}" >&2
   status=1
 fi
 if [[ ${#missing_license[@]} -gt 0 ]]; then
-  echo "FAIL (LIC-4): ${#missing_license[@]} file(s) missing SPDX-License-Identifier:" >&2
+  echo "FAIL (licensing-4): ${#missing_license[@]} file(s) missing SPDX-License-Identifier:" >&2
   printf '  %s\n' "${missing_license[@]}" >&2
   status=1
 fi

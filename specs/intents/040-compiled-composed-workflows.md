@@ -3,7 +3,11 @@
 
 # IR-040: Compiled composed workflows
 
-## Goal
+## Status
+
+In progress
+
+## Intent
 
 Compile the maintained CODE, REVIEW, and DECIDE sources into releasable nested playbooks with shared mapped-player continuity and a current, coherent public package.
 
@@ -30,7 +34,7 @@ Compile the maintained CODE, REVIEW, and DECIDE sources into releasable nested p
 10. Update deterministic release checks, smoke, and acceptance for the compiled workflows.
 11. Run the complete deterministic release workflow and nonblocking real-agent CLI acceptance, then audit the packed candidate without publishing it.
 
-## Acceptance criteria
+## Verification
 
 - A Coder call made in nested REVIEW resumes the Coder conversation that CODE or DECIDE already used, and the next parent Coder call resumes the token REVIEW returned.
 - DECIDE's nested Reviewer can compare against the independent proposal it produced before the child call without that proposal being copied into a replacement session.

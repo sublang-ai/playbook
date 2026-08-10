@@ -3,7 +3,11 @@
 
 # IR-022: Per-run agent tuning
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Implement DR-015: reasoning effort in the `playbook run` agent spec and repeatable `--with <path>` top-level config overlays for the interactive launch, so one run's lineup can differ from the global config without editing it.
 
@@ -17,17 +21,17 @@ Implement DR-015: reasoning effort in the `playbook run` agent spec and repeatab
 ## Tasks
 
 1. **Author DR-015 and the spec surface.** _[done]_
-   DR-015, this iteration, amended PBCLI-19, and new PBCLI-25/PBCLI-26/PBCLI-27 precede code changes.
+   DR-015, this iteration, amended playbook-cli-19, and new playbook-cli-25/playbook-cli-26/playbook-cli-27 precede code changes.
 2. **Extend the run host with effort.** _[done]_
    `@`-suffixed effort grammar in `bin/run.js`, adapter-scoped validation via cligent's effort metadata, `effort` on the default `Cligent` construction, and effort-bearing session records.
 3. **Add `--with` overlays to the launcher.** _[done]_
    Flag parsing and argv consumption in `bin/playbook.js`, YAML fragment loading, recursive plain-map merge, and the `--config` conflict diagnostic.
 4. **Pin acceptance tests.** _[done]_
-   PBCLI-27 clauses in `playbook.test.ts` over the injected agent factory, session store, and fake spawn.
+   playbook-cli-27 clauses in `playbook.test.ts` over the injected agent factory, session store, and fake spawn.
 5. **Document for fresh users.** _[done]_
    README run/launch sections, CHANGELOG entry, and `specs/map.md` rows.
 
-## Acceptance criteria
+## Verification
 
 - `--player reviewer=codex:gpt-5.5@xhigh` reaches the injected agent factory with that model and effort; `--captain claude@high` sets effort with the default model; a colon-bearing model binds intact; an unsupported effort exits `1` naming the adapter's supported values before any agent runs.
 - A parked session stores each spec's effort and a resume rebuilds the same lineup.

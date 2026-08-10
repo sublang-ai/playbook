@@ -7,7 +7,7 @@
 
 Accepted.
 Reverses the install-closure mechanism chosen for
-[RELEASE-12](../dev/release.md#release-12) — direct `dependencies` on
+[[release-12](../packages/release.md#release-12)] — direct `dependencies` on
 every wired adapter SDK — while keeping its goal: the adapters wired by
 the bundled production config must actually load.
 Breaking: an install that previously acquired both SDKs transitively no
@@ -140,10 +140,10 @@ since the re-run probes the CLI again.
 
 Making the SDKs optional is only safe if their absence is diagnosed
 before work starts. The launcher already owns an adapter readiness gate
-([PBCLI-12](../dev/playbook-cli.md#pbcli-12)) that checks credentials;
+([[playbook-cli-12](../packages/playbook-cli.md#playbook-cli-12)]) that checks credentials;
 it gains a second, independent check for SDK loadability, and the
 non-interactive `run` path gains the same check over its bound agents
-([PBCLI-39](../dev/playbook-cli.md#pbcli-39)).
+([[playbook-cli-39](../packages/playbook-cli.md#playbook-cli-39)]).
 
 The probe is cligent's own `adapter.isAvailable()`, imported from
 cligent's installed location. That is deliberate: it performs exactly
@@ -167,7 +167,7 @@ to gate.
 
 ### 5. The release gate moves to the shape users actually get
 
-The CI smoke test asserts both install shapes ([RELEASE-13](../test/release.md#release-13)):
+The CI smoke test asserts both install shapes ([[release-13](../packages/release.md#release-13)]):
 
 - **Lean** — the tarball alone. cligent nests under `@sublang/playbook`;
   neither SDK is present anywhere in the closure; both adapters probe
@@ -207,8 +207,8 @@ defect.
   rather than working around it here.
 - SemVer: removing dependencies other packages relied on transitively is
   breaking. The version bump is deliberately left to the release step
-  ([RELEASE-4](../dev/release.md#release-4),
-  [RELEASE-10](../dev/release.md#release-10)) rather than fixed here,
+  ([[release-4](../packages/release.md#release-4)],
+  [[release-10](../packages/release.md#release-10)]) rather than fixed here,
   because `4.0.0` is also the version [DR-023](023-data-only-machine-ir.md)
   names for the data-only machine IR direction, and sequencing those two
   is a release decision, not an implementation one.

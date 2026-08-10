@@ -3,11 +3,15 @@
 
 # IR-012: No raw judge JSON on the Captain pane — CODE half
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Implement CODE's half of [DR-007](../decisions/007-hidden-judge-captain-pane.md): keep the judge's control-plane JSON off the Boss pane so it no longer duplicates the runtime's composed glyph lines, and surface a suspended player's full question as captain speech.
 
-The runtime already composes human-readable lines ([PBRT-3](../user/playbook-runtime.md#pbrt-3) / [PBRT-14](../dev/playbook-runtime.md#pbrt-14)); routing `callJudge` through cligent's `callCaptain` ([PBRT-15](../dev/playbook-runtime.md#pbrt-15)) streamed the judge's JSON to the same pane, contradicting that. DR-007 reconciles the two: every judge call runs hidden, and the `awaitBossReply` entry shows the full question plus a rider-less marker.
+The runtime already composes human-readable lines ([[playbook-runtime-3](../packages/playbook-runtime.md#playbook-runtime-3)] / [[playbook-runtime-14](../packages/playbook-runtime.md#playbook-runtime-14)]); routing `callJudge` through cligent's `callCaptain` ([[playbook-runtime-15](../packages/playbook-runtime.md#playbook-runtime-15)]) streamed the judge's JSON to the same pane, contradicting that. DR-007 reconciles the two: every judge call runs hidden, and the `awaitBossReply` entry shows the full question plus a rider-less marker.
 
 ## Single-commit rationale
 
@@ -23,9 +27,9 @@ This lands as **one commit**: the spec reconciliation (DR-007 + PBRT amendments)
 ## Deliverables
 
 - [x] IR-012 doc, DR-007 doc, and their `map.md` rows landed.
-- [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md) — PBRT-3: two captain-speech acts; `awaitBossReply` emits the full-question speech line then the rider-less `◆` marker; judge JSON is not surfaced.
-- [x] [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md) — PBRT-14 (two `emitStatus` lines, full-question telemetry retained) and PBRT-15 (judge calls run hidden).
-- [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — PBRT-20 (two-line assertion), PBRT-21 (every `callCaptain` passes `{ visibility: 'hidden' }`), and new PBRT-32 (gated end-to-end no-JSON-on-pane test).
+- [x] [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md) — playbook-runtime-3: two captain-speech acts; `awaitBossReply` emits the full-question speech line then the rider-less `◆` marker; judge JSON is not surfaced.
+- [x] [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md) — playbook-runtime-14 (two `emitStatus` lines, full-question telemetry retained) and playbook-runtime-15 (judge calls run hidden).
+- [x] [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md) — playbook-runtime-20 (two-line assertion), playbook-runtime-21 (every `callCaptain` passes `{ visibility: 'hidden' }`), and new playbook-runtime-32 (gated end-to-end no-JSON-on-pane test).
 - [x] `code.tmux-play.ts` — `callJudge` passes `{ visibility: 'hidden' }`; temporary `@sublang/cligent/tmux-play` augmentation added with a `TODO(cligent-bump)` marker; siblings recompiled.
 - [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — `awaitBossReply` entry emits the full-question captain-speech line then the rider-less marker; siblings recompiled.
 - [x] `code.tmux-play.test.ts` — asserts every `callCaptain` passes `{ visibility: 'hidden' }`; adds the gated `describe.skipIf(!CLIGENT_SUPPORTS_HIDDEN_CAPTAIN)` integration test.
@@ -34,13 +38,13 @@ This lands as **one commit**: the spec reconciliation (DR-007 + PBRT amendments)
 ## Tasks
 
 1. **Land the change as one commit.**
-   Spec reconciliation (DR-007; PBRT-3/14/15/20/21; new PBRT-32; `map.md` rows for DR-007 + IR-012), adapter hidden call + temporary augmentation, runtime two-line `awaitBossReply` entry, and the two test updates, with `.js`/`.d.ts` siblings regenerated.
-   `pnpm build` clean and `pnpm test` green (PBRT-32 skipped, not failing).
+   Spec reconciliation (DR-007; playbook-runtime-3/14/15/20/21; new playbook-runtime-32; `map.md` rows for DR-007 + IR-012), adapter hidden call + temporary augmentation, runtime two-line `awaitBossReply` entry, and the two test updates, with `.js`/`.d.ts` siblings regenerated.
+   `pnpm build` clean and `pnpm test` green (playbook-runtime-32 skipped, not failing).
 
-## Acceptance criteria
+## Verification
 
 - The adapter's `callJudge` port invokes `context.callCaptain(prompt, { visibility: 'hidden' })`; every judge call (classification and adjudication) is hidden.
 - The package compiles (`pnpm build`) against the installed `@sublang/cligent` with no dependency bump and no lockfile change, via the temporary module augmentation only.
 - On entry to `awaitBossReply` the runtime emits `<player> asks: <full question>` then `◆ awaiting Boss reply · <resumeStateId> · <player> · <sourceItem>` (no `q=` rider); `playbook.fsm.state` telemetry still carries `pendingBossQuestion.question` verbatim.
-- `code.tmux-play.test.ts` fails if any `callCaptain` call omits `{ visibility: 'hidden' }`; PBRT-32's integration test is registered but skipped while `CLIGENT_SUPPORTS_HIDDEN_CAPTAIN` is `false`.
+- `code.tmux-play.test.ts` fails if any `callCaptain` call omits `{ visibility: 'hidden' }`; playbook-runtime-32's integration test is registered but skipped while `CLIGENT_SUPPORTS_HIDDEN_CAPTAIN` is `false`.
 - `pnpm test` from the repo root is green with the gated test skipped, not failing.

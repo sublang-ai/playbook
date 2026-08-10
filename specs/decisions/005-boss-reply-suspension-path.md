@@ -32,7 +32,7 @@ That fallback is lossy on three counts when the player has a specific question:
 2. The pending continuation (which state, IR task, player, sourceItem) is dropped — Boss must reconstruct it from transcript scrollback.
 3. Boss has no protocol to *answer* — ordinary Boss input is interpreted as a fresh directive, and no surface means "this is the reply to your question."
 
-The runtime's Boss-event classifier ([PBRT-7](../dev/playbook-runtime.md#pbrt-7)) needs current-state context: the judge cannot tell whether *"SQLite"* is a fresh directive or a reply to *"which database?"* unless it knows the actor is waiting for a Boss answer.
+The runtime's Boss-event classifier ([[playbook-runtime-7](../packages/playbook-runtime.md#playbook-runtime-7)]) needs current-state context: the judge cannot tell whether *"SQLite"* is a fresh directive or a reply to *"which database?"* unless it knows the actor is waiting for a Boss answer.
 
 This DR adds a third surface — **mid-state suspension and resume** — in `slc/gears2fsm.md`, so every playbook benefits, not just CODE.
 
@@ -46,9 +46,9 @@ Three actors collaborate on the suspension path; their responsibilities shall no
 |-------|----------|----------|
 | **Player** (claude / codex / etc.) | Free-form prose, which may contain a question Boss must answer | Choose FSM guards; emit FSM events; name a resume state; know that an FSM exists |
 | **Captain adjudicator** (the LLM the runtime drives through `callJudge`) | Picks one `guard` from the state's `result` map; extracts every payload field the chosen guard's description marks as required (e.g., `question` for `needsBossReply`) into `CaptainOutput` | Drive the FSM transition; mutate context; see Boss input |
-| **Runtime** | Invokes the Captain adjudicator per [PBRT-10](../dev/playbook-runtime.md#pbrt-10); on its return, sets `pendingBossQuestion` from invocation metadata + adjudicated `CaptainOutput.question` (per §3); fires `BOSS_REPLY` per §6; emits status per §10.2 | *Independently* infer guards or resume metadata from player prose outside the adjudicator's `CaptainOutput`; populate `pendingBossQuestion` from undocumented sources; re-classify Boss text outside §6's precedence |
+| **Runtime** | Invokes the Captain adjudicator per [[playbook-runtime-10](../packages/playbook-runtime.md#playbook-runtime-10)]; on its return, sets `pendingBossQuestion` from invocation metadata + adjudicated `CaptainOutput.question` (per §3); fires `BOSS_REPLY` per §6; emits status per §10.2 | *Independently* infer guards or resume metadata from player prose outside the adjudicator's `CaptainOutput`; populate `pendingBossQuestion` from undocumented sources; re-classify Boss text outside §6's precedence |
 
-PBRT-10 already vests the *act* of adjudication in the runtime — it calls `callJudge` and parses the reply.
+playbook-runtime-10 already vests the *act* of adjudication in the runtime — it calls `callJudge` and parses the reply.
 The rule above is narrower: once the adjudicator returns a `CaptainOutput`, the runtime shall not second-guess it — not pluck a guard the adjudicator "missed," not derive `sourceItem` or `player` from player text.
 Those fields are authoritative only as invocation metadata.
 
@@ -78,7 +78,7 @@ This separation matters because: (a) players cannot know FSM state ids; (b) embe
 
 The compiler shall emit a `resumableStates(ids)` helper analogous to `bossInterrupts(ids)`, generating the `BOSS_REPLY` arm array from the registered list of all captain-invoking states.
 
-`awaitBossReply` is a quiescent state for the runtime drive loop; see §10 for the PBRT-11 / PBRT-14 / PBRT-3 / DR-004 §8 amendments.
+`awaitBossReply` is a quiescent state for the runtime drive loop; see §10 for the playbook-runtime-11 / playbook-runtime-14 / playbook-runtime-3 / DR-004 §8 amendments.
 
 ### 2. New typed event: `BOSS_REPLY`
 
@@ -157,7 +157,7 @@ Recursive Q&A is supported by construction.
 
 ### 6. Runtime classifier: state-context-aware Boss input
 
-[PBRT-7](../dev/playbook-runtime.md#pbrt-7) shall make Boss-event classification state-context-aware.
+[[playbook-runtime-7](../packages/playbook-runtime.md#playbook-runtime-7)] shall make Boss-event classification state-context-aware.
 The runtime shall not use slash-prefix parsing.
 For every non-empty Boss turn it shall call `callJudge` with the current FSM state and the valid Boss events for that state.
 When the actor is in `'awaitBossReply'`, the prompt shall include the pending question and allow `BOSS_REPLY` only in that state.
@@ -166,8 +166,8 @@ When the actor is in `'awaitBossReply'`, the prompt shall include the pending qu
 |-------------|---------------|-----------|
 | Judge returns `BOSS_REPLY` with a non-empty `answer` while actor is in `awaitBossReply` | `{ type: 'BOSS_REPLY', answer }` | Boss answered the pending question |
 | Judge returns a root-level Boss entry event or `BOSS_INTERRUPT` while actor is in `awaitBossReply` | Emit that event (transitions out of `awaitBossReply` per §1; `clearBossReplyContext` runs) | Boss explicitly abandons the pending question with a fresh directive |
-| Judge returns no action or an invalid event/payload | One `emitStatus` call, no event (per PBRT-7) | A malformed classifier response must not silently move the FSM |
-| Empty or whitespace-only text | No event, judge/player call, status, or FSM action; trace telemetry only (per PBRT-7) | Preserves PBRT-7; an empty BOSS_REPLY is malformed per §8 |
+| Judge returns no action or an invalid event/payload | One `emitStatus` call, no event (per playbook-runtime-7) | A malformed classifier response must not silently move the FSM |
+| Empty or whitespace-only text | No event, judge/player call, status, or FSM action; trace telemetry only (per playbook-runtime-7) | Preserves playbook-runtime-7; an empty BOSS_REPLY is malformed per §8 |
 
 Outside `awaitBossReply`, `BOSS_REPLY` is not a valid classification result.
 The in-state context lets the judge decide whether `"SQLite"` is a fresh directive or a reply.
@@ -217,16 +217,16 @@ In particular, the CODE Committer states shall carry both guards:
 
 This DR amends the items below to accommodate the new quiescent state and its Boss-facing visibility; the amendments land with the implementing IR.
 
-#### 10.1 Amend PBRT-11 (Drive to quiescence)
+#### 10.1 Amend playbook-runtime-11 (Drive to quiescence)
 
-[PBRT-11](../dev/playbook-runtime.md#pbrt-11) lists quiescent states as the idle, failure, and terminal states.
+[[playbook-runtime-11](../packages/playbook-runtime.md#playbook-runtime-11)] lists quiescent states as the idle, failure, and terminal states.
 It shall also include any Boss-reply suspension state (`awaitBossReply`): `handleBossInput` shall return when the actor reaches the idle, failure, terminal, **or `awaitBossReply`** state, after draining port emissions.
 
 Without this, `handleBossInput` never returns from `awaitBossReply`, the runtime never yields to Boss, and the reply can never reach the FSM — a deadlock that defeats the DR.
 
-#### 10.2 Amend PBRT-14 (status / telemetry stream) and PBRT-3
+#### 10.2 Amend playbook-runtime-14 (status / telemetry stream) and playbook-runtime-3
 
-[PBRT-14](../dev/playbook-runtime.md#pbrt-14) and the user-facing [PBRT-3](../user/playbook-runtime.md#pbrt-3) glyph vocabulary shall be amended so that, on entry to `awaitBossReply`, the runtime emits a distinct status frame carrying `pendingBossQuestion`'s `question`, `player`, `sourceItem`, and the resume target id.
+[[playbook-runtime-14](../packages/playbook-runtime.md#playbook-runtime-14)] and the user-facing [[playbook-runtime-3](../packages/playbook-runtime.md#playbook-runtime-3)] glyph vocabulary shall be amended so that, on entry to `awaitBossReply`, the runtime emits a distinct status frame carrying `pendingBossQuestion`'s `question`, `player`, `sourceItem`, and the resume target id.
 Without it, Boss sees the FSM go silent with no signal that input is expected.
 
 The implementing IR selects the glyph and frame layout; this DR does not pin those bytes.
@@ -234,7 +234,7 @@ The IR shall also have the telemetry topic carry the same fields, so non-tmux-pl
 
 #### 10.3 Amend DR-004 §8 (CODE quiescent values)
 
-[DR-004 §8](./004-link-code-fsm-to-playbook-runtime.md#8-quiescence-and-abort) pins CODE quiescent values to `'ready'`, `'failed'`, `'done'`; the list shall gain `'awaitBossReply'` once the CODE FSM declares the state (§9).
+[DR-004](./004-link-code-fsm-to-playbook-runtime.md) §8 pins CODE quiescent values to `'ready'`, `'failed'`, `'done'`; the list shall gain `'awaitBossReply'` once the CODE FSM declares the state (§9).
 `code.playbook.ts`'s quiescent-state constant shall be updated in the same IR commit — drift from the spec list would re-introduce the 10.1 deadlock.
 
 ### 11. `needsBossInput` is not deprecated

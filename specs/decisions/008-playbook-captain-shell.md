@@ -16,7 +16,7 @@ DR-029 also restores §4's one-durable-Captain-conversation intent — sub-runti
 [DR-004](004-link-code-fsm-to-playbook-runtime.md) links the CODE FSM into a host-agnostic `PlaybookRuntime`.
 That runtime is currently adapted directly as the tmux-play Captain, so CODE is both the whole Boss-facing Captain and the runnable playbook.
 
-The runtime contract already reserves slash-prefixed `/command` input for host-level or playbook-selection UX before a turn reaches `handleBossInput` ([slc/link.md "Boss-event mapping"](../../slc/link.md#boss-event-mapping), [PBRT-1](../user/playbook-runtime.md#pbrt-1)).
+The runtime contract already reserves slash-prefixed `/command` input for host-level or playbook-selection UX before a turn reaches `handleBossInput` ([slc/link.md "Boss-event mapping"](../../slc/link.md#boss-event-mapping), [[playbook-runtime-1](../packages/playbook-runtime.md#playbook-runtime-1)]).
 Inside a playbook runtime, slash-prefixed text is ordinary Boss text classified by the playbook's own judge.
 The reserved selection layer has not yet existed in this repo.
 
@@ -132,8 +132,8 @@ Visibility hides records from the Boss pane; prompt envelopes protect the model 
 ### 5. Mirror sub-runtime state from telemetry
 
 The shell shall mirror the active sub-runtime's state from the `playbook.fsm.state` telemetry emitted through the shell's wrapped `PlaybookPorts`.
-[PBRT-11](../dev/playbook-runtime.md#pbrt-11) requires `handleBossInput` to return only after quiescence and after draining emissions.
-[PBRT-14](../dev/playbook-runtime.md#pbrt-14) requires ordered transition telemetry, failure error data, and `awaitBossReply` question data.
+[[playbook-runtime-11](../packages/playbook-runtime.md#playbook-runtime-11)] requires `handleBossInput` to return only after quiescence and after draining emissions.
+[[playbook-runtime-14](../packages/playbook-runtime.md#playbook-runtime-14)] requires ordered transition telemetry, failure error data, and `awaitBossReply` question data.
 Those contracts are sufficient for the first shell implementation.
 
 A new `getSnapshot()` method on `PlaybookRuntime` is deferred.
@@ -166,13 +166,13 @@ Those specs shall cover engagement, dismiss, and final-disposal status without c
 
 The implementing specs shall reconcile this DR with released CODE runtime and launcher items.
 
-- [PBRT-1](../user/playbook-runtime.md#pbrt-1) and [PBRT-2](../user/playbook-runtime.md#pbrt-2) shall be scoped to Boss turns that reach an engaged CODE runtime.
-- [PBRT-15](../dev/playbook-runtime.md#pbrt-15) and [PBRT-16](../dev/playbook-runtime.md#pbrt-16) shall be amended so the tmux-play `captain.from` target is the Playbook Captain shell, which constructs registered sub-runtimes and wires their `PlaybookPorts`.
-- [PBRT-30](../dev/playbook-runtime.md#pbrt-30) shall be amended so CODE option validation is owned by the CODE registry entry rather than by a direct CODE tmux adapter.
-- [PBRT-29](../user/playbook-runtime.md#pbrt-29) and the now-retired
+- [[playbook-runtime-1](../packages/playbook-runtime.md#playbook-runtime-1)] and [[playbook-runtime-2](../packages/playbook-runtime.md#playbook-runtime-2)] shall be scoped to Boss turns that reach an engaged CODE runtime.
+- [[playbook-runtime-15](../packages/playbook-runtime.md#playbook-runtime-15)] and [[playbook-runtime-16](../packages/playbook-runtime.md#playbook-runtime-16)] shall be amended so the tmux-play `captain.from` target is the Playbook Captain shell, which constructs registered sub-runtimes and wires their `PlaybookPorts`.
+- [[playbook-runtime-30](../packages/playbook-runtime.md#playbook-runtime-30)] shall be amended so CODE option validation is owned by the CODE registry entry rather than by a direct CODE tmux adapter.
+- [[playbook-runtime-29](../packages/playbook-runtime.md#playbook-runtime-29)] and the now-retired
   PBCODE-16 launcher contract shall be amended so the composer-injected
   `captain.from` value points at the Playbook Captain shell adapter.
-- [PBRT-12](../dev/playbook-runtime.md#pbrt-12) remains a CODE runtime contract for direct runtime use; the Captain shell normally disposes final sub-runtime engagements instead of sending another Boss turn into a final sub-runtime.
+- [[playbook-runtime-12](../packages/playbook-runtime.md#playbook-runtime-12)] remains a CODE runtime contract for direct runtime use; the Captain shell normally disposes final sub-runtime engagements instead of sending another Boss turn into a final sub-runtime.
 
 ### 9. Out of scope
 

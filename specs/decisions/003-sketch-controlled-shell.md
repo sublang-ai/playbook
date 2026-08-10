@@ -47,7 +47,7 @@ Findings:
   (XState has already performed deepest-owner selection and guard matching).
   This obsoletes DR-002's matcher: the parent-side adapter no longer
   reconstructs from microstep candidates and no longer needs a disambiguator
-  callback. SKETCH-12 (deepest-owner) becomes an observed consequence rather
+  callback. sketch-12 (deepest-owner) becomes an observed consequence rather
   than implemented behavior.
 - **Microsteps remain load-bearing for fired-edge truth.** Snapshots collapse
   macrosteps (e.g. `event E → microstep E→A → microstep (always) A→B →
@@ -78,14 +78,14 @@ Parent app process
   ┌─ XState actor (machine + actor + Captain children)
   ┌─ Sketch parent-side adapter
   │    actor.system.inspect((event) => …)
-  │      filtered: event.actorRef === boundActor          // SKETCH-11
+  │      filtered: event.actorRef === boundActor          // sketch-11
   │      @xstate.snapshot   → activeIds + cache → post sketch:setLiveActiveIds
   │      @xstate.microstep  → _transitions → edge-id index → post sketch:flashTransitions
   │    on adapter.start():
   │      actor.getSnapshot() → cache + post sketch:setLiveActiveIds
   │    on inbound sketch:ready:
   │      re-post cached latestActiveIds                   // late-mount replay
-  │    fired events are never replayed                    // SKETCH-10 retention rule survives
+  │    fired events are never replayed                    // sketch-10 retention rule survives
   └─ <iframe src="…/?iframe=true&mode=viz"> (controlled Sketch)
        postMessage receiver in __root.tsx →
          appStore.trigger.<setLiveActiveIds | flashTransitions | …>
@@ -230,10 +230,10 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
   Node-side renderer (`renderSketchToString`) and the screenshot capture
   script also retire — Sketch renders in the browser; static SVG snapshots
   are no longer load-bearing for documentation.
-- The **SKETCH spec package** ([user](../user/sketch.md),
-  [dev](../dev/sketch.md), [test](../test/sketch.md))
-  updates correspondingly. The user-visible items (SKETCH-1..5) survive
-  unchanged in spirit, with SKETCH-4's `disambiguator` mention dropped
+- The **SKETCH spec package** ([user](../packages/sketch.md),
+  [dev](../packages/sketch.md), [test](../packages/sketch.md))
+  updates correspondingly. The user-visible items (sketch-1..5) survive
+  unchanged in spirit, with sketch-4's `disambiguator` mention dropped
   because XState's transition selection is now the source of truth.
   Dev-side items reframe per the bullets below; test items retire those
   whose dev counterparts retire.
@@ -241,7 +241,7 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
   upstream Sketch update must be checked for compatibility with all seven.
   All patches are additive and surgical; rebase ergonomics are favorable.
 - The parent-side adapter inherits the actorRef-identity-filter responsibility
-  (SKETCH-11) and the latest-active retention rule (SKETCH-10). Both survive
+  (sketch-11) and the latest-active retention rule (sketch-10). Both survive
   unchanged in spirit; their implementation moves from `views/sketch/`'s
   Telemetry layer into the new ~80-LOC adapter.
 - **Microsteps replace DR-002's matcher.** `deriveFiredEdges` and its
@@ -259,10 +259,10 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
   receives and forwards to the iframe. The protocol surface is the same;
   only the transport between Captain and browser changes from DR-002's SSE
   to whatever the presenter chooses (still single-direction, still id-only).
-- **Inspector-less degradation no longer applies.** SKETCH-13 drops because
+- **Inspector-less degradation no longer applies.** sketch-13 drops because
   `actor.system.inspect` always exists; there is no separate "inspector
   supplied" concept.
-- **DOM-free production drops.** SKETCH-7 retires. Sketch is React/DOM; the
+- **DOM-free production drops.** sketch-7 retires. Sketch is React/DOM; the
   Diagram layer can no longer be produced outside a browser. Cross-process
   deployment renders in the browser, not on the Captain side.
 - **Deferred future work**: dev-only `@statelyai/inspect` tee for

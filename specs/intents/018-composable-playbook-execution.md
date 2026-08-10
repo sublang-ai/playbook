@@ -3,7 +3,11 @@
 
 # IR-018: Composable playbook execution
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Run independent playbook tasks concurrently and let one live playbook call, await, and resume from another enabled playbook.
 
@@ -32,7 +36,7 @@ Run independent playbook tasks concurrently and let one live playbook call, awai
 6. **Verify and regenerate.** _[done]_
    Exercise real linked runtimes and test-only nested callers, rebuild artifacts, run the complete suite, and audit the committed diff.
 
-## Acceptance criteria
+## Verification
 
 - Both DISCUSS players start each proposal round before either result is required, and the next round sees only the joined prior-round pair.
 - A waiting parallel branch resumes independently while completed or separately waiting siblings are not restarted.

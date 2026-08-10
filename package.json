@@ -121,7 +121,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "vitest run",
+    "test": "spex lint && vitest run",
     "test:acceptance": "vitest run --config vitest.acceptance.config.ts",
     "smoke:release": "node scripts/release-smoke.mjs",
     "check:links": "node scripts/check-links.mjs",
@@ -133,7 +133,7 @@
   },
   "dependencies": {
     "@sublang/cligent": "^0.19.0",
-    "@sublang/spex": "^0.3.0",
+    "@sublang/spex": "^2.1.1",
     "p-queue": "^9.3.1",
     "xstate": "^5.19.4",
     "yaml": "^2.9.0"

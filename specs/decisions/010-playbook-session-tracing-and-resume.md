@@ -53,7 +53,7 @@ Every trace payload shall carry:
 | `callId` | Stable id shared by matching call-started and call-finished events. |
 | `payload` | JSON-safe event data. |
 
-[DR-011 §5](011-composable-playbook-execution.md#5-trace-causality)
+[DR-011](011-composable-playbook-execution.md) §5
 supersedes the version-1 schema, closed type set, and state-id-only
 payload vocabulary for every linked runtime with trace schema version
 2, structured state, suspended settlement, causal session fields, and
@@ -116,7 +116,7 @@ The shell shall use cligent's live-session `Captain.prepareDispose()` hook to di
 
 ### 5. Boss-question continuation
 
-[DR-005 §7](005-boss-reply-suspension-path.md#7-transcript-embedding-with-player-session-resume) is amended: the labelled Boss question and answer blocks remain mandatory, and the resumed state may additionally continue the same backend player session under this decision.
+[DR-005](005-boss-reply-suspension-path.md) §7 is amended: the labelled Boss question and answer blocks remain mandatory, and the resumed state may additionally continue the same backend player session under this decision.
 The explicit Q+A remains deterministic input and an adapter-independent fallback; backend resume preserves conversation and tool context.
 
 ### 6. Preserved scope

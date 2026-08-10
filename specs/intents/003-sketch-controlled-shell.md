@@ -3,7 +3,11 @@
 
 # IR-003: Sketch Controlled Shell Cutover
 
-## Goal
+## Status
+
+Incomplete
+
+## Intent
 
 Implement the runtime XState visualizer specified by
 [DR-003](../decisions/003-sketch-controlled-shell.md): a forked self-hosted
@@ -87,40 +91,40 @@ only the visualizer renderer and its telemetry transport change.
 
 ### Spec updates (SKETCH package)
 
-- [ ] **`specs/user/sketch.md`** — items survive in spirit:
-  - SKETCH-1 (render): unchanged.
-  - SKETCH-2 (active state): unchanged.
-  - SKETCH-3 (fired transitions): unchanged.
-  - SKETCH-4 (ambiguity): user-visible behavior unchanged; **drop the
+- [ ] **`specs/packages/sketch.md`** — items survive in spirit:
+  - sketch-1 (render): unchanged.
+  - sketch-2 (active state): unchanged.
+  - sketch-3 (fired transitions): unchanged.
+  - sketch-4 (ambiguity): user-visible behavior unchanged; **drop the
     `disambiguator` mention** since the firing event resolves ambiguity at
     the source.
-  - SKETCH-5 (late-mount current state): unchanged.
-- [ ] **`specs/dev/sketch.md`** — substantive changes:
-  - SKETCH-6 (separable layers): reframe — the layers are now Diagram
+  - sketch-5 (late-mount current state): unchanged.
+- [ ] **`specs/packages/sketch.md`** — substantive changes:
+  - sketch-6 (separable layers): reframe — the layers are now Diagram
     (Sketch fork) / Adapter (parent) / Binding (postMessage). Cross-process
     splittability survives.
-  - SKETCH-7 (DOM-free production): **drop**. Sketch is React/DOM;
+  - sketch-7 (DOM-free production): **drop**. Sketch is React/DOM;
     cross-process deployment renders in the browser.
-  - SKETCH-8 (telemetry kinds + monotone seq): reframe to the postMessage
+  - sketch-8 (telemetry kinds + monotone seq): reframe to the postMessage
     subset; keep the two event kinds (`active`, `fired`) at the protocol
     level; **drop** the seq-monotonicity requirement (in-page postMessage
     is ordered).
-  - SKETCH-9 (seq reset on reconnect): **drop**. Replaced by `sketch:ready`
+  - sketch-9 (seq reset on reconnect): **drop**. Replaced by `sketch:ready`
     replay of cached `latestActiveIds`.
-  - SKETCH-10 (latest-active retention; no fired replay): unchanged in
+  - sketch-10 (latest-active retention; no fired replay): unchanged in
     spirit; lives in the parent-side adapter.
-  - SKETCH-11 (actorRef-identity filter): unchanged.
-  - SKETCH-12 (deepest-owner): reframe — "the visualizer shall reflect
+  - sketch-11 (actorRef-identity filter): unchanged.
+  - sketch-12 (deepest-owner): reframe — "the visualizer shall reflect
     XState's transition selection; deepest-owner is an observed
     consequence, not implemented logic."
-  - SKETCH-13 (no-inspector → active only): **drop**. `actor.system.inspect`
+  - sketch-13 (no-inspector → active only): **drop**. `actor.system.inspect`
     always exists; there is no separate inspector concept.
-  - SKETCH-14 (dispose three-step): retain; reframe to the adapter's
+  - sketch-14 (dispose three-step): retain; reframe to the adapter's
     teardown (unsubscribe inspect; clear decay timers; drain fired set).
-- [ ] **`specs/test/sketch.md`** — drop tests verifying retired items
-  (T for SKETCH-9, SKETCH-13, SKETCH-7); update Verifies citations on
-  reframed items; keep the integration tests for SKETCH-1..5, SKETCH-10..12,
-  SKETCH-14.
+- [ ] **`specs/packages/sketch.md`** — drop tests verifying retired items
+  (T for sketch-9, sketch-13, sketch-7); update Verifies citations on
+  reframed items; keep the integration tests for sketch-1..5, sketch-10..12,
+  sketch-14.
 - [ ] **`specs/map.md`** — add IR-003 row; the SKETCH package summary
   remains accurate.
 
@@ -176,7 +180,7 @@ commit; the deletions land *after* the adapter ships.
     `specs/{user,dev,test}/sketch.md` per the deliverable list; update
     `specs/map.md`. Mark IR-003 deliverables progressively as the IR lands.
 
-## Acceptance criteria
+## Verification
 
 - `npm run dev` from `views/sketch/` opens a two-pane page. The left pane is
   the Sketch fork iframe rendering `coding.fsm.ts` in card layout. The right
@@ -213,7 +217,7 @@ commit; the deletions land *after* the adapter ships.
   separately allowed by DR-003 and do not violate the live-telemetry
   rule.
 - All `views/sketch/**` and Sketch-fork patch sources carry SPDX headers per
-  [LIC-1](../dev/licensing.md#lic-1) and
-  [LIC-2](../dev/licensing.md#lic-2).
+  [[licensing-1](../packages/licensing.md#licensing-1)] and
+  [[licensing-2](../packages/licensing.md#licensing-2)].
 - After Task 10's deletion sweep, `npm run build` and `npm test` succeed
   with no references to the retired modules.

@@ -12,8 +12,8 @@ overlay with the generic `playbook` launcher and a top-level
 `profiles` / `playbooks` config, and moves CODE options from
 `captain.options.code` to the registry-scoped
 `captain.options.playbooks.code.options` slice
-([PBRT-29](../user/playbook-runtime.md#pbrt-29),
-[PBRT-30](../dev/playbook-runtime.md#pbrt-30)).
+([[playbook-runtime-29](../packages/playbook-runtime.md#playbook-runtime-29)],
+[[playbook-runtime-30](../packages/playbook-runtime.md#playbook-runtime-30)]).
 This DR's `captain.options` extension-point reasoning survives in DR-009's
 per-playbook option slices; its `playbook-code` composer mechanics and the
 retired PBCODE specs it cites below are historical.
@@ -31,7 +31,7 @@ Under cligent's contract (TMUX-008), when loading a config the loader rejects an
 So `captain.options` is the only place a plugin may extend without a cligent change.
 
 CODE will need its own runtime options, and there is no clean home for them today.
-The current onboarding seeds a full tmux-play config the user hand-maintains (PBCODE-5, PBCODE-7), including the `captain.from` and `players[].id` values the user is told not to touch ([PBRT-4](../user/playbook-runtime.md#pbrt-4)).
+The current onboarding seeds a full tmux-play config the user hand-maintains (PBCODE-5, PBCODE-7), including the `captain.from` and `players[].id` values the user is told not to touch ([[playbook-runtime-4](../packages/playbook-runtime.md#playbook-runtime-4)]).
 That is a leaky abstraction: the user maintains invariants that are not theirs to change.
 
 cligent already exports the primitives needed to *read* a config — `findTmuxPlayConfig`, `loadTmuxPlayConfig`, and the config types — from `@sublang/cligent/tmux-play`.
@@ -89,9 +89,9 @@ The implementing IR shall land these alongside the new items:
 
 - **PBCODE-1 / PBCODE-5** — the launch target becomes the composed temp config; the user-level CODE config becomes the overlay source, not the launched file.
 - **PBCODE-7** — the seeded template drops `captain.from` and `players[].id` (the composer injects them) and its comments no longer name those as user-maintained invariants.
-- **[PBRT-4](../user/playbook-runtime.md#pbrt-4)** — the `captain.from` and baked-id invariants are injected by the composer rather than declared by the user; `captain.from` targets the Playbook Captain shell adapter per [DR-008](008-playbook-captain-shell.md), and `captain.options.code` is named as the CODE option surface.
+- **[[playbook-runtime-4](../packages/playbook-runtime.md#playbook-runtime-4)]** — the `captain.from` and baked-id invariants are injected by the composer rather than declared by the user; `captain.from` targets the Playbook Captain shell adapter per [DR-008](008-playbook-captain-shell.md), and `captain.options.code` is named as the CODE option surface.
 
-New normative items: PBRT-29 / PBRT-30 (host config + registry validation) and PBCODE-16 / PBCODE-17 (composer behavior + mechanics), with test items PBRT-31 / PBCODE-18.
+New normative items: playbook-runtime-29 / playbook-runtime-30 (host config + registry validation) and PBCODE-16 / PBCODE-17 (composer behavior + mechanics), with test items playbook-runtime-31 / PBCODE-18.
 
 ## Consequences
 

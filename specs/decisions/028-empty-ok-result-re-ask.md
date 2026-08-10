@@ -22,7 +22,7 @@ The two call boundaries also disagreed on whether `''` counts as empty.
 - Both boundaries use that same empty predicate, closing the `''` asymmetry.
 - Non-`ok` results, thrown calls, and aborts are never retried ([DR-025](025-resilient-captain-control-adjudication.md)'s transport exclusion).
 - A second empty result follows the existing failure path.
-- A retry preserves the originating call's continuity policy: player retries follow player-session continuity ([PBRT-38](../dev/playbook-runtime.md#pbrt-38)); only the controller Captain's calls join [DR-029](029-session-scoped-conversational-captain.md)'s durable conversation; all other Captain and judge calls keep their existing isolation.
+- A retry preserves the originating call's continuity policy: player retries follow player-session continuity ([[playbook-runtime-38](../packages/playbook-runtime.md#playbook-runtime-38)]); only the controller Captain's calls join [DR-029](029-session-scoped-conversational-captain.md)'s durable conversation; all other Captain and judge calls keep their existing isolation.
 - When an empty controller result also loses continuity, the journal-seeded reseed is the single corrective call — never a reseed plus another retry.
 
 Rejected: fail-open passthrough (hides faults), multi-retry (loops on deterministic bugs), and adapter-only fixes (the shape stays legal for every adapter).
@@ -34,4 +34,4 @@ The implementing IR carries the item amendments, trace details, and test pins.
 
 ## References
 
-[1]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033 "cligent TMUX-033 — PlayerRunResult shape"
+[1]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-033 "cligent TMUX-033 — PlayerRunResult shape"

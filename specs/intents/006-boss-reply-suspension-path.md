@@ -3,7 +3,11 @@
 
 # IR-006: Boss-reply suspension path
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Implement [DR-005](../decisions/005-boss-reply-suspension-path.md)
 end to end: amend the relevant specs, audit and migrate the CODE
@@ -47,7 +51,7 @@ DR.
   four-glyph vocabulary, full text in telemetry for hosts that
   surface their own prompt.
 - **Glyph for `awaitBossReply` entry in the four-glyph
-  vocabulary (PBRT-3):** reuse `◆` (terminal/idle) — the
+  vocabulary (playbook-runtime-3):** reuse `◆` (terminal/idle) — the
   state is quiescent from the runtime's perspective, and adding
   a fifth glyph would inflate the vocabulary for one state.
   The preceding label (`awaiting Boss reply ·`) disambiguates
@@ -64,54 +68,54 @@ DR.
   helper, the `setPendingBossQuestion` / `clearBossReplyContext`
   assigners, and the input-function discipline that prepends the
   continuation preamble + Q/A labelled blocks.
-- [x] [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md)
+- [x] [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md)
   — three amendments:
-  - PBRT-7: classifier branch when actor state is
+  - playbook-runtime-7: classifier branch when actor state is
     `awaitBossReply` (precedence per DR-005 §6).
-  - PBRT-11: extend quiescent-state set to include
+  - playbook-runtime-11: extend quiescent-state set to include
     `awaitBossReply`.
-  - PBRT-14: status emission on `awaitBossReply` entry carries
+  - playbook-runtime-14: status emission on `awaitBossReply` entry carries
     the structured fields per DR-005 §10.2.
-- [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md)
+- [x] [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md)
   — two amendments:
-  - PBRT-2: classifier exception so non-slash text in
+  - playbook-runtime-2: classifier exception so non-slash text in
     `awaitBossReply` becomes `BOSS_REPLY` without a judge call;
     `/start` / `/continue` / `/summarize` while waiting
     additionally abandon the pending question.
-  - PBRT-3: `◆` vocabulary entry covers `awaitBossReply` entry
+  - playbook-runtime-3: `◆` vocabulary entry covers `awaitBossReply` entry
     and documents the `awaiting Boss reply · …` line shape.
-- [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md)
+- [x] [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md)
   — two changes so user / dev / test specs stay in agreement on
-  PBRT-2 / PBRT-7's classifier branch:
-  - PBRT-25 scoped to "outside `awaitBossReply`" so it stops
+  playbook-runtime-2 / playbook-runtime-7's classifier branch:
+  - playbook-runtime-25 scoped to "outside `awaitBossReply`" so it stops
     over-claiming for the suspension path.
-  - New PBRT-28 (next free ID after PBRT-27) verifies the
+  - New playbook-runtime-28 (next free ID after playbook-runtime-27) verifies the
     in-`awaitBossReply` branch: non-slash → `BOSS_REPLY` with
     no `callJudge`, recognized slash → normal event, etc.
-- [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md)
+- [x] [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md)
   — §8 quiescent values extended to
   `'ready' | 'failed' | 'done' | 'awaitBossReply'`. Recorded as
   a one-paragraph addendum at the bottom of DR-004 citing
   DR-005, not a substantive rewrite.
-- [x] [`specs/dev/playbook.md`](../dev/playbook.md) — two
-  new PLAYBOOK conformance items, IDs picked per META-11
-  (uniqueness within `specs/`) and META-12 (new items take
-  higher IDs per package). The existing range from IR-005 is
-  PLAYBOOK-1..6 (dev) and PLAYBOOK-7..11 (test), so the new
-  dev items are PLAYBOOK-12 and PLAYBOOK-13:
-  - PLAYBOOK-12: every captain-invoking state whose `result`
+- [x] [`specs/packages/playbook.md`](../packages/playbook.md) — two
+  new playbook conformance items, IDs picked per [[meta-11](../meta.md#meta-11)]
+  (uniqueness within the package) and [[meta-12](../meta.md#meta-12)] (released concerns retain
+  their IDs). The existing range from IR-005 is
+  playbook-1..6 (dev) and playbook-7..11 (test), so the new
+  dev items are playbook-12 and playbook-13:
+  - playbook-12: every captain-invoking state whose `result`
     map declares `needsBossReply` shall have a matching arm in
     `awaitBossReply.on.BOSS_REPLY` keyed by `resumeStateId`.
-  - PLAYBOOK-13: every transition out of `awaitBossReply`
+  - playbook-13: every transition out of `awaitBossReply`
     other than the `BOSS_REPLY` resume arm shall declare
     `actions: clearBossReplyContext`; every transition out of a
     resumable state's `onDone` other than its `needsBossReply`
     arm shall declare `actions: clearBossReplyContext`.
-- [x] [`specs/test/playbook.md`](../test/playbook.md) — two
-  new test items (PLAYBOOK-14, PLAYBOOK-15) per META-20 (each
-  test item carries a `Verifies:` line) and META-21
-  (integration-test scope), verifying PLAYBOOK-12 and
-  PLAYBOOK-13 respectively via the existing conformance /
+- [x] [`specs/packages/playbook.md`](../packages/playbook.md) — two
+  new test items (playbook-14, playbook-15) per [[meta-20](../meta.md#meta-20)] (each
+  test item cites its verified behaviors inline) and [[meta-21](../meta.md#meta-21)]
+  (integration-test scope), verifying playbook-12 and
+  playbook-13 respectively via the existing conformance /
   coverage test family.
 - [x] [`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md) — per-state
   audit applied: `planAndImplement` / `continueIr` /
@@ -195,12 +199,12 @@ Order keeps `main` both building and test-green throughout: specs land first to 
    No code or behavior changes.
 2. **Spec amendments.**
    `slc/gears2fsm.md` (new Boss-reply suspension subsection);
-   `specs/dev/playbook-runtime.md` (PBRT-7 branch, PBRT-11
-   quiescence, PBRT-14 status);
-   `specs/user/playbook-runtime.md` (PBRT-3 line shape);
+   `specs/packages/playbook-runtime.md` (playbook-runtime-7 branch, playbook-runtime-11
+   quiescence, playbook-runtime-14 status);
+   `specs/packages/playbook-runtime.md` (playbook-runtime-3 line shape);
    DR-004 §8 addendum;
-   `specs/dev/playbook.md` (PLAYBOOK-12, PLAYBOOK-13);
-   `specs/test/playbook.md` (PLAYBOOK-14, PLAYBOOK-15).
+   `specs/packages/playbook.md` (playbook-12, playbook-13);
+   `specs/packages/playbook.md` (playbook-14, playbook-15).
    All prose; no code touched.
 3. **CODE gears + FSM migration (combined).**
    This commit moves gears and FSM together so the
@@ -252,16 +256,16 @@ Order keeps `main` both building and test-green throughout: specs land first to 
    Extend the prompt composer to prepend the continuation
    preamble + `Boss question:` / `Boss reply:` labelled blocks
    when both context fields are present (DR-005 §5); ordering
-   per PLAYBOOK-5 grammar.
+   per playbook-5 grammar.
 6. **Runtime: status emission on awaitBossReply entry.**
    Emit the single-line pane string and structured telemetry
-   record per PBRT-14 amendment and "Decisions baked in" above.
+   record per playbook-runtime-14 amendment and "Decisions baked in" above.
    This is the change that lets Boss actually see what's being
    asked.
 7. **Tests: deep conformance + coverage.**
    Extend `code.gears-fsm.test.ts` to pin the
    gears-side parseable-marker requirement for
-   `needsBossReply` declarations (PLAYBOOK-12).
+   `needsBossReply` declarations (playbook-12).
    Extend `code.fsm.coverage.test.ts` beyond task 3's
    `BOSS_REPLY` arm fixtures with the remaining deep coverage:
    `needsBossReply` outcomes populate `pendingBossQuestion`
@@ -270,7 +274,7 @@ Order keeps `main` both building and test-green throughout: specs land first to 
    a resumable state's `onDone` and every transition out of
    `awaitBossReply` other than the resume arm uses
    `clearBossReplyContext` and actually clears both Boss-reply
-   context fields (PLAYBOOK-13); the three failure modes route
+   context fields (playbook-13); the three failure modes route
    to `failed` with the documented errors.
 8. **Tests: prompt-contract + runtime.**
    Extend `code.prompt-contract.test.ts` with rows for the
@@ -290,7 +294,7 @@ Order keeps `main` both building and test-green throughout: specs land first to 
    delta in a one-paragraph addendum at the bottom of DR-005
    (or open a follow-up DR if it warrants more than that).
 
-## Acceptance criteria
+## Verification
 
 - `pnpm test` from the repo root is green; the test count grows
   by at least one row per resumable state plus one row per

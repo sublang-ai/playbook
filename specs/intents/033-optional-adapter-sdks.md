@@ -3,7 +3,11 @@
 
 # IR-033: Optional Adapter SDKs
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Implement [DR-026](../decisions/026-optional-adapter-sdks.md): move
 `@anthropic-ai/claude-agent-sdk` and `@openai/codex-sdk` from hard
@@ -15,18 +19,18 @@ at the two install shapes users actually produce.
 
 ## Deliverables
 
-- [x] DR-026, the rewritten [RELEASE-12](../dev/release.md#release-12)
-      and [RELEASE-13](../test/release.md#release-13), new
-      [RELEASE-27](../test/release.md#release-27), new
-      [PBCLI-39](../dev/playbook-cli.md#pbcli-39)/[PBCLI-40](../user/playbook-cli.md#pbcli-40)/[PBCLI-41](../test/playbook-cli.md#pbcli-41),
+- [x] DR-026, the rewritten [[release-12](../packages/release.md#release-12)]
+      and [[release-13](../packages/release.md#release-13)], new
+      [[release-27](../packages/release.md#release-27)], new
+      [[playbook-cli-39](../packages/playbook-cli.md#playbook-cli-39)]/[[playbook-cli-40](../packages/playbook-cli.md#playbook-cli-40)]/[[playbook-cli-41](../packages/playbook-cli.md#playbook-cli-41)],
       this record, and the map rows.
 - [x] `package.json` declaring both SDKs as optional peers and as
       `devDependencies`, with `pnpm-lock.yaml` in agreement.
 - [x] The SDK preflight in `bin/playbook.js` (readiness gate) and
       `bin/run.js` (bound agents), probing through cligent's own
       `adapter.isAvailable()` and naming the exact install line.
-- [x] Integration tests per PBCLI-41, the declaration test per
-      RELEASE-27, and the two-shape CI smoke per RELEASE-13.
+- [x] Integration tests per playbook-cli-41, the declaration test per
+      release-27, and the two-shape CI smoke per release-13.
 - [x] README, `docs/cli.md`, and the seeded config template carrying the
       documented install line.
 - [x] The peer ranges identical to cligent's, so npm never rejects an
@@ -45,23 +49,23 @@ at the two install shapes users actually produce.
 
 ## Tasks
 
-1. **Spec surface.** _[done]_ Author DR-026, rewrite RELEASE-12/13, add
-   RELEASE-27 and PBCLI-39/40/41, author this record and the map rows.
+1. **Spec surface.** _[done]_ Author DR-026, rewrite release-12/13, add
+   release-27 and playbook-cli-39/40/41, author this record and the map rows.
 2. **Declaration move.** _[done]_ Move both SDKs to optional peers plus
    `devDependencies` in `package.json`, refresh `pnpm-lock.yaml`, and add
-   the RELEASE-27 declaration test.
+   the release-27 declaration test.
 3. **Preflight with integration tests.** _[done]_ Add the shared adapter
    SDK probe, wire it into the launcher readiness gate and the `run`
-   agent binding, extend `playbook.test.ts` per PBCLI-41 with no existing
+   agent binding, extend `playbook.test.ts` per playbook-cli-41 with no existing
    expectation changed.
 4. **Release gate and docs.** _[done]_ Rewrite `scripts/smoke-adapters.mjs`
    and the CI smoke job for the lean and opted-in shapes; update README,
    `docs/cli.md`, the config template comment, and `CHANGELOG.md`.
 5. **Review-round corrections.** _[done]_ Align the codex peer range to
-   cligent's exact `>=0.138.0` with RELEASE-27 demanding identity; map
+   cligent's exact `>=0.138.0` with release-27 demanding identity; map
    `opencode` into the preflight with SDK-plus-CLI remedies and narrow
    `gemini` out explicitly; add the exec-tree smoke shapes and the
-   npx-aware remedy per amended RELEASE-12/13 and PBCLI-39/40/41; and
+   npx-aware remedy per amended release-12/13 and playbook-cli-39/40/41; and
    replace the false upgrade-compatibility claim with the measured
    prune-and-reinstall migration in DR-026, README, `docs/cli.md`, and
    the changelog.
@@ -71,27 +75,27 @@ at the two install shapes users actually produce.
    re-run alternated between partial trees forever — pin the running
    package's own version, and replay the original arguments
    shell-quoted in place of the literal `playbook ...` placeholder;
-   amend PBCLI-40/41, RELEASE-13's partial exec shape with its CI leg,
+   amend playbook-cli-40/41, release-13's partial exec shape with its CI leg,
    DR-026 §3, and the changelog accordingly.
 7. **Stdin preservation and CLI ordering.** _[done]_ Append a
    stdin-consumed task or reply to the re-run as a quoted positional
    and print prerequisite external CLI installs before the ephemeral
-   re-run; amend PBCLI-40/41, DR-026 §3, and the changelog.
+   re-run; amend playbook-cli-40/41, DR-026 §3, and the changelog.
 8. **Flag-shaped stdin values.** _[done]_ Add the `--` end-of-options
    terminator to the `run` argument grammar and emit it before
    stdin-derived values on the re-run — quoting cannot stop a `--json`
    task or `--last` reply from being reinterpreted as an option, the
    latter silently resuming the wrong session — with first-run and
-   resume round-trip tests; amend PBCLI-18/40/41, DR-026 §3, the run
+   resume round-trip tests; amend playbook-cli-18/40/41, DR-026 §3, the run
    help text, and the changelog.
 9. **Terminator reuse.** _[done]_ Reuse an invocation's own active
    `--` instead of appending a second — parsing stops at the first,
    so a doubled marker becomes positional data (`-- --json`) — with
    the parser itself reporting activation so a `--` consumed as an
    option's value never counts; trailing, mid-argv, and resume cases
-   tested; amend PBCLI-40/41, DR-026 §3, and the changelog.
+   tested; amend playbook-cli-40/41, DR-026 §3, and the changelog.
 
-## Acceptance criteria
+## Verification
 
 - A global install of the packed tarball alone contains no
   `@anthropic-ai` or `@openai` directory anywhere in its closure, keeps

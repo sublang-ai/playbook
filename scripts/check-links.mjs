@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// Verify XREF-1 and XREF-2 from specs/test/cross-references.md: every
+// Verify cross-references-1 and cross-references-2 from
+// specs/packages/cross-references.md: every
 // relative markdown link in the checked files must resolve to an existing
 // file inside this repository, and every `#` fragment must match an anchor
 // the target file actually renders. Heading anchors follow GitHub's slug

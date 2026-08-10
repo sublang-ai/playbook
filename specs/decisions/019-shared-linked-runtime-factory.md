@@ -14,7 +14,7 @@ Accepted.
   The other ~1600 lines are generic: actor wiring, port boundary tracing, `sh -c` script execution, Boss-reply suspension and resume, snapshot/park handling, and judge classifier/adjudicator prompt plumbing.
 - That machinery is an interpreter of data the FSM artifact already carries — states, prompts, `result` contracts, player names in state metadata — yet each artifact owned a private copy, so a runtime bugfix required re-linking every artifact with a real agent.
 - The repo's own reference artifacts confirm the duplication: `code.playbook.ts` (2364 lines) and the slc demo runtime share their machinery nearly verbatim, differing only in the per-workflow spots.
-- [IR-015](../intents/015-slc-runtime-package-surface.md) already carved the contract *types* into `@sublang/playbook/runtime`; the interpreter *machinery* was the remaining per-artifact copy.
+- The public runtime package surface already carved out the contract *types*; the interpreter *machinery* was the remaining per-artifact copy.
 
 ## Decision
 

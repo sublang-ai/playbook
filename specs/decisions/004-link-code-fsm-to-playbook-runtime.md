@@ -69,7 +69,7 @@ Every non-empty Boss line is classified by `callJudge`.
 The classifier prompt is fixed text the linker emits once: names the valid event types for the current state, the placeholder set for each payload field, the valid `BOSS_INTERRUPT.targetId` values from the FSM's jumpable states, and enough state context to distinguish a fresh directive from a Boss reply while the actor is in `awaitBossReply`.
 It demands JSON carrying either one of the typed events and its payload, or an explicit no-action result.
 Empty or whitespace-only text produces no FSM event and no port call.
-`BOSS_REPLY` is valid only while the actor is in `awaitBossReply`, per [DR-005 §6](./005-boss-reply-suspension-path.md#6-runtime-classifier-state-context-aware-boss-input).
+`BOSS_REPLY` is valid only while the actor is in `awaitBossReply`, per [DR-005](./005-boss-reply-suspension-path.md) §6.
 
 CODE defines no in-playbook slash commands.
 The `/command` namespace is reserved for host-level playbook selection before input reaches the CODE runtime.
@@ -350,7 +350,7 @@ Players, options, and the rest of the config are unchanged.
 - Patching cligent or tmux-play from this repo.
 - Re-deriving FSM behavior, prompts, guard keys, or result semantics —
   those live in `code.gears.md` and `code.fsm.ts`.
-- Visualizer rendering (IR-003).
+- Visualizer rendering.
 - Persisting FSM context across runtime sessions.
 
 ## Addenda
@@ -361,7 +361,7 @@ Players, options, and the rest of the config are unchanged.
 `awaitBossReply` quiescent state for the CODE FSM. §8's
 quiescent-values list (`'ready'`, `'failed'`, `'done'`) is
 extended to `'ready' | 'failed' | 'done' | 'awaitBossReply'`,
-matching [PBRT-11](../dev/playbook-runtime.md#pbrt-11)'s
+matching [[playbook-runtime-11](../packages/playbook-runtime.md#playbook-runtime-11)]'s
 amended drive-loop check. The matching constant in
 `code.playbook.ts` shall be kept in sync — drift between the
 spec list and the implementation constant would re-introduce a
@@ -385,16 +385,16 @@ for this one composite.
   tmux-play alias is rejected as speculative (DR-006's CODE-agnostic
   boundary).
 - **How it reaches the resolver.** The adapter validates
-  `captain.options.code.committer` ([PBRT-30](../dev/playbook-runtime.md#pbrt-30))
+  `captain.options.code.committer` ([[playbook-runtime-30](../packages/playbook-runtime.md#playbook-runtime-30)])
   and threads it into `createPlaybookRuntime`, which carries it onto
   the `Committer` states' `CaptainInput.committerPlayer`. The §2 table
   becomes the fallback used only when no alias is configured
-  ([PBRT-8](../dev/playbook-runtime.md#pbrt-8)).
+  ([[playbook-runtime-8](../packages/playbook-runtime.md#playbook-runtime-8)]).
 - **Identity strings unaffected.** The alias is a player **id**
   (`coder` / `reviewer`), independent of the §1 `coderPlayer` /
   `reviewerPlayer` identity strings, so `<coder-llm>` /
   `<reviewer-llm>` substitutions are unchanged, and `input.player`
-  stays `Committer` ([PLAYBOOK-3](../dev/playbook.md#playbook-3)).
+  stays `Committer` ([[playbook-3](../packages/playbook.md#playbook-3)]).
 
 ### A4. Runtime contract types sourced from a shared module
 
@@ -442,7 +442,7 @@ runtime-boundary tracing, and player continuation.
 
 ## References
 
-[1]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-013 "TMUX-013 — `captain.from` path resolution"
-[2]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-014 "TMUX-014 — Captain factory contract"
-[3]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-026 "TMUX-026 — SIGINT terminal teardown"
-[4]: https://github.com/sublang-ai/cligent/blob/main/specs/user/tmux-play.md#tmux-033 "TMUX-033 — `PlayerRunResult` shape"
+[1]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-013 "TMUX-013 — `captain.from` path resolution"
+[2]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-014 "TMUX-014 — Captain factory contract"
+[3]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-026 "TMUX-026 — SIGINT terminal teardown"
+[4]: https://github.com/sublang-ai/cligent/blob/main/specs/packages/tmux-play.md#tmux-033 "TMUX-033 — `PlayerRunResult` shape"

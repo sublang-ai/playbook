@@ -3,7 +3,11 @@
 
 # IR-020: Routing-only Captain control
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Make the default Captain a deterministic router whose exact inputs, isolated calls, machine controls, and visible outputs cannot be confused with specialized execution.
 
@@ -24,7 +28,7 @@ Make the default Captain a deterministic router whose exact inputs, isolated cal
    The runtime contract, shell bridge, generated generic Captain runtime, and cligent adapters now preserve fresh sessions and explicit empty tool allowlists.
 3. **Separate source controls.** _[done]_
    Define and verify out-of-prompt result metadata in SLC without exposing guard schema to the acting Captain.
-   The SLC definitions, compiled GEARS/FSM/runtime, and CAPPLAY-16 checks keep result metadata out of the exact acting prompts.
+   The SLC definitions, compiled GEARS/FSM/runtime, and captain-playbook-16 checks keep result metadata out of the exact acting prompts.
 4. **Compile the router.** _[done]_
    Rewrite the maintained source, regenerate the canonical Captain bundle locally, and review every generated transition and prompt.
 5. **Verify the live failure path.** _[done]_
@@ -51,7 +55,7 @@ Task 6 retains only the separately authorized signed push; no release, version,
 lockfile, package pin, or published dependency range changes are part of this
 iteration.
 
-## Acceptance criteria
+## Verification
 
 - An idle ordinary Boss intent reaches the Captain byte-for-byte and cannot terminate before clarification or a child call.
 - Initial Captain calls cannot inspect the workspace or perform the requested specialized work.

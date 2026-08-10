@@ -3,14 +3,18 @@
 
 # IR-000: SPDX Headers
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Add SPDX headers (license and copyright info) to applicable files.
 
 ## Deliverables
 
 - [x] Add SPDX headers to applicable files missing them
-- [ ] Document header format in a dev spec
+- [x] Document header format in `specs/packages/licensing.md`
 
 ## Tasks
 
@@ -28,7 +32,7 @@ Add SPDX headers (license and copyright info) to applicable files.
 
 3. **Add headers** in the first comment block (after shebang if present), using appropriate comment syntax per file type
 
-4. **Document format** in a dev spec according to the license(s). E.g.:
+4. **Document format** in the licensing package according to the license(s). E.g.:
 
    > **Source code** (including specs):
    >
@@ -49,7 +53,7 @@ Add SPDX headers (license and copyright info) to applicable files.
    > <!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
    > ```
 
-## Acceptance criteria
+## Verification
 
-- All source files have SPDX-FileCopyrightText header ([LIC-3](../test/licensing.md#lic-3))
-- Files have SPDX-License-Identifier if a license file exists ([LIC-4](../test/licensing.md#lic-4))
+- All source files have SPDX-FileCopyrightText header ([[licensing-3](../packages/licensing.md#licensing-3)])
+- Files have SPDX-License-Identifier if a license file exists ([[licensing-4](../packages/licensing.md#licensing-4)])

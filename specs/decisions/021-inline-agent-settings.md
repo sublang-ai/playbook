@@ -10,7 +10,7 @@ Supersedes the top-level `profiles` map and the agent-block `profile` key of [DR
 
 ## Context
 
-[DR-009 §Config model](009-generic-playbook-cli-and-registry.md) gave the generic config a top-level `profiles` map of reusable agent settings, referenced by a scalar `captain` / `players.<role>` value or by an agent block's `profile` key.
+[DR-009](009-generic-playbook-cli-and-registry.md) §Config model gave the generic config a top-level `profiles` map of reusable agent settings, referenced by a scalar `captain` / `players.<role>` value or by an agent block's `profile` key.
 The seeded lineup ships three of them — `claude-opus`, `claude-opus-1m`, `codex-gpt` — one per distinct agent/model pairing.
 
 Reuse turned out to be the wrong default for how the config is actually edited.
@@ -19,7 +19,7 @@ Under `profiles`, changing one player means either editing a profile that other 
 
 The indirection also costs more than it saves at this size.
 A reader of `players.coder: claude-opus-1m` has to resolve an id in another block to learn the adapter, model, effort, and permissions; the profile ids exist only to be dereferenced once.
-It adds its own failure modes — a `profile` key naming no known profile, and a profile id colliding with an adapter shorthand, which the launcher must reject specifically ([PBCLI-8](../dev/playbook-cli.md#pbcli-8)).
+It adds its own failure modes — a `profile` key naming no known profile, and a profile id colliding with an adapter shorthand, which the launcher must reject specifically ([[playbook-cli-8](../packages/playbook-cli.md#playbook-cli-8)]).
 Duplication across two or three agents is cheaper than an indirection layer plus its validation.
 
 ## Decision

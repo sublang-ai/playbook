@@ -3,7 +3,11 @@
 
 # IR-019: Default Captain playbook
 
-## Goal
+## Status
+
+Incomplete
+
+## Intent
 
 Compile the generic Captain's routing and multi-playbook planning policy from maintained natural language and host it over the causal nested runtime stack.
 IR-020 supersedes this iteration's initial direct-answer routing and shared-agent-session assumptions.
@@ -39,7 +43,7 @@ Immutable closure still requires the Playbook 1.0 release followed by an
 atomic refresh of SLC's dependency, definitions, reviewed artifacts,
 provenance profile, and pins.
 
-## Acceptance criteria
+## Verification
 
 - Ordinary intent reaches the compiled Captain, while an explicit idle playbook command still selects that playbook directly.
 - Captain handles, clarifies, or forms a finite useful plan from the sanitized enabled catalog and invokes no unknown or self target.

@@ -18,7 +18,7 @@ DR-029 also supersedes §7 in part — different-command ask-first is replaced b
 [DR-008](008-playbook-captain-shell.md) introduced the Playbook Captain shell over registered `PlaybookRuntime` factories.
 Its first implementation registered only CODE and explicitly deferred multiple parked engagements, multi-playbook discovery, and a generic `playbook` executable.
 
-DR-004 links CODE into a host-agnostic `PlaybookRuntime` ([DR-004](004-link-code-fsm-to-playbook-runtime.md)), and PBRT-5 pins the runtime boundary: no host-specific types and interaction exclusively through `PlaybookPorts` ([PBRT-5](../dev/playbook-runtime.md#pbrt-5)).
+DR-004 links CODE into a host-agnostic `PlaybookRuntime` ([DR-004](004-link-code-fsm-to-playbook-runtime.md)), and playbook-runtime-5 pins the runtime boundary: no host-specific types and interaction exclusively through `PlaybookPorts` ([[playbook-runtime-5](../packages/playbook-runtime.md#playbook-runtime-5)]).
 The shell registry shape is therefore the right integration point for additional FSM workflows.
 
 The current `playbook-code` launcher remains CODE-specific.
@@ -97,7 +97,7 @@ playbooks:
 
 Scalar `captain` and player values shall resolve as profile ids or adapter shorthands.
 Profile ids shall not collide with known adapter shorthand ids such as `claude` or `codex`; the launcher shall reject a colliding profile id rather than let a profile silently shadow an adapter shorthand.
-Full captain and player blocks shall follow the host tmux-play agent-block schema ([DR-006 §2](006-code-config-composition.md#2-playbook-code-is-a-composer-not-a-config-the-user-authors)) and may reference a profile.
+Full captain and player blocks shall follow the host tmux-play agent-block schema ([DR-006](006-code-config-composition.md) §2) and may reference a profile.
 
 Within a playbook block, `from`, `command`, and `players` are launcher-owned keys.
 Every other key belongs to that playbook's option slice.
@@ -169,7 +169,7 @@ Each registry entry may declare a `summaryPolicy` that maps counted state ids an
 When an entry declares no summary policy, the shell shall skip the visible turn-summary block for that playbook.
 
 CODE shall provide the existing review/rebuttal summary policy through its registry entry.
-Generalizing summaries shall require CAPTAIN user/dev/test spec updates because [CAPTAIN-19](../user/playbook-captain.md#captain-19) currently pins CODE-specific saved-count wording.
+Generalizing summaries shall require CAPTAIN user/dev/test spec updates because [[playbook-captain-19](../packages/playbook-captain.md#playbook-captain-19)] currently pins CODE-specific saved-count wording.
 
 ### 6. Generic launcher
 
@@ -207,16 +207,16 @@ Playbook registry entries shall not define credential or adapter readiness predi
 
 The implementing specs shall reconcile this DR with released CODE runtime and launcher items.
 
-- [PBRT-15](../dev/playbook-runtime.md#pbrt-15) shall be amended so CODE identity derivation uses the active role binding rather than raw `session.players` ids `coder` and `reviewer`.
-- [PBRT-30](../dev/playbook-runtime.md#pbrt-30) shall be amended so CODE validates the shell-selected `captain.options.playbooks.code.options` slice.
-- [PBRT-16](../dev/playbook-runtime.md#pbrt-16) and [PBRT-29](../user/playbook-runtime.md#pbrt-29) shall be amended to remove the `@sublang/playbook/code/tmux-play` compatibility-shim and legacy `captain.options.code` host-config contracts.
-- [CAPTAIN-5](../dev/playbook-captain.md#captain-5), [CAPTAIN-10](../dev/playbook-captain.md#captain-10), and [CAPTAIN-11](../dev/playbook-captain.md#captain-11) were amended for registry-loaded entries, local-role-to-host-player binding, active-playbook visibility, and entry-owned lifecycle ids; DR-011 later retires those lifecycle ids in favor of run outcomes and descriptor tags.
-- [CAPTAIN-19](../user/playbook-captain.md#captain-19) and [CAPTAIN-20](../dev/playbook-captain.md#captain-20) shall be amended so summary policy and saved-count wording are registry-owned and optional rather than CODE-specific shell behavior.
-- [CAPTAIN-16](../dev/playbook-captain.md#captain-16) shall be amended so shell initialization loads enabled registry entries from `captain.options.playbooks` and rejects missing enablement.
+- [[playbook-runtime-15](../packages/playbook-runtime.md#playbook-runtime-15)] shall be amended so CODE identity derivation uses the active role binding rather than raw `session.players` ids `coder` and `reviewer`.
+- [[playbook-runtime-30](../packages/playbook-runtime.md#playbook-runtime-30)] shall be amended so CODE validates the shell-selected `captain.options.playbooks.code.options` slice.
+- [[playbook-runtime-16](../packages/playbook-runtime.md#playbook-runtime-16)] and [[playbook-runtime-29](../packages/playbook-runtime.md#playbook-runtime-29)] shall be amended to remove the `@sublang/playbook/code/tmux-play` compatibility-shim and legacy `captain.options.code` host-config contracts.
+- [[playbook-captain-5](../packages/playbook-captain.md#playbook-captain-5)], [[playbook-captain-10](../packages/playbook-captain.md#playbook-captain-10)], and [[playbook-captain-11](../packages/playbook-captain.md#playbook-captain-11)] were amended for registry-loaded entries, local-role-to-host-player binding, active-playbook visibility, and entry-owned lifecycle ids; DR-011 later retires those lifecycle ids in favor of run outcomes and descriptor tags.
+- [[playbook-captain-19](../packages/playbook-captain.md#playbook-captain-19)] and [[playbook-captain-20](../packages/playbook-captain.md#playbook-captain-20)] shall be amended so summary policy and saved-count wording are registry-owned and optional rather than CODE-specific shell behavior.
+- [[playbook-captain-16](../packages/playbook-captain.md#playbook-captain-16)] shall be amended so shell initialization loads enabled registry entries from `captain.options.playbooks` and rejects missing enablement.
 - PBCODE user/dev/test specs shall be retired.
 - Package metadata and release specs shall add `@sublang/playbook/code/registry` as a public export for the CODE registry module.
-- RELEASE specs and package metadata shall treat removal of the `playbook-code` bin, `./code/tmux-play` export, and legacy CODE tmux-play configs as breaking public-surface changes under [RELEASE-1](../dev/release.md#release-1) and [RELEASE-4](../dev/release.md#release-4).
-- [RELEASE-14](../dev/release.md#release-14) shall be satisfied with a cligent dependency range that includes the tmux-play dynamic visibility surface, first expected in `@sublang/cligent` 0.13.0.
+- RELEASE specs and package metadata shall treat removal of the `playbook-code` bin, `./code/tmux-play` export, and legacy CODE tmux-play configs as breaking public-surface changes under [[release-1](../packages/release.md#release-1)] and [[release-4](../packages/release.md#release-4)].
+- [[release-14](../packages/release.md#release-14)] shall be satisfied with a cligent dependency range that includes the tmux-play dynamic visibility surface, first expected in `@sublang/cligent` 0.13.0.
 - A follow-up IR shall add generic `playbook` user/dev/test items covering launcher behavior, starter-config seeding, generated roster composition, `layout.initialVisible`, active-playbook visibility switching, validation-rejection handling, and display-only pane reconciliation failures.
 
 ## Consequences

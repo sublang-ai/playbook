@@ -3,7 +3,11 @@
 
 # IR-010: Drop the injected Boss-question instruction
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Remove the framework-injected Boss-question instruction — `If a specific Boss answer is needed, ask the exact question and stop.` — from every composed player prompt.
 The nudge prompts unnecessary questions: told it *may* ask, the player asks more than it needs to.
@@ -15,12 +19,12 @@ The Boss-reply suspend/resume machinery is unchanged — only the player-facing 
 
 - The `needsBossReply` guard, `awaitBossReply` state, `BOSS_REPLY` event, and the DR-005 §1-§3 / §6 / §8 suspend/resume machinery stay exactly as specified.
 - The runtime prompt composer injects no Boss-question instruction; the composed prompt keeps the continuation preamble and Q&A blocks (when resuming), the ordinary structured blocks, and the GEARS-derived domain prompt — only the Boss-question instruction is removed.
-- A genuine player question is still detected by the [PBRT-10](../dev/playbook-runtime.md#pbrt-10) adjudicator via the `needsBossReply` guard description — no player-facing instruction is needed for the player to ask.
+- A genuine player question is still detected by the [[playbook-runtime-10](../packages/playbook-runtime.md#playbook-runtime-10)] adjudicator via the `needsBossReply` guard description — no player-facing instruction is needed for the player to ask.
 
 ## Deliverables
 
 - [x] IR-010 doc and its `map.md` row landed.
-- [x] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md) — §4/§5: the player-visible Boss-question instruction is removed; the guard and resume mechanics are retained.
+- [x] [DR-005](../decisions/005-boss-reply-suspension-path.md) — §4/§5: the player-visible Boss-question instruction is removed; the guard and resume mechanics are retained.
 - [x] [`slc/link.md`](../../slc/link.md) — "Player prompt composition": the Boss-question instruction injection is removed.
 - [x] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — "Boss-reply suspension": the reference to a runtime-supplied player-visible instruction is removed.
 - [x] [`code.playbook.ts`](../../reference/sdlc/code.playbook/code.playbook.ts) — `BOSS_QUESTION_INSTRUCTION` and its injection are removed from `composePlayerPrompt`; recompile siblings.
@@ -47,7 +51,7 @@ Order keeps `main` building and test-green: spec amendments land first, the runt
 
 Close-out addendum: Re-verified `map.md` against DR-005, `slc/link.md`, `slc/gears2fsm.md`, and the CODE prompt contract; no substantive divergence found.
 
-## Acceptance criteria
+## Verification
 
 - No composed player prompt contains a Boss-question instruction.
 - `code.playbook.ts` defines and injects no `BOSS_QUESTION_INSTRUCTION`.

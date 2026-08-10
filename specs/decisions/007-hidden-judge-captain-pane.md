@@ -11,8 +11,8 @@ Accepted
 
 The tmux-play adapter wires the runtime's `callJudge` port to
 cligent's `context.callCaptain` per
-[PBRT-15](../dev/playbook-runtime.md#pbrt-15) and
-[DR-004 §11](./004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
+[[playbook-runtime-15](../packages/playbook-runtime.md#playbook-runtime-15)] and
+[DR-004](./004-link-code-fsm-to-playbook-runtime.md) §11.
 cligent streams every `callCaptain` reply to the Boss pane.
 
 The judge's replies are control-plane JSON, not Boss-facing prose:
@@ -22,12 +22,12 @@ The judge's replies are control-plane JSON, not Boss-facing prose:
 
 So the Boss pane shows that JSON verbatim *and* the runtime's own
 human-readable glyph lines for the same transitions
-([PBRT-3](../user/playbook-runtime.md#pbrt-3),
-[PBRT-14](../dev/playbook-runtime.md#pbrt-14)) — duplicated, noisy,
+([[playbook-runtime-3](../packages/playbook-runtime.md#playbook-runtime-3)],
+[[playbook-runtime-14](../packages/playbook-runtime.md#playbook-runtime-14)]) — duplicated, noisy,
 and contradicting the "follow the FSM without reading the player
 panes" intent.
-PBRT-15 ("wire `callJudge` to `callCaptain`") thus conflicts with
-PBRT-3/14 ("the pane is human-readable").
+playbook-runtime-15 ("wire `callJudge` to `callCaptain`") thus conflicts with
+playbook-runtime-3/14 ("the pane is human-readable").
 
 A second-order effect: a player's clarifying question was, before
 this DR, partly legible only as a side effect of the adjudicator's
@@ -45,11 +45,11 @@ surface the question itself or the Boss loses it.
 and returns `finalText` but emits no pane records.
 CODE's adapter shall route **every** judge call — classification
 and adjudication alike — through the hidden form, per the amended
-[PBRT-15](../dev/playbook-runtime.md#pbrt-15).
+[[playbook-runtime-15](../packages/playbook-runtime.md#playbook-runtime-15)].
 The runtime stays the sole composer of Boss-pane content; the
 judge's JSON never reaches the pane.
 
-This reconciles PBRT-15 with PBRT-3/14: the pane carries only the
+This reconciles playbook-runtime-15 with playbook-runtime-3/14: the pane carries only the
 runtime's composed lines.
 
 ### 2. Full question as captain speech
@@ -80,9 +80,9 @@ This DR originally landed against a cligent that did not yet type the
 option, so it introduced two transitional carries: a temporary local
 module augmentation of `@sublang/cligent/tmux-play` adding the
 hidden-visibility overload, and the
-`CLIGENT_SUPPORTS_HIDDEN_CAPTAIN`-gated PBRT-32 integration test.
+`CLIGENT_SUPPORTS_HIDDEN_CAPTAIN`-gated playbook-runtime-32 integration test.
 Both were removed when the repo's pinned cligent was refreshed to
-0.11.0, and [PBRT-32](../test/playbook-runtime.md#pbrt-32) now runs
+0.11.0, and [[playbook-runtime-32](../packages/playbook-runtime.md#playbook-runtime-32)] now runs
 against the native option.
 
 ### 4. Scope
@@ -91,8 +91,8 @@ against the native option.
   cligent's own implementation of hidden visibility is cligent's.
 - The failure-state `emitStatus` data argument is unchanged: it
   still carries the compact `{ name, message }` form of `lastError`
-  per [PBRT-14](../dev/playbook-runtime.md#pbrt-14).
-- [DR-004 §11](./004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play)'s
+  per [[playbook-runtime-14](../packages/playbook-runtime.md#playbook-runtime-14)].
+- [DR-004](./004-link-code-fsm-to-playbook-runtime.md) §11's
   port-wiring table is amended: the `callJudge` row passes
   `{ visibility: 'hidden' }` into `context.callCaptain`.
 
@@ -108,4 +108,4 @@ against the native option.
 - Hiding *all* judge calls means classification reasoning is also
   off the pane; the bare FSM event type (captain-speech
   classification line) remains the Boss's view of how a turn was
-  classified, per PBRT-3.
+  classified, per playbook-runtime-3.

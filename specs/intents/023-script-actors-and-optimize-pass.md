@@ -3,7 +3,11 @@
 
 # IR-023: Script actors and the optimize pass
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Codify [DR-016](../decisions/016-script-actors-and-optimize-pass.md) in the maintained pipeline definitions so slc compiles can rewrite mechanical GEARS items into agent-free script states.
 
@@ -23,7 +27,7 @@ Codify [DR-016](../decisions/016-script-actors-and-optimize-pass.md) in the main
 3. Author `slc/optimize.md` and add it to the published file set.
 4. Record the changes in `CHANGELOG.md`.
 
-## Acceptance criteria
+## Verification
 
 - The four definitions agree on one script-item syntax: the literal `Captain shall run:` clause, a static blockquoted POSIX script, and exactly two exit-status guards in declared order.
 - No change to `src/runtime.ts` or any published runtime artifact: the `script` actor is runtime-internal to emitted modules, and existing reference playbooks (CODE, DISCUSS, Captain) are untouched.

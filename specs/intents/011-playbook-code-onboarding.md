@@ -3,7 +3,11 @@
 
 # IR-011: playbook-code zero-config onboarding
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Reduce the fresh-user onboarding path to "install and run."
 After `npm install -g @sublang/playbook` (or a one-shot `npx playbook-code`), invoking `playbook-code` shall seed a well-commented user config on first run, gate launch on a light per-adapter readiness check, and on failure print its own `--help` pointing at the seeded file and the per-adapter auth fixes.
@@ -14,7 +18,7 @@ The bundled production YAML stops being the runtime config and becomes the seed 
 
 - User config path: `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook-code.config.yaml`.
   Stable across global install and npx; never inside `node_modules`.
-- The bundled `playbook-code.config.template.yaml` is comment-rich, names the PBRT-4 fixed-`id` invariant inline, and is the source of the seed.
+- The bundled `playbook-code.config.template.yaml` is comment-rich, names the playbook-runtime-4 fixed-`id` invariant inline, and is the source of the seed.
 - First run with the user config absent seeds it from the bundled template and writes a one-line stderr notice with the resolved path.
   Subsequent runs do not re-seed; the user owns the file across upgrades.
 - `playbook-code --config <path>` bypasses seeding and the readiness check and exec-forwards as today, preserving the PBCODE-1 verbatim contract for that flag.
@@ -29,9 +33,9 @@ The bundled production YAML stops being the runtime config and becomes the seed 
 ## Deliverables
 
 - [x] IR-011 doc and its `map.md` row landed.
-- [x] `specs/user/playbook-code.md` — PBCODE-1 amended so verbatim forwarding holds when `--config` is passed; PBCODE-5 (first-run seed) and PBCODE-6 (readiness gate + `--help`) added.
-- [x] `specs/dev/playbook-code.md` — PBCODE-7 (template resolution from the package tree) and PBCODE-8 (readiness heuristic) added; PBCODE-3 reworded for the template-not-runtime-config role of the bundled YAML.
-- [x] `specs/test/playbook-code.md` — new test items covering seed-on-first-run, no-re-seed, `--config` bypass, readiness pass/fail per adapter, `--help` exit-code semantics.
+- [x] `specs/packages/playbook-code.md` — PBCODE-1 amended so verbatim forwarding holds when `--config` is passed; PBCODE-5 (first-run seed) and PBCODE-6 (readiness gate + `--help`) added.
+- [x] `specs/packages/playbook-code.md` — PBCODE-7 (template resolution from the package tree) and PBCODE-8 (readiness heuristic) added; PBCODE-3 reworded for the template-not-runtime-config role of the bundled YAML.
+- [x] `specs/packages/playbook-code.md` — new test items covering seed-on-first-run, no-re-seed, `--config` bypass, readiness pass/fail per adapter, `--help` exit-code semantics.
 - [x] `reference/sdlc/code.playbook/playbook-code.config.template.yaml` — new comment-rich template; the existing `tmux-play.production.config.yaml` is retained for the developer flow and the release smoke test.
 - [x] `reference/sdlc/code.playbook/bin/playbook-code.js` — seed, readiness, `--help`, and `--config` bypass; PBCODE-2 exit/signal semantics retained for the exec path.
 - [x] `reference/sdlc/code.playbook/playbook-code.test.ts` — new vitest covering the shim with mocked `HOME`, `XDG_CONFIG_HOME`, env vars, and spawn.
@@ -54,7 +58,7 @@ Order keeps `main` building and `pnpm test` green: spec amendments land first as
    `specs/map.md` PBCODE summaries refreshed.
    All prose; no code touched.
 3. **Template.**
-   Add `playbook-code.config.template.yaml` with inline comments naming the PBRT-4 fixed-`id` invariant, the `adapter` swap knob, and the `captain.options` player-id pairing.
+   Add `playbook-code.config.template.yaml` with inline comments naming the playbook-runtime-4 fixed-`id` invariant, the `adapter` swap knob, and the `captain.options` player-id pairing.
    Add the template path to `package.json` `files`.
    Existing tests stay green; the shim still points at the production YAML at this point.
 4. **Shim + tests.**
@@ -67,9 +71,9 @@ Order keeps `main` building and `pnpm test` green: spec amendments land first as
    re-verify `map.md`;
    record any substantive divergence from PBCODE specs as a one-line addendum.
 
-Close-out addendum: Re-verified `map.md` and `README.md` against PBCODE-1, PBCODE-5 through PBCODE-8, and PBRT-4; no substantive divergence found.
+Close-out addendum: Re-verified `map.md` and `README.md` against PBCODE-1, PBCODE-5 through PBCODE-8, and playbook-runtime-4; no substantive divergence found.
 
-## Acceptance criteria
+## Verification
 
 - On a fresh install where `$HOME/.config/playbook/playbook-code.config.yaml` does not exist, `playbook-code` (with no flags) creates that file from the bundled template, writes a one-line stderr notice with its path, then continues to the readiness gate.
 - `npx playbook-code` produces the same seeded file at the same user-level path, regardless of where the package itself was unpacked.
@@ -79,6 +83,6 @@ Close-out addendum: Re-verified `map.md` and `README.md` against PBCODE-1, PBCOD
 - `playbook-code --config <path>` skips seeding and the readiness check and forwards verbatim, preserving PBCODE-1's contract for the explicit-flag path.
 - A second invocation with the seeded file present does not modify or overwrite it.
 - A YAML naming an adapter id other than `claude` or `codex` produces a one-line stderr warning and proceeds to launch; the readiness gate does not block.
-- The seeded template's `players[].id` lines carry an inline comment citing the PBRT-4 fixed-`id` invariant.
+- The seeded template's `players[].id` lines carry an inline comment citing the playbook-runtime-4 fixed-`id` invariant.
 - `pnpm test` from the repo root is green and the new `playbook-code.test.ts` items pass.
 - `specs/map.md` lists IR-011 and the updated PBCODE row summaries.

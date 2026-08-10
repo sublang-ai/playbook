@@ -60,7 +60,7 @@ Supersedes nothing: [DR-023](023-data-only-machine-ir.md)'s data-only machine IR
 
 ### 7. The acceptance gate moves here
 
-- The [DR-023](023-data-only-machine-ir.md) hermetic global-only test is re-scoped onto this mechanism and joins the opt-in `pnpm test:acceptance` suite ([RELEASE-24](../dev/release.md#release-24)/[RELEASE-25](../test/release.md#release-25)): pack the candidate, install it globally in an isolated prefix with no project-local packages anywhere, run a compiled artifact from a bare directory, assert provisioning triggers (log line and symlinks), the run reaches its terminal JSON outcome, and a second run provisions nothing further.
+- The [DR-023](023-data-only-machine-ir.md) hermetic global-only test is re-scoped onto this mechanism and joins the opt-in `pnpm test:acceptance` suite ([[release-24](../packages/release.md#release-24)]/[[release-25](../packages/release.md#release-25)]): pack the candidate, install it globally in an isolated prefix with no project-local packages anywhere, run a compiled artifact from a bare directory, assert provisioning triggers (log line and symlinks), the run reaches its terminal JSON outcome, and a second run provisions nothing further.
 - Documentation drops the `npx`/project-local story only after this gate passes; slc-side adoption is out of scope here.
 
 ## Consequences

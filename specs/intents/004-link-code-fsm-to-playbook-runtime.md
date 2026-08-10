@@ -3,7 +3,11 @@
 
 # IR-004: Link CODE FSM to PlaybookRuntime
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Compile `code.fsm.ts` into a `PlaybookRuntime` module per [slc/link.md](../../slc/link.md), with CODE-specific bindings pinned by [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md).
 Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `PlaybookPorts` to cligent's Captain primitives.
@@ -11,20 +15,20 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
 ## Deliverables
 
 - [x] `code.playbook.ts` — emitted runtime
-  module per [DR-004 §10](../decisions/004-link-code-fsm-to-playbook-runtime.md#10-emitted-module--codeplaybookts).
+  module per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §10.
 - [x] `code.playbook.test.ts` — unit tests
   with a hand-rolled fake `PlaybookPorts`.
   Covers the Boss-event classifier, player-id resolution, judge JSON
   parsing, the quiescence drive loop, and the natural-rejection abort
   path.
 - [x] `code.tmux-play.ts` — tmux-play host
-  adapter per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
+  adapter per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §11.
 - [x] `code.tmux-play.test.ts` — unit tests
   with stubbed `CaptainContext` / `CaptainSession` asserting port wiring,
   `RoleRunResult` ↔ `PlayerResult` identity, `handleBossTurn →
   handleBossInput` forwarding, and lifecycle ordering.
 - [x] `tmux-play.config.yaml` — example
-  config per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play),
+  config per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §11,
   with `captain.from: ./code.tmux-play.js`.
 - [x] Build pipeline — `package.json` with `"type": "module"` and a
   `pnpm build` (or `npm run build`) script that emits `code.playbook.js`
@@ -37,7 +41,7 @@ Ship the in-repo tmux-play host adapter `code.tmux-play.ts` that wires `Playbook
   subsection linking the example YAML, and a "release usage" note
   showing the `@sublang/playbook/code/tmux-play` package-specifier form.
 - [x] `package.json` — declare `@sublang/cligent` as `peerDependency`.
-- [ ] `specs/map.md` — IR-004 row reflects the final summary; DR-004
+- [x] `specs/map.md` — IR-004 row reflects the final summary; DR-004
   row present.
   *(Re-verify at close-out.)*
 
@@ -57,36 +61,36 @@ Order keeps `main` building at every commit.
    Verify `pnpm install && pnpm build` is clean on a fresh checkout
    before any source file is added.
 3. **Scaffold the runtime module** — create `code.playbook.ts` with the
-   top-of-file header from [DR-004 §10](../decisions/004-link-code-fsm-to-playbook-runtime.md#10-emitted-module--codeplaybookts),
+   top-of-file header from [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §10,
    imports, factory export, `PlaybookPorts` / `PlaybookRuntime` types,
    and TODO stubs for the five internal capabilities.
    Typechecks against `./code.fsm.js` and `xstate` only; no host imports.
    Verify `pnpm build` emits `code.playbook.js`.
 4. **Player-prompt composer.**
-   Implement per [DR-004 §6](../decisions/004-link-code-fsm-to-playbook-runtime.md#6-player-prompt-composition).
+   Implement per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §6.
    Unit test round-trips every placeholder token (`<#>`, `<coder-llm>`,
    `<reviewer-llm>`) and every labelled block (`intent`, `reviews`,
    `challenges`, `taskDescription`).
 5. **Player-id resolver.**
-   Implement per [DR-004 §2](../decisions/004-link-code-fsm-to-playbook-runtime.md#2-player-binding-for-code).
+   Implement per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2.
    Cover CODE-15 / 16 / 17 alias resolution in tests.
 6. **LLM judge.**
-   Implement per [DR-004 §4](../decisions/004-link-code-fsm-to-playbook-runtime.md#4-captain-adjudication).
+   Implement per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §4.
    Test against a fake `ports.callJudge` returning fixed JSON; assert the
    prompt body contains every key in `input.result` with its description
    verbatim.
 7. **Boss-event classifier.**
-   Implement per [DR-004 §3](../decisions/004-link-code-fsm-to-playbook-runtime.md#3-boss-event-mapping-for-code).
+   Implement per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §3.
    Slash forms first; LLM-classifier fallback via `ports.callJudge`
    second.
    Test the slash table and one LLM-fallback path.
 8. **Captain-actor bridge.**
    Wire `captainBridge(ports)` + `.provide({ actors: { captain: … } })`
-   inside `createPlaybookRuntime` per [DR-004 §7](../decisions/004-link-code-fsm-to-playbook-runtime.md#7-captain-actor-bridge).
+   inside `createPlaybookRuntime` per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §7.
    Test an actor driven through one fake turn end-to-end with stubbed
    `callPlayer` / `callJudge` ports.
 9. **Drive-to-quiescence loop and abort.**
-   Implement `handleBossInput` per [DR-004 §5](../decisions/004-link-code-fsm-to-playbook-runtime.md#5-session-lifecycle)
+   Implement `handleBossInput` per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §5
    and §8, including the final-state dispose/reconstruct path.
    On `signal` abort the runtime takes no FSM action — natural
    rejection → `onError` → `#failed`.
@@ -94,10 +98,10 @@ Order keeps `main` building at every commit.
    mid-`callPlayer` lands at `failed` with the abort error in
    `lastError`; explicit `/interrupt <stateId>` redirects via
    `BOSS_INTERRUPT`.
-10. **Status / telemetry hookup** per [DR-004 §9](../decisions/004-link-code-fsm-to-playbook-runtime.md#9-status-and-telemetry).
+10. **Status / telemetry hookup** per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §9.
     Subscribe to actor snapshots, emit on every transition.
     Test with a fake `PlaybookPorts` recording emissions.
-11. **tmux-play adapter** (`code.tmux-play.ts`) per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
+11. **tmux-play adapter** (`code.tmux-play.ts`) per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §11.
     Default-export the Captain factory; import types from
     `@sublang/cligent/tmux-play` and the runtime from
     `./code.playbook.js`.
@@ -106,7 +110,7 @@ Order keeps `main` building at every commit.
     `PlayerResult` identity, `signal` propagation, and the
     `init → handleBossTurn → dispose` lifecycle order.
     Verify `pnpm build` emits `code.tmux-play.js`.
-12. **Example config** (`tmux-play.config.yaml`) per [DR-004 §11](../decisions/004-link-code-fsm-to-playbook-runtime.md#11-host-adapter--tmux-play).
+12. **Example config** (`tmux-play.config.yaml`) per [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §11.
     Ship the dev form with `captain.from: ./code.tmux-play.js`;
     document the release-form swap inline as a YAML comment; declare
     `roles[].id` as `coder` and `reviewer` to match the baked
@@ -125,7 +129,7 @@ Order keeps `main` building at every commit.
     one-paragraph addendum at the bottom of DR-004 (or open a follow-up
     DR if substantive).
 
-## Acceptance criteria
+## Verification
 
 - `code.playbook.ts` typechecks against `./code.fsm.js` and `xstate`
   with no host-specific imports.

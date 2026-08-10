@@ -3,7 +3,11 @@
 
 # IR-014: Playbook Captain shell
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Implement [DR-008](../decisions/008-playbook-captain-shell.md) in reviewable slices.
 The end state is a built-in Playbook Captain shell as the tmux-play Captain, with CODE registered as the first sub-runtime, `/code` as the explicit playbook-selection command, hidden routing and hidden CODE judge calls in one Captain session, telemetry-mirrored sub-runtime state, park/resume semantics, and a `./code/tmux-play` compatibility shim that delegates to the shell.
@@ -11,7 +15,7 @@ The end state is a built-in Playbook Captain shell as the tmux-play Captain, wit
 ## Deliverables
 
 - [x] IR-014 doc and its `map.md` row.
-- [x] Runtime/user/test specs amended for DR-008: PBRT-1/2 scoped to engaged CODE turns; PBRT-15/16/30 amended for the shell target, registry construction, and CODE registry option validation; PBRT-29 and PBCODE-16 amended so composed `captain.from` points at the shell adapter; PBRT-12's direct-runtime/no-change disposition recorded; shell engagement/status behavior specified in a CAPTAIN package; stale DR-004/DR-006 direct-adapter wording reconciled.
+- [x] Runtime/user/test specs amended for DR-008: playbook-runtime-1/2 scoped to engaged CODE turns; playbook-runtime-15/16/30 amended for the shell target, registry construction, and CODE registry option validation; playbook-runtime-29 and PBCODE-16 amended so composed `captain.from` points at the shell adapter; playbook-runtime-12's direct-runtime/no-change disposition recorded; shell engagement/status behavior specified in a CAPTAIN package; stale DR-004/DR-006 direct-adapter wording reconciled.
 - [x] Upstream cligent shared-session contract verified or amended before the shell relies on one Captain session across visible chat, hidden routing, and sub-runtime judge calls.
 - [x] Playbook Captain shell adapter implemented with a registered CODE entry, bounded control ledger, visible chat envelope, hidden router envelope, hidden sub-runtime judge calls, and pass-through status/telemetry.
 - [x] Shell routing implemented for registered commands, hidden router decisions, same-playbook command continuation, different-playbook rejection while engaged, and dismiss.
@@ -30,8 +34,8 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Add this doc and its `map.md` row.
    No runtime behavior change.
 2. **Spec amendments.** _[done]_
-   Amend PBRT-1/2/15/16/29/30, PBCODE-16, and the matching test specs for DR-008.
-   Record PBRT-12's no-change disposition: direct runtime use may still restart terminal CODE actors, while the shell disposes final sub-runtime engagements instead.
+   Amend playbook-runtime-1/2/15/16/29/30, PBCODE-16, and the matching test specs for DR-008.
+   Record playbook-runtime-12's no-change disposition: direct runtime use may still restart terminal CODE actors, while the shell disposes final sub-runtime engagements instead.
    Add the CAPTAIN user/dev/test package for shell chat, routing, engagement status, telemetry topic separation, and park/resume/dispose behavior.
    Reconcile DR-004/DR-006 direct-adapter wording with the DR-008 shell target.
    Prose only; no code.
@@ -64,7 +68,7 @@ Order keeps `main` building and reviewable by landing specs before behavior, ext
    Close-out note: no substantive divergence from DR-008 was found.
    Audit note: host adapter teardown through tmux-play `Captain.dispose()` is intentionally not treated as Boss-facing engagement disposal; cligent closes session emissions before calling Captain teardown, so the shell clears local state and disposes the active sub-runtime without emitting shell status or shell FSM telemetry on that teardown path, while dismiss and final engagement disposal still emit the DR-008/CAPTAIN status and telemetry.
 
-## Acceptance criteria
+## Verification
 
 - The tmux-play `captain.from` value composed by `playbook-code` targets the Playbook Captain shell adapter, and `./code/tmux-play` still works by delegating to that shell.
 - The shell supports `/code`, hidden router dispatch, visible chat, active-sub-runtime continuation, dismiss, and final disposal without teaching the shell CODE's in-playbook event taxonomy.

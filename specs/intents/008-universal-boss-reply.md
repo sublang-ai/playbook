@@ -3,7 +3,11 @@
 
 # IR-008: Universal Boss-reply suspension
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Make `needsBossReply` a universal capability of every captain-invoking state, so a player may surface a Boss question from any state with no per-state opt-in.
 The IR-007 `Resumable: Boss reply` source annotation was opaque jargon in the domain source; universal coverage removes the opt-in, and the annotation, entirely.
@@ -24,12 +28,12 @@ IR-008 supersedes IR-007: the IR-007 record is deleted, while its commits stay i
 ## Deliverables
 
 - [x] IR-008 doc and its `map.md` row landed; the IR-007 doc deleted and its `map.md` row removed.
-- [x] [`specs/decisions/005-boss-reply-suspension-path.md`](../decisions/005-boss-reply-suspension-path.md) — §4 made universal; §1 drops the "resumable" qualifier; §9 per-state audit removed; the no-both rule replaced.
+- [x] [DR-005](../decisions/005-boss-reply-suspension-path.md) — §4 made universal; §1 drops the "resumable" qualifier; §9 per-state audit removed; the no-both rule replaced.
 - [x] [`slc/text2gears.md`](../../slc/text2gears.md) — the "Resumable Boss replies" section removed.
 - [x] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — `needsBossReply` and the `awaitBossReply` / `resumableStates` wiring made universal for captain-invoking states; annotation-driven language removed.
 - [x] [`slc/link.md`](../../slc/link.md) — the standard Boss-question instruction injected into every captain prompt.
-- [x] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-12/13 reworded for universal coverage: every captain-invoking state declares `needsBossReply`; the "opts into" opt-in framing dropped.
-- [x] [`specs/test/playbook.md`](../test/playbook.md) — PLAYBOOK-14/15 reworded so the conformance tests assert universal `needsBossReply` coverage.
+- [x] [`specs/packages/playbook.md`](../packages/playbook.md) — playbook-12/13 reworded for universal coverage: every captain-invoking state declares `needsBossReply`; the "opts into" opt-in framing dropped.
+- [x] [`specs/packages/playbook.md`](../packages/playbook.md) — playbook-14/15 reworded so the conformance tests assert universal `needsBossReply` coverage.
 - [x] [`reference/sdlc/code.md`](../../reference/sdlc/code.md) — the three `Resumable: Boss reply` lines removed.
 - [x] [`code.gears.md`](../../reference/sdlc/code.playbook/code.gears.md) — the three `Result guard: needsBossReply` lines removed.
 - [x] [`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts) — every captain-invoking state carries `needsBossReply` and is registered with `resumableStates`; recompile siblings.
@@ -46,7 +50,7 @@ Order keeps `main` building and test-green: spec amendments land first to give t
    Add this IR doc and its `map.md` row; delete the IR-007 doc and remove its `map.md` row.
    No code or behavior change.
 2. **Spec amendments.**
-   DR-005 (§4 universal, §1 wording, §9 audit removed, the no-both rule replaced); `slc/text2gears.md` (remove "Resumable Boss replies"); `slc/gears2fsm.md` (universal wiring); `slc/link.md` (inject into every captain prompt); `specs/dev/playbook.md` and `specs/test/playbook.md` (PLAYBOOK-12/13/14/15 reworded for universal coverage).
+   DR-005 (§4 universal, §1 wording, §9 audit removed, the no-both rule replaced); `slc/text2gears.md` (remove "Resumable Boss replies"); `slc/gears2fsm.md` (universal wiring); `slc/link.md` (inject into every captain prompt); `specs/packages/playbook.md` and `specs/packages/playbook.md` (playbook-12/13/14/15 reworded for universal coverage).
    All prose; no code touched.
 3. **CODE migration (combined).**
    `code.md` drops the `Resumable: Boss reply` lines; `code.gears.md` drops the `Result guard: needsBossReply` lines; `code.fsm.ts` adds `needsBossReply` to every captain-invoking state with full `resumableStates` registration; `code.playbook.ts` covers every captain prompt; recompile siblings.
@@ -61,11 +65,11 @@ Order keeps `main` building and test-green: spec amendments land first to give t
 
 - `specs/map.md` re-verified; no substantive divergence from DR-005 remains after correcting DR-005's stale historical `needsBossInput` context note.
 
-## Acceptance criteria
+## Verification
 
 - No captain-invoking state requires a source annotation to be resumable; `code.md` and `code.gears.md` contain no Boss-reply opt-in marker or guard metadata.
 - Every captain-invoking state in `code.fsm.ts` declares `needsBossReply` and is registered with `resumableStates`.
-- No normative spec item frames `needsBossReply` as an opt-in: PLAYBOOK-12/13/14/15 describe universal coverage.
+- No normative spec item frames `needsBossReply` as an opt-in: playbook-12/13/14/15 describe universal coverage.
 - Every captain state's composed player prompt carries the standard Boss-question instruction immediately before the domain prompt body; no GEARS blockquote carries that instruction.
 - `needsBossReply` end-to-end behavior is unchanged: a player question lands at `awaitBossReply`, `BOSS_REPLY` resumes the originating state, and the DR-005 §8 failure modes still route to `failed`.
 - The CODE Committer states retain `needsBossInput` alongside `needsBossReply`.

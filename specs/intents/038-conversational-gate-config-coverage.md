@@ -3,10 +3,14 @@
 
 # IR-038: Conversational gate config coverage
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Bring the live gate's conversational config under the normal suite, the way
-[PBCLI-32](../test/playbook-cli.md#pbcli-32) already covered its workflow one.
+[[playbook-cli-32](../packages/playbook-cli.md#playbook-cli-32)] already covered its workflow one.
 
 `acceptance/live-config.ts` exists so an ordinary `pnpm test` case can prove the
 gate's config still composes.
@@ -34,21 +38,21 @@ package.
   ~300 lines of embedded JS that would bury the two config generators.
   Generated text is byte-identical; the acceptance suite imports both modules
   and is otherwise untouched.
-- [x] A second PBCLI-32 case in
+- [x] A second playbook-cli-32 case in
   `reference/sdlc/code.playbook/playbook.test.ts`: `conversationConfig`
   composed through the real `composeGenericConfig` over both fixture modules,
   written to the paths its `from` URLs name and imported by the real loader.
-- [x] PBCLI-32 amended to cover both configs, keeping its released id per
-  [META-12](../meta.md#meta-12).
+- [x] playbook-cli-32 amended to cover both configs, keeping its released id per
+  [[meta-12](../meta.md#meta-12)].
 - [x] This record and its `specs/map.md` row.
 
 ## Tasks
 
 1. **Move the conversational fixtures out and cover them.** _[done]_
    One commit: the two `acceptance/` modules and the suite's imports, the new
-   case, the PBCLI-32 amendment, this record, and the map row.
+   case, the playbook-cli-32 amendment, this record, and the map row.
    No `CHANGELOG.md` entry — no published surface, command, or documented
-   behavior changes, so [RELEASE-4](../dev/release.md#release-4) has nothing
+   behavior changes, so [[release-4](../packages/release.md#release-4)] has nothing
    notable to record.
    Real fixture modules on disk rather than a stub loader — the stub would make
    the asserted ids and commands self-fulfilling, while importing the sources
@@ -56,11 +60,11 @@ package.
    about six lines of setup, reusing the temp-dir pattern the suite already
    uses for generated registry modules.
 
-## Acceptance criteria
+## Verification
 
 - The new case fails when the config model moves under the conversational
   config, verified by mutation: the generated `<id>-<role>` separator (both
-  PBCLI-32 cases red), `RESERVED_CAPTAIN_ROLE_ID` retargeted to `worker` (only
+  playbook-cli-32 cases red), `RESERVED_CAPTAIN_ROLE_ID` retargeted to `worker` (only
   the new case red, since no workflow role is named `worker`), the checklist
   fixture's `command`, and a dangling transition target in the notes machine
   (each: only the new case red).
@@ -72,7 +76,7 @@ package.
   export to the committed `src/*.js` sibling, so this case pins fixture drift
   against the released engine surface, not engine source drift — that stays
   the CI sibling drift check's job
-  ([RELEASE-10](../dev/release.md#release-10)).
+  ([[release-10](../packages/release.md#release-10)]).
 - The acceptance suite's behavior is unchanged: the moved sources differ only
   by their `export` keyword, and
   `vitest list --config vitest.acceptance.config.ts` still collects all five

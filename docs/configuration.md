@@ -67,9 +67,9 @@ playbooks:
 
 `committer` is CODE's one option: an alias naming which role runs the
 commit turn (fallback semantics:
-[PBRT-8](../specs/dev/playbook-runtime.md#pbrt-8)). Each role's per-run
+[[playbook-runtime-8](../specs/packages/playbook-runtime.md#playbook-runtime-8)]). Each role's per-run
 prompt names its pinned `model`, else its `adapter`
-([PBRT-4](../specs/user/playbook-runtime.md#pbrt-4)), so commit trailers
+([[playbook-runtime-4](../specs/packages/playbook-runtime.md#playbook-runtime-4)]), so commit trailers
 credit the concrete model rather than the adapter family.
 
 ## Choosing the Captain agent
@@ -80,7 +80,7 @@ instead of doing the work itself. Claude enforces
 that at the provider level. The Codex adapter cannot — it rejects any
 tool list — so a `captain:` on `codex` falls back to a prompt-level
 restriction
-([DR-013 A1](../specs/decisions/013-routing-only-captain-control.md#addendum-a1-prompt-level-isolation-for-adapters-without-tool-enforcement)).
+([DR-013](../specs/decisions/013-routing-only-captain-control.md) A1).
 Codex remains a good choice for *players*, where full tools are wanted.
 
 Adapter readiness is intentionally light: `claude` is ready with local
@@ -122,7 +122,7 @@ role switched to `codex` needs its own `writablePaths` grant, because
 the base Claude block had no reason to carry one.
 
 The global file is never modified, and `--with` is not forwarded to
-`tmux-play` ([PBCLI-25](../specs/user/playbook-cli.md#pbcli-25)).
+`tmux-play` ([[playbook-cli-25](../specs/packages/playbook-cli.md#playbook-cli-25)]).
 
 ## Defaults for `playbook run`
 
@@ -131,7 +131,7 @@ lineup so you stop retyping flags — `run.captain`, `run.players.<role>`,
 and a `run.player` catch-all for any other required role, each an
 `<adapter>[:<model>][@<effort>]` string. Flags win per role, and
 `resume` always keeps the lineup stored with the parked session
-([PBCLI-28](../specs/user/playbook-cli.md#pbcli-28),
+([[playbook-cli-28](../specs/packages/playbook-cli.md#playbook-cli-28)],
 [DR-017](../specs/decisions/017-run-defaults-config.md)).
 
 ```yaml
@@ -153,7 +153,7 @@ do by hand.
 
 For a one-off, pass a raw `tmux-play` config explicitly. This bypasses
 the seed, composition, and readiness gate, forwarding arguments to
-`tmux-play` verbatim ([PBCLI-1](../specs/user/playbook-cli.md#pbcli-1)):
+`tmux-play` verbatim ([[playbook-cli-1](../specs/packages/playbook-cli.md#playbook-cli-1)]):
 
 ```sh
 playbook --config ./tmux-play.config.yaml

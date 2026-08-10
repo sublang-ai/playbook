@@ -3,7 +3,11 @@
 
 # IR-017: Playbook session trace and resume
 
-## Goal
+## Status
+
+Incomplete
+
+## Intent
 
 Give every linked runtime session an immutable id, emit a boundary-complete ordered trace, and explicitly isolate or resume each player from its adapter-provided token.
 
@@ -39,7 +43,7 @@ surface also required by the current shell; this package's dependency floor and
 lockfile pin now select that release for clean frozen installs. Publishing the
 updated Playbook package remains the final release step.
 
-## Acceptance criteria
+## Verification
 
 - Every new engagement receives a distinct UUID; a parked engagement retains its UUID.
 - Every trace event carries that UUID and a contiguous sequence, and trace call pairs bracket exact runtime-boundary data.

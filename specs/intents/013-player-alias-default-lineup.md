@@ -3,7 +3,11 @@
 
 # IR-013: Player-alias config and refreshed CODE default lineup
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Two coupled changes to the `playbook-code` CODE overlay and its composer.
 
@@ -11,7 +15,7 @@ Two coupled changes to the `playbook-code` CODE overlay and its composer.
    binding carried in the playbook config rather than baked at link time —
    with the Committer as the first consumer.
    Today the runtime binds `Committer → coder` in code, baked at link time
-   ([PBRT-8](../dev/playbook-runtime.md#pbrt-8),
+   ([[playbook-runtime-8](../packages/playbook-runtime.md#playbook-runtime-8)],
    [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2),
    while the gears define `Committer = Coder | Reviewer` (code.gears.md).
    Cligent's tmux-play config has no alias concept (players are a flat array
@@ -30,11 +34,11 @@ Two coupled changes to the `playbook-code` CODE overlay and its composer.
 
 - The alias is a new config concept that spans the overlay schema
   (the now-retired PBCODE-16, PBCODE-17), the composer, the CODE
-  runtime's player-id resolver ([PBRT-8](../dev/playbook-runtime.md#pbrt-8))
-  and identity-string derivation ([PBRT-4](../user/playbook-runtime.md#pbrt-4)),
+  runtime's player-id resolver ([[playbook-runtime-8](../packages/playbook-runtime.md#playbook-runtime-8)])
+  and identity-string derivation ([[playbook-runtime-4](../packages/playbook-runtime.md#playbook-runtime-4)]),
   and the namespaced `captain.options.code` validator
-  ([PBRT-29](../user/playbook-runtime.md#pbrt-29),
-  [PBRT-30](../dev/playbook-runtime.md#pbrt-30)) — plus a matching amendment
+  ([[playbook-runtime-29](../packages/playbook-runtime.md#playbook-runtime-29)],
+  [[playbook-runtime-30](../packages/playbook-runtime.md#playbook-runtime-30)]) — plus a matching amendment
   to DR-004 §2's baked-binding design.
 - It embeds an unsettled design decision (see below) that warrants
   deliberate specification before code.
@@ -51,7 +55,7 @@ spec and code disagree.
 
 ## Settled design decisions (Task 2)
 
-Settled and recorded across PBRT-8/29/30, PBCODE-16/17, PLAYBOOK-3,
+Settled and recorded across playbook-runtime-8/29/30, PBCODE-16/17, playbook-3,
 and DR-004 §2 (Addendum A2):
 
 - **Representation.** A string alias `players.committer: <role>` in the
@@ -60,23 +64,23 @@ and DR-004 §2 (Addendum A2):
   player block — no `adapter`, no pane.
 - **Home.** The overlay carries it under `players.committer`; the composer
   resolves it into the composed config's `captain.options.code.committer`
-  (PBRT-30) and emits no extra `players[]` entry. The alias is CODE-internal
-  role resolution, not the host adapter/model routing PBRT-29 reserves for
+  (playbook-runtime-30) and emits no extra `players[]` entry. The alias is CODE-internal
+  role resolution, not the host adapter/model routing playbook-runtime-29 reserves for
   `players`, so `options.code` is its rightful home (carve-out added to
-  PBRT-29). `players.committer` is the sole overlay surface: the composer is
+  playbook-runtime-29). `players.committer` is the sole overlay surface: the composer is
   the sole writer of the composed `captain.options.code.committer`, so a
   directly-set overlay `captain.options.code.committer` is rejected, avoiding
   a two-source conflict.
 - **No cligent change.** Resolved entirely in the playbook composer + CODE
   runtime; `@sublang/cligent` is untouched and the lockfile unchanged. Recorded
   as a DR-004 §2 amendment (Addendum A2), not a standalone DR-008.
-- **Path to `resolvePlayerId` (PBRT-8).** The adapter validates
+- **Path to `resolvePlayerId` (playbook-runtime-8).** The adapter validates
   `captain.options.code.committer` and threads it into `createPlaybookRuntime`,
   which wires it onto the `Committer` states' `CaptainInput.committerPlayer`. A
   configured alias wins; absent it, the DR-004 §2 coder-first fallback holds.
   The alias is a player id, independent of the `coderPlayer` / `reviewerPlayer`
-  identity strings (PBRT-4), so the `<coder-llm>` / `<reviewer-llm>` trailers
-  and `input.player` (`Committer`, PLAYBOOK-3) are unchanged.
+  identity strings (playbook-runtime-4), so the `<coder-llm>` / `<reviewer-llm>` trailers
+  and `input.player` (`Committer`, playbook-3) are unchanged.
 - **Column-weight length stays 3** (Boss/Captain + coder + reviewer) because
   the alias reuses the Reviewer pane rather than adding a player.
 
@@ -84,14 +88,14 @@ and DR-004 §2 (Addendum A2):
 
 - [x] IR-013 doc and its `map.md` row.
 - [x] Alias-representation decision recorded — DR-004 §2 amendment (Addendum A2); no DR-008, no new DR map row.
-- [x] [`specs/decisions/006-code-config-composition.md`](../decisions/006-code-config-composition.md) §2.4 amendment adding `layout` to the base-inheritable list (today closed to `theme` + the captain-judge fields) + `map.md` row refresh.
-- [x] `specs/user/playbook-code.md` — PBCODE-16: overlay may carry a top-level `layout` block and a Committer alias.
-- [x] `specs/dev/playbook-code.md` — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7's template *shape* refreshed for the structural additions (the `layout` block and the alias slot), not concrete model picks — PBCODE-7 documents structure, and PBCODE-6 keeps model values user-tunable.
-- [x] `specs/test/playbook-code.md` — PBCODE-18: `layout` and alias composition cases (alias cases landed in Task 2; `layout` cases in Task 3).
-- [x] [`specs/user/playbook-runtime.md`](../user/playbook-runtime.md) + [`specs/dev/playbook-runtime.md`](../dev/playbook-runtime.md) — PBRT-8 (configurable Committer binding), PBRT-29/30 (alias placement), PBRT-4 interaction.
-- [x] [`specs/test/playbook-runtime.md`](../test/playbook-runtime.md) — alias-resolution and options-validation cases (PBRT-26 configured-alias, PBRT-31 valid/invalid `committer`).
-- [x] [`specs/dev/playbook.md`](../dev/playbook.md) — PLAYBOOK-3 Committer binding stays gears-consistent.
-- [x] [`specs/decisions/004-link-code-fsm-to-playbook-runtime.md`](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2 baked-binding amendment (Addendum A2).
+- [x] [DR-006](../decisions/006-code-config-composition.md) §2.4 amendment adding `layout` to the base-inheritable list (today closed to `theme` + the captain-judge fields) + `map.md` row refresh.
+- [x] `specs/packages/playbook-code.md` — PBCODE-16: overlay may carry a top-level `layout` block and a Committer alias.
+- [x] `specs/packages/playbook-code.md` — PBCODE-17: compose `layout` (overlay → composed, inherited from base like `theme`) and resolve the alias without emitting an extra `players[]` entry; PBCODE-7's template *shape* refreshed for the structural additions (the `layout` block and the alias slot), not concrete model picks — PBCODE-7 documents structure, and PBCODE-6 keeps model values user-tunable.
+- [x] `specs/packages/playbook-code.md` — PBCODE-18: `layout` and alias composition cases (alias cases landed in Task 2; `layout` cases in Task 3).
+- [x] [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md) + [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md) — playbook-runtime-8 (configurable Committer binding), playbook-runtime-29/30 (alias placement), playbook-runtime-4 interaction.
+- [x] [`specs/packages/playbook-runtime.md`](../packages/playbook-runtime.md) — alias-resolution and options-validation cases (playbook-runtime-26 configured-alias, playbook-runtime-31 valid/invalid `committer`).
+- [x] [`specs/packages/playbook.md`](../packages/playbook.md) — playbook-3 Committer binding stays gears-consistent.
+- [x] [DR-004](../decisions/004-link-code-fsm-to-playbook-runtime.md) §2 baked-binding amendment (Addendum A2).
 - [x] `reference/sdlc/code.playbook/playbook-code.config.template.yaml` — `layout` (Task 3, done), model lineup (Task 4, done), Committer alias (Task 6, done).
 - [x] `reference/sdlc/code.playbook/bin/playbook-code.js` — `layout` pass-through (Task 3, done) + alias resolution (Task 5) in the composer.
 - [x] `reference/sdlc/code.playbook/code.tmux-play.ts` (+ `.js`) — alias option validation/threading.
@@ -106,13 +110,13 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    This doc and its `map.md` row; no code.
 2. **Settle the alias design.** _[done]_
    Decide representation, home, and the cligent-extension question;
-   amend PBRT-8/29/30, PBCODE-16/17 (alias half), PLAYBOOK-3, and DR-004 §2
+   amend playbook-runtime-8/29/30, PBCODE-16/17 (alias half), playbook-3, and DR-004 §2
    (Addendum A2); refresh `map.md`.
    Prose only; no code.
-   Review follow-up: de-cited IR-013 from DR-004 (META-18) and refreshed its
+   Review follow-up: de-cited IR-013 from DR-004 ([[meta-18](../meta.md#meta-18)]) and refreshed its
    `map.md` row; defined single-overlay-surface precedence (a direct overlay
    `captain.options.code.committer` is rejected); and pinned the alias
-   test-spec cases now (PBCODE-18, PBRT-26/31) for spec coherence rather than
+   test-spec cases now (PBCODE-18, playbook-runtime-26/31) for spec coherence rather than
    deferring them to Task 5.
 3. **Layout pass-through.** _[done]_
    Composer carries a top-level `layout` block (overlay → composed, inherited
@@ -181,12 +185,12 @@ Each task is one commit; order keeps `main` building and `pnpm test` green.
    models (Reviewer `claude-opus-4-8`), and the `committer: reviewer`
    alias — matching the actual seeded template.
 
-## Acceptance criteria
+## Verification
 
 - A fresh-seeded overlay composes a tmux-play config whose `layout.columnWeights` is `[4, 6, 6]` and `layout.window` is `{ columns: 174, rows: 49 }`, with `layout` inheritable from a base config like `theme`.
 - The seeded overlay pins Captain claude `claude-sonnet-4-6`, Coder codex `gpt-5.5` `xhigh`, and Reviewer claude `claude-opus-4-8` `xhigh`.
-- With the Committer aliased to Reviewer, every CODE-18 / CODE-19 commit turn routes to the `reviewer` player and no extra tmux-play player/pane is created; the `<coder-llm>` / `<reviewer-llm>` trailers are unchanged (PBRT-4).
+- With the Committer aliased to Reviewer, every CODE-18 / CODE-19 commit turn routes to the `reviewer` player and no extra tmux-play player/pane is created; the `<coder-llm>` / `<reviewer-llm>` trailers are unchanged (playbook-runtime-4).
 - The alias is expressed in the config per the Task-2 decision and validated; an unknown alias target is rejected with a path-named error.
-- `resolvePlayerId('Committer')` returns the configured alias target; the seeded template pins Reviewer, and absent any alias it falls back to DR-004 §2's coder-first baked binding, staying consistent with the gears `Committer = Coder | Reviewer` (PLAYBOOK-3).
+- `resolvePlayerId('Committer')` returns the configured alias target; the seeded template pins Reviewer, and absent any alias it falls back to DR-004 §2's coder-first baked binding, staying consistent with the gears `Committer = Coder | Reviewer` (playbook-3).
 - `pnpm build` is clean and `pnpm test` is green; `specs/map.md` lists IR-013 and the refreshed PBCODE/PBRT rows.
 - No `@sublang/cligent` dependency bump or lockfile change unless Task 2 explicitly chooses the cligent-extension path.

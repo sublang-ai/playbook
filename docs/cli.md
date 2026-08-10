@@ -50,7 +50,7 @@ runtime is reported as not installed; a stale one with its installed
 and required versions, never as absent. Either way the remedy printed
 is cligent's pinned install, `npm install -g <package>@<version>`, so
 following it cannot install a version the gate refuses again
-([PBCLI-40](../specs/user/playbook-cli.md#pbcli-40)).
+([[playbook-cli-40](../specs/packages/playbook-cli.md#playbook-cli-40)]).
 
 ## Interactive
 
@@ -81,8 +81,8 @@ The command resolves its config (seeding it on first run), composes a
 `tmux-play` config, checks adapter readiness, and launches. It exits
 with tmux-play's status, re-raises a terminating signal on itself, and
 exits `127` when it cannot launch at all
-([PBCLI-1](../specs/user/playbook-cli.md#pbcli-1),
-[PBCLI-2](../specs/user/playbook-cli.md#pbcli-2)).
+([[playbook-cli-1](../specs/packages/playbook-cli.md#playbook-cli-1)],
+[[playbook-cli-2](../specs/packages/playbook-cli.md#playbook-cli-2)]).
 
 ### Running a Boss turn
 
@@ -100,26 +100,26 @@ action the running playbook currently offers. It never does the
 specialized work itself, and a conversational turn — including a
 progress or status question — leaves the engagement, its parked state,
 and any pending player question untouched
-([CAPTAIN-1](../specs/user/playbook-captain.md#captain-1),
-[CAPTAIN-2](../specs/user/playbook-captain.md#captain-2)).
+([[playbook-captain-1](../specs/packages/playbook-captain.md#playbook-captain-1)],
+[[playbook-captain-2](../specs/packages/playbook-captain.md#playbook-captain-2)]).
 
 Once a turn reaches CODE, the CODE judge classifies it into an FSM event
 — start a coding turn, continue or summarize an iteration, interrupt to
 a named state, or nothing
-([PBRT-1](../specs/user/playbook-runtime.md#pbrt-1)). When a player
+([[playbook-runtime-1](../specs/packages/playbook-runtime.md#playbook-runtime-1)]). When a player
 surfaces a clarifying question the FSM parks, the pane shows the
 question, and your next turn is normally classified as the reply — a
 fresh directive abandons it
-([PBRT-2](../specs/user/playbook-runtime.md#pbrt-2)).
+([[playbook-runtime-2](../specs/packages/playbook-runtime.md#playbook-runtime-2)]).
 
 The Captain pane shows start/stop/finished status with `◇` lines and
 streams progress with captain-speech classification and questions
-([PBRT-3](../specs/user/playbook-runtime.md#pbrt-3)), while player
+([[playbook-runtime-3](../specs/packages/playbook-runtime.md#playbook-runtime-3)]), while player
 prompts ride their own panes. A turn that actually did something ends
 with one Captain reply summarizing what changed, composed only from that
 turn's reported outcome; a turn that changed nothing ends with an
 ordinary reply and no saved-counts line
-([CAPTAIN-19](../specs/user/playbook-captain.md#captain-19)).
+([[playbook-captain-19](../specs/packages/playbook-captain.md#playbook-captain-19)]).
 
 ## Non-interactive
 
@@ -152,7 +152,7 @@ config supplies [run defaults](configuration.md#defaults-for-playbook-run).
 
 Exit codes: `0` terminal, `1` bad argument or module, `2` failure, `3`
 the playbook needs a Boss reply
-([PBCLI-18](../specs/user/playbook-cli.md#pbcli-18)).
+([[playbook-cli-18](../specs/packages/playbook-cli.md#playbook-cli-18)]).
 
 ### Engine provisioning
 
@@ -164,7 +164,7 @@ install with no project-local packages —
 `node_modules/xstate` and `node_modules/@sublang/playbook` beside the
 module as symlinks to the running host's own packages and prints one
 line naming what it linked
-([PBCLI-36](../specs/user/playbook-cli.md#pbcli-36),
+([[playbook-cli-36](../specs/packages/playbook-cli.md#playbook-cli-36)],
 [DR-024](../specs/decisions/024-runtime-engine-provisioning.md)).
 A directory where the imports already resolve is never touched — a
 project-local install always wins — and `--no-provision` disables the
@@ -193,5 +193,5 @@ lineup, options, and working directory are stored with the session, so
 `resume` takes no binding flags. In scripts, capture the session id from
 the `--json` envelope, like Claude Code's `session_id` or
 `codex exec resume`
-([PBCLI-22](../specs/user/playbook-cli.md#pbcli-22),
+([[playbook-cli-22](../specs/packages/playbook-cli.md#playbook-cli-22)],
 [DR-014](../specs/decisions/014-durable-one-shot-run-sessions.md)).

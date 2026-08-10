@@ -112,7 +112,7 @@ pnpm playbook   # drive a Boss turn against the source tree
 
 Playbook is itself spec-driven: the compiler phases are specs in [`slc/`](slc), and the reference playbooks are regenerated from their prose sources.
 Edit a source, regenerate its GEARS, FSM, and runtime artifacts, sync the tests and downstream specs until `pnpm test` passes, and commit with co-author trailers per [`specs/packages/git.md`](specs/packages/git.md).
-The gears↔FSM contract ([the PLAYBOOK dev items](specs/dev/playbook.md)) and the runtime contract ([the PBRT dev items](specs/dev/playbook-runtime.md)) are pinned in [`specs/dev/`](specs/dev) and verified by the test suite.
+The gears↔FSM contract ([the playbook package](specs/packages/playbook.md)) and runtime contract ([the playbook-runtime package](specs/packages/playbook-runtime.md)) are pinned in [`specs/packages/`](specs/packages) and verified by the test suite.
 
 ## License
 

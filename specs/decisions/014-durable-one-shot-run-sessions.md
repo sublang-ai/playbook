@@ -13,12 +13,12 @@ The non-interactive `playbook run` subcommand drives one Boss turn to a terminal
 When the playbook instead parks awaiting a Boss reply, the one-shot host prints a diagnostic and exits `3`, and every artifact of the run — the FSM state, the pending question, and each player's backend conversation token — dies with the process.
 The Boss cannot see what was asked without scraping stderr progress lines, and cannot answer it at all.
 
-Interactive `playbook` does not have this problem because the Playbook Captain shell keeps the parked runtime alive in memory ([DR-008 §2](008-playbook-captain-shell.md)); its "resume" never crosses a process boundary.
-[DR-010 §6](010-playbook-session-tracing-and-resume.md#6-preserved-scope) and [DR-011 §6](011-composable-playbook-execution.md#6-preserved-scope) both defer durable storage and cross-process runtime restoration to a separate decision.
+Interactive `playbook` does not have this problem because the Playbook Captain shell keeps the parked runtime alive in memory ([DR-008](008-playbook-captain-shell.md) §2); its "resume" never crosses a process boundary.
+[DR-010](010-playbook-session-tracing-and-resume.md) §6 and [DR-011](011-composable-playbook-execution.md) §6 both defer durable storage and cross-process runtime restoration to a separate decision.
 This is that decision, scoped to the one-shot host.
 
 The mechanics are already in reach.
-A linked runtime is one XState v5 actor plus a small JSON-friendly closure (the player resume-token map of [DR-010 §3](010-playbook-session-tracing-and-resume.md#3-player-session-continuation) and the trace/turn/call counters).
+A linked runtime is one XState v5 actor plus a small JSON-friendly closure (the player resume-token map of [DR-010](010-playbook-session-tracing-and-resume.md) §3 and the trace/turn/call counters).
 At a parked quiescent state the actor has no invoked children and no in-flight port work, so `getPersistedSnapshot()` is complete and inert, and cligent's player resume tokens for every supported adapter name backend sessions that the agent CLIs persist on disk, so they stay valid in a later process.
 A runtime suspended on a nested playbook call is the opposite: its invoked promise actor awaits a live deferred that cannot be persisted.
 
@@ -49,7 +49,7 @@ Because both members are optional, a runtime that predates or declines the capab
 
 ### 2. A session may park across processes
 
-[DR-010 §1](010-playbook-session-tracing-and-resume.md#1-session-identity) defined a playbook session as one `init`-through-`dispose` lifecycle.
+[DR-010](010-playbook-session-tracing-and-resume.md) §1 defined a playbook session as one `init`-through-`dispose` lifecycle.
 This decision amends that definition: a playbook session is one logical lifecycle from its first `init` to its final settlement, and it may span multiple host processes through export/restore segments.
 A host that has exported and persisted a parked snapshot may terminate its process without calling `dispose`; the parked session is suspended, not ended.
 `session.disposed` marks true session end — terminal completion, failure disposal, or deliberate abandonment — never a parked hand-off.
@@ -57,7 +57,7 @@ A host that has exported and persisted a parked snapshot may terminate its proce
 ### 3. One-shot session store
 
 `playbook run` persists parked sessions as one JSON file per session at
-`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/<sessionId>.json`, created `0600` in directories created `0700`, because the snapshot embeds player resume tokens that [DR-010 §2](010-playbook-session-tracing-and-resume.md#2-boundary-complete-trace) classifies as sensitive.
+`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/<sessionId>.json`, created `0600` in directories created `0700`, because the snapshot embeds player resume tokens that [DR-010](010-playbook-session-tracing-and-resume.md) §2 classifies as sensitive.
 The file carries everything a later invocation needs to rebuild the identical host: the resolved `<from>` specifier, the captain and per-role agent bindings, the playbook option slice, the agents' working directory, creation/update timestamps, and the runtime snapshot itself.
 
 The store lives its lifecycle with the session: written when a one-shot turn parks awaiting a Boss reply, rewritten when a resumed turn parks again, and removed when a resumed turn reaches a terminal outcome.
@@ -76,7 +76,7 @@ The resume surface follows the Codex/Claude conventions [[1]] [[2]]:
 ### 5. Preserved scope
 
 - No resume for a runtime suspended on a nested playbook call; the one-shot host still cannot answer it, and its state cannot be safely persisted (§1).
-- No trace persistence and no trace-replay reconstruction; the boundary trace remains observer-facing ([DR-010 §6](010-playbook-session-tracing-and-resume.md#6-preserved-scope)).
+- No trace persistence and no trace-replay reconstruction; the boundary trace remains observer-facing ([DR-010](010-playbook-session-tracing-and-resume.md) §6).
 - No cross-process resume for the interactive Playbook Captain shell; its parked engagements remain in-memory ([DR-008](008-playbook-captain-shell.md)).
 - No snapshot surface on the compiled default Captain runtime; it is shell-internal and never runs one-shot.
 

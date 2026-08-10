@@ -3,7 +3,11 @@
 
 # IR-039: Unified Captain Results
 
-## Goal
+## Status
+
+Done
+
+## Intent
 
 Complete [DR-029](../decisions/029-session-scoped-conversational-captain.md) by replacing the Captain shell's separate refusal and recovery paths with one conversational action-result path, complete recovery history, and faithful multi-turn task handoff.
 
@@ -23,7 +27,7 @@ Complete [DR-029](../decisions/029-session-scoped-conversational-captain.md) by 
 4. Permit a Captain-authored start or switch handoff to carry the complete request agreed across the remembered conversation.
 5. Rewrite and recompile the Captain playbook where the controller contract changes, then update integration and release coverage.
 
-## Acceptance criteria
+## Verification
 
 - A fact stated before a forced conversation replacement remains understood afterward without being restated.
 - A failed or aborted turn is present in the recovered conversation, while completed work and the engagement stack remain unchanged.
