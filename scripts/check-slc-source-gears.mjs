@@ -253,18 +253,10 @@ export function checkSourceGearsContract(sourceText, gearsText) {
       for (const match of line.matchAll(PLACEHOLDER)) {
         const field = placeholderField(match[1]);
         if (!relayedFields.has(field)) continue;
-        const priorDelegated = (producers.get(field) ?? []).filter(
-          (producer) => producer.delegated && producer.ordinal < item.ordinal,
-        );
-        if (priorDelegated.length === 0) continue;
         const key = `${item.id}:${field}`;
         if (!line.startsWith('> ') && !reported.has(`quote:${key}`)) {
           findings.push(`${item.id}: relayed player field ${field} lacks a literal quote marker`);
           reported.add(`quote:${key}`);
-        }
-        if (!priorDelegated.every((producer) => producer.verbatim) && !reported.has(`verbatim:${key}`)) {
-          findings.push(`${item.id}: relayed player field ${field} is not annotated verbatim`);
-          reported.add(`verbatim:${key}`);
         }
       }
     }

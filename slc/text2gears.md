@@ -153,8 +153,9 @@ A single-outcome producer then declares exactly one bullet naming the
 property; this consumed-output case is the sole one in which a
 single-outcome behavior carries a `Results:` label.
 
-Where a later prompt relays a delegated player's output as quoted context, the producer shall declare that property in the exact annotated form `` `<field>: <verbatim final text>` ``.
+Where a later prompt relays a delegated player's whole final response as quoted context, the producer shall declare that property in the exact annotated form `` `<field>: <verbatim final text>` ``.
 The annotation makes the field runtime-owned: the adjudicator selects the result guard, while the linked runtime carries the player's canonical final text into that field instead of asking a judge to reproduce it.
+A distinct typed field extracted from that response remains judge-authored even when a later prompt quotes its exact value; quoting a field does not turn it into the player's whole final response.
 One property name shall not be annotated as verbatim in one result contract and judge-authored in another; text2gears shall choose distinct properties or report that the Source cannot be represented by the current contract.
 
 Result metadata is compiler control data, not part of the acting agent's

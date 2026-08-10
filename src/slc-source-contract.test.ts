@@ -106,13 +106,6 @@ describe('SLC Source -> GEARS prompt contract', () => {
     );
   });
 
-  it('fails when a relayed player field is left judge-authored', () => {
-    const changed = GEARS.replace('<verbatim final text>', '<complete text>');
-    expect(checkSourceGearsContract(SOURCE, changed)).toContain(
-      'FLOW-2: relayed player field coderOutput is not annotated verbatim',
-    );
-  });
-
   it('fails when link omits a GEARS-derived verbatim field', () => {
     expect(checkLinkedVerbatimContract(GEARS, [])).toEqual([
       'linked runtime omits verbatim field coderOutput',
@@ -151,5 +144,38 @@ After planning, Captain shall prompt Coder:
 `;
 
     expect(checkSourceGearsContract(source, gears)).toEqual([]);
+  });
+
+  it('allows an exact quoted structured field to remain judge-authored', () => {
+    const source = [
+      'When planning starts, Captain shall give Coder this instruction:',
+      '',
+      '```markdown',
+      'Choose the next IR task.',
+      '```',
+      '',
+      'Captain shall relay the exact task in quotes (`>`):',
+      '',
+      '> IR task: \\<ir-task\\>',
+      '',
+    ].join('\n');
+    const gears = `### FLOW-1
+
+When planning starts, Captain shall prompt Coder:
+
+> Choose the next IR task.
+
+Results:
+- \`planned\`: Coder chose the next task. Output shall include \`irTask: <complete task>\`.
+
+### FLOW-2
+
+After planning, Captain shall prompt Coder:
+
+> > IR task: <ir-task>
+`;
+
+    expect(checkSourceGearsContract(source, gears)).toEqual([]);
+    expect([...verbatimFieldsFromGears(gears)]).toEqual([]);
   });
 });
