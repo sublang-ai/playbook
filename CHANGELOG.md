@@ -12,15 +12,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **REVIEW and DECIDE are bundled compiled playbooks.** REVIEW provides the committed-work review loop as both a standalone workflow and a child of other playbooks, while DECIDE obtains independent Coder and Reviewer proposals before committing a design and delegating its review; both ship maintained sources, GEARS, FSM, linked-runtime, and public playbook and registry subpaths ([[playbook-21](specs/packages/playbook.md#playbook-21)], [[playbook-22](specs/packages/playbook.md#playbook-22)], [[release-20](specs/packages/release.md#release-20)]).
+- **REVIEW and DECIDE are bundled compiled playbooks.**
+  REVIEW provides the committed-work review loop as both a standalone workflow and a child of other playbooks, while DECIDE obtains independent Coder and Reviewer proposals before committing a design and delegating its review; both ship maintained sources, GEARS, FSM, linked-runtime, and public playbook and registry subpaths ([[playbook-21](specs/packages/playbook.md#playbook-21)], [[playbook-22](specs/packages/playbook.md#playbook-22)], [[release-20](specs/packages/release.md#release-20)]).
+
+- **Hosts can preserve a mapped player's conversation across composed runtimes.**
+  The public runtime contract adds optional `PlaybookSession.playerSessions` and the synchronous `PlayerSessionStore`, letting nested exact same-role frames use a root-owned continuation while standalone runtimes retain private session state ([[playbook-runtime-59](specs/packages/playbook-runtime.md#playbook-runtime-59)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)]).
+
+- **A deterministic Source-to-GEARS guard now protects maintained workflows.**
+  The public SLC contracts and repository check preserve authored instruction order, quoted relay context, placeholder mapping, and verbatim-output declarations without attempting an agentic recompile ([[playbook-5](specs/packages/playbook.md#playbook-5)], [[playbook-6](specs/packages/playbook.md#playbook-6)], [[playbook-11](specs/packages/playbook.md#playbook-11)], [[release-28](specs/packages/release.md#release-28)]).
 
 ### Changed
 
-- **CODE delegates every committed phase to REVIEW, and nested same-role players keep one root-engagement conversation.** CODE now owns only its coding commits and cannot advance until REVIEW returns the approved latest commit with no findings, while exact same-role child mappings inherit the nearest ancestor's host binding and root-owned continuation instead of starting replacement sessions ([DR-030](specs/decisions/030-shared-mapped-player-continuity.md), [[playbook-20](specs/packages/playbook.md#playbook-20)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)]).
+- **CODE delegates every committed phase to REVIEW.**
+  CODE owns each direct or intent-record phase commit and cannot advance until REVIEW approves the latest committed work with no unsettled findings ([[playbook-20](specs/packages/playbook.md#playbook-20)], [[playbook-21](specs/packages/playbook.md#playbook-21)]).
+
+- **Factory-backed workflows use a metadata-derived human status profile.**
+  The public XState runtime adds `XStatePlayerStateStatus` and `playerStates`, so CODE and REVIEW report exact guards and player labels instead of raw state-id fallback lines while metadata-absent schema-1 artifacts preserve their legacy status behavior ([[playbook-runtime-3](specs/packages/playbook-runtime.md#playbook-runtime-3)], [[playbook-runtime-57](specs/packages/playbook-runtime.md#playbook-runtime-57)]).
+
+- **Canonical specs now use one package-only layout.**
+  The former `specs/user`, `specs/dev`, `specs/test`, and `specs/iterations` trees are consolidated under `specs/packages` and `specs/intents`, and `pnpm test` now runs Spex lint with the `@sublang/spex` floor raised to 2.1.1 ([[meta-1](specs/meta.md#meta-1)], [[release-22](specs/packages/release.md#release-22)]).
 
 ### Removed
 
-- **Breaking: DISCUSS and its public playbook and registry subpaths are replaced by REVIEW and DECIDE.** Call REVIEW for iterative committed-work review and DECIDE for independent design proposals followed by REVIEW; the `discuss` command and `@sublang/playbook/discuss/{playbook,registry}` imports no longer exist ([[release-20](specs/packages/release.md#release-20)]).
+- **Breaking: DISCUSS and its public playbook and registry subpaths are replaced by REVIEW and DECIDE.**
+  Call REVIEW for iterative committed-work review and DECIDE for independent design proposals followed by REVIEW; the `discuss` command and `@sublang/playbook/discuss/{playbook,registry}` imports no longer exist ([[release-20](specs/packages/release.md#release-20)]).
+
+- **Breaking: CODE's embedded Reviewer and Committer selection are retired.**
+  Existing configs must keep `playbooks.code.players.coder`, remove `playbooks.code.committer`, and enable REVIEW separately with `coder` and `reviewer`, while direct runtime consumers must stop supplying `reviewerPlayer` and `committerPlayer`; CODE now delegates committed phases to REVIEW and shares its Coder conversation by exact role id ([[playbook-cli-11](specs/packages/playbook-cli.md#playbook-cli-11)], [[playbook-20](specs/packages/playbook.md#playbook-20)]).
+
+### Fixed
+
+- **CODE always reports the exact commit it owns.**
+  Successful phases and every nested-REVIEW failure now retain the latest CODE-owned commit instead of forcing callers to infer repository identity from player prose ([[playbook-20](specs/packages/playbook.md#playbook-20)], [[playbook-24](specs/packages/playbook.md#playbook-24)]).
+
+- **SLC no longer confuses typed relay values with verbatim player output.**
+  Result ownership is derived from the authored contract, so typed fields such as intent numbers remain judge-authored while fields declared as verbatim final text remain player-authored through later prompt composition ([[playbook-5](specs/packages/playbook.md#playbook-5)], [[playbook-6](specs/packages/playbook.md#playbook-6)]).
 
 ## [5.0.0] - 2026-08-09
 
