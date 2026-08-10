@@ -48,6 +48,7 @@ const maxBuffer = 64 * 1024 * 1024;
 const smokeToken = 'RELEASE_SMOKE_OK';
 const smokeTask = 'Run the deterministic release smoke probe.';
 const adapterSdks = ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'];
+let isolatedNpmCache;
 
 class SmokeFailure extends Error {}
 
@@ -80,6 +81,9 @@ function smokeEnv(overrides = {}) {
   const env = { ...process.env, ...overrides };
   delete env.npm_config_prefix;
   delete env.NPM_CONFIG_PREFIX;
+  if (isolatedNpmCache !== undefined) {
+    env.npm_config_cache = isolatedNpmCache;
+  }
   return env;
 }
 
@@ -342,42 +346,69 @@ export default {
 `;
 }
 
-// The installed package's own module scope: a self-referencing import is
-// exactly what a consumer's \`import '@sublang/playbook/captain/playbook'\`
-// resolves, exports map included.
-function captainImportProbeSource() {
-  return `// RELEASE-28 step 6: the installed captain/playbook subpath constructs.
-import factory from '@sublang/playbook/captain/playbook';
+// The installed package's own module scope: self-referencing imports resolve
+// exactly as consumer imports of the four public playbook subpaths do,
+// exports map included.
+function compiledRuntimeImportProbeSource() {
+  return `// RELEASE-28 step 6: every installed playbook subpath constructs.
+import captainFactory from '@sublang/playbook/captain/playbook';
+import codeFactory from '@sublang/playbook/code/playbook';
+import reviewFactory from '@sublang/playbook/review/playbook';
+import decideFactory from '@sublang/playbook/decide/playbook';
 
-const runtime = factory({
-  enabledPlaybooks: [
-    { id: 'code', command: 'code', intent: 'implement one spec item' },
-  ],
-});
-const required = [
+const enabledPlaybooks = [
+  { id: 'code', command: 'code', intent: 'implement a coding intent' },
+  { id: 'review', command: 'review', intent: 'review the latest commit' },
+  { id: 'decide', command: 'decide', intent: 'decide a spec design' },
+];
+const controller = {
+  async submit() {
+    throw new Error('the construction probe must not submit a selection');
+  },
+};
+const coreMembers = [
   'init',
+  'exportSnapshot',
+  'restore',
   'handleBossInput',
   'resumePlaybookCall',
   'dispose',
-  'describe',
-  'apply',
 ];
-const missing = required.filter((name) => typeof runtime[name] !== 'function');
-if (missing.length > 0) {
-  console.error(\`captain/playbook runtime is missing: \${missing.join(', ')}\`);
-  process.exit(1);
+const controlMembers = ['describe', 'apply'];
+const cases = [
+  {
+    id: 'captain',
+    runtime: captainFactory({ enabledPlaybooks, controller }),
+    members: [...coreMembers, ...controlMembers],
+  },
+  {
+    id: 'code',
+    runtime: codeFactory({}),
+    members: [...coreMembers, ...controlMembers],
+  },
+  {
+    id: 'review',
+    runtime: reviewFactory({
+      coderLlm: 'release-smoke-coder',
+      reviewerLlm: 'release-smoke-reviewer',
+    }),
+    members: [...coreMembers, ...controlMembers],
+  },
+  {
+    id: 'decide',
+    runtime: decideFactory({ coderLlm: 'release-smoke-coder' }),
+    members: coreMembers,
+  },
+];
+
+for (const { id, runtime, members } of cases) {
+  const missing = members.filter((name) => typeof runtime[name] !== 'function');
+  if (missing.length > 0) {
+    console.error(\`\${id}/playbook runtime is missing: \${missing.join(', ')}\`);
+    process.exit(1);
+  }
+  console.log(\`OK    \${id}/playbook constructs with \${members.length} contract members\`);
 }
-// Construction is the claim; the control surface is asserted as a member
-// pair, not exercised — \`describe()\` is only valid after \`init()\`, which
-// needs a live host session this model-free gate deliberately has none of.
-try {
-  runtime.describe();
-  console.error('captain/playbook describe() answered before init()');
-  process.exit(1);
-} catch {
-  // The uninitialized refusal is the expected engine behavior.
-}
-console.log(\`OK    captain/playbook constructs with \${required.length} contract members\`);
 `;
 }
 
@@ -413,6 +444,8 @@ async function main() {
   }
 
   const root = mkdtempSync(join(tmpdir(), 'playbook-release-smoke-'));
+  isolatedNpmCache = join(root, 'npm-cache');
+  mkdirSync(isolatedNpmCache, { recursive: true });
   const state = {};
   const steps = [
     ['pack the publishable tarball', () => stepPack(root, state)],
@@ -420,7 +453,7 @@ async function main() {
     ['install the opted-in global shape', () => stepOptedIn(root, state)],
     ['run the installed CLI surfaces', () => stepInstalledCli(root, state)],
     ['drive the hermetic provisioning run', () => stepHermetic(root, state)],
-    ['check Captain artifact integrity', () => stepCaptainArtifact(state)],
+    ['check compiled runtime integrity', () => stepCompiledRuntimeIntegrity(state)],
     ['check compiled-artifact fidelity', () => stepCompiledFidelity(state)],
     ['guard the nested cligent floor', () => stepCligentFloor(root, state)],
   ];
@@ -555,14 +588,16 @@ function stepInstalledCli(root, state) {
       '    from: "@sublang/playbook/code/registry"',
       '    players:',
       '      coder: claude',
-      '      reviewer: codex',
-      '    committer: coder',
-      '  discuss:',
-      '    from: "@sublang/playbook/discuss/registry"',
+      '  review:',
+      '    from: "@sublang/playbook/review/registry"',
       '    players:',
-      '      host: claude',
-      '      participant: codex',
-      '    committer: host',
+      '      coder: claude',
+      '      reviewer: codex',
+      '  decide:',
+      '    from: "@sublang/playbook/decide/registry"',
+      '    players:',
+      '      coder: claude',
+      '      reviewer: codex',
       '',
     ].join('\n'),
   );
@@ -577,7 +612,8 @@ function stepInstalledCli(root, state) {
   const list = run(state.optinBin, ['--list'], { cwd: root, env });
   for (const expected of [
     '/code  code  —',
-    '/discuss  discuss  —',
+    '/review  review  —',
+    '/decide  decide  —',
   ]) {
     expectContains(list.stdout, expected, '--list output');
   }
@@ -703,84 +739,101 @@ function stepHermetic(root, state) {
   ];
 }
 
-// Step 6 — the installed default Captain: the published subpath imports and
-// constructs, and every packed Captain artifact is byte-identical to the
-// committed one.
-function stepCaptainArtifact(state) {
+// Step 6 — every installed compiled runtime: each public playbook subpath
+// imports and constructs with its declared required contract surface.
+function stepCompiledRuntimeIntegrity(state) {
   const probePath = join(
     installedPackageRoot(state.optinPrefix),
-    'smoke-captain-import.mjs',
+    'smoke-runtime-imports.mjs',
   );
-  writeFileSync(probePath, captainImportProbeSource());
+  writeFileSync(probePath, compiledRuntimeImportProbeSource());
   const probe = run(process.execPath, [probePath], {
     cwd: dirname(probePath),
     allowFailure: true,
   });
   if (probe.status !== 0) {
     fail(
-      'the installed @sublang/playbook/captain/playbook did not construct',
+      'an installed @sublang/playbook playbook subpath did not construct',
       `stdout:\n${tail(probe.stdout)}\nstderr:\n${tail(probe.stderr)}`,
     );
   }
-  const captainDir = join(
-    state.packedPackage,
-    'reference',
-    'sdlc',
-    'captain.playbook',
-  );
-  if (!existsSync(captainDir)) {
-    fail(`the tarball carries no ${relative(state.packedPackage, captainDir)}`);
-  }
-  const compared = compareAgainstCommitted(state.packedPackage, [captainDir]);
-  return [probe.stdout.trim(), `${compared} packed Captain files byte-identical`];
+  return probe.stdout.trimEnd().split('\n');
 }
 
-// Step 7 — compiled-artifact fidelity WITHOUT a recompile. The SLC pipeline is
-// agentic, so this gate cannot re-derive the artifacts deterministically and
-// claims nothing about source → GEARS. What it does claim: every compiled
-// artifact the tarball carries is byte-identical to the committed one, and the
-// committed artifact-conformance suites — rooted at the compiled
-// `captain.gears.md`, not at the maintained `reference/sdlc/captain.md` — are
-// green. That is GEARS ↔ FSM ↔ runtime fidelity, and only that.
+// Step 7 — compiled-artifact fidelity WITHOUT an agentic recompile. The
+// deterministic Source → GEARS checker proves the mechanically decidable
+// preservation contract for each external workflow. The checked-in suites
+// then prove each artifact's GEARS ↔ FSM ↔ runtime contract, and byte equality
+// transfers those results to the packed candidate.
 function stepCompiledFidelity(state) {
   const compared = compareAgainstCommitted(state.packedPackage, [
     state.packedPackage,
   ]);
+
+  const workflows = ['code', 'review', 'decide'];
+  for (const id of workflows) {
+    run(process.execPath, [
+      join(repoRoot, 'scripts', 'check-slc-source-gears.mjs'),
+      join(state.packedPackage, 'reference', 'sdlc', `${id}.md`),
+      join(
+        state.packedPackage,
+        'reference',
+        'sdlc',
+        `${id}.playbook`,
+        `${id}.gears.md`,
+      ),
+    ]);
+  }
+
+  const artifactDirectories = ['captain', ...workflows].map((id) =>
+    `reference/sdlc/${id}.playbook`,
+  );
   const suites = run('pnpm', [
     'vitest',
     'run',
-    'reference/sdlc/captain.playbook',
+    ...artifactDirectories,
   ]);
   const output = `${suites.stdout}\n${suites.stderr}`;
   const summary = /Tests\s+(\d+) passed/.exec(output);
   if (!summary) {
     fail(
-      'the Captain artifact-conformance suites reported no passing count',
+      'the compiled artifact-conformance suites reported no passing count',
       tail(output),
     );
   }
-  // A green run of whatever the path filter happened to match is not the
-  // claim. The chain this step stands on is three suites by name, and a
-  // suite renamed, moved, or deleted must fail the gate rather than shrink
-  // it silently: vitest names every file it ran.
-  const chain = [
-    'captain.gears-fsm.test.ts',
-    'captain.fsm.coverage.test.ts',
-    'captain.fsm.introspect.test.ts',
+  // A green run of whatever the path filters happen to match is not the
+  // claim. Record every artifact suite the chain stands on, so a suite
+  // renamed, moved, or deleted fails instead of silently shrinking coverage.
+  const requiredSuites = [
+    'captain.playbook/captain.gears-fsm.test.ts',
+    'captain.playbook/captain.fsm.coverage.test.ts',
+    'captain.playbook/captain.fsm.introspect.test.ts',
+    'captain.playbook/captain.prompt-contract.test.ts',
+    'captain.playbook/captain.playbook.integration.test.ts',
+    'code.playbook/code.gears-fsm.test.ts',
+    'code.playbook/code.fsm.coverage.test.ts',
+    'code.playbook/code.fsm.introspect.test.ts',
+    'code.playbook/code.prompt-contract.test.ts',
+    'code.playbook/code.playbook.contract.test.ts',
+    'code.playbook/code.playbook.test.ts',
+    'review.playbook/review.gears-fsm.test.ts',
+    'review.playbook/review.playbook.test.ts',
+    'decide.playbook/decide.playbook.test.ts',
   ];
-  const absent = chain.filter((suite) => !output.includes(suite));
+  const absent = requiredSuites.filter((suite) => !output.includes(suite));
   if (absent.length > 0) {
     fail(
       `the conformance run did not include ${absent.join(', ')}`,
-      'RELEASE-28 step 7 rests on the GEARS ↔ FSM conformance, ' +
-        `declared-transition coverage, and pinned-topology suites.\n${tail(output)}`,
+      'RELEASE-28 step 7 rests on the recorded source, transition, prompt, ' +
+        `topology, and runtime suites.\n${tail(output)}`,
     );
   }
   return [
     `${compared} packed artifacts byte-identical to the committed tree`,
-    `reference/sdlc/captain.playbook suites: ${summary[1]} tests passed`,
-    `conformance chain ran: ${chain.join(', ')}`,
-    'no recompile attempted — the pipeline is agentic (source → GEARS unproven here)',
+    `source → GEARS preservation: ${workflows.join(', ')}`,
+    `compiled artifact suites: ${summary[1]} tests passed`,
+    `required suite files ran: ${requiredSuites.length}`,
+    'no agentic recompile attempted',
   ];
 }
 

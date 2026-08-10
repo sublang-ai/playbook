@@ -3117,6 +3117,9 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     const docs = fakePlaybookEntry('docs', 'docs', async () =>
       quiescentResult('drafting'),
     );
+    // Give the child one role its caller does not map so the visibility
+    // request is observably the child leaf under shared-role inheritance.
+    docs.entry.requiredRoleIds = ['docs'];
     delete code.entry.summaryPolicy;
     delete docs.entry.summaryPolicy;
     const shell = makeShell([code, docs], {
@@ -3126,7 +3129,7 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
     const context = stubContext();
     context.context.setVisiblePlayers = async (ids) => {
       context.visiblePlayers.push([...ids]);
-      if (ids.includes('docs-coder')) {
+      if (ids.includes('docs-docs')) {
         throw new Error('invalid nested visible set');
       }
     };
