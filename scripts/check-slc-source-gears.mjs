@@ -180,6 +180,17 @@ export function checkSourceGearsContract(sourceText, gearsText) {
   const findings = [];
   const fragments = sourcePromptFragments(sourceText);
   const items = parseGearsContract(gearsText);
+  const relayedFields = new Set(
+    fragments
+      .filter((fragment) => fragment.kind === 'relay')
+      .flatMap((fragment) =>
+        fragment.lines.flatMap((line) =>
+          [...line.matchAll(PLACEHOLDER)].map((match) =>
+            placeholderField(match[1]),
+          ),
+        ),
+      ),
+  );
   const allPromptLines = new Set(
     fragments.flatMap((fragment) => fragment.lines.filter((line) => line !== '')),
   );
@@ -241,6 +252,7 @@ export function checkSourceGearsContract(sourceText, gearsText) {
     for (const line of item.prompt) {
       for (const match of line.matchAll(PLACEHOLDER)) {
         const field = placeholderField(match[1]);
+        if (!relayedFields.has(field)) continue;
         const priorDelegated = (producers.get(field) ?? []).filter(
           (producer) => producer.delegated && producer.ordinal < item.ordinal,
         );

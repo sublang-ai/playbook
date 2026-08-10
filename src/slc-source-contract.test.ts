@@ -118,4 +118,38 @@ describe('SLC Source -> GEARS prompt contract', () => {
       'linked runtime omits verbatim field coderOutput',
     ]);
   });
+
+  it('does not mistake a typed extracted placeholder for a full-output relay', () => {
+    const source = [
+      'When planning starts, Captain shall give Coder this instruction:',
+      '',
+      '```markdown',
+      'Choose the next IR number.',
+      '```',
+      '',
+      'After planning, Captain shall give Coder this instruction:',
+      '',
+      '```markdown',
+      'Implement IR-<#>.',
+      '```',
+      '',
+    ].join('\n');
+    const gears = `### FLOW-1
+
+When planning starts, Captain shall prompt Coder:
+
+> Choose the next IR number.
+
+Results:
+- \`planned\`: Coder chose the next IR number. Output shall include \`irNumber: <number>\`.
+
+### FLOW-2
+
+After planning, Captain shall prompt Coder:
+
+> Implement IR-<#>.
+`;
+
+    expect(checkSourceGearsContract(source, gears)).toEqual([]);
+  });
 });
