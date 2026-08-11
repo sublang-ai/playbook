@@ -53,7 +53,8 @@ When CODE receives a coding intent, CODE shall obtain and retain the exact Coder
 
 #### playbook-24
 
-When REVIEW aborts, fails, or returns an invalid success result, CODE shall start no later phase and shall terminate with the failure and the exact last CODE-owned commit.
+When REVIEW returns an authored abort or failure, or a terminal result that does not prove exact approval, CODE shall start no later phase and shall terminate with the failure and the exact last CODE-owned commit.
+When the nested REVIEW call fails outside that authored result contract, CODE shall park as failed and retain the control-plane error.
 
 #### playbook-21
 
@@ -69,7 +70,8 @@ When DECIDE receives a topic, DECIDE shall request independent Coder and Reviewe
 
 #### playbook-25
 
-When REVIEW aborts, fails, or returns an invalid success result, DECIDE shall terminate with the failure and the exact last DECIDE-owned commit.
+When REVIEW returns an authored abort or failure, or a terminal result that does not prove exact approval, DECIDE shall terminate with the failure and the exact last DECIDE-owned commit.
+When the nested REVIEW call fails outside that authored result contract, DECIDE shall park as failed and retain the control-plane error.
 
 ### Boss-reply suspension
 
@@ -119,7 +121,7 @@ When the REVIEW prompt-contract suite runs, it shall fail if an affected-spec re
 
 #### playbook-23
 
-When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CODE sequences each retained commit through nested REVIEW, REVIEW covers findings-fixed, findings-rebutted, and no-findings paths with the declared success result, DECIDE preserves blind parallel proposals before its own commit, and each parent reports a child failure or invalid success with its exact last owned commit and without starting further work (verifying [[playbook-20](#playbook-20)], [[playbook-21](#playbook-21)], [[playbook-22](#playbook-22)], [[playbook-24](#playbook-24)], [[playbook-25](#playbook-25)], and [[playbook-26](#playbook-26)]).
+When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CODE sequences each retained commit through nested REVIEW, REVIEW covers findings-fixed, findings-rebutted, and no-findings paths with the declared success result, DECIDE preserves blind parallel proposals before its own commit, each parent reports an authored child failure or invalid success with its exact last owned commit and without starting further work, and each parent parks on a nested REVIEW control-plane failure without reporting an authored outcome (verifying [[playbook-20](#playbook-20)], [[playbook-21](#playbook-21)], [[playbook-22](#playbook-22)], [[playbook-24](#playbook-24)], [[playbook-25](#playbook-25)], and [[playbook-26](#playbook-26)]).
 
 ### Boss-reply suspension coverage
 

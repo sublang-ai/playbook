@@ -125,7 +125,7 @@ async function runToReview(): Promise<ReviewBoundary> {
             ? 'Coder proposal'
             : playerId === 'reviewer'
               ? 'Reviewer proposal'
-              : 'Committed proposal',
+              : 'Committed proposal\nCommit: abc123',
       };
     },
     callJudge: async (prompt) => judgeReply(prompt),
@@ -143,6 +143,57 @@ async function runToReview(): Promise<ReviewBoundary> {
   expect(result).toMatchObject({ outcome: 'suspended' });
   if (!request) throw new Error('DECIDE did not call REVIEW');
   return { runtime, request };
+}
+
+async function startWithCommitOutput(
+  commitOutput: string,
+  latestCommit: string,
+  callPlaybook: PlaybookPorts['callPlaybook'] = async () => ({
+    state: 'suspended',
+    childSessionId: 'review-child',
+  }),
+): Promise<{
+  runtime: ReturnType<typeof createPlaybookRuntime>;
+  result: Promise<PlaybookRunResult>;
+  nestedRequests: PlaybookCallRequest[];
+}> {
+  let coderCalls = 0;
+  const nestedRequests: PlaybookCallRequest[] = [];
+  const ports = completePorts({
+    callPlayer: async (playerId) => {
+      if (playerId === 'reviewer') {
+        return {
+          status: 'ok',
+          resumeToken: 'reviewer-token-1',
+          finalText: 'Reviewer proposal',
+        };
+      }
+      coderCalls += 1;
+      return {
+        status: 'ok',
+        resumeToken: `coder-token-${coderCalls}`,
+        finalText: coderCalls === 1 ? 'Coder proposal' : commitOutput,
+      };
+    },
+    callJudge: async (prompt) =>
+      prompt.includes('source item DECIDE-3')
+        ? JSON.stringify({ guard: 'committed', latestCommit })
+        : judgeReply(prompt),
+    callPlaybook: async (request, boundarySignal) => {
+      nestedRequests.push(request);
+      return callPlaybook(request, boundarySignal);
+    },
+  });
+  const runtime = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+  await runtime.init(session(ports));
+  return {
+    runtime,
+    result: runtime.handleBossInput({
+      text: 'Choose the durable design.',
+      signal: signal(),
+    }),
+    nestedRequests,
+  };
 }
 
 describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
@@ -194,7 +245,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         return {
           status: 'ok',
           resumeToken: 'coder-token-2',
-          finalText: 'Committed Coder proposal.',
+          finalText: 'Committed Coder proposal.\nCommit: abc123',
         };
       },
       callJudge: async (prompt) => judgeReply(prompt),
@@ -261,6 +312,9 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       options: { resume: 'coder-token-1' },
     });
     expect(playerCalls[2].prompt).toContain('Coder is GPT-5.6 Sol');
+    expect(playerCalls[2].prompt).toContain(
+      'exactly one final-response line beginning `Commit: `',
+    );
     expect(playerCalls[2].prompt).not.toContain(reviewerProposal);
     expect(nestedRequests).toEqual([
       {
@@ -314,6 +368,34 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     await runtime.dispose();
   });
 
+  it.each([
+    ['a missing marker', 'Committed proposal.', 'abc123'],
+    [
+      'duplicate markers',
+      'Committed proposal.\nCommit: old\nCommit: abc123',
+      'abc123',
+    ],
+    [
+      'a marker that disagrees with adjudication',
+      'Committed proposal.\nCommit: def456',
+      'abc123',
+    ],
+  ])('rejects commit identity with %s', async (_label, output, latestCommit) => {
+    const { runtime, result, nestedRequests } = await startWithCommitOutput(
+      output,
+      latestCommit,
+    );
+    await expect(result).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+      error: {
+        message: expect.stringContaining('"guard":"committed"'),
+      },
+    });
+    expect(nestedRequests).toEqual([]);
+    await runtime.dispose();
+  });
+
   it('restarts both proposal branches with the exact interrupted topic', async () => {
     const playerCalls: PlayerCallRecord[] = [];
     const counts = new Map<string, number>();
@@ -329,7 +411,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
             count === 1
               ? `Need ${playerId} input`
               : playerId === 'coder' && count === 3
-                ? 'Committed replacement proposal'
+                ? 'Committed replacement proposal\nCommit: replacement-commit'
                 : `${playerId} replacement proposal`,
         };
       },
@@ -481,6 +563,23 @@ describe('DECIDE terminal settlement from REVIEW', () => {
         error: { name: 'ReviewProtocolError' },
       },
     } satisfies Partial<PlaybookRunResult>);
+    await runtime.dispose();
+  });
+
+  it('parks when the nested REVIEW call rejects outside its result contract', async () => {
+    const transportError = new Error('REVIEW transport failed.');
+    const { runtime, result, nestedRequests } = await startWithCommitOutput(
+      'Committed proposal.\nCommit: abc123',
+      'abc123',
+      async () => {
+        throw transportError;
+      },
+    );
+    await expect(result).rejects.toBe(transportError);
+    expect(nestedRequests).toHaveLength(1);
+    expect(runtime.exportSnapshot?.()).toMatchObject({
+      state: { stateId: 'failed', status: 'active', quiescent: true },
+    });
     await runtime.dispose();
   });
 });

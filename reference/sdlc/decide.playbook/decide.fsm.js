@@ -22,6 +22,7 @@ const COMMIT_CODER_PROMPT = [
     '',
     'Commit the result as one new commit, following @specs/packages/git.md.',
     'Make the commit message explain concisely what changed and why.',
+    'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.',
     'Coder is <coder-llm>; format the model token in conventional human form.',
 ].join('\n');
 const REVIEW_INPUT_TEMPLATE = [
@@ -50,8 +51,26 @@ const reviewerProposed = ({ event }) => {
     const output = outputOf(event);
     return (output.guard === 'proposed' && isNonEmptyString(output.reviewerProposal));
 };
-const committed = ({ event }) => outputOf(event).guard === 'committed' &&
-    isNonEmptyString(outputOf(event).latestCommit);
+function commitOutput(event) {
+    const output = outputOf(event);
+    if (output.guard !== 'committed' ||
+        !isNonEmptyString(output.coderOutput) ||
+        !isNonEmptyString(output.latestCommit)) {
+        return undefined;
+    }
+    const commitLines = output.coderOutput
+        .split('\n')
+        .filter((line) => line.startsWith('Commit: '));
+    if (commitLines.length !== 1 ||
+        commitLines[0] !== `Commit: ${output.latestCommit}`) {
+        return undefined;
+    }
+    return {
+        coderOutput: output.coderOutput,
+        latestCommit: output.latestCommit,
+    };
+}
+const committed = ({ event }) => commitOutput(event) !== undefined;
 const needsBossReplyWithQuestion = ({ event }) => {
     const output = outputOf(event);
     return output.guard === 'needsBossReply' && isNonEmptyString(output.question);
@@ -713,7 +732,7 @@ export const decideMachine = setup({
                     player: 'Coder',
                     prompt: COMMIT_CODER_PROMPT,
                     result: withNeedsBossReply({
-                        committed: "Coder committed Coder's proposal. Output shall include `latestCommit: <commit identity>`.",
+                        committed: "Coder committed Coder's proposal. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.",
                     }),
                     coderLlm: context.coderLlm,
                     ...bossReplyFields(context, 'commitCoderProposal'),

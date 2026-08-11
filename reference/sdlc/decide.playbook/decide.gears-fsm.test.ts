@@ -35,6 +35,7 @@ interface RawState {
 interface RawTransition {
   guard?: unknown;
   target?: unknown;
+  actions?: unknown;
 }
 
 interface TransitionFixture {
@@ -44,9 +45,12 @@ interface TransitionFixture {
   event: unknown;
 }
 
-const gears = parseGearsContract(
-  readFileSync(new URL('./decide.gears.md', import.meta.url), 'utf8'),
+const sourceText = readFileSync(new URL('../decide.md', import.meta.url), 'utf8');
+const gearsText = readFileSync(
+  new URL('./decide.gears.md', import.meta.url),
+  'utf8',
 );
+const gears = parseGearsContract(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
 const machineConfig = (
   decideMachine as unknown as { config: RawState & { states: Record<string, RawState> } }
@@ -191,7 +195,11 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
   'commitCoderProposal.invoke.onDone': actorDoneFixtures(
     'committed',
     'reviewCommit',
-    { guard: 'committed', latestCommit: 'abc123' },
+    {
+      guard: 'committed',
+      coderOutput: 'Committed proposal.\nCommit: abc123',
+      latestCommit: 'abc123',
+    },
     'awaitBossReply',
     'failed',
   ),
@@ -240,19 +248,16 @@ const expectedPlayerStates = [
     path: 'independentProposals.coder.working',
     stateId: 'askCoderProposal',
     sourceItem: 'DECIDE-1',
-    player: 'Coder',
   },
   {
     path: 'independentProposals.reviewer.working',
     stateId: 'askReviewerProposal',
     sourceItem: 'DECIDE-2',
-    player: 'Reviewer',
   },
   {
     path: 'commitCoderProposal',
     stateId: 'commitCoderProposal',
     sourceItem: 'DECIDE-3',
-    player: 'Coder',
   },
 ] as const;
 
@@ -407,19 +412,21 @@ describe('DECIDE GEARS to FSM compilation', () => {
 
   it('preserves each delegated player, prompt, and result contract exactly', () => {
     for (const expected of expectedPlayerStates) {
+      const item = byId.get(expected.sourceItem);
       const state = stateAt(expected.path);
       const input = state?.invoke?.input?.({ context: CONTEXT });
       expect(input, expected.path).toBeDefined();
+      expect(item?.player, expected.sourceItem).toBeDefined();
       expect(input).toMatchObject({
         stateId: expected.stateId,
         sourceItem: expected.sourceItem,
-        player: expected.player,
+        player: item?.player,
       });
       expect('prompt' in (input ?? {}) ? input.prompt : undefined).toBe(
-        byId.get(expected.sourceItem)?.prompt.join('\n'),
+        item?.prompt.join('\n'),
       );
       expect('result' in (input ?? {}) ? Object.entries(input.result) : []).toEqual([
-        ...(byId.get(expected.sourceItem)?.results.map(
+        ...(item?.results.map(
           ({ guard, description }) => [guard, description] as const,
         ) ?? []),
         ['needsBossReply', NEEDS_BOSS_REPLY_DESCRIPTION],
@@ -429,7 +436,7 @@ describe('DECIDE GEARS to FSM compilation', () => {
         playbook: {
           stateId: expected.stateId,
           description: state?.description,
-          player: expected.player,
+          player: item?.player,
         },
       });
     }
@@ -453,6 +460,62 @@ describe('DECIDE GEARS to FSM compilation', () => {
       playbook: {
         stateId: 'reviewCommit',
         description: state?.description,
+      },
+    });
+  });
+
+  it('pins every authored post-REVIEW outcome to its compiled route', () => {
+    for (const clause of [
+      'When `review` returns an authored abort or failure, or a terminal result that does not prove exact approval, `decide` shall report the failure and the last `decide`-owned commit to its caller.',
+      'When the nested `review` call fails outside that authored result contract, `decide` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.',
+    ]) {
+      expect(sourceText).toContain(clause);
+    }
+    const reviewSection = gearsText.slice(gearsText.indexOf('### DECIDE-4'));
+    expect(reviewSection).toContain(
+      'An authored child abort, failure, or invalid approval terminates with the failure and `latestCommit` reported to the caller.',
+    );
+    expect(reviewSection).toContain(
+      'Any other nested-call error parks `decide` as failed and retains the control-plane error.',
+    );
+
+    const review = states.reviewCommit?.invoke;
+    const route = (transition: RawTransition | undefined) => ({
+      guard: guardKey(transition?.guard),
+      target: transition?.target,
+      actions: transition?.actions,
+    });
+    expect({
+      approved: route(
+        Array.isArray(review?.onDone) ? review.onDone[0] : review?.onDone,
+      ),
+      invalid: route(Array.isArray(review?.onDone) ? review.onDone[1] : undefined),
+      authoredFailure: route(
+        Array.isArray(review?.onError) ? review.onError[0] : review?.onError,
+      ),
+      controlFailure: route(
+        Array.isArray(review?.onError) ? review.onError[1] : undefined,
+      ),
+    }).toEqual({
+      approved: {
+        guard: 'validReviewSuccess',
+        target: 'done',
+        actions: 'rememberReviewSuccess',
+      },
+      invalid: {
+        guard: '<fallback>',
+        target: 'reportedReviewFailure',
+        actions: 'rememberReviewProtocolFailure',
+      },
+      authoredFailure: {
+        guard: 'authoredReviewFailure',
+        target: 'reportedReviewFailure',
+        actions: 'rememberReviewFailure',
+      },
+      controlFailure: {
+        guard: '<fallback>',
+        target: 'failed',
+        actions: 'rememberActorError',
       },
     });
   });

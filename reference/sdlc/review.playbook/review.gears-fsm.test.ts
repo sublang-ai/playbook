@@ -4,17 +4,12 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+import { parseGearsContract } from '../../../scripts/check-slc-source-gears.mjs';
 import {
   reviewMachine,
   type PlayerInput,
   type ReviewContext,
 } from './review.fsm.js';
-
-interface GearsItem {
-  id: string;
-  prompt: string;
-  results: Array<{ guard: string; description: string }>;
-}
 
 interface RawState {
   tags?: readonly string[];
@@ -44,44 +39,10 @@ interface TransitionFixture {
   event: unknown;
 }
 
-const ITEM_HEADING = /^### (REVIEW-\d+)$/;
-const RESULT = /^- `([A-Za-z_$][A-Za-z0-9_$]*)`: (.+)$/;
-
-function parseGears(source: string): Map<string, GearsItem> {
-  const lines = source.split('\n');
-  const starts = lines.flatMap((line, index) => {
-    const match = ITEM_HEADING.exec(line);
-    return match === null ? [] : [{ id: match[1], index }];
-  });
-  return new Map(
-    starts.map((start, ordinal) => {
-      const section = lines.slice(
-        start.index + 1,
-        starts[ordinal + 1]?.index ?? lines.length,
-      );
-      const quoteStart = section.findIndex((line) => line.startsWith('>'));
-      const prompt: string[] = [];
-      for (let index = quoteStart; index >= 0 && index < section.length; index++) {
-        const match = /^> ?(.*)$/.exec(section[index]);
-        if (match === null) break;
-        prompt.push(match[1]);
-      }
-      const results = section.flatMap((line) => {
-        const match = RESULT.exec(line);
-        return match === null
-          ? []
-          : [{ guard: match[1], description: match[2] }];
-      });
-      return [
-        start.id,
-        { id: start.id, prompt: prompt.join('\n'), results },
-      ];
-    }),
-  );
-}
-
-const gears = parseGears(
-  readFileSync(new URL('./review.gears.md', import.meta.url), 'utf8'),
+const gears = new Map(
+  parseGearsContract(
+    readFileSync(new URL('./review.gears.md', import.meta.url), 'utf8'),
+  ).map((item) => [item.id, item]),
 );
 
 const states = (
@@ -89,10 +50,10 @@ const states = (
 ).config.states ?? {};
 
 const expected = [
-  ['reviewInitial', 'REVIEW-1', 'Reviewer'],
-  ['addressFindings', 'REVIEW-2', 'Coder'],
-  ['reviewAfterCommit', 'REVIEW-3', 'Reviewer'],
-  ['reviewAfterRebuttal', 'REVIEW-4', 'Reviewer'],
+  ['reviewInitial', 'REVIEW-1'],
+  ['addressFindings', 'REVIEW-2'],
+  ['reviewAfterCommit', 'REVIEW-3'],
+  ['reviewAfterRebuttal', 'REVIEW-4'],
 ] as const;
 
 const context: ReviewContext = {
@@ -292,19 +253,21 @@ function guardName(guard: unknown): string | undefined {
 describe('REVIEW GEARS to FSM compilation', () => {
   it('maps every REVIEW item once with its exact player and prompt', () => {
     expect([...gears.keys()]).toEqual(expected.map(([, item]) => item));
-    for (const [stateId, sourceItem, player] of expected) {
+    for (const [stateId, sourceItem] of expected) {
+      const item = gears.get(sourceItem);
       const input = states[stateId]?.invoke?.input?.({ context });
       expect(input).toBeDefined();
       expect(input?.stateId).toBe(stateId);
       expect(input?.sourceItem).toBe(sourceItem);
-      expect(input?.player).toBe(player);
-      expect(input?.prompt).toBe(gears.get(sourceItem)?.prompt);
+      expect(item?.player).toBeDefined();
+      expect(input?.player).toBe(item?.player);
+      expect(input?.prompt).toBe(item?.prompt.join('\n'));
       expect(states[stateId]?.tags).toContain('playbook.busy');
       expect(states[stateId]?.meta).toEqual({
         playbook: {
           stateId,
           description: expect.any(String),
-          player,
+          player: item?.player,
         },
       });
     }

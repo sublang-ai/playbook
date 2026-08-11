@@ -36,6 +36,7 @@ Do not change code or implement the proposal.
 
 Commit the result as one new commit, following @specs/packages/git.md.
 Make the commit message explain concisely what changed and why.
+Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.
 Coder is <coder-llm>; format the model token in conventional human form.
 ```
 
@@ -49,4 +50,5 @@ After Coder commits, Captain shall call playbook `review`:
 > Coder's independent proposal: \<coder-proposal\>.
 
 `decide` is complete when `review` returns the approved latest commit and the fact that no unsettled findings remain.
-When `review` is aborted or fails, `decide` shall report the failure and the last `decide`-owned commit to its caller.
+When `review` returns an authored abort or failure, or a terminal result that does not prove exact approval, `decide` shall report the failure and the last `decide`-owned commit to its caller.
+When the nested `review` call fails outside that authored result contract, `decide` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.

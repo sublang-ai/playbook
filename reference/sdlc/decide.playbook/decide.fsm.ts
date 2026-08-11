@@ -114,6 +114,7 @@ export interface PlayerInput {
 type AdditionalPlayerFields = {
   coderProposal?: string;
   reviewerProposal?: string;
+  coderOutput?: string;
   latestCommit?: string;
   question?: string;
   readonly [key: string]: unknown;
@@ -122,7 +123,8 @@ type AdditionalPlayerFields = {
 export type PlayerOutput =
   | ({ guard: 'proposed'; coderProposal: string } & AdditionalPlayerFields)
   | ({ guard: 'proposed'; reviewerProposal: string } & AdditionalPlayerFields)
-  | ({ guard: 'committed'; latestCommit: string } & AdditionalPlayerFields)
+  | ({ guard: 'committed'; coderOutput: string; latestCommit: string } &
+      AdditionalPlayerFields)
   | ({ guard: 'needsBossReply'; question: string } & AdditionalPlayerFields);
 
 export interface PlaybookInput {
@@ -157,6 +159,7 @@ const COMMIT_CODER_PROMPT = [
   '',
   'Commit the result as one new commit, following @specs/packages/git.md.',
   'Make the commit message explain concisely what changed and why.',
+  'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.',
   'Coder is <coder-llm>; format the model token in conventional human form.',
 ].join('\n');
 
@@ -204,9 +207,34 @@ const reviewerProposed = ({ event }: { event: unknown }) => {
   );
 };
 
+function commitOutput(
+  event: unknown,
+): { readonly coderOutput: string; readonly latestCommit: string } | undefined {
+  const output = outputOf(event);
+  if (
+    output.guard !== 'committed' ||
+    !isNonEmptyString(output.coderOutput) ||
+    !isNonEmptyString(output.latestCommit)
+  ) {
+    return undefined;
+  }
+  const commitLines = output.coderOutput
+    .split('\n')
+    .filter((line) => line.startsWith('Commit: '));
+  if (
+    commitLines.length !== 1 ||
+    commitLines[0] !== `Commit: ${output.latestCommit}`
+  ) {
+    return undefined;
+  }
+  return {
+    coderOutput: output.coderOutput,
+    latestCommit: output.latestCommit,
+  };
+}
+
 const committed = ({ event }: { event: unknown }) =>
-  outputOf(event).guard === 'committed' &&
-  isNonEmptyString(outputOf(event).latestCommit);
+  commitOutput(event) !== undefined;
 
 const needsBossReplyWithQuestion = ({ event }: { event: unknown }) => {
   const output = outputOf(event);
@@ -958,7 +986,7 @@ export const decideMachine = setup({
           prompt: COMMIT_CODER_PROMPT,
           result: withNeedsBossReply({
             committed:
-              "Coder committed Coder's proposal. Output shall include `latestCommit: <commit identity>`.",
+              "Coder committed Coder's proposal. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.",
           }),
           coderLlm: context.coderLlm,
           ...bossReplyFields(context, 'commitCoderProposal'),

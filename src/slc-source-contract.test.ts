@@ -10,6 +10,7 @@ import { _internal as reviewInternal } from '../reference/sdlc/review.playbook/r
 import {
   checkLinkedVerbatimContract,
   checkSourceGearsContract,
+  parseGearsContract,
   sourcePromptFragments,
   verbatimFieldsFromGears,
 } from '../scripts/check-slc-source-gears.mjs';
@@ -98,7 +99,7 @@ const linkedWorkflows = [
       import.meta.url,
     ),
     linkedFields: decideInternal.VERBATIM_PAYLOAD_FIELDS,
-    expectedFields: ['coderProposal', 'reviewerProposal'],
+    expectedFields: ['coderProposal', 'reviewerProposal', 'coderOutput'],
   },
 ] as const;
 
@@ -124,6 +125,22 @@ describe('SLC Source -> GEARS prompt contract', () => {
       'instruction',
       'instruction',
       'relay',
+    ]);
+  });
+
+  it('derives each delegated player from its GEARS acting sentence', () => {
+    expect(parseGearsContract(GEARS).map(({ player }) => player)).toEqual([
+      'Coder',
+      'Reviewer',
+    ]);
+
+    const changed = GEARS.replace(
+      'Captain shall prompt Reviewer:',
+      'Captain shall prompt Coder:',
+    );
+    expect(parseGearsContract(changed).map(({ player }) => player)).toEqual([
+      'Coder',
+      'Coder',
     ]);
   });
 

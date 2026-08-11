@@ -5,7 +5,7 @@
 
 ## Status
 
-Complete
+In progress
 
 ## Intent
 
@@ -18,7 +18,8 @@ Establish a releasable linked-artifact baseline for the maintained CODE, REVIEW,
 - [x] SLC preserves authored instruction blocks, quoted relayed context, and verbatim player outputs.
 - [x] CODE, REVIEW, and DECIDE sources, GEARS, FSMs, linked runtimes, registries, and artifact verification agree.
 - [x] Package exports, configuration, documentation, smoke, and acceptance cover the current workflows.
-- [x] Deterministic and real-agent release gates pass without publishing or tagging.
+- [x] Deterministic release gates pass without publishing or tagging.
+- [ ] The real-agent release gate passes against the final candidate without publishing or tagging.
 - [x] The committed artifacts remain the comparison baseline for a later live SLC regeneration, with no claim that this intent invoked `slc playbook`.
 
 ## Tasks

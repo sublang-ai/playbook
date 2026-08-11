@@ -104,7 +104,8 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       const item = byId.get(state.sourceItem);
       expect(item, state.sourceItem).toBeDefined();
       const input = state.getInput(CONTEXT);
-      expect(input.player).toBe('Coder');
+      expect(item?.player).toBeDefined();
+      expect(input.player).toBe(item?.player);
       expect(input.prompt).toBe(item?.prompt.join('\n'));
       expect(Object.entries(input.result).slice(0, -1)).toEqual(
         item?.results.map(({ guard, description }) => [guard, description]),
@@ -119,6 +120,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       expect(input.playbookId).toBe('review');
       expect(input.sourceItem).toBe(state.sourceItem);
       expect(byId.get(state.sourceItem)?.delegated).toBe(false);
+      expect(byId.get(state.sourceItem)?.player).toBeUndefined();
     }
     expect(
       enumeratePlayerStates(codingMachine).some(({ sourceItem }) =>
@@ -228,14 +230,22 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     for (const id of ['ready', 'awaitBossReply', 'failed']) {
       expect(states[id]?.tags).toContain('playbook.parked');
     }
-    const delegatedStateIds = new Set(['runFirstPhase', 'runIrTask']);
+    const declaredPlayers = new Map(
+      enumeratePlayerStates(codingMachine).map(({ stateId, sourceItem }) => [
+        stateId,
+        byId.get(sourceItem)?.player,
+      ]),
+    );
     for (const [id, state] of Object.entries(states)) {
+      const delegated = declaredPlayers.has(id);
+      const player = declaredPlayers.get(id);
+      if (delegated) expect(player, id).toBeDefined();
       expect(state.description, id).toBeTruthy();
       expect(state.meta, id).toEqual({
         playbook: {
           stateId: id,
           description: state.description,
-          ...(delegatedStateIds.has(id) ? { player: 'Coder' } : {}),
+          ...(delegated ? { player } : {}),
         },
       });
     }

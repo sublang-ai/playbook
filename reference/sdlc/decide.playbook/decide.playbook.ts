@@ -202,6 +202,7 @@ const PLACEHOLDER_FIELDS: ReadonlyArray<readonly [string, keyof PlayerInput]> =
 const VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
   'coderProposal',
   'reviewerProposal',
+  'coderOutput',
 ]);
 
 function composePlayerPrompt(input: PlayerInput): string {

@@ -90,6 +90,7 @@ const PLACEHOLDER_FIELDS = [
 const VERBATIM_PAYLOAD_FIELDS = new Set([
     'coderProposal',
     'reviewerProposal',
+    'coderOutput',
 ]);
 function composePlayerPrompt(input) {
     const blocks = [];

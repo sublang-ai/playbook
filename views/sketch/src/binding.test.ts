@@ -418,8 +418,16 @@ describe('mountSketch with a source', () => {
         expect(svg.querySelector(`[data-edge-id="${id}"]`)).toBe(edge);
         expect(edge?.innerHTML).toBe(edgeGeometry.get(id));
       }
-      expect(states.get('b')?.classList.contains('active')).toBe(true);
-      expect(edges.get('a::GO::0::0')?.classList.contains('fired')).toBe(true);
+      expect(
+        [...svg.querySelectorAll('[data-state-id].active')]
+          .map((node) => node.getAttribute('data-state-id'))
+          .sort(),
+      ).toEqual(['b']);
+      expect(
+        [...svg.querySelectorAll('[data-edge-id].fired')]
+          .map((edge) => edge.getAttribute('data-edge-id'))
+          .sort(),
+      ).toEqual(['a::GO::0::0']);
 
       mount.dispose();
     } finally {

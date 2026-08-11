@@ -80,6 +80,7 @@ export interface PlayerInput {
 type AdditionalPlayerFields = {
     coderProposal?: string;
     reviewerProposal?: string;
+    coderOutput?: string;
     latestCommit?: string;
     question?: string;
     readonly [key: string]: unknown;
@@ -92,6 +93,7 @@ export type PlayerOutput = ({
     reviewerProposal: string;
 } & AdditionalPlayerFields) | ({
     guard: 'committed';
+    coderOutput: string;
     latestCommit: string;
 } & AdditionalPlayerFields) | ({
     guard: 'needsBossReply';

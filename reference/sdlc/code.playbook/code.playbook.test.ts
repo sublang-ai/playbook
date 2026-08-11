@@ -23,7 +23,7 @@ const APPROVED = {
 interface Fixtures {
   players: PlayerResult[];
   judges: unknown[];
-  children: PlaybookCallStart[];
+  children: Array<PlaybookCallStart | Error>;
 }
 
 function harness(fixtures: Partial<Fixtures> = {}) {
@@ -62,6 +62,7 @@ function harness(fixtures: Partial<Fixtures> = {}) {
       childRequests.push(request);
       const start = children.shift();
       if (start === undefined) throw new Error('missing child fixture');
+      if (start instanceof Error) throw start;
       return start;
     },
     async emitStatus(message) {
@@ -365,6 +366,33 @@ describe('linked CODE runtime', () => {
       error: { name: 'ReviewError', message: 'Reviewer unavailable.' },
     });
     expect(host.playerCalls).toHaveLength(1);
+    await runtime.dispose();
+  });
+
+  it('parks a raw nested-call rejection with the committed phase visible', async () => {
+    const host = harness({
+      players: [{ status: 'ok', finalText: 'Committed.\nCommit: abc123' }],
+      judges: [{ guard: 'directCommit', latestCommit: 'abc123' }],
+      children: [new Error('nested REVIEW bridge failed')],
+    });
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(rootSession(host.ports));
+
+    await expect(
+      runtime.handleBossInput({
+        text: 'Fix it.',
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('nested REVIEW bridge failed');
+    expect(host.playerCalls).toHaveLength(1);
+    expect(host.childRequests).toHaveLength(1);
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('failed');
+    expect(view.lastError).toMatchObject({
+      name: 'Error',
+      message: 'nested REVIEW bridge failed',
+    });
+    expect(view.context).toEqual({ phase: 'direct' });
     await runtime.dispose();
   });
 

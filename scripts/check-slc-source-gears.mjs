@@ -12,6 +12,7 @@ const BLOCKQUOTE = /^>\s?(.*)$/;
 const PLACEHOLDER = /<([A-Za-z_$#][A-Za-z0-9_$#-]*)>/g;
 const RESULT_BULLET = /^-\s+`([A-Za-z_$][A-Za-z0-9_$]*)`:\s+(.+)$/;
 const REQUIRED_FIELD = /^([A-Za-z_$][A-Za-z0-9_$]*)(?::\s*<([^>]+)>)?$/;
+const ENGLISH_PLAYER = '[A-Z][A-Za-z0-9_-]*';
 
 /** Resolve Markdown escaping that is Source syntax rather than prompt content. */
 function normalizePromptLine(line) {
@@ -87,6 +88,17 @@ function resultFields(description) {
   return fields;
 }
 
+/** Player named by one delegated GEARS acting sentence. */
+function actingPlayer(acting) {
+  const prompted = new RegExp(
+    `\\bCaptain shall prompt\\s+(${ENGLISH_PLAYER})\\b`,
+  ).exec(acting)?.[1];
+  if (prompted !== undefined) return prompted;
+  return new RegExp(
+    `\\bCaptain shall relay\\b.*?\\bto\\s+(${ENGLISH_PLAYER})\\b`,
+  ).exec(acting)?.[1];
+}
+
 /** Minimal GEARS item surface needed for Source and relay-contract checks. */
 export function parseGearsContract(gearsText) {
   const lines = gearsText.split('\n');
@@ -110,6 +122,7 @@ export function parseGearsContract(gearsText) {
     }
     const acting = section.slice(0, Math.max(firstQuote, 0)).join(' ');
     const delegated = /\bCaptain shall (?:prompt\b|relay\b)/.test(acting);
+    const player = actingPlayer(acting);
     const results = [];
     for (const line of section.slice(Math.max(cursor, 0))) {
       const bullet = RESULT_BULLET.exec(line);
@@ -120,7 +133,7 @@ export function parseGearsContract(gearsText) {
         fields: resultFields(bullet[2]),
       });
     }
-    return { id: start.id, ordinal, delegated, prompt, results };
+    return { id: start.id, ordinal, delegated, player, prompt, results };
   });
 }
 

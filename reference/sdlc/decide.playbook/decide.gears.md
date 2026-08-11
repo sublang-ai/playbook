@@ -64,10 +64,11 @@ When both independent proposals are complete, Captain shall prompt Coder:
 >
 > Commit the result as one new commit, following @specs/packages/git.md.
 > Make the commit message explain concisely what changed and why.
+> Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.
 > Coder is <coder-llm>; format the model token in conventional human form.
 
 Results:
-- `committed`: Coder committed Coder's proposal. Output shall include `latestCommit: <commit identity>`.
+- `committed`: Coder committed Coder's proposal. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.
 
 ## Review
 
@@ -83,4 +84,5 @@ When Coder commits, Captain shall call playbook `review`:
 > Coder's independent proposal: <coder-proposal>.
 
 The successful child output is DECIDE's terminal output.
-An authored child abort or failure terminates with the failure and `latestCommit` reported to the caller.
+An authored child abort, failure, or invalid approval terminates with the failure and `latestCommit` reported to the caller.
+Any other nested-call error parks `decide` as failed and retains the control-plane error.
