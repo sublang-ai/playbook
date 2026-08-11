@@ -5,7 +5,9 @@ name: Release
 
 on:
   push:
-    tags: ['v[0-9]*']
+    # GitHub ref filters use glob syntax: `+` repeats the preceding
+    # numeric character class, while each dot is literal.
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
 
 permissions:
   contents: write
@@ -17,6 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Verify tag matches package.json version
+        # RELEASE-2 / RELEASE-7 step 1. Reject malformed or mismatched tags
+        # before changing the checkout or spending install/build resources.
+        run: node scripts/check-release-metadata.mjs --tag-only "$GITHUB_REF_NAME"
 
       - name: Drop dev-only workspace override
         # A local pnpm-workspace.yaml links @sublang/cligent to a
@@ -34,17 +41,6 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-
-      - name: Verify tag matches package.json version
-        # RELEASE-2: tag without `v` prefix must equal package.json
-        # `version`.
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          PKG_VERSION="v$(node -p "require('./package.json').version")"
-          if [ "$TAG" != "$PKG_VERSION" ]; then
-            echo "::error::Tag $TAG does not match package.json version $PKG_VERSION"
-            exit 1
-          fi
 
       - name: Upgrade npm for trusted-publisher OIDC support
         # OIDC trusted publishing requires npm >= 11.5; bundled npm on
@@ -108,22 +104,12 @@ jobs:
       - name: Test
         run: pnpm test
 
-      - name: Extract release notes from CHANGELOG.md
-        # RELEASE-7 step 4. Write to a file (not GITHUB_OUTPUT) so the
-        # body stays opaque to later steps — `gh release create
-        # --notes-file` reads it verbatim, so backticks, $(), and other
-        # shell-meaningful chars in the changelog cannot be interpreted
-        # as commands when the release is created.
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          awk -v ver="$VERSION" '
-            /^## \[/ { if (found) exit; if ($0 == "## [" ver "]" || index($0, "## [" ver "] -")) found=1; next }
-            found { print }
-          ' CHANGELOG.md > /tmp/release-notes.md
-          if ! [ -s /tmp/release-notes.md ] || ! grep -q '[^[:space:]]' /tmp/release-notes.md; then
-            echo "::error::No release notes found for version $VERSION in CHANGELOG.md"
-            exit 1
-          fi
+      - name: Validate release metadata and extract release notes
+        # RELEASE-2 / RELEASE-7. The validator rejects non-SemVer or
+        # manifest-mismatched tags and malformed dated changelog sections.
+        # It writes notes directly to a file so shell-meaningful changelog
+        # text remains opaque to `gh release create --notes-file`.
+        run: node scripts/check-release-metadata.mjs "$GITHUB_REF_NAME" /tmp/release-notes.md
 
       - name: Publish to npm with provenance
         # RELEASE-8 / RELEASE-9: --provenance attaches a signed

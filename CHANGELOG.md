@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.0] - 2026-08-11
+
 ### Added
 
 - **REVIEW and DECIDE are bundled compiled playbooks.**
@@ -42,8 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **CODE always reports the exact commit it owns.**
-  Successful phases and every nested-REVIEW failure now retain the latest CODE-owned commit instead of forcing callers to infer repository identity from player prose ([[playbook-20](specs/packages/playbook.md#playbook-20)], [[playbook-24](specs/packages/playbook.md#playbook-24)]).
+- **CODE and DECIDE retain exact commit identity across REVIEW.**
+  Successful CODE phases and authored or invalid nested-REVIEW terminal outcomes return the latest CODE-owned commit, while DECIDE validates and retains the Coder's exact commit marker before REVIEW and returns it if an authored or invalid REVIEW outcome terminates; raw nested-call control errors park recoverably instead of masquerading as authored outcomes ([[playbook-20](specs/packages/playbook.md#playbook-20)], [[playbook-24](specs/packages/playbook.md#playbook-24)], [[playbook-25](specs/packages/playbook.md#playbook-25)]).
 
 - **SLC no longer confuses typed relay values with verbatim player output.**
   Result ownership is derived from the authored contract, so typed fields such as intent numbers remain judge-authored while fields declared as verbatim final text remain player-authored through later prompt composition ([[playbook-5](specs/packages/playbook.md#playbook-5)], [[playbook-6](specs/packages/playbook.md#playbook-6)]).
@@ -383,7 +385,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v5.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v6.0.0...HEAD
+[6.0.0]: https://github.com/sublang-ai/playbook/compare/v5.0.0...v6.0.0
 [5.0.0]: https://github.com/sublang-ai/playbook/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/sublang-ai/playbook/compare/v3.1.0...v4.0.0
 [3.1.0]: https://github.com/sublang-ai/playbook/compare/v3.0.0...v3.1.0
