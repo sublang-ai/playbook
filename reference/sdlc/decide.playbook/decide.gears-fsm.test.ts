@@ -484,4 +484,22 @@ describe('DECIDE GEARS to FSM compilation', () => {
       });
     }
   });
+
+  it('rejects a textless control-action probe without throwing', () => {
+    const interrupt = orderedTransitions(machineConfig, 'root').get(
+      'root.on.BOSS_INTERRUPT',
+    )?.[0];
+    expect(interrupt).toBeDefined();
+    expect(
+      evaluateGuard(interrupt?.guard, {
+        guard: '<inline>',
+        target: '#independentProposals',
+        context: CONTEXT,
+        event: {
+          type: 'BOSS_INTERRUPT',
+          targetId: 'independentProposals',
+        },
+      }),
+    ).toBe(false);
+  });
 });

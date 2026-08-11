@@ -601,6 +601,11 @@ context precondition required to enter that target safely. It shall not jump
 into a working or reassessment state with missing intent, prior result, plan,
 or other required context and shall not invent defaults merely to make an
 interrupt target executable.
+Control-action discovery probes these guards with optional textual fields
+omitted. Before applying a string operation such as `trim()`, a generated
+guard shall narrow the field to a string; a missing required textual field
+shall make the guard return false, never throw, so the control view remains
+total and omits an action whose payload the runtime cannot source.
 XState automatically stops the current state's invoked actor on transition [[2]].
 Where the default Captain's routing state accepts a fresh intent while another
 state or Boss-reply wait is active, its `BOSS_INTERRUPT` event shall carry a

@@ -149,6 +149,9 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     type: "rememberBossReply";
     params: import("xstate").NonReducibleUnknown;
 } | {
+    type: "rememberEmptyBossReplyError";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "completeSuccessfully";
     params: import("xstate").NonReducibleUnknown;
 } | {
@@ -176,6 +179,9 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     type: "isFinalTask";
     params: unknown;
 } | {
+    type: "authoredReviewFailure";
+    params: unknown;
+} | {
     type: "reviewApprovedDirect";
     params: unknown;
 } | {
@@ -186,6 +192,9 @@ export declare const codingMachine: import("xstate").StateMachine<CodingContext,
     params: unknown;
 } | {
     type: "reviewApprovedFinalTask";
+    params: unknown;
+} | {
+    type: "emptyBossReply";
     params: unknown;
 } | {
     type: "resumesFirstPhase";

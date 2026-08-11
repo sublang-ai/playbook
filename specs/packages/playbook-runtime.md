@@ -47,7 +47,6 @@ Each registry shall derive a prompt's player identity from the effective binding
 
 #### playbook-runtime-29
 
-Where CODE, REVIEW, or DECIDE is enabled through the Playbook Captain shell, its user config shall name the corresponding public registry module explicitly and the launcher shall normalize the playbook's non-launcher fields into that entry's namespaced option slice.
 The current CODE, REVIEW, and DECIDE registries accept no workflow-specific options and shall reject every nonempty option slice.
 Host-observable agent, layout, notification, permission, and presentation settings shall remain host configuration rather than workflow options.
 
@@ -83,7 +82,7 @@ same union without a resume token, `CaptainCallOptions` shall require
 expose optional `allowedTools?: readonly string[]` so an explicit empty list
 requests tool isolation while omission preserves the host Captain's configured
 tools. `PlaybookRuntime.init` shall
-accept a `PlaybookSession` whose optional `playerSessions` implements the exact synchronous store contract in [[playbook-runtime-59](#playbook-runtime-59)], and `PlaybookPorts` shall declare exactly
+accept a `PlaybookSession` whose optional `playerSessions` implements the exact synchronous store contract in [[playbook-runtime-58](#playbook-runtime-58)], and `PlaybookPorts` shall declare exactly
 the members `callPlayer`,
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
 `emitTelemetry`.
@@ -120,7 +119,7 @@ the dependency runs one way, from `code.playbook` to this module
 The module shall carry only type declarations and shall add no runtime
 engine, linker, or host primitives.
 
-#### playbook-runtime-59
+#### playbook-runtime-58
 
 Where `PlaybookSession.playerSessions` is supplied, the `PlayerSessionStore` shall expose exactly four synchronous operations keyed by the runtime-resolved frame-local role id:
 
@@ -1009,7 +1008,7 @@ requires visible-or-hidden visibility plus explicit resume selection and
 exposes an optional tool allowlist whose omission is distinct from an explicit
 empty list,
 unless `PlaybookRuntime.init` accepts a causal
-`PlaybookSession` with the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-59](#playbook-runtime-59)], and unless `handleBossInput` and
+`PlaybookSession` with the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-58](#playbook-runtime-58)], and unless `handleBossInput` and
 `resumePlaybookCall` return `PlaybookRunResult`; its import graph
 includes no CODE or FSM module.
 The test suite shall additionally fail unless the linker contract
@@ -1027,7 +1026,7 @@ everything, and shall require the `_internal` composers the artifact's
 own machine uses rather than a fixed player-and-Captain pair.
 Matching type shapes shall not satisfy this: the retired text declared
 the same optional `context` while describing the behavior the
-projection replaced (verifying [[playbook-runtime-34](#playbook-runtime-34)] and [[playbook-runtime-59](#playbook-runtime-59)]).
+projection replaced (verifying [[playbook-runtime-34](#playbook-runtime-34)] and [[playbook-runtime-58](#playbook-runtime-58)]).
 
 #### playbook-runtime-36
 
@@ -1050,7 +1049,7 @@ Host results shall fail unless they are validated, detached, and frozen before a
 
 #### playbook-runtime-56
 
-Where the integration suite initializes a runtime with a fake `PlayerSessionStore` and drives a host-mapped nested frame, it shall fail unless the declared store methods have the exact synchronous signatures of [[playbook-runtime-59](#playbook-runtime-59)], every call uses the frame-local role key, the host view maps that key to the effective root binding, selection occurs before the player-start trace and call, update or clearing occurs before the player-finish trace and adjudication, snapshot returns local-role keys, restore replaces exactly the frame view without clearing another binding, and a rejected host call preserves the prior selection (verifying [[playbook-runtime-55](#playbook-runtime-55)] and [[playbook-runtime-59](#playbook-runtime-59)]).
+Where the integration suite initializes a runtime with a fake `PlayerSessionStore` and drives a host-mapped nested frame, it shall fail unless the declared store methods have the exact synchronous signatures of [[playbook-runtime-58](#playbook-runtime-58)], every call uses the frame-local role key, the host view maps that key to the effective root binding, selection occurs before the player-start trace and call, update or clearing occurs before the player-finish trace and adjudication, snapshot returns local-role keys, restore replaces exactly the frame view without clearing another binding, and a rejected host call preserves the prior selection (verifying [[playbook-runtime-55](#playbook-runtime-55)] and [[playbook-runtime-58](#playbook-runtime-58)]).
 
 ### Structured and Composed Execution Coverage
 
@@ -1167,25 +1166,22 @@ context members carries no `context` at all while its FSM context is
 populated; unless a runtime that declares members exports exactly
 those, in declaration order, with a declared member that is absent or
 not JSON-safe dropped and a declared raw `Error` normalized; unless
-the real CODE runtime parked at `failed` exports exactly its four
-declared classification members and none of the resolved player
-roster, option value, or player-authored members its live context
-holds; and unless naming a first-class-surfaced member fails runtime
-construction.
+the real CODE runtime parked at `failed` exports only its declared
+`phase` when present and no `context` when `phase` is absent, without
+exposing the resolved player roster, option value, or player-authored
+members its live context holds; and unless naming a first-class-surfaced
+member fails runtime construction.
 Action derivation shall fail unless: the real CODE runtime parked in
-`failed` advertises the `retry:<EVENT_TYPE>` action for the recorded
-last classified event with a label written from the source state
-description — resolved for a recorded `BOSS_INTERRUPT` from the
-event's own `targetId` against the guarded multi-arm root transition,
-never from the first configured arm — plus the `jump:<stateId>`
-entries its live snapshot
-accepts; a recorded event the current state does not accept produces
-no retry entry; outside the failure state no retry entry appears; the
+`failed` advertises only the `retry:START_CODE` action for its recorded
+entry event with a label written from the source state description;
+a synthetic guarded multi-arm `BOSS_INTERRUPT` matrix exercises a
+non-first `targetId` and labels its retry from the recorded target's
+description, never from the first configured arm; a recorded event the current state does not accept produces no
+retry entry; outside the failure state no retry entry appears; the
 synthetic context-conditional target flips from excluded to included
-once the live context gains its required input;
-and jump events are sent with textual fields omitted, never with
-invented text (an applied retry replays the recorded payload with no
-classification call).
+once the live context gains its required input; and jump events are
+sent with textual fields omitted, never with invented text (an applied
+retry replays the recorded payload with no classification call).
 It shall further fail unless no advertised label is ever an identifier:
 a registered resumable target whose source publishes no description
 shall not be advertised at all — not advertised under its own target id

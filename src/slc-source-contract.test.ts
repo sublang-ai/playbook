@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
+import { _internal as codeInternal } from '../reference/sdlc/code.playbook/code.playbook.js';
+import { _internal as decideInternal } from '../reference/sdlc/decide.playbook/decide.playbook.js';
+import { _internal as reviewInternal } from '../reference/sdlc/review.playbook/review.playbook.js';
 import {
   checkLinkedVerbatimContract,
   checkSourceGearsContract,
@@ -65,7 +69,53 @@ After Coder finishes, Captain shall prompt Reviewer:
 > > Coder output: <coder-output>
 `;
 
+const linkedWorkflows = [
+  {
+    id: 'CODE',
+    sourceUrl: new URL('../reference/sdlc/code.md', import.meta.url),
+    gearsUrl: new URL(
+      '../reference/sdlc/code.playbook/code.gears.md',
+      import.meta.url,
+    ),
+    linkedFields: codeInternal.VERBATIM_PAYLOAD_FIELDS,
+    expectedFields: ['coderOutput'],
+  },
+  {
+    id: 'REVIEW',
+    sourceUrl: new URL('../reference/sdlc/review.md', import.meta.url),
+    gearsUrl: new URL(
+      '../reference/sdlc/review.playbook/review.gears.md',
+      import.meta.url,
+    ),
+    linkedFields: reviewInternal.VERBATIM_PAYLOAD_FIELDS,
+    expectedFields: ['reviewerOutput', 'coderOutput'],
+  },
+  {
+    id: 'DECIDE',
+    sourceUrl: new URL('../reference/sdlc/decide.md', import.meta.url),
+    gearsUrl: new URL(
+      '../reference/sdlc/decide.playbook/decide.gears.md',
+      import.meta.url,
+    ),
+    linkedFields: decideInternal.VERBATIM_PAYLOAD_FIELDS,
+    expectedFields: ['coderProposal', 'reviewerProposal'],
+  },
+] as const;
+
 describe('SLC Source -> GEARS prompt contract', () => {
+  it.each(linkedWorkflows)(
+    '$id keeps its protected Source, GEARS prompts, and linked field ownership aligned',
+    ({ sourceUrl, gearsUrl, linkedFields, expectedFields }) => {
+      const source = readFileSync(sourceUrl, 'utf8');
+      const gears = readFileSync(gearsUrl, 'utf8');
+
+      expect(checkSourceGearsContract(source, gears)).toEqual([]);
+      expect([...verbatimFieldsFromGears(gears)]).toEqual(expectedFields);
+      expect([...linkedFields]).toEqual(expectedFields);
+      expect(checkLinkedVerbatimContract(gears, linkedFields)).toEqual([]);
+    },
+  );
+
   it('preserves instruction fragments, literal relayed quotes, and verbatim fields', () => {
     expect(checkSourceGearsContract(SOURCE, GEARS)).toEqual([]);
     expect([...verbatimFieldsFromGears(GEARS)]).toEqual(['coderOutput']);

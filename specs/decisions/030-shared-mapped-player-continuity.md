@@ -36,4 +36,4 @@ The existing host instead gives every playbook a separate namespaced player and 
 ## References
 
 - [DR-010](010-playbook-session-tracing-and-resume.md) defines runtime-local player continuation.
-- [[playbook-runtime-59](../packages/playbook-runtime.md#playbook-runtime-59)] defines the shared store boundary.
+- [[playbook-runtime-58](../packages/playbook-runtime.md#playbook-runtime-58)] defines the shared store boundary.

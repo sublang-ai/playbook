@@ -3703,6 +3703,98 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     await runtime.dispose();
   });
 
+  it('labels a guarded BOSS_INTERRUPT retry from its recorded targetId', async () => {
+    const interruptMachine = createMachine({
+      id: 'interrupt-retry',
+      context: { lastError: undefined as unknown },
+      initial: 'ready',
+      on: {
+        BOSS_INTERRUPT: [
+          {
+            guard: ({ event }) =>
+              (event as { targetId?: string }).targetId === 'firstRoute',
+            target: '#firstRoute',
+          },
+          {
+            guard: ({ event }) =>
+              (event as { targetId?: string }).targetId === 'secondRoute',
+            target: '#secondRoute',
+          },
+        ],
+      },
+      states: {
+        ready: {
+          meta: meta('ready'),
+          tags: ['playbook.parked'],
+        },
+        firstRoute: {
+          id: 'firstRoute',
+          meta: meta('firstRoute'),
+          tags: ['playbook.parked'],
+        },
+        secondRoute: {
+          id: 'secondRoute',
+          meta: playerMeta('secondRoute', 'Coder'),
+          tags: ['playbook.busy'],
+          invoke: {
+            src: 'player',
+            input: () => ({
+              stateId: 'secondRoute',
+              sourceItem: 'INTERRUPT-2',
+              player: 'Coder',
+              prompt: 'Run the second route.',
+              result: { done: 'The second route completed.' },
+            }),
+            onDone: '#firstRoute',
+            onError: {
+              target: '#interruptFailed',
+              actions: assign({
+                lastError: ({ event }) => event.error,
+              }),
+            },
+          },
+        },
+        failed: {
+          id: 'interruptFailed',
+          meta: meta('failed'),
+          tags: ['playbook.parked'],
+        },
+      },
+    });
+    const createInterruptRuntime = createXStatePlaybookRuntime(
+      interruptMachine,
+      {
+        label: 'interrupt-retry',
+        snapshotOptions: () => ({}),
+        playerStates: {
+          secondRoute: { player: 'Coder', label: 'secondRoute state' },
+        },
+      },
+    );
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({
+        status: 'error',
+        error: 'second route failed',
+      }),
+      callJudge: async () =>
+        '{"type":"BOSS_INTERRUPT","targetId":"secondRoute"}',
+    });
+    const runtime = createInterruptRuntime({});
+    await runtime.init(makeSession(ports));
+
+    const failed = await runtime.handleBossInput(turn('take the second route'));
+    expect(failed.outcome).toBe('failed');
+    expect(runtime.describe!().actions).toContainEqual({
+      id: 'retry:BOSS_INTERRUPT',
+      label: 'Retry: secondRoute state',
+    });
+    expect(runtime.describe!().actions).not.toContainEqual({
+      id: 'retry:BOSS_INTERRUPT',
+      label: 'Retry: firstRoute state',
+    });
+    await runtime.dispose();
+  });
+
   it('rejects the parallel DECIDE machine at factory construction', () => {
     expect(() =>
       createXStatePlaybookRuntime(decideMachine, {

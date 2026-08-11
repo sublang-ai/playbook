@@ -4,8 +4,7 @@ import createPlaybookRuntime from './review.playbook.js';
 export const reviewStateCountLabels = {
     reviewInitial: 'review round',
     reviewAfterCommit: 'review round',
-    reviewAfterRebuttal: 'review round',
-    addressFindings: 'rebuttal',
+    reviewAfterRebuttal: 'rebuttal',
 };
 export const reviewCopyPasteGuardNames = [
     'hasFindings',

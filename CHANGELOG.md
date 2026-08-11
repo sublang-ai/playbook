@@ -16,10 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   REVIEW provides the committed-work review loop as both a standalone workflow and a child of other playbooks, while DECIDE obtains independent Coder and Reviewer proposals before committing a design and delegating its review; both ship maintained sources, GEARS, FSM, linked-runtime, and public playbook and registry subpaths ([[playbook-21](specs/packages/playbook.md#playbook-21)], [[playbook-22](specs/packages/playbook.md#playbook-22)], [[release-20](specs/packages/release.md#release-20)]).
 
 - **Hosts can preserve a mapped player's conversation across composed runtimes.**
-  The public runtime contract adds optional `PlaybookSession.playerSessions` and the synchronous `PlayerSessionStore`, letting nested exact same-role frames use a root-owned continuation while standalone runtimes retain private session state ([[playbook-runtime-59](specs/packages/playbook-runtime.md#playbook-runtime-59)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)]).
+  The public runtime contract adds optional `PlaybookSession.playerSessions` and the synchronous `PlayerSessionStore`, letting nested exact same-role frames use a root-owned continuation while standalone runtimes retain private session state ([[playbook-runtime-58](specs/packages/playbook-runtime.md#playbook-runtime-58)], [[playbook-captain-10](specs/packages/playbook-captain.md#playbook-captain-10)]).
 
 - **A deterministic Source-to-GEARS guard now protects maintained workflows.**
-  The public SLC contracts and repository check preserve authored instruction order, quoted relay context, placeholder mapping, and verbatim-output declarations without attempting an agentic recompile ([[playbook-5](specs/packages/playbook.md#playbook-5)], [[playbook-6](specs/packages/playbook.md#playbook-6)], [[playbook-11](specs/packages/playbook.md#playbook-11)], [[release-28](specs/packages/release.md#release-28)]).
+  The public SLC contracts and repository check preserve recognized authored prompt fragments, their order, and explicit quote markers, while checking that linked ownership agrees with GEARS-declared verbatim fields without attempting an agentic recompile ([[playbook-5](specs/packages/playbook.md#playbook-5)], [[playbook-6](specs/packages/playbook.md#playbook-6)], [[playbook-11](specs/packages/playbook.md#playbook-11)], [[release-28](specs/packages/release.md#release-28)]).
 
 ### Changed
 

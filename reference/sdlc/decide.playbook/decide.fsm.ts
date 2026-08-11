@@ -453,6 +453,7 @@ function bossInterrupts(ids: readonly JumpableStateId[]): any[] {
     guard: ({ event }: { event: DecideEvent }) =>
       event.type === 'BOSS_INTERRUPT' &&
       event.targetId === id &&
+      typeof event.bossIntent === 'string' &&
       event.bossIntent.trim().length > 0,
     target: `#${id}`,
     reenter: true,

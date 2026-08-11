@@ -178,6 +178,9 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
     type: "clearProposalRoundContext";
     params: import("xstate").NonReducibleUnknown;
 }, {
+    type: "authoredReviewFailure";
+    params: unknown;
+} | {
     type: "committed";
     params: unknown;
 } | {
@@ -194,9 +197,6 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
     params: unknown;
 } | {
     type: "validReviewSuccess";
-    params: unknown;
-} | {
-    type: "authoredReviewFailure";
     params: unknown;
 }, never, "done" | "failed" | "awaitBossReply" | "ready" | "commitCoderProposal" | "reviewCommit" | "reportedReviewFailure" | {
     independentProposals: {

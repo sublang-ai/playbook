@@ -26,11 +26,55 @@ const gearsText = readFileSync(
 const gears = parseGearsContract(gearsText);
 const byId = new Map(gears.map((item) => [item.id, item]));
 
+interface RawTransition {
+  guard?: string;
+  target?: string;
+  actions?: string;
+}
+
+interface RawReviewState {
+  invoke?: {
+    onDone?: readonly RawTransition[];
+    onError?: readonly RawTransition[];
+  };
+}
+
+const CODE_2_OUTCOMES = [
+  'Workflow outcomes:',
+  '- Exact approval after a direct implementation phase completes `code`.',
+  '- Exact approval after a new-IR phase continues with its next unfinished IR task.',
+  '- An authored `review` abort, error, or invalid approval terminates `code` with the failure and last `code`-owned commit.',
+  '- Any other nested-call error parks `code` as failed and retains the control-plane error.',
+].join('\n');
+
+const CODE_4_OUTCOMES = [
+  'Workflow outcomes:',
+  '- Exact approval after a nonfinal IR-task phase continues with its next unfinished IR task.',
+  '- Exact approval after the final IR-task phase completes `code`.',
+  '- An authored `review` abort, error, or invalid approval terminates `code` with the failure and last `code`-owned commit.',
+  '- Any other nested-call error parks `code` as failed and retains the control-plane error.',
+].join('\n');
+
+function gearsSection(id: 'CODE-2' | 'CODE-4'): string {
+  const start = gearsText.indexOf(`### ${id}`);
+  const end =
+    id === 'CODE-2' ? gearsText.indexOf('### CODE-3', start) : gearsText.length;
+  return gearsText.slice(start, end);
+}
+
+function route(transition: RawTransition | undefined) {
+  return {
+    guard: transition?.guard,
+    target: transition?.target,
+    actions: transition?.actions,
+  };
+}
+
 const CONTEXT: CodingContext = {
   coderPlayer: 'GPT-5.6 Sol',
   runResults: '',
   callerInput: 'Implement the request.',
-  coderOutput: 'Committed abc123.',
+  coderOutput: 'Committed.\nCommit: abc123',
   latestCommit: 'abc123',
   irNumber: '040',
   irTask: 'Implement task 1.',
@@ -81,6 +125,89 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
         sourceItem === 'CODE-2' || sourceItem === 'CODE-4',
       ),
     ).toBe(false);
+  });
+
+  it('pins every authored post-REVIEW outcome to its compiled route', () => {
+    for (const clause of [
+      'When `review` passes a direct implementation phase, `code` is complete.',
+      'When `review` passes a new IR or a nonfinal IR-task phase, Captain shall continue with the next unfinished IR-task phase.',
+      'When `review` passes the final IR-task phase, `code` is complete.',
+      'When `review` returns an authored abort or failure, or a terminal result that does not prove exact approval, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.',
+      'When the nested `review` call fails outside that authored result contract, `code` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.',
+    ]) {
+      expect(source).toContain(clause);
+    }
+    expect(gearsSection('CODE-2')).toContain(CODE_2_OUTCOMES);
+    expect(gearsSection('CODE-4')).toContain(CODE_4_OUTCOMES);
+
+    const states = (codingMachine as unknown as {
+      config: { states: Record<string, RawReviewState> };
+    }).config.states;
+    const first = states.reviewFirstCommit?.invoke;
+    const task = states.reviewIrTask?.invoke;
+    expect({
+      firstApprovedDirect: route(first?.onDone?.[0]),
+      firstApprovedIr: route(first?.onDone?.[1]),
+      firstInvalidApproval: route(first?.onDone?.[2]),
+      firstAuthoredFailure: route(first?.onError?.[0]),
+      firstControlFailure: route(first?.onError?.[1]),
+      taskApprovedMore: route(task?.onDone?.[0]),
+      taskApprovedFinal: route(task?.onDone?.[1]),
+      taskInvalidApproval: route(task?.onDone?.[2]),
+      taskAuthoredFailure: route(task?.onError?.[0]),
+      taskControlFailure: route(task?.onError?.[1]),
+    }).toEqual({
+      firstApprovedDirect: {
+        guard: 'reviewApprovedDirect',
+        target: 'done',
+        actions: 'completeSuccessfully',
+      },
+      firstApprovedIr: {
+        guard: 'reviewApprovedIrCreated',
+        target: 'runIrTask',
+        actions: undefined,
+      },
+      firstInvalidApproval: {
+        guard: undefined,
+        target: 'done',
+        actions: 'completeWithInvalidReviewOutput',
+      },
+      firstAuthoredFailure: {
+        guard: 'authoredReviewFailure',
+        target: 'done',
+        actions: 'completeWithReviewFailure',
+      },
+      firstControlFailure: {
+        guard: undefined,
+        target: 'failed',
+        actions: 'rememberActorError',
+      },
+      taskApprovedMore: {
+        guard: 'reviewApprovedMoreTasks',
+        target: 'runIrTask',
+        actions: 'advanceToNextIrTask',
+      },
+      taskApprovedFinal: {
+        guard: 'reviewApprovedFinalTask',
+        target: 'done',
+        actions: 'completeSuccessfully',
+      },
+      taskInvalidApproval: {
+        guard: undefined,
+        target: 'done',
+        actions: 'completeWithInvalidReviewOutput',
+      },
+      taskAuthoredFailure: {
+        guard: 'authoredReviewFailure',
+        target: 'done',
+        actions: 'completeWithReviewFailure',
+      },
+      taskControlFailure: {
+        guard: undefined,
+        target: 'failed',
+        actions: 'rememberActorError',
+      },
+    });
   });
 
   it('publishes stable descriptions and the correct runtime tags', () => {

@@ -17,6 +17,7 @@ const FIRST_PHASE_PROMPT = [
     'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
     "Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
     'Make the commit message explain concisely what changed and why, including relevant verification.',
+    'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.',
     'Coder is <coder-llm>; format the model token in conventional human form.',
 ].join('\n');
 const IR_TASK_PROMPT = [
@@ -31,6 +32,7 @@ const IR_TASK_PROMPT = [
     'Do not re-run tests or builds whose inputs have not changed since any previous reported run.',
     "Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.",
     'Make the commit message explain concisely what changed and why, including relevant verification.',
+    'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.',
     'Coder is <coder-llm>; format the model token in conventional human form.',
 ].join('\n');
 const FIRST_PHASE_RESULTS = {
@@ -84,28 +86,38 @@ function outputString(event, field) {
     const value = playerOutput(event)?.[field];
     return isNonEmptyString(value) ? value : undefined;
 }
+function commitOutput(event) {
+    const coderOutput = outputString(event, 'coderOutput');
+    const latestCommit = outputString(event, 'latestCommit');
+    const commitLines = coderOutput
+        ?.split('\n')
+        .filter((line) => line.startsWith('Commit: '));
+    if (coderOutput === undefined ||
+        latestCommit === undefined ||
+        commitLines?.length !== 1 ||
+        commitLines[0] !== `Commit: ${latestCommit}`) {
+        return undefined;
+    }
+    return { coderOutput, latestCommit };
+}
 function isDirectCommit({ event }) {
     return (outputGuard(event, 'directCommit') &&
-        outputString(event, 'coderOutput') !== undefined &&
-        outputString(event, 'latestCommit') !== undefined);
+        commitOutput(event) !== undefined);
 }
 function isIrCommit({ event }) {
     return (outputGuard(event, 'irCommit') &&
-        outputString(event, 'coderOutput') !== undefined &&
-        outputString(event, 'latestCommit') !== undefined &&
+        commitOutput(event) !== undefined &&
         outputString(event, 'irNumber') !== undefined &&
         outputString(event, 'irTask') !== undefined);
 }
 function isMoreTasks({ event }) {
     return (outputGuard(event, 'moreTasks') &&
-        outputString(event, 'coderOutput') !== undefined &&
-        outputString(event, 'latestCommit') !== undefined &&
+        commitOutput(event) !== undefined &&
         outputString(event, 'irTask') !== undefined);
 }
 function isFinalTask({ event }) {
     return (outputGuard(event, 'finalTask') &&
-        outputString(event, 'coderOutput') !== undefined &&
-        outputString(event, 'latestCommit') !== undefined);
+        commitOutput(event) !== undefined);
 }
 function needsBossReply({ event }) {
     return (outputGuard(event, 'needsBossReply') &&
@@ -124,19 +136,122 @@ function isReviewApprovedValue(value) {
 function reviewApprovedFor(phase) {
     return ({ context, event }) => context.phase === phase && isReviewApprovedValue(reviewOutput(event));
 }
-function isCompactError(value) {
+function isStateValue(value, ancestors = new Set()) {
+    if (typeof value === 'string')
+        return true;
+    if (!isRecord(value) || ancestors.has(value))
+        return false;
+    const next = new Set(ancestors).add(value);
+    return Reflect.ownKeys(value).every((key) => typeof key === 'string' &&
+        Object.prototype.propertyIsEnumerable.call(value, key) &&
+        isStateValue(value[key], next));
+}
+function isStringArray(value) {
+    return (Array.isArray(value) &&
+        Reflect.ownKeys(value).length === value.length + 1 &&
+        Reflect.ownKeys(value).every((key) => {
+            if (key === 'length')
+                return true;
+            return (typeof key === 'string' &&
+                /^(0|[1-9][0-9]*)$/.test(key) &&
+                Number(key) < value.length);
+        }) &&
+        value.every((entry) => isNonEmptyString(entry)) &&
+        new Set(value).size === value.length);
+}
+function isPlaybookState(value) {
     if (!isRecord(value))
         return false;
-    const keys = Object.keys(value).sort();
-    if (keys.join('\0') !== ['message', 'name'].join('\0'))
+    const allowed = new Set([
+        'value',
+        'activeStateIds',
+        'tags',
+        'status',
+        'quiescent',
+        'stateId',
+    ]);
+    if (Reflect.ownKeys(value).some((key) => typeof key !== 'string' || !allowed.has(key)) ||
+        !Object.prototype.hasOwnProperty.call(value, 'value') ||
+        !Object.prototype.hasOwnProperty.call(value, 'activeStateIds') ||
+        !Object.prototype.hasOwnProperty.call(value, 'tags') ||
+        !Object.prototype.hasOwnProperty.call(value, 'status') ||
+        !Object.prototype.hasOwnProperty.call(value, 'quiescent')) {
         return false;
-    return isNonEmptyString(value.name) && typeof value.message === 'string';
+    }
+    return (isStateValue(value.value) &&
+        isStringArray(value.activeStateIds) &&
+        isStringArray(value.tags) &&
+        (value.status === 'active' ||
+            value.status === 'done' ||
+            value.status === 'error' ||
+            value.status === 'stopped') &&
+        typeof value.quiescent === 'boolean' &&
+        (!Object.prototype.hasOwnProperty.call(value, 'stateId') ||
+            (isNonEmptyString(value.stateId) &&
+                value.activeStateIds.length === 1 &&
+                value.activeStateIds[0] === value.stateId)));
 }
 function nestedResultFromError(error) {
     if (!(error instanceof Error))
         return undefined;
     const result = error.result;
     return isRecord(result) ? result : undefined;
+}
+function normalizedReviewFailure(error) {
+    const result = nestedResultFromError(error);
+    if (result === undefined)
+        return undefined;
+    const allowed = new Set([
+        'status',
+        'playbookId',
+        'childSessionId',
+        'state',
+        'error',
+    ]);
+    if (Reflect.ownKeys(result).some((key) => typeof key !== 'string' || !allowed.has(key)) ||
+        (result.status !== 'aborted' && result.status !== 'error') ||
+        result.playbookId !== 'review') {
+        return undefined;
+    }
+    if (Object.prototype.hasOwnProperty.call(result, 'childSessionId') &&
+        !isNonEmptyString(result.childSessionId)) {
+        return undefined;
+    }
+    if (Object.prototype.hasOwnProperty.call(result, 'state') &&
+        !isPlaybookState(result.state)) {
+        return undefined;
+    }
+    let normalizedError;
+    if (Object.prototype.hasOwnProperty.call(result, 'error')) {
+        if (!isRecord(result.error))
+            return undefined;
+        const errorKeys = Reflect.ownKeys(result.error);
+        if (errorKeys.some((key) => typeof key !== 'string' ||
+            (key !== 'name' && key !== 'message' && key !== 'stack')) ||
+            !Object.prototype.hasOwnProperty.call(result.error, 'name') ||
+            !Object.prototype.hasOwnProperty.call(result.error, 'message') ||
+            !isNonEmptyString(result.error.name) ||
+            typeof result.error.message !== 'string' ||
+            (Object.prototype.hasOwnProperty.call(result.error, 'stack') &&
+                typeof result.error.stack !== 'string')) {
+            return undefined;
+        }
+        normalizedError = {
+            name: result.error.name,
+            message: result.error.message,
+        };
+    }
+    else if (result.status === 'error') {
+        return undefined;
+    }
+    return {
+        status: result.status,
+        ...(normalizedError === undefined ? {} : { error: normalizedError }),
+    };
+}
+function authoredReviewFailure({ event }) {
+    const error = isRecord(event) ? event.error : undefined;
+    return normalizedReviewFailure(error) !== undefined;
 }
 function compactError(value) {
     if (value instanceof Error) {
@@ -149,10 +264,10 @@ function compactError(value) {
 }
 function authoredReviewError(event) {
     const outer = isRecord(event) ? event.error : undefined;
-    const result = nestedResultFromError(outer);
-    if (result !== undefined && isCompactError(result.error))
-        return result.error;
-    if (result?.status === 'aborted') {
+    const failure = normalizedReviewFailure(outer);
+    if (failure?.error !== undefined)
+        return failure.error;
+    if (failure?.status === 'aborted') {
         return { name: 'AbortError', message: 'REVIEW was aborted.' };
     }
     return compactError(outer);
@@ -193,6 +308,8 @@ const machineSetup = setup({
         reviewApprovedIrCreated: reviewApprovedFor('ir-created'),
         reviewApprovedMoreTasks: reviewApprovedFor('ir-task-more'),
         reviewApprovedFinalTask: reviewApprovedFor('ir-task-final'),
+        authoredReviewFailure,
+        emptyBossReply: ({ event }) => event.type === 'BOSS_REPLY' && event.answer.trim().length === 0,
         resumesFirstPhase: ({ context, event }) => event.type === 'BOSS_REPLY' &&
             event.answer.trim().length > 0 &&
             context.pendingBossQuestion?.resumeStateId === 'runFirstPhase' &&
@@ -279,6 +396,11 @@ const machineSetup = setup({
             };
         }),
         rememberBossReply: assign(({ event }) => event.type === 'BOSS_REPLY' ? { bossReply: event.answer } : {}),
+        rememberEmptyBossReplyError: assign({
+            lastError: () => new Error('BOSS_REPLY received an empty answer'),
+            pendingBossQuestion: undefined,
+            bossReply: undefined,
+        }),
         completeSuccessfully: assign({
             completion: 'complete',
             reviewError: undefined,
@@ -415,10 +537,14 @@ export const codingMachine = machineSetup.createMachine({
                         actions: 'completeWithInvalidReviewOutput',
                     },
                 ],
-                onError: {
-                    target: 'done',
-                    actions: 'completeWithReviewFailure',
-                },
+                onError: [
+                    {
+                        guard: 'authoredReviewFailure',
+                        target: 'done',
+                        actions: 'completeWithReviewFailure',
+                    },
+                    { target: 'failed', actions: 'rememberActorError' },
+                ],
             },
         },
         runIrTask: {
@@ -501,10 +627,14 @@ export const codingMachine = machineSetup.createMachine({
                         actions: 'completeWithInvalidReviewOutput',
                     },
                 ],
-                onError: {
-                    target: 'done',
-                    actions: 'completeWithReviewFailure',
-                },
+                onError: [
+                    {
+                        guard: 'authoredReviewFailure',
+                        target: 'done',
+                        actions: 'completeWithReviewFailure',
+                    },
+                    { target: 'failed', actions: 'rememberActorError' },
+                ],
             },
         },
         awaitBossReply: {
@@ -514,6 +644,11 @@ export const codingMachine = machineSetup.createMachine({
             tags: ['playbook.parked'],
             on: {
                 BOSS_REPLY: [
+                    {
+                        guard: 'emptyBossReply',
+                        target: '#failed',
+                        actions: 'rememberEmptyBossReplyError',
+                    },
                     {
                         guard: 'resumesFirstPhase',
                         target: '#runFirstPhase',

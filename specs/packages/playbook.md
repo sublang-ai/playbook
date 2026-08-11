@@ -13,7 +13,7 @@ This package specifies agreement among the maintained CODE, REVIEW, and DECIDE s
 
 #### playbook-1
 
-Where a maintained workflow source declares player instructions, nested playbook calls, or terminal outcomes, its compiled GEARS shall preserve every instruction and outcome in source order and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, or `DECIDE-1` through `DECIDE-4`, respectively.
+Where a maintained workflow source declares player instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, or `DECIDE-1` through `DECIDE-4`, while the compiled FSM and runtime shall implement every preserved outcome.
 
 #### playbook-2
 
@@ -87,7 +87,7 @@ Where execution leaves a player-invoking state without suspending for its Boss q
 
 #### playbook-7
 
-When the workflow conformance suites run, they shall fail unless each protected source instruction and terminal outcome has exactly one corresponding GEARS item in the required ordered set and no compiled item lacks source authority (verifying [[playbook-1](#playbook-1)]).
+When the workflow conformance suites run, they shall fail unless every protected source instruction, acting-result contract, and workflow outcome appears in at least one corresponding GEARS item in the required ordered set, no compiled item lacks source authority, and every GEARS-preserved workflow outcome is pinned at the compiled FSM and runtime boundary (verifying [[playbook-1](#playbook-1)]).
 
 #### playbook-8
 

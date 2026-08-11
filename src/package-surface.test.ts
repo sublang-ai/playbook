@@ -456,13 +456,16 @@ describe('GEARS grammar provenance (RELEASE-23)', () => {
     '@sublang/spex/scaffold/i18n/zh/specs/meta.md',
   ];
 
-  it('declares @sublang/spex on a caret range no lower than 0.3.0', () => {
+  it('declares @sublang/spex on a caret range no lower than 2.1.1', () => {
     const specifier = pkg.dependencies[SPEX_DEP];
     const lockEntry = lockfile.importers['.'].dependencies[SPEX_DEP];
 
     expect(specifier).toMatch(/^\^\d+\.\d+\.\d+$/);
-    const [major, minor] = specifier.slice(1).split('.').map(Number);
-    expect(major > 0 || (major === 0 && minor >= 3)).toBe(true);
+    const [major, minor, patch] = specifier.slice(1).split('.').map(Number);
+    expect(
+      major > 2 ||
+        (major === 2 && (minor > 1 || (minor === 1 && patch >= 1))),
+    ).toBe(true);
     expect(lockEntry.specifier).toBe(specifier);
   });
 

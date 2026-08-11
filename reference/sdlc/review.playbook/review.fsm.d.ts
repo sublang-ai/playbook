@@ -89,6 +89,9 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     type: "rememberBossReply";
     params: import("xstate").NonReducibleUnknown;
 } | {
+    type: "rememberEmptyBossReplyError";
+    params: import("xstate").NonReducibleUnknown;
+} | {
     type: "copyStartInput";
     params: import("xstate").NonReducibleUnknown;
 } | {
@@ -102,9 +105,6 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "clearBossReplyContext";
-    params: import("xstate").NonReducibleUnknown;
-} | {
-    type: "rememberEmptyBossReplyError";
     params: import("xstate").NonReducibleUnknown;
 } | {
     type: "setPendingReviewInitial";
@@ -122,6 +122,9 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     type: "needsBossReply";
     params: unknown;
 } | {
+    type: "emptyBossReply";
+    params: unknown;
+} | {
     type: "hasFindings";
     params: unknown;
 } | {
@@ -132,9 +135,6 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
     params: unknown;
 } | {
     type: "rejectedAll";
-    params: unknown;
-} | {
-    type: "emptyBossReply";
     params: unknown;
 } | {
     type: "resumeReviewInitial";

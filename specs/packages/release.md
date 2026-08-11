@@ -273,18 +273,6 @@ to change, and they may be added, changed, or removed in any release.
 Narrowing an existing public declaration so input that previously
 typechecked no longer does — including adding a required property to an
 options type — is likewise a breaking change under [[release-1](#release-1)].
-The current unreleased Captain rewrite removes the public
-`composeCaptainPrompt` and `composePlayerPrompt` named exports and makes
-the public Captain runtime's controller option required.
-Those changes stand and require a major release; the package version and
-changelog section shall change at tag preparation under
-[[release-2](#release-2)] and [[release-4](#release-4)], not before.
-The removal of the `playbook-code` bin, the
-`@sublang/playbook/code/tmux-play` export, and the bundled legacy CODE
-tmux-play configs are breaking public-surface changes under
-[[release-1](#release-1)] and shall be recorded in the `Removed` section
-of `CHANGELOG.md` per [[release-4](#release-4)] and
-[[release-5](#release-5)].
 The current unreleased replacement of DISCUSS and its public subpaths with REVIEW and DECIDE is a breaking public-surface change and shall be released in the same next major version under [[release-1](#release-1)].
 
 ### Pre-release Checklist
@@ -356,7 +344,9 @@ step below holds of the packed candidate:
 Step 7 shall claim no more than it proves. The SLC pipeline is agentic, so
 this gate shall not attempt to re-derive the compiled artifacts and shall
 not treat byte-for-byte reproduction as a release condition.
-The deterministic source contract check shall establish that each GEARS artifact preserves the maintained source's instruction blocks, quoted relay fragments, and verbatim-output declarations, while the artifact suites establish GEARS ↔ FSM ↔ runtime fidelity.
+The deterministic source contract check shall establish only that each GEARS artifact preserves the maintained source fragments its parser recognizes as instruction blocks or explicit quoted relays, including their order and literal quote markers.
+It shall not infer prose-only relay contracts, prove a result-field ownership declaration that is absent from GEARS, or establish semantic authorship for a bare quoted placeholder.
+The linked ownership check shall establish agreement between GEARS-declared verbatim fields and the runtime's declared verbatim fields, while the artifact suites establish GEARS ↔ FSM ↔ runtime fidelity.
 The byte-equality check is a transfer
 argument and not a drift check either: `npm pack` copies the working tree,
 so agreement between the committed sources and their built siblings stays

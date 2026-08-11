@@ -155,6 +155,7 @@ export const reviewMachine = setup({
                 event.questionId === context.pendingBossQuestion.questionId),
         restartInitialReview: ({ event }) => event.type === 'BOSS_INTERRUPT' &&
             event.targetId === 'reviewInitial' &&
+            typeof event.bossIntent === 'string' &&
             event.bossIntent.trim().length > 0,
     },
     actions: {

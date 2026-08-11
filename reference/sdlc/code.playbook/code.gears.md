@@ -26,6 +26,7 @@ When the first coding phase begins, Captain shall prompt Coder:
 > Do not re-run tests or builds whose inputs have not changed since any previous reported run.
 > Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 > Make the commit message explain concisely what changed and why, including relevant verification.
+> Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.
 > Coder is <coder-llm>; format the model token in conventional human form.
 
 Results:
@@ -38,6 +39,12 @@ When the first phase has one new commit, Captain shall call playbook `review`:
 
 > > Initial intent: <caller-input>
 > > Coder output: <coder-output>
+
+Workflow outcomes:
+- Exact approval after a direct implementation phase completes `code`.
+- Exact approval after a new-IR phase continues with its next unfinished IR task.
+- An authored `review` abort, error, or invalid approval terminates `code` with the failure and last `code`-owned commit.
+- Any other nested-call error parks `code` as failed and retains the control-plane error.
 
 ### CODE-3
 
@@ -54,6 +61,7 @@ When a reviewed IR has a next unfinished task, Captain shall prompt Coder:
 > Do not re-run tests or builds whose inputs have not changed since any previous reported run.
 > Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 > Make the commit message explain concisely what changed and why, including relevant verification.
+> Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.
 > Coder is <coder-llm>; format the model token in conventional human form.
 
 Results:
@@ -66,3 +74,9 @@ When an IR-task phase has one new commit, Captain shall call playbook `review`:
 
 > > IR task: <ir-task>
 > > Coder output: <coder-output>
+
+Workflow outcomes:
+- Exact approval after a nonfinal IR-task phase continues with its next unfinished IR task.
+- Exact approval after the final IR-task phase completes `code`.
+- An authored `review` abort, error, or invalid approval terminates `code` with the failure and last `code`-owned commit.
+- Any other nested-call error parks `code` as failed and retains the control-plane error.

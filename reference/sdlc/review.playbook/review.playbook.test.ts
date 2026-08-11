@@ -16,6 +16,7 @@ import type {
 import createPlaybookRuntime, { _internal } from './review.playbook.js';
 import {
   createReviewRuntimeOptions,
+  reviewStateCountLabels,
   validateReviewOptions,
 } from './review.registry.js';
 
@@ -217,20 +218,19 @@ describe('linked REVIEW runtime', () => {
     await runtime.dispose();
   });
 
-  it('resumes the same review state after a Boss answer', async () => {
-    const playerCalls: PlayerCall[] = [];
-    const ports = portsFor({
-      playerCalls,
+  it.each([
+    {
+      origin: 'reviewInitial',
       playerResults: [
         {
-          status: 'ok',
+          status: 'ok' as const,
           finalText: 'Which release target should govern?',
-          resumeToken: 'reviewer-1',
+          resumeToken: 'reviewer-question',
         },
         {
-          status: 'ok',
+          status: 'ok' as const,
           finalText: 'No unsettled findings.',
-          resumeToken: 'reviewer-2',
+          resumeToken: 'reviewer-answer',
         },
       ],
       judgeReplies: [
@@ -238,6 +238,121 @@ describe('linked REVIEW runtime', () => {
         '{"type":"BOSS_REPLY"}',
         '{"guard":"noFindings"}',
       ],
+      resumedCall: 1,
+      resumedPlayer: 'reviewer',
+      resumedToken: 'reviewer-question',
+    },
+    {
+      origin: 'addressFindings',
+      playerResults: [
+        {
+          status: 'ok' as const,
+          finalText: '1. The target is ambiguous.',
+          resumeToken: 'reviewer-findings',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'Which release target should govern?',
+          resumeToken: 'coder-question',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'Fixed and committed.',
+          resumeToken: 'coder-answer',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'No unsettled findings.',
+          resumeToken: 'reviewer-approved',
+        },
+      ],
+      judgeReplies: [
+        '{"guard":"hasFindings"}',
+        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"type":"BOSS_REPLY"}',
+        '{"guard":"committed"}',
+        '{"guard":"noFindings"}',
+      ],
+      resumedCall: 2,
+      resumedPlayer: 'coder',
+      resumedToken: 'coder-question',
+    },
+    {
+      origin: 'reviewAfterCommit',
+      playerResults: [
+        {
+          status: 'ok' as const,
+          finalText: '1. The target is ambiguous.',
+          resumeToken: 'reviewer-findings',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'Fixed and committed.',
+          resumeToken: 'coder-commit',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'Which release target should govern?',
+          resumeToken: 'reviewer-question',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'No unsettled findings.',
+          resumeToken: 'reviewer-answer',
+        },
+      ],
+      judgeReplies: [
+        '{"guard":"hasFindings"}',
+        '{"guard":"committed"}',
+        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"type":"BOSS_REPLY"}',
+        '{"guard":"noFindings"}',
+      ],
+      resumedCall: 3,
+      resumedPlayer: 'reviewer',
+      resumedToken: 'reviewer-question',
+    },
+    {
+      origin: 'reviewAfterRebuttal',
+      playerResults: [
+        {
+          status: 'ok' as const,
+          finalText: '1. The target is ambiguous.',
+          resumeToken: 'reviewer-findings',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'Rejected with evidence.',
+          resumeToken: 'coder-rebuttal',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'Which release target should govern?',
+          resumeToken: 'reviewer-question',
+        },
+        {
+          status: 'ok' as const,
+          finalText: 'No unsettled findings.',
+          resumeToken: 'reviewer-answer',
+        },
+      ],
+      judgeReplies: [
+        '{"guard":"hasFindings"}',
+        '{"guard":"rejectedAll"}',
+        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"type":"BOSS_REPLY"}',
+        '{"guard":"noFindings"}',
+      ],
+      resumedCall: 3,
+      resumedPlayer: 'reviewer',
+      resumedToken: 'reviewer-question',
+    },
+  ])('resumes $origin after a Boss answer', async (scenario) => {
+    const playerCalls: PlayerCall[] = [];
+    const ports = portsFor({
+      playerCalls,
+      playerResults: [...scenario.playerResults],
+      judgeReplies: [...scenario.judgeReplies],
     });
     const runtime = createPlaybookRuntime({
       coderLlm: 'GPT-5.6 Sol',
@@ -250,22 +365,121 @@ describe('linked REVIEW runtime', () => {
       signal: new AbortController().signal,
     });
     expect(parked.outcome).toBe('quiescent');
+    expect(parked.state.stateId).toBe('awaitBossReply');
 
     const completed = await runtime.handleBossInput({
       text: 'Target version 6.0.0.',
       signal: new AbortController().signal,
     });
     expect(completed.outcome).toBe('terminal');
-    expect(playerCalls).toHaveLength(2);
-    expect(playerCalls[1].options.resume).toBe('reviewer-1');
-    expect(playerCalls[1].prompt).toContain(
+    const resumed = playerCalls[scenario.resumedCall];
+    expect(resumed?.playerId).toBe(scenario.resumedPlayer);
+    expect(resumed?.options.resume).toBe(scenario.resumedToken);
+    expect(resumed?.prompt).toContain(
       'Boss question:\nWhich release target should govern?',
     );
-    expect(playerCalls[1].prompt).toContain(
+    expect(resumed?.prompt).toContain(
       'Boss reply:\nTarget version 6.0.0.',
     );
 
     await runtime.dispose();
+  });
+
+  it('abandons a pending question when Boss starts a fresh review', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const ports = portsFor({
+      playerCalls,
+      playerResults: [
+        {
+          status: 'ok',
+          finalText: 'Which release target should govern?',
+          resumeToken: 'reviewer-question',
+        },
+        {
+          status: 'ok',
+          finalText: 'No unsettled findings.',
+          resumeToken: 'reviewer-restarted',
+        },
+      ],
+      judgeReplies: [
+        '{"guard":"needsBossReply","question":"Which release target should govern?"}',
+        '{"type":"BOSS_INTERRUPT","targetId":"reviewInitial"}',
+        '{"guard":"noFindings"}',
+      ],
+    });
+    const runtime = createPlaybookRuntime({
+      coderLlm: 'GPT-5.6 Sol',
+      reviewerLlm: 'Claude Opus 5',
+    });
+    await runtime.init(session(ports));
+
+    await runtime.handleBossInput({
+      text: 'Review the old release commit.',
+      signal: new AbortController().signal,
+    });
+    const completed = await runtime.handleBossInput({
+      text: 'Review the replacement commit instead.',
+      signal: new AbortController().signal,
+    });
+
+    expect(completed.outcome).toBe('terminal');
+    expect(playerCalls[1]?.prompt).toContain(
+      '> Review the replacement commit instead.',
+    );
+    expect(playerCalls[1]?.prompt).not.toContain('Boss question:');
+    expect(playerCalls[1]?.prompt).not.toContain('Boss reply:');
+    await runtime.dispose();
+  });
+
+  it('restarts a failed review with fresh caller context', async () => {
+    const playerCalls: PlayerCall[] = [];
+    const ports = portsFor({
+      playerCalls,
+      playerResults: [
+        { status: 'error', error: 'reviewer transport failed' },
+        {
+          status: 'ok',
+          finalText: 'No unsettled findings.',
+          resumeToken: 'reviewer-restarted',
+        },
+      ],
+      judgeReplies: [
+        '{"type":"START_REVIEW"}',
+        '{"guard":"noFindings"}',
+      ],
+    });
+    const runtime = createPlaybookRuntime({
+      coderLlm: 'GPT-5.6 Sol',
+      reviewerLlm: 'Claude Opus 5',
+    });
+    await runtime.init(session(ports));
+
+    const failed = await runtime.handleBossInput({
+      text: 'Review the old release commit.',
+      signal: new AbortController().signal,
+    });
+    expect(failed.outcome).toBe('failed');
+    expect(runtime.describe!().lastError).toMatchObject({
+      message: 'reviewer transport failed',
+    });
+
+    const completed = await runtime.handleBossInput({
+      text: 'Review the replacement commit.',
+      signal: new AbortController().signal,
+    });
+    expect(completed.outcome).toBe('terminal');
+    expect(playerCalls[1]?.prompt).toContain('> Review the replacement commit.');
+    expect(playerCalls[1]?.prompt).not.toContain('old release commit');
+    expect(runtime.describe!().lastError).toBeUndefined();
+    await runtime.dispose();
+  });
+
+  it('counts only Reviewer review and rebuttal states as rounds', () => {
+    expect(reviewStateCountLabels).toEqual({
+      reviewInitial: 'review round',
+      reviewAfterCommit: 'review round',
+      reviewAfterRebuttal: 'rebuttal',
+    });
   });
 
   it('validates the registry slice and derives both model labels', () => {

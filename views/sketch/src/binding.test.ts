@@ -350,6 +350,83 @@ describe('mountSketch with a source', () => {
     mount.dispose();
   });
 
+  it('keeps the complete initial diagram fixed while telemetry changes classes', () => {
+    vi.useFakeTimers();
+    try {
+      const graph = extractGraph(sampleMachine);
+      const container = document.createElement('div');
+      const { source, push } = makePushSource();
+      const mount = mountSketch(container, { machine: sampleMachine, source });
+      const svg = container.querySelector('svg')!;
+
+      const states = new Map(
+        graph.nodes.map((node) => [
+          node.id,
+          svg.querySelector(`[data-state-id="${node.id}"]`),
+        ]),
+      );
+      const edges = new Map(
+        graph.edges.map((edge) => [
+          edge.id,
+          svg.querySelector(`[data-edge-id="${edge.id}"]`),
+        ]),
+      );
+      expect([...states.values()].every((node) => node !== null)).toBe(true);
+      expect([...edges.values()].every((edge) => edge !== null)).toBe(true);
+      expect(
+        [...states].map(([id, node]) => [
+          id,
+          node?.querySelector('.label')?.textContent,
+        ]),
+      ).toEqual([
+        ['demo', 'demo'],
+        ['a', 'a'],
+        ['b', 'b'],
+      ]);
+      expect(
+        [...edges].map(([id, edge]) => [
+          id,
+          edge?.querySelector('.event-label')?.textContent,
+        ]),
+      ).toEqual([
+        ['a::GO::0::0', 'GO'],
+        ['b::BACK::0::0', 'BACK'],
+      ]);
+
+      const viewBox = svg.getAttribute('viewBox');
+      const stateGeometry = new Map(
+        [...states].map(([id, node]) => [id, node?.innerHTML]),
+      );
+      const edgeGeometry = new Map(
+        [...edges].map(([id, edge]) => [id, edge?.innerHTML]),
+      );
+
+      push({ type: 'active', seq: 1, activeStateIds: ['b'] });
+      push({
+        type: 'fired',
+        seq: 2,
+        firedEdgeIds: ['a::GO::0::0'],
+      });
+
+      expect(container.querySelector('svg')).toBe(svg);
+      expect(svg.getAttribute('viewBox')).toBe(viewBox);
+      for (const [id, node] of states) {
+        expect(svg.querySelector(`[data-state-id="${id}"]`)).toBe(node);
+        expect(node?.innerHTML).toBe(stateGeometry.get(id));
+      }
+      for (const [id, edge] of edges) {
+        expect(svg.querySelector(`[data-edge-id="${id}"]`)).toBe(edge);
+        expect(edge?.innerHTML).toBe(edgeGeometry.get(id));
+      }
+      expect(states.get('b')?.classList.contains('active')).toBe(true);
+      expect(edges.get('a::GO::0::0')?.classList.contains('fired')).toBe(true);
+
+      mount.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('runs the three-step teardown on dispose: source, timers, container', () => {
     vi.useFakeTimers();
     try {

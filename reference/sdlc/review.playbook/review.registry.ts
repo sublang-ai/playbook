@@ -41,8 +41,7 @@ export interface ReviewPlaybookRegistryEntry {
 export const reviewStateCountLabels = {
   reviewInitial: 'review round',
   reviewAfterCommit: 'review round',
-  reviewAfterRebuttal: 'review round',
-  addressFindings: 'rebuttal',
+  reviewAfterRebuttal: 'rebuttal',
 } as const;
 
 export const reviewCopyPasteGuardNames = [

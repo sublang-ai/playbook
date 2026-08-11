@@ -198,4 +198,4 @@ distinguish the per-target edges from one another (verifying [[sketch-3](#sketch
 
 #### sketch-23
 
-Where the visualizer is mounted with a machine and a layout observer, when telemetry changes its active states and fired transitions, the integration shall fail unless the initial diagram contains every labeled state and event-bearing transition and the machine's layout is computed exactly once across those updates (verifying [[sketch-1](#sketch-1)], [[sketch-7](#sketch-7)]).
+Where the visualizer is mounted with a real machine and telemetry source, when active-state and fired-transition telemetry is applied, the integration shall fail unless the mounted diagram contains every labeled state and event-bearing transition and updates only the matching visual state while retaining the same diagram structure and geometry across those messages (verifying [[sketch-1](#sketch-1)] and [[sketch-7](#sketch-7)]).

@@ -43,6 +43,7 @@ import { captainMachine } from './captain.fsm.js';
 // runtime that ships without the control-surface pair.
 import codeRegistryEntry from '../code.playbook/code.registry.js';
 import decideRegistryEntry from '../decide.playbook/decide.registry.js';
+import reviewRegistryEntry from '../review.playbook/review.registry.js';
 import { INCIDENT_BOSS_TURNS } from './acceptance-fixtures/incident-boss-turns.js';
 
 const ENABLED_PLAYBOOKS = [
@@ -2117,25 +2118,27 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     expect(harness.surfaced.at(-1)).toBe('Done.');
   });
 
-  it('shares a mapped player through a nested call and resets at the next root', async () => {
-    const callWorker = async (
+  it('pins the shipped CODE to REVIEW mixed-role inheritance and routing', async () => {
+    const callRole = async (
       runtime: ScriptedRuntime,
+      role: 'coder' | 'reviewer',
       prompt: string,
     ): Promise<void> => {
       const store = runtime.session?.playerSessions;
       if (!store) throw new Error('composed runtime needs a player store');
-      const resume = store.select('worker');
+      const resume = store.select(role);
       const result = await runtime.ports!.callPlayer(
-        'worker',
+        role,
         prompt,
         new AbortController().signal,
         { resume },
       );
-      store.update('worker', result.resumeToken);
+      store.update(role, result.resumeToken);
     };
-    const child = shellEntry('child', 'child', {
+    const review = shellEntry('review', 'review', {
       onInput: async (_text, runtime) => {
-        await callWorker(runtime, 'review the committed change');
+        await callRole(runtime, 'coder', 'explain the committed change');
+        await callRole(runtime, 'reviewer', 'review the committed change');
         return {
           outcome: 'terminal',
           state: { ...runtime.state(), status: 'done' },
@@ -2150,16 +2153,16 @@ describe('CAPTAIN-38 validated actions and command table', () => {
       savedCountsLine: (counts: { interruptions: number }) =>
         `Nested activity: ${counts.interruptions} player calls.`,
     };
-    const parent = shellEntry(
-      'parent',
-      'parent',
+    const code = shellEntry(
+      'code',
+      'code',
       {
         onInput: async (_text, runtime) => {
-          await callWorker(runtime, 'prepare the committed change');
+          await callRole(runtime, 'coder', 'prepare the committed change');
           const start = await runtime.ports!.callPlaybook(
             {
-              callId: `parent:child:${++nestedCall}`,
-              playbookId: 'child',
+              callId: `code:review:${++nestedCall}`,
+              playbookId: 'review',
               text: 'review it',
             },
             new AbortController().signal,
@@ -2167,7 +2170,7 @@ describe('CAPTAIN-38 validated actions and command table', () => {
           if (start.state !== 'settled') {
             throw new Error('child should finish within the parent turn');
           }
-          await callWorker(runtime, 'address the completed review');
+          await callRole(runtime, 'coder', 'address the completed review');
           return {
             outcome: 'terminal',
             state: { ...runtime.state(), status: 'done' },
@@ -2176,7 +2179,14 @@ describe('CAPTAIN-38 validated actions and command table', () => {
       },
       summaryPolicy,
     );
-    const harness = makeShellHarness([parent, child], [], {
+    expect(codeRegistryEntry.requiredRoleIds).toEqual(['coder']);
+    expect(reviewRegistryEntry.requiredRoleIds).toEqual([
+      'coder',
+      'reviewer',
+    ]);
+    code.entry.requiredRoleIds = [...codeRegistryEntry.requiredRoleIds];
+    review.entry.requiredRoleIds = [...reviewRegistryEntry.requiredRoleIds];
+    const harness = makeShellHarness([code, review], [], {
       players: (_playerId, _prompt, callIndex) => ({
         status: 'ok',
         finalText: `player result ${callIndex + 1}`,
@@ -2185,39 +2195,50 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     });
     await harness.init();
 
-    await harness.turn('/parent first root', 1);
-    await harness.turn('/parent second root', 2);
+    await harness.turn('/code first root', 1);
+    await harness.turn('/code second root', 2);
 
     expect(harness.playerCalls).toEqual([
-      'parent-worker',
-      'parent-worker',
-      'parent-worker',
-      'parent-worker',
-      'parent-worker',
-      'parent-worker',
+      'code-coder',
+      'code-coder',
+      'review-reviewer',
+      'code-coder',
+      'code-coder',
+      'code-coder',
+      'review-reviewer',
+      'code-coder',
     ]);
     expect(harness.playerResumes).toEqual([
       false,
       'player-token-1',
+      false,
       'player-token-2',
       false,
-      'player-token-4',
       'player-token-5',
+      false,
+      'player-token-6',
     ]);
-    expect(harness.visiblePlayerSets).not.toContainEqual(['child-worker']);
+    expect(harness.visiblePlayerSets).toContainEqual([
+      'code-coder',
+      'review-reviewer',
+    ]);
+    expect(harness.visiblePlayerSets.flat()).not.toContain('review-coder');
     expect(
       harness.visiblePlayerSets.every(
         (playerIds) =>
-          playerIds.length === 1 && playerIds[0] === 'parent-worker',
+          (playerIds.length === 1 && playerIds[0] === 'code-coder') ||
+          (playerIds.length === 2 &&
+            playerIds[0] === 'code-coder' &&
+            playerIds[1] === 'review-reviewer'),
       ),
     ).toBe(true);
     expect(harness.closingPrompts()).toHaveLength(2);
     for (const closing of harness.closingPrompts()) {
       expect(closing).toContain(
-        'Counts: {"interruptions":3,"copyPastes":0,"progressRounds":0}',
+        'Counts: {"interruptions":4,"copyPastes":0,"progressRounds":0}',
       );
       expect(closing).toContain(
-        'Saved-counts line supplied for this turn; append it verbatim: Nested activity: 3 player calls.',
+        'Saved-counts line supplied for this turn; append it verbatim: Nested activity: 4 player calls.',
       );
     }
   });

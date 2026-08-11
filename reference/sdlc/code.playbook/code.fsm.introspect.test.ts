@@ -15,7 +15,7 @@ const CONTEXT: CodingContext = {
   coderPlayer: 'GPT-5.6 Sol',
   runResults: 'unit tests passed',
   callerInput: 'Implement the intent.',
-  coderOutput: 'Committed abc123.',
+  coderOutput: 'Committed.\nCommit: abc123',
   latestCommit: 'abc123',
   irNumber: '040',
   irTask: 'Implement task 1.',
@@ -45,18 +45,22 @@ describe('CODE FSM introspection', () => {
         stateId: 'reviewFirstCommit',
         sourceItem: 'CODE-2',
         playbookId: 'review',
-        text: '> Initial intent: Implement the intent.\n> Coder output: Committed abc123.',
+        text:
+          '> Initial intent: Implement the intent.\n' +
+          '> Coder output: Committed.\n> Commit: abc123',
       },
       {
         stateId: 'reviewIrTask',
         sourceItem: 'CODE-4',
         playbookId: 'review',
-        text: '> IR task: Implement task 1.\n> Coder output: Committed abc123.',
+        text:
+          '> IR task: Implement task 1.\n' +
+          '> Coder output: Committed.\n> Commit: abc123',
       },
     ]);
   });
 
-  it('exposes one deterministic entry and two Boss-reply resume arms', () => {
+  it('exposes one entry, empty-reply failure, and two resume arms', () => {
     expect(enumerateRootEvents(codingMachine)).toEqual({
       startCode: { target: 'runFirstPhase' },
     });
@@ -64,6 +68,6 @@ describe('CODE FSM introspection', () => {
       enumerateAwaitBossReply(codingMachine).bossReplyTransitions.map(
         ({ target }) => target,
       ),
-    ).toEqual(['runFirstPhase', 'runIrTask']);
+    ).toEqual(['failed', 'runFirstPhase', 'runIrTask']);
   });
 });

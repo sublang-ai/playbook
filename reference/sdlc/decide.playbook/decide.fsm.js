@@ -238,6 +238,7 @@ function bossInterrupts(ids) {
     return ids.map((id) => ({
         guard: ({ event }) => event.type === 'BOSS_INTERRUPT' &&
             event.targetId === id &&
+            typeof event.bossIntent === 'string' &&
             event.bossIntent.trim().length > 0,
         target: `#${id}`,
         reenter: true,

@@ -19,7 +19,8 @@ Do not amend any reviewed commit.
 When `review` passes a direct implementation phase, `code` is complete.
 When `review` passes a new IR or a nonfinal IR-task phase, Captain shall continue with the next unfinished IR-task phase.
 When `review` passes the final IR-task phase, `code` is complete.
-When `review` is aborted or fails, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.
+When `review` returns an authored abort or failure, or a terminal result that does not prove exact approval, `code` shall start no further phase and shall report the failure and the last `code`-owned commit to its caller.
+When the nested `review` call fails outside that authored result contract, `code` shall park as failed and retain the control-plane error instead of reporting an authored review outcome.
 
 At the start of the first phase, Captain shall relay to Coder the complete caller input and any relevant run results in quotes (`>`), along with the following instruction:
 
@@ -47,6 +48,7 @@ At the start of *every* phase, Captain shall append the following instruction:
 Do not re-run tests or builds whose inputs have not changed since any previous reported run.
 Make the phase's minimal changes and then one new commit, following @specs/packages/git.md; never amend an existing commit.
 Make the commit message explain concisely what changed and why, including relevant verification.
+Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.
 Coder is <coder-llm>; format the model token in conventional human form.
 ```
 
