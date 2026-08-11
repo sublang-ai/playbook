@@ -106,6 +106,10 @@ export async function runPlaybookCli(options = {}) {
       ...(options.createSessionTempId
         ? { createSessionTempId: options.createSessionTempId }
         : {}),
+      ...(options.createAttemptId
+        ? { createAttemptId: options.createAttemptId }
+        : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
       // PBCLI-39: the run path gates on SDK availability too.
       ...(options.probeAdapterSdk
         ? { probeAdapterSdk: options.probeAdapterSdk }
@@ -244,6 +248,48 @@ export async function runPlaybookCli(options = {}) {
   }
 }
 
+// PBCLI-23/24: the executable converts termination signals into an abort of
+// the active headless host, lets its uncertain marker and lease cleanup
+// finish, then asks the caller to re-raise the original signal.
+export async function runPlaybookCliEntry(options = {}) {
+  const processLike = options.processLike ?? process;
+  const entryArgv = options.argv ?? processLike.argv?.slice(2) ?? [];
+  if (entryArgv[0] !== 'run') {
+    return runPlaybookCli(options);
+  }
+  const controller = new AbortController();
+  let receivedSignal;
+  const handlers = {};
+  const removeHandlers = () => {
+    for (const [signal, handler] of Object.entries(handlers)) {
+      processLike.off(signal, handler);
+    }
+  };
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    handlers[signal] = () => {
+      if (receivedSignal !== undefined) {
+        removeHandlers();
+        processLike.kill(processLike.pid, signal);
+        return;
+      }
+      receivedSignal = signal;
+      controller.abort(new Error(`received ${signal}`));
+    };
+  }
+  for (const [signal, handler] of Object.entries(handlers)) {
+    processLike.on(signal, handler);
+  }
+  try {
+    const result = await runPlaybookCli({
+      ...options,
+      signal: controller.signal,
+    });
+    return receivedSignal === undefined ? result : { signal: receivedSignal };
+  } finally {
+    removeHandlers();
+  }
+}
+
 function writeComposedConfig(composed) {
   const dir = mkdtempSync(join(tmpdir(), 'playbook-'));
   const path = join(dir, 'tmux-play.config.yaml');
@@ -354,7 +400,7 @@ function isCliEntry(argv1 = process.argv[1], moduleUrl = import.meta.url) {
 }
 
 if (isCliEntry()) {
-  const result = await runPlaybookCli();
+  const result = await runPlaybookCliEntry();
   if (result.signal) process.kill(process.pid, result.signal);
   // Let Node drain a long piped Captain reply or diagnostic naturally.
   else process.exitCode = result.code ?? 0;

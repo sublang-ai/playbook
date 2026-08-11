@@ -72,42 +72,21 @@ export async function runPlaybookRun(options = {}) {
     return { code: EXIT.ok };
   }
 
-  // PBCLI-18/40: drain a piped producer before config, provisioning, or a
-  // potentially slow SDK gate. The entire decoded stream is one Boss turn;
-  // trim is used only to reject empty input and never changes submitted text.
-  let input = args.input;
-  if (input === undefined) {
-    try {
-      input = await (options.readStdin ?? readAllStdin)();
-    } catch (error) {
-      await writeStream(
-        stderr,
-        `playbook run: cannot read stdin: ${message(error)}\n`,
-      );
-      return { code: EXIT.argument };
-    }
-  }
-  if (input.trim().length === 0) {
-    await writeStream(
-      stderr,
-      'playbook run: empty input; pass one argument or pipe a Boss message on stdin\n',
-    );
-    return { code: EXIT.argument };
-  }
-
   const env = options.env ?? process.env;
   const home = options.homeDir ?? env.HOME ?? homedir();
-  const loadModule = memoizedModuleLoader(
-    options.loadModule ?? ((specifier) => import(specifier)),
-  );
-  const prepareRegistryModule =
-    options.prepareRegistryModule ??
-    prepareConfiguredRegistries({
-      enabled: !args.noProvision,
-      stderr,
-      hostRoots: options.hostRoots,
-      commandName: 'playbook run',
-    });
+  const recovering = args.retryUncertain || args.discardUncertain;
+  const continuing = args.continue || args.sessionId !== undefined;
+  let input = args.input;
+
+  // PBCLI-18/40: a fresh piped producer is drained before config,
+  // preparation, import, or readiness. Continuations first inspect the
+  // selected record so an uncertain turn never blocks waiting for input;
+  // explicit recovery never reads input at all.
+  if (!continuing && !recovering) {
+    const resolvedInput = await resolveBossInput(input, options, stderr);
+    if (!resolvedInput.ok) return { code: EXIT.argument };
+    input = resolvedInput.input;
+  }
 
   let store;
   try {
@@ -127,38 +106,137 @@ export async function runPlaybookRun(options = {}) {
     return { code: EXIT.argument };
   }
 
-  const continuing = args.continue || args.sessionId !== undefined;
   let priorRecord;
+  let lease;
   let sessionId;
   let config;
   let cwd;
   let restoreSnapshot;
+  const loadModule = memoizedModuleLoader(
+    options.loadModule ?? ((specifier) => import(specifier)),
+  );
+  const prepareRegistryModule = registryPreparer(args, options, stderr);
 
   if (continuing) {
     try {
-      priorRecord = validateCaptainSessionRecord(
-        args.sessionId === undefined
-          ? await store.latest()
-          : await store.read(args.sessionId),
-      );
-      sessionId = priorRecord.sessionId;
+      if (args.sessionId === undefined) {
+        const selected = validateCaptainSessionRecord(
+          await awaitWithAbort(store.latest(), options.signal),
+        );
+        sessionId = selected.sessionId;
+      } else {
+        sessionId = args.sessionId;
+      }
+      throwIfAborted(options.signal);
+      lease = await store.acquire(sessionId);
+      throwIfAborted(options.signal);
+      const authoritative = await lease.read();
+      throwIfAborted(options.signal);
+      if (authoritative === undefined) {
+        throw new Error(
+          `Captain session ${JSON.stringify(sessionId)} does not exist`,
+        );
+      }
+      priorRecord = validateCaptainSessionRecord(authoritative);
       assertLogicalSessionIdDistinct(priorRecord);
-      cwd = priorRecord.cwd;
-      config = await validateFrozenExecutionConfig(priorRecord.config, {
-        loadModule,
-        prepareRegistryModule,
-      });
-      restoreSnapshot = priorRecord.snapshot;
     } catch (error) {
+      const releaseError = await releaseLease(lease);
       await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      if (releaseError !== undefined) {
+        await writeStream(
+          stderr,
+          `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+        );
+        return { code: EXIT.turn };
+      }
       return { code: EXIT.argument };
     }
+
+    if (priorRecord.state === 'uncertain') {
+      if (args.discardUncertain) {
+        try {
+          throwIfAborted(options.signal);
+          const record = await lease.discard({
+            attemptId: priorRecord.uncertain.attemptId,
+          });
+          throwIfAborted(options.signal);
+          const releaseError = await releaseLease(lease);
+          lease = undefined;
+          if (releaseError !== undefined) throw releaseError;
+          await writeStream(
+            stderr,
+            `playbook run: discarded uncertain turn for Captain session ${JSON.stringify(sessionId)}\n`,
+          );
+          return { code: EXIT.ok, sessionId, record };
+        } catch (error) {
+          const releaseError = await releaseLease(lease);
+          await writeStream(
+            stderr,
+            `playbook run: cannot discard uncertain Captain turn: ${message(error)}\n`,
+          );
+          if (releaseError !== undefined) {
+            await writeStream(
+              stderr,
+              `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+            );
+          }
+          return { code: EXIT.turn };
+        }
+      }
+      if (!args.retryUncertain) {
+        const releaseError = await releaseLease(lease);
+        lease = undefined;
+        await reportUncertainSession(stderr, sessionId);
+        if (releaseError !== undefined) {
+          await writeStream(
+            stderr,
+            `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+          );
+          return { code: EXIT.turn };
+        }
+        return { code: EXIT.argument };
+      }
+      input = priorRecord.uncertain.input;
+    } else if (recovering) {
+      const releaseError = await releaseLease(lease);
+      lease = undefined;
+      await writeStream(
+        stderr,
+        `playbook run: Captain session ${JSON.stringify(sessionId)} has no uncertain turn to recover\n`,
+      );
+      if (releaseError !== undefined) {
+        await writeStream(
+          stderr,
+          `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+        );
+        return { code: EXIT.turn };
+      }
+      return { code: EXIT.argument };
+    } else {
+      const resolvedInput = await resolveBossInput(input, options, stderr);
+      if (!resolvedInput.ok) {
+        const releaseError = await releaseLease(lease);
+        if (releaseError !== undefined) {
+          await writeStream(
+            stderr,
+            `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+          );
+          return { code: EXIT.turn };
+        }
+        return { code: EXIT.argument };
+      }
+      input = resolvedInput.input;
+    }
+
+    cwd = priorRecord.cwd;
+    restoreSnapshot = priorRecord.snapshot;
   } else {
     const userConfigPath =
       options.userConfigPath ?? resolveUserConfigPath(env, home);
     let plan;
     const configNotices = [];
     try {
+      throwIfAborted(options.signal);
       plan = await loadLaunchPlan({
         userConfigPath,
         overlayPaths: args.withPaths,
@@ -166,6 +244,7 @@ export async function runPlaybookRun(options = {}) {
         prepareRegistryModule,
         onNotice: (line) => configNotices.push(line),
       });
+      throwIfAborted(options.signal);
     } catch (error) {
       for (const line of configNotices) await writeStream(stderr, line);
       await writeStream(stderr, `playbook run: ${message(error)}\n`);
@@ -183,7 +262,37 @@ export async function runPlaybookRun(options = {}) {
       config = executionConfigFromPlan(plan);
       cwd = resolve(options.cwd ?? process.cwd());
     } catch (error) {
+      const releaseError = await releaseLease(lease);
       await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      if (releaseError !== undefined) {
+        await writeStream(
+          stderr,
+          `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+        );
+        return { code: EXIT.turn };
+      }
+      return { code: EXIT.argument };
+    }
+  }
+
+  if (continuing) {
+    try {
+      throwIfAborted(options.signal);
+      config = await validateFrozenExecutionConfig(priorRecord.config, {
+        loadModule,
+        prepareRegistryModule,
+      });
+      throwIfAborted(options.signal);
+    } catch (error) {
+      const releaseError = await releaseLease(lease);
+      await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      if (releaseError !== undefined) {
+        await writeStream(
+          stderr,
+          `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+        );
+        return { code: EXIT.turn };
+      }
       return { code: EXIT.argument };
     }
   }
@@ -192,16 +301,27 @@ export async function runPlaybookRun(options = {}) {
   const readiness = checkReadiness(adapters, env, home);
   let sdkReadiness;
   try {
-    sdkReadiness = await checkAdapterSdks(
-      adapters,
-      options.probeAdapterSdk ?? probeAdapterSdk,
-      ...(options.classifyRuntime ? [options.classifyRuntime] : []),
+    sdkReadiness = await awaitWithAbort(
+      checkAdapterSdks(
+        adapters,
+        options.probeAdapterSdk ?? probeAdapterSdk,
+        ...(options.classifyRuntime ? [options.classifyRuntime] : []),
+      ),
+      options.signal,
     );
   } catch (error) {
+    const releaseError = await releaseLease(lease);
     await writeStream(
       stderr,
       `playbook run: adapter readiness failed: ${message(error)}\n`,
     );
+    if (releaseError !== undefined) {
+      await writeStream(
+        stderr,
+        `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+      );
+      return { code: EXIT.turn };
+    }
     return { code: EXIT.argument };
   }
   for (const adapter of readiness.unknownAdapters) {
@@ -222,6 +342,49 @@ export async function runPlaybookRun(options = {}) {
       invocation: replayInvocation(argv, args, input),
       ephemeralNpx: options.ephemeralNpx,
     });
+    const releaseError = await releaseLease(lease);
+    if (releaseError !== undefined) {
+      await writeStream(
+        stderr,
+        `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+      );
+      return { code: EXIT.turn };
+    }
+    return { code: EXIT.argument };
+  }
+
+  if (lease === undefined) {
+    try {
+      throwIfAborted(options.signal);
+      lease = await store.acquire(sessionId);
+      throwIfAborted(options.signal);
+    } catch (error) {
+      const releaseError = await releaseLease(lease);
+      await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      if (releaseError !== undefined) {
+        await writeStream(
+          stderr,
+          `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+        );
+        return { code: EXIT.turn };
+      }
+      return { code: EXIT.argument };
+    }
+  }
+
+  let attemptId;
+  try {
+    attemptId = createAttemptId(options);
+  } catch (error) {
+    const releaseError = await releaseLease(lease);
+    await writeStream(stderr, `playbook run: ${message(error)}\n`);
+    if (releaseError !== undefined) {
+      await writeStream(
+        stderr,
+        `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+      );
+      return { code: EXIT.turn };
+    }
     return { code: EXIT.argument };
   }
 
@@ -250,12 +413,42 @@ export async function runPlaybookRun(options = {}) {
       ...(restoreSnapshot !== undefined
         ? { restoreSnapshot }
         : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+      beforeBossTurn: async (baselineSnapshot) => {
+        throwIfAborted(options.signal);
+        return args.retryUncertain
+          ? lease.beginRetry({
+              expectedAttemptId: priorRecord.uncertain.attemptId,
+              nextAttemptId: attemptId,
+            })
+          : lease.beginTurn({
+              input,
+              attemptId,
+              ...(priorRecord === undefined
+                ? {
+                    fresh: {
+                      cwd,
+                      config,
+                      snapshot: baselineSnapshot,
+                    },
+                  }
+                : {}),
+            });
+      },
+      assertBeforeBossTurn: () => lease.assertOwner(),
     });
   } catch (error) {
+    const releaseError = await releaseLease(lease);
     await writeStream(stderr, `playbook run: ${message(error)}\n`);
+    if (releaseError !== undefined) {
+      await writeStream(
+        stderr,
+        `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+      );
+    }
     return {
       code:
-        error instanceof HeadlessHostSetupError
+        error instanceof HeadlessHostSetupError && releaseError === undefined
           ? EXIT.argument
           : EXIT.turn,
     };
@@ -263,15 +456,11 @@ export async function runPlaybookRun(options = {}) {
 
   let durableRecord;
   try {
-    durableRecord =
-      priorRecord === undefined
-        ? await store.commitNew({
-            sessionId,
-            cwd,
-            config: settled.config,
-            snapshot: settled.snapshot,
-          })
-        : await store.commitNext(priorRecord, settled.snapshot);
+    throwIfAborted(options.signal);
+    durableRecord = await lease.settle({
+      attemptId: settled.uncertainRecord.uncertain.attemptId,
+      snapshot: settled.snapshot,
+    });
   } catch (error) {
     try {
       await settled.dispose();
@@ -282,7 +471,31 @@ export async function runPlaybookRun(options = {}) {
       stderr,
       `playbook run: cannot persist Captain session: ${message(error)}\n`,
     );
+    const releaseError = await releaseLease(lease);
+    if (releaseError !== undefined) {
+      await writeStream(
+        stderr,
+        `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+      );
+    }
     return { code: EXIT.turn };
+  }
+
+  const releaseError = await releaseLease(lease);
+  lease = undefined;
+  if (releaseError !== undefined) {
+    await writeStream(
+      stderr,
+      `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+    );
+    return { code: EXIT.turn };
+  }
+  if (options.signal?.aborted) {
+    await writeStream(
+      stderr,
+      'playbook run: Captain turn was interrupted; reply withheld\n',
+    );
+    return { code: EXIT.turn, sessionId, record: durableRecord };
   }
 
   // Durable hand-off transfers semantic ownership to the logical session.
@@ -326,10 +539,15 @@ export async function driveHeadlessCaptainTurn({
   createCaptainSessionId,
   createHostRuntime = createTmuxPlayRuntime,
   restoreSnapshot,
+  beforeBossTurn,
+  assertBeforeBossTurn,
+  signal,
 }) {
   const replies = [];
   let shell;
   let host;
+  let baselineSnapshot;
+  let uncertainRecord;
   try {
     try {
       shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
@@ -345,6 +563,7 @@ export async function driveHeadlessCaptainTurn({
         captainConfig: cloneJson(config.captain),
         players: cloneJson(config.players),
         cwd,
+        ...(signal ? { signal } : {}),
         ...(adapterImports ? { adapterImports } : {}),
         observers: [
           {
@@ -360,10 +579,35 @@ export async function driveHeadlessCaptainTurn({
           },
         ],
       });
+      if (shell === undefined) {
+        throw new Error('Captain shell host initialized without a shell');
+      }
+      baselineSnapshot = shell.exportSnapshot();
+      if (baselineSnapshot === undefined) {
+        throw new Error(
+          'Captain shell initialized without an exportable session snapshot',
+        );
+      }
+      if (
+        restoreSnapshot !== undefined &&
+        !isDeepStrictEqual(baselineSnapshot, restoreSnapshot)
+      ) {
+        throw new Error('restored Captain snapshot changed before the Boss turn');
+      }
+      assertLogicalSessionIdDistinct({
+        sessionId,
+        snapshot: baselineSnapshot,
+      });
+      uncertainRecord = await beforeBossTurn?.(baselineSnapshot);
     } catch (error) {
       throw new HeadlessHostSetupError(error);
     }
+    await assertBeforeBossTurn?.();
+    if (signal?.aborted) {
+      throw signal.reason ?? new Error('Captain turn aborted');
+    }
     await host.runBossTurn(input);
+    throwIfAborted(signal);
     if (
       replies.length !== 1 ||
       typeof replies[0] !== 'string' ||
@@ -394,6 +638,7 @@ export async function driveHeadlessCaptainTurn({
       snapshot,
       config: cloneJson(config),
       cwd,
+      uncertainRecord,
       dispose: () => host.dispose(),
     };
   } catch (error) {
@@ -781,6 +1026,8 @@ export function parseRunArgs(argv) {
     verbose: false,
     continue: false,
     sessionId: undefined,
+    retryUncertain: false,
+    discardUncertain: false,
     help: false,
     terminated: false,
   };
@@ -796,6 +1043,17 @@ export function parseRunArgs(argv) {
     else if (arg === '--json') parsed.json = true;
     else if (arg === '--verbose') parsed.verbose = true;
     else if (arg === '--no-provision') parsed.noProvision = true;
+    else if (arg === '--retry-uncertain') {
+      if (parsed.retryUncertain) {
+        throw new Error('--retry-uncertain may be specified only once');
+      }
+      parsed.retryUncertain = true;
+    } else if (arg === '--discard-uncertain') {
+      if (parsed.discardUncertain) {
+        throw new Error('--discard-uncertain may be specified only once');
+      }
+      parsed.discardUncertain = true;
+    }
     else if (arg === '--continue') {
       if (parsed.continue) throw new Error('--continue may be specified only once');
       parsed.continue = true;
@@ -848,6 +1106,35 @@ export function parseRunArgs(argv) {
   if (parsed.continue && parsed.sessionId !== undefined) {
     throw new Error('--continue and --session are mutually exclusive');
   }
+  if (parsed.retryUncertain && parsed.discardUncertain) {
+    throw new Error(
+      '--retry-uncertain and --discard-uncertain are mutually exclusive',
+    );
+  }
+  if (
+    (parsed.retryUncertain || parsed.discardUncertain) &&
+    parsed.sessionId === undefined
+  ) {
+    throw new Error(
+      '--retry-uncertain and --discard-uncertain require --session <id>',
+    );
+  }
+  if (
+    (parsed.retryUncertain || parsed.discardUncertain) &&
+    (parsed.continue || positionals.length > 0)
+  ) {
+    throw new Error(
+      'uncertain-turn recovery accepts only an explicit --session and no input',
+    );
+  }
+  if (
+    parsed.discardUncertain &&
+    (parsed.json || parsed.verbose || parsed.noProvision)
+  ) {
+    throw new Error(
+      '--discard-uncertain does not accept --json, --verbose, or --no-provision',
+    );
+  }
   if (
     (parsed.continue || parsed.sessionId !== undefined) &&
     parsed.withPaths.length > 0
@@ -897,7 +1184,102 @@ async function reportReadinessFailure({
   }
 }
 
+async function resolveBossInput(input, options, stderr) {
+  let resolved = input;
+  if (resolved === undefined) {
+    try {
+      resolved = await awaitWithAbort(
+        (options.readStdin ?? readAllStdin)(),
+        options.signal,
+      );
+    } catch (error) {
+      await writeStream(
+        stderr,
+        `playbook run: cannot read stdin: ${message(error)}\n`,
+      );
+      return { ok: false };
+    }
+  }
+  if (resolved.trim().length === 0) {
+    await writeStream(
+      stderr,
+      'playbook run: empty input; pass one argument or pipe a Boss message on stdin\n',
+    );
+    return { ok: false };
+  }
+  return { ok: true, input: resolved };
+}
+
+async function awaitWithAbort(value, signal) {
+  if (signal === undefined) return value;
+  if (signal.aborted) throw signal.reason ?? new Error('operation aborted');
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(signal.reason ?? new Error('operation aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([value, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) {
+    throw signal.reason ?? new Error('operation aborted');
+  }
+}
+
+function registryPreparer(args, options, stderr) {
+  return (
+    options.prepareRegistryModule ??
+    prepareConfiguredRegistries({
+      enabled: !args.noProvision,
+      stderr,
+      hostRoots: options.hostRoots,
+      commandName: 'playbook run',
+    })
+  );
+}
+
+function createAttemptId(options) {
+  const attemptId = (options.createAttemptId ?? randomUUID)();
+  if (typeof attemptId !== 'string' || !UUID_PATTERN.test(attemptId)) {
+    throw new Error(
+      `uncertain turn attempt id generator returned a non-UUID value: ${JSON.stringify(attemptId)}`,
+    );
+  }
+  return attemptId;
+}
+
+async function releaseLease(lease) {
+  if (lease === undefined) return undefined;
+  try {
+    await lease.release();
+    return undefined;
+  } catch (error) {
+    return error;
+  }
+}
+
+async function reportUncertainSession(stderr, sessionId) {
+  await writeStream(
+    stderr,
+    [
+      `playbook run: Captain session ${JSON.stringify(sessionId)} has an uncertain turn and will not be replayed automatically`,
+      'Retry may duplicate external effects from the interrupted attempt; discard abandons that attempted turn.',
+      `playbook run --session ${sessionId} --retry-uncertain`,
+      `playbook run --session ${sessionId} --discard-uncertain`,
+      '',
+    ].join('\n'),
+  );
+}
+
 function replayInvocation(argv, args, input) {
+  if (args.retryUncertain || args.discardUncertain) {
+    return ['run', ...argv];
+  }
   if (args.input !== undefined) return ['run', ...argv];
   return args.terminated
     ? ['run', ...argv, input]
@@ -940,6 +1322,8 @@ function runHelpText(userConfigPath) {
     '               [--verbose] [--] [input]',
     '  playbook run (--continue | --session <id>) [--no-provision]',
     '               [--json] [--verbose] [--] [reply]',
+    '  playbook run --session <id> --retry-uncertain [--no-provision]',
+    '  playbook run --session <id> --discard-uncertain',
     '',
     '  [input]  one exact Boss message; read verbatim from stdin when omitted',
     '  --        end options so a flag-shaped input remains Boss text',
@@ -959,6 +1343,8 @@ function runHelpText(userConfigPath) {
     '  --no-provision   do not provision thin filesystem registry engines',
     '  --continue       reply to the latest durable Captain session',
     '  --session <id>   reply to one durable Captain session UUID',
+    '  --retry-uncertain retry that session\'s exact recorded uncertain input',
+    '  --discard-uncertain discard that session\'s uncertain attempt',
     '  --json           print exactly {"sessionId", "reply"}',
     '  --verbose        print Captain telemetry topics to stderr',
     '  -h, --help       print this help without reading input or config',

@@ -5,8 +5,10 @@ import { EventEmitter } from 'node:events';
 import {
   mkdir,
   mkdtemp,
+  open,
   readFile,
   readlink,
+  rename,
   rm,
   stat,
   writeFile,
@@ -31,7 +33,7 @@ import type {
   PlaybookState,
 } from '../../../src/runtime.js';
 
-const { runPlaybookCli } = await import(
+const { runPlaybookCli, runPlaybookCliEntry } = await import(
   new URL('./bin/playbook.js', import.meta.url).href
 );
 const { parseRunArgs } = await import(
@@ -789,6 +791,19 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
   });
 
   it('classifies host setup separately from turn and reply-boundary failures', async () => {
+    let invalidAttemptHosts = 0;
+    const invalidAttempt = await headlessHarness(['run', 'hello'], {
+      createAttemptId: () => 'not-a-uuid',
+      createHostRuntime: async () => {
+        invalidAttemptHosts += 1;
+        throw new Error('must not construct host');
+      },
+    });
+    expect(invalidAttempt.result.code).toBe(1);
+    expect(invalidAttempt.stdout).toBe('');
+    expect(invalidAttempt.stderr).toContain('attempt id generator');
+    expect(invalidAttemptHosts).toBe(0);
+
     const setup = await headlessHarness(['run', 'hello'], {
       createHostRuntime: async () => {
         throw new Error('synthetic host init failed');
@@ -1002,10 +1017,20 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       sessionsDir,
       sessionStore: {
         ...baseStore,
-        async commitNew(record: any) {
-          const committed = await baseStore.commitNew(record);
-          order.push('persisted');
-          return committed;
+        async acquire(sessionId: string) {
+          const lease = await baseStore.acquire(sessionId);
+          return {
+            ...lease,
+            async settle(value: any) {
+              const committed = await lease.settle(value);
+              order.push('persisted');
+              return committed;
+            },
+            async release() {
+              await lease.release();
+              order.push('released');
+            },
+          };
         },
       },
       createLogicalSessionId: () => firstId,
@@ -1033,14 +1058,16 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     const record = JSON.parse(await readFile(path, 'utf8'));
     expect(order).toEqual([
       'persisted',
+      'released',
       'stdout:Captain acknowledged the message.\n',
     ]);
     expect(record).toMatchObject({
       schemaVersion: 2,
       kind: 'captain-session',
+      state: 'settled',
       sessionId: firstId,
       createdAt: '2026-08-11T20:00:00.000Z',
-      updatedAt: '2026-08-11T20:00:00.000Z',
+      updatedAt: '2026-08-11T20:00:00.001Z',
       cwd: process.cwd(),
       config: {
         schemaVersion: 1,
@@ -1052,6 +1079,33 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     expect((await stat(out.sessionsDir)).mode & 0o777).toBe(0o700);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it('rejects a fresh logical-id collision before the Boss turn without changing prior bytes', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-id-collision-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'first turn'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+    });
+    expect(first.result.code).toBe(0);
+    const path = join(sessionsDir, `${firstId}.json`);
+    const before = await readFile(path, 'utf8');
+
+    const collision = await headlessHarness(['run', 'must not run'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => thirdId,
+    });
+    expect(collision.result.code).toBe(1);
+    expect(collision.stdout).toBe('');
+    expect(collision.inputs).toEqual([]);
+    expect(collision.stderr).toContain(
+      'fresh Captain session record already exists',
+    );
+    expect(await readFile(path, 'utf8')).toBe(before);
   });
 
   it('restores an explicit session instead of init and freezes config, cwd, and timestamps', async () => {
@@ -1106,7 +1160,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
     );
     expect(record.createdAt).toBe('2026-08-11T20:10:00.000Z');
-    expect(record.updatedAt).toBe('2026-08-11T20:10:00.001Z');
+    expect(record.updatedAt).toBe('2026-08-11T20:10:00.003Z');
     expect(record.cwd).toBe(frozenCwd);
     expect(record.snapshot.sequences.turn).toBe(2);
   });
@@ -1228,6 +1282,51 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(continued.inputs).toEqual(['latest reply']);
   });
 
+  it('rereads the selected session under its lease before deciding whether to run', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-reread-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'settled selection'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+    });
+    expect(first.result.code).toBe(0);
+
+    const baseStore = createCaptainSessionStore({ sessionsDir });
+    let hosts = 0;
+    const raced = await headlessHarness(
+      ['run', '--continue', 'must not run'],
+      {
+        sessionsDir,
+        sessionStore: {
+          ...baseStore,
+          async acquire(sessionId: string) {
+            const lease = await baseStore.acquire(sessionId);
+            await lease.beginTurn({
+              input: 'concurrent uncertain boundary',
+              attemptId: thirdId,
+            });
+            return lease;
+          },
+        },
+        createHostRuntime: async () => {
+          hosts += 1;
+          throw new Error('must not construct host from stale selection');
+        },
+      },
+    );
+    expect(raced.result.code).toBe(1);
+    expect(raced.stdout).toBe('');
+    expect(hosts).toBe(0);
+    expect(raced.stderr).toContain('will not be replayed automatically');
+    expect(
+      JSON.parse(
+        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+      ).state,
+    ).toBe('uncertain');
+  });
+
   it('rejects a changed manifest default even under a frozen command override', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-manifest-'));
     tempDirs.push(stateRoot);
@@ -1310,11 +1409,593 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         };
       },
     });
+    expect(failed.result.code).toBe(1);
+    expect(output).toBe('');
+    expect(disposals).toBe(1);
+    expect(failed.stderr).toContain('synthetic durable replacement failed');
+  });
+
+  it('leaves uncertainty and withholds output when settlement persistence fails', async () => {
+    let disposals = 0;
+    let output = '';
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-settle-fail-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const recordPath = join(sessionsDir, `${firstId}.json`);
+    const sessionStore = createCaptainSessionStore({
+      sessionsDir,
+      fsOps: {
+        async rename(from: string, to: string) {
+          if (from.endsWith('.tmp') && to === recordPath) {
+            throw new Error('synthetic settlement rename failure');
+          }
+          return rename(from, to);
+        },
+      },
+    });
+    const failed = await headlessHarness(['run', 'hello'], {
+      sessionsDir,
+      sessionStore,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+      stdout: {
+        write(chunk: string) {
+          output += chunk;
+          return true;
+        },
+      },
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return {
+          runBossTurn: (...args: any[]) => host.runBossTurn(...args),
+          async dispose() {
+            disposals += 1;
+            await host.dispose();
+          },
+        };
+      },
+    });
     expect(failed.result.code).toBe(2);
     expect(output).toBe('');
     expect(disposals).toBe(1);
-    expect(failed.stderr).toContain('cannot persist Captain session');
-    expect(failed.stderr).toContain('synthetic durable replacement failed');
+    expect(failed.stderr).toContain('synthetic settlement rename failure');
+    expect(JSON.parse(await readFile(recordPath, 'utf8')).state).toBe(
+      'uncertain',
+    );
+  });
+
+  it('withholds output but preserves a complete settlement after post-rename sync failure', async () => {
+    let disposals = 0;
+    let output = '';
+    let failSessionSync = false;
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-settle-sync-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const baseStore = createCaptainSessionStore({
+      sessionsDir,
+      fsOps: {
+        async open(path: string, flags: string | number, mode?: number) {
+          const handle = await open(path, flags as any, mode);
+          if (path !== sessionsDir || flags !== 'r') return handle;
+          return {
+            async sync() {
+              if (failSessionSync) {
+                throw new Error('synthetic post-rename sync failure');
+              }
+              await handle.sync();
+            },
+            close: () => handle.close(),
+          };
+        },
+      },
+    });
+    const sessionStore = {
+      ...baseStore,
+      async acquire(sessionId: string) {
+        const lease = await baseStore.acquire(sessionId);
+        return {
+          ...lease,
+          async settle(value: any) {
+            failSessionSync = true;
+            try {
+              return await lease.settle(value);
+            } finally {
+              failSessionSync = false;
+            }
+          },
+        };
+      },
+    };
+    const failed = await headlessHarness(['run', 'hello'], {
+      sessionsDir,
+      sessionStore,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+      stdout: {
+        write(chunk: string) {
+          output += chunk;
+          return true;
+        },
+      },
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return {
+          runBossTurn: (...args: any[]) => host.runBossTurn(...args),
+          async dispose() {
+            disposals += 1;
+            await host.dispose();
+          },
+        };
+      },
+    });
+    expect(failed.result.code).toBe(2);
+    expect(output).toBe('');
+    expect(disposals).toBe(1);
+    expect(failed.stderr).toContain('synthetic post-rename sync failure');
+    const record = JSON.parse(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(record.state).toBe('settled');
+    expect(record.snapshot.sequences.turn).toBe(1);
+  });
+
+  it('writes uncertainty before effects, refuses implicit replay, and retries exact stored input', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-uncertain-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const exactInput = '  uncertain input\nwith exact bytes\n';
+    let markerDuringTurn: any;
+    const failed = await headlessHarness(['run', exactInput], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return {
+          async runBossTurn() {
+            markerDuringTurn = JSON.parse(
+              await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+            );
+            throw new Error('synthetic crash after first effect boundary');
+          },
+          dispose: () => host.dispose(),
+        };
+      },
+    });
+    expect(failed.result.code).toBe(2);
+    expect(failed.stdout).toBe('');
+    expect(markerDuringTurn).toMatchObject({
+      state: 'uncertain',
+      sessionId: firstId,
+      snapshot: { sequences: { turn: 0 } },
+      uncertain: {
+        baseUpdatedAt: null,
+        input: exactInput,
+        attemptId: secondId,
+        attemptNumber: 1,
+      },
+    });
+    expect(markerDuringTurn.uncertain.markedAt).toBe(
+      markerDuringTurn.updatedAt,
+    );
+    expect(markerDuringTurn.createdAt).toBe(markerDuringTurn.updatedAt);
+
+    let reads = 0;
+    let hosts = 0;
+    const refused = await headlessHarness(['run', '--session', firstId], {
+      sessionsDir,
+      readStdin: async () => {
+        reads += 1;
+        return 'must not read';
+      },
+      createHostRuntime: async () => {
+        hosts += 1;
+        throw new Error('must not create host');
+      },
+    });
+    expect(refused.result.code).toBe(1);
+    expect(refused.stdout).toBe('');
+    expect({ reads, hosts }).toEqual({ reads: 0, hosts: 0 });
+    expect(refused.stderr).toContain('will not be replayed automatically');
+    expect(refused.stderr).toContain('may duplicate external effects');
+    expect(refused.stderr).toContain(
+      `playbook run --session ${firstId} --retry-uncertain`,
+    );
+    expect(refused.stderr).toContain(
+      `playbook run --session ${firstId} --discard-uncertain`,
+    );
+
+    let retryMarker: any;
+    const retried = await headlessHarness(
+      ['run', '--session', firstId, '--retry-uncertain'],
+      {
+        sessionsDir,
+        createAttemptId: () => thirdId,
+        readStdin: async () => {
+          reads += 1;
+          return 'must not read';
+        },
+        createHostRuntime: async (options: any) => {
+          const host = await createTmuxPlayRuntime(options);
+          return {
+            async runBossTurn(input: string) {
+              retryMarker = JSON.parse(
+                await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+              );
+              await host.runBossTurn(input);
+            },
+            dispose: () => host.dispose(),
+          };
+        },
+      },
+    );
+    expect(retried.result.code).toBe(0);
+    expect(retried.inputs).toEqual([exactInput]);
+    expect(reads).toBe(0);
+    expect(retryMarker).toMatchObject({
+      state: 'uncertain',
+      uncertain: {
+        input: exactInput,
+        attemptId: thirdId,
+        attemptNumber: 2,
+      },
+    });
+    expect(retryMarker.uncertain.markedAt).toBe(retryMarker.updatedAt);
+    expect(Date.parse(retryMarker.updatedAt)).toBeGreaterThan(
+      Date.parse(markerDuringTurn.updatedAt),
+    );
+    const settled = JSON.parse(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(settled.state).toBe('settled');
+    expect(settled).not.toHaveProperty('uncertain');
+  });
+
+  it('rechecks lease ownership after the marker and immediately before model work', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-owner-swap-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const baseStore = createCaptainSessionStore({ sessionsDir });
+    let bossTurns = 0;
+    const out = await headlessHarness(['run', 'must remain uncertain'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+      sessionStore: {
+        ...baseStore,
+        async acquire(sessionId: string) {
+          const lease = await baseStore.acquire(sessionId);
+          return {
+            ...lease,
+            async beginTurn(value: any) {
+              const record = await lease.beginTurn(value);
+              const ownerPath = join(
+                sessionsDir,
+                `.${sessionId}.lock`,
+                'owner.json',
+              );
+              const owner = JSON.parse(await readFile(ownerPath, 'utf8'));
+              await writeFile(
+                ownerPath,
+                `${JSON.stringify({ ...owner, ownerToken: thirdId })}\n`,
+                'utf8',
+              );
+              return record;
+            },
+          };
+        },
+      },
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return {
+          async runBossTurn(input: string) {
+            bossTurns += 1;
+            await host.runBossTurn(input);
+          },
+          dispose: () => host.dispose(),
+        };
+      },
+    });
+    expect(out.result.code).toBe(2);
+    expect(out.stdout).toBe('');
+    expect(bossTurns).toBe(0);
+    expect(out.stderr).toContain('owned by a different token');
+    expect(
+      JSON.parse(
+        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+      ).state,
+    ).toBe('uncertain');
+  });
+
+  it('discards to the exact settled boundary without input, config, readiness, or host work', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-discard-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'settled input'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+    });
+    expect(first.result.code).toBe(0);
+    const path = join(sessionsDir, `${firstId}.json`);
+    const settledBytes = await readFile(path, 'utf8');
+
+    const failed = await headlessHarness(
+      ['run', '--session', firstId, 'attempted continuation'],
+      {
+        sessionsDir,
+        createAttemptId: () => thirdId,
+        createHostRuntime: async (options: any) => {
+          const host = await createTmuxPlayRuntime(options);
+          return {
+            async runBossTurn() {
+              throw new Error('synthetic continued crash');
+            },
+            dispose: () => host.dispose(),
+          };
+        },
+      },
+    );
+    expect(failed.result.code).toBe(2);
+    expect(
+      JSON.parse(await readFile(path, 'utf8')).state,
+    ).toBe('uncertain');
+
+    const calls = { stdin: 0, load: 0, probe: 0, host: 0 };
+    const discarded = await headlessHarness(
+      ['run', '--session', firstId, '--discard-uncertain'],
+      {
+        sessionsDir,
+        readStdin: async () => {
+          calls.stdin += 1;
+          return 'must not read';
+        },
+        loadModule: async () => {
+          calls.load += 1;
+          throw new Error('must not import');
+        },
+        probeAdapterSdk: async () => {
+          calls.probe += 1;
+          return false;
+        },
+        createHostRuntime: async () => {
+          calls.host += 1;
+          throw new Error('must not host');
+        },
+      },
+    );
+    expect(discarded.result.code).toBe(0);
+    expect(discarded.stdout).toBe('');
+    expect(discarded.stderr).toContain('discarded uncertain turn');
+    expect(calls).toEqual({ stdin: 0, load: 0, probe: 0, host: 0 });
+    expect(await readFile(path, 'utf8')).toBe(settledBytes);
+
+    const freshFailed = await headlessHarness(['run', 'never settled'], {
+      sessionsDir,
+      createLogicalSessionId: () => secondId,
+      createAttemptId: () => thirdId,
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return {
+          async runBossTurn() {
+            throw new Error('synthetic fresh crash');
+          },
+          dispose: () => host.dispose(),
+        };
+      },
+    });
+    expect(freshFailed.result.code).toBe(2);
+    const freshCalls = { stdin: 0, load: 0, probe: 0, host: 0 };
+    const freshDiscarded = await headlessHarness(
+      ['run', '--session', secondId, '--discard-uncertain'],
+      {
+        sessionsDir,
+        readStdin: async () => {
+          freshCalls.stdin += 1;
+          return 'must not read';
+        },
+        loadModule: async () => {
+          freshCalls.load += 1;
+          throw new Error('must not import');
+        },
+        probeAdapterSdk: async () => {
+          freshCalls.probe += 1;
+          return false;
+        },
+        createHostRuntime: async () => {
+          freshCalls.host += 1;
+          throw new Error('must not host');
+        },
+      },
+    );
+    expect(freshDiscarded.result.code).toBe(0);
+    expect(freshDiscarded.stdout).toBe('');
+    expect(freshCalls).toEqual({ stdin: 0, load: 0, probe: 0, host: 0 });
+    await expect(
+      readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('rejects a concurrent writer while the first turn owns the session lease', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-exclusive-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    let announceEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      announceEntered = resolve;
+    });
+    let unblock!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    const first = headlessHarness(['run', 'first writer'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return {
+          async runBossTurn(input: string) {
+            announceEntered();
+            await blocked;
+            await host.runBossTurn(input);
+          },
+          dispose: () => host.dispose(),
+        };
+      },
+    });
+    await entered;
+
+    let secondHosts = 0;
+    const second = await headlessHarness(
+      ['run', '--session', firstId, 'second writer'],
+      {
+        sessionsDir,
+        createHostRuntime: async () => {
+          secondHosts += 1;
+          throw new Error('concurrent host must not start');
+        },
+      },
+    );
+    expect(second.result.code).toBe(1);
+    expect(second.stdout).toBe('');
+    expect(secondHosts).toBe(0);
+    expect(second.stderr).toMatch(/lease|locked|active|owner/i);
+
+    unblock();
+    expect((await first).result.code).toBe(0);
+  });
+
+  it('aborts a signaled turn, preserves uncertainty, retires ownership, and lets a second signal escape', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-signal-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const configPath = await writeConfig(sharedConfig());
+    const entries = nestedEntries([]);
+    const modules: Record<string, unknown> = {
+      'mod://code': { default: entries.code },
+      'mod://review': { default: entries.review },
+    };
+    const processLike = new EventEmitter() as any;
+    processLike.argv = ['node', 'playbook', 'run', 'signal me'];
+    processLike.pid = 4242;
+    const killed: string[] = [];
+    processLike.kill = (_pid: number, signal: string) => {
+      killed.push(signal);
+    };
+    let announceTurn!: () => void;
+    const turnEntered = new Promise<void>((resolve) => {
+      announceTurn = resolve;
+    });
+    const stdout = writer();
+    const stderr = writer();
+    const pending = runPlaybookCliEntry({
+      processLike,
+      argv: ['run', 'signal me'],
+      userConfigPath: configPath,
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      loadModule: async (specifier: string) => modules[specifier],
+      adapterImports,
+      createCaptainRuntime: scriptedCaptainRuntime([]),
+      createLogicalSessionId: () => firstId,
+      createCaptainSessionId: uuidSequence(),
+      createAttemptId: () => secondId,
+      probeAdapterSdk: async () => true,
+      sessionsDir,
+      stdout,
+      stderr,
+      createHostRuntime: async (options: any) => {
+        // Deliberately omit the external signal from the underlying host to
+        // prove the CLI's post-turn boundary still withholds settlement.
+        const host = await createTmuxPlayRuntime({
+          ...options,
+          signal: undefined,
+        });
+        return {
+          async runBossTurn(input: string) {
+            announceTurn();
+            await new Promise<void>((resolve) => {
+              if (options.signal.aborted) resolve();
+              else options.signal.addEventListener('abort', () => resolve(), { once: true });
+            });
+            await host.runBossTurn(input);
+          },
+          dispose: () => host.dispose(),
+        };
+      },
+    });
+    await turnEntered;
+    processLike.emit('SIGTERM');
+    expect(await pending).toEqual({ signal: 'SIGTERM' });
+    expect(stdout.text()).toBe('');
+    expect(killed).toEqual([]);
+    expect(processLike.listenerCount('SIGTERM')).toBe(0);
+    const record = JSON.parse(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(record.state).toBe('uncertain');
+    const store = createCaptainSessionStore({ sessionsDir });
+    const lease = await store.acquire(firstId);
+    expect((await lease.read())?.state).toBe('uncertain');
+    await lease.release();
+
+    const stalledProcess = new EventEmitter() as any;
+    stalledProcess.argv = ['node', 'playbook', 'run'];
+    stalledProcess.pid = 4343;
+    const secondKills: string[] = [];
+    stalledProcess.kill = (_pid: number, signal: string) => {
+      secondKills.push(signal);
+    };
+    const stalled = runPlaybookCliEntry({
+      processLike: stalledProcess,
+      argv: ['run'],
+      readStdin: () => new Promise(() => {}),
+      stdout: writer(),
+      stderr: writer(),
+    });
+    stalledProcess.emit('SIGINT');
+    stalledProcess.emit('SIGHUP');
+    expect(secondKills).toEqual(['SIGHUP']);
+    expect(await stalled).toEqual({ signal: 'SIGINT' });
+  });
+
+  it('withholds stdout when a signal arrives during atomic settlement', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-late-signal-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const controller = new AbortController();
+    const baseStore = createCaptainSessionStore({ sessionsDir });
+    const sessionStore = {
+      ...baseStore,
+      async acquire(sessionId: string) {
+        const lease = await baseStore.acquire(sessionId);
+        return {
+          ...lease,
+          async settle(value: any) {
+            const record = await lease.settle(value);
+            controller.abort(new Error('synthetic late SIGTERM'));
+            return record;
+          },
+        };
+      },
+    };
+    const out = await headlessHarness(['run', 'settle then signal'], {
+      sessionsDir,
+      sessionStore,
+      signal: controller.signal,
+      createLogicalSessionId: () => firstId,
+      createAttemptId: () => secondId,
+    });
+    expect(out.result.code).toBe(2);
+    expect(out.stdout).toBe('');
+    expect(out.stderr).toContain('reply withheld');
+    expect(
+      JSON.parse(
+        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+      ).state,
+    ).toBe('settled');
+    const probe = await baseStore.acquire(firstId);
+    await probe.release();
   });
 
   it('rejects an unrestorable or id-colliding record before host or agent work', async () => {
@@ -1403,6 +2084,44 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       continue: false,
       input: '--continue',
     });
+    expect(
+      parseRunArgs(['--session', firstId, '--retry-uncertain']),
+    ).toMatchObject({
+      sessionId: firstId,
+      retryUncertain: true,
+      input: undefined,
+    });
+    expect(
+      parseRunArgs(['--session', firstId, '--discard-uncertain']),
+    ).toMatchObject({
+      sessionId: firstId,
+      discardUncertain: true,
+      input: undefined,
+    });
+    expect(() => parseRunArgs(['--retry-uncertain'])).toThrow(
+      /require --session/,
+    );
+    expect(() =>
+      parseRunArgs(['--session', firstId, '--retry-uncertain', 'input']),
+    ).toThrow(/no input/);
+    expect(() =>
+      parseRunArgs([
+        '--session',
+        firstId,
+        '--retry-uncertain',
+        '--discard-uncertain',
+      ]),
+    ).toThrow(/mutually exclusive/);
+    for (const inert of ['--json', '--verbose', '--no-provision']) {
+      expect(() =>
+        parseRunArgs([
+          '--session',
+          firstId,
+          '--discard-uncertain',
+          inert,
+        ]),
+      ).toThrow(/does not accept/);
+    }
   });
 });
 
