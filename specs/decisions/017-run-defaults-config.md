@@ -5,7 +5,7 @@
 
 ## Status
 
-Accepted.
+Superseded by [DR-031](031-shared-captain-session-front-ends.md).
 
 ## Context
 

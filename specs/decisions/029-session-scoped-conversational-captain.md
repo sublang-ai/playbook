@@ -43,7 +43,7 @@ The Boss requires the Captain to know the whole session, converse naturally whil
    A turn summary is grounded in the action result, and a saved-counts line appears only when the turn recorded nonzero counted activity.
 
 This decision supersedes the isolated per-turn Captain calls of DR-013, the hand-authored lifecycle classifier, and DR-012's intra-turn multi-child plans for the interactive shell.
-It places the session Captain outside the DR-011 engagement stack and leaves headless `playbook run` unchanged.
+It places the session Captain outside the DR-011 engagement stack; [DR-031](031-shared-captain-session-front-ends.md) later makes the interactive and headless front ends host that same session design.
 The CAPTAIN and CAPPLAY item packages define the observable and implementation contracts.
 
 ## Consequences
