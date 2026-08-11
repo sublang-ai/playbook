@@ -1240,12 +1240,12 @@ durability, the pair shall behave as follows.
 
 `exportSnapshot()` shall return `undefined` unless the runtime is at a safe
 capture point: initialized, not disposing or disposed, no active
-`handleBossInput`/`resumePlaybookCall` boundary, no pending nested playbook
-call, and the root actor at a quiescent state with actor status `active`.
+`handleBossInput`/`resumePlaybookCall` boundary, and the root actor at a
+quiescent state with actor status `active`.
 At a safe capture point it shall return a JSON-safe
 `PlaybookRuntimeSnapshot` carrying:
 
-- `schemaVersion`: literal `1`.
+- `schemaVersion`: literal `2`.
 - `playbookId`: the bound session's playbook id.
 - `machine`: the root actor's `getPersistedSnapshot()` result, passed
   through the shared JSON detachment with any raw `Error` context value
@@ -1255,19 +1255,33 @@ At a safe capture point it shall return a JSON-safe
   (§PlaybookPorts contract).
 - `sequences`: the live `trace`, `turn`, `judgeCall`, `playerCall`, and
   `playbookCall` counters, plus `captainCall` when the runtime supports direct
-  Captain calls. `captainCall` remains optional under schema version `1` for
-  backward compatibility; a direct-Captain-capable runtime shall persist it.
+  Captain calls. A direct-Captain-capable runtime shall persist it in current
+  schema-version-2 exports; it remains optional in legacy schema-version-1
+  input, where restore uses `trace` as its collision-safe floor.
 - `state`: the current normalized state descriptor.
 - `pendingBossQuestions`: the pending Boss question(s) from FSM context as
   a list of `{ questionId, player, question, sourceItem? }`, empty when the
   parked state awaits no reply. This list exists so hosts can surface the
   question without parsing status lines or telemetry.
+- `suspendedCall`: omitted when no nested call is pending; otherwise the
+  shared nested bridge's complete `callId`, source `stateId`, target
+  `playbookId`, exact handed-off `text`, and `childSessionId`, enriched with
+  the call-to-turn map's optional `turnId`.
+
+A pending nested call is exportable only when the bridge's pending identity
+and complete descriptor agree and the call-to-turn map owns that exact call
+id, including ownership whose value is absent. A bridge descriptor that
+already carries a turn id shall equal that map value. Any missing or
+inconsistent bridge, descriptor, or turn-ownership record makes the capture
+unsafe and returns `undefined`.
 
 `restore(session, snapshot)` is an alternative to `init` under the same
 lifecycle guards (§Session lifecycle): it shall reject when already
 initialized, disposing, or disposed, and shall validate
-`snapshot.schemaVersion` and that `snapshot.playbookId` equals
-`session.playbookId` before touching state.
+schema version `1` or `2` and that `snapshot.playbookId` equals
+`session.playbookId` before touching state. Schema version `1` remains a
+descriptor-free legacy input; schema version `2` may carry the suspended-call
+descriptor above.
 The host supplies the same immutable `PlaybookSession` identity the
 snapshot was exported under and recreates the runtime through the same
 factory with equivalent options; the runtime does not diff options, and
@@ -1278,13 +1292,22 @@ make before calling `restore`.
 sequence counters (using the persisted global `trace` counter as a
 collision-safe floor for an absent legacy `captainCall`), and the
 prior-state descriptor from the snapshot,
-construct the actor with the persisted `machine` snapshot, and start it
+prepare the shared nested bridge with the suspended-call descriptor or its
+explicit absence, restore a descriptor's call-to-turn map entry, construct
+the actor with the persisted `machine` snapshot, and start it
 with root inspection emissions suppressed so rehydration emits no
 `session.started` trace, no transition trace, and no human status — the
 session already started, and the next public boundary continues the
-contiguous trace sequence. After start, a restored actor whose status is
-not `active` or whose state descriptor cannot be normalized shall fail
-`restore` through the same failed-start cleanup path as `init`.
+contiguous trace sequence. After start, the runtime shall normalize the
+actual actor state with the prepared suspended call as its pending identity
+and require it to equal the detached persisted state exactly, including
+active status. It shall drain suppressed startup work and invoke the bridge's
+`confirmRestore` as the final fallible restore step, publishing the pending
+identity only after every other validation succeeds. A missing, extra, or
+mismatched reconstructed invocation, an actual/persisted state mismatch, or
+any other failed validation shall fail `restore` through the same
+failed-start cleanup path as `init`, rolling back provisional bridge and turn
+ownership without a child-host call or duplicate start/finish boundary.
 A restore failure shall leave the runtime unbound so `dispose` remains
 callable and terminal.
 
@@ -1440,7 +1463,7 @@ runtime's emission-failure channel to surface from the next public boundary
 that drains.
 
 The recorded receipts and the recorded last classified event are
-process-local: the schema-1 parked-session snapshot persists neither, and a
+process-local: the durable runtime snapshot persists neither, and a
 restored runtime advertises a retry again only after its next classified
 event.
 

@@ -324,6 +324,23 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function sortJson(value: JsonValue): JsonValue {
+  if (Array.isArray(value)) return value.map((entry) => sortJson(entry));
+  if (value !== null && typeof value === 'object') {
+    const record = value as { readonly [key: string]: JsonValue };
+    const sorted: Record<string, JsonValue> = {};
+    for (const key of Object.keys(record).sort()) {
+      sorted[key] = sortJson(record[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+function stableJson(value: unknown, path: string): string {
+  return JSON.stringify(sortJson(snapshotJsonValue(value, path)));
+}
+
 function stripCodeFence(text: string): string {
   const fence = text.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/i);
   return fence ? fence[1].trim() : text;
@@ -920,13 +937,16 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       playerResumeTokens.set(playerId, token);
     }
   };
-  const currentState = (): PlaybookState => {
+  const currentState = (
+    pendingCall: PlaybookPendingCall | undefined =
+      nestedBridge.getPendingCall(),
+  ): PlaybookState => {
     const live = actor;
     if (!live) {
       throw new Error('decide runtime: actor is not initialized');
     }
     return normalizePlaybookSnapshot(live.getSnapshot(), {
-      pendingCall: nestedBridge.getPendingCall(),
+      pendingCall,
     });
   };
   const stateIdentity = (state: PlaybookState): { stateId?: string } => {
@@ -1592,9 +1612,10 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   // The caller rethrows its original failure. A restore failure skips
   // the disposal trace — the parked session was never re-bound in this
   // process, so its persisted snapshot stays authoritative (DR-014 §2).
-  const cleanupFailedStart = async (options: {
-    emitDisposal: boolean;
-  }): Promise<void> => {
+  const cleanupFailedStart = async (
+    cause: unknown,
+    options: { emitDisposal: boolean },
+  ): Promise<void> => {
     let finalState: PlaybookState | undefined;
     if (options.emitDisposal && actor) {
       try {
@@ -1605,6 +1626,11 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     }
     try {
       stopActor();
+    } catch {
+      // Preserve the original startup failure.
+    }
+    try {
+      await nestedBridge.abortPending(cause);
     } catch {
       // Preserve the original startup failure.
     }
@@ -1682,7 +1708,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         actor?.start();
         await flush();
       } catch (error) {
-        await cleanupFailedStart({ emitDisposal: true });
+        await cleanupFailedStart(error, { emitDisposal: true });
         throw error;
       } finally {
         finishInitialization();
@@ -1690,10 +1716,11 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       }
     },
 
-    // DR-014 §1 / PBRT-45: JSON-safe capture of a parked session.
+    // DR-014 §1 / DR-031 §5 / PBRT-45: JSON-safe capture of a parked
+    // session, including one already-started suspended REVIEW call.
     // Defined only at a safe capture point — initialized, not disposing
-    // or disposed, no active public boundary, and the actor quiescent
-    // with status `active` and no pending nested REVIEW call.
+    // or disposed, no active public boundary, and the actor quiescent with
+    // status `active`.
     exportSnapshot(): PlaybookRuntimeSnapshot | undefined {
       if (
         !actor ||
@@ -1706,7 +1733,37 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       if (currentTurnId !== undefined || currentSignal !== undefined) {
         return undefined;
       }
-      if (nestedBridge.getPendingCall()) return undefined;
+      const pendingCall = nestedBridge.getPendingCall();
+      const bridgeSuspendedCall = nestedBridge.getSuspendedCall();
+      if ((pendingCall === undefined) !== (bridgeSuspendedCall === undefined)) {
+        return undefined;
+      }
+      if (
+        pendingCall !== undefined &&
+        bridgeSuspendedCall !== undefined &&
+        (pendingCall.callId !== bridgeSuspendedCall.callId ||
+          pendingCall.playbookId !== bridgeSuspendedCall.playbookId ||
+          pendingCall.childSessionId !== bridgeSuspendedCall.childSessionId)
+      ) {
+        return undefined;
+      }
+      let suspendedCall: typeof bridgeSuspendedCall;
+      if (bridgeSuspendedCall !== undefined) {
+        if (!playbookCallTurnIds.has(bridgeSuspendedCall.callId)) {
+          return undefined;
+        }
+        const turnId = playbookCallTurnIds.get(bridgeSuspendedCall.callId);
+        if (
+          bridgeSuspendedCall.turnId !== undefined &&
+          bridgeSuspendedCall.turnId !== turnId
+        ) {
+          return undefined;
+        }
+        suspendedCall = {
+          ...bridgeSuspendedCall,
+          ...(turnId === undefined ? {} : { turnId }),
+        };
+      }
       const state = currentState();
       if (state.status !== 'active' || !state.quiescent) return undefined;
       const machine = detachPersistedMachineSnapshot(
@@ -1716,7 +1773,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         actor.getSnapshot() as SnapshotFrom<typeof decideMachine>
       ).context as unknown as Record<string, unknown>;
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         playbookId: sessionIdentity.playbookId,
         machine,
         playerResumeTokens: snapshotPlayerResumeTokens(),
@@ -1736,6 +1793,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
             sourceItem: pending.sourceItem,
           }),
         ),
+        ...(suspendedCall === undefined ? {} : { suspendedCall }),
       };
     },
 
@@ -1762,7 +1820,12 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       const boundSnapshot = assertPlaybookRuntimeSnapshot(
         snapshot,
         identity.playbookId,
+        { allowSuspendedCall: true },
       );
+      const suspendedCall =
+        boundSnapshot.schemaVersion === 2
+          ? boundSnapshot.suspendedCall
+          : undefined;
       let finishInitialization!: () => void;
       const initialization = new Promise<void>((resolve) => {
         finishInitialization = resolve;
@@ -1784,18 +1847,34 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           priorExternalPlayerTokens = snapshotPlayerResumeTokens();
         }
         restorePlayerResumeTokens(boundSnapshot.playerResumeTokens);
+        nestedBridge.prepareRestore(suspendedCall);
+        if (suspendedCall !== undefined) {
+          playbookCallTurnIds.set(suspendedCall.callId, suspendedCall.turnId);
+        }
         suppressInspectionEmissions = true;
         createRuntimeActor(boundSnapshot.machine);
         actor?.start();
-        const restoredState = currentState();
+        const restoredState = currentState(suspendedCall);
         if (restoredState.status !== 'active') {
           throw new Error(
             `decide runtime: restored actor status is ${restoredState.status}, expected active`,
           );
         }
-        suppressInspectionEmissions = false;
+        if (
+          stableJson(restoredState, 'restored runtime state') !==
+          stableJson(boundSnapshot.state, 'runtime snapshot state')
+        ) {
+          throw new Error(
+            'decide runtime: restored actor state does not match snapshot state',
+          );
+        }
         previousState = restoredState;
         await flush();
+        suppressInspectionEmissions = false;
+        // Final fallible step: after this publication the authoritative
+        // child has rejoined ordinary resume/abort ownership, so no later
+        // restore validation may trigger failed-start rollback.
+        nestedBridge.confirmRestore();
       } catch (error) {
         let failure = error;
         if (priorExternalPlayerTokens !== undefined) {
@@ -1808,7 +1887,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
             );
           }
         }
-        await cleanupFailedStart({ emitDisposal: false });
+        await cleanupFailedStart(failure, { emitDisposal: false });
         throw failure;
       } finally {
         finishInitialization();

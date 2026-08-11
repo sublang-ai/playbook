@@ -10,7 +10,9 @@ import createPlaybookRuntime, {
   type PlaybookCallResult,
   type PlaybookPorts,
   type PlaybookRunResult,
+  type PlaybookRuntimeSnapshot,
   type PlaybookSession,
+  type PlaybookTraceEvent,
 } from './decide.playbook.ts';
 
 const signal = (): AbortSignal => new AbortController().signal;
@@ -24,6 +26,12 @@ interface PlayerCallRecord {
 interface TelemetryRecord {
   topic: string;
   payload: unknown;
+}
+
+function playbookTraces(records: readonly TelemetryRecord[]): PlaybookTraceEvent[] {
+  return records
+    .filter(({ topic }) => topic === 'playbook.trace')
+    .map(({ payload }) => payload as PlaybookTraceEvent);
 }
 
 function deferred<T>(): {
@@ -108,10 +116,12 @@ function judgeReply(prompt: string): string {
 interface ReviewBoundary {
   runtime: ReturnType<typeof createPlaybookRuntime>;
   request: PlaybookCallRequest;
+  telemetry: TelemetryRecord[];
 }
 
 async function runToReview(): Promise<ReviewBoundary> {
   const playerCounts = new Map<string, number>();
+  const telemetry: TelemetryRecord[] = [];
   let request: PlaybookCallRequest | undefined;
   const ports = completePorts({
     callPlayer: async (playerId) => {
@@ -133,6 +143,9 @@ async function runToReview(): Promise<ReviewBoundary> {
       request = nestedRequest;
       return { state: 'suspended', childSessionId: 'review-child' };
     },
+    emitTelemetry: async (record) => {
+      telemetry.push(record);
+    },
   });
   const runtime = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
   await runtime.init(session(ports));
@@ -142,7 +155,7 @@ async function runToReview(): Promise<ReviewBoundary> {
   });
   expect(result).toMatchObject({ outcome: 'suspended' });
   if (!request) throw new Error('DECIDE did not call REVIEW');
-  return { runtime, request };
+  return { runtime, request, telemetry };
 }
 
 async function startWithCommitOutput(
@@ -467,6 +480,255 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     }
 
     await runtime.dispose();
+  });
+});
+
+describe('DECIDE suspended REVIEW persistence', () => {
+  it('restores one suspended REVIEW without replay and resumes its original trace once', async () => {
+    const {
+      runtime: source,
+      request,
+      telemetry: sourceTelemetry,
+    } = await runToReview();
+    const snapshot = source.exportSnapshot?.();
+    if (
+      snapshot?.schemaVersion !== 2 ||
+      snapshot.suspendedCall === undefined
+    ) {
+      throw new Error('DECIDE did not export its suspended REVIEW call');
+    }
+    expect(snapshot.suspendedCall).toEqual({
+      ...request,
+      stateId: 'reviewCommit',
+      childSessionId: 'review-child',
+      turnId: 1,
+    });
+    expect(snapshot.state).toMatchObject({
+      stateId: 'reviewCommit',
+      status: 'active',
+      quiescent: true,
+      tags: expect.arrayContaining(['playbook.suspended']),
+    });
+
+    const roundTripped = JSON.parse(
+      JSON.stringify(snapshot),
+    ) as PlaybookRuntimeSnapshot;
+    const nestedRequests: PlaybookCallRequest[] = [];
+    const restoredStatuses: string[] = [];
+    const restoredTelemetry: TelemetryRecord[] = [];
+    const restored = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+    const restoredPorts = completePorts({
+      callPlaybook: async (nestedRequest) => {
+        nestedRequests.push(nestedRequest);
+        throw new Error('restore must not restart REVIEW');
+      },
+      emitStatus: async (message) => {
+        restoredStatuses.push(message);
+      },
+      emitTelemetry: async (record) => {
+        restoredTelemetry.push(record);
+      },
+    });
+    if (!restored.restore) throw new Error('DECIDE restore is unavailable');
+    await restored.restore(session(restoredPorts), roundTripped);
+
+    expect(nestedRequests).toEqual([]);
+    expect(restoredStatuses).toEqual([]);
+    expect(restoredTelemetry).toEqual([]);
+    const restoredSnapshot = restored.exportSnapshot?.();
+    expect(restoredSnapshot?.schemaVersion).toBe(2);
+    expect(
+      restoredSnapshot?.schemaVersion === 2
+        ? restoredSnapshot.suspendedCall
+        : undefined,
+    ).toEqual(snapshot.suspendedCall);
+    expect(restoredSnapshot?.state).toEqual(snapshot.state);
+
+    const childResult = {
+      status: 'ok',
+      playbookId: 'review',
+      childSessionId: 'review-child',
+      output: {
+        approvedCommit: 'latest',
+        noUnsettledFindings: true,
+      },
+    } satisfies PlaybookCallResult;
+    await expect(
+      restored.resumePlaybookCall({
+        callId: request.callId,
+        result: childResult,
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({ outcome: 'terminal' });
+
+    const sourceStarts = playbookTraces(sourceTelemetry).filter(
+      ({ type }) => type === 'playbook.call.started',
+    );
+    const restoredTraces = playbookTraces(restoredTelemetry);
+    const restoredStarts = restoredTraces.filter(
+      ({ type }) => type === 'playbook.call.started',
+    );
+    const restoredFinishes = restoredTraces.filter(
+      ({ type }) => type === 'playbook.call.finished',
+    );
+    expect(sourceStarts).toHaveLength(1);
+    expect(restoredStarts).toHaveLength(0);
+    expect(restoredFinishes).toHaveLength(1);
+    expect(sourceStarts[0]).toMatchObject({
+      callId: request.callId,
+      turnId: 1,
+      payload: {
+        stateId: 'reviewCommit',
+        playbookId: 'review',
+        text: request.text,
+      },
+    });
+    expect(restoredFinishes[0]).toMatchObject({
+      callId: request.callId,
+      turnId: 1,
+      payload: {
+        stateId: 'reviewCommit',
+        playbookId: 'review',
+        text: request.text,
+        result: childResult,
+      },
+    });
+    expect(restoredFinishes[0].sequence).toBeGreaterThan(
+      sourceStarts[0].sequence,
+    );
+    expect(
+      restoredTraces.some(
+        ({ type, sequence }) =>
+          type === 'fsm.transition' &&
+          sequence > restoredFinishes[0].sequence,
+      ),
+    ).toBe(true);
+
+    await expect(
+      restored.resumePlaybookCall({
+        callId: request.callId,
+        result: childResult,
+        signal: signal(),
+      }),
+    ).rejects.toThrow(`unknown or stale playbook call id ${request.callId}`);
+    await restored.dispose();
+    await source.dispose();
+  });
+
+  it.each([
+    [
+      'descriptor disagrees with the restored invoke input',
+      (snapshot: PlaybookRuntimeSnapshot): PlaybookRuntimeSnapshot => {
+        if (
+          snapshot.schemaVersion !== 2 ||
+          snapshot.suspendedCall === undefined
+        ) {
+          throw new Error('expected a suspended schema-2 snapshot');
+        }
+        return {
+          ...snapshot,
+          suspendedCall: {
+            ...snapshot.suspendedCall,
+            text: `${snapshot.suspendedCall.text} (forged)`,
+          },
+        };
+      },
+      /text does not match its persisted input/,
+    ],
+    [
+      'public state disagrees with the restored actor',
+      (snapshot: PlaybookRuntimeSnapshot): PlaybookRuntimeSnapshot => ({
+        ...snapshot,
+        state: { ...snapshot.state, value: 'forgedReviewCommit' },
+      }),
+      /restored actor state does not match snapshot state/,
+    ],
+  ] as const)(
+    'rolls back a failed restore when the %s',
+    async (_label, mutate, expectedError) => {
+      const { runtime: source } = await runToReview();
+      const snapshot = source.exportSnapshot?.();
+      if (!snapshot) throw new Error('DECIDE did not export a snapshot');
+      const invalidSnapshot = mutate(
+        JSON.parse(JSON.stringify(snapshot)) as PlaybookRuntimeSnapshot,
+      );
+      const nestedRequests: PlaybookCallRequest[] = [];
+      const statuses: string[] = [];
+      const telemetry: TelemetryRecord[] = [];
+      const playerSessions = createPlayerSessionStore();
+      playerSessions.update('sentinel', 'keep-me');
+      const restored = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+      const restoredPorts = completePorts({
+        callPlaybook: async (request) => {
+          nestedRequests.push(request);
+          throw new Error('failed restore must not restart REVIEW');
+        },
+        emitStatus: async (message) => {
+          statuses.push(message);
+        },
+        emitTelemetry: async (record) => {
+          telemetry.push(record);
+        },
+      });
+      if (!restored.restore) throw new Error('DECIDE restore is unavailable');
+
+      await expect(
+        restored.restore(
+          session(restoredPorts, playerSessions),
+          invalidSnapshot,
+        ),
+      ).rejects.toThrow(expectedError);
+      expect(nestedRequests).toEqual([]);
+      expect(statuses).toEqual([]);
+      expect(telemetry).toEqual([]);
+      expect(Object.fromEntries(playerSessions.tokens)).toEqual({
+        sentinel: 'keep-me',
+      });
+
+      await restored.dispose();
+      await source.dispose();
+    },
+  );
+
+  it('restores a legacy schema-1 parked snapshot without invoking a child', async () => {
+    const source = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+    await source.init(session(completePorts({})));
+    const snapshot = source.exportSnapshot?.();
+    if (!snapshot) throw new Error('DECIDE did not export a snapshot');
+    const { suspendedCall: _suspendedCall, ...snapshotFields } = snapshot;
+    const legacySnapshot: PlaybookRuntimeSnapshot = {
+      ...snapshotFields,
+      schemaVersion: 1,
+    };
+    const nestedRequests: PlaybookCallRequest[] = [];
+    const statuses: string[] = [];
+    const telemetry: TelemetryRecord[] = [];
+    const restored = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+    const restoredPorts = completePorts({
+      callPlaybook: async (request) => {
+        nestedRequests.push(request);
+        throw new Error('legacy parked restore must not call a child');
+      },
+      emitStatus: async (message) => {
+        statuses.push(message);
+      },
+      emitTelemetry: async (record) => {
+        telemetry.push(record);
+      },
+    });
+    if (!restored.restore) throw new Error('DECIDE restore is unavailable');
+    await restored.restore(session(restoredPorts), legacySnapshot);
+
+    expect(nestedRequests).toEqual([]);
+    expect(statuses).toEqual([]);
+    expect(telemetry).toEqual([]);
+    expect(restored.exportSnapshot?.()).toMatchObject({
+      schemaVersion: 2,
+      state: snapshot.state,
+    });
+
+    await restored.dispose();
+    await source.dispose();
   });
 });
 

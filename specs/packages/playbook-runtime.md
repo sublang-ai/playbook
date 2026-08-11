@@ -574,23 +574,21 @@ capability of `@sublang/playbook/runtime`
 ([DR-014](../decisions/014-durable-one-shot-run-sessions.md) §1),
 the runtime shall implement `exportSnapshot` and `restore` together.
 When `exportSnapshot` is called at a safe capture point — initialized,
-not disposing or disposed, no active public boundary, no pending nested
-playbook call, and the root actor quiescent with actor status `active` —
-it shall return a JSON-safe `PlaybookRuntimeSnapshot` carrying schema
-version `1`, the session's playbook id, the persisted machine snapshot
+not disposing or disposed, no active public boundary, and the root actor
+quiescent with actor status `active` — it shall return a JSON-safe
+`PlaybookRuntimeSnapshot` carrying schema version `2`, the session's playbook
+id, the persisted machine snapshot
 with any raw `Error` context value normalized to `{ name, message,
 stack? }`, the player resume-token map, the trace/turn/judge-call/
 player-call/playbook-call sequence counters, the direct-Captain-call
 counter when the runtime supports direct Captain calls, the current normalized
 state descriptor, and the pending Boss questions as
-`{ questionId, player, question, sourceItem? }` entries; at any other
-point it shall return `undefined`.
-The `captainCall` member of `sequences` shall remain optional under
-schema version `1`: a direct-Captain-capable runtime shall persist it, and
-`restore` shall accept an older snapshot that omits it and use the persisted
-global `trace` counter as a collision-safe floor for subsequent Captain call
-ids.
-The public `PlaybookRuntimeSnapshot` contract shall also admit schema version `2`, whose optional `suspendedCall` descriptor carries `callId`, `stateId`, `playbookId`, exact `text`, `childSessionId`, and optional positive `turnId`; schema version `1` shall not carry that member.
+`{ questionId, player, question, sourceItem? }` entries.
+Where exactly one nested playbook call is suspended, that snapshot shall also carry its bridge-owned `callId`, `stateId`, `playbookId`, exact `text`, and `childSessionId`, enriched with the matching call-to-turn owner when present; export shall return `undefined` if the pending bridge identity, complete descriptor, or recorded call-to-turn ownership is absent or inconsistent.
+Where no nested playbook call is suspended, the schema-version-2 snapshot shall omit `suspendedCall`; at any other unsafe capture point `exportSnapshot` shall return `undefined`.
+A direct-Captain-capable runtime shall persist the `captainCall` member of `sequences` in every exported schema-version-2 snapshot.
+That member shall remain optional in a legacy schema-version-1 snapshot, which `restore` shall accept by using the persisted global `trace` counter as a collision-safe floor for subsequent Captain call ids.
+The public `PlaybookRuntimeSnapshot` contract shall admit schema version `2`, whose optional `suspendedCall` descriptor carries `callId`, `stateId`, `playbookId`, exact `text`, `childSessionId`, and optional positive `turnId`, and shall continue to admit schema version `1` without that member.
 The shared snapshot validator shall capture the complete supplied value once as detached frozen JSON, reject accessors and undeclared snapshot, sequence, pending-question, or suspended-call fields, and preserve schema-version-1 snapshots that contain no suspended call.
 The validator shall reject a schema-version-2 suspended call unless its caller explicitly opts into handling it, its playbook-call counter is positive, its optional turn id does not exceed the turn counter, and its normalized state is active, quiescent, tagged `playbook.suspended`, and contains the descriptor's source state among its active state ids.
 Conversely, the validator shall reject any snapshot whose normalized state is tagged `playbook.suspended` without a schema-version-2 suspended-call descriptor.
@@ -604,10 +602,12 @@ sequence counters, and prior-state descriptor, reconstruct the actor
 from the persisted machine snapshot, and start it without emitting
 `session.started`, transition traces, or human status, so the next
 public boundary continues the session's contiguous trace sequence.
+Before actor construction, `restore` shall prepare the shared nested bridge with the snapshot's suspended-call descriptor or an explicit absence and shall restore any descriptor's call-to-turn ownership before actor startup.
+After actor startup, `restore` shall normalize the actual actor state using the prepared descriptor as pending identity, require it to equal the detached persisted state exactly, drain all suppressed startup work, and call `confirmRestore` as its final fallible step.
 `restore` shall reject a schema or playbook-id mismatch, a snapshot
-whose restored actor is not `active`, and reuse of an initialized,
+whose restored actor is not `active`, a persisted/actual state mismatch, an unclaimed or mismatched suspended call, an opaque nested invocation without a descriptor, and reuse of an initialized,
 disposing, or disposed runtime, following the same failed-start cleanup
-as `init` so `dispose` remains callable.
+as `init` so provisional nested ownership rolls back without a duplicate start or finish and `dispose` remains callable.
 The compiled default Captain runtime shall expose the shared factory's snapshot methods, while the interactive shell shall neither persist nor restore Captain snapshots ([DR-014](../decisions/014-durable-one-shot-run-sessions.md) §5).
 
 ### Control surface
@@ -764,7 +764,7 @@ idempotency key, and — on finish — the receipt disposition with its
 reason, normalized error, or projected run result, under a
 session-unique `apply-<n>` call id whose counter restores from the
 persisted trace floor. Recorded receipts and the recorded last
-classified event shall stay process-local: the schema-1 parked snapshot
+classified event shall stay process-local: the durable runtime snapshot
 persists neither.
 
 ## Verification
@@ -1126,7 +1126,7 @@ finish and shall reject disposal with the original cleanup error (verifying [[pl
 Where the integration suite drives the real CODE linked runtime through
 scripted ports to `awaitBossReply` and calls `exportSnapshot`, the test
 suite shall fail unless the snapshot is JSON-round-trip safe and carries
-schema version `1`, the playbook id, the parked state descriptor, the
+schema version `2` without a suspended-call descriptor, the playbook id, the parked state descriptor, the
 recorded player resume token, the live sequence counters, and one
 pending Boss question with the asking player and verbatim question
 text.
@@ -1136,6 +1136,8 @@ identity without emitting `session.started`, and a following Boss reply
 re-enters the recorded resume state, passes the pre-park resume token
 to the resumed player call, and continues the trace with contiguous
 sequence numbers across the export/restore boundary.
+Where the integration suite exports a shared-factory runtime suspended behind a nested playbook and restores it in a fresh instance, the suite shall fail unless the schema-version-2 descriptor preserves the original call, child, input, and turn ownership; restore reattaches the reconstructed promise actor without another host call or start trace; exact resume emits one finish under the original call and turn before continuing the parent; and a failed pre-confirm state comparison rolls back without a finish and permits exact retry (verifying [[playbook-runtime-42](#playbook-runtime-42)] and [[playbook-runtime-45](#playbook-runtime-45)]).
+Where a descriptor-free legacy snapshot's opaque machine attempts to reconstruct a nested invocation, the suite shall fail unless restore rejects without invoking the host child port or emitting another start or finish (verifying [[playbook-runtime-42](#playbook-runtime-42)] and [[playbook-runtime-45](#playbook-runtime-45)]).
 It shall fail unless `exportSnapshot` returns `undefined` during an
 active turn and after disposal; unless `restore` rejects a
 schema-version mismatch, a playbook-id mismatch, and an already

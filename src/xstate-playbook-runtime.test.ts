@@ -2254,6 +2254,285 @@ describe('nested playbook actor over the shared factory', () => {
     await runtime.dispose();
   });
 
+  it('restores a suspended child without replaying its start', async () => {
+    let hostStarts = 0;
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlaybook: async (request) => {
+        hostStarts += 1;
+        expect(request).toMatchObject({ playbookId: 'child', text: 'do it' });
+        return { state: 'suspended', childSessionId: 'child-session-1' };
+      },
+    });
+    const session = makeSession(ports);
+    const first = createNestedRuntime({});
+    await first.init(session);
+    const suspended = await first.handleBossInput(turn('do it'));
+    expect(suspended.outcome).toBe('suspended');
+
+    const snapshot = first.exportSnapshot?.();
+    if (
+      snapshot?.schemaVersion !== 2 ||
+      snapshot.suspendedCall === undefined
+    ) {
+      throw new Error('expected a schema-2 suspended-call snapshot');
+    }
+    expect(snapshot.suspendedCall).toEqual({
+      callId: 'playbook-1',
+      stateId: 'call',
+      playbookId: 'child',
+      text: 'do it',
+      childSessionId: 'child-session-1',
+      turnId: 1,
+    });
+    expect(snapshot.sequences).toMatchObject({
+      turn: 1,
+      playbookCall: 1,
+    });
+    const telemetryBeforeRestore = telemetry.length;
+    const statusesBeforeRestore = statuses.length;
+
+    const restored = createNestedRuntime({});
+    await restored.restore?.(session, snapshot);
+    expect(hostStarts).toBe(1);
+    expect(telemetry).toHaveLength(telemetryBeforeRestore);
+    expect(statuses).toHaveLength(statusesBeforeRestore);
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(({ type }) => type === 'playbook.call.started'),
+    ).toHaveLength(1);
+
+    const resumed = await restored.resumePlaybookCall({
+      callId: snapshot.suspendedCall.callId,
+      result: {
+        status: 'ok',
+        playbookId: snapshot.suspendedCall.playbookId,
+        childSessionId: snapshot.suspendedCall.childSessionId,
+        output: { note: 'child finished after restore' },
+      },
+      signal: new AbortController().signal,
+    });
+    expect(resumed.outcome).toBe('terminal');
+    expect('output' in resumed ? resumed.output : undefined).toEqual({
+      childOutput: { note: 'child finished after restore' },
+    });
+    const callTraces = telemetry
+      .map(({ payload }) => payload as PlaybookTraceEvent)
+      .filter(
+        ({ type }) =>
+          type === 'playbook.call.started' ||
+          type === 'playbook.call.finished',
+      );
+    expect(callTraces).toHaveLength(2);
+    expect(callTraces[1]).toMatchObject({
+      type: 'playbook.call.finished',
+      callId: snapshot.suspendedCall.callId,
+      turnId: snapshot.suspendedCall.turnId,
+      sequence: snapshot.sequences.trace + 1,
+    });
+    expect(hostStarts).toBe(1);
+
+    await restored.dispose();
+    await first.dispose();
+  });
+
+  it('rolls back a pre-confirm state mismatch and permits exact retry', async () => {
+    let hostStarts = 0;
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlaybook: async () => {
+        hostStarts += 1;
+        return { state: 'suspended', childSessionId: 'child-session-1' };
+      },
+    });
+    const session = makeSession(ports);
+    const first = createNestedRuntime({});
+    await first.init(session);
+    await first.handleBossInput(turn('do it'));
+    const snapshot = first.exportSnapshot?.();
+    if (
+      snapshot?.schemaVersion !== 2 ||
+      snapshot.suspendedCall === undefined
+    ) {
+      throw new Error('expected a schema-2 suspended-call snapshot');
+    }
+    const mismatched = structuredClone(snapshot);
+    (mismatched.state as { value: unknown }).value = 'ready';
+
+    const restored = createNestedRuntime({});
+    await expect(restored.restore?.(session, mismatched)).rejects.toThrow(
+      'restored actor state does not match snapshot state',
+    );
+    expect(hostStarts).toBe(1);
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(({ type }) => type === 'playbook.call.finished'),
+    ).toEqual([]);
+
+    // Failed-start cleanup removes the provisional bridge claim and turn
+    // ownership, so the same runtime can retry the authoritative snapshot.
+    await restored.restore?.(session, snapshot);
+    await restored.resumePlaybookCall({
+      callId: snapshot.suspendedCall.callId,
+      result: {
+        status: 'ok',
+        playbookId: snapshot.suspendedCall.playbookId,
+        childSessionId: snapshot.suspendedCall.childSessionId,
+      },
+      signal: new AbortController().signal,
+    });
+    expect(hostStarts).toBe(1);
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(({ type }) => type === 'playbook.call.finished'),
+    ).toHaveLength(1);
+
+    await restored.dispose();
+    await first.dispose();
+  });
+
+  it('arms descriptor-free restores so an opaque invoke cannot reopen a child', async () => {
+    let hostStarts = 0;
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlaybook: async () => {
+        hostStarts += 1;
+        return { state: 'suspended', childSessionId: 'child-session-1' };
+      },
+    });
+    const session = makeSession(ports);
+    const first = createNestedRuntime({});
+    await first.init(session);
+    await first.handleBossInput(turn('do it'));
+    const snapshot = first.exportSnapshot?.();
+    if (
+      snapshot?.schemaVersion !== 2 ||
+      snapshot.suspendedCall === undefined
+    ) {
+      throw new Error('expected a schema-2 suspended-call snapshot');
+    }
+    const { suspendedCall: _suspendedCall, ...withoutCall } = snapshot;
+    const forgedLegacy = {
+      ...withoutCall,
+      schemaVersion: 1 as const,
+      state: {
+        ...snapshot.state,
+        tags: ['playbook.parked'],
+        quiescent: true,
+      },
+    };
+
+    const restored = createNestedRuntime({});
+    await expect(restored.restore?.(session, forgedLegacy)).rejects.toThrow();
+    expect(hostStarts).toBe(1);
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(({ type }) => type === 'playbook.call.started'),
+    ).toHaveLength(1);
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(({ type }) => type === 'playbook.call.finished'),
+    ).toEqual([]);
+
+    await restored.dispose();
+    await first.dispose();
+  });
+
+  it('round-trips the real CODE runtime while it is suspended behind REVIEW', async () => {
+    let playerCalls = 0;
+    let childStarts = 0;
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return {
+          status: 'ok',
+          finalText: 'Implemented and verified.\nCommit: abc123',
+        };
+      },
+      callJudge: async () =>
+        '{"guard":"directCommit","latestCommit":"abc123"}',
+      callPlaybook: async () => {
+        childStarts += 1;
+        return {
+          state: 'suspended',
+          childSessionId: 'review-suspended',
+        };
+      },
+    });
+    const session = { ...makeSession(ports), playbookId: 'code' };
+    const first = createCodePlaybookRuntime({});
+    await first.init(session);
+    const suspended = await first.handleBossInput(turn('Fix it.'));
+    expect(suspended.outcome).toBe('suspended');
+    const snapshot = first.exportSnapshot?.();
+    if (
+      snapshot?.schemaVersion !== 2 ||
+      snapshot.suspendedCall === undefined
+    ) {
+      throw new Error('expected CODE to export its suspended REVIEW call');
+    }
+
+    const restored = createCodePlaybookRuntime({});
+    await restored.restore?.(session, snapshot);
+    const immediate = restored.exportSnapshot?.();
+    expect(immediate).toMatchObject({
+      schemaVersion: 2,
+      state: snapshot.state,
+      sequences: snapshot.sequences,
+      suspendedCall: snapshot.suspendedCall,
+    });
+    expect(playerCalls).toBe(1);
+    expect(childStarts).toBe(1);
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(({ type }) => type === 'session.started'),
+    ).toHaveLength(1);
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(({ type }) => type === 'playbook.call.started'),
+    ).toHaveLength(1);
+
+    const resumed = await restored.resumePlaybookCall({
+      callId: snapshot.suspendedCall.callId,
+      result: {
+        status: 'ok',
+        playbookId: 'review',
+        childSessionId: snapshot.suspendedCall.childSessionId,
+        output: {
+          approvedCommit: 'latest',
+          noUnsettledFindings: true,
+        },
+      },
+      signal: new AbortController().signal,
+    });
+    expect(resumed.outcome).toBe('terminal');
+    const traces = telemetry.map(
+      ({ payload }) => payload as PlaybookTraceEvent,
+    );
+    const finishIndex = traces.findIndex(
+      ({ type }) => type === 'playbook.call.finished',
+    );
+    const parentTransitionIndex = traces.findIndex(
+      ({ type }, index) => index > finishIndex && type === 'fsm.transition',
+    );
+    expect(finishIndex).toBeGreaterThanOrEqual(0);
+    expect(parentTransitionIndex).toBeGreaterThan(finishIndex);
+    expect(traces[finishIndex]).toMatchObject({
+      callId: snapshot.suspendedCall.callId,
+      turnId: snapshot.suspendedCall.turnId,
+      sequence: snapshot.sequences.trace + 1,
+    });
+    expect(playerCalls).toBe(1);
+    expect(childStarts).toBe(1);
+
+    await restored.dispose();
+    await first.dispose();
+  });
+
   it('settles an immediately resolved child call without suspension', async () => {
     const { ports } = makeRecordingPorts({
       callPlaybook: async () => ({

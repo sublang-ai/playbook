@@ -1285,8 +1285,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // DR-029: the last event a public Boss boundary sent into the
         // machine — classified, deterministic entry, or Boss reply — kept with
         // its recorded payload so a failure-state retry action can replay the
-        // event that drove the run into `failed`. Process-local: the schema-1
-        // parked snapshot does not persist it (PBRT-50: no schema bump).
+        // event that drove the run into `failed`. Process-local: the durable
+        // runtime snapshot does not persist it (PBRT-50).
         let lastBossEvent;
         // DR-029: process-local at-most-once `apply` execution — the accepted receipt
         // recorded for each idempotency key, returned verbatim on a repeated
@@ -2424,18 +2424,42 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         initInFlight = undefined;
                 }
             },
-            // DR-014 §1 / PBRT-45: JSON-safe capture of a parked session.
+            // DR-014 §1 / DR-031 §5 / PBRT-45: JSON-safe capture of a parked
+            // session, including one already-started suspended nested call.
             // Defined only at a safe capture point — initialized, not disposing
-            // or disposed, no active public boundary, no pending nested call,
-            // and the actor quiescent with status `active`.
+            // or disposed, no active public boundary, and the actor quiescent with
+            // status `active`.
             exportSnapshot() {
                 if (!actor || !session || disposed || disposalPromise !== undefined) {
                     return undefined;
                 }
                 if (activeSignal !== undefined)
                     return undefined;
-                if (nestedBridge.getPendingCall())
+                const pendingCall = nestedBridge.getPendingCall();
+                const bridgeSuspendedCall = nestedBridge.getSuspendedCall();
+                if ((pendingCall === undefined) !== (bridgeSuspendedCall === undefined)) {
                     return undefined;
+                }
+                let suspendedCall;
+                if (bridgeSuspendedCall !== undefined) {
+                    if (pendingCall?.callId !== bridgeSuspendedCall.callId ||
+                        pendingCall?.playbookId !== bridgeSuspendedCall.playbookId ||
+                        pendingCall?.childSessionId !== bridgeSuspendedCall.childSessionId) {
+                        return undefined;
+                    }
+                    if (!playbookCallTurnIds.has(bridgeSuspendedCall.callId)) {
+                        return undefined;
+                    }
+                    const turnId = playbookCallTurnIds.get(bridgeSuspendedCall.callId);
+                    if (bridgeSuspendedCall.turnId !== undefined &&
+                        bridgeSuspendedCall.turnId !== turnId) {
+                        return undefined;
+                    }
+                    suspendedCall = {
+                        ...bridgeSuspendedCall,
+                        ...(turnId === undefined ? {} : { turnId }),
+                    };
+                }
                 const state = currentState();
                 if (state.status !== 'active' || !state.quiescent)
                     return undefined;
@@ -2444,7 +2468,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     .context;
                 const pending = pendingBossQuestionFromContext(context ?? {});
                 return {
-                    schemaVersion: 1,
+                    schemaVersion: 2,
                     playbookId: session.playbookId,
                     machine: machineSnapshot,
                     playerResumeTokens: snapshotPlayerResumeTokens(),
@@ -2469,6 +2493,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                                 sourceItem: pending.sourceItem,
                             },
                         ],
+                    ...(suspendedCall === undefined ? {} : { suspendedCall }),
                 };
             },
             // DR-014 §1 / PBRT-45: alternative to `init` that rehydrates an
@@ -2481,7 +2506,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     throw new Error('createPlaybookRuntime.restore: already initialized');
                 }
                 const boundSession = snapshotPlaybookSession(nextSession);
-                const boundSnapshot = assertPlaybookRuntimeSnapshot(snapshot, boundSession.playbookId);
+                const boundSnapshot = assertPlaybookRuntimeSnapshot(snapshot, boundSession.playbookId, { allowSuspendedCall: true });
+                const suspendedCall = boundSnapshot.schemaVersion === 2
+                    ? boundSnapshot.suspendedCall
+                    : undefined;
                 let priorExternalPlayerTokens;
                 let externalStoreRestoreAttempted = false;
                 initialized = true;
@@ -2505,26 +2533,48 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             // Every Captain call already consumed at least one trace number,
                             // so the global trace counter is a collision-safe id floor.
                             boundSnapshot.sequences.trace;
-                    // The schema-1 snapshot carries no apply counter (PBRT-50: no
-                    // schema bump); every apply boundary consumed trace numbers, so
-                    // the persisted trace counter is a collision-safe id floor here
-                    // too, keeping `apply-<n>` call ids unique across restore.
+                    // The runtime snapshot carries no apply counter (PBRT-50); every
+                    // apply boundary consumed trace numbers, so the persisted trace
+                    // counter is a collision-safe id floor here too, keeping
+                    // `apply-<n>` call ids unique across restore.
                     applyCallSequence = boundSnapshot.sequences.trace;
                     if (boundSession.playerSessions) {
                         priorExternalPlayerTokens = snapshotPlayerResumeTokens();
                         externalStoreRestoreAttempted = true;
                     }
                     restorePlayerResumeTokens(boundSnapshot.playerResumeTokens);
+                    nestedBridge.prepareRestore(suspendedCall);
+                    if (suspendedCall !== undefined) {
+                        playbookCallTurnIds.set(suspendedCall.callId, suspendedCall.turnId);
+                    }
                     suppressInspectionEmissions = true;
                     actor = buildActor(runtimePorts, boundSnapshot.machine);
                     actor.start();
-                    const restoredState = currentState();
+                    if (controlPlaneError !== undefined)
+                        throw controlPlaneError;
+                    const restoredState = normalizePlaybookSnapshot(actor.getSnapshot(), suspendedCall === undefined
+                        ? {}
+                        : {
+                            pendingCall: {
+                                callId: suspendedCall.callId,
+                                playbookId: suspendedCall.playbookId,
+                                childSessionId: suspendedCall.childSessionId,
+                            },
+                        });
                     if (restoredState.status !== 'active') {
                         throw new Error(`createPlaybookRuntime.restore: restored actor status is ${restoredState.status}, expected active`);
                     }
-                    suppressInspectionEmissions = false;
+                    if (stableJson(restoredState, 'restored runtime state') !==
+                        stableJson(boundSnapshot.state, 'runtime snapshot state')) {
+                        throw new Error('createPlaybookRuntime.restore: restored actor state does not match snapshot state');
+                    }
                     priorState = restoredState;
                     await drainEmissions();
+                    suppressInspectionEmissions = false;
+                    // Final fallible step: after this publication the authoritative
+                    // child has rejoined ordinary resume/abort ownership, so no later
+                    // restore validation may trigger failed-start rollback.
+                    nestedBridge.confirmRestore();
                 })();
                 try {
                     await initTask;
