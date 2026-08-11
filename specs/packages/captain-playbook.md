@@ -198,6 +198,15 @@ re-ask; it follows the continuity contract of
 Each call, initial or corrective, shall trace its own paired
 `captain.call.started` and `captain.call.finished` boundaries.
 
+### Cross-process Captain continuity
+
+#### captain-playbook-21
+
+Where the shell exports the complete logical session between Boss turns, the compiled default Captain shall be active and quiescent at its `playbook.parked` conversational hub and shall contribute a schema-version-2 runtime snapshot with playbook id `captain`, no player token, no pending Boss question, and no suspended nested call to the shell snapshot of [[playbook-captain-41](playbook-captain.md#playbook-captain-41)].
+Where a fresh shell built from equivalent options restores that snapshot, the shell shall reconstruct the compiled default Captain with the same immutable enabled-playbook catalog and controller, bind the saved Captain session id, restore its runtime through [[playbook-runtime-45](playbook-runtime.md#playbook-runtime-45)], and restore the exact durable-conversation state, recovery journal, and shell counters through [[playbook-captain-42](playbook-captain.md#playbook-captain-42)].
+Restore shall make no Captain model call, controller submission, reply, status, telemetry, transition, or lifecycle emission and shall not replay a decision, action, result phase, or presentation from a settled turn.
+When the next Boss turn reaches the restored default Captain, it shall continue the saved pinned conversation or perform the one owed recovery-history reseed, preserve every remembered Boss fact and established outcome, and process the turn through the same controller loop and next sequence ownership as the uninterrupted session ([[captain-playbook-3](#captain-playbook-3)], [[captain-playbook-9](#captain-playbook-9)]).
+
 ## Verification
 
 ### captain-playbook-11
@@ -274,3 +283,10 @@ reseed-seeded one
 The suite shall also fail unless (5) every result-phase prompt states
 the grounding instruction that the closing reply and turn summary
 compose only from the outcome-report facts (verifying [[captain-playbook-6](#captain-playbook-6)], [[captain-playbook-7](#captain-playbook-7)], [[captain-playbook-16](#captain-playbook-16)]).
+
+### Cross-process Captain continuity coverage
+
+#### captain-playbook-22
+
+Where the real compiled default Captain is hosted by the public shell, a chat turn establishes a remembered fact and a pinned conversation, and the shell snapshot is JSON-round-tripped into a fresh equivalent shell, when the next non-command Boss turn refers to that fact, the integration suite shall fail unless restore itself makes zero Captain calls, controller submissions, replies, statuses, telemetry events, or transitions; the next turn resumes the exact saved token, remembers the fact without restatement, continues the runtime and shell sequences, and settles once through the ordinary controller loop with no prior decision, result, action, or presentation replayed (verifying [[captain-playbook-21](#captain-playbook-21)]).
+Where a separate captured chat session requires reseeding after an uncertain presentation, when that snapshot is restored and the next Boss turn runs, the integration suite shall fail unless the Captain starts a fresh conversation seeded once from the complete saved recovery history, remembers the failed turn and attempted reply, and subsequently pins the newly returned token (verifying [[captain-playbook-21](#captain-playbook-21)]).

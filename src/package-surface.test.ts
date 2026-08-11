@@ -1020,6 +1020,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'CreatePlaybookRuntimeOptions',
       'PlaybookCaptainDeps',
       'PlaybookCaptainRegistryEntry',
+      'PlaybookCaptainShell',
+      'PlaybookCaptainShellSnapshot',
       'createPlaybookCaptainShell',
       'default',
     ],

@@ -608,7 +608,7 @@ After actor startup, `restore` shall normalize the actual actor state using the 
 whose restored actor is not `active`, a persisted/actual state mismatch, an unclaimed or mismatched suspended call, an opaque nested invocation without a descriptor, and reuse of an initialized,
 disposing, or disposed runtime, following the same failed-start cleanup
 as `init` so provisional nested ownership rolls back without a duplicate start or finish and `dispose` remains callable.
-The compiled default Captain runtime shall expose the shared factory's snapshot methods, while the interactive shell shall neither persist nor restore Captain snapshots ([DR-014](../decisions/014-durable-one-shot-run-sessions.md) §5).
+The compiled default Captain runtime shall expose the shared factory's snapshot methods, while the Playbook Captain shell shall embed and restore that runtime snapshot only as part of its complete logical-session snapshot ([[playbook-captain-41](playbook-captain.md#playbook-captain-41)], [[playbook-captain-42](playbook-captain.md#playbook-captain-42)], [DR-031](../decisions/031-shared-captain-session-front-ends.md)).
 
 ### Control surface
 
@@ -1143,7 +1143,7 @@ active turn and after disposal; unless `restore` rejects a
 schema-version mismatch, a playbook-id mismatch, and an already
 initialized instance; and unless the DECIDE linked runtime round-trips
 a parked branch question through the same export/restore surface (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
-The suite shall also fail unless the compiled default Captain exposes both snapshot methods while its shell performs no Captain snapshot persistence (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
+The suite shall also fail unless the compiled default Captain exposes both snapshot methods and the real Playbook Captain shell embeds its exported runtime snapshot in, and restores it from, one complete shell snapshot without calling `init` on the restored runtime (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 
 #### playbook-runtime-59
 

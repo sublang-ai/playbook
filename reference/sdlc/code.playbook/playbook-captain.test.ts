@@ -20,6 +20,7 @@ import type {
   PlaybookPorts,
   PlaybookRunResult,
   PlaybookRuntime,
+  PlaybookRuntimeSnapshot,
   PlaybookSession,
   PlaybookState,
 } from '../../../src/runtime.js';
@@ -27,6 +28,7 @@ import {
   createPlaybookCaptainShell,
   type PlaybookCaptainDeps,
   type PlaybookCaptainRegistryEntry,
+  type PlaybookCaptainShellSnapshot,
 } from './playbook-captain.js';
 import { codeSavedCountsLine } from './code.registry.js';
 
@@ -95,6 +97,11 @@ type InitHook = (
   runtime: FakeRuntime,
   session: PlaybookSession,
 ) => Promise<void>;
+type RestoreHook = (
+  runtime: FakeRuntime,
+  session: PlaybookSession,
+  snapshot: PlaybookRuntimeSnapshot,
+) => Promise<void>;
 
 class FakeRuntime implements PlaybookRuntime {
   ports: PlaybookPorts | undefined;
@@ -106,13 +113,16 @@ class FakeRuntime implements PlaybookRuntime {
     signal: AbortSignal;
   }[] = [];
   initCount = 0;
+  restoreCount = 0;
   disposeCount = 0;
+  snapshot: PlaybookRuntimeSnapshot | undefined;
 
   constructor(
     private readonly handleHook?: HandleHook,
     private readonly disposeHook?: DisposeHook,
     private readonly initHook?: InitHook,
     private readonly resumeHook?: ResumeHook,
+    private readonly restoreHook?: RestoreHook,
   ) {}
 
   async init(session: PlaybookSession): Promise<void> {
@@ -128,6 +138,22 @@ class FakeRuntime implements PlaybookRuntime {
   }): Promise<PlaybookRunResult> {
     this.inputs.push(turn);
     return (await this.handleHook?.(this, turn)) ?? quiescentResult();
+  }
+
+  exportSnapshot(): PlaybookRuntimeSnapshot | undefined {
+    return this.snapshot;
+  }
+
+  async restore(
+    session: PlaybookSession,
+    snapshot: PlaybookRuntimeSnapshot,
+  ): Promise<void> {
+    this.session = session;
+    this.ports = session.ports;
+    this.restoreCount += 1;
+    this.snapshot = snapshot;
+    session.playerSessions?.restore(snapshot.playerResumeTokens);
+    await this.restoreHook?.(this, session, snapshot);
   }
 
   async resumePlaybookCall(input: {
@@ -194,6 +220,37 @@ function suspendedResult(input: {
       quiescent: true,
     }),
     pendingCall: input,
+  };
+}
+
+function runtimeSnapshot(
+  playbookId: string,
+  state: PlaybookState,
+  options: {
+    turn?: number;
+    playerResumeTokens?: Readonly<Record<string, string>>;
+    pendingBossQuestions?: PlaybookRuntimeSnapshot['pendingBossQuestions'];
+    suspendedCall?: NonNullable<PlaybookRuntimeSnapshot['suspendedCall']>;
+  } = {},
+): PlaybookRuntimeSnapshot {
+  return {
+    schemaVersion: 2,
+    playbookId,
+    machine: { value: state.value, status: state.status },
+    playerResumeTokens: options.playerResumeTokens ?? {},
+    sequences: {
+      trace: 0,
+      turn: options.turn ?? 0,
+      judgeCall: 0,
+      playerCall: 0,
+      playbookCall: options.suspendedCall === undefined ? 0 : 1,
+      captainCall: 0,
+    },
+    state,
+    pendingBossQuestions: options.pendingBossQuestions ?? [],
+    ...(options.suspendedCall === undefined
+      ? {}
+      : { suspendedCall: options.suspendedCall }),
   };
 }
 
@@ -386,6 +443,7 @@ function fakeCodeEntry(
   disposeHook?: DisposeHook,
   initHook?: InitHook,
   resumeHook?: ResumeHook,
+  restoreHook?: RestoreHook,
 ): {
   entry: PlaybookCaptainRegistryEntry;
   validateOptions: ReturnType<typeof vi.fn>;
@@ -400,6 +458,7 @@ function fakeCodeEntry(
       disposeHook,
       initHook,
       resumeHook,
+      restoreHook,
     );
     runtimes.push(runtime);
     return runtime;
@@ -435,8 +494,15 @@ function fakePlaybookEntry(
   disposeHook?: DisposeHook,
   initHook?: InitHook,
   resumeHook?: ResumeHook,
+  restoreHook?: RestoreHook,
 ): ReturnType<typeof fakeCodeEntry> {
-  const registry = fakeCodeEntry(handleHook, disposeHook, initHook, resumeHook);
+  const registry = fakeCodeEntry(
+    handleHook,
+    disposeHook,
+    initHook,
+    resumeHook,
+    restoreHook,
+  );
   registry.entry.id = id;
   registry.entry.command = command;
   registry.entry.intent = `${id} playbook`;
@@ -452,6 +518,7 @@ function fakeSessionCaptain(
   handleHook?: HandleHook,
   resumeHook?: ResumeHook,
   disposeHook?: DisposeHook,
+  restoreHook?: RestoreHook,
 ) {
   const runtimes: FakeRuntime[] = [];
   const ports: {
@@ -495,6 +562,7 @@ function fakeSessionCaptain(
         disposeHook,
         undefined,
         resumeHook,
+        restoreHook,
       );
       runtimes.push(runtime);
       return runtime;
@@ -3749,6 +3817,1252 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
       'call docs',
       'continue root',
     ]);
+  });
+});
+
+describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () => {
+  const ROOT_ID = '30000000-0000-4000-8000-000000000001';
+  const CHILD_ID = '30000000-0000-4000-8000-000000000002';
+  const roster: CaptainSession['players'] = [
+    { id: 'code-coder', adapter: 'claude' },
+    { id: 'code-reviewer', adapter: 'codex' },
+    { id: 'review-coder', adapter: 'claude' },
+    { id: 'review-reviewer', adapter: 'codex' },
+  ];
+
+  const nestedSnapshotFixture = async (): Promise<PlaybookCaptainShellSnapshot> => {
+    const source = makeShell([fakeCodeEntry(), fakePlaybookEntry('review', 'review')]);
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(
+      turn('hello'),
+      stubContext([
+        captainJson({ action: 'respond', text: 'Ready.' }),
+      ]).context,
+    );
+    const chat = source.exportSnapshot()!;
+    await source.dispose?.();
+    const waiting = playbookState('waitingForReview', {
+      tags: ['playbook.suspended'],
+    });
+    return {
+      ...chat,
+      mode: 'engaged.parked',
+      issuedSessionIds: [SESSION_CAPTAIN_ID, ROOT_ID, CHILD_ID],
+      frames: [
+        {
+          playbookId: 'code',
+          sessionId: ROOT_ID,
+          rootSessionId: ROOT_ID,
+          depth: 0,
+          runtime: runtimeSnapshot('code', waiting, {
+            turn: 1,
+            playerResumeTokens: { reviewer: 'shared-token' },
+            suspendedCall: {
+              callId: 'code:review:1',
+              stateId: 'waitingForReview',
+              playbookId: 'review',
+              text: 'review this',
+              childSessionId: CHILD_ID,
+              turnId: 1,
+            },
+          }),
+        },
+        {
+          playbookId: 'review',
+          sessionId: CHILD_ID,
+          rootSessionId: ROOT_ID,
+          depth: 1,
+          parentSessionId: ROOT_ID,
+          parentCallId: 'code:review:1',
+          runtime: runtimeSnapshot('review', playbookState('ready'), {
+            turn: 1,
+            playerResumeTokens: { reviewer: 'shared-token' },
+          }),
+        },
+      ],
+      rootPlayerResumeTokens: {
+        'code-reviewer': 'shared-token',
+        // A valid configured binding retained from an already returned child.
+        'review-reviewer': 'historical-child-token',
+      },
+    };
+  };
+
+  it('round-trips chat history and resumes the pinned Captain conversation without restore work', async () => {
+    const source = makeShell(fakeCodeEntry());
+    const sourceSession = stubSession(roster);
+    const first = stubContext([
+      captainJson({ action: 'respond', text: 'Hello — ready when you are.' }),
+    ]);
+    await source.init!(sourceSession.session);
+    const unopenedSnapshot = source.exportSnapshot()!;
+    expect(unopenedSnapshot).toMatchObject({
+      schemaVersion: 1,
+      mode: 'chat',
+      captain: {
+        sessionId: SESSION_CAPTAIN_ID,
+        conversation: { kind: 'unopened' },
+        runtime: { schemaVersion: 2, sequences: { turn: 0 } },
+      },
+      issuedSessionIds: [SESSION_CAPTAIN_ID],
+      sequences: { turn: 0, journal: 0 },
+      journal: [],
+    });
+    const unopenedRestored = makeShell(fakeCodeEntry());
+    const unopenedHost = stubSession(roster);
+    await unopenedRestored.restore(
+      unopenedHost.session,
+      JSON.parse(
+        JSON.stringify(unopenedSnapshot),
+      ) as PlaybookCaptainShellSnapshot,
+    );
+    expect(unopenedHost.statuses).toEqual([]);
+    expect(unopenedHost.telemetry).toEqual([]);
+    const firstAfterRestore = stubContext([
+      captainJson({ action: 'respond', text: 'First restored reply.' }),
+    ]);
+    await unopenedRestored.handleBossTurn(
+      turn('first restored turn'),
+      firstAfterRestore.context,
+    );
+    expect(firstAfterRestore.captainCalls[0]?.options?.resume).toBe(false);
+    expect(firstAfterRestore.replies).toEqual(['First restored reply.']);
+    expect(unopenedRestored.exportSnapshot()).toMatchObject({
+      sequences: { turn: 1 },
+      captain: {
+        conversation: { kind: 'pinned' },
+        runtime: { sequences: { turn: 1 } },
+      },
+    });
+    await unopenedRestored.dispose?.();
+    await source.handleBossTurn(turn('hello'), first.context);
+
+    const snapshot = source.exportSnapshot();
+    expect(snapshot).toMatchObject({
+      schemaVersion: 1,
+      mode: 'chat',
+      captain: {
+        conversation: { kind: 'pinned', token: 'conversation-1' },
+        runtime: {
+          schemaVersion: 2,
+          sequences: { turn: 1 },
+          state: { tags: expect.arrayContaining(['playbook.parked']) },
+        },
+      },
+      sequences: { turn: 1 },
+    });
+    expect(snapshot && 'frames' in snapshot).toBe(false);
+    expect(snapshot?.issuedSessionIds).toEqual([SESSION_CAPTAIN_ID]);
+
+    const restored = makeShell(fakeCodeEntry());
+    const restoredSession = stubSession(roster);
+    await restored.restore(
+      restoredSession.session,
+      JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
+    );
+    expect(restoredSession.statuses).toEqual([]);
+    expect(restoredSession.telemetry).toEqual([]);
+    expect(restored.exportSnapshot()).toEqual(snapshot);
+    await expect(
+      restored.restore(stubSession(roster).session, snapshot!),
+    ).rejects.toThrow(/fresh shell/);
+    await expect(restored.init!(stubSession(roster).session)).rejects.toThrow(
+      /fresh instance/,
+    );
+
+    const next = stubContext([
+      captainJson({ action: 'respond', text: 'Still with you.' }),
+    ]);
+    await restored.handleBossTurn(turn('and now?', 2), next.context);
+    expect(next.captainCalls[0]?.options?.resume).toBe('conversation-1');
+    expect(next.replies).toEqual(['Still with you.']);
+    expect(restored.exportSnapshot()).toMatchObject({
+      sequences: { turn: 2 },
+      captain: { runtime: { sequences: { turn: 2 } } },
+    });
+
+    await source.dispose?.();
+    await restored.dispose?.();
+  });
+
+  it('restores needsSeeding chat through the journal recap rather than a stale token', async () => {
+    const source = makeShell(fakeCodeEntry());
+    await source.init!(stubSession(roster).session);
+    const failedPresentation = stubContext([
+      captainJson({ action: 'respond', text: 'Remembered.' }),
+    ]);
+    failedPresentation.context.emitReply = async () => {
+      throw new Error('presentation boundary failed');
+    };
+    await expect(
+      source.handleBossTurn(turn('remember this'), failedPresentation.context),
+    ).rejects.toThrow(/presentation boundary failed/);
+    const snapshot = source.exportSnapshot()!;
+    expect(snapshot).toMatchObject({
+      mode: 'chat',
+      captain: {
+        conversation: { kind: 'needsSeeding' },
+        runtime: { schemaVersion: 2, sequences: { turn: 1 } },
+      },
+      sequences: { turn: 1 },
+    });
+    const restored = makeShell(fakeCodeEntry());
+    const restoredSession = stubSession(roster);
+    await restored.restore(
+      restoredSession.session,
+      JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
+    );
+    expect(restoredSession.statuses).toEqual([]);
+    expect(restoredSession.telemetry).toEqual([]);
+
+    const next = stubContext([
+      captainJson({ action: 'respond', text: 'I remember.' }),
+    ]);
+    await restored.handleBossTurn(turn('what did I say?', 2), next.context);
+    expect(next.captainCalls[0]?.options?.resume).toBe(false);
+    expect(next.captainCalls[0]?.prompt).toContain('Conversation recap');
+    expect(next.captainCalls[0]?.prompt).toContain('remember this');
+    expect(restored.exportSnapshot()).toMatchObject({
+      sequences: { turn: 2 },
+      captain: { runtime: { sequences: { turn: 2 } } },
+    });
+
+    await source.dispose?.();
+    await restored.dispose?.();
+  });
+
+  it('restores one parked root with its root-owned player continuation', async () => {
+    const pendingQuestion = {
+      questionId: 'q-1',
+      player: 'coder',
+      question: 'Which target?',
+    };
+    const sourceCode = fakeCodeEntry(async (runtime) => {
+      runtime.session?.playerSessions?.update('coder', 'coder-root-token');
+      await runtime.ports?.emitTelemetry(
+        stateTelemetry('ready', {
+          pendingBossQuestions: [pendingQuestion],
+          lastError: { name: 'TargetError', message: 'target missing' },
+        }),
+      );
+      return quiescentResult('ready');
+    });
+    const source = makeShell(sourceCode, { sessionIds: [ROOT_ID] });
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(
+      turn('/code implement it'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Implementation is parked.' },
+      ]).context,
+    );
+    const runtimeOwnedSnapshot = runtimeSnapshot(
+      'code',
+      playbookState('ready'),
+      {
+        turn: 1,
+        playerResumeTokens: { coder: 'coder-root-token' },
+        pendingBossQuestions: [pendingQuestion],
+      },
+    );
+    sourceCode.runtimes[0]!.snapshot = runtimeOwnedSnapshot;
+    const snapshot = source.exportSnapshot();
+    expect(snapshot).toMatchObject({
+      mode: 'engaged.parked',
+      rootPlayerResumeTokens: { 'code-coder': 'coder-root-token' },
+      pendingBossQuestions: [pendingQuestion],
+      lastError: { name: 'TargetError', message: 'target missing' },
+      frames: [{ playbookId: 'code', sessionId: ROOT_ID, depth: 0 }],
+    });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot?.captain)).toBe(true);
+    expect(
+      snapshot?.mode === 'engaged.parked' &&
+        Object.isFrozen(snapshot.frames[0]?.runtime),
+    ).toBe(true);
+    (
+      runtimeOwnedSnapshot.playerResumeTokens as Record<string, string>
+    ).coder = 'mutated-after-export';
+    expect(snapshot).toMatchObject({
+      frames: [
+        { runtime: { playerResumeTokens: { coder: 'coder-root-token' } } },
+      ],
+    });
+
+    let restoredToken: string | false | undefined;
+    const targetCode = fakeCodeEntry(async (runtime) => {
+      restoredToken = runtime.session?.playerSessions?.select('coder');
+      return quiescentResult('ready');
+    });
+    const target = makeShell(targetCode);
+    const targetSession = stubSession(roster);
+    await target.restore(
+      targetSession.session,
+      JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
+    );
+    expect(targetSession.statuses).toEqual([]);
+    expect(targetSession.telemetry).toEqual([]);
+    expect(targetCode.runtimes[0]?.restoreCount).toBe(1);
+    expect(target.exportSnapshot()).toEqual(snapshot);
+
+    await target.handleBossTurn(
+      turn('/code continue', 2),
+      stubContext([
+        { status: 'ok', turnId: 2, finalText: 'Continued.' },
+      ]).context,
+    );
+    expect(restoredToken).toBe('coder-root-token');
+
+    await source.dispose?.();
+    await target.dispose?.();
+  });
+
+  it('restores a nested parked edge with shared tokens and resumes its original parent once', async () => {
+    const callId = 'code:review:1';
+    const waiting = playbookState('waitingForReview', {
+      tags: ['playbook.suspended'],
+    });
+    const sourceCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const start = await runtime.ports!.callPlaybook(
+        { callId, playbookId: 'review', text: 'review this' },
+        runtimeTurn.signal,
+      );
+      if (start.state !== 'suspended') throw new Error('review must park');
+      return {
+        outcome: 'suspended',
+        state: waiting,
+        pendingCall: {
+          callId,
+          playbookId: 'review',
+          childSessionId: start.childSessionId,
+        },
+      };
+    });
+    const sourceReview = fakePlaybookEntry(
+      'review',
+      'review',
+      async (runtime) => {
+        runtime.session?.playerSessions?.update(
+          'reviewer',
+          'shared-reviewer-token',
+        );
+        return quiescentResult('ready');
+      },
+    );
+    const source = makeShell([sourceCode, sourceReview], {
+      sessionIds: [ROOT_ID, CHILD_ID],
+    });
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(
+      turn('/code inspect it'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Review is waiting.' },
+      ]).context,
+    );
+    const projected = { reviewer: 'shared-reviewer-token' };
+    sourceCode.runtimes[0]!.snapshot = runtimeSnapshot('code', waiting, {
+      turn: 1,
+      playerResumeTokens: projected,
+      suspendedCall: {
+        callId,
+        stateId: 'waitingForReview',
+        playbookId: 'review',
+        text: 'review this',
+        childSessionId: CHILD_ID,
+        turnId: 1,
+      },
+    });
+    sourceReview.runtimes[0]!.snapshot = runtimeSnapshot(
+      'review',
+      playbookState('ready'),
+      { turn: 1, playerResumeTokens: projected },
+    );
+    const snapshot = source.exportSnapshot();
+    expect(snapshot).toMatchObject({
+      mode: 'engaged.parked',
+      rootPlayerResumeTokens: {
+        'code-reviewer': 'shared-reviewer-token',
+      },
+      frames: [
+        {
+          playbookId: 'code',
+          runtime: { suspendedCall: { callId, childSessionId: CHILD_ID } },
+        },
+        {
+          playbookId: 'review',
+          sessionId: CHILD_ID,
+          parentSessionId: ROOT_ID,
+          parentCallId: callId,
+        },
+      ],
+    });
+
+    const targetCode = fakeCodeEntry(
+      undefined,
+      undefined,
+      undefined,
+      async () => quiescentResult('readyAfterReview'),
+    );
+    const targetReview = fakePlaybookEntry(
+      'review',
+      'review',
+      async () => terminalResult('done', { approved: true }),
+    );
+    const target = makeShell([targetCode, targetReview]);
+    const targetSession = stubSession(roster);
+    await target.restore(
+      targetSession.session,
+      JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
+    );
+    expect(targetSession.statuses).toEqual([]);
+    expect(targetSession.telemetry).toEqual([]);
+    expect(targetCode.runtimes[0]?.restoreCount).toBe(1);
+    expect(targetReview.runtimes[0]?.restoreCount).toBe(1);
+
+    await target.handleBossTurn(
+      turn('/review finish', 2),
+      stubContext([
+        { status: 'ok', turnId: 2, finalText: 'Review returned.' },
+      ]).context,
+    );
+    expect(targetReview.runtimes[0]?.inputs).toHaveLength(1);
+    expect(targetCode.runtimes[0]?.resumes).toHaveLength(1);
+    expect(targetCode.runtimes[0]?.resumes[0]?.callId).toBe(callId);
+    expect(
+      targetCode.runtimes[0]?.session?.playerSessions?.select('reviewer'),
+    ).toBe('shared-reviewer-token');
+
+    const teardownOrder: string[] = [];
+    const teardownCode = fakeCodeEntry(
+      undefined,
+      async () => {
+        teardownOrder.push('code');
+      },
+    );
+    const teardownReview = fakePlaybookEntry(
+      'review',
+      'review',
+      undefined,
+      async () => {
+        teardownOrder.push('review');
+      },
+    );
+    const teardown = makeShell([teardownCode, teardownReview]);
+    await teardown.restore(
+      stubSession(roster).session,
+      JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
+    );
+    await teardown.dispose?.();
+    expect(teardownOrder).toEqual(['review', 'code']);
+    expect(teardownCode.runtimes[0]?.resumes).toEqual([]);
+
+    await source.dispose?.();
+    await target.dispose?.();
+  });
+
+  it('rejects malformed topology before construction and returns to fresh after clean gated failure', async () => {
+    const sourceCode = fakeCodeEntry(async () => quiescentResult('ready'));
+    const source = makeShell(sourceCode, { sessionIds: [ROOT_ID] });
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(
+      turn('/code work'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Parked.' },
+      ]).context,
+    );
+    sourceCode.runtimes[0]!.snapshot = runtimeSnapshot(
+      'code',
+      playbookState('ready'),
+      { turn: 1 },
+    );
+    const valid = source.exportSnapshot()!;
+    if (valid.mode !== 'engaged.parked') throw new Error('expected frame');
+    const malformed = JSON.parse(JSON.stringify(valid));
+    malformed.frames[0].sessionId = SESSION_CAPTAIN_ID;
+
+    let emitOnFirstRestore = true;
+    const targetCode = fakeCodeEntry(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      async (_runtime, session) => {
+        if (!emitOnFirstRestore) return;
+        emitOnFirstRestore = false;
+        const signal = new AbortController().signal;
+        const calls = [
+          () =>
+            session.ports.callPlayer(
+              'coder',
+              'must not reach a player',
+              signal,
+              { resume: false },
+            ),
+          () =>
+            session.ports.callCaptain('must not reach Captain', signal, {
+              visibility: 'hidden',
+              resume: false,
+            }),
+          () => session.ports.callJudge('must not reach a judge', signal),
+          () =>
+            session.ports.callPlaybook(
+              { callId: 'forbidden', playbookId: 'review', text: 'no' },
+              signal,
+            ),
+        ];
+        for (const call of calls) {
+          try {
+            await call();
+          } catch {
+            // A malicious runtime may swallow a gated call rejection; the
+            // shell's attempt latch must still reject the restore.
+          }
+        }
+        await session.ports.emitStatus('must stay gated');
+      },
+    );
+    const target = makeShell(targetCode);
+    const rejectedSession = stubSession(roster);
+    await expect(
+      target.restore(rejectedSession.session, malformed),
+    ).rejects.toThrow(/session ids must be unique/);
+    expect(targetCode.createRuntime).not.toHaveBeenCalled();
+    expect(rejectedSession.statuses).toEqual([]);
+    expect(rejectedSession.telemetry).toEqual([]);
+
+    const mismatchedTokens = JSON.parse(JSON.stringify(valid));
+    mismatchedTokens.frames[0].runtime.playerResumeTokens = {
+      coder: 'not-in-the-root-map',
+    };
+    await expect(
+      target.restore(stubSession(roster).session, mismatchedTokens),
+    ).rejects.toThrow(/player tokens do not match root-owned continuation/);
+    expect(targetCode.createRuntime).not.toHaveBeenCalled();
+
+    const gatedSession = stubSession(roster);
+    await expect(target.restore(gatedSession.session, valid)).rejects.toThrow(
+      /attempted a host emission during restore/,
+    );
+    expect(gatedSession.statuses).toEqual([]);
+    expect(gatedSession.telemetry).toEqual([]);
+    expect(targetCode.runtimes[0]?.disposeCount).toBe(1);
+
+    const successfulSession = stubSession(roster);
+    await target.restore(successfulSession.session, valid);
+    expect(successfulSession.statuses).toEqual([]);
+    expect(successfulSession.telemetry).toEqual([]);
+
+    await source.dispose?.();
+    await target.dispose?.();
+  });
+
+  it('cleans Captain, root, and later-child restore failures in strict leaf-to-root order', async () => {
+    const snapshot = await nestedSnapshotFixture();
+    for (const failing of ['root', 'child'] as const) {
+      const events: string[] = [];
+      const code = fakeCodeEntry(
+        undefined,
+        async () => {
+          events.push('dispose:code');
+        },
+        undefined,
+        undefined,
+        async () => {
+          events.push('restore:code');
+          if (failing === 'root') throw new Error('root restore failed');
+        },
+      );
+      const review = fakePlaybookEntry(
+        'review',
+        'review',
+        undefined,
+        async () => {
+          events.push('dispose:review');
+        },
+        undefined,
+        undefined,
+        async () => {
+          events.push('restore:review');
+          if (failing === 'child') throw new Error('child restore failed');
+        },
+      );
+      const captain = fakeSessionCaptain(
+        undefined,
+        undefined,
+        async () => {
+          events.push('dispose:captain');
+        },
+        async () => {
+          events.push('restore:captain');
+        },
+      );
+      const shell = makeShell([code, review], {
+        createCaptainRuntime: captain.createCaptainRuntime,
+      });
+      const host = stubSession(roster);
+      await expect(shell.restore(host.session, snapshot)).rejects.toThrow(
+        new RegExp(`${failing} restore failed`),
+      );
+      expect(events).toEqual([
+        'restore:captain',
+        'restore:code',
+        ...(failing === 'child' ? ['restore:review'] : []),
+        'dispose:review',
+        'dispose:code',
+        'dispose:captain',
+      ]);
+      expect(host.statuses).toEqual([]);
+      expect(host.telemetry).toEqual([]);
+    }
+  });
+
+  it('rejects post-restore Captain state, frame state, and token drift before opening the gate', async () => {
+    const snapshot = await nestedSnapshotFixture();
+    for (const drift of ['captain-state', 'root-state', 'child-token'] as const) {
+      const code = fakeCodeEntry(
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        async (runtime, _session, restored) => {
+          if (drift !== 'root-state') return;
+          runtime.snapshot = {
+            ...restored,
+            state: {
+              ...restored.state,
+              tags: [...restored.state.tags, 'mutated-after-restore'],
+            },
+          };
+        },
+      );
+      const review = fakePlaybookEntry(
+        'review',
+        'review',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        async (runtime, _session, restored) => {
+          if (drift !== 'child-token') return;
+          runtime.snapshot = {
+            ...restored,
+            playerResumeTokens: { reviewer: 'mutated-after-restore' },
+          };
+        },
+      );
+      const captain = fakeSessionCaptain(
+        undefined,
+        undefined,
+        undefined,
+        async (runtime, _session, restored) => {
+          if (drift !== 'captain-state') return;
+          runtime.snapshot = {
+            ...restored,
+            state: {
+              ...restored.state,
+              tags: [...restored.state.tags, 'mutated-after-restore'],
+            },
+          };
+        },
+      );
+      const shell = makeShell([code, review], {
+        createCaptainRuntime: captain.createCaptainRuntime,
+      });
+      const host = stubSession(roster);
+      await expect(shell.restore(host.session, snapshot)).rejects.toThrow(
+        /changed snapshot field/,
+      );
+      expect(host.statuses).toEqual([]);
+      expect(host.telemetry).toEqual([]);
+      expect(code.runtimes[0]?.disposeCount).toBe(1);
+      expect(review.runtimes[0]?.disposeCount).toBe(1);
+      expect(captain.runtimes[0]?.disposeCount).toBe(1);
+    }
+  });
+
+  it('rejects the complete schema, identity, topology, and token mutation matrix before runtime construction', async () => {
+    const base = await nestedSnapshotFixture();
+    const clone = (): any => JSON.parse(JSON.stringify(base));
+    const mutations: readonly [string, () => unknown][] = [
+      ['schema version', () => Object.assign(clone(), { schemaVersion: 9 })],
+      ['unknown field', () => Object.assign(clone(), { ledger: {} })],
+      ['chat with engagement members', () => Object.assign(clone(), { mode: 'chat' })],
+      ['conversation/history mismatch', () => {
+        const value = clone();
+        value.captain.conversation = { kind: 'unopened' };
+        return value;
+      }],
+      ['journal sequence gap', () => {
+        const value = clone();
+        value.journal[0].seq = 2;
+        return value;
+      }],
+      ['journal turn gap', () => {
+        const value = clone();
+        value.journal[0].turnId = 2;
+        return value;
+      }],
+      ['journal counter mismatch', () => {
+        const value = clone();
+        value.sequences.journal++;
+        return value;
+      }],
+      ['Captain turn mismatch', () => {
+        const value = clone();
+        value.captain.runtime.sequences.turn++;
+        return value;
+      }],
+      ['Captain schema downgrade', () => {
+        const value = clone();
+        value.captain.runtime.schemaVersion = 1;
+        return value;
+      }],
+      ['Captain player token', () => {
+        const value = clone();
+        value.captain.runtime.playerResumeTokens = { captain: 'token' };
+        return value;
+      }],
+      ['duplicate issued UUID', () => {
+        const value = clone();
+        value.issuedSessionIds.push(ROOT_ID);
+        return value;
+      }],
+      ['Captain UUID reused by root', () => {
+        const value = clone();
+        value.frames[0].sessionId = SESSION_CAPTAIN_ID;
+        value.frames[0].rootSessionId = SESSION_CAPTAIN_ID;
+        value.frames[1].rootSessionId = SESSION_CAPTAIN_ID;
+        value.frames[1].parentSessionId = SESSION_CAPTAIN_ID;
+        return value;
+      }],
+      ['live UUID absent from issued set', () => {
+        const value = clone();
+        value.issuedSessionIds = value.issuedSessionIds.filter(
+          (id: string) => id !== CHILD_ID,
+        );
+        return value;
+      }],
+      ['disabled frame playbook', () => {
+        const value = clone();
+        value.frames[1].playbookId = 'missing';
+        value.frames[1].runtime.playbookId = 'missing';
+        value.frames[0].runtime.suspendedCall.playbookId = 'missing';
+        return value;
+      }],
+      ['runtime/playbook mismatch', () => {
+        const value = clone();
+        value.frames[0].runtime.playbookId = 'review';
+        return value;
+      }],
+      ['frame depth gap', () => {
+        const value = clone();
+        value.frames[1].depth = 2;
+        return value;
+      }],
+      ['parent session mismatch', () => {
+        const value = clone();
+        value.frames[1].parentSessionId = CHILD_ID;
+        return value;
+      }],
+      ['parent call mismatch', () => {
+        const value = clone();
+        value.frames[1].parentCallId = 'other-call';
+        return value;
+      }],
+      ['descriptor child mismatch', () => {
+        const value = clone();
+        value.frames[0].runtime.suspendedCall.childSessionId = ROOT_ID;
+        return value;
+      }],
+      ['non-leaf descriptor removed', () => {
+        const value = clone();
+        delete value.frames[0].runtime.suspendedCall;
+        value.frames[0].runtime.state.tags = ['playbook.parked'];
+        return value;
+      }],
+      ['dangling leaf descriptor', () => {
+        const value = clone();
+        value.frames[1].runtime.state = playbookState('waitingForChild', {
+          tags: ['playbook.suspended'],
+        });
+        value.frames[1].runtime.sequences.playbookCall = 1;
+        value.frames[1].runtime.suspendedCall = {
+          callId: 'review:child:1',
+          stateId: 'waitingForChild',
+          playbookId: 'code',
+          text: 'nested again',
+          childSessionId: '30000000-0000-4000-8000-000000000003',
+          turnId: 1,
+        };
+        return value;
+      }],
+      ['leaf not parked', () => {
+        const value = clone();
+        value.frames[1].runtime.state.tags = [];
+        return value;
+      }],
+      ['unknown root token binding', () => {
+        const value = clone();
+        value.rootPlayerResumeTokens['missing-player'] = 'token';
+        return value;
+      }],
+      ['live token projection mismatch', () => {
+        const value = clone();
+        value.frames[1].runtime.playerResumeTokens.reviewer = 'other-token';
+        return value;
+      }],
+      ['undefined value', () => {
+        const value = clone();
+        value.lastAction = undefined;
+        return value;
+      }],
+      ['non-finite number', () => {
+        const value = clone();
+        value.sequences.turn = Number.NaN;
+        return value;
+      }],
+      ['sparse array', () => {
+        const value = clone();
+        delete value.issuedSessionIds[1];
+        return value;
+      }],
+      ['accessor', () => {
+        const value = clone();
+        Object.defineProperty(value, 'lastAction', {
+          enumerable: true,
+          get: () => 'respond',
+        });
+        return value;
+      }],
+      ['cycle', () => {
+        const value = clone();
+        value.journal[0].payload = value;
+        return value;
+      }],
+      ['non-plain instance', () => Object.assign(new Date(), clone())],
+    ];
+
+    for (const [name, makeCandidate] of mutations) {
+      const code = fakeCodeEntry();
+      const review = fakePlaybookEntry('review', 'review');
+      const captain = fakeSessionCaptain();
+      const shell = makeShell([code, review], {
+        createCaptainRuntime: captain.createCaptainRuntime,
+      });
+      await expect(
+        shell.restore(
+          stubSession(roster).session,
+          makeCandidate() as PlaybookCaptainShellSnapshot,
+        ),
+        name,
+      ).rejects.toBeDefined();
+      expect(captain.createCaptainRuntime, name).not.toHaveBeenCalled();
+      expect(code.createRuntime, name).not.toHaveBeenCalled();
+      expect(review.createRuntime, name).not.toHaveBeenCalled();
+    }
+
+    // A configured token retained for a returned child is valid even though
+    // neither live frame projects that child's own effective host binding.
+    const code = fakeCodeEntry();
+    const review = fakePlaybookEntry('review', 'review');
+    const valid = makeShell([code, review]);
+    await expect(valid.restore(stubSession(roster).session, base)).resolves.toBeUndefined();
+    await valid.dispose?.();
+  });
+
+  it('claims restore before its first await and rejects already-aborted host sessions', async () => {
+    const source = makeShell(fakeCodeEntry());
+    await source.init!(stubSession(roster).session);
+    const snapshot = source.exportSnapshot()!;
+    const registry = fakeCodeEntry();
+    const imported = deferred<unknown>();
+    const target = createPlaybookCaptainShell(
+      {
+        playbooks: {
+          code: { from: 'test://code', options: {} },
+        },
+      },
+      {
+        loadModule: async () => imported.promise,
+      },
+    );
+    const targetSession = stubSession(roster);
+    const restoring = target.restore(targetSession.session, snapshot);
+    await expect(
+      target.restore(stubSession(roster).session, snapshot),
+    ).rejects.toThrow(/fresh shell/);
+    await expect(target.init!(stubSession(roster).session)).rejects.toThrow(
+      /fresh instance/,
+    );
+    await expect(target.dispose?.()).rejects.toThrow(/setup is in progress/);
+    imported.resolve({ default: registry.entry });
+    await restoring;
+
+    const abortedSession = {
+      ...stubSession(roster).session,
+      signal: AbortSignal.abort(),
+    };
+    const fresh = makeShell(fakeCodeEntry());
+    await expect(fresh.init!(abortedSession)).rejects.toThrow(
+      /aborted Captain session/,
+    );
+    await expect(fresh.restore(abortedSession, snapshot)).rejects.toThrow(
+      /aborted Captain session/,
+    );
+
+    await source.dispose?.();
+    await target.dispose?.();
+  });
+
+  it('keeps a removed historical frame UUID unavailable to later allocation', async () => {
+    const nested = await nestedSnapshotFixture();
+    if (nested.mode !== 'engaged.parked') throw new Error('expected frames');
+    const snapshot: PlaybookCaptainShellSnapshot = {
+      ...nested,
+      frames: [
+        {
+          ...nested.frames[0]!,
+          runtime: runtimeSnapshot('code', playbookState('ready'), {
+            turn: 1,
+            playerResumeTokens: { reviewer: 'shared-token' },
+          }),
+        },
+      ],
+    };
+    const code = fakeCodeEntry();
+    const review = fakePlaybookEntry('review', 'review');
+    const modules: Record<string, unknown> = {
+      'test://code': { default: code.entry },
+      'test://review': { default: review.entry },
+    };
+    const shell = createPlaybookCaptainShell(
+      {
+        playbooks: {
+          code: { from: 'test://code', options: {} },
+          review: { from: 'test://review', options: {} },
+        },
+      },
+      {
+        loadModule: async (specifier) => modules[specifier],
+        // Restore allocates nothing. The next root allocation deliberately
+        // proposes the removed root's historical UUID and must be rejected.
+        createSessionId: () => ROOT_ID,
+      },
+    );
+    const host = stubSession(roster);
+    await shell.restore(host.session, snapshot);
+    await shell.handleBossTurn(
+      turn('stop the current work', 2),
+      stubContext([
+        captainJson({ action: 'dismiss' }),
+        { status: 'ok', turnId: 2, finalText: 'Stopped.' },
+      ]).context,
+    );
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+
+    await shell.handleBossTurn(
+      turn('/code start again', 3),
+      stubContext([
+        { status: 'ok', turnId: 3, finalText: 'Could not restart.' },
+      ]).context,
+    );
+    expect(code.createRuntime).toHaveBeenCalledTimes(1);
+    expect(host.statuses.filter(({ message }) => message.endsWith('started'))).toEqual([]);
+
+    await shell.dispose?.();
+  });
+
+  it('fails closed at every unsafe capture category without changing the active work', async () => {
+    const captures = new Map<string, PlaybookCaptainShellSnapshot | undefined>();
+    let shell!: ReturnType<typeof createPlaybookCaptainShell>;
+    const capture = (name: string): void => {
+      captures.set(name, shell.exportSnapshot());
+    };
+    const code = fakeCodeEntry(
+      async (runtime, runtimeTurn) => {
+        capture('engaged.driving');
+        const hostCall = runtime.ports!.callCaptain(
+          'runtime queue probe',
+          runtimeTurn.signal,
+          ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
+        );
+        capture('queued-or-in-flight-host-work');
+        await hostCall;
+        const start = await runtime.ports!.callPlaybook(
+          {
+            callId: 'code:review:unsafe',
+            playbookId: 'review',
+            text: 'review it',
+          },
+          runtimeTurn.signal,
+        );
+        if (start.state !== 'suspended') throw new Error('review must park');
+        return suspendedResult({
+          callId: 'code:review:unsafe',
+          playbookId: 'review',
+          childSessionId: start.childSessionId,
+        });
+      },
+      async () => {
+        capture('disposal');
+      },
+      undefined,
+      async () => quiescentResult('readyAfterReview'),
+    );
+    const review = fakePlaybookEntry(
+      'review',
+      'review',
+      async (_runtime, runtimeTurn) =>
+        runtimeTurn.text === 'finish'
+          ? terminalResult('done')
+          : quiescentResult('ready'),
+      async () => {
+        capture('frame-removal');
+      },
+      async () => {
+        capture('opening-child');
+      },
+    );
+    shell = makeShell([code, review], {
+      sessionIds: [ROOT_ID, CHILD_ID],
+    });
+    await shell.init!(stubSession(roster).session);
+    const chat = stubContext(
+      [captainJson({ action: 'respond', text: 'Ready.' })],
+      (prompt) => {
+        if (isDecisionPrompt(prompt)) capture('controller-call-transient');
+      },
+    );
+    await shell.handleBossTurn(turn('hello'), chat.context);
+
+    const start = stubContext(
+      [{ status: 'ok', turnId: 2, finalText: 'Review is parked.' }],
+      (prompt) => {
+        if (isClosingReplyPrompt(prompt)) capture('turn-summary-transient');
+      },
+    );
+    await shell.handleBossTurn(turn('/code start nested', 2), start.context);
+    await shell.handleBossTurn(
+      turn('/review finish', 3),
+      stubContext([
+        { status: 'ok', turnId: 3, finalText: 'Review returned.' },
+      ]).context,
+    );
+    await shell.dispose?.();
+
+    expect([...captures.keys()].sort()).toEqual(
+      [
+        'controller-call-transient',
+        'disposal',
+        'engaged.driving',
+        'frame-removal',
+        'opening-child',
+        'queued-or-in-flight-host-work',
+        'turn-summary-transient',
+      ].sort(),
+    );
+    for (const value of captures.values()) expect(value).toBeUndefined();
+    expect(code.runtimes).toHaveLength(1);
+    expect(review.runtimes).toHaveLength(1);
+    expect(code.runtimes[0]?.resumes).toHaveLength(1);
+  });
+
+  it.each(['status', 'telemetry'] as const)(
+    'drains a fire-and-forget working-frame %s emission before the turn becomes snapshot-safe',
+    async (kind) => {
+      const emissionStarted = deferred<void>();
+      const releaseEmission = deferred<void>();
+      const turnWorkCompleted = deferred<void>();
+      const code = fakeCodeEntry(async (runtime) => {
+        if (kind === 'status') {
+          void runtime.ports!.emitStatus('deferred runtime status');
+        } else {
+          void runtime.ports!.emitTelemetry({
+            topic: 'test.deferred-runtime-telemetry',
+            payload: { deferred: true },
+          });
+        }
+        return quiescentResult('ready');
+      });
+      const shell = makeShell(code, { sessionIds: [ROOT_ID] });
+      const host = stubSession(roster);
+      const originalStatus = host.session.emitStatus.bind(host.session);
+      const originalTelemetry = host.session.emitTelemetry.bind(host.session);
+      host.session.emitStatus = async (message, data) => {
+        if (message === 'deferred runtime status') {
+          emissionStarted.resolve(undefined);
+          await releaseEmission.promise;
+        }
+        await originalStatus(message, data);
+      };
+      host.session.emitTelemetry = async (event) => {
+        if (event.topic === 'test.deferred-runtime-telemetry') {
+          emissionStarted.resolve(undefined);
+          await releaseEmission.promise;
+        }
+        await originalTelemetry(event);
+      };
+      await shell.init!(host.session);
+      let turnSettled = false;
+      const context = stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Emission drained.' },
+      ]);
+      const originalReply = context.context.emitReply.bind(context.context);
+      context.context.emitReply = async (text) => {
+        await originalReply(text);
+        turnWorkCompleted.resolve(undefined);
+      };
+      const running = shell
+        .handleBossTurn(turn('/code emit'), context.context)
+        .then(() => {
+          turnSettled = true;
+        });
+      await emissionStarted.promise;
+      await turnWorkCompleted.promise;
+      // The normal action, settlement, and Boss presentation are complete.
+      // Give an untracked implementation a full task in which to settle, so
+      // this assertion is specifically pinned to the outstanding emission.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(turnSettled).toBe(false);
+      expect(shell.exportSnapshot()).toBeUndefined();
+
+      releaseEmission.resolve(undefined);
+      await running;
+      code.runtimes[0]!.snapshot = runtimeSnapshot(
+        'code',
+        playbookState('ready'),
+        { turn: 1 },
+      );
+      expect(shell.exportSnapshot()).toBeDefined();
+      await shell.dispose?.();
+    },
+  );
+
+  it('drains fire-and-forget session-Captain telemetry after ordinary turn work completes', async () => {
+    const emissionStarted = deferred<void>();
+    const releaseEmission = deferred<void>();
+    const turnWorkCompleted = deferred<void>();
+    const captain = fakeSessionCaptain(async (runtime) => {
+      void runtime.ports!.emitTelemetry({
+        topic: 'test.deferred-captain-telemetry',
+        payload: { deferred: true },
+      });
+      return quiescentResult();
+    });
+    const shell = makeShell(fakeCodeEntry(), {
+      createCaptainRuntime: captain.createCaptainRuntime,
+    });
+    const host = stubSession(roster);
+    const originalTelemetry = host.session.emitTelemetry.bind(host.session);
+    host.session.emitTelemetry = async (event) => {
+      if (event.topic === 'test.deferred-captain-telemetry') {
+        emissionStarted.resolve(undefined);
+        await releaseEmission.promise;
+      }
+      await originalTelemetry(event);
+    };
+    await shell.init!(host.session);
+
+    const context = stubContext();
+    const originalReply = context.context.emitReply.bind(context.context);
+    context.context.emitReply = async (text) => {
+      await originalReply(text);
+      turnWorkCompleted.resolve(undefined);
+    };
+    let turnSettled = false;
+    const running = shell
+      .handleBossTurn(turn('captain telemetry probe'), context.context)
+      .then(() => {
+        turnSettled = true;
+      });
+    await emissionStarted.promise;
+    await turnWorkCompleted.promise;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(turnSettled).toBe(false);
+    expect(shell.exportSnapshot()).toBeUndefined();
+
+    releaseEmission.resolve(undefined);
+    await running;
+    captain.runtimes[0]!.snapshot = runtimeSnapshot(
+      'captain',
+      playbookState('ready'),
+      { turn: 1 },
+    );
+    expect(shell.exportSnapshot()).toMatchObject({
+      mode: 'chat',
+      sequences: { turn: 1 },
+      captain: { conversation: { kind: 'needsSeeding' } },
+    });
+    await shell.dispose?.();
+  });
+
+  it('returns undefined during an active turn and permanently closes after disposal', async () => {
+    const waiting = deferred<PlaybookRunResult>();
+    const registry = fakeCodeEntry(async () => waiting.promise);
+    const shell = makeShell(registry, { sessionIds: [ROOT_ID] });
+    await shell.init!(stubSession(roster).session);
+    const running = shell.handleBossTurn(
+      turn('/code wait'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Settled.' },
+      ]).context,
+    );
+    await vi.waitFor(() => expect(registry.runtimes).toHaveLength(1));
+    expect(shell.exportSnapshot()).toBeUndefined();
+    waiting.resolve(quiescentResult('ready'));
+    await running;
+    registry.runtimes[0]!.snapshot = runtimeSnapshot(
+      'code',
+      playbookState('ready'),
+      { turn: 1 },
+    );
+    expect(shell.exportSnapshot()).toBeDefined();
+    await shell.dispose?.();
+    expect(shell.exportSnapshot()).toBeUndefined();
+    await expect(
+      shell.restore(stubSession(roster).session, {} as PlaybookCaptainShellSnapshot),
+    ).rejects.toThrow(/fresh shell/);
+
+    const disposedFresh = makeShell(fakeCodeEntry());
+    await disposedFresh.dispose?.();
+    await expect(disposedFresh.init!(stubSession(roster).session)).rejects.toThrow(
+      /fresh instance/,
+    );
+  });
+
+  it('aggregates restore cleanup failure and leaves the shell permanently closed', async () => {
+    const source = makeShell(fakeCodeEntry());
+    await source.init!(stubSession(roster).session);
+    const snapshot = source.exportSnapshot()!;
+    const poisonedCaptain = fakeSessionCaptain(
+      undefined,
+      undefined,
+      async () => {
+        throw new Error('Captain cleanup failed');
+      },
+      async () => {
+        throw new Error('Captain restore failed');
+      },
+    );
+    const target = makeShell(fakeCodeEntry(), {
+      createCaptainRuntime: poisonedCaptain.createCaptainRuntime,
+    });
+    const targetSession = stubSession(roster);
+
+    await expect(target.restore(targetSession.session, snapshot)).rejects.toMatchObject({
+      name: 'AggregateError',
+      message: 'Captain shell restore and cleanup failed',
+      errors: [
+        expect.objectContaining({ message: 'Captain restore failed' }),
+        expect.objectContaining({ message: 'Captain cleanup failed' }),
+      ],
+    });
+    expect(targetSession.statuses).toEqual([]);
+    expect(targetSession.telemetry).toEqual([]);
+    await expect(target.restore(stubSession(roster).session, snapshot)).rejects.toThrow(
+      /fresh shell/,
+    );
+
+    await source.dispose?.();
   });
 });
 

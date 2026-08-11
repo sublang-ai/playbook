@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
-import { hiddenControlEnvelope, registerPlaybookAbortCleanup, } from '../../../src/xstate-runtime.js';
+import { assertPlaybookRuntimeSnapshot, hiddenControlEnvelope, registerPlaybookAbortCleanup, snapshotJsonValue, } from '../../../src/xstate-runtime.js';
 import createDefaultCaptainRuntime from '../captain.playbook/captain.playbook.js';
 class VisibilityControlError extends Error {
     constructor(cause) {
@@ -414,6 +415,267 @@ function isValidRegistryEntry(value) {
         typeof e.validateOptions === 'function' &&
         typeof e.createRuntime === 'function');
 }
+const SNAPSHOT_ACTIONS = new Set([
+    'respond',
+    'start',
+    'switch',
+    'dismiss',
+    'deliver',
+    'runtime',
+]);
+const SNAPSHOT_SETTLEMENT_STATUSES = new Set([
+    'ok',
+    'rejected',
+    'failed',
+]);
+const SNAPSHOT_JOURNAL_KINDS = new Set([
+    'boss',
+    'reply',
+    'handoff',
+    'action',
+    'outcome',
+]);
+function snapshotRecord(value, path) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new TypeError(`${path} must be an object`);
+    }
+    return value;
+}
+function rejectSnapshotKeys(value, allowed, path) {
+    const allowedKeys = new Set(allowed);
+    const unknown = Object.keys(value).filter((key) => !allowedKeys.has(key));
+    if (unknown.length > 0) {
+        throw new TypeError(`${path} has unknown field ${JSON.stringify(unknown[0])}`);
+    }
+}
+function snapshotString(value, path, allowEmpty = false) {
+    if (typeof value !== 'string' ||
+        (!allowEmpty && value.trim().length === 0)) {
+        throw new TypeError(`${path} must be a ${allowEmpty ? '' : 'non-empty '}string`);
+    }
+    return value;
+}
+function snapshotInteger(value, path, minimum = 0) {
+    if (!Number.isSafeInteger(value) || value < minimum) {
+        throw new TypeError(`${path} must be an integer >= ${minimum}`);
+    }
+    return value;
+}
+function snapshotUuid(value, path) {
+    const id = snapshotString(value, path);
+    if (!UUID_PATTERN.test(id)) {
+        throw new TypeError(`${path} must be a UUID`);
+    }
+    return id;
+}
+/** Validate, detach, and freeze one untrusted shell snapshot. */
+function assertPlaybookCaptainShellSnapshot(value) {
+    const detached = snapshotJsonValue(value, 'Captain shell snapshot');
+    const snapshot = snapshotRecord(detached, 'Captain shell snapshot');
+    const mode = snapshot.mode;
+    const commonKeys = [
+        'schemaVersion',
+        'captain',
+        'issuedSessionIds',
+        'sequences',
+        'journal',
+        'lastAction',
+        'lastSettlementStatus',
+        'mode',
+    ];
+    if (mode === 'chat') {
+        rejectSnapshotKeys(snapshot, commonKeys, 'Captain shell snapshot');
+    }
+    else if (mode === 'engaged.parked') {
+        rejectSnapshotKeys(snapshot, [
+            ...commonKeys,
+            'frames',
+            'rootPlayerResumeTokens',
+            'pendingBossQuestions',
+            'lastError',
+        ], 'Captain shell snapshot');
+    }
+    else {
+        throw new TypeError('Captain shell snapshot.mode must be "chat" or "engaged.parked"');
+    }
+    if (snapshot.schemaVersion !== 1) {
+        throw new TypeError(`Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 1)`);
+    }
+    const captain = snapshotRecord(snapshot.captain, 'Captain shell snapshot.captain');
+    rejectSnapshotKeys(captain, ['sessionId', 'runtime', 'conversation'], 'Captain shell snapshot.captain');
+    const captainSessionId = snapshotUuid(captain.sessionId, 'Captain shell snapshot.captain.sessionId');
+    const captainRuntime = assertPlaybookRuntimeSnapshot(captain.runtime, INTERNAL_CAPTAIN_ID);
+    const conversation = snapshotRecord(captain.conversation, 'Captain shell snapshot.captain.conversation');
+    let normalizedConversation;
+    if (conversation.kind === 'pinned') {
+        rejectSnapshotKeys(conversation, ['kind', 'token'], 'Captain shell snapshot.captain.conversation');
+        normalizedConversation = {
+            kind: 'pinned',
+            token: snapshotString(conversation.token, 'Captain shell snapshot.captain.conversation.token', true),
+        };
+    }
+    else if (conversation.kind === 'unopened' ||
+        conversation.kind === 'needsSeeding') {
+        rejectSnapshotKeys(conversation, ['kind'], 'Captain shell snapshot.captain.conversation');
+        normalizedConversation = { kind: conversation.kind };
+    }
+    else {
+        throw new TypeError('Captain shell snapshot.captain.conversation.kind is not supported');
+    }
+    if (!Array.isArray(snapshot.issuedSessionIds)) {
+        throw new TypeError('Captain shell snapshot.issuedSessionIds must be an array');
+    }
+    const issued = snapshot.issuedSessionIds.map((id, index) => snapshotUuid(id, `Captain shell snapshot.issuedSessionIds[${index}]`));
+    if (new Set(issued).size !== issued.length) {
+        throw new TypeError('Captain shell snapshot.issuedSessionIds must not contain duplicates');
+    }
+    if (issued[0] !== captainSessionId) {
+        throw new TypeError('Captain shell snapshot Captain session id must be the first issued id');
+    }
+    const sequences = snapshotRecord(snapshot.sequences, 'Captain shell snapshot.sequences');
+    rejectSnapshotKeys(sequences, ['turn', 'journal'], 'Captain shell snapshot.sequences');
+    const turnSequence = snapshotInteger(sequences.turn, 'Captain shell snapshot.sequences.turn');
+    const journalSequence = snapshotInteger(sequences.journal, 'Captain shell snapshot.sequences.journal');
+    if (!Array.isArray(snapshot.journal)) {
+        throw new TypeError('Captain shell snapshot.journal must be an array');
+    }
+    const normalizedJournal = [];
+    let previousTurn = 0;
+    let bossRecords = 0;
+    for (const [index, value] of snapshot.journal.entries()) {
+        const record = snapshotRecord(value, `Captain shell snapshot.journal[${index}]`);
+        rejectSnapshotKeys(record, ['seq', 'turnId', 'kind', 'payload'], `Captain shell snapshot.journal[${index}]`);
+        const seq = snapshotInteger(record.seq, `Captain shell snapshot.journal[${index}].seq`, 1);
+        if (seq !== index + 1) {
+            throw new TypeError('Captain shell snapshot journal sequence must be contiguous from one');
+        }
+        const turnId = snapshotInteger(record.turnId, `Captain shell snapshot.journal[${index}].turnId`, 1);
+        if (turnId < previousTurn || turnId > turnSequence) {
+            throw new TypeError('Captain shell snapshot journal turn ids must be ordered and in range');
+        }
+        const kind = record.kind;
+        if (typeof kind !== 'string' ||
+            !SNAPSHOT_JOURNAL_KINDS.has(kind)) {
+            throw new TypeError(`Captain shell snapshot.journal[${index}].kind is not supported`);
+        }
+        if (turnId !== previousTurn) {
+            if (turnId !== previousTurn + 1 || kind !== 'boss') {
+                throw new TypeError('Captain shell snapshot journal must begin every turn with one boss record');
+            }
+            bossRecords++;
+            previousTurn = turnId;
+        }
+        else if (kind === 'boss') {
+            throw new TypeError('Captain shell snapshot journal must contain one boss record per turn');
+        }
+        normalizedJournal.push({
+            seq,
+            turnId,
+            kind: kind,
+            payload: record.payload,
+        });
+    }
+    if (journalSequence !== normalizedJournal.length ||
+        bossRecords !== turnSequence) {
+        throw new TypeError('Captain shell snapshot sequences do not match the complete journal');
+    }
+    let lastAction;
+    if (snapshot.lastAction !== undefined) {
+        if (typeof snapshot.lastAction !== 'string' ||
+            !SNAPSHOT_ACTIONS.has(snapshot.lastAction)) {
+            throw new TypeError('Captain shell snapshot.lastAction is not supported');
+        }
+        lastAction = snapshot.lastAction;
+    }
+    let lastSettlementStatus;
+    if (snapshot.lastSettlementStatus !== undefined) {
+        if (typeof snapshot.lastSettlementStatus !== 'string' ||
+            !SNAPSHOT_SETTLEMENT_STATUSES.has(snapshot.lastSettlementStatus)) {
+            throw new TypeError('Captain shell snapshot.lastSettlementStatus is not supported');
+        }
+        lastSettlementStatus = snapshot.lastSettlementStatus;
+    }
+    const common = {
+        schemaVersion: 1,
+        captain: {
+            sessionId: captainSessionId,
+            runtime: captainRuntime,
+            conversation: normalizedConversation,
+        },
+        issuedSessionIds: issued,
+        sequences: { turn: turnSequence, journal: journalSequence },
+        journal: normalizedJournal,
+        ...(lastAction === undefined ? {} : { lastAction }),
+        ...(lastSettlementStatus === undefined
+            ? {}
+            : { lastSettlementStatus }),
+    };
+    if (mode === 'chat') {
+        return snapshotJsonValue({ ...common, mode }, 'Captain shell snapshot');
+    }
+    if (!Array.isArray(snapshot.frames) || snapshot.frames.length === 0) {
+        throw new TypeError('Captain shell snapshot.frames must be a non-empty array');
+    }
+    const normalizedFrames = [];
+    for (const [index, value] of snapshot.frames.entries()) {
+        const frame = snapshotRecord(value, `Captain shell snapshot.frames[${index}]`);
+        rejectSnapshotKeys(frame, [
+            'playbookId',
+            'sessionId',
+            'rootSessionId',
+            'depth',
+            'parentSessionId',
+            'parentCallId',
+            'runtime',
+        ], `Captain shell snapshot.frames[${index}]`);
+        const playbookId = snapshotString(frame.playbookId, `Captain shell snapshot.frames[${index}].playbookId`);
+        const sessionId = snapshotUuid(frame.sessionId, `Captain shell snapshot.frames[${index}].sessionId`);
+        const rootSessionId = snapshotUuid(frame.rootSessionId, `Captain shell snapshot.frames[${index}].rootSessionId`);
+        const depth = snapshotInteger(frame.depth, `Captain shell snapshot.frames[${index}].depth`);
+        const parentSessionId = frame.parentSessionId === undefined
+            ? undefined
+            : snapshotUuid(frame.parentSessionId, `Captain shell snapshot.frames[${index}].parentSessionId`);
+        const parentCallId = frame.parentCallId === undefined
+            ? undefined
+            : snapshotString(frame.parentCallId, `Captain shell snapshot.frames[${index}].parentCallId`);
+        const runtime = assertPlaybookRuntimeSnapshot(frame.runtime, playbookId, { allowSuspendedCall: true });
+        normalizedFrames.push({
+            playbookId,
+            sessionId,
+            rootSessionId,
+            depth,
+            ...(parentSessionId === undefined ? {} : { parentSessionId }),
+            ...(parentCallId === undefined ? {} : { parentCallId }),
+            runtime,
+        });
+    }
+    const rootTokens = snapshotRecord(snapshot.rootPlayerResumeTokens, 'Captain shell snapshot.rootPlayerResumeTokens');
+    const normalizedRootTokens = Object.fromEntries(Object.entries(rootTokens).map(([playerId, token]) => [
+        playerId,
+        snapshotString(token, `Captain shell snapshot.rootPlayerResumeTokens.${playerId}`),
+    ]));
+    let normalizedLastError;
+    if (snapshot.lastError !== undefined) {
+        const error = snapshotRecord(snapshot.lastError, 'Captain shell snapshot.lastError');
+        rejectSnapshotKeys(error, ['name', 'message'], 'Captain shell snapshot.lastError');
+        normalizedLastError = {
+            name: snapshotString(error.name, 'Captain shell snapshot.lastError.name', true),
+            message: snapshotString(error.message, 'Captain shell snapshot.lastError.message', true),
+        };
+    }
+    return snapshotJsonValue({
+        ...common,
+        mode,
+        frames: normalizedFrames,
+        rootPlayerResumeTokens: normalizedRootTokens,
+        ...(snapshot.pendingBossQuestions === undefined
+            ? {}
+            : { pendingBossQuestions: snapshot.pendingBossQuestions }),
+        ...(normalizedLastError === undefined
+            ? {}
+            : { lastError: normalizedLastError }),
+    }, 'Captain shell snapshot');
+}
 function readPlaybooksConfig(options) {
     if (typeof options !== 'object' || options === null)
         return undefined;
@@ -512,6 +774,10 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     let byId = new Map();
     let enablementById = new Map();
     let session;
+    let sessionEmissionsOpen = false;
+    let closedGateAttempted = false;
+    let lifecycle = 'fresh';
+    let terminallyDisposed = false;
     let players = [];
     let activeContext;
     const frames = [];
@@ -524,6 +790,41 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const pendingChildParents = new Set();
     const captainQueue = new PQueue({ concurrency: 1 });
     let disposing = false;
+    const admitHostBoundary = () => {
+        if (sessionEmissionsOpen)
+            return;
+        closedGateAttempted = true;
+        throw new Error('Captain shell host boundaries are closed during restore');
+    };
+    const admitHostEmission = () => {
+        if (sessionEmissionsOpen)
+            return true;
+        closedGateAttempted = true;
+        return false;
+    };
+    const installSession = (initSession, emissionsOpen) => {
+        sessionEmissionsOpen = emissionsOpen;
+        closedGateAttempted = false;
+        session = {
+            signal: initSession.signal,
+            players: initSession.players,
+            emitStatus: async (message, data) => {
+                if (!admitHostEmission())
+                    return;
+                await initSession.emitStatus(message, data);
+            },
+            emitTelemetry: async (event) => {
+                if (!admitHostEmission())
+                    return;
+                await initSession.emitTelemetry(event);
+            },
+            setVisiblePlayers: async (playerIds) => {
+                if (!admitHostEmission())
+                    return;
+                await initSession.setVisiblePlayers(playerIds);
+            },
+        };
+    };
     // --- session Captain, durable conversation, and journal (CAPTAIN-16/31/35)
     let captainRuntime;
     let captainSessionId;
@@ -760,6 +1061,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     let callNestedPlaybook;
     const createPorts = (frame) => ({
         callPlayer: async (playerId, prompt, signal, options) => {
+            admitHostBoundary();
             if (!activeContext) {
                 throw new Error('callPlayer invoked outside a Boss turn');
             }
@@ -793,6 +1095,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             };
         },
         callCaptain: async (prompt, signal, options) => {
+            admitHostBoundary();
             if (!activeContext) {
                 throw new Error('callCaptain invoked outside a Boss turn');
             }
@@ -810,6 +1113,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             };
         },
         callJudge: async (prompt, signal) => {
+            admitHostBoundary();
             if (!activeContext) {
                 throw new Error('callJudge invoked outside a Boss turn');
             }
@@ -835,6 +1139,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return result.finalText;
         },
         callPlaybook: (request, signal) => {
+            admitHostBoundary();
             const opening = callNestedPlaybook(frame, request, signal);
             let exposed;
             const registerOpeningCleanup = () => {
@@ -848,14 +1153,23 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 registerOpeningCleanup();
             return exposed;
         },
-        emitStatus: async (message, data) => {
-            await requireSession().emitStatus(message, data);
+        emitStatus: (message, data) => {
+            if (!admitHostEmission())
+                return Promise.resolve();
+            return trackHostCall(frame, (async () => {
+                await requireSession().emitStatus(message, data);
+            })());
         },
-        emitTelemetry: async (event) => {
-            if (event.topic === SUB_RUNTIME_FSM_TOPIC) {
-                await mirrorSubRuntimeTelemetry(frame, event.payload);
-            }
-            await requireSession().emitTelemetry(event);
+        emitTelemetry: (event) => {
+            if (!admitHostEmission())
+                return Promise.resolve();
+            const emission = (async () => {
+                if (event.topic === SUB_RUNTIME_FSM_TOPIC) {
+                    await mirrorSubRuntimeTelemetry(frame, event.payload);
+                }
+                await requireSession().emitTelemetry(event);
+            })();
+            return trackHostCall(frame, emission);
         },
     });
     // CAPTAIN-22: before dispatching to a playbook, request tmux-play
@@ -896,9 +1210,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 : undefined;
         return typeof stack === 'string' ? { ...compact, stack } : compact;
     };
-    const makeFrame = (enablement, parent) => {
+    const makePlayerBindings = (enablement, parent) => {
         const entry = enablement.entry;
-        const sessionId = allocateSessionId();
         const playerBindings = new Map();
         for (const role of entry.requiredRoleIds) {
             let inherited;
@@ -915,6 +1228,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 player: configured,
             });
         }
+        return playerBindings;
+    };
+    const makeFrame = (enablement, parent) => {
+        const entry = enablement.entry;
+        const sessionId = allocateSessionId();
+        const playerBindings = makePlayerBindings(enablement, parent);
         const playerResumeTokens = parent?.frame.playerResumeTokens ?? new Map();
         const runtime = entry.createRuntime({
             captainOptions: enablement.optionInput,
@@ -934,6 +1253,31 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             playerBindings,
             playerResumeTokens,
             ...(parent ? { parent } : {}),
+            inFlightHostCalls: new Set(),
+        };
+    };
+    const makeRestoredFrame = (enablement, snapshot, rootPlayerResumeTokens, parent) => {
+        const entry = enablement.entry;
+        const playerBindings = makePlayerBindings(enablement, parent);
+        const runtime = entry.createRuntime({
+            captainOptions: enablement.optionInput,
+            players: [...playerBindings].map(([role, { player }]) => ({
+                id: role,
+                ...(player.adapter === undefined ? {} : { adapter: player.adapter }),
+                ...(player.model === undefined ? {} : { model: player.model }),
+            })),
+        });
+        return {
+            entry,
+            enablement,
+            runtime,
+            sessionId: snapshot.sessionId,
+            rootSessionId: snapshot.rootSessionId,
+            depth: snapshot.depth,
+            playerBindings,
+            playerResumeTokens: rootPlayerResumeTokens,
+            ...(parent ? { parent } : {}),
+            state: snapshot.runtime.state,
             inFlightHostCalls: new Set(),
         };
     };
@@ -970,21 +1314,22 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
         },
     });
+    const frameSession = (frame) => ({
+        sessionId: frame.sessionId,
+        playbookId: frame.entry.id,
+        rootSessionId: frame.rootSessionId,
+        ...(frame.parent
+            ? {
+                parentSessionId: frame.parent.frame.sessionId,
+                parentCallId: frame.parent.callId,
+            }
+            : {}),
+        depth: frame.depth,
+        playerSessions: playerSessionStore(frame),
+        ports: createPorts(frame),
+    });
     const initFrame = async (frame) => {
-        await frame.runtime.init({
-            sessionId: frame.sessionId,
-            playbookId: frame.entry.id,
-            rootSessionId: frame.rootSessionId,
-            ...(frame.parent
-                ? {
-                    parentSessionId: frame.parent.frame.sessionId,
-                    parentCallId: frame.parent.callId,
-                }
-                : {}),
-            depth: frame.depth,
-            playerSessions: playerSessionStore(frame),
-            ports: createPorts(frame),
-        });
+        await frame.runtime.init(frameSession(frame));
     };
     const clearLeafLedger = () => {
         pendingBossQuestions = undefined;
@@ -2025,9 +2370,11 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     // -------------------------------------------------------------------------
     const captainPorts = () => ({
         callPlayer: async () => {
+            admitHostBoundary();
             throw new Error('the session Captain has no players');
         },
         callCaptain: async (prompt, signal) => {
+            admitHostBoundary();
             if (!activeContext) {
                 throw new Error('the session Captain called out of a Boss turn');
             }
@@ -2085,29 +2432,38 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return { status: 'ok', finalText: 'ok' };
         },
         callJudge: async () => {
+            admitHostBoundary();
             throw new Error('the session Captain makes no judge call');
         },
         callPlaybook: async () => {
+            admitHostBoundary();
             throw new Error('the session Captain never calls a playbook');
         },
         // CAPTAIN-9: the session Captain's human status stream is suppressed while
         // its structured telemetry is forwarded.
-        emitStatus: async () => { },
-        emitTelemetry: async (event) => {
-            if (event.topic === 'playbook.trace') {
-                const payload = payloadRecord(event.payload);
-                if (payload?.type === 'captain.call.started') {
-                    const identity = payloadRecord(payload.payload);
-                    const stateId = identity?.stateId;
-                    servingCall =
-                        stateId === 'reporting'
-                            ? 'closingReply'
-                            : stateId === 'answeringCommand'
-                                ? 'commandReply'
-                                : 'decision';
+        emitStatus: async () => {
+            admitHostEmission();
+        },
+        emitTelemetry: (event) => {
+            if (!admitHostEmission())
+                return Promise.resolve();
+            const emission = (async () => {
+                if (event.topic === 'playbook.trace') {
+                    const payload = payloadRecord(event.payload);
+                    if (payload?.type === 'captain.call.started') {
+                        const identity = payloadRecord(payload.payload);
+                        const stateId = identity?.stateId;
+                        servingCall =
+                            stateId === 'reporting'
+                                ? 'closingReply'
+                                : stateId === 'answeringCommand'
+                                    ? 'commandReply'
+                                    : 'decision';
+                    }
                 }
-            }
-            await requireSession().emitTelemetry(event);
+                await requireSession().emitTelemetry(event);
+            })();
+            return trackTurnCall(emission);
         },
     });
     const resolveCommandTurn = (text) => {
@@ -2730,8 +3086,14 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         };
     };
     const controller = {
-        submit: (selection, signal) => settleSelection(selection, signal),
-        resolveParsedTurn: () => shuttingDown ? { kind: 'shutdown' } : activeTurn?.resolution,
+        submit: (selection, signal) => {
+            admitHostBoundary();
+            return settleSelection(selection, signal);
+        },
+        resolveParsedTurn: () => {
+            admitHostBoundary();
+            return shuttingDown ? { kind: 'shutdown' } : activeTurn?.resolution;
+        },
     };
     // -------------------------------------------------------------------------
     // Failure surface (CAPTAIN-34): a Boss-appropriate reply naming a concrete
@@ -2800,40 +3162,455 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             text: failureReplyText(),
         });
     };
-    return {
-        async init(initSession) {
-            session = initSession;
+    const enabledCatalog = () => Object.freeze(entries.map((entry) => Object.freeze({
+        id: entry.id,
+        command: enablementById.get(entry.id).command,
+        intent: entry.intent,
+    })));
+    const captainPlaybookSession = (id) => ({
+        sessionId: id,
+        playbookId: INTERNAL_CAPTAIN_ID,
+        rootSessionId: id,
+        depth: 0,
+        ports: captainPorts(),
+    });
+    const tokenRecord = (tokens) => Object.fromEntries(tokens);
+    const assertSnapshotMatchesEnablements = (snapshot, enabled) => {
+        const captain = snapshot.captain.runtime;
+        if (captain.schemaVersion !== 2 ||
+            captain.state.status !== 'active' ||
+            !captain.state.quiescent ||
+            !captain.state.tags.includes('playbook.parked') ||
+            captain.suspendedCall !== undefined ||
+            Object.keys(captain.playerResumeTokens).length > 0 ||
+            captain.pendingBossQuestions.length > 0) {
+            throw new TypeError('Captain shell snapshot Captain runtime must be active, quiescent, playerless, and unsuspended');
+        }
+        if (captain.sequences.turn !== snapshot.sequences.turn) {
+            throw new TypeError('Captain shell snapshot Captain and shell turn sequences must match');
+        }
+        const emptyHistory = snapshot.sequences.turn === 0 && snapshot.journal.length === 0;
+        if ((snapshot.captain.conversation.kind === 'unopened') !== emptyHistory) {
+            throw new TypeError('Captain shell snapshot unopened conversation must exactly match an empty session history');
+        }
+        if (snapshot.mode === 'chat')
+            return;
+        const activePlaybooks = new Set();
+        const activeSessionIds = new Set([snapshot.captain.sessionId]);
+        const issuedIds = new Set(snapshot.issuedSessionIds);
+        const allowedHostPlayerIds = new Set();
+        for (const enablement of enabled.values()) {
+            for (const role of enablement.entry.requiredRoleIds) {
+                allowedHostPlayerIds.add(enablement.hostPlayerId(role));
+            }
+        }
+        for (const playerId of Object.keys(snapshot.rootPlayerResumeTokens)) {
+            if (!allowedHostPlayerIds.has(playerId)) {
+                throw new TypeError(`Captain shell snapshot root token names unknown host player ${JSON.stringify(playerId)}`);
+            }
+        }
+        const bindingMaps = [];
+        const rootSessionId = snapshot.frames[0].sessionId;
+        for (const [index, frame] of snapshot.frames.entries()) {
+            const enablement = enabled.get(frame.playbookId);
+            if (!enablement) {
+                throw new TypeError(`Captain shell snapshot frame names disabled playbook ${JSON.stringify(frame.playbookId)}`);
+            }
+            if (activePlaybooks.has(frame.playbookId)) {
+                throw new TypeError('Captain shell snapshot engagement path must not contain a playbook cycle');
+            }
+            activePlaybooks.add(frame.playbookId);
+            if (activeSessionIds.has(frame.sessionId)) {
+                throw new TypeError('Captain shell snapshot frame session ids must be unique');
+            }
+            activeSessionIds.add(frame.sessionId);
+            if (!issuedIds.has(frame.sessionId)) {
+                throw new TypeError('Captain shell snapshot frame session id was not historically issued');
+            }
+            if (frame.depth !== index ||
+                frame.rootSessionId !== rootSessionId ||
+                frame.runtime.state.status !== 'active' ||
+                !frame.runtime.state.quiescent) {
+                throw new TypeError('Captain shell snapshot frame depth, root, or parked runtime state is inconsistent');
+            }
+            if (index === 0) {
+                if (frame.sessionId !== frame.rootSessionId ||
+                    frame.parentSessionId !== undefined ||
+                    frame.parentCallId !== undefined) {
+                    throw new TypeError('Captain shell snapshot root frame has child-only identity fields');
+                }
+            }
+            else {
+                const parent = snapshot.frames[index - 1];
+                if (frame.parentSessionId !== parent.sessionId ||
+                    frame.parentCallId === undefined) {
+                    throw new TypeError('Captain shell snapshot child frame does not identify its immediate parent');
+                }
+                const pending = parent.runtime.suspendedCall;
+                if (!pending ||
+                    pending.callId !== frame.parentCallId ||
+                    pending.playbookId !== frame.playbookId ||
+                    pending.childSessionId !== frame.sessionId) {
+                    throw new TypeError('Captain shell snapshot parent suspended call does not match its child edge');
+                }
+            }
+            const roleBindings = new Map();
+            for (const role of enablement.entry.requiredRoleIds) {
+                let inherited;
+                for (let ancestor = index - 1; ancestor >= 0; ancestor--) {
+                    inherited = bindingMaps[ancestor]?.get(role);
+                    if (inherited !== undefined)
+                        break;
+                }
+                roleBindings.set(role, inherited ?? enablement.hostPlayerId(role));
+            }
+            bindingMaps.push(roleBindings);
+            const projectedTokens = Object.fromEntries([...roleBindings].flatMap(([role, hostPlayerId]) => {
+                const token = snapshot.rootPlayerResumeTokens[hostPlayerId];
+                return token === undefined ? [] : [[role, token]];
+            }));
+            if (!isDeepStrictEqual(projectedTokens, frame.runtime.playerResumeTokens)) {
+                throw new TypeError(`Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} player tokens do not match root-owned continuation`);
+            }
+        }
+        const leafRuntime = snapshot.frames.at(-1).runtime;
+        if (leafRuntime.suspendedCall !== undefined ||
+            !leafRuntime.state.tags.includes('playbook.parked')) {
+            throw new TypeError('Captain shell snapshot leaf runtime must be parked without a dangling suspended child call');
+        }
+    };
+    const safeCapturePoint = () => {
+        if (lifecycle !== 'ready' ||
+            terminallyDisposed ||
+            !sessionEmissionsOpen ||
+            !session ||
+            session.signal.aborted ||
+            !captainRuntime ||
+            disposing ||
+            shuttingDown ||
+            activeContext !== undefined ||
+            activeTurn !== undefined ||
+            activeTurnHostCalls !== undefined ||
+            activeTurnSummary !== undefined ||
+            runFailureFacts !== undefined ||
+            servingCall !== undefined ||
+            decisionCall !== undefined ||
+            captainQueue.pending !== 0 ||
+            captainQueue.size !== 0 ||
+            (mode !== 'chat' && mode !== 'engaged.parked')) {
+            return false;
+        }
+        if ((mode === 'chat' &&
+            (frames.length !== 0 ||
+                pendingChildParents.size !== 0 ||
+                pendingBossQuestions !== undefined ||
+                lastError !== undefined)) ||
+            (mode === 'engaged.parked' && frames.length === 0)) {
+            return false;
+        }
+        const expectedParents = new Set(frames.slice(0, -1));
+        if (pendingChildParents.size !== expectedParents.size ||
+            [...pendingChildParents].some((frame) => !expectedParents.has(frame))) {
+            return false;
+        }
+        return frames.every((frame, index) => {
+            const liveInvocation = frame.invocationSignal !== undefined || frame.abortListener !== undefined;
+            return (frame.state !== undefined &&
+                frame.state.status === 'active' &&
+                frame.state.quiescent &&
+                !frame.disposing &&
+                frame.disposePromise === undefined &&
+                frame.removal === undefined &&
+                frame.inFlightHostCalls.size === 0 &&
+                (index === 0
+                    ? !liveInvocation
+                    : !liveInvocation ||
+                        (frame.invocationSignal !== undefined &&
+                            !frame.invocationSignal.aborted &&
+                            frame.abortListener !== undefined)));
+        });
+    };
+    const exportShellSnapshot = () => {
+        if (!safeCapturePoint() || !captainRuntime || !captainSessionId) {
+            return undefined;
+        }
+        try {
+            if (typeof captainRuntime.exportSnapshot !== 'function' ||
+                typeof captainRuntime.restore !== 'function') {
+                return undefined;
+            }
+            const captainSnapshot = captainRuntime.exportSnapshot();
+            if (captainSnapshot === undefined)
+                return undefined;
+            const frameSnapshots = [];
+            for (const frame of frames) {
+                if (typeof frame.runtime.exportSnapshot !== 'function' ||
+                    typeof frame.runtime.restore !== 'function') {
+                    return undefined;
+                }
+                const runtime = frame.runtime.exportSnapshot();
+                if (runtime === undefined ||
+                    !isDeepStrictEqual(frame.state, runtime.state)) {
+                    return undefined;
+                }
+                frameSnapshots.push({
+                    playbookId: frame.entry.id,
+                    sessionId: frame.sessionId,
+                    rootSessionId: frame.rootSessionId,
+                    depth: frame.depth,
+                    ...(frame.parent
+                        ? {
+                            parentSessionId: frame.parent.frame.sessionId,
+                            parentCallId: frame.parent.callId,
+                        }
+                        : {}),
+                    runtime,
+                });
+            }
+            const common = {
+                schemaVersion: 1,
+                captain: {
+                    sessionId: captainSessionId,
+                    runtime: captainSnapshot,
+                    conversation,
+                },
+                issuedSessionIds: [...issuedSessionIds],
+                sequences: { turn: turnSequence, journal: journalSeq },
+                journal,
+                ...(lastAction === undefined ? {} : { lastAction }),
+                ...(lastSettlementStatus === undefined
+                    ? {}
+                    : { lastSettlementStatus }),
+            };
+            const candidate = mode === 'chat'
+                ? { ...common, mode }
+                : {
+                    ...common,
+                    mode: 'engaged.parked',
+                    frames: frameSnapshots,
+                    rootPlayerResumeTokens: tokenRecord(rootFrame().playerResumeTokens),
+                    ...(pendingBossQuestions === undefined
+                        ? {}
+                        : { pendingBossQuestions: pendingBossQuestions }),
+                    ...(lastError === undefined ? {} : { lastError }),
+                };
+            const normalized = assertPlaybookCaptainShellSnapshot(candidate);
+            assertSnapshotMatchesEnablements(normalized, enablementById);
+            return normalized;
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const verifyRestoredRuntime = (runtime, expected, playbookId, allowSuspendedCall) => {
+        const actual = runtime.exportSnapshot?.();
+        if (actual === undefined) {
+            throw new Error(`restored ${playbookId} runtime did not reach a safe snapshot boundary`);
+        }
+        const normalized = assertPlaybookRuntimeSnapshot(actual, playbookId, allowSuspendedCall ? { allowSuspendedCall: true } : {});
+        for (const key of [
+            'state',
+            'playerResumeTokens',
+            'sequences',
+            'pendingBossQuestions',
+            'suspendedCall',
+        ]) {
+            if (!isDeepStrictEqual(normalized[key], expected[key])) {
+                throw new Error(`restored ${playbookId} runtime changed snapshot field ${key}`);
+            }
+        }
+    };
+    const resetFailedRestore = async () => {
+        const cleanupFailures = [];
+        for (const frame of [...frames].reverse()) {
+            frame.disposing = true;
+            try {
+                await frame.runtime.dispose();
+            }
+            catch (error) {
+                cleanupFailures.push(error);
+            }
+        }
+        if (captainRuntime) {
+            shuttingDown = true;
+            try {
+                await captainRuntime.dispose();
+            }
+            catch (error) {
+                cleanupFailures.push(error);
+            }
+        }
+        frames.splice(0);
+        pendingChildParents.clear();
+        issuedSessionIds.clear();
+        journal.splice(0);
+        entries = [];
+        byCommand = new Map();
+        byId = new Map();
+        enablementById = new Map();
+        players = [];
+        session = undefined;
+        sessionEmissionsOpen = false;
+        closedGateAttempted = false;
+        captainRuntime = undefined;
+        captainSessionId = undefined;
+        conversation = { kind: 'unopened' };
+        mode = 'chat';
+        pendingBossQuestions = undefined;
+        lastError = undefined;
+        journalSeq = 0;
+        turnSequence = 0;
+        lastAction = undefined;
+        lastSettlementStatus = undefined;
+        shuttingDown = false;
+        if (cleanupFailures.length > 0) {
+            terminallyDisposed = true;
+            lifecycle = 'closed';
+        }
+        else {
+            lifecycle = 'fresh';
+        }
+        return cleanupFailures;
+    };
+    const restoreShellSnapshot = async (initSession, untrusted) => {
+        if (lifecycle !== 'fresh' || terminallyDisposed) {
+            throw new Error('Captain shell restore requires a fresh shell');
+        }
+        if (initSession.signal.aborted) {
+            throw new Error('cannot restore an aborted Captain session');
+        }
+        lifecycle = 'restoring';
+        try {
+            const snapshot = assertPlaybookCaptainShellSnapshot(untrusted);
+            const built = await buildEnablements(options, initSession.players, loadModule);
+            for (const enablement of built.enablementById.values()) {
+                enablement.entry.validateOptions(enablement.optionInput);
+            }
+            assertSnapshotMatchesEnablements(snapshot, built.enablementById);
+            installSession(initSession, false);
             players = initSession.players;
-            const built = await buildEnablements(options, players, loadModule);
             entries = built.entries;
             byCommand = built.byCommand;
             byId = built.byId;
             enablementById = built.enablementById;
-            for (const enablement of enablementById.values()) {
-                enablement.entry.validateOptions(enablement.optionInput);
-            }
-            await setMode('chat', 'init');
-            // CAPTAIN-16: the session Captain exists from `init`, outside the
-            // engagement stack, with its own playbook session id.
-            const catalog = Object.freeze(entries.map((entry) => Object.freeze({
-                id: entry.id,
-                command: enablementById.get(entry.id).command,
-                intent: entry.intent,
-            })));
-            captainSessionId = allocateSessionId();
             captainRuntime = createCaptainRuntime({
-                enabledPlaybooks: catalog,
+                enabledPlaybooks: enabledCatalog(),
                 controller,
             });
-            await captainRuntime.init({
-                sessionId: captainSessionId,
-                playbookId: INTERNAL_CAPTAIN_ID,
-                rootSessionId: captainSessionId,
-                depth: 0,
-                ports: captainPorts(),
-            });
+            if (typeof captainRuntime.restore !== 'function') {
+                throw new Error('session Captain runtime does not support restore');
+            }
+            if (snapshot.mode === 'engaged.parked') {
+                const rootTokens = new Map(Object.entries(snapshot.rootPlayerResumeTokens));
+                for (const [index, frameSnapshot] of snapshot.frames.entries()) {
+                    const parentFrame = frames.at(-1);
+                    const frame = makeRestoredFrame(enablementById.get(frameSnapshot.playbookId), frameSnapshot, rootTokens, index === 0
+                        ? undefined
+                        : {
+                            frame: parentFrame,
+                            callId: frameSnapshot.parentCallId,
+                        });
+                    if (typeof frame.runtime.restore !== 'function') {
+                        throw new Error(`playbook ${frame.entry.id} runtime does not support restore`);
+                    }
+                    frames.push(frame);
+                    if (parentFrame)
+                        pendingChildParents.add(parentFrame);
+                }
+            }
+            await captainRuntime.restore(captainPlaybookSession(snapshot.captain.sessionId), snapshot.captain.runtime);
+            if (snapshot.mode === 'engaged.parked') {
+                for (const [index, frame] of frames.entries()) {
+                    await frame.runtime.restore(frameSession(frame), snapshot.frames[index].runtime);
+                }
+            }
+            if (closedGateAttempted) {
+                throw new Error('a runtime attempted a host emission during restore');
+            }
+            verifyRestoredRuntime(captainRuntime, snapshot.captain.runtime, INTERNAL_CAPTAIN_ID, false);
+            if (snapshot.mode === 'engaged.parked') {
+                for (const [index, frame] of frames.entries()) {
+                    verifyRestoredRuntime(frame.runtime, snapshot.frames[index].runtime, frame.entry.id, true);
+                }
+                if (!isDeepStrictEqual(tokenRecord(rootFrame().playerResumeTokens), snapshot.rootPlayerResumeTokens)) {
+                    throw new Error('restored root-owned player continuation changed during restore');
+                }
+            }
+            if (closedGateAttempted) {
+                throw new Error('a runtime attempted a host emission during restore');
+            }
+            if (requireSession().signal.aborted) {
+                throw new Error('Captain session aborted during restore');
+            }
+            for (const id of snapshot.issuedSessionIds)
+                issuedSessionIds.add(id);
+            journal.push(...snapshot.journal);
+            journalSeq = snapshot.sequences.journal;
+            turnSequence = snapshot.sequences.turn;
+            conversation = snapshot.captain.conversation;
+            captainSessionId = snapshot.captain.sessionId;
+            lastAction = snapshot.lastAction;
+            lastSettlementStatus = snapshot.lastSettlementStatus;
+            mode = snapshot.mode;
+            if (snapshot.mode === 'engaged.parked') {
+                pendingBossQuestions = snapshot.pendingBossQuestions;
+                lastError = snapshot.lastError;
+            }
+            lifecycle = 'ready';
+            // The final commit is deliberately one non-throwing assignment.
+            sessionEmissionsOpen = true;
+        }
+        catch (error) {
+            const cleanupFailures = await resetFailedRestore();
+            if (cleanupFailures.length > 0) {
+                throw new AggregateError([error, ...cleanupFailures], 'Captain shell restore and cleanup failed');
+            }
+            throw error;
+        }
+    };
+    return {
+        async init(initSession) {
+            if (lifecycle !== 'fresh' || terminallyDisposed) {
+                throw new Error('Captain shell requires a fresh instance for init');
+            }
+            if (initSession.signal.aborted) {
+                throw new Error('cannot initialize an aborted Captain session');
+            }
+            lifecycle = 'initializing';
+            try {
+                installSession(initSession, true);
+                players = initSession.players;
+                const built = await buildEnablements(options, players, loadModule);
+                entries = built.entries;
+                byCommand = built.byCommand;
+                byId = built.byId;
+                enablementById = built.enablementById;
+                for (const enablement of enablementById.values()) {
+                    enablement.entry.validateOptions(enablement.optionInput);
+                }
+                await setMode('chat', 'init');
+                // CAPTAIN-16: the session Captain exists from `init`, outside the
+                // engagement stack, with its own playbook session id.
+                captainSessionId = allocateSessionId();
+                captainRuntime = createCaptainRuntime({
+                    enabledPlaybooks: enabledCatalog(),
+                    controller,
+                });
+                await captainRuntime.init(captainPlaybookSession(captainSessionId));
+                lifecycle = 'ready';
+            }
+            catch (error) {
+                terminallyDisposed = true;
+                lifecycle = 'closed';
+                throw error;
+            }
         },
+        exportSnapshot: exportShellSnapshot,
+        restore: restoreShellSnapshot,
         async handleBossTurn(turn, context) {
+            if (lifecycle !== 'ready' || terminallyDisposed) {
+                throw new Error('init must be called first, or restore must complete before handling a Boss turn');
+            }
             requireSession();
             if (!captainRuntime) {
                 throw new Error('init must be called first');
@@ -2926,10 +3703,16 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
         },
         async prepareDispose() {
+            if (lifecycle === 'initializing' || lifecycle === 'restoring') {
+                throw new Error('cannot dispose while Captain shell setup is in progress');
+            }
             activeContext = undefined;
             await teardown();
         },
         async dispose() {
+            if (lifecycle === 'initializing' || lifecycle === 'restoring') {
+                throw new Error('cannot dispose while Captain shell setup is in progress');
+            }
             activeContext = undefined;
             await teardown();
         },
@@ -2937,6 +3720,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     // CAPTAIN-16: dispose every active frame from leaf to root, then the
     // session Captain last.
     async function teardown() {
+        terminallyDisposed = true;
+        lifecycle = 'disposing';
         let failure;
         try {
             await disposeStack('dispose');
@@ -2955,6 +3740,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 failure ??= error;
             }
         }
+        lifecycle = 'closed';
         if (failure !== undefined)
             throw failure;
     }
