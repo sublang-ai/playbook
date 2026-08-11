@@ -6,8 +6,8 @@
 // `@sublang/playbook/xstate-runtime`, which Node resolves by walking up
 // from the artifact's own directory; a globally installed host therefore
 // fails at artifact load in a bare directory. Before importing such a
-// module, `playbook run` probes both specifiers with the module's path as
-// resolution parent and, only when a probe fails, symlinks the running
+// module, both `playbook` front ends probe both specifiers with the module's
+// path as resolution parent and, only when a probe fails, symlink the running
 // host's own installed package roots beside the module. It never shells
 // out to `npm link` and never installs from the registry.
 
@@ -133,18 +133,24 @@ function linkState(linkPath) {
   return existsSync(linkPath) ? 'live' : 'dangling';
 }
 
-// PBCLI-36/37: probe, then provision the missing engine links beside a
-// filesystem registry module. Returns {} when the run may proceed (either
-// nothing was needed or links were created and logged) or { code: 1 }
-// after writing one `playbook run: <message>` diagnostic to stderr.
+export class EngineProvisioningError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'EngineProvisioningError';
+    this.code = code;
+  }
+}
+
+// PBCLI-36/37: host-neutral probe and provisioning core. It returns
+// structured link notices and throws a coded error; CLI hosts own prefixes
+// and streams, so the same preparation has no baked-in presentation.
 export async function provisionEngine({
   modulePath,
-  stderr,
   enabled = true,
   hostRoots,
 }) {
   const missing = missingEngineLinks(modulePath);
-  if (missing.length === 0) return {};
+  if (missing.length === 0) return { createdLinks: [] };
 
   const moduleDir = dirname(modulePath);
   if (!enabled) {
@@ -154,35 +160,27 @@ export async function provisionEngine({
     for (const name of missing) {
       const linkPath = join(moduleDir, 'node_modules', name);
       if (linkState(linkPath) === 'dangling') {
-        stderr.write(
-          `playbook run: ${linkPath} is a stale engine link to missing ` +
-            `${readlinkSync(linkPath)}; rerun without --no-provision to relink\n`,
+        throw new EngineProvisioningError(
+          'stale-link',
+          `${linkPath} is a stale engine link to missing ` +
+            `${readlinkSync(linkPath)}; rerun without --no-provision to relink`,
         );
-        return { code: 1 };
       }
     }
-    return {};
+    return { createdLinks: [] };
   }
 
   const manifestPath = declaringManifest(moduleDir);
   if (manifestPath !== undefined) {
-    stderr.write(
-      `playbook run: ${manifestPath} declares @sublang/playbook; ` +
+    throw new EngineProvisioningError(
+      'declared-install-missing',
+      `${manifestPath} declares @sublang/playbook; ` +
         'provisioning would shadow the project install — run the ' +
-        "project's dependency install (e.g. npm install) instead\n",
+        "project's dependency install (e.g. npm install) instead",
     );
-    return { code: 1 };
   }
 
-  let roots;
-  try {
-    roots = hostRoots ?? defaultHostRoots();
-  } catch (error) {
-    stderr.write(
-      `playbook run: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-    return { code: 1 };
-  }
+  const roots = hostRoots ?? defaultHostRoots();
 
   // PBCLI-37: validate every destination before mutating any, so an
   // occupied-path refusal leaves the module directory unchanged rather
@@ -194,11 +192,11 @@ export async function provisionEngine({
     if (state === 'occupied' || state === 'live') {
       // A live-but-unresolvable link is as foreign as a real directory:
       // neither is a link this host may replace.
-      stderr.write(
-        `playbook run: cannot provision ${linkPath}: the path is already ` +
-          `occupied${state === 'live' ? ' by a foreign symbolic link' : ''}\n`,
+      throw new EngineProvisioningError(
+        'occupied-link',
+        `cannot provision ${linkPath}: the path is already ` +
+          `occupied${state === 'live' ? ' by a foreign symbolic link' : ''}`,
       );
-      return { code: 1 };
     }
     plans.push({
       linkPath,
@@ -207,22 +205,70 @@ export async function provisionEngine({
     });
   }
 
-  const created = [];
   try {
     for (const { linkPath, target, dangling } of plans) {
       if (dangling) await unlink(linkPath);
       await mkdir(dirname(linkPath), { recursive: true });
       await symlink(target, linkPath, 'dir');
-      created.push(`${linkPath} -> ${target}`);
     }
   } catch (error) {
     // PBCLI-37: a filesystem failure is a load fault, not a raw crash.
-    stderr.write(
-      'playbook run: cannot provision engine links: ' +
-        `${error instanceof Error ? error.message : String(error)}\n`,
+    throw new EngineProvisioningError(
+      'filesystem',
+      'cannot provision engine links: ' +
+        `${error instanceof Error ? error.message : String(error)}`,
     );
-    return { code: 1 };
   }
-  stderr.write(`playbook run: provisioned ${created.join(', ')}\n`);
-  return {};
+  return {
+    createdLinks: plans.map(({ linkPath, target }) => ({
+      path: linkPath,
+      target,
+    })),
+  };
+}
+
+// PBCLI-36/46 (DR-024 as amended by DR-031): adapt the low-level
+// probe/symlink operation to launch-config's prepare-or-throw contract. Both
+// front ends install this hook, filesystem URLs are prepared before the
+// catalog import transaction, and bare/custom specifiers stay untouched.
+export function prepareConfiguredRegistries({
+  enabled = true,
+  stderr,
+  hostRoots,
+  commandName = 'playbook',
+}) {
+  return async ({ from }) => {
+    if (!from.startsWith('file:')) return from;
+    const result = await provisionEngine({
+      modulePath: fileURLToPath(from),
+      enabled,
+      hostRoots,
+    });
+    if (result.createdLinks.length > 0) {
+      await writeStream(
+        stderr,
+        `${commandName}: provisioned ${result.createdLinks
+          .map(({ path, target }) => `${path} -> ${target}`)
+          .join(', ')}\n`,
+      );
+    }
+    return from;
+  };
+}
+
+async function writeStream(stream, text) {
+  const ready = stream.write(text);
+  if (ready !== false || typeof stream.once !== 'function') return;
+  await new Promise((resolvePromise, rejectPromise) => {
+    const onDrain = () => {
+      stream.off?.('error', onError);
+      resolvePromise();
+    };
+    const onError = (error) => {
+      stream.off?.('drain', onDrain);
+      rejectPromise(error);
+    };
+    stream.once('drain', onDrain);
+    stream.once('error', onError);
+  });
 }

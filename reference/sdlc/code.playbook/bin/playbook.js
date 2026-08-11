@@ -27,6 +27,7 @@ import {
   resolveUserConfigPath,
   checkReadiness,
 } from './launch-config.js';
+import { prepareConfiguredRegistries } from './provision.js';
 
 // Preserve the established import surface while the CLI itself delegates to
 // the host-neutral launch-config module.
@@ -63,22 +64,43 @@ export async function runPlaybookCli(options = {}) {
   const userConfigPath =
     options.userConfigPath ?? resolveUserConfigPath(env, home);
 
-  // PBCLI-18: `playbook run ...` is the non-interactive one-shot path; it
-  // never seeds, composes, resolves tmux-play, or launches it.
+  // PBCLI-18: `playbook run ...` is the non-interactive presentation of the
+  // same generic-config Captain session. It never resolves or launches the
+  // tmux presenter, but it receives the launch inputs shared with this host.
   if (argv[0] === 'run') {
     const { runPlaybookRun } = await import('./run.js');
     return await runPlaybookRun({
       argv: argv.slice(1),
       stdout,
       stderr,
-      // PBCLI-29: the run host reads the same user config as the launcher,
-      // honoring any injected env, home, or explicit path.
+      env,
+      homeDir: home,
       userConfigPath,
+      ...(options.cwd ? { cwd: options.cwd } : {}),
       ...(options.loadModule ? { loadModule: options.loadModule } : {}),
-      ...(options.createAgent ? { createAgent: options.createAgent } : {}),
       ...(options.readStdin ? { readStdin: options.readStdin } : {}),
-      ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
       ...(options.hostRoots ? { hostRoots: options.hostRoots } : {}),
+      ...(options.prepareRegistryModule
+        ? { prepareRegistryModule: options.prepareRegistryModule }
+        : {}),
+      ...(options.adapterImports
+        ? { adapterImports: options.adapterImports }
+        : {}),
+      ...(options.createCaptainRuntime
+        ? { createCaptainRuntime: options.createCaptainRuntime }
+        : {}),
+      ...(options.createCaptainSessionId
+        ? { createCaptainSessionId: options.createCaptainSessionId }
+        : {}),
+      ...(options.createLogicalSessionId
+        ? { createLogicalSessionId: options.createLogicalSessionId }
+        : {}),
+      ...(options.createHostRuntime
+        ? { createHostRuntime: options.createHostRuntime }
+        : {}),
+      ...(options.restoreSnapshot
+        ? { restoreSnapshot: options.restoreSnapshot }
+        : {}),
       // PBCLI-39: the run path gates on SDK availability too.
       ...(options.probeAdapterSdk
         ? { probeAdapterSdk: options.probeAdapterSdk }
@@ -120,6 +142,15 @@ export async function runPlaybookCli(options = {}) {
     );
     return { code: COMPOSITION_FAILURE_EXIT_CODE };
   }
+  const noProvision = forwardArgv.includes('--no-provision');
+  forwardArgv = forwardArgv.filter((arg) => arg !== '--no-provision');
+  if (noProvision && hasExplicitConfig(argv)) {
+    stderr.write(
+      'playbook: --no-provision applies to configured registry preparation ' +
+        'and cannot combine with a raw --config launch\n',
+    );
+    return { code: COMPOSITION_FAILURE_EXIT_CODE };
+  }
 
   // PBCLI-1: explicit `--config <path>` launches that raw tmux-play config
   // directly, bypassing seeding, composition, and the readiness gate.
@@ -133,9 +164,14 @@ export async function runPlaybookCli(options = {}) {
       userConfigPath,
       overlayPaths: withPaths,
       loadModule,
-      ...(options.prepareRegistryModule
-        ? { prepareRegistryModule: options.prepareRegistryModule }
-        : {}),
+      prepareRegistryModule:
+        options.prepareRegistryModule ??
+        prepareConfiguredRegistries({
+          enabled: !noProvision,
+          stderr,
+          hostRoots: options.hostRoots,
+          commandName: 'playbook',
+        }),
       onNotice: (line) => stderr.write(line),
     });
   } catch (error) {
@@ -229,9 +265,10 @@ function helpText({
     ...sdkFailureLines,
     ...failures,
     'Usage:',
-    '  playbook [--list] [--with <path>]... [--config <path>] [tmux-play options]',
-    '  playbook run <from> [task] [options]   # non-interactive one-shot',
-    '  playbook run resume <session-id> [reply]   # answer a parked run',
+    '  playbook [--list] [--with <path>]... [--no-provision]',
+    '           [--config <path>] [tmux-play options]',
+    '  playbook run [--with <path>]... [--no-provision] [--json]',
+    '               [--verbose] [--] [input]',
     '  playbook --help',
     '',
     `Default config: ${userConfigPath}`,
@@ -240,6 +277,9 @@ function helpText({
     '  the default config) over the default config for this launch only —',
     '  maps merge recursively, other values replace, later files win. The',
     '  default config file is never modified.',
+    '  --no-provision keeps configured filesystem registries read-only;',
+    '  any missing engine links remain a launch error.',
+    '  `playbook run --verbose` prints Captain telemetry topics to stderr.',
     '',
     'Adapter setup:',
     '  claude: npm install -g @anthropic-ai/claude-agent-sdk, then run',
@@ -311,5 +351,6 @@ function isCliEntry(argv1 = process.argv[1], moduleUrl = import.meta.url) {
 if (isCliEntry()) {
   const result = await runPlaybookCli();
   if (result.signal) process.kill(process.pid, result.signal);
-  else process.exit(result.code ?? 0);
+  // Let Node drain a long piped Captain reply or diagnostic naturally.
+  else process.exitCode = result.code ?? 0;
 }

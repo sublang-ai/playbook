@@ -123,12 +123,8 @@ SDKs the current tree does have and the two partial trees alternate
 forever — pins the running package's own version, and replays the
 original arguments, so it is executable as printed and completes in
 one hop.
-Input the command already consumed from stdin (a `run` task, a
-`resume` reply) is appended to the re-run behind a `--` end-of-options
-terminator, quoted, because the pipe that carried it is gone when the
-printed command runs and quoting alone cannot stop a flag-shaped value
-(`--json`, `--last`, a `-`-leading bullet) from being reinterpreted as
-an option.
+Captain input the command already consumed from stdin, for a new or continued headless turn, is appended to the re-run behind a `--` end-of-options terminator and quoted.
+The pipe that carried it is gone when the printed command runs, and quoting alone cannot stop a flag-shaped value such as `--json` or a `-`-leading bullet from being reinterpreted as an option.
 An invocation whose own `--` is already active keeps it and gets no
 second one — parsing stops at the first terminator, so a doubled `--`
 is itself positional data — and only a `--` the parser treated as

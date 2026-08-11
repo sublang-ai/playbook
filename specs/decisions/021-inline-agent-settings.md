@@ -46,9 +46,9 @@ Migration is idempotent: a migrated config carries nothing to migrate on the nex
 
 ### 4. Preserved scope
 
-- No change to the `playbooks` model, the launcher-owned keys, roster generation, readiness, or the `run` defaults block ([DR-017](017-run-defaults-config.md)), none of which read `profiles`.
-- No change to `playbook run`'s `<adapter>[:<model>][@<effort>]` agent grammar ([DR-015](015-per-run-agent-tuning.md)), which was already inline.
-- Agent-block schema and per-agent fields stay exactly as cligent's tmux-play defines them.
+- No change to the `playbooks` model, the launcher-owned keys, roster generation, or readiness.
+- [DR-031](031-shared-captain-session-front-ends.md) subsequently retired the separate `run` defaults block and the run-only `<adapter>[:<model>][@<effort>]` grammar; both front ends now use these same inline `captain` and `playbooks.<id>.players.<role>` blocks.
+- Agent-block schema and per-agent fields stay exactly as the installed cligent tmux-play loader defines and normalizes them.
 
 ## Consequences
 

@@ -7,12 +7,13 @@
 
 Accepted.
 Supersedes nothing: [DR-023](023-data-only-machine-ir.md)'s data-only machine IR remains the accepted long-term direction, but it no longer gates dropping the project-local install and `npx` consumption story — this record's provisioning mechanism is the chosen near-term gate, delivered as a 3.x minor.
+Amended by [DR-031](031-shared-captain-session-front-ends.md): provisioning now applies to configured filesystem `playbooks.<id>.from` modules through the launch path shared by interactive and headless Captain sessions, not a positional direct-run module.
 
 ## Context
 
 - A compiled thin artifact is code: its FSM imports `xstate` and its runtime module imports `@sublang/playbook/xstate-runtime`, both resolved by Node walking up from the **artifact's** directory.
   A globally installed host launches fine but fails at artifact load in any directory without a project-local install ([DR-023](023-data-only-machine-ir.md)).
-- The Boss judged the full data-only IR redesign too heavy a prerequisite for the near-term goal; the goal is only that `npm install -g @sublang/playbook` plus a bare `playbook run` work anywhere.
+- The Boss judged the full data-only IR redesign too heavy a prerequisite for the near-term goal; the goal is only that `npm install -g @sublang/playbook` plus a configured filesystem playbook work from either CLI front end anywhere.
 - npm-mediated fixes are rejected for cause:
   - `npm link` maintains a global link registry, writes manifests, and its links are silently removed by later `npm install` runs in the same tree;
   - a default registry `npm install` at run time needs the network, drifts from the host's engine version, and npm's directory walk-up can mutate an unrelated parent `package.json` — the exact bug that recently bit slc's demo docs.
@@ -21,7 +22,7 @@ Supersedes nothing: [DR-023](023-data-only-machine-ir.md)'s data-only machine IR
 
 ### 1. Probe first; an existing install always wins
 
-- Before `playbook run` imports the artifact module (first run and `resume` alike), the command probes resolution of both engine specifiers — `xstate` and `@sublang/playbook/xstate-runtime` — with the artifact's own path as resolution parent (`module.createRequire(artifactPath).resolve(...)`).
+- Before either front end imports a configured filesystem `playbooks.<id>.from` artifact, the shared launch path probes resolution of both engine specifiers — `xstate` and `@sublang/playbook/xstate-runtime` — with the artifact's own path as resolution parent (`module.createRequire(artifactPath).resolve(...)`).
 - If both resolve, the command touches nothing: a project-local installation is always authoritative, whatever its version — [DR-022](022-runtime-compatibility-contract.md)'s `spec.compat` check remains the arbiter of genuine incompatibility.
 
 ### 2. Provision by direct symlink from the host's own tree
@@ -35,8 +36,8 @@ Supersedes nothing: [DR-023](023-data-only-machine-ir.md)'s data-only machine IR
 
 ### 3. Implicit by default, one log line, one opt-out
 
-- Provisioning is automatic, with exactly one stderr line naming each created link and its target.
-- `--no-provision` disables it; the unresolvable import then surfaces through the ordinary load-diagnostic path.
+- Provisioning is automatic in both front ends, with exactly one front-end-prefixed stderr line naming each created link and its target.
+- `--no-provision` disables it for that new interactive or headless session; the unresolvable import then surfaces through the ordinary load-diagnostic path.
 - No explicit environment subcommand ships in this cut; the implicit-only choice is deliberate — the probe makes the operation idempotent and self-explanatory, and an explicit subcommand can layer on later without changing this contract.
 - Idempotence: a repeated run finds the probes resolving and creates nothing.
 
@@ -60,12 +61,12 @@ Supersedes nothing: [DR-023](023-data-only-machine-ir.md)'s data-only machine IR
 
 ### 7. The acceptance gate moves here
 
-- The [DR-023](023-data-only-machine-ir.md) hermetic global-only test is re-scoped onto this mechanism and joins the opt-in `pnpm test:acceptance` suite ([[release-24](../packages/release.md#release-24)]/[[release-25](../packages/release.md#release-25)]): pack the candidate, install it globally in an isolated prefix with no project-local packages anywhere, run a compiled artifact from a bare directory, assert provisioning triggers (log line and symlinks), the run reaches its terminal JSON outcome, and a second run provisions nothing further.
+- The [DR-023](023-data-only-machine-ir.md) hermetic global-only test is re-scoped onto this mechanism and joins the opt-in `pnpm test:acceptance` suite ([[release-24](../packages/release.md#release-24)]/[[release-25](../packages/release.md#release-25)]): pack the candidate, install it globally in an isolated prefix with no project-local packages anywhere, enable a compiled artifact from a bare directory in the shared config, assert provisioning triggers (log line and symlinks), drive its effective command through Captain, and assert a second launch provisions nothing further.
 - Documentation drops the `npx`/project-local story only after this gate passes; slc-side adoption is out of scope here.
 
 ## Consequences
 
-- The global-CLI experience ships as a minor release: additive behavior on `playbook run`, no new package surface, no artifact format change.
+- The original global-CLI provisioning behavior shipped additively; [DR-031](031-shared-captain-session-front-ends.md) carries its later front-end unification in a major release without changing the engine-link mechanism.
 - Provisioned runs execute under exactly the host's engine, so the remaining artifact/engine skew surface is the one [DR-022](022-runtime-compatibility-contract.md) already checks by declaration.
 - Machine-local symlinks are the accepted cost; the dangling-link diagnostic and the never-overwrite rule bound the damage, and copy-mode remains open under a future record.
 - [DR-023](023-data-only-machine-ir.md) work is deferred, not abandoned: when a data-only artifact format lands, provisioning simply stops triggering for it (nothing to resolve), so the mechanisms compose rather than conflict.

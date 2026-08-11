@@ -10,16 +10,20 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   parse as parseYaml,
   parseDocument as parseYamlDocument,
+  stringify as stringifyYaml,
 } from 'yaml';
+import { loadTmuxPlayConfig } from '@sublang/cligent/tmux-play';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_TEMPLATE_PATH = resolve(
@@ -32,6 +36,13 @@ const DEFAULT_TEMPLATE_PATH = resolve(
 export const PLAYBOOK_CAPTAIN_MODULE =
   '@sublang/playbook/playbook-captain';
 const PLAYBOOK_LAUNCHER_KEYS = ['from', 'command', 'players'];
+const PLAYBOOK_TOP_LEVEL_KEYS = new Set([
+  'captain',
+  'playbooks',
+  'layout',
+  'notifications',
+  'theme',
+]);
 const RESERVED_CAPTAIN_PLAYBOOK_ID = 'captain';
 const RESERVED_CAPTAIN_ROLE_ID = 'captain';
 
@@ -125,9 +136,8 @@ export function canonicalizeRegistrySpecifier(from, configPath) {
 }
 
 // PBCLI-46: seed, migrate, overlay, validate, and normalize through one path.
-// `prepareRegistryModule` is the single provision-before-import seam. It is
-// absent for today's interactive path, so this extraction changes no launch
-// behavior; the shared headless host can attach the existing provisioner.
+// `prepareRegistryModule` is the single provision-before-import seam used by
+// both front ends, so filesystem registry handling cannot drift by presenter.
 export async function loadLaunchPlan({
   userConfigPath,
   overlayPaths = [],
@@ -185,6 +195,23 @@ export async function normalizeLaunchPlan(
   const importModule = loadModule ?? ((specifier) => import(specifier));
   top = cloneJson(top, 'config');
   assertNoRetiredProfiles(top, configPath);
+  if (hasOwn(top, 'run')) {
+    throw new Error(
+      'top-level "run" was removed: configure the shared Captain under ' +
+        'captain and playbooks.<id>.players instead',
+    );
+  }
+  const unknownTopLevel = Object.keys(top).filter(
+    (key) => !PLAYBOOK_TOP_LEVEL_KEYS.has(key),
+  );
+  if (unknownTopLevel.length > 0) {
+    throw new Error(
+      `config has unknown top-level ${formatKeyList(unknownTopLevel)}`,
+    );
+  }
+  if (top.layout !== undefined && !isObject(top.layout)) {
+    throw new Error('layout must be a map');
+  }
 
   const playbooksCfg = requireObject(top.playbooks, 'playbooks');
   const ids = Object.keys(playbooksCfg);
@@ -195,7 +222,7 @@ export async function normalizeLaunchPlan(
     throw new Error('playbooks keys must be nonblank ids');
   }
 
-  const captain = resolveAgent(top.captain, 'captain', ['from', 'options']);
+  let captain = resolveAgent(top.captain, 'captain', ['from', 'options']);
   if (
     typeof captain.adapter !== 'string' ||
     captain.adapter.trim().length === 0
@@ -236,6 +263,13 @@ export async function normalizeLaunchPlan(
     }
     if (roles.some((role) => role.trim().length === 0)) {
       throw new Error(`playbooks.${id}.players keys must be nonblank role ids`);
+    }
+    if (roles.includes(RESERVED_CAPTAIN_ROLE_ID)) {
+      throw new Error(
+        `playbooks.${id}.players.${RESERVED_CAPTAIN_ROLE_ID} binds local ` +
+          `role "${RESERVED_CAPTAIN_ROLE_ID}", which is reserved for the ` +
+          'tmux-play Captain',
+      );
     }
     const normalizedPlayers = [];
     const generated = [];
@@ -287,6 +321,45 @@ export async function normalizeLaunchPlan(
     });
   }
 
+  // Both front ends consume the exact installed cligent schema. Normalize a
+  // detached provisional projection before any registry preparation/import,
+  // then feed its agent and presentation fields back into the authoritative
+  // plan. The interactive child will only revalidate these same values.
+  const firstVisible = configuredPlaybooks[0].generated;
+  const provisional = {
+    captain: {
+      ...captain,
+      from: PLAYBOOK_CAPTAIN_MODULE,
+      options: {},
+    },
+    players: configuredPlaybooks.flatMap((configured) =>
+      configured.normalizedPlayers.map(({ id, agent }) => ({
+        id,
+        ...agent,
+      })),
+    ),
+    layout: {
+      ...(isObject(top.layout) ? top.layout : {}),
+      initialVisible: firstVisible,
+    },
+    ...(top.notifications === undefined
+      ? {}
+      : { notifications: top.notifications }),
+    ...(top.theme === undefined ? {} : { theme: top.theme }),
+  };
+  const normalizedHost = await normalizeHostConfig(provisional);
+  const { from: _captainFrom, options: _captainOptions, ...normalizedCaptain } =
+    normalizedHost.captain;
+  captain = normalizedCaptain;
+  const hostAgents = new Map(
+    normalizedHost.players.map(({ id, ...agent }) => [id, agent]),
+  );
+  for (const configured of configuredPlaybooks) {
+    configured.normalizedPlayers = configured.normalizedPlayers.map(
+      (player) => ({ ...player, agent: hostAgents.get(player.id) }),
+    );
+  }
+
   // Preparation is a transaction-like pre-import phase across the complete
   // configured catalog. A provisioning failure therefore cannot leave some
   // registry modules evaluated and others untouched.
@@ -324,7 +397,6 @@ export async function normalizeLaunchPlan(
   const players = [];
   const seenCommands = new Map();
   const seenIds = new Set();
-  let firstVisible;
 
   for (const {
     id,
@@ -333,7 +405,6 @@ export async function normalizeLaunchPlan(
     commandOverride,
     roles,
     normalizedPlayers,
-    generated,
     playerIds,
     optionSlice,
   } of preparedPlaybooks) {
@@ -378,14 +449,6 @@ export async function normalizeLaunchPlan(
           'which is reserved for the tmux-play Captain',
       );
     }
-    if (roles.includes(RESERVED_CAPTAIN_ROLE_ID)) {
-      throw new Error(
-        `playbooks.${id}.players.${RESERVED_CAPTAIN_ROLE_ID} binds local ` +
-          `role "${RESERVED_CAPTAIN_ROLE_ID}", which is reserved for the ` +
-          'tmux-play Captain',
-      );
-    }
-
     for (const required of entry.requiredRoleIds) {
       if (!roles.includes(required)) {
         throw new Error(
@@ -395,7 +458,6 @@ export async function normalizeLaunchPlan(
     }
 
     players.push(...normalizedPlayers);
-    if (firstVisible === undefined) firstVisible = generated;
     catalogEntries.push([
       id,
       {
@@ -411,13 +473,13 @@ export async function normalizeLaunchPlan(
     ]);
   }
 
-  const layout = isObject(top.layout) ? { ...top.layout } : {};
-  layout.initialVisible = firstVisible;
-  const presentation = { layout };
-  if (top.notifications !== undefined) {
-    presentation.notifications = top.notifications;
-  }
-  if (top.theme !== undefined) presentation.theme = top.theme;
+  const presentation = {
+    layout: normalizedHost.layout,
+    notifications: normalizedHost.notifications,
+    ...(normalizedHost.theme === undefined
+      ? {}
+      : { theme: normalizedHost.theme }),
+  };
 
   return deepFreeze(
     cloneJson(
@@ -433,6 +495,20 @@ export async function normalizeLaunchPlan(
   );
 }
 
+// Run cligent's public explicit-config loader over an isolated projection so
+// generic launch planning tracks the installed host schema without importing
+// or duplicating cligent's private validators.
+export async function normalizeHostConfig(config) {
+  const dir = mkdtempSync(join(tmpdir(), 'playbook-host-config-'));
+  const path = join(dir, 'tmux-play.config.yaml');
+  try {
+    writeFileSync(path, stringifyYaml(config));
+    return (await loadTmuxPlayConfig({ configPath: path })).config;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 // PBCLI-8/9/10/46: tmux is one projection of the host-neutral plan. The
 // projection is detached so cligent normalization cannot mutate the plan.
 export function projectTmuxConfig(plan) {
@@ -441,9 +517,7 @@ export function projectTmuxConfig(plan) {
       id,
       {
         from: item.from,
-        ...(item.commandOverride === undefined
-          ? {}
-          : { command: item.commandOverride }),
+        command: item.command,
         options: cloneJson(item.options, `catalog.${id}.options`),
       },
     ]),
@@ -464,7 +538,7 @@ export function projectTmuxConfig(plan) {
       ...cloneJson(agent, `players.${id}.agent`),
       id,
     })),
-    layout: cloneJson(plan.presentation.layout, 'presentation.layout'),
+    layout: projectHostLayout(plan.presentation.layout),
   };
   if (hasOwn(plan.presentation, 'notifications')) {
     config.notifications = cloneJson(
@@ -476,6 +550,22 @@ export function projectTmuxConfig(plan) {
     config.theme = cloneJson(plan.presentation.theme, 'presentation.theme');
   }
   return config;
+}
+
+function projectHostLayout(layout) {
+  const projected = cloneJson(layout, 'presentation.layout');
+  // cligent's normalized runtime shape carries `columnWeights` as the
+  // derived active-shape value alongside both canonical shape fields. The
+  // authored schema deliberately rejects that alias/canonical combination,
+  // so the interactive child projection must serialize canonical authority
+  // only; its loader deterministically derives the same alias again.
+  if (
+    Array.isArray(projected.singlePlayerColumnWeights) &&
+    Array.isArray(projected.multiPlayerColumnWeights)
+  ) {
+    delete projected.columnWeights;
+  }
+  return projected;
 }
 
 // Compatibility surface used by existing integrations and tests. New hosts
@@ -831,6 +921,12 @@ function hasOwn(value, key) {
 function requireObject(value, path) {
   if (!isObject(value)) throw new Error(`${path} must be an object`);
   return value;
+}
+
+function formatKeyList(keys) {
+  return `${keys.length === 1 ? 'key' : 'keys'} ${keys
+    .map((key) => JSON.stringify(key))
+    .join(', ')}`;
 }
 
 function errorMessage(error) {

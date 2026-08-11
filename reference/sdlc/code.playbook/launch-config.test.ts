@@ -45,9 +45,9 @@ describe('shared launch-config plan (PBCLI-47)', () => {
   it('builds one detached frozen JSON plan and a separate tmux projection', async () => {
     const top = {
       captain: { adapter: 'claude', model: 'captain-model' },
-      layout: { window: { width: 120, height: 42 } },
+      layout: { window: { columns: 120, rows: 42 } },
       notifications: { turn_finished: 'desktop' },
-      theme: { palette: { accent: 'cyan' } },
+      theme: 'mocha',
       playbooks: {
         code: {
           from: 'mod://code',
@@ -68,7 +68,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
 
     top.captain.model = 'mutated';
     top.playbooks.code.players.coder.model = 'mutated';
-    top.layout.window.width = 1;
+    top.layout.window.columns = 1;
 
     expect(plan).toMatchObject({
       schemaVersion: 1,
@@ -103,9 +103,18 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       },
       presentation: {
         layout: {
-          window: { width: 120, height: 42 },
+          window: { columns: 120, rows: 42 },
           initialVisible: ['code-coder', 'code-reviewer'],
+          singlePlayerColumnWeights: [1, 1],
+          multiPlayerColumnWeights: [1, 1, 1],
+          columnWeights: [1, 1, 1],
         },
+        notifications: {
+          player_finished: 'off',
+          turn_finished: 'desktop',
+          turn_aborted: 'off',
+        },
+        theme: 'mocha',
       },
     });
     expect(Object.isFrozen(plan)).toBe(true);
@@ -123,6 +132,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       playbooks: {
         code: {
           from: 'mod://code',
+          command: 'code',
           options: {
             committer: 'coder',
             policy: { levels: ['strict'] },
@@ -135,11 +145,15 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       { id: 'code-coder', adapter: 'codex', model: 'coder-model' },
       { id: 'code-reviewer', adapter: 'claude' },
     ]);
-    tmux.layout.window.width = 2;
-    tmux.theme.palette.accent = 'red';
+    expect(tmux.layout).not.toHaveProperty('columnWeights');
+    await expect(launchConfig.normalizeHostConfig(tmux)).resolves.toMatchObject({
+      layout: plan.presentation.layout,
+    });
+    tmux.layout.window.columns = 2;
+    tmux.theme = 'latte';
     tmux.captain.options.playbooks.code.options.policy.levels[0] = 'loose';
-    expect(plan.presentation.layout.window.width).toBe(120);
-    expect(plan.presentation.theme.palette.accent).toBe('cyan');
+    expect(plan.presentation.layout.window.columns).toBe(120);
+    expect(plan.presentation.theme).toBe('mocha');
     expect(plan.catalog.code.options.policy.levels[0]).toBe('strict');
 
     expect(launchConfig.adaptersFromLaunchPlan(plan)).toEqual([
@@ -333,31 +347,31 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(projected.players[0].id).toBe('code-coder');
   });
 
-  it('treats prototype-shaped ids and option keys as own data', async () => {
-    const players = Object.fromEntries([['__proto__', 'codex']]);
+  it('treats prototype-shaped option keys as own data', async () => {
+    const players = Object.fromEntries([['constructor', 'codex']]);
     const block = Object.fromEntries([
       ['from', 'mod://prototype'],
       ['players', players],
       ['__proto__', { safe: true }],
     ]);
-    const playbooks = Object.fromEntries([['__proto__', block]]);
+    const playbooks = Object.fromEntries([['prototype', block]]);
     const plan = await launchConfig.normalizeLaunchPlan(
       { captain: 'claude', playbooks },
       {
         loadModule: async () => ({
-          default: entry('__proto__', ['__proto__'], 'prototype'),
+          default: entry('prototype', ['constructor'], 'prototype'),
         }),
       },
     );
 
-    expect(Object.hasOwn(plan.catalog, '__proto__')).toBe(true);
-    expect(Object.hasOwn(plan.catalog.__proto__.playerIds, '__proto__')).toBe(
+    expect(Object.hasOwn(plan.catalog, 'prototype')).toBe(true);
+    expect(Object.hasOwn(plan.catalog.prototype.playerIds, 'constructor')).toBe(
       true,
     );
-    expect(Object.hasOwn(plan.catalog.__proto__.options, '__proto__')).toBe(
+    expect(Object.hasOwn(plan.catalog.prototype.options, '__proto__')).toBe(
       true,
     );
-    expect(plan.catalog.__proto__.options.__proto__).toEqual({ safe: true });
+    expect(plan.catalog.prototype.options.__proto__).toEqual({ safe: true });
   });
 
   it.each([
@@ -404,6 +418,111 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       launchConfig.normalizeLaunchPlan(config, { loadModule }),
     ).rejects.toThrow();
     expect(loadModule).not.toHaveBeenCalled();
+  });
+
+  it('uses the installed cligent schema before preparation or import', async () => {
+    const base = (captain: unknown = 'claude', player: unknown = 'codex') => ({
+      captain,
+      playbooks: {
+        code: { from: 'mod://code', players: { coder: player } },
+      },
+    });
+    const invalid: Array<[string, unknown]> = [
+      ['unknown root key', { ...base(), layoutt: {} }],
+      ['non-map layout', { ...base(), layout: 'wide' }],
+      [
+        'reserved configured player role',
+        {
+          captain: 'claude',
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              players: { captain: 'codex' },
+            },
+          },
+        },
+      ],
+      ['unknown captain key', base({ adapter: 'claude', temperature: 1 })],
+      ['unknown adapter', base({ adapter: 'missing' })],
+      [
+        'legacy effort conflict',
+        base({ adapter: 'claude', effort: 'high', reasoningEffort: 'xhigh' }),
+      ],
+      ['unsupported effort', base({ adapter: 'claude', effort: 'extreme' })],
+      ['non-string model', base({ adapter: 'claude', model: { id: 'bad' } })],
+      ['non-string instruction', base({ adapter: 'claude', instruction: 7 })],
+      [
+        'invalid permission mode',
+        base({ adapter: 'claude', permissions: { mode: 'unsafe' } }),
+      ],
+      [
+        'escaping writable path',
+        base({
+          adapter: 'claude',
+          permissions: { mode: 'auto', writablePaths: ['../outside'] },
+        }),
+      ],
+      ['unknown player key', base('claude', { adapter: 'codex', extra: true })],
+      ['invalid theme', { ...base(), theme: { flavor: 'mocha' } }],
+      [
+        'invalid layout shape',
+        { ...base(), layout: { window: { width: 120, height: 42 } } },
+      ],
+      [
+        'invalid notification sink',
+        { ...base(), notifications: { turn_finished: 'email' } },
+      ],
+    ];
+
+    for (const [label, config] of invalid) {
+      const prepareRegistryModule = vi.fn();
+      const loadModule = vi.fn();
+      await expect(
+        launchConfig.normalizeLaunchPlan(config, {
+          prepareRegistryModule,
+          loadModule,
+        }),
+        label,
+      ).rejects.toThrow();
+      expect(prepareRegistryModule, label).not.toHaveBeenCalled();
+      expect(loadModule, label).not.toHaveBeenCalled();
+    }
+  });
+
+  it('normalizes deprecated effort aliases only in the isolated host projection', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-launch-effort-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    const source = [
+      'captain:',
+      '  adapter: claude',
+      '  reasoningEffort: high',
+      'playbooks:',
+      '  code:',
+      '    from: mod://code',
+      '    players:',
+      '      coder:',
+      '        adapter: codex',
+      '        reasoningEffort: xhigh',
+      '',
+    ].join('\n');
+    await writeFile(configPath, source, 'utf8');
+
+    const plan = await launchConfig.loadLaunchPlan({
+      userConfigPath: configPath,
+      loadModule: moduleLoader({
+        'mod://code': entry('code', ['coder']),
+      }),
+    });
+
+    expect(plan.captain).toMatchObject({ adapter: 'claude', effort: 'high' });
+    expect(plan.captain).not.toHaveProperty('reasoningEffort');
+    expect(plan.players[0].agent).toMatchObject({
+      adapter: 'codex',
+      effort: 'xhigh',
+    });
+    expect(plan.players[0].agent).not.toHaveProperty('reasoningEffort');
+    expect(await readFile(configPath, 'utf8')).toBe(source);
   });
 
   it('prepares the complete catalog before importing any registry', async () => {

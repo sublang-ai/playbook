@@ -36,7 +36,7 @@ Consumers that vendor and pin the `slc/link.md` text and adopt playbook releases
 ### 3. Scope
 
 - No entry-registry-level compatibility fields are added in this iteration: the factory call is on every execution path — `playbook run`, test suites, embedding hosts — so the factory check already covers them all; a registry-level advertisement can be layered on later without changing this contract.
-- `playbook run` gains no flags: a construction-time throw from an entry's `createRuntime` surfaces through the existing `playbook run: <message>` diagnostic and exit `1` path ([[playbook-cli-20](../packages/playbook-cli.md#playbook-cli-20)]).
+- `playbook run` gains no compatibility flags: a construction-time throw from a selected entry's `createRuntime` settles through the shared Captain action and reply path, while a throw during headless host construction before a Boss turn starts remains a `playbook run: <message>` configuration diagnostic with exit `1` ([[playbook-cli-20](../packages/playbook-cli.md#playbook-cli-20)]), as amended by [DR-031](031-shared-captain-session-front-ends.md).
 - The DECIDE parallel-region runtime does not use the shared factory, carries no declaration, and remains out of scope until it converges on a compatible engine profile under its own record.
 
 ## Consequences
