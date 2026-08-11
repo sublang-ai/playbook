@@ -48,7 +48,9 @@ function sectionOf(src: string, title: string): string {
 
 function interfaceBody(src: string, name: string): string {
   const block = src.match(
-    new RegExp(`interface ${name}\\s*\\{([\\s\\S]*?)\\n\\}`),
+    new RegExp(
+      `interface ${name}(?:\\s+extends\\s+[^\\{]+)?\\s*\\{([\\s\\S]*?)\\n\\}`,
+    ),
   );
   if (!block) throw new Error(`${name} interface not found`);
   return block[1];
@@ -304,6 +306,19 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(interfaceProperties(runtimeDts, 'PlaybookPendingCall')).toEqual(
       interfaceProperties(linkSpec, 'PlaybookPendingCall'),
     );
+    expect(runtimeDts).toMatch(
+      /interface PlaybookSuspendedCall extends PlaybookPendingCall/,
+    );
+    expect(interfaceProperties(runtimeDts, 'PlaybookSuspendedCall')).toEqual([
+      'stateId:string',
+      'text:string',
+      'turnId?:number',
+    ]);
+    expect(
+      normalizeType(typeAliasBody(runtimeDts, 'PlaybookRuntimeSnapshot')),
+    ).toBe(
+      'PlaybookRuntimeSnapshotFields&({schemaVersion:1;suspendedCall?:never}|{schemaVersion:2;suspendedCall?:PlaybookSuspendedCall})',
+    );
     expect(interfaceProperties(runtimeDts, 'PlaybookCallRequest')).toEqual([
       'callId:string',
       'playbookId:string',
@@ -492,6 +507,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'NormalizedError',
       'PlaybookState',
       'PlaybookPendingCall',
+      'PlaybookSuspendedCall',
       'PlaybookCallRequest',
       'PlaybookControlAction',
       'PlaybookControlView',
@@ -508,6 +524,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'PlaybookCallResult',
       'PlaybookCallStart',
       'PlaybookRunResult',
+      'PlaybookRuntimeSnapshot',
       'PlaybookControlReceipt',
       'PlaybookTraceType',
       'PlaybookRuntimeFactory',

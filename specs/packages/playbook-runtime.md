@@ -554,6 +554,13 @@ port, malformed start/result, invocation abort, and disposal while opening —
 shall drain exactly one matching finish event; validation failures shall reject
 as control-plane errors without creating pending state or ordinary child
 evidence.
+Before starting an actor reconstructed from a runtime snapshot, the restore path shall arm the shared nested bridge with `prepareRestore`, supplying either the snapshot's complete suspended-call descriptor or no descriptor when the snapshot owns no suspended child.
+While restore remains prepared, the bridge shall not allocate a call id, drain start emissions, emit `playbook.call.started`, invoke `callPlaybook`, publish pending identity, or attach ordinary child-abort settlement.
+Where a suspended-call descriptor was supplied, exactly one reconstructed `playbook` actor shall claim its call id, source state, target playbook, exact handed-off text, child session id, and optional positive turn id; a mismatched or second claim shall reject as a control-plane error.
+Where no suspended-call descriptor was supplied, any reconstructed `playbook` actor invocation shall reject rather than opening a child.
+Only `confirmRestore` after complete actor validation shall publish the claimed pending identity and arm its ordinary resume and abort behavior; it shall reject an unclaimed descriptor or a prior failed claim, while a prepared zero-call restore shall confirm only when no nested actor appeared.
+Before confirmation, `abortPending`, disposal, or an aborted reconstructed invocation shall roll back a provisional claim locally, reject its actor logic, and release its provisional used call id without emitting a finish boundary or aborting the authoritative child.
+After confirmation, the eventual exact child result shall use the ordinary resume path, emit the one matching `playbook.call.finished` under the original call and turn ownership, and settle the reconstructed actor exactly once.
 If child abort cleanup rejects while the call is suspended, the bridge shall
 emit the paired error finish and reject parent disposal with the original
 cleanup error rather than swallowing it as an ordinary nested-call rejection.
@@ -583,6 +590,10 @@ schema version `1`: a direct-Captain-capable runtime shall persist it, and
 `restore` shall accept an older snapshot that omits it and use the persisted
 global `trace` counter as a collision-safe floor for subsequent Captain call
 ids.
+The public `PlaybookRuntimeSnapshot` contract shall also admit schema version `2`, whose optional `suspendedCall` descriptor carries `callId`, `stateId`, `playbookId`, exact `text`, `childSessionId`, and optional positive `turnId`; schema version `1` shall not carry that member.
+The shared snapshot validator shall capture the complete supplied value once as detached frozen JSON, reject accessors and undeclared snapshot, sequence, pending-question, or suspended-call fields, and preserve schema-version-1 snapshots that contain no suspended call.
+The validator shall reject a schema-version-2 suspended call unless its caller explicitly opts into handling it, its playbook-call counter is positive, its optional turn id does not exceed the turn counter, and its normalized state is active, quiescent, tagged `playbook.suspended`, and contains the descriptor's source state among its active state ids.
+Conversely, the validator shall reject any snapshot whose normalized state is tagged `playbook.suspended` without a schema-version-2 suspended-call descriptor.
 When `restore` is called on an unused runtime instance with the same
 immutable session identity the snapshot was exported under, the runtime
 shall validate the snapshot's schema version and that its playbook id
@@ -1131,6 +1142,13 @@ schema-version mismatch, a playbook-id mismatch, and an already
 initialized instance; and unless the DECIDE linked runtime round-trips
 a parked branch question through the same export/restore surface (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 The suite shall also fail unless the compiled default Captain exposes both snapshot methods while its shell performs no Captain snapshot persistence (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
+
+#### playbook-runtime-59
+
+
+Where the integration suite arms the shared nested bridge and starts a real XState parent in its nested promise actor's invoking state, the test suite shall fail unless an exact descriptor remains unpublished before confirmation, confirms without allocating or emitting a second start or invoking the host port, preserves its detached full identity, and eventually emits one finish before the parent's `onDone` transition.
+The suite shall fail unless mismatched state, target, or text, a second claim, an invoke without a descriptor, and an unclaimed descriptor each reject; unless a failed or aborted pre-confirmation attempt emits no finish and leaves its call id reusable; and unless a confirmed call id remains spent after exact resume (verifying [[playbook-runtime-42](#playbook-runtime-42)]).
+Where the suite validates public runtime snapshots, it shall fail unless schema version `1` remains accepted without a suspended call, schema version `2` requires explicit suspended-call support on the handling path, the returned snapshot and descriptor are detached and frozen, and malformed ownership, impossible state/counter combinations, undeclared fields, and accessors are rejected (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 
 ### Control Surface Coverage
 

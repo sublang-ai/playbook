@@ -47,6 +47,11 @@ export interface PlaybookPendingCall {
     playbookId: string;
     childSessionId: string;
 }
+export interface PlaybookSuspendedCall extends PlaybookPendingCall {
+    stateId: string;
+    text: string;
+    turnId?: number;
+}
 export interface PlaybookCallRequest {
     callId: string;
     playbookId: string;
@@ -137,8 +142,7 @@ export interface PlaybookPendingBossQuestion {
     question: string;
     sourceItem?: string;
 }
-export interface PlaybookRuntimeSnapshot {
-    schemaVersion: 1;
+interface PlaybookRuntimeSnapshotFields {
     playbookId: string;
     machine: JsonValue;
     playerResumeTokens: {
@@ -155,6 +159,13 @@ export interface PlaybookRuntimeSnapshot {
     state: PlaybookState;
     pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
 }
+export type PlaybookRuntimeSnapshot = PlaybookRuntimeSnapshotFields & ({
+    schemaVersion: 1;
+    suspendedCall?: never;
+} | {
+    schemaVersion: 2;
+    suspendedCall?: PlaybookSuspendedCall;
+});
 export interface PlaybookControlAction {
     id: string;
     label: string;
@@ -199,3 +210,4 @@ export interface PlaybookRuntime {
     dispose(): Promise<void>;
 }
 export type PlaybookRuntimeFactory<Options = unknown> = (options: Options) => PlaybookRuntime;
+export {};

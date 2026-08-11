@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-import { createActor, createMachine, toPromise } from 'xstate';
+import { createActor, createMachine, setup, toPromise } from 'xstate';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -9,10 +9,13 @@ import type {
   PlaybookCallResult,
   PlaybookCallStart,
   PlaybookPendingCall,
+  PlaybookRuntimeSnapshot,
   PlaybookStateValue,
+  PlaybookSuspendedCall,
 } from './runtime.js';
 import {
   activePlaybookStateMetadata,
+  assertPlaybookRuntimeSnapshot,
   assertJsonSafe,
   combineAbortSignals,
   createNestedPlaybookBridge,
@@ -36,6 +39,52 @@ const INPUT = {
   playbookId: 'review',
   text: 'Review the proposed change.',
 };
+
+const RESTORED_CALL: PlaybookSuspendedCall = {
+  callId: 'call-7',
+  stateId: INPUT.stateId,
+  playbookId: INPUT.playbookId,
+  text: INPUT.text,
+  childSessionId: 'child-7',
+  turnId: 3,
+};
+
+function runtimeSnapshot(
+  schemaVersion: 1 | 2,
+  suspendedCall?: PlaybookSuspendedCall,
+): PlaybookRuntimeSnapshot {
+  const stateId = suspendedCall?.stateId ?? 'await-boss';
+  const fields = {
+    playbookId: 'parent',
+    machine: { status: 'active', value: stateId },
+    playerResumeTokens: { coder: 'thread-1' },
+    sequences: {
+      trace: 12,
+      turn: 3,
+      judgeCall: 1,
+      playerCall: 2,
+      playbookCall: 7,
+    },
+    state: {
+      value: stateId,
+      activeStateIds: [stateId],
+      tags: [suspendedCall ? 'playbook.suspended' : 'playbook.parked'],
+      status: 'active' as const,
+      quiescent: true,
+      stateId,
+    },
+    pendingBossQuestions: [],
+  };
+  return schemaVersion === 1
+    ? { schemaVersion: 1, ...fields }
+    : {
+        schemaVersion: 2,
+        ...fields,
+        ...(suspendedCall === undefined
+          ? {}
+          : { suspendedCall: { ...suspendedCall } }),
+      };
+}
 
 function pendingCall(
   bridge: ReturnType<typeof createNestedPlaybookBridge>,
@@ -71,6 +120,28 @@ function bridgeOptions(
       events.push('drain');
     },
   };
+}
+
+function restoredInvokeMachine(
+  bridge: ReturnType<typeof createNestedPlaybookBridge>,
+  input: typeof INPUT = INPUT,
+) {
+  return setup({ actors: { nested: bridge.actorLogic } }).createMachine({
+    id: 'restored-parent',
+    initial: 'calling',
+    states: {
+      calling: {
+        invoke: {
+          src: 'nested',
+          input: () => input,
+          onDone: 'done',
+          onError: 'failed',
+        },
+      },
+      done: { type: 'final' },
+      failed: { type: 'final' },
+    },
+  });
 }
 
 const parallelMachine = createMachine({
@@ -227,6 +298,172 @@ describe('public XState snapshot normalization', () => {
   });
 });
 
+describe('runtime snapshot schema validation', () => {
+  it('accepts legacy schema 1 and explicitly opted-in schema 2', () => {
+    const legacy = assertPlaybookRuntimeSnapshot(
+      runtimeSnapshot(1),
+      'parent',
+    );
+    expect(legacy.schemaVersion).toBe(1);
+    expect('suspendedCall' in legacy).toBe(false);
+
+    const source = runtimeSnapshot(2, RESTORED_CALL) as Extract<
+      PlaybookRuntimeSnapshot,
+      { schemaVersion: 2 }
+    >;
+    const restored = assertPlaybookRuntimeSnapshot(source, 'parent', {
+      allowSuspendedCall: true,
+    });
+    expect(restored).toMatchObject({
+      schemaVersion: 2,
+      suspendedCall: RESTORED_CALL,
+    });
+    expect(Object.isFrozen(restored)).toBe(true);
+    expect(Object.isFrozen(restored.suspendedCall)).toBe(true);
+
+    (source.sequences as { turn: number }).turn = 99;
+    (source.suspendedCall as { text: string }).text = 'mutated';
+    expect(restored.sequences.turn).toBe(3);
+    expect(restored.suspendedCall?.text).toBe(INPUT.text);
+  });
+
+  it('fails closed unless suspended-call restoration is explicit', () => {
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        runtimeSnapshot(2, RESTORED_CALL),
+        'parent',
+      ),
+    ).toThrow('explicitly allows it');
+
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...runtimeSnapshot(1),
+          suspendedCall: RESTORED_CALL,
+        },
+        'parent',
+        { allowSuspendedCall: true },
+      ),
+    ).toThrow('schemaVersion 1 must not carry suspendedCall');
+  });
+
+  it.each([
+    ['zero turn owner', { ...RESTORED_CALL, turnId: 0 }, 'positive integer'],
+    [
+      'future turn owner',
+      { ...RESTORED_CALL, turnId: 4 },
+      'must not exceed sequences.turn',
+    ],
+    [
+      'unknown descriptor field',
+      { ...RESTORED_CALL, internal: true },
+      'is not a declared property',
+    ],
+  ])('rejects a malformed %s', (_name, suspendedCall, message) => {
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        runtimeSnapshot(2, suspendedCall as PlaybookSuspendedCall),
+        'parent',
+        { allowSuspendedCall: true },
+      ),
+    ).toThrow(message);
+  });
+
+  it('rejects impossible suspended-call state and counters', () => {
+    const noCall = runtimeSnapshot(2, RESTORED_CALL) as Extract<
+      PlaybookRuntimeSnapshot,
+      { schemaVersion: 2 }
+    >;
+    (noCall.sequences as { playbookCall: number }).playbookCall = 0;
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(noCall, 'parent', {
+        allowSuspendedCall: true,
+      }),
+    ).toThrow('sequences.playbookCall greater than zero');
+
+    const wrongState = runtimeSnapshot(2, RESTORED_CALL) as Extract<
+      PlaybookRuntimeSnapshot,
+      { schemaVersion: 2 }
+    >;
+    (wrongState.state.tags as string[])[0] = 'playbook.parked';
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(wrongState, 'parent', {
+        allowSuspendedCall: true,
+      }),
+    ).toThrow('requires state tag playbook.suspended');
+
+    const wrongSource = runtimeSnapshot(2, RESTORED_CALL) as Extract<
+      PlaybookRuntimeSnapshot,
+      { schemaVersion: 2 }
+    >;
+    (wrongSource.state.activeStateIds as string[])[0] = 'other-state';
+    (wrongSource.state as { stateId?: string }).stateId = 'other-state';
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(wrongSource, 'parent', {
+        allowSuspendedCall: true,
+      }),
+    ).toThrow('suspendedCall.stateId must be active');
+
+    const stripped = runtimeSnapshot(1);
+    (stripped.state.tags as string[])[0] = 'playbook.suspended';
+    expect(() => assertPlaybookRuntimeSnapshot(stripped, 'parent')).toThrow(
+      'requires schemaVersion 2 suspendedCall',
+    );
+  });
+
+  it('captures the complete snapshot once and rejects accessors or extras', () => {
+    const accessor = runtimeSnapshot(2, RESTORED_CALL) as unknown as Record<
+      string,
+      unknown
+    >;
+    const getter = vi.fn(() => 'parent');
+    Object.defineProperty(accessor, 'playbookId', {
+      enumerable: true,
+      get: getter,
+    });
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(accessor, 'parent', {
+        allowSuspendedCall: true,
+      }),
+    ).toThrow('must be a JSON data property');
+    expect(getter).not.toHaveBeenCalled();
+
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        { ...runtimeSnapshot(1), internal: true },
+        'parent',
+      ),
+    ).toThrow('runtime snapshot.internal is not a declared property');
+
+    const sequenceExtra = runtimeSnapshot(1);
+    (sequenceExtra.sequences as Record<string, unknown>).internal = true;
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(sequenceExtra, 'parent'),
+    ).toThrow(
+      'runtime snapshot sequences.internal is not a declared property',
+    );
+
+    const questionExtra = runtimeSnapshot(1);
+    (
+      questionExtra.pendingBossQuestions as unknown as Record<
+        string,
+        unknown
+      >[]
+    ).push({
+      questionId: 'question-1',
+      player: 'coder',
+      question: 'Which target?',
+      sourceItem: 'REVIEW-1',
+      internal: true,
+    });
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(questionExtra, 'parent'),
+    ).toThrow(
+      'runtime snapshot pendingBossQuestions[0].internal is not a declared property',
+    );
+  });
+});
+
 describe('abort signal composition', () => {
   it('preserves one signal and composes independent abort owners', () => {
     const invocation = new AbortController();
@@ -255,6 +492,331 @@ describe('abort signal composition', () => {
 });
 
 describe('nested XState playbook call bridge', () => {
+  it('attaches one restored invoke and resumes it without replaying its start', async () => {
+    const events: string[] = [];
+    const openChild = vi.fn(async () => ({
+      state: 'suspended' as const,
+      childSessionId: 'must-not-open',
+    }));
+    const options = bridgeOptions(events, openChild);
+    options.nextCallId = vi.fn(() => RESTORED_CALL.callId);
+    options.emitStarted = vi.fn(async () => {
+      events.push('unexpected:start');
+    });
+    const bridge = createNestedPlaybookBridge(options);
+    const source = { ...RESTORED_CALL } as PlaybookSuspendedCall & {
+      text: string;
+    };
+    bridge.prepareRestore(source);
+    source.text = 'mutated after preparation';
+
+    expect(bridge.getPendingCall()).toBeUndefined();
+    expect(bridge.getSuspendedCall()).toBeUndefined();
+    const actor = createActor(restoredInvokeMachine(bridge));
+    const completion = toPromise(actor);
+    actor.start();
+
+    // The invoke is attached but remains unpublished until the restore host
+    // has validated the complete root and commits startup.
+    expect(bridge.getPendingCall()).toBeUndefined();
+    expect(events).toEqual([]);
+    bridge.confirmRestore();
+    expect(bridge.getPendingCall()).toEqual({
+      callId: RESTORED_CALL.callId,
+      playbookId: RESTORED_CALL.playbookId,
+      childSessionId: RESTORED_CALL.childSessionId,
+    });
+    const suspended = bridge.getSuspendedCall();
+    expect(suspended).toEqual(RESTORED_CALL);
+    expect(Object.isFrozen(suspended)).toBe(true);
+    expect(openChild).not.toHaveBeenCalled();
+    expect(options.nextCallId).not.toHaveBeenCalled();
+    expect(options.emitStarted).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+
+    await bridge.resume({
+      callId: RESTORED_CALL.callId,
+      result: {
+        status: 'ok',
+        playbookId: RESTORED_CALL.playbookId,
+        childSessionId: RESTORED_CALL.childSessionId,
+        output: { accepted: true },
+      },
+      signal: new AbortController().signal,
+    });
+    await completion;
+    expect(actor.getSnapshot().matches('done')).toBe(true);
+    expect(events).toEqual([
+      `finished:${RESTORED_CALL.callId}:ok`,
+      'drain',
+    ]);
+
+    // A committed restored id remains spent just like an id allocated by a
+    // fresh start; an allocator bug cannot publish the same boundary again.
+    const duplicate = createActor(bridge.actorLogic, { input: INPUT });
+    const duplicateCompletion = toPromise(duplicate);
+    duplicate.start();
+    await expect(duplicateCompletion).rejects.toThrow(
+      `allocated duplicate playbook call id ${RESTORED_CALL.callId}`,
+    );
+    expect(openChild).not.toHaveBeenCalled();
+    await bridge.dispose();
+  });
+
+  it.each([
+    ['stateId', 'different-state'],
+    ['playbookId', 'other-playbook'],
+    ['text', 'different text'],
+  ] as const)(
+    'rejects a mismatched restored %s and permits a clean retry',
+    async (field, value) => {
+      const events: string[] = [];
+      const controlErrors: unknown[] = [];
+      const options = bridgeOptions(events, async () => ({
+        state: 'suspended',
+        childSessionId: 'must-not-open',
+      }));
+      options.onControlPlaneError = (error) => controlErrors.push(error);
+      const bridge = createNestedPlaybookBridge(options);
+      bridge.prepareRestore(RESTORED_CALL);
+      const mismatched = createActor(
+        restoredInvokeMachine(bridge, { ...INPUT, [field]: value }),
+      );
+      const mismatchedCompletion = toPromise(mismatched);
+      mismatched.start();
+
+      expect(() => bridge.confirmRestore()).toThrow(
+        `${field} does not match its persisted input`,
+      );
+      await mismatchedCompletion;
+      expect(mismatched.getSnapshot().matches('failed')).toBe(true);
+      expect(events).toEqual([]);
+      expect(controlErrors).toHaveLength(1);
+
+      // The failed claim spent no call id and left no pending identity.
+      bridge.prepareRestore(RESTORED_CALL);
+      const retry = createActor(restoredInvokeMachine(bridge));
+      const retryCompletion = toPromise(retry);
+      retry.start();
+      bridge.confirmRestore();
+      await bridge.resume({
+        callId: RESTORED_CALL.callId,
+        result: {
+          status: 'ok',
+          playbookId: RESTORED_CALL.playbookId,
+          childSessionId: RESTORED_CALL.childSessionId,
+        },
+        signal: new AbortController().signal,
+      });
+      await retryCompletion;
+      expect(retry.getSnapshot().matches('done')).toBe(true);
+      await bridge.dispose();
+    },
+  );
+
+  it('fails closed for missing or unclaimed restore descriptors', async () => {
+    const events: string[] = [];
+    const bridge = createNestedPlaybookBridge(
+      bridgeOptions(events, async () => ({
+        state: 'suspended',
+        childSessionId: 'must-not-open',
+      })),
+    );
+
+    bridge.prepareRestore();
+    const unexpected = createActor(restoredInvokeMachine(bridge));
+    const unexpectedCompletion = toPromise(unexpected);
+    unexpected.start();
+    expect(() => bridge.confirmRestore()).toThrow(
+      'without a suspendedCall descriptor',
+    );
+    await unexpectedCompletion;
+    expect(unexpected.getSnapshot().matches('failed')).toBe(true);
+
+    bridge.prepareRestore(RESTORED_CALL);
+    const idle = createActor(createMachine({ initial: 'idle', states: { idle: {} } }));
+    idle.start();
+    expect(() => bridge.confirmRestore()).toThrow(
+      'was not claimed by actor startup',
+    );
+
+    // A zero-call restore succeeds only when no nested actor appeared.
+    bridge.prepareRestore();
+    expect(() => bridge.confirmRestore()).not.toThrow();
+    expect(events).toEqual([]);
+    idle.stop();
+    await bridge.dispose();
+  });
+
+  it('rejects a second restored claim and rolls back the first locally', async () => {
+    const events: string[] = [];
+    const bridge = createNestedPlaybookBridge(
+      bridgeOptions(events, async () => ({
+        state: 'suspended',
+        childSessionId: 'must-not-open',
+      })),
+    );
+    bridge.prepareRestore(RESTORED_CALL);
+    const first = createActor(bridge.actorLogic, { input: INPUT });
+    const firstCompletion = toPromise(first);
+    first.start();
+    const second = createActor(bridge.actorLogic, { input: INPUT });
+    const secondCompletion = toPromise(second);
+    second.start();
+
+    await expect(secondCompletion).rejects.toThrow('claimed more than once');
+    await expect(firstCompletion).rejects.toThrow('claimed more than once');
+    expect(() => bridge.confirmRestore()).toThrow('claimed more than once');
+    expect(events).toEqual([]);
+    expect(bridge.getPendingCall()).toBeUndefined();
+
+    // The provisional id was released with the first claim's rollback.
+    expect(() => bridge.prepareRestore(RESTORED_CALL)).not.toThrow();
+    await bridge.abortPending();
+    await bridge.dispose();
+  });
+
+  it('rolls back an uncommitted restored actor without finishing its child', async () => {
+    const events: string[] = [];
+    const bridge = createNestedPlaybookBridge(
+      bridgeOptions(events, async () => ({
+        state: 'suspended',
+        childSessionId: 'must-not-open',
+      })),
+    );
+    bridge.prepareRestore(RESTORED_CALL);
+    const actor = createActor(bridge.actorLogic, { input: INPUT });
+    const completion = toPromise(actor);
+    actor.start();
+
+    expect(bridge.getPendingCall()).toBeUndefined();
+    await bridge.abortPending(new Error('restore validation failed'));
+    await expect(completion).rejects.toThrow('restore validation failed');
+    expect(events).toEqual([]);
+    expect(bridge.getPendingCall()).toBeUndefined();
+
+    // Rollback removes the provisional used-id entry, so another fresh
+    // restore attempt may claim the authoritative child.
+    expect(() => bridge.prepareRestore(RESTORED_CALL)).not.toThrow();
+    await bridge.abortPending();
+    await bridge.dispose();
+  });
+
+  it('rolls back an uncommitted restore immediately when its actor stops', async () => {
+    const events: string[] = [];
+    const openChild = vi.fn(async () => ({
+      state: 'settled' as const,
+      result: {
+        status: 'ok' as const,
+        playbookId: INPUT.playbookId,
+        childSessionId: 'fresh-child',
+      },
+    }));
+    const options = bridgeOptions(events, openChild);
+    options.nextCallId = vi.fn(() => RESTORED_CALL.callId);
+    const bridge = createNestedPlaybookBridge(options);
+    bridge.prepareRestore(RESTORED_CALL);
+    const restored = createActor(bridge.actorLogic, { input: INPUT });
+    const restoredCompletion = toPromise(restored);
+    restored.start();
+
+    restored.stop();
+
+    await expect(restoredCompletion).resolves.toBeUndefined();
+    const intervening = createActor(bridge.actorLogic, { input: INPUT });
+    const interveningCompletion = toPromise(intervening);
+    intervening.start();
+    await expect(interveningCompletion).rejects.toThrow(
+      'is no longer claimable',
+    );
+    let confirmationError: unknown;
+    try {
+      bridge.confirmRestore();
+    } catch (error) {
+      confirmationError = error;
+    }
+    expect(normalizeError(confirmationError)).toMatchObject({
+      name: 'AbortError',
+    });
+    expect(normalizeError(confirmationError).message).not.toContain(
+      'claimed more than once',
+    );
+    expect(normalizeError(confirmationError).message).not.toContain(
+      'no longer claimable',
+    );
+    expect(events).toEqual([]);
+    expect(openChild).not.toHaveBeenCalled();
+    expect(bridge.getPendingCall()).toBeUndefined();
+
+    // The stop-triggered local rollback removes the provisional id. A fresh
+    // invocation can allocate it, proving no hidden used-id mutation remains.
+    const fresh = createActor(bridge.actorLogic, { input: INPUT });
+    const freshCompletion = toPromise(fresh);
+    fresh.start();
+    await expect(freshCompletion).resolves.toBeUndefined();
+    expect(options.nextCallId).toHaveBeenCalledOnce();
+    expect(openChild).toHaveBeenCalledOnce();
+    expect(events).toEqual([
+      'drain',
+      `started:${RESTORED_CALL.callId}:review`,
+      'drain',
+      `port:${RESTORED_CALL.callId}:false`,
+      `finished:${RESTORED_CALL.callId}:ok`,
+      'drain',
+    ]);
+    await bridge.dispose();
+  });
+
+  it('commits restore before notifying a subscriber that aborts it', async () => {
+    const events: string[] = [];
+    const openChild = vi.fn(async () => ({
+      state: 'settled' as const,
+      result: {
+        status: 'ok' as const,
+        playbookId: INPUT.playbookId,
+        childSessionId: 'fresh-child',
+      },
+    }));
+    const options = bridgeOptions(events, openChild);
+    options.nextCallId = vi.fn(() => RESTORED_CALL.callId);
+    const bridge = createNestedPlaybookBridge(options);
+    bridge.prepareRestore(RESTORED_CALL);
+    const restored = createActor(bridge.actorLogic, { input: INPUT });
+    const restoredCompletion = toPromise(restored);
+    restored.start();
+
+    let aborting: Promise<void> | undefined;
+    const unsubscribe = bridge.subscribePendingCall(() => {
+      aborting = bridge.abortPending(
+        new Error('subscriber aborted restored call'),
+      );
+    });
+    bridge.confirmRestore();
+
+    expect(aborting).toBeDefined();
+    await expect(aborting).resolves.toBeUndefined();
+    await expect(restoredCompletion).rejects.toThrow(
+      'subscriber aborted restored call',
+    );
+    expect(events).toEqual([
+      `finished:${RESTORED_CALL.callId}:aborted`,
+      'drain',
+    ]);
+    expect(openChild).not.toHaveBeenCalled();
+
+    // Ordinary committed settlement keeps the call id spent. Reentrant
+    // notification must not masquerade as pre-commit restore rollback.
+    const duplicate = createActor(bridge.actorLogic, { input: INPUT });
+    const duplicateCompletion = toPromise(duplicate);
+    duplicate.start();
+    await expect(duplicateCompletion).rejects.toThrow(
+      `allocated duplicate playbook call id ${RESTORED_CALL.callId}`,
+    );
+    expect(openChild).not.toHaveBeenCalled();
+    unsubscribe();
+    await bridge.dispose();
+  });
+
   it('finishes an immediate child before resolving the promise actor', async () => {
     const events: string[] = [];
     const bridge = createNestedPlaybookBridge(

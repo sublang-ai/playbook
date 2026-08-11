@@ -75,6 +75,15 @@ export interface PlaybookPendingCall {
   childSessionId: string;
 }
 
+// DR-031 §5: complete durable identity for one nested call whose start
+// boundary has already been published and whose child remains suspended.
+// `turnId` is absent when the call was opened outside a Boss-turn boundary.
+export interface PlaybookSuspendedCall extends PlaybookPendingCall {
+  stateId: string;
+  text: string;
+  turnId?: number;
+}
+
 export interface PlaybookCallRequest {
   callId: string;
   playbookId: string;
@@ -199,12 +208,11 @@ export interface PlaybookPendingBossQuestion {
   sourceItem?: string;
 }
 
-// DR-014 §1: JSON-safe capture of a parked session. `machine` is the
-// XState persisted snapshot and is opaque to hosts; the pending Boss
-// questions are first-class so a host can surface what was asked
-// without parsing status lines or telemetry.
-export interface PlaybookRuntimeSnapshot {
-  schemaVersion: 1;
+// DR-014 §1 / DR-031 §5: JSON-safe capture of a parked or nested-call
+// suspended session. `machine` is the opaque XState persisted snapshot;
+// pending Boss questions and a schema-2 suspended call are first-class so a
+// host never has to reconstruct durable ownership from presentation records.
+interface PlaybookRuntimeSnapshotFields {
   playbookId: string;
   machine: JsonValue;
   playerResumeTokens: { readonly [playerId: string]: string };
@@ -219,6 +227,18 @@ export interface PlaybookRuntimeSnapshot {
   state: PlaybookState;
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
 }
+
+export type PlaybookRuntimeSnapshot = PlaybookRuntimeSnapshotFields &
+  (
+    | {
+        schemaVersion: 1;
+        suspendedCall?: never;
+      }
+    | {
+        schemaVersion: 2;
+        suspendedCall?: PlaybookSuspendedCall;
+      }
+  );
 
 // DR-029: one currently valid, runtime-advertised control action. The id
 // is stable within the returned view; the label is runtime-written,

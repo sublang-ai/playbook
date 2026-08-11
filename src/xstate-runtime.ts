@@ -22,6 +22,7 @@ import type {
   PlaybookSession,
   PlaybookState,
   PlaybookStateValue,
+  PlaybookSuspendedCall,
   PlayerResult,
 } from './runtime.js';
 
@@ -757,23 +758,122 @@ const SNAPSHOT_SEQUENCE_KEYS = [
   'playbookCall',
 ] as const;
 
-// DR-014 §1: validate and detach a host-supplied runtime snapshot before
-// restore touches any state. Rejects a schema-version or playbook-id
-// mismatch with a path-named error.
+export interface PlaybookRuntimeSnapshotValidationOptions {
+  /**
+   * Opt in only when the restore path will prepare and confirm the suspended
+   * call transaction. The default is fail-closed so a legacy restore cannot
+   * reopen or ignore it.
+   */
+  allowSuspendedCall?: boolean;
+}
+
+function snapshotSuspendedCall(
+  value: unknown,
+  path = 'runtime snapshot suspendedCall',
+): PlaybookSuspendedCall {
+  const captured = snapshotJsonValue(value, path);
+  if (!isRecord(captured)) {
+    throw new TypeError(`${path} must be an object`);
+  }
+  rejectUnknownKeys(
+    captured,
+    ['callId', 'stateId', 'playbookId', 'text', 'childSessionId', 'turnId'],
+    path,
+  );
+  const call: PlaybookSuspendedCall = {
+    callId: requireNonEmptyString(captured.callId, `${path}.callId`),
+    stateId: requireNonEmptyString(captured.stateId, `${path}.stateId`),
+    playbookId: requireNonEmptyString(
+      captured.playbookId,
+      `${path}.playbookId`,
+    ),
+    text: requireNonEmptyString(captured.text, `${path}.text`),
+    childSessionId: requireNonEmptyString(
+      captured.childSessionId,
+      `${path}.childSessionId`,
+    ),
+  };
+  if (own(captured, 'turnId')) {
+    if (
+      !Number.isSafeInteger(captured.turnId) ||
+      (captured.turnId as number) <= 0
+    ) {
+      throw new TypeError(`${path}.turnId must be a positive integer`);
+    }
+    call.turnId = captured.turnId as number;
+  }
+  return Object.freeze(call);
+}
+
+// DR-014 §1 / DR-031 §5: validate and detach a host-supplied runtime
+// snapshot before restore touches any state. A suspended schema-2 call is
+// rejected unless the restore path explicitly promises to seed and claim it.
 export function assertPlaybookRuntimeSnapshot(
   value: unknown,
   expectedPlaybookId: string,
+  options: PlaybookRuntimeSnapshotValidationOptions = {},
 ): PlaybookRuntimeSnapshot {
-  if (!isRecord(value)) {
+  const snapshot = snapshotJsonValue(value, 'runtime snapshot');
+  if (!isRecord(snapshot)) {
     throw new TypeError('runtime snapshot must be an object');
   }
-  if (value.schemaVersion !== 1) {
+  const capturedOptions = snapshotJsonValue(
+    options,
+    'runtime snapshot validation options',
+  );
+  if (!isRecord(capturedOptions)) {
+    throw new TypeError('runtime snapshot validation options must be an object');
+  }
+  rejectUnknownKeys(
+    capturedOptions,
+    ['allowSuspendedCall'],
+    'runtime snapshot validation options',
+  );
+  if (
+    capturedOptions.allowSuspendedCall !== undefined &&
+    typeof capturedOptions.allowSuspendedCall !== 'boolean'
+  ) {
     throw new TypeError(
-      `runtime snapshot schemaVersion ${String(value.schemaVersion)} is not supported (expected 1)`,
+      'runtime snapshot validation options.allowSuspendedCall must be boolean',
     );
   }
+  const allowSuspendedCall = capturedOptions.allowSuspendedCall ?? false;
+  if (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2) {
+    throw new TypeError(
+      `runtime snapshot schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 1 or 2)`,
+    );
+  }
+  const schemaVersion = snapshot.schemaVersion;
+  rejectUnknownKeys(
+    snapshot,
+    [
+      'schemaVersion',
+      'playbookId',
+      'machine',
+      'playerResumeTokens',
+      'sequences',
+      'state',
+      'pendingBossQuestions',
+      'suspendedCall',
+    ],
+    'runtime snapshot',
+  );
+  if (schemaVersion === 1 && own(snapshot, 'suspendedCall')) {
+    throw new TypeError(
+      'runtime snapshot schemaVersion 1 must not carry suspendedCall',
+    );
+  }
+  let suspendedCall: PlaybookSuspendedCall | undefined;
+  if (schemaVersion === 2 && own(snapshot, 'suspendedCall')) {
+    suspendedCall = snapshotSuspendedCall(snapshot.suspendedCall);
+    if (!allowSuspendedCall) {
+      throw new TypeError(
+        'runtime snapshot suspendedCall requires a restore path that explicitly allows it',
+      );
+    }
+  }
   const playbookId = requireNonEmptyString(
-    value.playbookId,
+    snapshot.playbookId,
     'runtime snapshot playbookId',
   );
   if (playbookId !== expectedPlaybookId) {
@@ -781,17 +881,17 @@ export function assertPlaybookRuntimeSnapshot(
       `runtime snapshot playbookId ${playbookId} does not match runtime playbook ${expectedPlaybookId}`,
     );
   }
-  if (!isRecord(value.machine)) {
+  if (!isRecord(snapshot.machine)) {
     throw new TypeError('runtime snapshot machine must be an object');
   }
-  const machine = snapshotJsonValue(value.machine, 'runtime snapshot machine');
-  if (!isRecord(value.playerResumeTokens)) {
+  const machine = snapshot.machine;
+  if (!isRecord(snapshot.playerResumeTokens)) {
     throw new TypeError(
       'runtime snapshot playerResumeTokens must be an object',
     );
   }
   const playerResumeTokens: Record<string, string> = {};
-  for (const [playerId, token] of Object.entries(value.playerResumeTokens)) {
+  for (const [playerId, token] of Object.entries(snapshot.playerResumeTokens)) {
     defineEnumerableDataProperty(
       playerResumeTokens,
       playerId,
@@ -801,12 +901,17 @@ export function assertPlaybookRuntimeSnapshot(
       ),
     );
   }
-  if (!isRecord(value.sequences)) {
+  if (!isRecord(snapshot.sequences)) {
     throw new TypeError('runtime snapshot sequences must be an object');
   }
+  rejectUnknownKeys(
+    snapshot.sequences,
+    [...SNAPSHOT_SEQUENCE_KEYS, 'captainCall'],
+    'runtime snapshot sequences',
+  );
   const sequences = {} as PlaybookRuntimeSnapshot['sequences'];
   for (const key of SNAPSHOT_SEQUENCE_KEYS) {
-    const sequence = value.sequences[key];
+    const sequence = snapshot.sequences[key];
     if (!Number.isSafeInteger(sequence) || (sequence as number) < 0) {
       throw new TypeError(
         `runtime snapshot sequences.${key} must be a non-negative integer`,
@@ -814,7 +919,7 @@ export function assertPlaybookRuntimeSnapshot(
     }
     sequences[key] = sequence as number;
   }
-  const captainCall = value.sequences.captainCall;
+  const captainCall = snapshot.sequences.captainCall;
   if (captainCall !== undefined) {
     if (!Number.isSafeInteger(captainCall) || (captainCall as number) < 0) {
       throw new TypeError(
@@ -823,20 +928,57 @@ export function assertPlaybookRuntimeSnapshot(
     }
     sequences.captainCall = captainCall as number;
   }
-  validateState(value.state, 'runtime snapshot state');
-  const state = snapshotJsonValue(
-    value.state,
-    'runtime snapshot state',
-  ) as unknown as PlaybookState;
-  if (!Array.isArray(value.pendingBossQuestions)) {
+  validateState(snapshot.state, 'runtime snapshot state');
+  const state = snapshot.state as unknown as PlaybookState;
+  if (state.tags.includes(SUSPENDED_TAG) && suspendedCall === undefined) {
+    throw new TypeError(
+      `runtime snapshot state tagged ${SUSPENDED_TAG} requires schemaVersion 2 suspendedCall`,
+    );
+  }
+  if (suspendedCall) {
+    if (sequences.playbookCall === 0) {
+      throw new TypeError(
+        'runtime snapshot suspendedCall requires sequences.playbookCall greater than zero',
+      );
+    }
+    if (
+      suspendedCall.turnId !== undefined &&
+      suspendedCall.turnId > sequences.turn
+    ) {
+      throw new TypeError(
+        'runtime snapshot suspendedCall.turnId must not exceed sequences.turn',
+      );
+    }
+    if (state.status !== 'active' || !state.quiescent) {
+      throw new TypeError(
+        'runtime snapshot suspendedCall requires an active quiescent state',
+      );
+    }
+    if (!state.tags.includes(SUSPENDED_TAG)) {
+      throw new TypeError(
+        `runtime snapshot suspendedCall requires state tag ${SUSPENDED_TAG}`,
+      );
+    }
+    if (!state.activeStateIds.includes(suspendedCall.stateId)) {
+      throw new TypeError(
+        'runtime snapshot suspendedCall.stateId must be active in snapshot state',
+      );
+    }
+  }
+  if (!Array.isArray(snapshot.pendingBossQuestions)) {
     throw new TypeError(
       'runtime snapshot pendingBossQuestions must be an array',
     );
   }
-  const pendingBossQuestions = value.pendingBossQuestions.map(
+  const pendingBossQuestions = snapshot.pendingBossQuestions.map(
     (entry, index) => {
       const path = `runtime snapshot pendingBossQuestions[${index}]`;
       if (!isRecord(entry)) throw new TypeError(`${path} must be an object`);
+      rejectUnknownKeys(
+        entry,
+        ['questionId', 'player', 'question', 'sourceItem'],
+        path,
+      );
       const question: PlaybookPendingBossQuestion = {
         questionId: requireNonEmptyString(
           entry.questionId,
@@ -856,14 +998,21 @@ export function assertPlaybookRuntimeSnapshot(
       return Object.freeze(question);
     },
   );
-  return Object.freeze({
-    schemaVersion: 1,
+  const fields = {
     playbookId,
     machine,
     playerResumeTokens: Object.freeze(playerResumeTokens),
     sequences: Object.freeze(sequences),
     state,
     pendingBossQuestions: Object.freeze(pendingBossQuestions),
+  };
+  if (schemaVersion === 1) {
+    return Object.freeze({ schemaVersion: 1, ...fields });
+  }
+  return Object.freeze({
+    schemaVersion: 2,
+    ...fields,
+    ...(suspendedCall === undefined ? {} : { suspendedCall }),
   });
 }
 
@@ -916,15 +1065,24 @@ export class NestedPlaybookCallError extends Error {
 interface ActiveCall {
   readonly callId: string;
   readonly input: NestedPlaybookInput;
+  readonly turnId?: number;
   readonly deferred: Deferred<JsonValue | undefined>;
   readonly finished: Deferred<void>;
   readonly controller: AbortController;
   readonly signal: AbortSignal;
-  phase: 'starting' | 'suspended' | 'settling';
+  phase: 'starting' | 'restoring' | 'suspended' | 'settling';
   childSessionId?: string;
   abortListener?: () => void;
   settlement?: Promise<void>;
   runError?: unknown;
+  restoreRolledBack?: boolean;
+}
+
+interface NestedPlaybookRestoreMode {
+  readonly call?: PlaybookSuspendedCall;
+  state: 'armed' | 'claimed' | 'failed';
+  active?: ActiveCall;
+  error?: unknown;
 }
 
 export interface PendingCallObserver {
@@ -938,6 +1096,15 @@ export interface NestedPlaybookBridge<
   TInput extends NestedPlaybookInput = NestedPlaybookInput,
 > extends PendingCallObserver {
   actorLogic: PromiseActorLogic<JsonValue | undefined, TInput>;
+  /** Arm fail-closed actor startup for a snapshot with zero or one nested call. */
+  prepareRestore(call?: PlaybookSuspendedCall): void;
+  /**
+   * Commit restore startup after the persisted machine recreated exactly the
+   * expected zero or one nested invocation.
+   */
+  confirmRestore(): void;
+  /** Complete durable identity; undefined until a normal or restored call suspends. */
+  getSuspendedCall(): PlaybookSuspendedCall | undefined;
   resume(input: {
     callId: string;
     result: PlaybookCallResult;
@@ -1267,6 +1434,7 @@ export function createNestedPlaybookBridge<
   TInput extends NestedPlaybookInput = NestedPlaybookInput,
 >(options: NestedPlaybookBridgeOptions): NestedPlaybookBridge<TInput> {
   let current: ActiveCall | undefined;
+  let restoreMode: NestedPlaybookRestoreMode | undefined;
   let disposed = false;
   const usedCallIds = new Set<string>();
   const pendingListeners = new Set<
@@ -1307,10 +1475,38 @@ export function createNestedPlaybookBridge<
         }
       : undefined;
 
-  const clear = (active: ActiveCall): void => {
+  const suspendedIdentity = (
+    active: ActiveCall | undefined,
+  ): PlaybookSuspendedCall | undefined =>
+    active?.phase === 'suspended' && active.childSessionId
+      ? Object.freeze({
+          callId: active.callId,
+          stateId: active.input.stateId,
+          playbookId: active.input.playbookId,
+          text: active.input.text,
+          childSessionId: active.childSessionId,
+          ...(active.turnId === undefined ? {} : { turnId: active.turnId }),
+        })
+      : undefined;
+
+  const failRestoreMode = (
+    mode: NestedPlaybookRestoreMode,
+    error: unknown,
+  ): void => {
+    mode.state = 'failed';
+    mode.error = error;
+    reportControlPlaneError(error);
+  };
+
+  const detachAbortListener = (active: ActiveCall): void => {
     if (active.abortListener) {
       active.signal.removeEventListener('abort', active.abortListener);
+      active.abortListener = undefined;
     }
+  };
+
+  const clear = (active: ActiveCall): void => {
+    detachAbortListener(active);
     if (current === active) current = undefined;
   };
 
@@ -1443,35 +1639,202 @@ export function createNestedPlaybookBridge<
     }
   };
 
+  const rollbackRestoredCall = (
+    mode: NestedPlaybookRestoreMode,
+    error: unknown,
+  ): ActiveCall | undefined => {
+    const active = mode.active;
+    mode.state = 'failed';
+    mode.error = error;
+    mode.active = undefined;
+    if (!active) return undefined;
+    active.phase = 'settling';
+    active.restoreRolledBack = true;
+    clear(active);
+    usedCallIds.delete(active.callId);
+    active.deferred.reject(error);
+    return active;
+  };
+
+  const publishSuspendedCall = (active: ActiveCall): void => {
+    if (active.phase !== 'suspended') {
+      throw new Error(`playbook call ${active.callId} is not suspended`);
+    }
+    const abortListener = (): void => {
+      if (active.phase !== 'suspended') return;
+      const result = resultFromThrown(
+        active.input.playbookId,
+        active.childSessionId,
+        active.signal.reason ?? new Error('Nested playbook invocation aborted'),
+        true,
+      );
+      void settlePending(active, result).catch((error: unknown) => {
+        reportBackgroundError(error);
+      });
+    };
+    active.abortListener = abortListener;
+    active.signal.addEventListener('abort', abortListener, { once: true });
+    const pendingCall = pendingIdentity(active);
+    if (!pendingCall) {
+      throw new Error('suspended call identity was not recorded');
+    }
+    for (const listener of pendingListeners) {
+      try {
+        listener(pendingCall);
+      } catch (error) {
+        reportBackgroundError(error);
+      }
+    }
+    if (active.signal.aborted) abortListener();
+  };
+
+  const waitOnSuspendedCall = async (
+    active: ActiveCall,
+  ): Promise<JsonValue | undefined> => {
+    publishSuspendedCall(active);
+    return await active.deferred.promise;
+  };
+
   const actorLogic = fromPromise<JsonValue | undefined, TInput>(
     async ({ input, signal: invocationSignal }) => {
       if (disposed) {
         rejectControlPlane(new Error('nested playbook bridge is disposed'));
       }
+      const normalizedInput = (() => {
+        try {
+          return {
+            stateId: requireNonEmptyString(
+              input.stateId,
+              'playbook input stateId',
+            ),
+            playbookId: requireNonEmptyString(
+              input.playbookId,
+              'playbook input playbookId',
+            ),
+            text: requireNonEmptyString(input.text, 'playbook input text'),
+          };
+        } catch (error) {
+          const mode = restoreMode;
+          if (mode) {
+            if (mode.state === 'claimed') {
+              rollbackRestoredCall(mode, error);
+              reportControlPlaneError(error);
+            } else failRestoreMode(mode, error);
+            throw error;
+          }
+          return rejectControlPlane(error);
+        }
+      })();
+
+      const mode = restoreMode;
+      if (mode) {
+        if (mode.state !== 'armed') {
+          const callId = mode.call?.callId ?? 'without a descriptor';
+          const error = new Error(
+            mode.state === 'claimed'
+              ? `restored playbook call ${callId} was claimed more than once`
+              : `restored playbook call ${callId} is no longer claimable`,
+          );
+          if (mode.state === 'claimed') rollbackRestoredCall(mode, error);
+          else mode.error ??= error;
+          reportControlPlaneError(error);
+          throw error;
+        }
+        const seed = mode.call;
+        if (!seed) {
+          const error = new Error(
+            'restored machine invoked a nested playbook without a suspendedCall descriptor',
+          );
+          failRestoreMode(mode, error);
+          throw error;
+        }
+        for (const field of ['stateId', 'playbookId', 'text'] as const) {
+          if (normalizedInput[field] !== seed[field]) {
+            const error = new Error(
+              `restored playbook call ${seed.callId} ${field} does not match its persisted input`,
+            );
+            failRestoreMode(mode, error);
+            throw error;
+          }
+        }
+        if (usedCallIds.has(seed.callId)) {
+          const error = new Error(
+            `restored duplicate playbook call id ${seed.callId}`,
+          );
+          failRestoreMode(mode, error);
+          throw error;
+        }
+        const controller = new AbortController();
+        let callSignal: AbortSignal;
+        try {
+          callSignal = combineAbortSignals(
+            invocationSignal,
+            options.getBoundarySignal?.(),
+            controller.signal,
+          );
+        } catch (error) {
+          failRestoreMode(mode, error);
+          throw error;
+        }
+        const active: ActiveCall = {
+          callId: seed.callId,
+          input: normalizedInput,
+          ...(seed.turnId === undefined
+            ? {}
+            : { turnId: seed.turnId }),
+          deferred: deferred<JsonValue | undefined>(),
+          finished: deferred<void>(),
+          controller,
+          signal: callSignal,
+          phase: 'restoring',
+          childSessionId: seed.childSessionId,
+        };
+        usedCallIds.add(active.callId);
+        current = active;
+        mode.state = 'claimed';
+        mode.active = active;
+        const restoreAbortListener = (): void => {
+          if (
+            restoreMode !== mode ||
+            mode.state !== 'claimed' ||
+            mode.active !== active ||
+            active.phase !== 'restoring'
+          ) {
+            return;
+          }
+          rollbackRestoredCall(
+            mode,
+            active.signal.reason ??
+              new Error('Restored nested playbook invocation aborted'),
+          );
+        };
+        active.abortListener = restoreAbortListener;
+        active.signal.addEventListener('abort', restoreAbortListener, {
+          once: true,
+        });
+        if (active.signal.aborted) restoreAbortListener();
+        try {
+          return await active.deferred.promise;
+        } catch (error) {
+          if (!active.restoreRolledBack) active.runError = error;
+          throw error;
+        } finally {
+          active.finished.resolve(undefined);
+        }
+      }
+
       if (current) {
         rejectControlPlane(
           new Error(`playbook call ${current.callId} is already outstanding`),
         );
       }
-      const [normalizedInput, callId] = (() => {
+
+      const callId = (() => {
         try {
-          return [
-            {
-              stateId: requireNonEmptyString(
-                input.stateId,
-                'playbook input stateId',
-              ),
-              playbookId: requireNonEmptyString(
-                input.playbookId,
-                'playbook input playbookId',
-              ),
-              text: requireNonEmptyString(input.text, 'playbook input text'),
-            },
-            requireNonEmptyString(
-              options.nextCallId(),
-              'allocated playbook call id',
-            ),
-          ] as const;
+          return requireNonEmptyString(
+            options.nextCallId(),
+            'allocated playbook call id',
+          );
         } catch (error) {
           return rejectControlPlane(error);
         }
@@ -1665,34 +2028,7 @@ export function createNestedPlaybookBridge<
 
         active.phase = 'suspended';
         active.childSessionId = start.childSessionId;
-        const abortListener = (): void => {
-          if (active.phase !== 'suspended') return;
-          const result = resultFromThrown(
-            active.input.playbookId,
-            active.childSessionId,
-            active.signal.reason ??
-              new Error('Nested playbook invocation aborted'),
-            true,
-          );
-          void settlePending(active, result).catch((error: unknown) => {
-            reportBackgroundError(error);
-          });
-        };
-        active.abortListener = abortListener;
-        active.signal.addEventListener('abort', abortListener, { once: true });
-        const pendingCall = pendingIdentity(active);
-        if (!pendingCall) {
-          throw new Error('suspended call identity was not recorded');
-        }
-        for (const listener of pendingListeners) {
-          try {
-            listener(pendingCall);
-          } catch (error) {
-            reportBackgroundError(error);
-          }
-        }
-        if (active.signal.aborted) abortListener();
-        return await active.deferred.promise;
+        return await waitOnSuspendedCall(active);
       } catch (error) {
         active.runError = error;
         throw error;
@@ -1705,6 +2041,16 @@ export function createNestedPlaybookBridge<
   const abortPending = async (
     error: unknown = new Error('Nested playbook call aborted'),
   ): Promise<void> => {
+    const mode = restoreMode;
+    if (mode) {
+      restoreMode = undefined;
+      const restored =
+        mode.state === 'claimed'
+          ? rollbackRestoredCall(mode, error)
+          : undefined;
+      if (restored) await restored.finished.promise;
+      return;
+    }
     const active = current;
     if (!active) return;
     if (!active.controller.signal.aborted) active.controller.abort(error);
@@ -1740,6 +2086,79 @@ export function createNestedPlaybookBridge<
   return {
     actorLogic,
     getPendingCall: () => pendingIdentity(current),
+    getSuspendedCall: () => suspendedIdentity(current),
+    prepareRestore(call) {
+      // Capture the complete host-owned descriptor before observing or
+      // mutating bridge state, so a rejected preparation cannot leave state.
+      const captured =
+        call === undefined
+          ? undefined
+          : snapshotSuspendedCall(call, 'restored playbook call');
+      if (disposed) {
+        rejectControlPlane(new Error('nested playbook bridge is disposed'));
+      }
+      if (current) {
+        rejectControlPlane(
+          new Error(`playbook call ${current.callId} is already outstanding`),
+        );
+      }
+      if (restoreMode) {
+        rejectControlPlane(
+          new Error('nested playbook bridge restore is already prepared'),
+        );
+      }
+      if (captured && usedCallIds.has(captured.callId)) {
+        rejectControlPlane(
+          new Error(`restored duplicate playbook call id ${captured.callId}`),
+        );
+      }
+      restoreMode = {
+        ...(captured === undefined ? {} : { call: captured }),
+        state: 'armed',
+      };
+    },
+    confirmRestore() {
+      const mode = restoreMode;
+      if (!mode) {
+        throw new Error('nested playbook bridge restore is not prepared');
+      }
+      if (mode.state === 'failed') {
+        restoreMode = undefined;
+        throw mode.error;
+      }
+      if (mode.call === undefined) {
+        restoreMode = undefined;
+        return;
+      }
+      if (mode.state !== 'claimed' || !mode.active) {
+        const error = new Error(
+          `restored playbook call ${mode.call.callId} was not claimed by actor startup`,
+        );
+        restoreMode = undefined;
+        reportControlPlaneError(error);
+        throw error;
+      }
+      const active = mode.active;
+      if (active.signal.aborted) {
+        const error =
+          active.signal.reason ??
+          new Error('Restored nested playbook invocation aborted');
+        rollbackRestoredCall(mode, error);
+        restoreMode = undefined;
+        throw error;
+      }
+      try {
+        detachAbortListener(active);
+        active.phase = 'suspended';
+        restoreMode = undefined;
+        publishSuspendedCall(active);
+      } catch (error) {
+        rollbackRestoredCall(mode, error);
+        restoreMode = undefined;
+        reportControlPlaneError(error);
+        throw error;
+      }
+    },
     subscribePendingCall(listener) {
       if (disposed) return () => undefined;
       pendingListeners.add(listener);
@@ -1807,6 +2226,7 @@ export function createNestedPlaybookBridge<
           throw active.runError;
         }
       } finally {
+        restoreMode = undefined;
         pendingListeners.clear();
       }
     },

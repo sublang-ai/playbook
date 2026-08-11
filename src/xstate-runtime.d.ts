@@ -1,5 +1,5 @@
 import { type AnyActorRef, type PromiseActorLogic, type SnapshotFrom } from 'xstate';
-import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookSuspendedCall, PlayerResult } from './runtime.js';
 export * from './xstate-playbook-runtime.js';
 /**
  * Compose invocation-lifetime and imperative-boundary cancellation without
@@ -31,7 +31,15 @@ export interface SnapshotNormalizationOptions {
 }
 export declare function normalizePlaybookSnapshot(snapshot: unknown, options?: SnapshotNormalizationOptions): PlaybookState;
 export declare function detachPersistedMachineSnapshot(persisted: unknown): JsonValue;
-export declare function assertPlaybookRuntimeSnapshot(value: unknown, expectedPlaybookId: string): PlaybookRuntimeSnapshot;
+export interface PlaybookRuntimeSnapshotValidationOptions {
+    /**
+     * Opt in only when the restore path will prepare and confirm the suspended
+     * call transaction. The default is fail-closed so a legacy restore cannot
+     * reopen or ignore it.
+     */
+    allowSuspendedCall?: boolean;
+}
+export declare function assertPlaybookRuntimeSnapshot(value: unknown, expectedPlaybookId: string, options?: PlaybookRuntimeSnapshotValidationOptions): PlaybookRuntimeSnapshot;
 export interface NestedPlaybookInput {
     stateId: string;
     playbookId: string;
@@ -68,6 +76,15 @@ export interface PendingCallObserver {
 }
 export interface NestedPlaybookBridge<TInput extends NestedPlaybookInput = NestedPlaybookInput> extends PendingCallObserver {
     actorLogic: PromiseActorLogic<JsonValue | undefined, TInput>;
+    /** Arm fail-closed actor startup for a snapshot with zero or one nested call. */
+    prepareRestore(call?: PlaybookSuspendedCall): void;
+    /**
+     * Commit restore startup after the persisted machine recreated exactly the
+     * expected zero or one nested invocation.
+     */
+    confirmRestore(): void;
+    /** Complete durable identity; undefined until a normal or restored call suspends. */
+    getSuspendedCall(): PlaybookSuspendedCall | undefined;
     resume(input: {
         callId: string;
         result: PlaybookCallResult;
