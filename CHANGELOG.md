@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Complete headless Captain sessions can continue safely across processes.** Every settled `playbook run` turn is durably handed off before stdout with the compiled Captain conversation, engagement stack, mapped-player continuity, frozen execution config, working directory, and nested parked state intact. `--continue` selects the latest session and `--session <id>` selects one explicitly; exclusive leases and pre-effect uncertain markers reject competing writers and require explicit `--retry-uncertain` or `--discard-uncertain` recovery after interruption ([IR-041](specs/intents/041-shared-captain-session.md), [[playbook-cli-22](specs/packages/playbook-cli.md#playbook-cli-22)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)]).
+
+### Changed
+
+- **Breaking: `playbook run [input]` is now the tmux-free front end to the same Captain session engine as `playbook`.** Exact argument or verbatim stdin input enters one Boss turn over the same normalized shared config, compiled Captain, enabled catalog, nested stack, mapped players, provisioning, and readiness; plain stdout is exactly Captain's reply, while `--json` emits only `{ "sessionId": "…", "reply": "…" }` and operational output stays on stderr ([DR-031](specs/decisions/031-shared-captain-session-front-ends.md), [[playbook-cli-18](specs/packages/playbook-cli.md#playbook-cli-18)], [[playbook-cli-20](specs/packages/playbook-cli.md#playbook-cli-20)], [[playbook-cli-46](specs/packages/playbook-cli.md#playbook-cli-46)]).
+
+### Removed
+
+- **Breaking: the direct-registry run surface and separate run configuration are retired.** Positional `<from>`, `resume <id>`, `--player`, `--captain`, `--option`, `--cwd`, `--last`, run-only `--config`, and top-level `run:` no longer select or configure execution. Enable each registry under shared `playbooks`, invoke its effective `/command` through Captain, keep lineup and options under top-level `captain` and `playbooks.<id>`, use `--with` only for a new-session overlay, and replace old resume forms with `--session` or `--continue`; released direct-run snapshot records are not continuable ([[playbook-cli-19](specs/packages/playbook-cli.md#playbook-cli-19)], [[playbook-cli-22](specs/packages/playbook-cli.md#playbook-cli-22)], [[playbook-cli-28](specs/packages/playbook-cli.md#playbook-cli-28)]).
+
+### Fixed
+
+- **Restoring a parent parked behind a nested playbook no longer reopens or loses its child call.** Runtime snapshot schema 2 preserves exact suspended-call identity; restore reconnects the existing child without another host call or start trace and resumes the parent exactly once from the original child result, while ordinary schema-1 snapshots remain compatible ([[playbook-runtime-42](specs/packages/playbook-runtime.md#playbook-runtime-42)], [[playbook-runtime-45](specs/packages/playbook-runtime.md#playbook-runtime-45)], [[playbook-captain-42](specs/packages/playbook-captain.md#playbook-captain-42)]).
+
 ## [6.0.0] - 2026-08-11
 
 ### Added

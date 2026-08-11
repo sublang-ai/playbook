@@ -3,9 +3,10 @@
 
 # Using the CLI
 
-`playbook` has two surfaces: an interactive tmux-play session, and a
-one-shot non-interactive `run`. Agent settings for both come from the
-[config](configuration.md).
+`playbook` has two presentations of one configured Captain session: an
+interactive tmux-play UI and a headless `playbook run` turn for scripts and
+CI. Both use the same compiled Captain, enabled catalog, players, nested
+stack, and [config](configuration.md); only presentation differs.
 
 ## Installing agent SDKs
 
@@ -123,78 +124,122 @@ turn's reported outcome; a turn that changed nothing ends with an
 ordinary reply and no saved-counts line
 ([[playbook-captain-19](../specs/packages/playbook-captain.md#playbook-captain-19)]).
 
-## Non-interactive
+## Headless
 
-`playbook run <from> [task]` runs one playbook once, without tmux-play
-and without an interactive config entry. For example, run REVIEW
-directly against the latest commit:
+`playbook run [input]` submits one exact Boss turn to the same Captain that
+the interactive pane hosts, without constructing tmux. The shared config
+selects the Captain, enabled playbooks, players, options, provisioning, and
+readiness; a slash command selects a playbook through Captain, and ordinary
+text remains a conversational Captain turn.
 
 ```sh
-playbook run @sublang/playbook/review/registry "review the latest commit" \
-  --player coder=claude --player reviewer=codex --cwd ./my-repo
+cd ./my-repo
+playbook run "/review review the latest commit"
+playbook run "/code implement the approved specification"
+printf '%s\n' 'Summarize the current work and propose the next step.' | playbook run
 ```
 
-`[task]` is read from stdin when omitted — pipe long or multi-line
-intents the same way you would to `claude -p` or `codex exec`.
+When `[input]` is absent, stdin is read to EOF as verbatim UTF-8 text.
+Use `--` before one flag-shaped input. Plain stdout is exactly the one
+Boss-visible Captain reply plus a line feed; status and diagnostics use
+stderr, and `--verbose` adds only telemetry topic names to stderr.
+`--json` instead prints exactly `{"sessionId":"…","reply":"…"}`.
 
 | Flag | Meaning |
 | --- | --- |
-| `--player <role>=<agent>` | bind a required role |
-| `--captain <agent>` | set the captain/judge agent |
-| `--option <key>=<value>` | a registry-defined playbook option (none in the current bundled workflows) |
-| `--cwd <dir>` | the agents' working directory |
-| `--json` | one envelope: `outcome`, `sessionId`, output or questions |
-| `--no-provision` | never create engine links beside a filesystem `<from>` |
+| `--with <path>` | overlay the shared config for a new session; repeatable |
+| `--no-provision` | do not create missing engine links for configured filesystem registries |
+| `--json` | print exactly one `sessionId` / `reply` object |
+| `--verbose` | add Captain telemetry topic names to stderr |
+| `--continue` | continue the latest durable Captain session |
+| `--session <id>` | continue one durable Captain session explicitly |
+| `--retry-uncertain` | with `--session`, retry its exact recorded uncertain input |
+| `--discard-uncertain` | with `--session`, abandon its uncertain attempt |
+| `--` | end options before one literal input or reply |
+| `-h`, `--help` | print the complete grammar without reading stdin or config |
 
-`<agent>` is `<adapter>[:<model>][@<effort>]` — `codex:gpt-5.5@xhigh`,
-or `claude@high` for the default model at high reasoning effort. The
-model keeps every interior colon (`opencode:ollama/llama3:8b@max`), and
-an unsupported effort is rejected up front naming the adapter's
-supported values. Roles and the captain default to `claude` unless the
-config supplies [run defaults](configuration.md#defaults-for-playbook-run).
-
-Exit codes: `0` terminal, `1` bad argument or module, `2` failure, `3`
-the playbook needs a Boss reply
+Exit `0` means the Captain turn and its durable hand-off were presented,
+even when the selected action reported rejection or failure through the
+Captain reply. Argument, config, catalog, readiness, or pre-turn setup errors
+exit `1`; a started-turn, persistence, lease-release, or presentation failure
+exits `2` with stdout empty. SIGINT, SIGTERM, and SIGHUP preserve the
+uncertain boundary, withhold stdout, and are re-raised after lease retirement
 ([[playbook-cli-18](../specs/packages/playbook-cli.md#playbook-cli-18)]).
 
-### Engine provisioning
+The former positional `<from>`, `resume`, `--player`, `--captain`,
+`--option`, `--cwd`, `--last`, run-only `--config`, and top-level `run:`
+config are removed. Enable a registry under `playbooks`, tune its inline
+agents and options there or in a fresh `--with` overlay, invoke its effective
+`/command`, and run from the working directory you want agents to use.
 
-A compiled playbook module imports `xstate` and
-`@sublang/playbook/xstate-runtime` from its own directory. When a
-filesystem `<from>` cannot resolve them — typically under a global
-install with no project-local packages —
-`playbook run` provisions them automatically before loading: it creates
-`node_modules/xstate` and `node_modules/@sublang/playbook` beside the
-module as symlinks to the running host's own packages and prints one
-line naming what it linked
-([[playbook-cli-36](../specs/packages/playbook-cli.md#playbook-cli-36)],
-[DR-024](../specs/decisions/024-runtime-engine-provisioning.md)).
-A directory where the imports already resolve is never touched — a
-project-local install always wins — and `--no-provision` disables the
-mechanism entirely.
+### Piping a Spex update prompt
 
-If the module's directory is a git repository, add `node_modules/` to
-its `.gitignore` so the provisioned links never land in commits made by
-player agents working there.
-
-### Resuming a parked run
-
-When the playbook stops to ask something, the run is parked, not lost:
-the question prints to stdout, the session is saved under
-`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/`, and stderr
-names the command that continues it.
+`spex scaffold --update` refreshes its scaffold before printing guidance and
+a fenced reconciliation prompt. Force Spex's non-interactive agent-file
+selection, capture its successful output, extract the first fenced prompt,
+and pass only that prompt to Captain:
 
 ```sh
-playbook run resume 4f2c…9ab1 "keep the scope small; skip the docs"
-playbook run resume --last   # most recently parked session; reply on stdin
+update_output="$(spex scaffold --update </dev/null)" &&
+printf '%s\n' "$update_output" |
+  awk '/^```$/{if (++n==2) exit; next} n==1' |
+  playbook run
 ```
 
-A resumed run picks up exactly where it parked — same session id, same
-workflow state, and each agent continues its own conversation — then
-prints the final output and exits `0`, or parks again and exits `3`. The
-lineup, options, and working directory are stored with the session, so
-`resume` takes no binding flags. In scripts, capture the session id from
-the `--json` envelope, like Claude Code's `session_id` or
-`codex exec resume`
+The capture prevents a failed Spex command from launching Playbook. Without
+`--lang`, the first fenced block is the sole structure reconciliation or
+legacy-migration prompt; a language switch adds a second translation prompt.
+
+### External playbooks and engine provisioning
+
+Enable an external registry in the shared config and invoke its effective
+slash command; a path-shaped `playbooks.<id>.from` is resolved relative to
+the primary config file. Before either front end imports a configured
+filesystem registry, the shared launcher checks whether that module can
+resolve `xstate` and `@sublang/playbook/xstate-runtime`. When needed, it
+creates engine symlinks beside the module and prints one provisioning line
+([[playbook-cli-36](../specs/packages/playbook-cli.md#playbook-cli-36)],
+[DR-024](../specs/decisions/024-runtime-engine-provisioning.md)).
+
+A directory where both imports already resolve is untouched, and
+`--no-provision` disables new links for either fresh front end. If the
+module's directory is a git repository, add `node_modules/` to its
+`.gitignore` so provisioned links never enter player commits.
+
+### Continuing a Captain session
+
+Every successfully presented headless turn is stored under
+`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/` before stdout.
+Continue the newest logical session, or select the id returned by `--json`:
+
+```sh
+playbook run --continue "keep the scope small; skip the docs"
+playbook run --session 4f2c0000-0000-4000-8000-000000009ab1
+```
+
+A missing reply is read verbatim from stdin. Continuation restores the exact
+compiled Captain conversation, engagement stack, nested child boundary,
+mapped-player conversations, normalized execution config, and absolute
+working directory. It does not reread current config, does not repeat a
+settled or pending child start, and rejects `--with` because an existing
+session's lineup is frozen
 ([[playbook-cli-22](../specs/packages/playbook-cli.md#playbook-cli-22)],
-[DR-014](../specs/decisions/014-durable-one-shot-run-sessions.md)).
+[DR-031](../specs/decisions/031-shared-captain-session-front-ends.md)).
+
+### Recovering an uncertain turn
+
+Before model work, the runner takes one exclusive session lease and writes an
+uncertain marker. If the process is interrupted after effects may
+have begun but before settlement is durable, ordinary continuation refuses
+to guess. Choose explicitly:
+
+```sh
+playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 --retry-uncertain
+playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 --discard-uncertain
+```
+
+Retry reads no input and reuses the byte-exact recorded turn; it may duplicate
+external effects. Discard reads no input and runs no model: it restores the
+exact prior settled boundary, or deletes a never-settled fresh session, while
+abandoning the attempted work. Session files written by the removed direct
+v6 runner are not shared-Captain sessions and cannot be continued.

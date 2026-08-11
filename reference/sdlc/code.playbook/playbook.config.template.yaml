@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-# Generic `playbook` launcher config.
+# Shared `playbook` and `playbook run` launcher config.
 # Top-level host fields only — no `config:` wrapper, no top-level `players`.
 # The launcher injects captain.from and the namespaced <id>-<role> host
-# players, then launches cligent's tmux-play under the Playbook Captain shell.
+# players, then hosts the same Playbook Captain shell interactively or headlessly.
 
 # Every agent — the Captain and each playbook role — carries its own
 # settings inline: an adapter shorthand (claude, codex) or a block with
@@ -33,7 +33,8 @@ captain:
   permissions:
     mode: auto
 
-# Host notifications. Omitting turn_aborted resolves it to off.
+# Interactive host notifications. Headless runs ignore presentation fields.
+# Omitting turn_aborted resolves it to off.
 notifications:
   player_finished: bell
   turn_finished: desktop
@@ -90,14 +91,3 @@ playbooks:
         permissions:
           mode: auto
           writablePaths: ['.git']
-
-# Non-interactive `playbook run` defaults (optional). Each value is an
-# agent string <adapter>[:<model>][@<effort>]; `player` is the catch-all
-# for any required role without its own `players.<role>` entry, across
-# every playbook. Flags override per role (--player / --captain), and
-# `playbook run resume` keeps the lineup stored with the parked session.
-#run:
-#  captain: claude:claude-opus-4-8@high
-#  player: claude:claude-opus-4-8@high
-#  players:
-#    coder: claude:claude-opus-4-8[1m]@xhigh

@@ -21,14 +21,14 @@ SubLang Playbook addresses both:
 
 Vocabulary: the **Boss** is you; the **Captain** is the coordinating agent you talk to; **players** are the agents a playbook delegates work to.
 
-Run `playbook` for an interactive tmux UI powered by [cligent](https://github.com/sublang-ai/cligent), or `playbook run` for one-shot scripts and CI.
+Run `playbook` for an interactive tmux UI powered by [cligent](https://github.com/sublang-ai/cligent), or `playbook run` for the same Captain session without tmux in scripts and CI.
 
 ## Quick start
 
 Out of the box, Playbook includes **CODE** for implementation, **REVIEW** for commit-based review and fixes, and **DECIDE** for independently proposed and reviewed specification decisions.
 CODE and DECIDE call REVIEW as a nested playbook.
 
-The interactive starter config uses Claude as both Captain and Coder, and Codex as Reviewer.
+The shared starter config uses Claude as both Captain and Coder, and Codex as Reviewer.
 
 ```sh
 npm install -g @sublang/playbook
@@ -41,9 +41,10 @@ If an SDK is missing or older than cligent supports, Playbook prints the pinned 
 Prerequisites:
 
 - Node.js >= 20.6.0
-- `tmux` and [`glow`](https://github.com/charmbracelet/glow#installation) on `PATH`
 - Authenticated [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) or `ANTHROPIC_API_KEY`
 - Authenticated [Codex CLI](https://github.com/openai/codex) or `OPENAI_API_KEY`
+
+Interactive `playbook` additionally needs `tmux` and [`glow`](https://github.com/charmbracelet/glow#installation) on `PATH`; headless `playbook run` does not.
 
 CODE works in the current directory and can edit and commit autonomously, so use a clean branch or worktree.
 
@@ -57,16 +58,17 @@ Type a task, enter `/code <task>` for implementation, or enter
 
 On first launch, Playbook writes its config to `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`.
 
-One-shot runs use separate defaults instead of the interactive lineup.
-Without configured `run` defaults, the Captain and every player use Claude; run standalone REVIEW with a Codex Reviewer using:
+The same config, compiled Captain, enabled playbooks, players, and nested calls power headless turns.
+Run REVIEW explicitly, or pipe a longer request to Captain:
 
 ```sh
-playbook run @sublang/playbook/review/registry "review the latest commit" --player reviewer=codex --json
+playbook run "/review review the latest commit"
+printf '%s\n' 'Implement the approved specification, then review it.' | playbook run
 ```
 
-CODE and DECIDE require interactive `playbook` because the one-shot host does not drive nested calls.
+`playbook run` prints the one Boss-visible Captain reply to stdout and operational status to stderr; CODE and DECIDE can complete their nested REVIEW calls there too.
 
-See [Using the CLI](docs/cli.md) for flags and session resume, [Configuring agents](docs/configuration.md) for lineups, [Embedding](docs/embedding.md) for custom hosts, and the [changelog](CHANGELOG.md) for releases.
+See [Using the CLI](docs/cli.md) for flags and durable continuation, [Configuring agents](docs/configuration.md) for the shared lineup, [Embedding](docs/embedding.md) for custom hosts, and the [changelog](CHANGELOG.md) for releases.
 
 ## Create your own playbook
 
@@ -75,10 +77,12 @@ The separate [SLC compiler](https://github.com/sublang-ai/slc) requires Node.js 
 ```sh
 npm install -g @sublang/slc
 slc playbook my-workflow.md
-playbook run ./my-workflow.ts "<your task>"
+# After enabling /absolute/path/to/my-workflow.ts in the shared config:
+playbook run "/my-workflow <your task>"
 ```
 
-SLC writes `my-workflow.ts` beside the source, and the inspectable intermediates and tests under `my-workflow.playbook/`; see the [SLC documentation](https://github.com/sublang-ai/slc#quick-start) for setup and phase commands.
+SLC writes `my-workflow.ts`, a registry entry ready for Playbook, beside the source, and the inspectable intermediates and tests under `my-workflow.playbook/`.
+Enable that entry and bind each role it declares under `playbooks.my-workflow` in the shared config, then invoke `/my-workflow`; see [External playbooks](docs/configuration.md#external-playbooks) and the [SLC documentation](https://github.com/sublang-ai/slc#quick-start).
 
 ## How it compiles
 

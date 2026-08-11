@@ -3,7 +3,7 @@
 
 # Configuring agents
 
-`playbook` reads one config at
+`playbook` and every fresh `playbook run` read one config at
 `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`. The
 first launch seeds it from the bundled starter and prints the path;
 later launches reuse it untouched.
@@ -16,9 +16,10 @@ $EDITOR "${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml"
 
 The config is top-level (no `config:` wrapper): a `captain` agent (it
 runs the session Captain's hidden control calls, the hidden judge calls,
-and the replies you see in the Captain pane), optional
+and the replies you see in the Captain pane or on headless stdout), optional
 `layout` / `notifications` / `theme`, and a `playbooks` map of enabled
-playbooks.
+playbooks. Those three presentation fields apply only to interactive tmux;
+headless runs ignore them.
 
 Each `captain` or `players.<role>` value is either an adapter shorthand
 (`claude`, `codex`) or a block carrying that agent's own `adapter`,
@@ -138,6 +139,7 @@ recursively, other values replace):
 
 ```sh
 playbook --with fast-lineup.yaml
+playbook run --with fast-lineup.yaml "/code implement the approved change"
 ```
 
 ```yaml
@@ -165,24 +167,63 @@ the base Claude block had no reason to carry one.
 
 The global file is never modified, and `--with` is not forwarded to
 `tmux-play` ([[playbook-cli-25](../specs/packages/playbook-cli.md#playbook-cli-25)]).
+Overlays apply only when creating a fresh session. A continued headless
+session restores its frozen config and working directory and rejects `--with`.
 
-## Defaults for `playbook run`
+## Shared headless configuration
 
-An optional top-level `run` block supplies the non-interactive host's
-lineup so you stop retyping flags — `run.captain`, `run.players.<role>`,
-and a `run.player` catch-all for any other required role, each an
-`<adapter>[:<model>][@<effort>]` string. Flags win per role, and
-`resume` always keeps the lineup stored with the parked session
-([[playbook-cli-28](../specs/packages/playbook-cli.md#playbook-cli-28)],
-[DR-017](../specs/decisions/017-run-defaults-config.md)).
+Fresh interactive and headless sessions use the same top-level `captain`
+and `playbooks` blocks. A headless session retains the normalized lineup,
+catalog, options, and absolute working directory with every durable turn;
+continuation does not reread the current file. Presentation-only fields are
+inert headlessly.
+
+## External playbooks
+
+`slc playbook my-workflow.md` emits `my-workflow.ts` beside its artifact
+directory. That file already default-exports the registry manifest Playbook
+requires: `id`, `command`, `intent`, `requiredRoleIds`, `validateOptions`,
+and `createRuntime`. Enable it under `playbooks`, bind every role listed in
+its `requiredRoleIds`, and invoke its effective slash command through Captain:
 
 ```yaml
-run:
-  captain: claude:claude-opus-4-8@high
-  players:
-    coder: claude:claude-opus-4-8[1m]@xhigh
-    reviewer: codex:gpt-5.5@xhigh
+playbooks:
+  my-workflow:
+    from: /absolute/path/to/my-workflow.ts
+    players:
+      worker: claude
 ```
+
+```sh
+playbook run "/my-workflow perform the task"
+```
+
+A relative path-shaped `from` is resolved relative to the primary config
+file, not the invocation directory; an absolute path is clearest for an SLC
+entry emitted in a project working tree.
+Before either front end imports a filesystem registry, the shared launcher
+checks and, unless `--no-provision` is set, provisions its runtime engine
+links as described in [Using the CLI](cli.md#external-playbooks-and-engine-provisioning).
+
+## Migrating direct runs from 6.x
+
+The top-level `run:` block is deliberately rejected rather than silently
+ignored or rewritten, because doing otherwise could change the agents after
+an upgrade. Re-express `run.captain`, `run.players`, and former `--player`
+bindings as the inline agent blocks above; the old `run.player` catch-all has
+no shared equivalent, so configure every required role explicitly at
+`playbooks.<id>.players.<role>`. Use a fresh `--with` fragment for temporary
+lineup changes. Move former `--option` values into their `playbooks.<id>`
+block, run from the desired directory instead of passing `--cwd`, enable a
+former positional `<from>` as a configured registry, and quote or pipe one
+`/command task` Boss message. Replace `resume` and `--last` with `--continue`
+or `--session`.
+
+The JSON response is now exactly `{ "sessionId": "…", "reply": "…" }`.
+Released direct-run session records are not complete Captain sessions and
+cannot be continued by the new host ([[playbook-cli-19](../specs/packages/playbook-cli.md#playbook-cli-19)],
+[[playbook-cli-22](../specs/packages/playbook-cli.md#playbook-cli-22)],
+[[playbook-cli-28](../specs/packages/playbook-cli.md#playbook-cli-28)]).
 
 ## Migrating from `profiles`
 

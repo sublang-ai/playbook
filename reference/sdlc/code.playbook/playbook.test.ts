@@ -1287,6 +1287,11 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
 
     expect(result).toEqual({ code: 0 });
     expect(stdout.text()).toContain('Usage:');
+    expect(stdout.text()).toContain(
+      'playbook run (--continue | --session <id>) [reply]',
+    );
+    expect(stdout.text()).toContain('--retry-uncertain');
+    expect(stdout.text()).toContain('fresh launch only');
     expect(stdout.text()).toContain('Agent swap recipe:');
     expect(spawn.calls).toHaveLength(0);
   });
