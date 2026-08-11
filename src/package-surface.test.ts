@@ -1434,6 +1434,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     );
     for (const artifact of [
       `${CODE_BASE}bin/playbook.js`,
+      `${CODE_BASE}bin/launch-config.js`,
       `${CODE_BASE}bin/run.js`,
       `${CODE_BASE}bin/provision.js`,
       `${CODE_BASE}bin/adapter-sdk.js`,

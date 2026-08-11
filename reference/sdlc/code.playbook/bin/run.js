@@ -35,6 +35,7 @@ import {
   mappedSdksFor,
   probeAdapterSdk,
 } from './adapter-sdk.js';
+import { resolveUserConfigPath } from './launch-config.js';
 import { provisionEngine } from './provision.js';
 
 // PBCLI-19: adapter shorthands the run host can construct.
@@ -73,7 +74,8 @@ export async function runPlaybookRun(options = {}) {
   // PBCLI-28/29: config defaults come from the same user config file the
   // interactive launcher resolves; tests inject a hermetic path.
   const userConfigPath =
-    options.userConfigPath ?? (await defaultUserConfigPath());
+    options.userConfigPath ??
+    resolveUserConfigPath(process.env, process.env.HOME ?? homedir());
   const ctx = {
     stdout,
     stderr,
@@ -732,18 +734,6 @@ function isAgentSpec(spec) {
     (spec.effort === undefined ||
       (typeof spec.effort === 'string' && spec.effort.length > 0))
   );
-}
-
-// PBCLI-29: the run host reads the same user config file the interactive
-// launcher resolves. The resolver is imported lazily: a static import of
-// ./playbook.js would deadlock the CLI entry — playbook.js is still
-// mid-evaluation of its own top-level await when it dynamically imports
-// this module, and a circular static edge back to it can never settle.
-// The launcher always injects userConfigPath, so this default runs only
-// for direct runPlaybookRun callers, where playbook.js is not evaluating.
-async function defaultUserConfigPath() {
-  const { resolveUserConfigPath } = await import('./playbook.js');
-  return resolveUserConfigPath(process.env, process.env.HOME ?? homedir());
 }
 
 // PBCLI-28/29 (DR-017): default agent specs for a first run, read from the

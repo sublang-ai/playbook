@@ -67,6 +67,7 @@
     "reference/sdlc/code.playbook/code.gears.md",
     "reference/sdlc/code.playbook/playbook.config.template.yaml",
     "reference/sdlc/code.playbook/bin/playbook.js",
+    "reference/sdlc/code.playbook/bin/launch-config.js",
     "reference/sdlc/code.playbook/bin/run.js",
     "reference/sdlc/code.playbook/bin/provision.js",
     "reference/sdlc/code.playbook/bin/adapter-sdk.js",

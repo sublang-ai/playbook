@@ -761,6 +761,21 @@ A migrated config shall present nothing to migrate on the next launch.
 
 ## Internal Behavior
 
+### Shared launch configuration
+
+#### playbook-cli-46
+
+Where either front end prepares a new Captain session from the generic config, when the launcher resolves that config, it shall use one leaf launch-config module to perform the following ordered pipeline:
+
+1. Resolve the primary path per [[playbook-cli-3](#playbook-cli-3)], seed and migrate that primary file before applying overlays, and merge every [[playbook-cli-25](#playbook-cli-25)] overlay in argument order without mutating an input.
+2. Resolve a relative configured filesystem `playbooks.<id>.from` against the primary config's directory, including one introduced by an overlay, canonicalize an absolute filesystem path to a file URL, and preserve an existing file URL, bare package specifier, or custom specifier unchanged.
+3. Canonicalize and prepare every configured registry module before importing any of them, use a preparation hook's returned canonical specifier for both the one import and the normalized catalog, and perform no registry import when any preparation fails.
+4. Validate registry manifests and launcher-owned identities, reject blank identifiers or adapters and colliding generated `<playbook>-<role>` host-player ids, and prevent authored agent blocks from replacing the Captain module, Captain options, or generated player ids.
+5. Produce one detached, deeply frozen, JSON-safe plan separating the Captain agent, namespaced player agents, normalized playbook catalog, and presentation fields, with no imported registry function retained in the plan.
+6. Derive adapter readiness from the plan's Captain and players independently of presentation, and project a detached tmux-play config only for the interactive host while keeping `--list` ahead of readiness.
+
+The module shall import neither CLI host, both CLI hosts shall resolve the user-config path through it without a circular import, the legacy positional `playbook run` host shall otherwise retain its current working-directory and provisioning behavior, and the packed package shall include the module.
+
 ### Dependency resolution
 
 #### playbook-cli-43
@@ -1074,3 +1089,9 @@ Where a packed candidate is installed without a top-level `tmux-play` executable
 #### playbook-cli-45
 
 When the CLI integration suite drives the real REVIEW registry through `playbook run`, it shall fail unless both required roles are bound, REVIEW reaches its approved terminal output, no tmux session is created, and the run needs no interactive playbook configuration (verifying [[playbook-cli-44](#playbook-cli-44)]).
+
+### Shared launch configuration verification
+
+#### playbook-cli-47
+
+When the integration suite exercises the shared launch-config pipeline over temporary primary configs, overlays, and synthetic registries and dry-packs the public package, it shall fail unless relative, absolute, file-URL, bare, and custom registry specifiers follow their defined resolution cases; all registry preparation precedes every import; the prepared specifier reaches both import and catalog; overlays win in order without changing the primary file; the plan is detached, deeply frozen, JSON-round-trippable, and free of imported functions; nested execution and presentation values stay detached from their tmux projection; authority-key smuggling, blank identities, generated host-id collisions, accessors, sparse arrays, symbols, undefined values, non-finite numbers, cycles, and non-plain objects are rejected before registry import; readiness derives from the plan; the leaf module has no host import and is re-exported compatibly by the interactive launcher; the legacy direct-run suite remains unchanged; and the packed file list includes the shared module (verifying [[playbook-cli-46](#playbook-cli-46)]).
