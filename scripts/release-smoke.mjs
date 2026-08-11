@@ -818,6 +818,7 @@ function stepCompiledFidelity(state) {
     'code.playbook/code.playbook.test.ts',
     'review.playbook/review.gears-fsm.test.ts',
     'review.playbook/review.playbook.test.ts',
+    'decide.playbook/decide.gears-fsm.test.ts',
     'decide.playbook/decide.playbook.test.ts',
   ];
   const absent = requiredSuites.filter((suite) => !output.includes(suite));

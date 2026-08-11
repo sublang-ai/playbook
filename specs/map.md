@@ -98,7 +98,7 @@ meta.md       The spec of specs
 | [IR-037](intents/037-markdown-cross-reference-check.md) | 037-markdown-cross-reference-check.md | Fail the suite on a broken spec cross-reference: the XREF package, a dependency-free link/anchor checker with GitHub's slug rules, and the repointing of two links into a sibling checkout |
 | [IR-038](intents/038-conversational-gate-config-coverage.md) | 038-conversational-gate-config-coverage.md | Bring the live gate's conversational config under `pnpm test`: its config and fixture playbook sources moved out of the excluded acceptance suite into `acceptance/live-config.ts` and `acceptance/live-fixtures.ts`, and the amended playbook-cli-32 composing it through the real launcher over the real fixture modules |
 | [IR-039](intents/039-unified-captain-results.md) | 039-unified-captain-results.md | Complete DR-029 with one conversational result path, complete recovery history, action-safe recovery, and faithful multi-turn task handoff |
-| [IR-040](intents/040-compiled-composed-workflows.md) | 040-compiled-composed-workflows.md | Compile and release-gate CODE, REVIEW, and DECIDE with shared mapped-player continuity, current SLC preservation rules, and package-only specs |
+| [IR-040](intents/040-compiled-composed-workflows.md) | 040-compiled-composed-workflows.md | Establish and release-gate a linked CODE, REVIEW, and DECIDE baseline with shared mapped-player continuity, current SLC preservation rules, and package-only specs |
 
 ## Packages
 

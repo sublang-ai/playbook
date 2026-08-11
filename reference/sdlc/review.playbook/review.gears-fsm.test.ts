@@ -13,7 +13,7 @@ import {
 interface GearsItem {
   id: string;
   prompt: string;
-  guards: string[];
+  results: Array<{ guard: string; description: string }>;
 }
 
 interface RawState {
@@ -22,16 +22,30 @@ interface RawState {
   invoke?: {
     src?: unknown;
     input?: (args: { context: ReviewContext }) => PlayerInput;
-    onDone?: unknown;
+    onDone?: RawTransition | readonly RawTransition[];
   };
+  on?: Record<string, RawTransition | readonly RawTransition[]>;
+  states?: Record<string, RawState>;
 }
 
 interface RawMachineConfig {
   states?: Record<string, RawState>;
 }
 
+interface RawTransition {
+  guard?: unknown;
+  target?: unknown;
+}
+
+interface TransitionFixture {
+  guard: string;
+  target: string;
+  context: ReviewContext;
+  event: unknown;
+}
+
 const ITEM_HEADING = /^### (REVIEW-\d+)$/;
-const RESULT = /^- `([A-Za-z_$][A-Za-z0-9_$]*)`:/;
+const RESULT = /^- `([A-Za-z_$][A-Za-z0-9_$]*)`: (.+)$/;
 
 function parseGears(source: string): Map<string, GearsItem> {
   const lines = source.split('\n');
@@ -52,13 +66,15 @@ function parseGears(source: string): Map<string, GearsItem> {
         if (match === null) break;
         prompt.push(match[1]);
       }
-      const guards = section.flatMap((line) => {
+      const results = section.flatMap((line) => {
         const match = RESULT.exec(line);
-        return match === null ? [] : [match[1]];
+        return match === null
+          ? []
+          : [{ guard: match[1], description: match[2] }];
       });
       return [
         start.id,
-        { id: start.id, prompt: prompt.join('\n'), guards },
+        { id: start.id, prompt: prompt.join('\n'), results },
       ];
     }),
   );
@@ -87,6 +103,192 @@ const context: ReviewContext = {
   coderOutput: 'Coder disposition',
 };
 
+const done = (output: unknown) => ({
+  type: 'xstate.done.actor.player',
+  output,
+});
+
+const pendingContext = (
+  stateId:
+    | 'reviewInitial'
+    | 'addressFindings'
+    | 'reviewAfterCommit'
+    | 'reviewAfterRebuttal',
+  sourceItem: 'REVIEW-1' | 'REVIEW-2' | 'REVIEW-3' | 'REVIEW-4',
+  player: 'Coder' | 'Reviewer',
+): ReviewContext => ({
+  ...context,
+  pendingBossQuestion: {
+    questionId: stateId,
+    resumeStateId: stateId,
+    sourceItem,
+    player,
+    question: 'Which requirement applies?',
+  },
+});
+
+const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
+  'reviewInitial.invoke.onDone': [
+    {
+      guard: 'hasFindings',
+      target: '#addressFindings',
+      context,
+      event: done({ guard: 'hasFindings', reviewerOutput: 'Finding 1' }),
+    },
+    {
+      guard: 'noFindings',
+      target: '#done',
+      context,
+      event: done({ guard: 'noFindings' }),
+    },
+    {
+      guard: 'needsBossReply',
+      target: '#awaitBossReply',
+      context,
+      event: done({ guard: 'needsBossReply', question: 'Which scope?' }),
+    },
+  ],
+  'addressFindings.invoke.onDone': [
+    {
+      guard: 'committed',
+      target: '#reviewAfterCommit',
+      context,
+      event: done({ guard: 'committed', coderOutput: 'Committed abc123' }),
+    },
+    {
+      guard: 'rejectedAll',
+      target: '#reviewAfterRebuttal',
+      context,
+      event: done({
+        guard: 'rejectedAll',
+        coderOutput: 'Rejected with evidence',
+      }),
+    },
+    {
+      guard: 'needsBossReply',
+      target: '#awaitBossReply',
+      context,
+      event: done({ guard: 'needsBossReply', question: 'Which scope?' }),
+    },
+  ],
+  'reviewAfterCommit.invoke.onDone': [
+    {
+      guard: 'hasFindings',
+      target: '#addressFindings',
+      context,
+      event: done({ guard: 'hasFindings', reviewerOutput: 'Finding 2' }),
+    },
+    {
+      guard: 'noFindings',
+      target: '#done',
+      context,
+      event: done({ guard: 'noFindings' }),
+    },
+    {
+      guard: 'needsBossReply',
+      target: '#awaitBossReply',
+      context,
+      event: done({ guard: 'needsBossReply', question: 'Which scope?' }),
+    },
+  ],
+  'reviewAfterRebuttal.invoke.onDone': [
+    {
+      guard: 'hasFindings',
+      target: '#addressFindings',
+      context,
+      event: done({ guard: 'hasFindings', reviewerOutput: 'Finding remains' }),
+    },
+    {
+      guard: 'noFindings',
+      target: '#done',
+      context,
+      event: done({ guard: 'noFindings' }),
+    },
+    {
+      guard: 'needsBossReply',
+      target: '#awaitBossReply',
+      context,
+      event: done({ guard: 'needsBossReply', question: 'Which scope?' }),
+    },
+  ],
+  'awaitBossReply.on.BOSS_REPLY': [
+    {
+      guard: 'emptyBossReply',
+      target: '#failed',
+      context: pendingContext('reviewInitial', 'REVIEW-1', 'Reviewer'),
+      event: { type: 'BOSS_REPLY', questionId: 'reviewInitial', answer: '  ' },
+    },
+    {
+      guard: 'resumeReviewInitial',
+      target: '#reviewInitial',
+      context: pendingContext('reviewInitial', 'REVIEW-1', 'Reviewer'),
+      event: { type: 'BOSS_REPLY', questionId: 'reviewInitial', answer: 'Answer' },
+    },
+    {
+      guard: 'resumeAddressFindings',
+      target: '#addressFindings',
+      context: pendingContext('addressFindings', 'REVIEW-2', 'Coder'),
+      event: {
+        type: 'BOSS_REPLY',
+        questionId: 'addressFindings',
+        answer: 'Answer',
+      },
+    },
+    {
+      guard: 'resumeReviewAfterCommit',
+      target: '#reviewAfterCommit',
+      context: pendingContext('reviewAfterCommit', 'REVIEW-3', 'Reviewer'),
+      event: {
+        type: 'BOSS_REPLY',
+        questionId: 'reviewAfterCommit',
+        answer: 'Answer',
+      },
+    },
+    {
+      guard: 'resumeReviewAfterRebuttal',
+      target: '#reviewAfterRebuttal',
+      context: pendingContext('reviewAfterRebuttal', 'REVIEW-4', 'Reviewer'),
+      event: {
+        type: 'BOSS_REPLY',
+        questionId: 'reviewAfterRebuttal',
+        answer: 'Answer',
+      },
+    },
+  ],
+};
+
+function orderedTransitions(
+  current: Record<string, RawState>,
+  parent = '',
+): Map<string, readonly RawTransition[]> {
+  const found = new Map<string, readonly RawTransition[]>();
+  for (const [key, state] of Object.entries(current)) {
+    const path = parent === '' ? key : `${parent}.${key}`;
+    if (Array.isArray(state.invoke?.onDone)) {
+      found.set(`${path}.invoke.onDone`, state.invoke.onDone);
+    }
+    for (const [event, transitions] of Object.entries(state.on ?? {})) {
+      if (Array.isArray(transitions)) {
+        found.set(`${path}.on.${event}`, transitions);
+      }
+    }
+    for (const [nestedPath, transitions] of orderedTransitions(
+      state.states ?? {},
+      path,
+    )) {
+      found.set(nestedPath, transitions);
+    }
+  }
+  return found;
+}
+
+function guardName(guard: unknown): string | undefined {
+  if (typeof guard === 'string') return guard;
+  if (typeof guard !== 'object' || guard === null) return undefined;
+  const type = (guard as { type?: unknown }).type;
+  return typeof type === 'string' ? type : undefined;
+}
+
 describe('REVIEW GEARS to FSM compilation', () => {
   it('maps every REVIEW item once with its exact player and prompt', () => {
     expect([...gears.keys()]).toEqual(expected.map(([, item]) => item));
@@ -111,10 +313,49 @@ describe('REVIEW GEARS to FSM compilation', () => {
   it('preserves each authored result contract and adds only Boss suspension', () => {
     for (const [stateId, sourceItem] of expected) {
       const input = states[stateId]?.invoke?.input?.({ context });
-      expect(Object.keys(input?.result ?? {})).toEqual([
-        ...(gears.get(sourceItem)?.guards ?? []),
-        'needsBossReply',
-      ]);
+      const entries = Object.entries(input?.result ?? {});
+      expect(entries.slice(0, -1)).toEqual(
+        (gears.get(sourceItem)?.results ?? []).map(
+          ({ guard, description }) => [guard, description],
+        ),
+      );
+      expect(entries.at(-1)?.[0]).toBe('needsBossReply');
+    }
+  });
+
+  it('has one load-bearing fixture for every ordered transition arm', () => {
+    const actual = orderedTransitions(states);
+    expect([...actual.keys()]).toEqual(Object.keys(transitionFixtures));
+
+    const guards = reviewMachine.implementations.guards as unknown as Record<
+      string,
+      (
+        args: { context: ReviewContext; event: unknown },
+        params: unknown,
+      ) => boolean
+    >;
+    for (const [location, fixtures] of Object.entries(transitionFixtures)) {
+      const arms = actual.get(location) ?? [];
+      expect(
+        arms.map((arm) => ({ guard: guardName(arm.guard), target: arm.target })),
+        location,
+      ).toEqual(fixtures.map(({ guard, target }) => ({ guard, target })));
+
+      fixtures.forEach((fixture, index) => {
+        const evaluations = arms.slice(0, index + 1).map((arm) => {
+          const name = guardName(arm.guard);
+          return name === undefined
+            ? true
+            : guards[name](
+                { context: fixture.context, event: fixture.event },
+                undefined,
+              );
+        });
+        expect(evaluations, `${location}[${index}]`).toEqual([
+          ...Array.from({ length: index }, () => false),
+          true,
+        ]);
+      });
     }
   });
 

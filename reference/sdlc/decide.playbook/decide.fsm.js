@@ -466,6 +466,7 @@ export const decideMachine = setup({
                                 playbook: {
                                     stateId: 'askCoderProposal',
                                     description: 'Coder independently proposes a spec design.',
+                                    player: 'Coder',
                                 },
                             },
                             invoke: {
@@ -581,6 +582,7 @@ export const decideMachine = setup({
                                 playbook: {
                                     stateId: 'askReviewerProposal',
                                     description: 'Reviewer independently proposes a spec design.',
+                                    player: 'Reviewer',
                                 },
                             },
                             invoke: {
@@ -699,6 +701,7 @@ export const decideMachine = setup({
                 playbook: {
                     stateId: 'commitCoderProposal',
                     description: 'Coder writes and commits Coder’s independent proposal.',
+                    player: 'Coder',
                 },
             },
             invoke: {
@@ -709,7 +712,7 @@ export const decideMachine = setup({
                     player: 'Coder',
                     prompt: COMMIT_CODER_PROMPT,
                     result: withNeedsBossReply({
-                        committed: 'Coder committed Coder’s proposal. Output shall include `latestCommit: <commit identity>`.',
+                        committed: "Coder committed Coder's proposal. Output shall include `latestCommit: <commit identity>`.",
                     }),
                     coderLlm: context.coderLlm,
                     ...bossReplyFields(context, 'commitCoderProposal'),
