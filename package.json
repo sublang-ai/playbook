@@ -69,6 +69,7 @@
     "reference/sdlc/code.playbook/bin/playbook.js",
     "reference/sdlc/code.playbook/bin/launch-config.js",
     "reference/sdlc/code.playbook/bin/run.js",
+    "reference/sdlc/code.playbook/bin/session-store.js",
     "reference/sdlc/code.playbook/bin/provision.js",
     "reference/sdlc/code.playbook/bin/adapter-sdk.js",
     "reference/sdlc/review.playbook/review.gears.md",

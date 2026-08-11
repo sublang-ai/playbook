@@ -463,6 +463,10 @@ export async function normalizeLaunchPlan(
       {
         id,
         from: preparedFrom,
+        // Keep the registry-authored default even when launcher config
+        // overrides the effective command. Durable continuation validates
+        // this manifest identity but still executes the frozen command.
+        manifestCommand: entry.command,
         command,
         ...(commandOverride === undefined ? {} : { commandOverride }),
         intent: entry.intent,

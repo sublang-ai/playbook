@@ -98,8 +98,13 @@ export async function runPlaybookCli(options = {}) {
       ...(options.createHostRuntime
         ? { createHostRuntime: options.createHostRuntime }
         : {}),
-      ...(options.restoreSnapshot
-        ? { restoreSnapshot: options.restoreSnapshot }
+      ...(options.sessionStore
+        ? { sessionStore: options.sessionStore }
+        : {}),
+      ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.createSessionTempId
+        ? { createSessionTempId: options.createSessionTempId }
         : {}),
       // PBCLI-39: the run path gates on SDK availability too.
       ...(options.probeAdapterSdk

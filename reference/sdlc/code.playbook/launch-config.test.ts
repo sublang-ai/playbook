@@ -90,6 +90,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       catalog: {
         code: {
           from: 'mod://code',
+          manifestCommand: 'code',
           command: 'code',
           playerIds: {
             coder: 'code-coder',

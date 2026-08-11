@@ -8,6 +8,7 @@ import {
   readFile,
   readlink,
   rm,
+  stat,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -35,6 +36,9 @@ const { runPlaybookCli } = await import(
 );
 const { parseRunArgs } = await import(
   new URL('./bin/run.js', import.meta.url).href
+);
+const { createCaptainSessionStore } = await import(
+  new URL('./bin/session-store.js', import.meta.url).href
 );
 
 const tempDirs: string[] = [];
@@ -151,10 +155,12 @@ function runtimeSnapshot(
 
 function scriptedCaptainRuntime(
   inputs: string[],
+  restoredDecision?: { action: string },
 ) {
   return ({ controller }: any): PlaybookRuntime => {
     let session: PlaybookSession;
     let turns = 0;
+    let restored = false;
     return {
       async init(next) {
         session = next;
@@ -162,6 +168,7 @@ function scriptedCaptainRuntime(
       async restore(next, snapshot) {
         session = next;
         turns = snapshot.sequences.turn;
+        restored = true;
       },
       exportSnapshot() {
         return runtimeSnapshot('captain', turns);
@@ -173,7 +180,10 @@ function scriptedCaptainRuntime(
           topic: 'fixture.captain',
           payload: { turn: turns },
         });
-        const parsed = controller.resolveParsedTurn(text);
+        const parsed =
+          restored && restoredDecision !== undefined
+            ? { kind: 'action', decision: restoredDecision }
+            : controller.resolveParsedTurn(text);
         if (parsed?.kind === 'action') {
           await controller.submit(parsed.decision, signal);
           // The real compiled Captain marks and performs the reporting call;
@@ -313,6 +323,175 @@ function nestedEntries(events: string[]) {
   return { code, review };
 }
 
+function nestedParkedEntries(
+  events: string[],
+  lifecycle: {
+    childCalls: number;
+    parentResumes: number;
+    codeInits: number;
+    codeRestores: number;
+    reviewInits: number;
+    reviewRestores: number;
+  },
+) {
+  const callId = 'code:review:durable';
+  const waiting = {
+    ...activeState('waitingForReview'),
+    tags: ['playbook.suspended'],
+  };
+  const code = {
+    id: 'code',
+    command: 'code',
+    intent: 'park on nested review',
+    requiredRoleIds: ['coder'],
+    validateOptions: (value: unknown) => value,
+    createRuntime(): PlaybookRuntime {
+      let session: PlaybookSession;
+      let state = activeState();
+      let turnCount = 0;
+      let suspendedCall: any;
+      return {
+        async init(next) {
+          lifecycle.codeInits += 1;
+          session = next;
+        },
+        async restore(next, snapshot) {
+          lifecycle.codeRestores += 1;
+          session = next;
+          state = snapshot.state;
+          turnCount = snapshot.sequences.turn;
+          suspendedCall = snapshot.suspendedCall;
+        },
+        exportSnapshot() {
+          return {
+            schemaVersion: 2,
+            playbookId: 'code',
+            machine: { value: state.value, status: state.status },
+            playerResumeTokens: {},
+            sequences: {
+              trace: 0,
+              turn: turnCount,
+              judgeCall: 0,
+              playerCall: 0,
+              playbookCall: suspendedCall === undefined ? 0 : 1,
+              captainCall: 0,
+            },
+            state,
+            pendingBossQuestions: [],
+            ...(suspendedCall === undefined ? {} : { suspendedCall }),
+          } as PlaybookRuntimeSnapshot;
+        },
+        async handleBossInput({ text, signal }) {
+          turnCount += 1;
+          events.push(`code:start:${text}`);
+          lifecycle.childCalls += 1;
+          const child = await session.ports.callPlaybook(
+            { callId, playbookId: 'review', text: 'review durable work' },
+            signal,
+          );
+          if (child.state !== 'suspended') {
+            throw new Error('durable REVIEW must park');
+          }
+          suspendedCall = {
+            callId,
+            stateId: 'waitingForReview',
+            playbookId: 'review',
+            text: 'review durable work',
+            childSessionId: child.childSessionId,
+            turnId: turnCount,
+          };
+          state = waiting;
+          return {
+            outcome: 'suspended',
+            state,
+            pendingCall: {
+              callId,
+              playbookId: 'review',
+              childSessionId: child.childSessionId,
+            },
+          };
+        },
+        async resumePlaybookCall(input: {
+          callId: string;
+          result: PlaybookCallResult;
+        }) {
+          lifecycle.parentResumes += 1;
+          events.push(`code:resume:${input.callId}:${input.result.status}`);
+          suspendedCall = undefined;
+          state = terminalState();
+          return {
+            outcome: 'terminal',
+            state,
+            output: { response: 'nested durable review completed' },
+          };
+        },
+        async dispose() {},
+      };
+    },
+  };
+  const review = {
+    id: 'review',
+    command: 'review',
+    intent: 'park then accept exact Boss reply',
+    requiredRoleIds: ['coder', 'reviewer'],
+    validateOptions: (value: unknown) => value,
+    createRuntime(): PlaybookRuntime {
+      let state = activeState();
+      let turnCount = 0;
+      let restored = false;
+      return {
+        async init() {
+          lifecycle.reviewInits += 1;
+        },
+        async restore(_session, snapshot) {
+          lifecycle.reviewRestores += 1;
+          restored = true;
+          state = snapshot.state;
+          turnCount = snapshot.sequences.turn;
+        },
+        exportSnapshot() {
+          return {
+            schemaVersion: 2,
+            playbookId: 'review',
+            machine: { value: state.value, status: state.status },
+            playerResumeTokens: {},
+            sequences: {
+              trace: 0,
+              turn: turnCount,
+              judgeCall: 0,
+              playerCall: 0,
+              playbookCall: 0,
+              captainCall: 0,
+            },
+            state,
+            pendingBossQuestions: [],
+          } as PlaybookRuntimeSnapshot;
+        },
+        async handleBossInput({ text }) {
+          turnCount += 1;
+          if (!restored) {
+            events.push(`review:park:${text}`);
+            state = activeState();
+            return { outcome: 'quiescent', state };
+          }
+          events.push(`review:finish:${text}`);
+          state = terminalState();
+          return {
+            outcome: 'terminal',
+            state,
+            output: { approved: true },
+          };
+        },
+        async resumePlaybookCall() {
+          return { outcome: 'no-action', state };
+        },
+        async dispose() {},
+      };
+    },
+  };
+  return { code, review };
+}
+
 async function writeConfig(contents: string) {
   const dir = await mkdtemp(join(tmpdir(), 'playbook-headless-'));
   tempDirs.push(dir);
@@ -346,6 +525,9 @@ async function headlessHarness(
   const inputs: string[] = [];
   const entries = nestedEntries(events);
   const configPath = await writeConfig(sharedConfig());
+  const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-headless-state-'));
+  tempDirs.push(stateRoot);
+  const sessionsDir = join(stateRoot, 'sessions');
   const stdout = writer();
   const stderr = writer();
   const modules: Record<string, unknown> = {
@@ -366,6 +548,7 @@ async function headlessHarness(
       '90000000-0000-4000-8000-000000000001',
     createCaptainSessionId: uuidSequence(),
     probeAdapterSdk: async () => true,
+    sessionsDir,
     stdout,
     stderr,
     spawn: () => {
@@ -379,6 +562,8 @@ async function headlessHarness(
     stderr: stderr.text(),
     events,
     inputs,
+    sessionsDir: (extra.sessionsDir as string | undefined) ?? sessionsDir,
+    configPath,
   };
 }
 
@@ -798,6 +983,429 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
   });
 });
 
+describe('durable Captain continuation (PBCLI-24)', () => {
+  const firstId = '90000000-0000-4000-8000-000000000011';
+  const secondId = '90000000-0000-4000-8000-000000000012';
+  const thirdId = '90000000-0000-4000-8000-000000000013';
+
+  it('persists a closed v2 record before stdout without semantic disposal', async () => {
+    const order: string[] = [];
+    let disposals = 0;
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-order-state-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const baseStore = createCaptainSessionStore({
+      sessionsDir,
+      now: () => new Date('2026-08-11T20:00:00.000Z'),
+    });
+    const out = await headlessHarness(['run', 'hello'], {
+      sessionsDir,
+      sessionStore: {
+        ...baseStore,
+        async commitNew(record: any) {
+          const committed = await baseStore.commitNew(record);
+          order.push('persisted');
+          return committed;
+        },
+      },
+      createLogicalSessionId: () => firstId,
+      stdout: {
+        write(chunk: string) {
+          order.push(`stdout:${chunk}`);
+          return true;
+        },
+      },
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return {
+          runBossTurn: (...args: any[]) => host.runBossTurn(...args),
+          async dispose() {
+            disposals += 1;
+            await host.dispose();
+          },
+        };
+      },
+    });
+
+    expect(out.result.code).toBe(0);
+    expect(disposals).toBe(0);
+    const path = join(out.sessionsDir, `${firstId}.json`);
+    const record = JSON.parse(await readFile(path, 'utf8'));
+    expect(order).toEqual([
+      'persisted',
+      'stdout:Captain acknowledged the message.\n',
+    ]);
+    expect(record).toMatchObject({
+      schemaVersion: 2,
+      kind: 'captain-session',
+      sessionId: firstId,
+      createdAt: '2026-08-11T20:00:00.000Z',
+      updatedAt: '2026-08-11T20:00:00.000Z',
+      cwd: process.cwd(),
+      config: {
+        schemaVersion: 1,
+        catalog: {
+          code: { manifestCommand: 'code', command: 'code' },
+        },
+      },
+      snapshot: { schemaVersion: 1, mode: 'chat' },
+    });
+    expect((await stat(out.sessionsDir)).mode & 0o777).toBe(0o700);
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it('restores an explicit session instead of init and freezes config, cwd, and timestamps', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-continue-'));
+    const frozenCwd = await mkdtemp(join(tmpdir(), 'playbook-frozen-cwd-'));
+    tempDirs.push(stateRoot, frozenCwd);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const lifecycle = { init: 0, restore: 0 };
+    const seen: string[] = [];
+    const createRuntime = (args: any) => {
+      const runtime = scriptedCaptainRuntime(seen)(args);
+      return {
+        ...runtime,
+        async init(session: PlaybookSession) {
+          lifecycle.init += 1;
+          await runtime.init(session);
+        },
+        async restore(session: PlaybookSession, snapshot: any) {
+          lifecycle.restore += 1;
+          await runtime.restore!(session, snapshot);
+        },
+      };
+    };
+    const frozen = new Date('2026-08-11T20:10:00.000Z');
+
+    const first = await headlessHarness(['run', 'first'], {
+      sessionsDir,
+      cwd: frozenCwd,
+      createLogicalSessionId: () => firstId,
+      createCaptainRuntime: createRuntime,
+      now: () => frozen,
+    });
+    expect(first.result.code).toBe(0);
+
+    const second = await headlessHarness(
+      ['run', '--session', firstId, '  exact follow-up  '],
+      {
+        sessionsDir,
+        cwd: '/must/not/replace/frozen/cwd',
+        userConfigPath: join(stateRoot, 'missing-current-config.yaml'),
+        createCaptainRuntime: createRuntime,
+        now: () => new Date('2026-01-01T00:00:00.000Z'),
+      },
+    );
+
+    expect(second.result.code).toBe(0);
+    expect(second.result.sessionId).toBe(firstId);
+    expect(second.result.cwd).toBe(frozenCwd);
+    expect(seen).toEqual(['first', '  exact follow-up  ']);
+    expect(lifecycle).toEqual({ init: 1, restore: 1 });
+    const record = JSON.parse(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(record.createdAt).toBe('2026-08-11T20:10:00.000Z');
+    expect(record.updatedAt).toBe('2026-08-11T20:10:00.001Z');
+    expect(record.cwd).toBe(frozenCwd);
+    expect(record.snapshot.sequences.turn).toBe(2);
+  });
+
+  it('persists completed-root settlement evidence as a continuable chat snapshot', async () => {
+    const out = await headlessHarness(['run', '/review complete it'], {
+      createLogicalSessionId: () => firstId,
+    });
+    expect(out.result.code).toBe(0);
+    const record = JSON.parse(
+      await readFile(join(out.sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(record.snapshot).toMatchObject({
+      mode: 'chat',
+      lastAction: 'start',
+      lastSettlementStatus: 'ok',
+    });
+    expect(record.snapshot.journal.map((item: any) => item.kind)).toContain(
+      'outcome',
+    );
+  });
+
+  it('restores a nested parked stack across CLI hosts without repeating the child start', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-nested-state-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const events: string[] = [];
+    const lifecycle = {
+      childCalls: 0,
+      parentResumes: 0,
+      codeInits: 0,
+      codeRestores: 0,
+      reviewInits: 0,
+      reviewRestores: 0,
+    };
+    const entries = nestedParkedEntries(events, lifecycle);
+    const captainRuntime = scriptedCaptainRuntime([], { action: 'deliver' });
+    const loadModule = async (specifier: string) => ({
+      default: specifier === 'mod://code' ? entries.code : entries.review,
+    });
+
+    const first = await headlessHarness(['run', '/code inspect it'], {
+      sessionsDir,
+      loadModule,
+      createCaptainRuntime: captainRuntime,
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    const parked = JSON.parse(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(parked.snapshot).toMatchObject({
+      mode: 'engaged.parked',
+      frames: [
+        { playbookId: 'code', runtime: { suspendedCall: { callId: 'code:review:durable' } } },
+        { playbookId: 'review', parentCallId: 'code:review:durable' },
+      ],
+    });
+    expect(lifecycle.childCalls).toBe(1);
+
+    const exactReply = '  exact review reply\nwith context\n';
+    const second = await headlessHarness(
+      ['run', '--session', firstId],
+      {
+        sessionsDir,
+        loadModule,
+        createCaptainRuntime: captainRuntime,
+        readStdin: async () => exactReply,
+      },
+    );
+    expect(second.result.code).toBe(0);
+    expect(second.result.sessionId).toBe(firstId);
+    expect(events).toEqual([
+      'code:start:inspect it',
+      'review:park:review durable work',
+      `review:finish:${exactReply}`,
+      'code:resume:code:review:durable:ok',
+    ]);
+    expect(lifecycle).toMatchObject({
+      childCalls: 1,
+      parentResumes: 1,
+      codeInits: 1,
+      codeRestores: 1,
+      reviewInits: 1,
+      reviewRestores: 1,
+    });
+    expect(second.stderr).not.toContain('/review called by /code');
+    const settled = JSON.parse(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(settled.snapshot.mode).toBe('chat');
+  });
+
+  it('selects the newest valid session by updatedAt for --continue', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-latest-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'older'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      now: () => new Date('2026-08-11T20:20:00.000Z'),
+    });
+    const second = await headlessHarness(['run', 'newer'], {
+      sessionsDir,
+      createLogicalSessionId: () => secondId,
+      now: () => new Date('2026-08-11T20:20:01.000Z'),
+    });
+    expect([first.result.code, second.result.code]).toEqual([0, 0]);
+
+    const continued = await headlessHarness(
+      ['run', '--continue', 'latest reply'],
+      {
+        sessionsDir,
+        now: () => new Date('2026-08-11T20:20:02.000Z'),
+      },
+    );
+    expect(continued.result.code).toBe(0);
+    expect(continued.result.sessionId).toBe(secondId);
+    expect(continued.inputs).toEqual(['latest reply']);
+  });
+
+  it('rejects a changed manifest default even under a frozen command override', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-manifest-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const overrideConfig = await writeConfig(
+      sharedConfig().replace(
+        '    from: mod://code\n',
+        '    from: mod://code\n    command: ship\n',
+      ),
+    );
+    const first = await headlessHarness(['run', '/ship do it'], {
+      sessionsDir,
+      userConfigPath: overrideConfig,
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    expect(first.result.config.catalog.code).toMatchObject({
+      manifestCommand: 'code',
+      command: 'ship',
+      commandOverride: 'ship',
+    });
+
+    const frozenCommand = await headlessHarness(
+      ['run', '--session', firstId, '/ship continue'],
+      {
+        sessionsDir,
+        userConfigPath: join(stateRoot, 'missing-current-config.yaml'),
+      },
+    );
+    expect(frozenCommand.result.code).toBe(0);
+    expect(frozenCommand.result.config.catalog.code.command).toBe('ship');
+
+    const changed = nestedEntries([]);
+    changed.code.command = 'changed';
+    const rejected = await headlessHarness(
+      ['run', '--session', firstId, 'continue'],
+      {
+        sessionsDir,
+        loadModule: async (specifier: string) => ({
+          default:
+            specifier === 'mod://code' ? changed.code : changed.review,
+        }),
+      },
+    );
+    expect(rejected.result.code).toBe(1);
+    expect(rejected.stdout).toBe('');
+    expect(rejected.stderr).toContain('no longer matches its recorded manifest identity');
+    expect(rejected.inputs).toEqual([]);
+  });
+
+  it('keeps stdout empty and disposes safely when durable hand-off fails', async () => {
+    let disposals = 0;
+    let output = '';
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-failing-store-'));
+    tempDirs.push(stateRoot);
+    const sessionStore = createCaptainSessionStore({
+      sessionsDir: join(stateRoot, 'sessions'),
+      fsOps: {
+        async link() {
+          throw new Error('synthetic durable replacement failed');
+        },
+      },
+    });
+    const failed = await headlessHarness(['run', 'hello'], {
+      sessionStore,
+      stdout: {
+        write(chunk: string) {
+          output += chunk;
+          return true;
+        },
+      },
+      createHostRuntime: async (options: any) => {
+        const host = await createTmuxPlayRuntime(options);
+        return {
+          runBossTurn: (...args: any[]) => host.runBossTurn(...args),
+          async dispose() {
+            disposals += 1;
+            await host.dispose();
+          },
+        };
+      },
+    });
+    expect(failed.result.code).toBe(2);
+    expect(output).toBe('');
+    expect(disposals).toBe(1);
+    expect(failed.stderr).toContain('cannot persist Captain session');
+    expect(failed.stderr).toContain('synthetic durable replacement failed');
+  });
+
+  it('rejects an unrestorable or id-colliding record before host or agent work', async () => {
+    const first = await headlessHarness(['run', 'hello'], {
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    const originalPath = join(first.sessionsDir, `${firstId}.json`);
+    const record = JSON.parse(await readFile(originalPath, 'utf8'));
+    const internalId = record.snapshot.captain.sessionId;
+    record.sessionId = internalId;
+    await writeFile(
+      join(first.sessionsDir, `${internalId}.json`),
+      `${JSON.stringify(record)}\n`,
+      { mode: 0o600 },
+    );
+    let hosts = 0;
+    const rejected = await headlessHarness(
+      ['run', '--session', internalId, 'must not run'],
+      {
+        sessionsDir: first.sessionsDir,
+        createHostRuntime: async () => {
+          hosts += 1;
+          throw new Error('must not construct host');
+        },
+      },
+    );
+    expect(rejected.result.code).toBe(1);
+    expect(rejected.stdout).toBe('');
+    expect(rejected.stderr).toContain('collides with an internal Captain session id');
+    expect(hosts).toBe(0);
+    expect(rejected.inputs).toEqual([]);
+
+    const pathShaped = JSON.parse(await readFile(originalPath, 'utf8'));
+    pathShaped.sessionId = secondId;
+    pathShaped.config.catalog.code.from = '../rewired.js';
+    await writeFile(
+      join(first.sessionsDir, `${secondId}.json`),
+      `${JSON.stringify(pathShaped)}\n`,
+      { mode: 0o600 },
+    );
+    const unsafe = await headlessHarness(
+      ['run', '--session', secondId, 'must not run'],
+      { sessionsDir: first.sessionsDir },
+    );
+    expect(unsafe.result.code).toBe(1);
+    expect(unsafe.stdout).toBe('');
+    expect(unsafe.stderr).toContain('not a canonical module specifier');
+    expect(unsafe.inputs).toEqual([]);
+
+    const malformedRecord = JSON.parse(await readFile(originalPath, 'utf8'));
+    malformedRecord.sessionId = thirdId;
+    malformedRecord.snapshot.mode = 'corrupt';
+    await writeFile(
+      join(first.sessionsDir, `${thirdId}.json`),
+      `${JSON.stringify(malformedRecord)}\n`,
+      { mode: 0o600 },
+    );
+    const malformed = await headlessHarness(
+      ['run', '--session', thirdId, 'must not run'],
+      { sessionsDir: first.sessionsDir },
+    );
+    expect(malformed.result.code).toBe(1);
+    expect(malformed.stdout).toBe('');
+    expect(malformed.stderr).toContain('snapshot.mode');
+    expect(malformed.inputs).toEqual([]);
+  });
+
+  it('parses only the two explicit continuation selectors', () => {
+    expect(parseRunArgs(['--continue', 'yes'])).toMatchObject({
+      continue: true,
+      input: 'yes',
+    });
+    expect(parseRunArgs([`--session=${firstId}`, 'yes'])).toMatchObject({
+      sessionId: firstId,
+      input: 'yes',
+    });
+    expect(() =>
+      parseRunArgs(['--continue', '--session', firstId, 'yes']),
+    ).toThrow(/mutually exclusive/);
+    expect(() => parseRunArgs(['--continue', '--with', 'x', 'yes']))
+      .toThrow(/frozen continued/);
+    expect(() => parseRunArgs(['--session', '../escape', 'yes']))
+      .toThrow(/canonical UUID/);
+    expect(parseRunArgs(['--', '--continue'])).toMatchObject({
+      continue: false,
+      input: '--continue',
+    });
+  });
+});
+
 function classifyMissing(
   target: RuntimeTarget,
   available: boolean,
@@ -909,6 +1517,8 @@ describe('configured engine provisioning parity (PBCLI-38/48)', () => {
 
     const headlessErr = writer();
     const inputs: string[] = [];
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-engine-state-'));
+    tempDirs.push(stateRoot);
     const ran = await runPlaybookCli({
       argv: ['run', '/fixture work'],
       userConfigPath: headless.configPath,
@@ -920,6 +1530,7 @@ describe('configured engine provisioning parity (PBCLI-38/48)', () => {
       createCaptainSessionId: uuidSequence(),
       createLogicalSessionId: () =>
         '90000000-0000-4000-8000-000000000002',
+      sessionsDir: join(stateRoot, 'sessions'),
       stdout: writer(),
       stderr: headlessErr,
     });

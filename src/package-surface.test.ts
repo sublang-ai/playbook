@@ -1436,6 +1436,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       `${CODE_BASE}bin/playbook.js`,
       `${CODE_BASE}bin/launch-config.js`,
       `${CODE_BASE}bin/run.js`,
+      `${CODE_BASE}bin/session-store.js`,
       `${CODE_BASE}bin/provision.js`,
       `${CODE_BASE}bin/adapter-sdk.js`,
       `${CODE_BASE}code.registry.js`,

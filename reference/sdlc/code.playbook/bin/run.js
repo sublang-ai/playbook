@@ -8,8 +8,10 @@
 
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
+import { snapshotJsonValue } from '../../../../src/xstate-runtime.js';
 import { createPlaybookCaptainShell } from '../playbook-captain.js';
 import {
   adapterSdkFailureLines,
@@ -18,16 +20,21 @@ import {
   probeAdapterSdk,
 } from './adapter-sdk.js';
 import {
-  adaptersFromLaunchPlan,
   checkReadiness,
   loadLaunchPlan,
+  normalizeHostConfig,
+  PLAYBOOK_CAPTAIN_MODULE,
   resolveUserConfigPath,
 } from './launch-config.js';
 import { prepareConfiguredRegistries } from './provision.js';
+import {
+  createCaptainSessionStore,
+  SESSION_ID_PATTERN,
+  validateCaptainSessionRecord,
+} from './session-store.js';
 
 const EXIT = { ok: 0, argument: 1, turn: 2 };
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = SESSION_ID_PATTERN;
 class HeadlessHostSetupError extends Error {
   constructor(cause) {
     super(message(cause));
@@ -90,10 +97,9 @@ export async function runPlaybookRun(options = {}) {
 
   const env = options.env ?? process.env;
   const home = options.homeDir ?? env.HOME ?? homedir();
-  const cwd = resolve(options.cwd ?? process.cwd());
-  const userConfigPath =
-    options.userConfigPath ?? resolveUserConfigPath(env, home);
-  const loadModule = options.loadModule ?? ((specifier) => import(specifier));
+  const loadModule = memoizedModuleLoader(
+    options.loadModule ?? ((specifier) => import(specifier)),
+  );
   const prepareRegistryModule =
     options.prepareRegistryModule ??
     prepareConfiguredRegistries({
@@ -103,24 +109,86 @@ export async function runPlaybookRun(options = {}) {
       commandName: 'playbook run',
     });
 
-  let plan;
-  const configNotices = [];
+  let store;
   try {
-    plan = await loadLaunchPlan({
-      userConfigPath,
-      overlayPaths: args.withPaths,
-      loadModule,
-      prepareRegistryModule,
-      onNotice: (line) => configNotices.push(line),
-    });
+    store =
+      options.sessionStore ??
+      createCaptainSessionStore({
+        env,
+        homeDir: home,
+        ...(options.sessionsDir ? { sessionsDir: options.sessionsDir } : {}),
+        ...(options.now ? { now: options.now } : {}),
+        ...(options.createSessionTempId
+          ? { createTempId: options.createSessionTempId }
+          : {}),
+      });
   } catch (error) {
-    for (const line of configNotices) await writeStream(stderr, line);
     await writeStream(stderr, `playbook run: ${message(error)}\n`);
     return { code: EXIT.argument };
   }
-  for (const line of configNotices) await writeStream(stderr, line);
 
-  const adapters = adaptersFromLaunchPlan(plan);
+  const continuing = args.continue || args.sessionId !== undefined;
+  let priorRecord;
+  let sessionId;
+  let config;
+  let cwd;
+  let restoreSnapshot;
+
+  if (continuing) {
+    try {
+      priorRecord = validateCaptainSessionRecord(
+        args.sessionId === undefined
+          ? await store.latest()
+          : await store.read(args.sessionId),
+      );
+      sessionId = priorRecord.sessionId;
+      assertLogicalSessionIdDistinct(priorRecord);
+      cwd = priorRecord.cwd;
+      config = await validateFrozenExecutionConfig(priorRecord.config, {
+        loadModule,
+        prepareRegistryModule,
+      });
+      restoreSnapshot = priorRecord.snapshot;
+    } catch (error) {
+      await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      return { code: EXIT.argument };
+    }
+  } else {
+    const userConfigPath =
+      options.userConfigPath ?? resolveUserConfigPath(env, home);
+    let plan;
+    const configNotices = [];
+    try {
+      plan = await loadLaunchPlan({
+        userConfigPath,
+        overlayPaths: args.withPaths,
+        loadModule,
+        prepareRegistryModule,
+        onNotice: (line) => configNotices.push(line),
+      });
+    } catch (error) {
+      for (const line of configNotices) await writeStream(stderr, line);
+      await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      return { code: EXIT.argument };
+    }
+    for (const line of configNotices) await writeStream(stderr, line);
+
+    try {
+      sessionId = (options.createLogicalSessionId ?? randomUUID)();
+      if (typeof sessionId !== 'string' || !UUID_PATTERN.test(sessionId)) {
+        throw new Error(
+          `logical session id generator returned a non-UUID value: ${JSON.stringify(sessionId)}`,
+        );
+      }
+      config = executionConfigFromPlan(plan);
+      cwd = resolve(options.cwd ?? process.cwd());
+    } catch (error) {
+      await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      return { code: EXIT.argument };
+    }
+  }
+
+  const adapters = adaptersFromExecutionConfig(config);
   const readiness = checkReadiness(adapters, env, home);
   let sdkReadiness;
   try {
@@ -157,20 +225,6 @@ export async function runPlaybookRun(options = {}) {
     return { code: EXIT.argument };
   }
 
-  let sessionId;
-  let config;
-  try {
-    sessionId = (options.createLogicalSessionId ?? randomUUID)();
-    if (typeof sessionId !== 'string' || !UUID_PATTERN.test(sessionId)) {
-      throw new Error(
-        `logical session id generator returned a non-UUID value: ${JSON.stringify(sessionId)}`,
-      );
-    }
-    config = executionConfigFromPlan(plan);
-  } catch (error) {
-    await writeStream(stderr, `playbook run: ${message(error)}\n`);
-    return { code: EXIT.argument };
-  }
   let settled;
   try {
     settled = await driveHeadlessCaptainTurn({
@@ -193,8 +247,8 @@ export async function runPlaybookRun(options = {}) {
       ...(options.createHostRuntime
         ? { createHostRuntime: options.createHostRuntime }
         : {}),
-      ...(options.restoreSnapshot
-        ? { restoreSnapshot: options.restoreSnapshot }
+      ...(restoreSnapshot !== undefined
+        ? { restoreSnapshot }
         : {}),
     });
   } catch (error) {
@@ -207,19 +261,33 @@ export async function runPlaybookRun(options = {}) {
     };
   }
 
-  // Task 6 has no durable hand-off yet, so a fresh one-turn process disposes
-  // after capturing the complete snapshot. Task 7 can persist `settled`
-  // before choosing not to call this semantic teardown.
+  let durableRecord;
   try {
-    await settled.dispose();
+    durableRecord =
+      priorRecord === undefined
+        ? await store.commitNew({
+            sessionId,
+            cwd,
+            config: settled.config,
+            snapshot: settled.snapshot,
+          })
+        : await store.commitNext(priorRecord, settled.snapshot);
   } catch (error) {
+    try {
+      await settled.dispose();
+    } catch {
+      // Preserve the failed durable hand-off as the primary diagnostic.
+    }
     await writeStream(
       stderr,
-      `playbook run: Captain session teardown failed: ${message(error)}\n`,
+      `playbook run: cannot persist Captain session: ${message(error)}\n`,
     );
     return { code: EXIT.turn };
   }
 
+  // Durable hand-off transfers semantic ownership to the logical session.
+  // Process exit owns ephemeral transport teardown; semantic disposal here
+  // would end the session that `--continue` must restore.
   try {
     await presentHeadlessCaptainTurn(settled, {
       stdout,
@@ -239,6 +307,7 @@ export async function runPlaybookRun(options = {}) {
     snapshot: settled.snapshot,
     config: settled.config,
     cwd: settled.cwd,
+    record: durableRecord,
   };
 }
 
@@ -367,6 +436,316 @@ export function executionConfigFromPlan(plan) {
   });
 }
 
+// PBCLI-22/23: a continuation consumes only the detached execution projection
+// captured at session creation. The current registry code must still expose
+// the recorded manifest identity, while the stored effective command remains
+// authoritative even when launcher configuration originally overrode it.
+export async function validateFrozenExecutionConfig(
+  value,
+  { loadModule, prepareRegistryModule },
+) {
+  const config = requireRecord(
+    snapshotJsonValue(value, 'Captain execution config'),
+    'Captain execution config',
+  );
+  requireExactKeys(
+    config,
+    ['schemaVersion', 'captain', 'players', 'catalog'],
+    'Captain execution config',
+  );
+  if (config.schemaVersion !== 1) {
+    throw new Error(
+      `Captain execution config schema ${JSON.stringify(config.schemaVersion)} is not supported`,
+    );
+  }
+  requireRecord(config.captain, 'Captain execution config.captain');
+  if (!Array.isArray(config.players)) {
+    throw new Error('Captain execution config.players must be an array');
+  }
+  const catalog = requireRecord(
+    config.catalog,
+    'Captain execution config.catalog',
+  );
+  const catalogItems = Object.entries(catalog);
+  if (catalogItems.length === 0) {
+    throw new Error('Captain execution config.catalog must not be empty');
+  }
+
+  const expectedPlayerIds = [];
+  const seenCommands = new Set();
+  for (const [key, itemValue] of catalogItems) {
+    const item = requireRecord(
+      itemValue,
+      `Captain execution config.catalog.${key}`,
+    );
+    const allowed = [
+      'id',
+      'from',
+      'manifestCommand',
+      'command',
+      'intent',
+      'requiredRoleIds',
+      'playerIds',
+      'options',
+      ...(Object.hasOwn(item, 'commandOverride') ? ['commandOverride'] : []),
+    ];
+    requireExactKeys(
+      item,
+      allowed,
+      `Captain execution config.catalog.${key}`,
+    );
+    if (requireNonblank(item.id, `catalog.${key}.id`) !== key) {
+      throw new Error(
+        `Captain execution config catalog key must equal id ${JSON.stringify(item.id)}`,
+      );
+    }
+    if (item.id === 'captain') {
+      throw new Error('Captain execution config uses the reserved playbook id "captain"');
+    }
+    const from = requireNonblank(item.from, `catalog.${key}.from`);
+    if (
+      isAbsolute(from) ||
+      /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[A-Za-z]:[\\/])/.test(from)
+    ) {
+      throw new Error(
+        `Captain execution config catalog.${key}.from is not a canonical module specifier`,
+      );
+    }
+    requireNonblank(item.manifestCommand, `catalog.${key}.manifestCommand`);
+    const command = requireNonblank(item.command, `catalog.${key}.command`);
+    if (typeof item.intent !== 'string') {
+      throw new Error(`catalog.${key}.intent must be a string`);
+    }
+    if (command === 'captain') {
+      throw new Error(
+        `Captain execution config catalog.${key} uses the reserved command "captain"`,
+      );
+    }
+    if (seenCommands.has(command)) {
+      throw new Error(
+        `Captain execution config has duplicate effective command ${JSON.stringify(command)}`,
+      );
+    }
+    seenCommands.add(command);
+    if (Object.hasOwn(item, 'commandOverride')) {
+      if (
+        requireNonblank(item.commandOverride, `catalog.${key}.commandOverride`) !==
+        command
+      ) {
+        throw new Error(`Captain execution config catalog.${key} command override is not frozen`);
+      }
+    } else if (command !== item.manifestCommand) {
+      throw new Error(
+        `Captain execution config catalog.${key} changed its manifest command without an override`,
+      );
+    }
+    if (
+      !Array.isArray(item.requiredRoleIds) ||
+      item.requiredRoleIds.some(
+        (role) => typeof role !== 'string' || role.trim().length === 0,
+      ) ||
+      new Set(item.requiredRoleIds).size !== item.requiredRoleIds.length
+    ) {
+      throw new Error(`Captain execution config catalog.${key}.requiredRoleIds is invalid`);
+    }
+    const playerIds = requireRecord(
+      item.playerIds,
+      `Captain execution config catalog.${key}.playerIds`,
+    );
+    if (Object.keys(playerIds).length === 0) {
+      throw new Error(`Captain execution config catalog.${key}.playerIds must not be empty`);
+    }
+    for (const required of item.requiredRoleIds) {
+      if (!Object.hasOwn(playerIds, required)) {
+        throw new Error(
+          `Captain execution config catalog.${key} has no mapped player for required role ${JSON.stringify(required)}`,
+        );
+      }
+    }
+    for (const [role, playerId] of Object.entries(playerIds)) {
+      requireNonblank(role, `catalog.${key}.playerIds role`);
+      if (role === 'captain') {
+        throw new Error(`Captain execution config catalog.${key} uses the reserved role "captain"`);
+      }
+      requireNonblank(playerId, `catalog.${key}.playerIds.${role}`);
+      if (playerId !== `${key}-${role}`) {
+        throw new Error(
+          `Captain execution config catalog.${key}.playerIds.${role} is not canonical`,
+        );
+      }
+      expectedPlayerIds.push(playerId);
+    }
+    requireRecord(item.options, `Captain execution config catalog.${key}.options`);
+  }
+  if (new Set(expectedPlayerIds).size !== expectedPlayerIds.length) {
+    throw new Error('Captain execution config maps a host player more than once');
+  }
+  const actualPlayerIds = config.players.map((player, index) =>
+    requireNonblank(
+      requireRecord(player, `Captain execution config.players[${index}]`).id,
+      `Captain execution config.players[${index}].id`,
+    ),
+  );
+  if (!isDeepStrictEqual(actualPlayerIds, expectedPlayerIds)) {
+    throw new Error('Captain execution config players do not match the frozen catalog mapping');
+  }
+
+  // Round-trip the stored agents through the installed cligent validator. No
+  // user config participates, and equality prevents defaults or coercions
+  // from silently changing the frozen lineup.
+  const firstVisible = Object.values(catalogItems[0][1].playerIds);
+  const normalizedHost = await normalizeHostConfig({
+    captain: {
+      ...config.captain,
+      from: PLAYBOOK_CAPTAIN_MODULE,
+      options: {},
+    },
+    players: config.players,
+    layout: { initialVisible: firstVisible },
+  });
+  const {
+    from: _captainFrom,
+    options: _captainOptions,
+    ...normalizedCaptain
+  } = normalizedHost.captain;
+  if (
+    !isDeepStrictEqual(normalizedCaptain, config.captain) ||
+    !isDeepStrictEqual(normalizedHost.players, config.players)
+  ) {
+    throw new Error('Captain execution config agents are not canonical for this cligent host');
+  }
+
+  // Preserve the complete-catalog preparation transaction: prepare every
+  // stored canonical module before importing any. A hook may provision the
+  // module's dependencies but cannot rewrite the frozen module identity.
+  for (const [id, item] of catalogItems) {
+    if (prepareRegistryModule === undefined) continue;
+    let prepared;
+    try {
+      prepared = await prepareRegistryModule({
+        id,
+        from: item.from,
+        authoredFrom: item.from,
+      });
+    } catch (cause) {
+      throw new Error(`stored playbook ${JSON.stringify(id)} failed to prepare: ${message(cause)}`);
+    }
+    if (prepared !== undefined && prepared !== item.from) {
+      throw new Error(
+        `stored playbook ${JSON.stringify(id)} preparation changed its frozen module identity`,
+      );
+    }
+  }
+
+  for (const [id, item] of catalogItems) {
+    let entry;
+    try {
+      entry = (await loadModule(item.from))?.default;
+    } catch (cause) {
+      throw new Error(`stored playbook ${JSON.stringify(id)} failed to import: ${message(cause)}`);
+    }
+    if (!isValidRegistryEntry(entry)) {
+      throw new Error(`stored playbook ${JSON.stringify(id)} exposes no valid registry entry`);
+    }
+    if (
+      entry.id !== id ||
+      entry.command !== item.manifestCommand ||
+      entry.intent !== item.intent ||
+      !isDeepStrictEqual(entry.requiredRoleIds, item.requiredRoleIds)
+    ) {
+      throw new Error(
+        `stored playbook ${JSON.stringify(id)} no longer matches its recorded manifest identity`,
+      );
+    }
+    try {
+      entry.validateOptions(cloneJson(item.options));
+    } catch (cause) {
+      throw new Error(
+        `stored playbook ${JSON.stringify(id)} options are no longer compatible: ${message(cause)}`,
+      );
+    }
+  }
+  return config;
+}
+
+function adaptersFromExecutionConfig(config) {
+  return [
+    ...new Set([
+      config.captain.adapter,
+      ...config.players.map((player) => player.adapter),
+    ]),
+  ];
+}
+
+function assertLogicalSessionIdDistinct(record) {
+  if (
+    record.snapshot.captain?.sessionId === record.sessionId ||
+    (Array.isArray(record.snapshot.issuedSessionIds) &&
+      record.snapshot.issuedSessionIds.includes(record.sessionId))
+  ) {
+    throw new Error(
+      'logical session id collides with an internal Captain session id',
+    );
+  }
+}
+
+function memoizedModuleLoader(loadModule) {
+  const modules = new Map();
+  return (specifier) => {
+    if (!modules.has(specifier)) {
+      modules.set(specifier, Promise.resolve().then(() => loadModule(specifier)));
+    }
+    return modules.get(specifier);
+  };
+}
+
+function isValidRegistryEntry(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof value.id === 'string' &&
+    value.id.trim().length > 0 &&
+    typeof value.command === 'string' &&
+    value.command.trim().length > 0 &&
+    typeof value.intent === 'string' &&
+    Array.isArray(value.requiredRoleIds) &&
+    value.requiredRoleIds.every(
+      (role) => typeof role === 'string' && role.trim().length > 0,
+    ) &&
+    new Set(value.requiredRoleIds).size === value.requiredRoleIds.length &&
+    typeof value.validateOptions === 'function' &&
+    typeof value.createRuntime === 'function'
+  );
+}
+
+function requireRecord(value, path) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  return value;
+}
+
+function requireExactKeys(value, expected, path) {
+  const keys = Object.keys(value);
+  const allowed = new Set(expected);
+  const unknown = keys.find((key) => !allowed.has(key));
+  if (unknown !== undefined) {
+    throw new Error(`${path} has unknown field ${JSON.stringify(unknown)}`);
+  }
+  const missing = expected.find((key) => !Object.hasOwn(value, key));
+  if (missing !== undefined) {
+    throw new Error(`${path} is missing field ${JSON.stringify(missing)}`);
+  }
+}
+
+function requireNonblank(value, path) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${path} must be a nonblank string`);
+  }
+  return value;
+}
+
 function captainOptionsFromConfig(config) {
   return {
     playbooks: Object.fromEntries(
@@ -400,6 +779,8 @@ export function parseRunArgs(argv) {
     noProvision: false,
     json: false,
     verbose: false,
+    continue: false,
+    sessionId: undefined,
     help: false,
     terminated: false,
   };
@@ -415,7 +796,27 @@ export function parseRunArgs(argv) {
     else if (arg === '--json') parsed.json = true;
     else if (arg === '--verbose') parsed.verbose = true;
     else if (arg === '--no-provision') parsed.noProvision = true;
-    else if (arg === '--with') {
+    else if (arg === '--continue') {
+      if (parsed.continue) throw new Error('--continue may be specified only once');
+      parsed.continue = true;
+    } else if (arg === '--session') {
+      const value = argv[index + 1];
+      if (value === undefined || value === '') {
+        throw new Error('--session needs a UUID value');
+      }
+      if (parsed.sessionId !== undefined) {
+        throw new Error('--session may be specified only once');
+      }
+      parsed.sessionId = value;
+      index += 1;
+    } else if (arg.startsWith('--session=')) {
+      const value = arg.slice('--session='.length);
+      if (value === '') throw new Error('--session needs a UUID value');
+      if (parsed.sessionId !== undefined) {
+        throw new Error('--session may be specified only once');
+      }
+      parsed.sessionId = value;
+    } else if (arg === '--with') {
       const value = argv[index + 1];
       if (value === undefined || value === '') {
         throw new Error('--with needs a value');
@@ -443,6 +844,21 @@ export function parseRunArgs(argv) {
     throw new Error(
       'expected at most one [input] argument; quote multi-word input as one shell argument',
     );
+  }
+  if (parsed.continue && parsed.sessionId !== undefined) {
+    throw new Error('--continue and --session are mutually exclusive');
+  }
+  if (
+    (parsed.continue || parsed.sessionId !== undefined) &&
+    parsed.withPaths.length > 0
+  ) {
+    throw new Error('--with cannot change a frozen continued Captain session');
+  }
+  if (
+    parsed.sessionId !== undefined &&
+    !SESSION_ID_PATTERN.test(parsed.sessionId)
+  ) {
+    throw new Error('--session needs a canonical UUID value');
   }
   parsed.input = positionals[0];
   return parsed;
@@ -522,6 +938,8 @@ function runHelpText(userConfigPath) {
     'Usage:',
     '  playbook run [--with <path>]... [--no-provision] [--json]',
     '               [--verbose] [--] [input]',
+    '  playbook run (--continue | --session <id>) [--no-provision]',
+    '               [--json] [--verbose] [--] [reply]',
     '',
     '  [input]  one exact Boss message; read verbatim from stdin when omitted',
     '  --        end options so a flag-shaped input remains Boss text',
@@ -533,10 +951,14 @@ function runHelpText(userConfigPath) {
     '`playbook`. Enable an external registry in that config, then invoke its',
     'effective /command through Captain. The former positional registry,',
     'resume, and run-only binding surfaces have been removed.',
+    'A continued run restores the stored execution config and working',
+    'directory; it never re-reads current config or --with overlays.',
     '',
     'Options:',
     '  --with <path>    overlay a generic config fragment (repeatable)',
     '  --no-provision   do not provision thin filesystem registry engines',
+    '  --continue       reply to the latest durable Captain session',
+    '  --session <id>   reply to one durable Captain session UUID',
     '  --json           print exactly {"sessionId", "reply"}',
     '  --verbose        print Captain telemetry topics to stderr',
     '  -h, --help       print this help without reading input or config',
