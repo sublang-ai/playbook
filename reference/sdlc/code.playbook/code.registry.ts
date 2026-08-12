@@ -2,7 +2,6 @@
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 import createPlaybookRuntime, {
-  type CodePlaybookOptions,
   type PlaybookRuntime,
 } from './code.playbook.js';
 
@@ -15,27 +14,18 @@ export interface PlaybookSummaryPolicy {
   ): string;
 }
 
-export interface RegistryPlayer {
-  id: string;
-  adapter?: string;
-  model?: string;
-}
-
-export interface CreateCodeRuntimeOptions {
-  captainOptions: unknown;
-  players: readonly RegistryPlayer[];
-}
-
 export type CodeOptions = Readonly<Record<string, never>>;
 
 export interface CodePlaybookRegistryEntry {
   id: 'code';
   command: 'code';
   intent: string;
+  artifactSchema: 2;
   requiredRoleIds: readonly ['coder'];
+  concurrentRoleSets: readonly [];
   summaryPolicy: PlaybookSummaryPolicy;
-  validateOptions(captainOptions: unknown): CodeOptions;
-  createRuntime(options: CreateCodeRuntimeOptions): PlaybookRuntime;
+  validateOptions(optionSlice: unknown): CodeOptions;
+  createRuntime(options: CodeOptions): PlaybookRuntime;
 }
 
 // REVIEW owns and labels its real review rounds. CODE's two suspended wrapper
@@ -96,33 +86,18 @@ export function validateCodeOptions(optionSlice: unknown): CodeOptions {
   return Object.freeze({});
 }
 
-function playerIdentity(
-  players: readonly RegistryPlayer[],
-  id: string,
-): string | undefined {
-  const player = players.find((entry) => entry.id === id);
-  return player?.model ?? player?.adapter;
-}
-
-export function createCodeRuntimeOptions({
-  captainOptions,
-  players,
-}: CreateCodeRuntimeOptions): CodePlaybookOptions {
-  validateCodeOptions(captainOptions);
-  const coderPlayer = playerIdentity(players, 'coder');
-  return coderPlayer === undefined ? {} : { coderPlayer };
-}
-
 export const codePlaybookRegistryEntry: CodePlaybookRegistryEntry = {
   id: 'code',
   command: 'code',
   intent:
     'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
+  artifactSchema: 2,
   requiredRoleIds: ['coder'],
+  concurrentRoleSets: [],
   summaryPolicy: codeSummaryPolicy,
   validateOptions: validateCodeOptions,
   createRuntime(options) {
-    return createPlaybookRuntime(createCodeRuntimeOptions(options));
+    return createPlaybookRuntime(options);
   },
 };
 

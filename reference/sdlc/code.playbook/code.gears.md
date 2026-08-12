@@ -3,7 +3,7 @@
 
 # CODE: Commit-Based Coding Workflow
 
-Players:
+Roles:
 
 - Coder
 

@@ -31,19 +31,18 @@ export type PendingBossQuestion = {
   readonly questionId: 'runFirstPhase' | 'runIrTask';
   readonly resumeStateId: 'runFirstPhase' | 'runIrTask';
   readonly sourceItem: 'CODE-1' | 'CODE-3';
-  readonly player: 'Coder';
+  readonly asker: { readonly kind: 'role'; readonly roleId: 'coder' };
   readonly question: string;
 };
 
 export type PlayerInput = {
   readonly stateId: 'runFirstPhase' | 'runIrTask';
-  readonly player: 'Coder';
+  readonly role: 'coder';
   readonly sourceItem: 'CODE-1' | 'CODE-3';
   readonly prompt: string;
   readonly result: Readonly<Record<string, string>>;
   readonly callerInput: string;
   readonly runResults: string;
-  readonly coderPlayer: string;
   readonly irNumber?: string;
   readonly irTask?: string;
   readonly pendingBossQuestion?: PendingBossQuestion;
@@ -114,12 +113,10 @@ export type CodePlaybookOutput =
     };
 
 export type CodingInput = {
-  readonly coderPlayer?: string;
   readonly runResults?: string;
 };
 
 export type CodingContext = {
-  readonly coderPlayer: string;
   readonly runResults: string;
   readonly callerInput?: string;
   readonly coderOutput?: string;
@@ -210,13 +207,13 @@ const STATE_DESCRIPTIONS = {
 
 function playbookMeta<StateId extends keyof typeof STATE_DESCRIPTIONS>(
   stateId: StateId,
-  player?: 'Coder',
+  role?: 'coder',
 ) {
   return {
     playbook: {
       stateId,
       description: STATE_DESCRIPTIONS[stateId],
-      ...(player === undefined ? {} : { player }),
+      ...(role === undefined ? {} : { role }),
     },
   };
 }
@@ -557,7 +554,6 @@ const machineSetup = setup({
     startCoding: assign(({ context, event }) => {
       if (event.type !== 'START_CODE') return {};
       return {
-        coderPlayer: context.coderPlayer,
         runResults: context.runResults,
         callerInput: event.callerInput,
         coderOutput: undefined,
@@ -623,7 +619,7 @@ const machineSetup = setup({
           questionId: stateId,
           resumeStateId: stateId,
           sourceItem: stateId === 'runFirstPhase' ? 'CODE-1' : 'CODE-3',
-          player: 'Coder',
+          asker: { kind: 'role', roleId: 'coder' },
           question,
         },
         bossReply: undefined,
@@ -670,8 +666,6 @@ export const codingMachine = machineSetup.createMachine({
   id: 'code',
   initial: 'ready',
   context: ({ input }) => ({
-    coderPlayer:
-      isNonEmptyString(input.coderPlayer) ? input.coderPlayer : 'Coder',
     runResults: typeof input.runResults === 'string' ? input.runResults : '',
   }),
   output: ({ context }): CodePlaybookOutput => {
@@ -707,19 +701,18 @@ export const codingMachine = machineSetup.createMachine({
     runFirstPhase: {
       id: 'runFirstPhase',
       description: STATE_DESCRIPTIONS.runFirstPhase,
-      meta: playbookMeta('runFirstPhase', 'Coder'),
+      meta: playbookMeta('runFirstPhase', 'coder'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
         input: ({ context }): PlayerInput => ({
           stateId: 'runFirstPhase',
-          player: 'Coder',
+          role: 'coder',
           sourceItem: 'CODE-1',
           prompt: FIRST_PHASE_PROMPT,
           result: FIRST_PHASE_RESULTS,
           callerInput: context.callerInput ?? '',
           runResults: context.runResults,
-          coderPlayer: context.coderPlayer,
           ...(context.pendingBossQuestion === undefined
             ? {}
             : { pendingBossQuestion: context.pendingBossQuestion }),
@@ -792,19 +785,18 @@ export const codingMachine = machineSetup.createMachine({
     runIrTask: {
       id: 'runIrTask',
       description: STATE_DESCRIPTIONS.runIrTask,
-      meta: playbookMeta('runIrTask', 'Coder'),
+      meta: playbookMeta('runIrTask', 'coder'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
         input: ({ context }): PlayerInput => ({
           stateId: 'runIrTask',
-          player: 'Coder',
+          role: 'coder',
           sourceItem: 'CODE-3',
           prompt: IR_TASK_PROMPT,
           result: IR_TASK_RESULTS,
           callerInput: context.callerInput ?? '',
           runResults: context.runResults,
-          coderPlayer: context.coderPlayer,
           ...(context.irNumber === undefined
             ? {}
             : { irNumber: context.irNumber }),

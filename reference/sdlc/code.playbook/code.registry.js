@@ -43,24 +43,17 @@ export function validateCodeOptions(optionSlice) {
     }
     return Object.freeze({});
 }
-function playerIdentity(players, id) {
-    const player = players.find((entry) => entry.id === id);
-    return player?.model ?? player?.adapter;
-}
-export function createCodeRuntimeOptions({ captainOptions, players, }) {
-    validateCodeOptions(captainOptions);
-    const coderPlayer = playerIdentity(players, 'coder');
-    return coderPlayer === undefined ? {} : { coderPlayer };
-}
 export const codePlaybookRegistryEntry = {
     id: 'code',
     command: 'code',
     intent: 'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
+    artifactSchema: 2,
     requiredRoleIds: ['coder'],
+    concurrentRoleSets: [],
     summaryPolicy: codeSummaryPolicy,
     validateOptions: validateCodeOptions,
     createRuntime(options) {
-        return createPlaybookRuntime(createCodeRuntimeOptions(options));
+        return createPlaybookRuntime(options);
     },
 };
 export default codePlaybookRegistryEntry;

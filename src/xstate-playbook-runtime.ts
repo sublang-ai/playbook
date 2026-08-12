@@ -66,13 +66,13 @@ export interface PlaybookPendingBossQuestionContext {
   questionId: string;
   resumeStateId: string;
   sourceItem: string;
-  player: string;
+  asker: { kind: 'captain' } | { kind: 'role'; roleId: string };
   question: string;
 }
 
 export interface PlaybookPlayerInput {
   stateId: string;
-  player: string;
+  role: string;
   sourceItem: string;
   prompt: string;
   result: Readonly<Record<string, string>>;
@@ -113,7 +113,7 @@ export type JudgePurpose =
 export interface RuntimeBoundaryCalls {
   callPlayer(
     input: PlaybookPlayerInput,
-    playerId: string,
+    roleId: string,
     prompt: string,
     signal: AbortSignal,
   ): Promise<PlayerResult>;
@@ -151,10 +151,13 @@ export interface ScheduledStatus {
 }
 
 /** Boss-facing identity for one FSM state whose invoked actor is `player`. */
-export interface XStatePlayerStateStatus {
-  player: string;
+export interface XStateRoleStateStatus {
+  role: string;
   label: string;
 }
+
+/** Invocation-scoped lookup exposed only while composing a player prompt. */
+export type XStatePromptIdentity = (roleId: string) => string;
 
 export interface XStateBossEventFieldSpec {
   /** The judge supplies routing data; the runtime supplies exact Boss text. */
@@ -247,7 +250,7 @@ export const RUNTIME_ABI = 1;
 
 /** The linked-artifact schema versions this engine accepts (DR-022). */
 export const SUPPORTED_ARTIFACT_SCHEMAS: readonly number[] = Object.freeze([
-  1,
+  2,
 ]);
 
 /** A linked artifact's declared link-time compatibility values (DR-022). */
@@ -259,14 +262,17 @@ export interface XStatePlaybookRuntimeCompat {
 }
 
 // PBRT-50: validate a declaration against the loaded engine, schema first,
-// so one clear diagnostic covers a fully skewed artifact. Absent means a
-// legacy artifact emitted before the DR-022 contract; those must keep
-// loading unchanged (DR-019 §4), so there is nothing to check.
+// so one clear diagnostic covers a fully skewed artifact. Declaration-free
+// artifacts are schema 1 and cannot be interpreted as local-role artifacts.
 function assertRuntimeCompat(
   compat: XStatePlaybookRuntimeCompat | undefined,
   label: string,
 ): void {
-  if (compat === undefined) return;
+  if (compat === undefined) {
+    throw new TypeError(
+      `${label} spec.compat is required for local-role artifacts`,
+    );
+  }
   if (compat === null || typeof compat !== 'object') {
     throw new TypeError(`${label} spec.compat must be an object`);
   }
@@ -355,8 +361,8 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
   label?: string;
   /**
    * Link-time compatibility declaration checked at construction against the
-   * loaded engine's self-report (DR-022). Absent: a legacy artifact emitted
-   * before the contract — constructed with no compatibility check.
+   * loaded engine's self-report (DR-022). Absent declarations reject because
+   * their overloaded player metadata has no safe local-role interpretation.
    */
   compat?: XStatePlaybookRuntimeCompat;
   /** Validate and JSON-snapshot the caller's per-run options. */
@@ -397,14 +403,15 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
    * recoverable FSM-result failures instead.
    */
   captainStrategy?: XStateCaptainStrategy<TOptions>;
-  /** Status line emitted after classification; canonical metadata defaults to the event type, legacy artifacts to none. */
+  /** Status line emitted after classification; metadata defaults to the event type. */
   classificationStatus?: (event: EventObject) => string | undefined;
-  /** Complete FSM-derived Boss-facing metadata for every `player` state; its presence selects the canonical status profile. */
-  playerStates?: Readonly<Record<string, XStatePlayerStateStatus>>;
-  /** Map a player-invoking state's input to the host player id. Default: lowercased player name. */
-  resolvePlayerId?: (input: PlaybookPlayerInput, options: TOptions) => string;
+  /** Complete FSM-derived Boss-facing metadata for every `player` state. */
+  roleStates?: Readonly<Record<string, XStateRoleStateStatus>>;
   /** Compose the player prompt. Default: continuation blocks + `<field>` placeholder substitution. */
-  composePlayerPrompt?: (input: PlaybookPlayerInput) => string;
+  composePlayerPrompt?: (
+    input: PlaybookPlayerInput,
+    promptIdentity: XStatePromptIdentity,
+  ) => string;
   /** Compose the direct-Captain prompt. Default: continuation blocks + placeholder substitution with deterministic JSON rendering. */
   composeCaptainPrompt?: (input: PlaybookCaptainInput) => string;
   /** Linker-known exceptions to the default kebab-token → camel-field mapping. */
@@ -594,16 +601,34 @@ export function pendingBossQuestionFromContext(
     typeof candidate.questionId !== 'string' ||
     typeof candidate.resumeStateId !== 'string' ||
     typeof candidate.sourceItem !== 'string' ||
-    typeof candidate.player !== 'string' ||
+    !isPlainObject(candidate.asker) ||
     typeof candidate.question !== 'string'
   ) {
+    return undefined;
+  }
+  let asker: PlaybookPendingBossQuestionContext['asker'];
+  if (candidate.asker.kind === 'captain') {
+    if (Object.keys(candidate.asker).some((key) => key !== 'kind')) {
+      return undefined;
+    }
+    asker = { kind: 'captain' };
+  } else if (
+    candidate.asker.kind === 'role' &&
+    typeof candidate.asker.roleId === 'string' &&
+    candidate.asker.roleId.trim().length > 0 &&
+    Object.keys(candidate.asker).every(
+      (key) => key === 'kind' || key === 'roleId',
+    )
+  ) {
+    asker = { kind: 'role', roleId: candidate.asker.roleId };
+  } else {
     return undefined;
   }
   return {
     questionId: candidate.questionId,
     resumeStateId: candidate.resumeStateId,
     sourceItem: candidate.sourceItem,
-    player: candidate.player,
+    asker,
     question: candidate.question,
   };
 }
@@ -707,11 +732,6 @@ export function defaultComposeCaptainPrompt(
   return blocks.join('\n\n');
 }
 
-/** Default player binding: each player to its lowercased name. */
-export function defaultResolvePlayerId(input: PlaybookPlayerInput): string {
-  return input.player.toLowerCase();
-}
-
 /**
  * Default required-field extraction (slc/link.md §Captain adjudication).
  * Limited to the description's `Output shall include` / `输出应包含` clause;
@@ -748,7 +768,7 @@ export function defaultBuildJudgePrompt(
       'and outcome descriptions. Reply with exactly one JSON object and no prose.',
   );
   lines.push('');
-  lines.push(`The ${input.player} just produced this output:`);
+  lines.push(`The ${input.role} role just produced this output:`);
   lines.push('');
   lines.push('```');
   lines.push(finalText);
@@ -856,7 +876,8 @@ function validateBossReplyOutput(
 
 // ---------------------------------------------------------------------------
 // Delegated-player actor bridge. One PromiseActorLogic the machine invokes
-// from every player-invoking state: resolve the playerId, compose the prompt,
+// from every player-invoking state: retain the role, resolve any bound player
+// identity privately, compose the prompt through the ephemeral identity lookup,
 // await callPlayer, adjudicate the finalText. An `ok` result with a missing,
 // empty, or whitespace-only finalText earns exactly one corrective re-ask of
 // the same composed call (DR-028); a non-`ok` result, or a second such empty
@@ -867,8 +888,8 @@ function validateBossReplyOutput(
 // which only fires on actor.stop(), not on Boss abort.
 // ---------------------------------------------------------------------------
 
-export interface PlayerBridgeSpec {
-  resolvePlayerId: (input: PlaybookPlayerInput) => string;
+interface PlayerBridgeSpec {
+  resolveRoleId: (input: PlaybookPlayerInput) => string;
   composePlayerPrompt: (input: PlaybookPlayerInput) => string;
   adjudication: PlayerAdjudicationSpec;
   resumableStateIds: ReadonlySet<string>;
@@ -884,12 +905,24 @@ export function createPlayerBridge(
   return fromPromise<PlaybookActorOutput, PlaybookPlayerInput>(
     async ({ input, signal }) => {
       const activeSignal = combineAbortSignals(signal, getActiveSignal?.());
-      const playerId = spec.resolvePlayerId(input);
-      const prompt = spec.composePlayerPrompt(input);
+      let roleId: string;
+      let prompt: string;
+      try {
+        roleId = spec.resolveRoleId(input);
+        prompt = spec.composePlayerPrompt(input);
+      } catch (error) {
+        onControlPlaneError?.(error);
+        throw error;
+      }
       const callPlayer = (resume: string | false) =>
         boundary
-          ? boundary.callPlayer(input, playerId, prompt, activeSignal)
-          : ports.callPlayer(playerId, prompt, activeSignal, { resume });
+          ? boundary.callPlayer(
+              input,
+              roleId,
+              prompt,
+              activeSignal,
+            )
+          : ports.callPlayer(roleId, prompt, activeSignal, { resume });
       let result = await callPlayer(false);
       if (result.status === 'ok' && isEmptyFinalText(result.finalText)) {
         // An abort that lands between the empty first result and the
@@ -1063,10 +1096,10 @@ function collectInvokeSources(machine: AnyStateMachine): ReadonlySet<string> {
   return sources;
 }
 
-function collectPlayerStatePlayers(
+function collectPlayerStateRoles(
   machine: AnyStateMachine,
 ): ReadonlyMap<string, string> {
-  const players = new Map<string, string>();
+  const roles = new Map<string, string>();
   const visit = (stateDef: unknown, stateKey: string): void => {
     if (!isPlainObject(stateDef)) return;
     const invoke = stateDef.invoke;
@@ -1092,15 +1125,15 @@ function collectPlayerStatePlayers(
           'player state metadata must use a non-empty state id',
         );
       }
-      const player = isPlainObject(playbookMeta)
-        ? playbookMeta.player
+      const role = isPlainObject(playbookMeta)
+        ? playbookMeta.role
         : undefined;
-      if (typeof player !== 'string' || player.trim().length === 0) {
+      if (typeof role !== 'string' || role.trim().length === 0) {
         throw new TypeError(
-          `player state ${stateId} meta.playbook.player must be a non-empty string`,
+          `player state ${stateId} meta.playbook.role must be a non-empty string`,
         );
       }
-      players.set(stateId, player);
+      roles.set(stateId, role);
     }
     if (isPlainObject(stateDef.states)) {
       for (const [childKey, child] of Object.entries(stateDef.states)) {
@@ -1114,7 +1147,7 @@ function collectPlayerStatePlayers(
       visit(stateDef, stateKey);
     }
   }
-  return players;
+  return roles;
 }
 
 function transitionTargets(transition: unknown): string[] {
@@ -1268,55 +1301,68 @@ function makeDefaultNormalizeTransitionEvent(
   };
 }
 
-function snapshotPlayerStateStatuses(
-  value: Readonly<Record<string, XStatePlayerStateStatus>> | undefined,
+function snapshotRoleStateStatuses(
+  value: unknown,
   label: string,
   machine: AnyStateMachine,
   stateDescriptions: ReadonlyMap<string, string>,
-): ReadonlyMap<string, XStatePlayerStateStatus> {
-  if (value === undefined) return new Map();
-  if (!isPlainObject(value)) {
-    throw new TypeError(`${label} playerStates must be an object`);
+): ReadonlyMap<string, XStateRoleStateStatus> {
+  if (value === undefined) {
+    throw new TypeError(`${label} roleStates must be supplied for schema 2`);
   }
-  const declared = collectPlayerStatePlayers(machine);
-  const statuses = new Map<string, XStatePlayerStateStatus>();
-  for (const [stateId, candidate] of Object.entries(value)) {
+  const captured = snapshotJsonValue(value, `${label} roleStates`);
+  if (!isPlainObject(captured)) {
+    throw new TypeError(`${label} roleStates must be an object`);
+  }
+  const declared = collectPlayerStateRoles(machine);
+  const statuses = new Map<string, XStateRoleStateStatus>();
+  for (const [stateId, candidate] of Object.entries(captured)) {
     if (!declared.has(stateId)) {
       throw new TypeError(
-        `${label} playerStates.${stateId} does not name a player state`,
+        `${label} roleStates.${stateId} does not name a player state`,
       );
+    }
+    if (isPlainObject(candidate)) {
+      const extra = Object.keys(candidate).find(
+        (key) => key !== 'role' && key !== 'label',
+      );
+      if (extra !== undefined) {
+        throw new TypeError(
+          `${label} roleStates.${stateId}.${extra} is not allowed`,
+        );
+      }
     }
     if (
       !isPlainObject(candidate) ||
-      typeof candidate.player !== 'string' ||
-      candidate.player.trim().length === 0 ||
+      typeof candidate.role !== 'string' ||
+      candidate.role.trim().length === 0 ||
       typeof candidate.label !== 'string' ||
       candidate.label.trim().length === 0
     ) {
       throw new TypeError(
-        `${label} playerStates.${stateId} must carry non-empty player and label strings`,
+        `${label} roleStates.${stateId} must carry non-empty role and label strings`,
       );
     }
     const expectedLabel = stateDescriptions.get(stateId);
     if (candidate.label !== expectedLabel) {
       throw new TypeError(
-        `${label} playerStates.${stateId}.label must equal its FSM description`,
+        `${label} roleStates.${stateId}.label must equal its FSM description`,
       );
     }
-    if (candidate.player !== declared.get(stateId)) {
+    if (candidate.role !== declared.get(stateId)) {
       throw new TypeError(
-        `${label} playerStates.${stateId}.player must equal its FSM player`,
+        `${label} roleStates.${stateId}.role must equal its FSM role`,
       );
     }
     statuses.set(stateId, {
-      player: candidate.player,
+      role: candidate.role,
       label: candidate.label,
     });
   }
   for (const stateId of declared.keys()) {
     if (!statuses.has(stateId)) {
       throw new TypeError(
-        `${label} playerStates must declare player state ${stateId}`,
+        `${label} roleStates must declare player state ${stateId}`,
       );
     }
   }
@@ -1331,39 +1377,14 @@ function settlingGuard(event: unknown): string | undefined {
     : undefined;
 }
 
-function legacyStatusesForState(
-  state: PlaybookState,
-  context: Record<string, unknown>,
-): ScheduledStatus[] {
-  const stateId = state.stateId;
-  if (stateId === undefined || SUPPRESSED_ENTRY_STATES.has(stateId)) return [];
-  if (stateId === 'awaitBossReply') {
-    const pending = pendingBossQuestionFromContext(context);
-    return [
-      {
-        message:
-          pending === undefined
-            ? 'Awaiting Boss reply.'
-            : `${pending.player} asks: ${pending.question}`,
-      },
-    ];
-  }
-  if (stateId === 'failed') {
-    const lastError = normalizeErrorFull(context.lastError);
-    return [
-      {
-        message: 'Workflow failed; awaiting Boss recovery.',
-        ...(lastError === undefined
-          ? {}
-          : { data: snapshotJsonValue({ lastError }, 'failed status data') }),
-      },
-    ];
-  }
-  return [{ message: `Entered ${stateId}.` }];
+function askerLabel(
+  asker: PlaybookPendingBossQuestionContext['asker'],
+): string {
+  return asker.kind === 'captain' ? 'Captain' : asker.roleId;
 }
 
 function makeDefaultStatusesForState(
-  playerStates: ReadonlyMap<string, XStatePlayerStateStatus>,
+  roleStates: ReadonlyMap<string, XStateRoleStateStatus>,
 ): NonNullable<XStatePlaybookRuntimeSpec<unknown>['statusesForState']> {
   return (state, context, event): ScheduledStatus[] => {
     const statuses: ScheduledStatus[] = [];
@@ -1381,11 +1402,11 @@ function makeDefaultStatusesForState(
       }
       return [
         ...statuses,
-        { message: `${pending.player} asks: ${pending.question}` },
+        { message: `${askerLabel(pending.asker)} asks: ${pending.question}` },
         {
           message:
             `◆ awaiting Boss reply · ${pending.resumeStateId} · ` +
-            `${pending.player} · ${pending.sourceItem}`,
+            `${askerLabel(pending.asker)} · ${pending.sourceItem}`,
         },
       ];
     }
@@ -1406,10 +1427,10 @@ function makeDefaultStatusesForState(
         },
       ];
     }
-    const playerState = playerStates.get(stateId);
-    if (playerState !== undefined) {
+    const roleState = roleStates.get(stateId);
+    if (roleState !== undefined) {
       statuses.push({
-        message: `⤷ ${playerState.player}: ${playerState.label}`,
+        message: `⤷ ${roleState.role}: ${roleState.label}`,
       });
     }
     return statuses;
@@ -1672,7 +1693,7 @@ function makeDefaultClassifyBossText(
     if (pending !== undefined) {
       lines.push(
         `Pending question id: ${pending.questionId}`,
-        `Pending asking player: ${pending.player}`,
+        `Pending asker: ${askerLabel(pending.asker)}`,
         `Pending Boss question: ${pending.question}`,
       );
     }
@@ -1846,6 +1867,17 @@ export function createXStatePlaybookRuntime<TOptions>(
   // DR-022 / PBRT-50: reject an incompatible artifact declaration before any
   // machine interpretation, against this loaded engine's own self-report.
   assertRuntimeCompat(spec.compat, label);
+  const specDescriptors = Object.getOwnPropertyDescriptors(spec);
+  if (Object.prototype.hasOwnProperty.call(specDescriptors, 'playerStates')) {
+    throw new TypeError(
+      `${label} schema-2 artifacts must supply roleStates, not playerStates`,
+    );
+  }
+  if (Object.prototype.hasOwnProperty.call(specDescriptors, 'resolvePlayerId')) {
+    throw new TypeError(
+      `${label} schema-2 artifacts must not derive concrete player bindings`,
+    );
+  }
   if (machineDeclaresParallelState(machine)) {
     throw new Error(
       `${label} uses a parallel state; the shared runtime supports only single-region FSMs`,
@@ -1857,13 +1889,22 @@ export function createXStatePlaybookRuntime<TOptions>(
   // DR-029: source state descriptions label the control actions the
   // runtime advertises through `describe()`.
   const stateDescriptions = stateDescriptionsFromMachine(machine);
-  const hasCanonicalStatusProfile = spec.playerStates !== undefined;
-  const playerStates = snapshotPlayerStateStatuses(
-    spec.playerStates,
+  const roleStatesDescriptor = specDescriptors.roleStates;
+  if (
+    roleStatesDescriptor !== undefined &&
+    !Object.prototype.hasOwnProperty.call(roleStatesDescriptor, 'value')
+  ) {
+    throw new TypeError(`${label} roleStates must be an own data property`);
+  }
+  const roleStates = snapshotRoleStateStatuses(
+    roleStatesDescriptor?.value,
     label,
     machine,
     stateDescriptions,
   );
+  const declaredRoleIds = Object.freeze([
+    ...new Set([...roleStates.values()].map(({ role }) => role)),
+  ]);
   // PBRT-52: the artifact's own ControlView context projection. Nothing is
   // exported by default, so an FSM context member — including one added
   // after this artifact was linked — is private until named here. The two
@@ -1880,7 +1921,6 @@ export function createXStatePlaybookRuntime<TOptions>(
       );
     }
   }
-  const resolvePlayerIdSpec = spec.resolvePlayerId;
   const composePlayerPrompt =
     spec.composePlayerPrompt ??
     ((input: PlaybookPlayerInput) =>
@@ -1919,14 +1959,10 @@ export function createXStatePlaybookRuntime<TOptions>(
     makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
   const statusesForState =
     spec.statusesForState ??
-    (hasCanonicalStatusProfile
-      ? makeDefaultStatusesForState(playerStates)
-      : legacyStatusesForState);
+    makeDefaultStatusesForState(roleStates);
   const classificationStatus =
     spec.classificationStatus ??
-    (hasCanonicalStatusProfile
-      ? (event: EventObject) => event.type
-      : () => undefined);
+    ((event: EventObject) => event.type);
   const machineInput =
     spec.machineInput ?? ((options: TOptions) => options as unknown);
   const scriptCwd =
@@ -1977,8 +2013,8 @@ export function createXStatePlaybookRuntime<TOptions>(
     // acceptance records nothing, so a later call with that key may still
     // execute.
     const appliedReceipts = new Map<string, PlaybookControlReceipt>();
-    const playerResumeTokens = new Map<string, string>();
-    const activePlayerIds = new Set<string>();
+    const privateResumeTokens = new Map<string, string>();
+    const activePlayerKeys = new Set<string>();
     const playbookCallTurnIds = new Map<string, number | undefined>();
     // Captain and judge work share one serialized lane (slc/link.md
     // §Session lifecycle).
@@ -1991,69 +2027,191 @@ export function createXStatePlaybookRuntime<TOptions>(
     // imperative boundaries await their queued work directly.
     let emissionFailure: unknown;
 
-    function selectPlayerResume(playerId: string): string | false {
+    function bindSession(nextSession: PlaybookSession): PlaybookSession {
+      const bound = snapshotPlaybookSession(nextSession);
+      if (bound.roleBindings === undefined) return bound;
+      const actual = Object.keys(bound.roleBindings).sort();
+      const expected = [...declaredRoleIds].sort();
+      const missing = expected.filter((roleId) => !actual.includes(roleId));
+      const extra = actual.filter((roleId) => !expected.includes(roleId));
+      if (missing.length > 0 || extra.length > 0) {
+        throw new TypeError(
+          `${label} session roleBindings must cover exactly [${expected.join(', ')}]` +
+            `${missing.length === 0 ? '' : `; missing [${missing.join(', ')}]`}` +
+            `${extra.length === 0 ? '' : `; extra [${extra.join(', ')}]`}`,
+        );
+      }
+      return bound;
+    }
+
+    function requireRoleId(input: PlaybookPlayerInput): string {
+      const roleId = input.role;
+      if (
+        typeof roleId !== 'string' ||
+        roleId.trim().length === 0 ||
+        !declaredRoleIds.includes(roleId)
+      ) {
+        throw new TypeError(
+          `${label} player input role must name a declared local role`,
+        );
+      }
+      return roleId;
+    }
+
+    function resolvedPlayerId(roleId: string): string | undefined {
+      return session?.roleBindings?.[roleId]?.playerId;
+    }
+
+    function promptIdentity(roleId: string): string {
+      if (!declaredRoleIds.includes(roleId)) {
+        throw new TypeError(
+          `${label} prompt identity lookup rejected undeclared role ${roleId}`,
+        );
+      }
+      return session?.roleBindings?.[roleId]?.promptIdentity ?? roleId;
+    }
+
+    function composeBoundPlayerPrompt(input: PlaybookPlayerInput): string {
+      let active = true;
+      const lookup: XStatePromptIdentity = (roleId) => {
+        if (!active) {
+          throw new Error(
+            `${label} prompt identity lookup is no longer active`,
+          );
+        }
+        return promptIdentity(roleId);
+      };
+      try {
+        return composePlayerPrompt(input, lookup);
+      } finally {
+        active = false;
+      }
+    }
+
+    function continuationKey(
+      roleId: string,
+      playerId: string | undefined,
+    ): string {
+      return playerId ?? roleId;
+    }
+
+    function roleTokensByContinuationKey(
+      tokens: Readonly<Record<string, string>>,
+    ): Map<string, string> {
+      const byKey = new Map<string, string>();
+      for (const [roleId, token] of Object.entries(tokens)) {
+        if (!declaredRoleIds.includes(roleId)) {
+          throw new TypeError(
+            `runtime role tokens contain unknown role ${roleId}`,
+          );
+        }
+        const key = continuationKey(roleId, resolvedPlayerId(roleId));
+        const existing = byKey.get(key);
+        if (existing !== undefined && existing !== token) {
+          throw new TypeError(
+            `runtime snapshot assigns conflicting tokens to roles bound to player ${key}`,
+          );
+        }
+        byKey.set(key, token);
+      }
+      const rolesByKey = new Map<string, string[]>();
+      for (const roleId of declaredRoleIds) {
+        const key = continuationKey(roleId, resolvedPlayerId(roleId));
+        rolesByKey.set(key, [...(rolesByKey.get(key) ?? []), roleId]);
+      }
+      for (const [key, roles] of rolesByKey) {
+        if (roles.length < 2) continue;
+        const present = roles.filter((roleId) => tokens[roleId] !== undefined);
+        if (present.length !== 0 && present.length !== roles.length) {
+          throw new TypeError(
+            `runtime role tokens must project player ${key} through every aliased role [${roles.join(', ')}]`,
+          );
+        }
+      }
+      return byKey;
+    }
+
+    function selectPlayerResume(
+      roleId: string,
+      playerId: string | undefined,
+    ): string | false {
+      const key = continuationKey(roleId, playerId);
       const selected = session?.playerSessions
-        ? session.playerSessions.select(playerId)
-        : playerResumeTokens.get(playerId) ?? false;
+        ? session.playerSessions.select(roleId)
+        : privateResumeTokens.get(key) ?? false;
       if (
         selected !== false &&
         (typeof selected !== 'string' || selected.trim().length === 0)
       ) {
         throw new TypeError(
-          `player session store returned an invalid resume token for ${playerId}`,
+          `player session store returned an invalid resume token for role ${roleId}`,
         );
       }
       return selected;
     }
 
     function updatePlayerResume(
-      playerId: string,
-      resumeToken: string | undefined,
+      roleId: string,
+      playerId: string | undefined,
+      result: PlayerResult,
     ): void {
+      const resumeToken = result.resumeToken;
+      if (resumeToken === undefined && result.status !== 'ok') return;
+      const key = continuationKey(roleId, playerId);
       if (session?.playerSessions) {
-        session.playerSessions.update(playerId, resumeToken);
-      } else if (resumeToken !== undefined && resumeToken.trim().length > 0) {
-        playerResumeTokens.set(playerId, resumeToken);
+        session.playerSessions.update(roleId, resumeToken);
+      } else if (resumeToken !== undefined) {
+        privateResumeTokens.set(key, resumeToken);
       } else {
-        playerResumeTokens.delete(playerId);
+        privateResumeTokens.delete(key);
       }
     }
 
-    function snapshotPlayerResumeTokens(): Record<string, string> {
-      const raw = session?.playerSessions
-        ? session.playerSessions.snapshot()
-        : Object.fromEntries(playerResumeTokens);
+    function snapshotRoleResumeTokens(): Record<string, string> {
+      const raw = snapshotJsonValue(
+        session?.playerSessions
+          ? session.playerSessions.snapshot()
+          : Object.fromEntries(
+              declaredRoleIds.flatMap((roleId) => {
+                const token = privateResumeTokens.get(
+                  continuationKey(roleId, resolvedPlayerId(roleId)),
+                );
+                return token === undefined ? [] : [[roleId, token]];
+              }),
+            ),
+        'player session store snapshot',
+      );
       if (!isPlainObject(raw)) {
         throw new TypeError('player session store snapshot must be an object');
       }
       const detached: Record<string, string> = {};
-      for (const [playerId, token] of Object.entries(raw)) {
-        if (playerId.trim().length === 0) {
+      for (const [roleId, token] of Object.entries(raw)) {
+        if (!declaredRoleIds.includes(roleId)) {
           throw new TypeError(
-            'player session store snapshot player ids must be non-empty',
+            `player session store snapshot contains unknown role ${roleId}`,
           );
         }
         if (typeof token !== 'string' || token.trim().length === 0) {
           throw new TypeError(
-            `player session store snapshot token for ${playerId} must be a non-empty string`,
+            `player session store snapshot token for ${roleId} must be a non-empty string`,
           );
         }
-        detached[playerId] = token;
+        detached[roleId] = token;
       }
+      roleTokensByContinuationKey(detached);
       return detached;
     }
 
-    function restorePlayerResumeTokens(
+    function restoreRoleResumeTokens(
       tokens: Readonly<Record<string, string>>,
     ): void {
+      const byKey = roleTokensByContinuationKey(tokens);
       if (session?.playerSessions) {
         session.playerSessions.restore(tokens);
         return;
       }
-      playerResumeTokens.clear();
-      for (const [playerId, token] of Object.entries(tokens)) {
-        playerResumeTokens.set(playerId, token);
-      }
+      privateResumeTokens.clear();
+      for (const [key, token] of byKey) privateResumeTokens.set(key, token);
     }
 
     function enqueueEmission(fn: () => Promise<void>): Promise<void> {
@@ -2111,7 +2269,7 @@ export function createXStatePlaybookRuntime<TOptions>(
       const currentSession = requireSession();
       const safePayload = snapshotJsonValue(payload, `trace ${type} payload`);
       return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         sessionId: currentSession.sessionId,
         playbookId: currentSession.playbookId,
         rootSessionId: currentSession.rootSessionId,
@@ -2260,25 +2418,31 @@ export function createXStatePlaybookRuntime<TOptions>(
     }
 
     const boundary: RuntimeBoundaryCalls = {
-      async callPlayer(input, playerId, prompt, signal): Promise<PlayerResult> {
+      async callPlayer(
+        input,
+        roleId,
+        prompt,
+        signal,
+      ): Promise<PlayerResult> {
         // State-entry telemetry/status must precede the call they describe.
         await drainEmissions();
         const turnId = activeTurnId;
         const stateId = input.stateId;
+        const playerId = resolvedPlayerId(roleId);
         let resume: string | false;
         try {
           signal.throwIfAborted();
-          resume = selectPlayerResume(playerId);
+          resume = selectPlayerResume(roleId, playerId);
         } catch (error) {
           if (!signal.aborted) controlPlaneError ??= error;
           throw error;
         }
         const callId = `player-${++playerCallSequence}`;
         const identity = {
-          purpose: 'captain' as const,
           ...stateIdentity(stateId),
           sourceItem: input.sourceItem,
-          playerId,
+          roleId,
+          ...(playerId === undefined ? {} : { playerId }),
           resume,
         };
         const position: TracePosition = {
@@ -2286,9 +2450,10 @@ export function createXStatePlaybookRuntime<TOptions>(
           callId,
         };
 
-        if (activePlayerIds.has(playerId)) {
+        const playerKey = continuationKey(roleId, playerId);
+        if (activePlayerKeys.has(playerKey)) {
           const error = new Error(
-            `simultaneous calls to resolved player ${playerId} are not allowed`,
+            `simultaneous calls to player key ${playerKey} are not allowed`,
           );
           await emitCallStarted(
             'player.call.started',
@@ -2303,7 +2468,7 @@ export function createXStatePlaybookRuntime<TOptions>(
           );
           throw error;
         }
-        activePlayerIds.add(playerId);
+        activePlayerKeys.add(playerKey);
 
         try {
           await emitTrace(
@@ -2320,7 +2485,7 @@ export function createXStatePlaybookRuntime<TOptions>(
             // as `aborted` through the catch below.
             signal.throwIfAborted();
             rawResult = await requireHostPorts().callPlayer(
-              playerId,
+              roleId,
               prompt,
               signal,
               { resume },
@@ -2366,13 +2531,7 @@ export function createXStatePlaybookRuntime<TOptions>(
           }
 
           try {
-            updatePlayerResume(
-              playerId,
-              typeof result.resumeToken === 'string' &&
-                result.resumeToken.trim().length > 0
-                ? result.resumeToken
-                : undefined,
-            );
+            updatePlayerResume(roleId, playerId, result);
           } catch (error) {
             if (!signal.aborted) controlPlaneError ??= error;
             try {
@@ -2406,7 +2565,7 @@ export function createXStatePlaybookRuntime<TOptions>(
           );
           return result;
         } finally {
-          activePlayerIds.delete(playerId);
+          activePlayerKeys.delete(playerKey);
         }
       },
 
@@ -2611,19 +2770,13 @@ export function createXStatePlaybookRuntime<TOptions>(
       },
     };
 
-    function resolvePlayerId(input: PlaybookPlayerInput): string {
-      return resolvePlayerIdSpec
-        ? resolvePlayerIdSpec(input, boundOptions)
-        : defaultResolvePlayerId(input);
-    }
-
     function playerActor(
       ports: PlaybookPorts,
     ): PromiseActorLogic<PlaybookActorOutput, PlaybookPlayerInput> {
       return createPlayerBridge(
         {
-          resolvePlayerId,
-          composePlayerPrompt,
+          resolveRoleId: requireRoleId,
+          composePlayerPrompt: composeBoundPlayerPrompt,
           adjudication,
           resumableStateIds,
         },
@@ -3123,8 +3276,8 @@ export function createXStatePlaybookRuntime<TOptions>(
           // The session-start error remains authoritative.
         }
       }
-      playerResumeTokens.clear();
-      activePlayerIds.clear();
+      privateResumeTokens.clear();
+      activePlayerKeys.clear();
       playbookCallTurnIds.clear();
       activeEmissionCalls.clear();
       emissionQueue.clear();
@@ -3332,7 +3485,7 @@ export function createXStatePlaybookRuntime<TOptions>(
         if (initialized || disposed || disposalPromise !== undefined) {
           throw new Error('createPlaybookRuntime.init: already initialized');
         }
-        const boundSession = snapshotPlaybookSession(nextSession);
+        const boundSession = bindSession(nextSession);
         initialized = true;
         let finishInitialization!: () => void;
         const initialization = new Promise<void>((resolve) => {
@@ -3408,10 +3561,10 @@ export function createXStatePlaybookRuntime<TOptions>(
           .context as Record<string, unknown>;
         const pending = pendingBossQuestionFromContext(context ?? {});
         return {
-          schemaVersion: 2,
+          schemaVersion: 3,
           playbookId: session.playbookId,
           machine: machineSnapshot,
-          playerResumeTokens: snapshotPlayerResumeTokens(),
+          roleResumeTokens: snapshotRoleResumeTokens(),
           sequences: {
             trace: traceSequence,
             turn: turnSequence,
@@ -3429,7 +3582,7 @@ export function createXStatePlaybookRuntime<TOptions>(
               : [
                   {
                     questionId: pending.questionId,
-                    player: pending.player,
+                    asker: pending.asker,
                     question: pending.question,
                     sourceItem: pending.sourceItem,
                   },
@@ -3450,16 +3603,21 @@ export function createXStatePlaybookRuntime<TOptions>(
         if (initialized || disposed || disposalPromise !== undefined) {
           throw new Error('createPlaybookRuntime.restore: already initialized');
         }
-        const boundSession = snapshotPlaybookSession(nextSession);
+        const boundSession = bindSession(nextSession);
         const boundSnapshot = assertPlaybookRuntimeSnapshot(
           snapshot,
           boundSession.playbookId,
           { allowSuspendedCall: true },
         );
-        const suspendedCall =
-          boundSnapshot.schemaVersion === 2
-            ? boundSnapshot.suspendedCall
-            : undefined;
+        if (
+          declaredActors.has('captain') &&
+          boundSnapshot.sequences.captainCall === undefined
+        ) {
+          throw new TypeError(
+            'runtime snapshot sequences.captainCall is required for a direct-Captain artifact',
+          );
+        }
+        const suspendedCall = boundSnapshot.suspendedCall;
         let priorExternalPlayerTokens:
           | Readonly<Record<string, string>>
           | undefined;
@@ -3479,22 +3637,17 @@ export function createXStatePlaybookRuntime<TOptions>(
           judgeCallSequence = boundSnapshot.sequences.judgeCall;
           playerCallSequence = boundSnapshot.sequences.playerCall;
           playbookCallSequence = boundSnapshot.sequences.playbookCall;
-          captainCallSequence =
-            boundSnapshot.sequences.captainCall ??
-            // Legacy schema-v1 snapshots predate this dedicated counter.
-            // Every Captain call already consumed at least one trace number,
-            // so the global trace counter is a collision-safe id floor.
-            boundSnapshot.sequences.trace;
+          captainCallSequence = boundSnapshot.sequences.captainCall ?? 0;
           // The runtime snapshot carries no apply counter (PBRT-50); every
           // apply boundary consumed trace numbers, so the persisted trace
           // counter is a collision-safe id floor here too, keeping
           // `apply-<n>` call ids unique across restore.
           applyCallSequence = boundSnapshot.sequences.trace;
           if (boundSession.playerSessions) {
-            priorExternalPlayerTokens = snapshotPlayerResumeTokens();
+            priorExternalPlayerTokens = snapshotRoleResumeTokens();
             externalStoreRestoreAttempted = true;
           }
-          restorePlayerResumeTokens(boundSnapshot.playerResumeTokens);
+          restoreRoleResumeTokens(boundSnapshot.roleResumeTokens);
           nestedBridge.prepareRestore(suspendedCall);
           if (suspendedCall !== undefined) {
             playbookCallTurnIds.set(
@@ -3604,7 +3757,7 @@ export function createXStatePlaybookRuntime<TOptions>(
               : [
                   {
                     questionId: pending.questionId,
-                    player: pending.player,
+                    asker: pending.asker,
                     question: pending.question,
                     sourceItem: pending.sourceItem,
                   },
@@ -4176,9 +4329,9 @@ export function createXStatePlaybookRuntime<TOptions>(
             // engagement tree. Child disposal must not erase a token its
             // caller will resume. The private fallback remains runtime-owned.
             if (session?.playerSessions === undefined) {
-              playerResumeTokens.clear();
+              privateResumeTokens.clear();
             }
-            activePlayerIds.clear();
+            activePlayerKeys.clear();
             playbookCallTurnIds.clear();
             activeEmissionCalls.clear();
             emissionQueue.clear();

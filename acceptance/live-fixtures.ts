@@ -17,7 +17,10 @@ export function hermeticArtifactSource(): string {
   return `// Hermetic acceptance fixture: a compiled-style thin artifact.
 import { readFileSync } from 'node:fs';
 import { assign, fromPromise, setup } from 'xstate';
-import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+import {
+  createXStatePlaybookRuntime,
+  RUNTIME_ABI,
+} from '@sublang/playbook/xstate-runtime';
 
 const machine = setup({
   actors: {
@@ -57,6 +60,7 @@ const machine = setup({
         playbook: {
           stateId: 'work',
           description: 'HERMETIC-1: Worker echoes the fixture token.',
+          role: 'worker',
         },
       },
       tags: ['playbook.busy'],
@@ -64,7 +68,7 @@ const machine = setup({
         src: 'player',
         input: ({ context }) => ({
           stateId: 'work',
-          player: 'Worker',
+          role: 'worker',
           sourceItem: 'HERMETIC-1',
           prompt: [
             'Read acceptance-hermetic-token.txt in the working directory and',
@@ -133,15 +137,24 @@ const machine = setup({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'HERMETIC',
+  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
+  roleStates: {
+    work: {
+      role: 'worker',
+      label: 'HERMETIC-1: Worker echoes the fixture token.',
+    },
+  },
 });
 
 export default {
   id: 'hermetic',
   command: 'hermetic',
   intent: 'hermetic global-only acceptance fixture',
+  artifactSchema: 2,
   requiredRoleIds: ['worker'],
+  concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
@@ -160,7 +173,10 @@ export default {
 export function checklistFixtureSource(flagPath: string): string {
   return `// Conversational acceptance fixture: a deterministic script checklist.
 import { assign, setup } from 'xstate';
-import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+import {
+  createXStatePlaybookRuntime,
+  RUNTIME_ABI,
+} from '@sublang/playbook/xstate-runtime';
 
 const flagPath = ${JSON.stringify(flagPath)};
 
@@ -298,8 +314,10 @@ const machine = setup({}).createMachine({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'CHECKLIST',
+  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
+  roleStates: {},
   // The same failure grammar the bundled playbooks use, so the gate can
   // count the two engineered failures apart from any real one.
   statusesForState: (state) =>
@@ -314,7 +332,9 @@ export default {
   id: 'checklist',
   command: 'checklist',
   intent: 'run the fixture release checklist end to end',
+  artifactSchema: 2,
   requiredRoleIds: [],
+  concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
@@ -331,7 +351,10 @@ export default {
 export function notesFixtureSource(): string {
   return `// Conversational acceptance fixture: the release-notes switch target.
 import { assign, setup } from 'xstate';
-import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+import {
+  createXStatePlaybookRuntime,
+  RUNTIME_ABI,
+} from '@sublang/playbook/xstate-runtime';
 
 const machine = setup({}).createMachine({
   id: 'notes',
@@ -429,8 +452,10 @@ const machine = setup({}).createMachine({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'NOTES',
+  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'topic' },
+  roleStates: {},
   statusesForState: (state) =>
     state.stateId === undefined || state.stateId === 'ready'
       ? []
@@ -443,7 +468,9 @@ export default {
   id: 'notes',
   command: 'notes',
   intent: 'draft and discuss the release notes for this repository',
+  artifactSchema: 2,
   requiredRoleIds: [],
+  concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },

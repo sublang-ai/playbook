@@ -17,8 +17,16 @@ import createPlaybookRuntime, {
 
 const signal = (): AbortSignal => new AbortController().signal;
 
+const distinctBindings = {
+  coder: { playerId: 'dev.coder', promptIdentity: 'GPT-5.6 Sol' },
+  reviewer: {
+    playerId: 'dev.reviewer',
+    promptIdentity: 'Claude Opus 5',
+  },
+} as const;
+
 interface PlayerCallRecord {
-  playerId: string;
+  roleId: string;
   prompt: string;
   options: PlayerCallOptions;
 }
@@ -51,16 +59,16 @@ function createPlayerSessionStore(): PlayerSessionStore & {
   const tokens = new Map<string, string>();
   return {
     tokens,
-    select: (playerId) => tokens.get(playerId) ?? false,
-    update: (playerId, resumeToken) => {
-      if (resumeToken === undefined) tokens.delete(playerId);
-      else tokens.set(playerId, resumeToken);
+    select: (roleId) => tokens.get(roleId) ?? false,
+    update: (roleId, resumeToken) => {
+      if (resumeToken === undefined) tokens.delete(roleId);
+      else tokens.set(roleId, resumeToken);
     },
     snapshot: () => Object.fromEntries(tokens),
     restore: (restored) => {
       tokens.clear();
-      for (const [playerId, resumeToken] of Object.entries(restored)) {
-        tokens.set(playerId, resumeToken);
+      for (const [roleId, resumeToken] of Object.entries(restored)) {
+        tokens.set(roleId, resumeToken);
       }
     },
   };
@@ -69,6 +77,7 @@ function createPlayerSessionStore(): PlayerSessionStore & {
 function session(
   ports: PlaybookPorts,
   playerSessions = createPlayerSessionStore(),
+  roleBindings?: PlaybookSession['roleBindings'],
 ): PlaybookSession {
   return {
     sessionId: 'decide-test-session',
@@ -76,6 +85,7 @@ function session(
     rootSessionId: 'decide-test-session',
     depth: 0,
     playerSessions,
+    ...(roleBindings === undefined ? {} : { roleBindings }),
     ports,
   };
 }
@@ -124,16 +134,16 @@ async function runToReview(): Promise<ReviewBoundary> {
   const telemetry: TelemetryRecord[] = [];
   let request: PlaybookCallRequest | undefined;
   const ports = completePorts({
-    callPlayer: async (playerId) => {
-      const count = (playerCounts.get(playerId) ?? 0) + 1;
-      playerCounts.set(playerId, count);
+    callPlayer: async (roleId) => {
+      const count = (playerCounts.get(roleId) ?? 0) + 1;
+      playerCounts.set(roleId, count);
       return {
         status: 'ok',
-        resumeToken: `${playerId}-token-${count}`,
+        resumeToken: `${roleId}-token-${count}`,
         finalText:
-          playerId === 'coder' && count === 1
+          roleId === 'coder' && count === 1
             ? 'Coder proposal'
-            : playerId === 'reviewer'
+            : roleId === 'reviewer'
               ? 'Reviewer proposal'
               : 'Committed proposal\nCommit: abc123',
       };
@@ -147,7 +157,7 @@ async function runToReview(): Promise<ReviewBoundary> {
       telemetry.push(record);
     },
   });
-  const runtime = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+  const runtime = createPlaybookRuntime({});
   await runtime.init(session(ports));
   const result = await runtime.handleBossInput({
     text: 'Choose the durable design.',
@@ -173,8 +183,8 @@ async function startWithCommitOutput(
   let coderCalls = 0;
   const nestedRequests: PlaybookCallRequest[] = [];
   const ports = completePorts({
-    callPlayer: async (playerId) => {
-      if (playerId === 'reviewer') {
+    callPlayer: async (roleId) => {
+      if (roleId === 'reviewer') {
         return {
           status: 'ok',
           resumeToken: 'reviewer-token-1',
@@ -197,7 +207,7 @@ async function startWithCommitOutput(
       return callPlaybook(request, boundarySignal);
     },
   });
-  const runtime = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+  const runtime = createPlaybookRuntime({});
   await runtime.init(session(ports));
   return {
     runtime,
@@ -237,10 +247,10 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     let maximumActiveProposalCalls = 0;
 
     const ports = completePorts({
-      callPlayer: async (playerId, prompt, _signal, options) => {
-        playerCalls.push({ playerId, prompt, options: { ...options } });
-        const count = (playerCounts.get(playerId) ?? 0) + 1;
-        playerCounts.set(playerId, count);
+      callPlayer: async (roleId, prompt, _signal, options) => {
+        playerCalls.push({ roleId, prompt, options: { ...options } });
+        const count = (playerCounts.get(roleId) ?? 0) + 1;
+        playerCounts.set(roleId, count);
         if (count === 1) {
           activeProposalCalls += 1;
           maximumActiveProposalCalls = Math.max(
@@ -248,13 +258,13 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
             activeProposalCalls,
           );
           try {
-            return await proposalResults[playerId as 'coder' | 'reviewer']
+            return await proposalResults[roleId as 'coder' | 'reviewer']
               .promise;
           } finally {
             activeProposalCalls -= 1;
           }
         }
-        expect(playerId).toBe('coder');
+        expect(roleId).toBe('coder');
         return {
           status: 'ok',
           resumeToken: 'coder-token-2',
@@ -273,8 +283,8 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         telemetry.push(record);
       },
     });
-    const runtime = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
-    await runtime.init(session(ports, playerSessions));
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(session(ports, playerSessions, distinctBindings));
 
     const running = runtime.handleBossInput({
       text: callerTopic,
@@ -285,7 +295,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     });
 
     expect(maximumActiveProposalCalls).toBe(2);
-    expect(playerCalls.map(({ playerId }) => playerId).sort()).toEqual([
+    expect(playerCalls.map(({ roleId }) => roleId).sort()).toEqual([
       'coder',
       'reviewer',
     ]);
@@ -321,7 +331,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     });
     expect(playerCalls).toHaveLength(3);
     expect(playerCalls[2]).toMatchObject({
-      playerId: 'coder',
+      roleId: 'coder',
       options: { resume: 'coder-token-1' },
     });
     expect(playerCalls[2].prompt).toContain('Coder is GPT-5.6 Sol');
@@ -351,6 +361,31 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       coder: 'coder-token-2',
       reviewer: 'reviewer-token-1',
     });
+    const playerTraces = playbookTraces(telemetry).filter(({ type }) =>
+      type.startsWith('player.call.'),
+    );
+    expect(playerTraces).toHaveLength(6);
+    for (const trace of playerTraces) {
+      expect(trace.schemaVersion).toBe(3);
+      const payload = trace.payload as Record<string, unknown>;
+      expect(payload.roleId).toMatch(/^(coder|reviewer)$/);
+      expect(payload.playerId).toBe(
+        payload.roleId === 'coder' ? 'dev.coder' : 'dev.reviewer',
+      );
+      expect(payload).not.toHaveProperty('purpose');
+    }
+    const snapshot = runtime.exportSnapshot?.();
+    expect(snapshot).toMatchObject({
+      schemaVersion: 3,
+      roleResumeTokens: {
+        coder: 'coder-token-2',
+        reviewer: 'reviewer-token-1',
+      },
+    });
+    expect(JSON.stringify(snapshot)).not.toContain('dev.coder');
+    expect(JSON.stringify(snapshot)).not.toContain('dev.reviewer');
+    expect(JSON.stringify(snapshot)).not.toContain('GPT-5.6 Sol');
+    expect(JSON.stringify(snapshot)).not.toContain('Claude Opus 5');
     expect(statuses).toContain('START_DECIDE');
     expect(statuses).toContain(
       '⤷ Coder: Coder independently proposes a spec design.',
@@ -413,19 +448,19 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     const playerCalls: PlayerCallRecord[] = [];
     const counts = new Map<string, number>();
     const ports = completePorts({
-      callPlayer: async (playerId, prompt, _signal, options) => {
-        playerCalls.push({ playerId, prompt, options: { ...options } });
-        const count = (counts.get(playerId) ?? 0) + 1;
-        counts.set(playerId, count);
+      callPlayer: async (roleId, prompt, _signal, options) => {
+        playerCalls.push({ roleId, prompt, options: { ...options } });
+        const count = (counts.get(roleId) ?? 0) + 1;
+        counts.set(roleId, count);
         return {
           status: 'ok',
-          resumeToken: `${playerId}-token-${count}`,
+          resumeToken: `${roleId}-token-${count}`,
           finalText:
             count === 1
-              ? `Need ${playerId} input`
-              : playerId === 'coder' && count === 3
+              ? `Need ${roleId} input`
+              : roleId === 'coder' && count === 3
                 ? 'Committed replacement proposal\nCommit: replacement-commit'
-                : `${playerId} replacement proposal`,
+                : `${roleId} replacement proposal`,
         };
       },
       callJudge: async (prompt) => {
@@ -457,7 +492,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         childSessionId: 'review-child',
       }),
     });
-    const runtime = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+    const runtime = createPlaybookRuntime({});
     await runtime.init(session(ports));
 
     await expect(
@@ -469,15 +504,134 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
       runtime.handleBossInput({ text: 'New topic', signal: signal() }),
     ).resolves.toMatchObject({ outcome: 'suspended' });
     const restarted = playerCalls.slice(2, 4);
-    expect(restarted.map(({ playerId }) => playerId).sort()).toEqual([
+    expect(restarted.map(({ roleId }) => roleId).sort()).toEqual([
       'coder',
       'reviewer',
     ]);
     for (const call of restarted) {
       expect(call.prompt).toContain('> New topic');
       expect(call.prompt).not.toContain('> Old topic');
-      expect(call.options.resume).toBe(`${call.playerId}-token-1`);
+      expect(call.options.resume).toBe(`${call.roleId}-token-1`);
     }
+
+    await runtime.dispose();
+  });
+
+  it('rejects aliased parallel roles before a second host call', async () => {
+    const hostCalls = vi.fn(
+      (_roleId: string, _prompt: string, invocationSignal: AbortSignal) =>
+        new Promise<{
+          status: 'aborted';
+        }>((resolve) => {
+          invocationSignal.addEventListener(
+            'abort',
+            () => resolve({ status: 'aborted' }),
+            { once: true },
+          );
+        }),
+    );
+    const telemetry: TelemetryRecord[] = [];
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(
+      session(
+        completePorts({
+          callPlayer: hostCalls,
+          emitTelemetry: async (record) => {
+            telemetry.push(record);
+          },
+        }),
+        createPlayerSessionStore(),
+        {
+          coder: { playerId: 'dev.shared', promptIdentity: 'Coder' },
+          reviewer: {
+            playerId: 'dev.shared',
+            promptIdentity: 'Reviewer',
+          },
+        },
+      ),
+    );
+
+    await expect(
+      runtime.handleBossInput({ text: 'Compare designs.', signal: signal() }),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(hostCalls).toHaveBeenCalledTimes(1);
+    const collision = playbookTraces(telemetry).find(
+      ({ type, payload }) =>
+        type === 'player.call.finished' &&
+        (payload as Record<string, unknown>).status === 'error',
+    );
+    expect(collision?.payload).toMatchObject({
+      playerId: 'dev.shared',
+      error: {
+        message: expect.stringContaining('already has an in-flight call'),
+      },
+    });
+
+    await runtime.dispose();
+  });
+
+  it('snapshots parallel questions with local-role askers', async () => {
+    const runtime = createPlaybookRuntime({});
+    const statuses: string[] = [];
+    await runtime.init(
+      session(
+        completePorts({
+          callPlayer: async (roleId) => ({
+            status: 'ok',
+            resumeToken: `${roleId}-thread`,
+            finalText: `Need ${roleId} clarification`,
+          }),
+          callJudge: async (prompt) => {
+            const roleId = prompt.includes('Need coder clarification')
+              ? 'coder'
+              : 'reviewer';
+            return JSON.stringify({
+              guard: 'needsBossReply',
+              question: `${roleId} question?`,
+            });
+          },
+          emitStatus: async (message) => {
+            statuses.push(message);
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      runtime.handleBossInput({ text: 'Compare designs.', signal: signal() }),
+    ).resolves.toMatchObject({ outcome: 'quiescent' });
+    expect(runtime.exportSnapshot?.()).toMatchObject({
+      schemaVersion: 3,
+      roleResumeTokens: {
+        coder: 'coder-thread',
+        reviewer: 'reviewer-thread',
+      },
+      pendingBossQuestions: [
+        {
+          questionId: 'askCoderProposal',
+          asker: { kind: 'role', roleId: 'coder' },
+          question: 'coder question?',
+          sourceItem: 'DECIDE-1',
+        },
+        {
+          questionId: 'askReviewerProposal',
+          asker: { kind: 'role', roleId: 'reviewer' },
+          question: 'reviewer question?',
+          sourceItem: 'DECIDE-2',
+        },
+      ],
+    });
+    expect(statuses).toEqual(
+      expect.arrayContaining([
+        'coder asks: coder question?',
+        '◆ awaiting Boss reply · askCoderProposal · coder · DECIDE-1',
+        'reviewer asks: reviewer question?',
+        '◆ awaiting Boss reply · askReviewerProposal · reviewer · DECIDE-2',
+      ]),
+    );
 
     await runtime.dispose();
   });
@@ -492,7 +646,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
     } = await runToReview();
     const snapshot = source.exportSnapshot?.();
     if (
-      snapshot?.schemaVersion !== 2 ||
+      snapshot?.schemaVersion !== 3 ||
       snapshot.suspendedCall === undefined
     ) {
       throw new Error('DECIDE did not export its suspended REVIEW call');
@@ -516,7 +670,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
     const nestedRequests: PlaybookCallRequest[] = [];
     const restoredStatuses: string[] = [];
     const restoredTelemetry: TelemetryRecord[] = [];
-    const restored = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+    const restored = createPlaybookRuntime({});
     const restoredPorts = completePorts({
       callPlaybook: async (nestedRequest) => {
         nestedRequests.push(nestedRequest);
@@ -536,12 +690,8 @@ describe('DECIDE suspended REVIEW persistence', () => {
     expect(restoredStatuses).toEqual([]);
     expect(restoredTelemetry).toEqual([]);
     const restoredSnapshot = restored.exportSnapshot?.();
-    expect(restoredSnapshot?.schemaVersion).toBe(2);
-    expect(
-      restoredSnapshot?.schemaVersion === 2
-        ? restoredSnapshot.suspendedCall
-        : undefined,
-    ).toEqual(snapshot.suspendedCall);
+    expect(restoredSnapshot?.schemaVersion).toBe(3);
+    expect(restoredSnapshot?.suspendedCall).toEqual(snapshot.suspendedCall);
     expect(restoredSnapshot?.state).toEqual(snapshot.state);
 
     const childResult = {
@@ -620,10 +770,10 @@ describe('DECIDE suspended REVIEW persistence', () => {
       'descriptor disagrees with the restored invoke input',
       (snapshot: PlaybookRuntimeSnapshot): PlaybookRuntimeSnapshot => {
         if (
-          snapshot.schemaVersion !== 2 ||
+          snapshot.schemaVersion !== 3 ||
           snapshot.suspendedCall === undefined
         ) {
-          throw new Error('expected a suspended schema-2 snapshot');
+          throw new Error('expected a suspended schema-3 snapshot');
         }
         return {
           ...snapshot,
@@ -656,8 +806,8 @@ describe('DECIDE suspended REVIEW persistence', () => {
       const statuses: string[] = [];
       const telemetry: TelemetryRecord[] = [];
       const playerSessions = createPlayerSessionStore();
-      playerSessions.update('sentinel', 'keep-me');
-      const restored = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
+      playerSessions.update('coder', 'keep-me');
+      const restored = createPlaybookRuntime({});
       const restoredPorts = completePorts({
         callPlaybook: async (request) => {
           nestedRequests.push(request);
@@ -682,7 +832,7 @@ describe('DECIDE suspended REVIEW persistence', () => {
       expect(statuses).toEqual([]);
       expect(telemetry).toEqual([]);
       expect(Object.fromEntries(playerSessions.tokens)).toEqual({
-        sentinel: 'keep-me',
+        coder: 'keep-me',
       });
 
       await restored.dispose();
@@ -690,45 +840,119 @@ describe('DECIDE suspended REVIEW persistence', () => {
     },
   );
 
-  it('restores a legacy schema-1 parked snapshot without invoking a child', async () => {
-    const source = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
-    await source.init(session(completePorts({})));
-    const snapshot = source.exportSnapshot?.();
-    if (!snapshot) throw new Error('DECIDE did not export a snapshot');
-    const { suspendedCall: _suspendedCall, ...snapshotFields } = snapshot;
-    const legacySnapshot: PlaybookRuntimeSnapshot = {
-      ...snapshotFields,
-      schemaVersion: 1,
-    };
-    const nestedRequests: PlaybookCallRequest[] = [];
-    const statuses: string[] = [];
-    const telemetry: TelemetryRecord[] = [];
-    const restored = createPlaybookRuntime({ coderLlm: 'GPT-5.6 Sol' });
-    const restoredPorts = completePorts({
-      callPlaybook: async (request) => {
-        nestedRequests.push(request);
-        throw new Error('legacy parked restore must not call a child');
-      },
-      emitStatus: async (message) => {
-        statuses.push(message);
-      },
-      emitTelemetry: async (record) => {
-        telemetry.push(record);
-      },
-    });
-    if (!restored.restore) throw new Error('DECIDE restore is unavailable');
-    await restored.restore(session(restoredPorts), legacySnapshot);
+  it.each([1, 2])(
+    'rejects legacy schema-%i snapshots without invoking a child',
+    async (schemaVersion) => {
+      const source = createPlaybookRuntime({});
+      await source.init(session(completePorts({})));
+      const snapshot = source.exportSnapshot?.();
+      if (!snapshot) throw new Error('DECIDE did not export a snapshot');
+      const legacySnapshot = {
+        ...snapshot,
+        schemaVersion,
+      } as unknown as PlaybookRuntimeSnapshot;
+      const nestedRequests: PlaybookCallRequest[] = [];
+      const statuses: string[] = [];
+      const telemetry: TelemetryRecord[] = [];
+      const restored = createPlaybookRuntime({});
+      const restoredPorts = completePorts({
+        callPlaybook: async (request) => {
+          nestedRequests.push(request);
+          throw new Error('legacy restore must not call a child');
+        },
+        emitStatus: async (message) => {
+          statuses.push(message);
+        },
+        emitTelemetry: async (record) => {
+          telemetry.push(record);
+        },
+      });
+      if (!restored.restore) throw new Error('DECIDE restore is unavailable');
+      await expect(
+        restored.restore(session(restoredPorts), legacySnapshot),
+      ).rejects.toThrow(`schemaVersion ${schemaVersion} is not supported`);
 
-    expect(nestedRequests).toEqual([]);
-    expect(statuses).toEqual([]);
-    expect(telemetry).toEqual([]);
-    expect(restored.exportSnapshot?.()).toMatchObject({
-      schemaVersion: 2,
-      state: snapshot.state,
+      expect(nestedRequests).toEqual([]);
+      expect(statuses).toEqual([]);
+      expect(telemetry).toEqual([]);
+      expect(restored.exportSnapshot?.()).toBeUndefined();
+
+      await restored.dispose();
+      await source.dispose();
+    },
+  );
+});
+
+describe('DECIDE local-role continuation', () => {
+  it.each(['aborted', 'error'] as const)(
+    'preserves a prior token when a resolved %s result omits one',
+    async (status) => {
+      const playerSessions = createPlayerSessionStore();
+      playerSessions.update('coder', 'coder-prior');
+      const runtime = createPlaybookRuntime({});
+      await runtime.init(
+        session(
+          completePorts({
+            callPlayer: async (roleId) =>
+              roleId === 'coder'
+                ? {
+                    status,
+                    ...(status === 'error' ? { error: 'failed' } : {}),
+                  }
+                : {
+                    status: 'ok',
+                    finalText: 'Reviewer proposal',
+                  },
+            callJudge: async (prompt) => judgeReply(prompt),
+          }),
+          playerSessions,
+        ),
+      );
+
+      await expect(
+        runtime.handleBossInput({ text: 'Compare designs.', signal: signal() }),
+      ).resolves.toMatchObject({ outcome: 'failed' });
+      expect(playerSessions.tokens.get('coder')).toBe('coder-prior');
+
+      await runtime.dispose();
+    },
+  );
+
+  it('clears a prior token only for a validated ok result that omits one', async () => {
+    const playerSessions = createPlayerSessionStore();
+    playerSessions.update('coder', 'coder-prior');
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(
+      session(
+        completePorts({
+          callPlayer: async (roleId) =>
+            roleId === 'coder'
+              ? { status: 'ok', finalText: 'Coder proposal' }
+              : {
+                  status: 'ok',
+                  resumeToken: 'reviewer-next',
+                  finalText: 'Need reviewer clarification',
+                },
+          callJudge: async (prompt) =>
+            prompt.includes('source item DECIDE-1')
+              ? JSON.stringify({ guard: 'proposed' })
+              : JSON.stringify({
+                  guard: 'needsBossReply',
+                  question: 'Reviewer question?',
+                }),
+        }),
+        playerSessions,
+      ),
+    );
+
+    await expect(
+      runtime.handleBossInput({ text: 'Compare designs.', signal: signal() }),
+    ).resolves.toMatchObject({ outcome: 'quiescent' });
+    expect(Object.fromEntries(playerSessions.tokens)).toEqual({
+      reviewer: 'reviewer-next',
     });
 
-    await restored.dispose();
-    await source.dispose();
+    await runtime.dispose();
   });
 });
 

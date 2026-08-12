@@ -3,7 +3,7 @@
 
 # REVIEW: Commit Review Workflow
 
-Players:
+Roles:
 
 - Coder
 - Reviewer

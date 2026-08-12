@@ -37,11 +37,12 @@ import createDefaultCaptainRuntime, {
   type CaptainParsedResolution,
   type SettlementEvidence,
 } from '../captain.playbook/captain.playbook.js';
-import type { PlaybookSummaryPolicy, RegistryPlayer } from './code.registry.js';
+import type { PlaybookSummaryPolicy } from './code.registry.js';
 
-export interface CreatePlaybookRuntimeOptions {
-  captainOptions: unknown;
-  players: readonly RegistryPlayer[];
+interface RegistryPlayer {
+  id: string;
+  adapter?: string;
+  model?: string;
 }
 
 export interface PlaybookCaptainDeps {
@@ -61,10 +62,12 @@ export interface PlaybookCaptainRegistryEntry {
   id: string;
   command: string;
   intent: string;
+  artifactSchema: 2;
   requiredRoleIds: readonly string[];
+  concurrentRoleSets: readonly (readonly string[])[];
   summaryPolicy?: PlaybookSummaryPolicy;
-  validateOptions(captainOptions: unknown): unknown;
-  createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
+  validateOptions(optionSlice: unknown): unknown;
+  createRuntime(options: unknown): PlaybookRuntime;
 }
 
 type PlaybookCaptainConversationSnapshot =
@@ -492,7 +495,16 @@ function pendingQuestionLines(pending: unknown): string[] {
           : typeof record.id === 'string'
             ? record.id
             : undefined;
-      const player = typeof record.player === 'string' ? record.player : undefined;
+      const asker =
+        typeof record.asker === 'object' && record.asker !== null
+          ? (record.asker as Record<string, unknown>)
+          : undefined;
+      const askerLabel =
+        asker?.kind === 'captain'
+          ? 'Captain'
+          : asker?.kind === 'role' && typeof asker.roleId === 'string'
+            ? asker.roleId
+            : undefined;
       const text =
         typeof record.question === 'string'
           ? record.question
@@ -504,9 +516,9 @@ function pendingQuestionLines(pending: unknown): string[] {
       // second time would cut the line at the seam's limit and drop whatever
       // the shell had already written after the long part.
       const asked =
-        player === undefined
+        askerLabel === undefined
           ? digestLine`${quoteEvidence(text)}`
-          : digestLine`${quoteEvidence(player)} asks: ${quoteEvidence(text)}`;
+          : digestLine`${quoteEvidence(askerLabel)} asks: ${quoteEvidence(text)}`;
       const marker = id === undefined ? '' : digestLine`(${quoteEvidence(id)}) `;
       lines.push(`- ${marker}${asked}`);
     }
@@ -2046,14 +2058,9 @@ export function createPlaybookCaptainShell(
     const playerBindings = makePlayerBindings(enablement, parent);
     const playerResumeTokens =
       parent?.frame.playerResumeTokens ?? new Map<string, string>();
-    const runtime = entry.createRuntime({
-      captainOptions: enablement.optionInput,
-      players: [...playerBindings].map(([role, { player }]) => ({
-        id: role,
-        ...(player.adapter === undefined ? {} : { adapter: player.adapter }),
-        ...(player.model === undefined ? {} : { model: player.model }),
-      })),
-    });
+    const runtime = entry.createRuntime(
+      entry.validateOptions(enablement.optionInput),
+    );
     return {
       entry,
       enablement,
@@ -2076,14 +2083,9 @@ export function createPlaybookCaptainShell(
   ): EngagementFrame => {
     const entry = enablement.entry;
     const playerBindings = makePlayerBindings(enablement, parent);
-    const runtime = entry.createRuntime({
-      captainOptions: enablement.optionInput,
-      players: [...playerBindings].map(([role, { player }]) => ({
-        id: role,
-        ...(player.adapter === undefined ? {} : { adapter: player.adapter }),
-        ...(player.model === undefined ? {} : { model: player.model }),
-      })),
-    });
+    const runtime = entry.createRuntime(
+      entry.validateOptions(enablement.optionInput),
+    );
     return {
       entry,
       enablement,
@@ -2949,7 +2951,9 @@ export function createPlaybookCaptainShell(
     const pending = view.pendingQuestions.map(
       (question) =>
         digestLine`- (${quoteEvidence(question.questionId)}) ${quoteEvidence(
-          question.player,
+          question.asker.kind === 'captain'
+            ? 'Captain'
+            : question.asker.roleId,
         )} asks: ${quoteEvidence(question.question)}`,
     );
     lines.push(
@@ -4366,12 +4370,12 @@ export function createPlaybookCaptainShell(
   ): void => {
     const captain = snapshot.captain.runtime;
     if (
-      captain.schemaVersion !== 2 ||
+      captain.schemaVersion !== 3 ||
       captain.state.status !== 'active' ||
       !captain.state.quiescent ||
       !captain.state.tags.includes('playbook.parked') ||
       captain.suspendedCall !== undefined ||
-      Object.keys(captain.playerResumeTokens).length > 0 ||
+      Object.keys(captain.roleResumeTokens).length > 0 ||
       captain.pendingBossQuestions.length > 0
     ) {
       throw new TypeError(
@@ -4496,7 +4500,7 @@ export function createPlaybookCaptainShell(
           return token === undefined ? [] : [[role, token] as const];
         }),
       );
-      if (!isDeepStrictEqual(projectedTokens, frame.runtime.playerResumeTokens)) {
+      if (!isDeepStrictEqual(projectedTokens, frame.runtime.roleResumeTokens)) {
         throw new TypeError(
           `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} player tokens do not match root-owned continuation`,
         );
@@ -4673,7 +4677,7 @@ export function createPlaybookCaptainShell(
     );
     for (const key of [
       'state',
-      'playerResumeTokens',
+      'roleResumeTokens',
       'sequences',
       'pendingBossQuestions',
       'suspendedCall',

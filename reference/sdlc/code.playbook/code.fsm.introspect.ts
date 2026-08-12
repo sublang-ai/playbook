@@ -92,7 +92,7 @@ export function enumeratePlayerStates(
     if (invoke?.src !== 'player' || invoke.input === undefined) return [];
     const getInput = (context: CodingContext): PlayerInput =>
       invoke.input?.({ context }) as PlayerInput;
-    const input = getInput({ coderPlayer: 'Coder', runResults: '' });
+    const input = getInput({ runResults: '' });
     return [
       {
         stateId,
@@ -116,7 +116,7 @@ export function enumerateNestedPlaybookStates(
     if (invoke?.src !== 'playbook' || invoke.input === undefined) return [];
     const getInput = (context: CodingContext): PlaybookInput =>
       invoke.input?.({ context }) as PlaybookInput;
-    const input = getInput({ coderPlayer: 'Coder', runResults: '' });
+    const input = getInput({ runResults: '' });
     return [
       {
         stateId,

@@ -7,11 +7,13 @@ import type { PlayerInput } from './code.fsm.js';
 import { _internal } from './code.playbook.js';
 
 const { composePlayerPrompt } = _internal;
+const promptIdentity = (roleId: string): string =>
+  roleId === 'coder' ? 'GPT-5.6 Sol' : roleId;
 
 function firstInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
   return {
     stateId: 'runFirstPhase',
-    player: 'Coder',
+    role: 'coder',
     sourceItem: 'CODE-1',
     prompt: [
       '> <caller-input>',
@@ -23,14 +25,13 @@ function firstInput(overrides: Partial<PlayerInput> = {}): PlayerInput {
     result: { directCommit: 'done' },
     callerInput: 'line one\nline two',
     runResults: 'test one\ntest two',
-    coderPlayer: 'GPT-5.6 Sol',
     ...overrides,
   };
 }
 
 describe('CODE player prompt composition', () => {
   it('keeps every line of relayed values inside Markdown quotes', () => {
-    expect(composePlayerPrompt(firstInput())).toBe(
+    expect(composePlayerPrompt(firstInput(), promptIdentity)).toBe(
       [
         '> line one',
         '> line two',
@@ -44,7 +45,10 @@ describe('CODE player prompt composition', () => {
   });
 
   it('omits the optional run-results relay when none exists', () => {
-    const prompt = composePlayerPrompt(firstInput({ runResults: '' }));
+    const prompt = composePlayerPrompt(
+      firstInput({ runResults: '' }),
+      promptIdentity,
+    );
     expect(prompt).not.toContain('<run-results>');
     expect(prompt).not.toContain('\n> \n');
     expect(prompt).toContain('> line one\n> line two');
@@ -53,7 +57,7 @@ describe('CODE player prompt composition', () => {
   it('substitutes IR task, IR number, and Coder identity once', () => {
     const input: PlayerInput = {
       stateId: 'runIrTask',
-      player: 'Coder',
+      role: 'coder',
       sourceItem: 'CODE-3',
       prompt: [
         '> <ir-task>',
@@ -63,11 +67,10 @@ describe('CODE player prompt composition', () => {
       result: { finalTask: 'done' },
       callerInput: 'unused',
       runResults: '',
-      coderPlayer: 'GPT-5.6 Sol',
       irNumber: '040',
       irTask: 'Use literal <coder-llm> and $&.\nThen finish.',
     };
-    expect(composePlayerPrompt(input)).toBe(
+    expect(composePlayerPrompt(input, promptIdentity)).toBe(
       [
         '> Use literal <coder-llm> and $&.',
         '> Then finish.',
@@ -84,11 +87,12 @@ describe('CODE player prompt composition', () => {
           questionId: 'runFirstPhase',
           resumeStateId: 'runFirstPhase',
           sourceItem: 'CODE-1',
-          player: 'Coder',
+          asker: { kind: 'role', roleId: 'coder' },
           question: 'Which branch?',
         },
         bossReply: 'Use the narrow branch.',
       }),
+      promptIdentity,
     );
     expect(prompt).toMatch(
       /^You previously paused this task[\s\S]*Boss question:\nWhich branch\?\n\nBoss reply:\nUse the narrow branch\.\n\n> line one/,

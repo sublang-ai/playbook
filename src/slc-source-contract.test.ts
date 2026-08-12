@@ -18,7 +18,7 @@ import {
 const SOURCE = [
   '# Review flow',
   '',
-  'Players:',
+  'Roles:',
   '',
   '- Coder',
   '- Reviewer',
@@ -45,7 +45,7 @@ const SOURCE = [
 
 const GEARS = `# Review flow
 
-Players:
+Roles:
 
 - Coder
 - Reviewer

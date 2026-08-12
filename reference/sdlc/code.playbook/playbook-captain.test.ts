@@ -154,7 +154,7 @@ class FakeRuntime implements PlaybookRuntime {
     this.ports = session.ports;
     this.restoreCount += 1;
     this.snapshot = snapshot;
-    session.playerSessions?.restore(snapshot.playerResumeTokens);
+    session.playerSessions?.restore(snapshot.roleResumeTokens);
     await this.restoreHook?.(this, session, snapshot);
   }
 
@@ -230,16 +230,16 @@ function runtimeSnapshot(
   state: PlaybookState,
   options: {
     turn?: number;
-    playerResumeTokens?: Readonly<Record<string, string>>;
+    roleResumeTokens?: Readonly<Record<string, string>>;
     pendingBossQuestions?: PlaybookRuntimeSnapshot['pendingBossQuestions'];
     suspendedCall?: NonNullable<PlaybookRuntimeSnapshot['suspendedCall']>;
   } = {},
 ): PlaybookRuntimeSnapshot {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     playbookId,
     machine: { value: state.value, status: state.status },
-    playerResumeTokens: options.playerResumeTokens ?? {},
+    roleResumeTokens: options.roleResumeTokens ?? {},
     sequences: {
       trace: 0,
       turn: options.turn ?? 0,
@@ -470,7 +470,9 @@ function fakeCodeEntry(
       id: 'code',
       command: 'code',
       intent: 'software development / SDLC coding workflow',
+      artifactSchema: 2,
       requiredRoleIds: ['coder', 'reviewer'],
+      concurrentRoleSets: [],
       summaryPolicy: {
         copyPasteGuardNames: ['hasFindings', 'changesMadeSpecs', 'accepted'],
         stateCountLabels: {
@@ -768,14 +770,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     );
 
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
-    // Host players bound to local roles: ids re-keyed, host adapter carried.
-    expect(registry.createRuntime).toHaveBeenCalledWith({
-      captainOptions: {},
-      players: [
-        { id: 'coder', adapter: 'claude' },
-        { id: 'reviewer', adapter: 'codex' },
-      ],
-    });
+    expect(registry.createRuntime).toHaveBeenCalledWith(undefined);
     expect(registry.runtimes[0]?.initCount).toBe(1);
     expect(registry.runtimes[0]?.inputs).toEqual([
       {
@@ -2494,14 +2489,7 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     expect(registry.validateOptions).toHaveBeenCalledWith({
       committer: 'reviewer',
     });
-    // createRuntime receives the slice plus host players bound to local roles.
-    expect(registry.createRuntime).toHaveBeenCalledWith({
-      captainOptions: { committer: 'reviewer' },
-      players: [
-        { id: 'coder', adapter: 'codex', model: 'gpt-5.5' },
-        { id: 'reviewer', adapter: 'claude', model: 'claude-opus-4-8' },
-      ],
-    });
+    expect(registry.createRuntime).toHaveBeenCalledWith(undefined);
     expect(registry.runtimes[0]?.inputs.map((i) => i.text)).toEqual([
       'do the task',
     ]);
@@ -2610,7 +2598,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
       await runtime.ports.emitTelemetry({
         topic: 'playbook.trace',
         payload: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           sessionId: runtime.session.sessionId,
           playbookId: runtime.session.playbookId,
           rootSessionId: runtime.session.rootSessionId,
@@ -2927,7 +2915,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
         await runtime.ports.emitTelemetry({
           topic: 'playbook.trace',
           payload: {
-            schemaVersion: 2,
+            schemaVersion: 3,
             sessionId: runtime.session.sessionId,
             playbookId: runtime.session.playbookId,
             rootSessionId: runtime.session.rootSessionId,
@@ -3976,7 +3964,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           depth: 0,
           runtime: runtimeSnapshot('code', waiting, {
             turn: 1,
-            playerResumeTokens: { reviewer: 'shared-token' },
+            roleResumeTokens: { reviewer: 'shared-token' },
             suspendedCall: {
               callId: 'code:review:1',
               stateId: 'waitingForReview',
@@ -3996,7 +3984,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           parentCallId: 'code:review:1',
           runtime: runtimeSnapshot('review', playbookState('ready'), {
             turn: 1,
-            playerResumeTokens: { reviewer: 'shared-token' },
+            roleResumeTokens: { reviewer: 'shared-token' },
           }),
         },
       ],
@@ -4022,7 +4010,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       captain: {
         sessionId: SESSION_CAPTAIN_ID,
         conversation: { kind: 'unopened' },
-        runtime: { schemaVersion: 2, sequences: { turn: 0 } },
+        runtime: { schemaVersion: 3, sequences: { turn: 0 } },
       },
       issuedSessionIds: [SESSION_CAPTAIN_ID],
       sequences: { turn: 0, journal: 0 },
@@ -4064,7 +4052,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       captain: {
         conversation: { kind: 'pinned', token: 'conversation-1' },
         runtime: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           sequences: { turn: 1 },
           state: { tags: expect.arrayContaining(['playbook.parked']) },
         },
@@ -4122,7 +4110,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       mode: 'chat',
       captain: {
         conversation: { kind: 'needsSeeding' },
-        runtime: { schemaVersion: 2, sequences: { turn: 1 } },
+        runtime: { schemaVersion: 3, sequences: { turn: 1 } },
       },
       sequences: { turn: 1 },
     });
@@ -4154,7 +4142,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
   it('restores one parked root with its root-owned player continuation', async () => {
     const pendingQuestion = {
       questionId: 'q-1',
-      player: 'coder',
+      asker: { kind: 'role' as const, roleId: 'coder' },
       question: 'Which target?',
     };
     const sourceCode = fakeCodeEntry(async (runtime) => {
@@ -4180,7 +4168,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       playbookState('ready'),
       {
         turn: 1,
-        playerResumeTokens: { coder: 'coder-root-token' },
+        roleResumeTokens: { coder: 'coder-root-token' },
         pendingBossQuestions: [pendingQuestion],
       },
     );
@@ -4200,11 +4188,11 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         Object.isFrozen(snapshot.frames[0]?.runtime),
     ).toBe(true);
     (
-      runtimeOwnedSnapshot.playerResumeTokens as Record<string, string>
+      runtimeOwnedSnapshot.roleResumeTokens as Record<string, string>
     ).coder = 'mutated-after-export';
     expect(snapshot).toMatchObject({
       frames: [
-        { runtime: { playerResumeTokens: { coder: 'coder-root-token' } } },
+        { runtime: { roleResumeTokens: { coder: 'coder-root-token' } } },
       ],
     });
 
@@ -4281,7 +4269,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     const projected = { reviewer: 'shared-reviewer-token' };
     sourceCode.runtimes[0]!.snapshot = runtimeSnapshot('code', waiting, {
       turn: 1,
-      playerResumeTokens: projected,
+      roleResumeTokens: projected,
       suspendedCall: {
         callId,
         stateId: 'waitingForReview',
@@ -4294,7 +4282,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     sourceReview.runtimes[0]!.snapshot = runtimeSnapshot(
       'review',
       playbookState('ready'),
-      { turn: 1, playerResumeTokens: projected },
+      { turn: 1, roleResumeTokens: projected },
     );
     const snapshot = source.exportSnapshot();
     expect(snapshot).toMatchObject({
@@ -4450,7 +4438,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     expect(rejectedSession.telemetry).toEqual([]);
 
     const mismatchedTokens = JSON.parse(JSON.stringify(valid));
-    mismatchedTokens.frames[0].runtime.playerResumeTokens = {
+    mismatchedTokens.frames[0].runtime.roleResumeTokens = {
       coder: 'not-in-the-root-map',
     };
     await expect(
@@ -4565,7 +4553,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           if (drift !== 'child-token') return;
           runtime.snapshot = {
             ...restored,
-            playerResumeTokens: { reviewer: 'mutated-after-restore' },
+            roleResumeTokens: { reviewer: 'mutated-after-restore' },
           };
         },
       );
@@ -4638,7 +4626,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       }],
       ['Captain player token', () => {
         const value = clone();
-        value.captain.runtime.playerResumeTokens = { captain: 'token' };
+        value.captain.runtime.roleResumeTokens = { captain: 'token' };
         return value;
       }],
       ['duplicate issued UUID', () => {
@@ -4727,7 +4715,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       }],
       ['live token projection mismatch', () => {
         const value = clone();
-        value.frames[1].runtime.playerResumeTokens.reviewer = 'other-token';
+        value.frames[1].runtime.roleResumeTokens.reviewer = 'other-token';
         return value;
       }],
       ['undefined value', () => {
@@ -4843,7 +4831,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           ...nested.frames[0]!,
           runtime: runtimeSnapshot('code', playbookState('ready'), {
             turn: 1,
-            playerResumeTokens: { reviewer: 'shared-token' },
+            roleResumeTokens: { reviewer: 'shared-token' },
           }),
         },
       ],

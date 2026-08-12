@@ -71,7 +71,6 @@ function route(transition: RawTransition | undefined) {
 }
 
 const CONTEXT: CodingContext = {
-  coderPlayer: 'GPT-5.6 Sol',
   runResults: '',
   callerInput: 'Implement the request.',
   coderOutput: 'Committed.\nCommit: abc123',
@@ -105,7 +104,7 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       expect(item, state.sourceItem).toBeDefined();
       const input = state.getInput(CONTEXT);
       expect(item?.player).toBeDefined();
-      expect(input.player).toBe(item?.player);
+      expect(input.role).toBe(item?.player?.toLowerCase());
       expect(input.prompt).toBe(item?.prompt.join('\n'));
       expect(Object.entries(input.result).slice(0, -1)).toEqual(
         item?.results.map(({ guard, description }) => [guard, description]),
@@ -230,22 +229,22 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
     for (const id of ['ready', 'awaitBossReply', 'failed']) {
       expect(states[id]?.tags).toContain('playbook.parked');
     }
-    const declaredPlayers = new Map(
+    const declaredRoles = new Map(
       enumeratePlayerStates(codingMachine).map(({ stateId, sourceItem }) => [
         stateId,
-        byId.get(sourceItem)?.player,
+        byId.get(sourceItem)?.player?.toLowerCase(),
       ]),
     );
     for (const [id, state] of Object.entries(states)) {
-      const delegated = declaredPlayers.has(id);
-      const player = declaredPlayers.get(id);
-      if (delegated) expect(player, id).toBeDefined();
+      const delegated = declaredRoles.has(id);
+      const role = declaredRoles.get(id);
+      if (delegated) expect(role, id).toBeDefined();
       expect(state.description, id).toBeTruthy();
       expect(state.meta, id).toEqual({
         playbook: {
           stateId: id,
           description: state.description,
-          ...(delegated ? { player } : {}),
+          ...(delegated ? { role } : {}),
         },
       });
     }

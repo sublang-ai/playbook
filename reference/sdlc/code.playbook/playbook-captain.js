@@ -127,7 +127,14 @@ function pendingQuestionLines(pending) {
                 : typeof record.id === 'string'
                     ? record.id
                     : undefined;
-            const player = typeof record.player === 'string' ? record.player : undefined;
+            const asker = typeof record.asker === 'object' && record.asker !== null
+                ? record.asker
+                : undefined;
+            const askerLabel = asker?.kind === 'captain'
+                ? 'Captain'
+                : asker?.kind === 'role' && typeof asker.roleId === 'string'
+                    ? asker.roleId
+                    : undefined;
             const text = typeof record.question === 'string'
                 ? record.question
                 : typeof record.text === 'string'
@@ -137,9 +144,9 @@ function pendingQuestionLines(pending) {
             // fragment is never handed back to the tag as a value: bounding it a
             // second time would cut the line at the seam's limit and drop whatever
             // the shell had already written after the long part.
-            const asked = player === undefined
+            const asked = askerLabel === undefined
                 ? digestLine `${quoteEvidence(text)}`
-                : digestLine `${quoteEvidence(player)} asks: ${quoteEvidence(text)}`;
+                : digestLine `${quoteEvidence(askerLabel)} asks: ${quoteEvidence(text)}`;
             const marker = id === undefined ? '' : digestLine `(${quoteEvidence(id)}) `;
             lines.push(`- ${marker}${asked}`);
         }
@@ -1235,14 +1242,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         const sessionId = allocateSessionId();
         const playerBindings = makePlayerBindings(enablement, parent);
         const playerResumeTokens = parent?.frame.playerResumeTokens ?? new Map();
-        const runtime = entry.createRuntime({
-            captainOptions: enablement.optionInput,
-            players: [...playerBindings].map(([role, { player }]) => ({
-                id: role,
-                ...(player.adapter === undefined ? {} : { adapter: player.adapter }),
-                ...(player.model === undefined ? {} : { model: player.model }),
-            })),
-        });
+        const runtime = entry.createRuntime(entry.validateOptions(enablement.optionInput));
         return {
             entry,
             enablement,
@@ -1259,14 +1259,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const makeRestoredFrame = (enablement, snapshot, rootPlayerResumeTokens, parent) => {
         const entry = enablement.entry;
         const playerBindings = makePlayerBindings(enablement, parent);
-        const runtime = entry.createRuntime({
-            captainOptions: enablement.optionInput,
-            players: [...playerBindings].map(([role, { player }]) => ({
-                id: role,
-                ...(player.adapter === undefined ? {} : { adapter: player.adapter }),
-                ...(player.model === undefined ? {} : { model: player.model }),
-            })),
-        });
+        const runtime = entry.createRuntime(entry.validateOptions(enablement.optionInput));
         return {
             entry,
             enablement,
@@ -2015,7 +2008,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             stateDigestLine(view.state, view.stateDescription),
         ].join(': '));
         lines.push(...leafContextLines(view.context));
-        const pending = view.pendingQuestions.map((question) => digestLine `- (${quoteEvidence(question.questionId)}) ${quoteEvidence(question.player)} asks: ${quoteEvidence(question.question)}`);
+        const pending = view.pendingQuestions.map((question) => digestLine `- (${quoteEvidence(question.questionId)}) ${quoteEvidence(question.asker.kind === 'captain'
+            ? 'Captain'
+            : question.asker.roleId)} asks: ${quoteEvidence(question.question)}`);
         lines.push(pending.length === 0
             ? 'Pending Boss questions: none.'
             : ['Pending Boss questions:', ...pending].join('\n'));
@@ -3187,12 +3182,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const tokenRecord = (tokens) => Object.fromEntries(tokens);
     const assertSnapshotMatchesEnablements = (snapshot, enabled) => {
         const captain = snapshot.captain.runtime;
-        if (captain.schemaVersion !== 2 ||
+        if (captain.schemaVersion !== 3 ||
             captain.state.status !== 'active' ||
             !captain.state.quiescent ||
             !captain.state.tags.includes('playbook.parked') ||
             captain.suspendedCall !== undefined ||
-            Object.keys(captain.playerResumeTokens).length > 0 ||
+            Object.keys(captain.roleResumeTokens).length > 0 ||
             captain.pendingBossQuestions.length > 0) {
             throw new TypeError('Captain shell snapshot Captain runtime must be active, quiescent, playerless, and unsuspended');
         }
@@ -3279,7 +3274,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 const token = snapshot.rootPlayerResumeTokens[hostPlayerId];
                 return token === undefined ? [] : [[role, token]];
             }));
-            if (!isDeepStrictEqual(projectedTokens, frame.runtime.playerResumeTokens)) {
+            if (!isDeepStrictEqual(projectedTokens, frame.runtime.roleResumeTokens)) {
                 throw new TypeError(`Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} player tokens do not match root-owned continuation`);
             }
         }
@@ -3420,7 +3415,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         const normalized = assertPlaybookRuntimeSnapshot(actual, playbookId, allowSuspendedCall ? { allowSuspendedCall: true } : {});
         for (const key of [
             'state',
-            'playerResumeTokens',
+            'roleResumeTokens',
             'sequences',
             'pendingBossQuestions',
             'suspendedCall',

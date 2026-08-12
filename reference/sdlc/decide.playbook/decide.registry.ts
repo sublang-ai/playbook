@@ -3,7 +3,6 @@
 
 import createPlaybookRuntime, {
   type PlaybookRuntime,
-  type PlaybookRuntimeOptions,
 } from './decide.playbook.js';
 
 export interface PlaybookSummaryPolicy {
@@ -15,27 +14,18 @@ export interface PlaybookSummaryPolicy {
   ): string;
 }
 
-export interface RegistryPlayer {
-  id: string;
-  adapter?: string;
-  model?: string;
-}
-
-export interface CreateDecideRuntimeOptions {
-  captainOptions: unknown;
-  players: readonly RegistryPlayer[];
-}
-
 export type DecideOptions = Readonly<Record<string, never>>;
 
 export interface DecidePlaybookRegistryEntry {
   id: 'decide';
   command: 'decide';
   intent: string;
+  artifactSchema: 2;
   requiredRoleIds: readonly ['coder', 'reviewer'];
+  concurrentRoleSets: readonly [readonly ['coder', 'reviewer']];
   summaryPolicy: PlaybookSummaryPolicy;
-  validateOptions(captainOptions: unknown): DecideOptions;
-  createRuntime(options: CreateDecideRuntimeOptions): PlaybookRuntime;
+  validateOptions(optionSlice: unknown): DecideOptions;
+  createRuntime(options: DecideOptions): PlaybookRuntime;
 }
 
 export const decideStateCountLabels = {
@@ -93,32 +83,18 @@ export function validateDecideOptions(optionSlice: unknown): DecideOptions {
   return Object.freeze({});
 }
 
-function playerIdentity(
-  players: readonly RegistryPlayer[],
-  id: string,
-): string {
-  const player = players.find((entry) => entry.id === id);
-  return player?.model ?? player?.adapter ?? id;
-}
-
-export function createDecideRuntimeOptions({
-  captainOptions,
-  players,
-}: CreateDecideRuntimeOptions): PlaybookRuntimeOptions {
-  validateDecideOptions(captainOptions);
-  return { coderLlm: playerIdentity(players, 'coder') };
-}
-
 export const decidePlaybookRegistryEntry: DecidePlaybookRegistryEntry = {
   id: 'decide',
   command: 'decide',
   intent:
     'turn independent Coder and Reviewer proposals into an approved spec-design commit',
+  artifactSchema: 2,
   requiredRoleIds: ['coder', 'reviewer'],
+  concurrentRoleSets: [['coder', 'reviewer']],
   summaryPolicy: decideSummaryPolicy,
   validateOptions: validateDecideOptions,
   createRuntime(options) {
-    return createPlaybookRuntime(createDecideRuntimeOptions(options));
+    return createPlaybookRuntime(options);
   },
 };
 

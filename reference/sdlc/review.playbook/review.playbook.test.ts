@@ -15,7 +15,7 @@ import type {
 } from '@sublang/playbook/runtime';
 import createPlaybookRuntime, { _internal } from './review.playbook.js';
 import {
-  createReviewRuntimeOptions,
+  reviewPlaybookRegistryEntry,
   reviewStateCountLabels,
   validateReviewOptions,
 } from './review.registry.js';
@@ -33,6 +33,10 @@ function session(ports: PlaybookPorts): PlaybookSession {
     playbookId: 'review',
     rootSessionId: sessionId,
     depth: 0,
+    roleBindings: {
+      coder: { playerId: 'coder', promptIdentity: 'GPT-5.6 Sol' },
+      reviewer: { playerId: 'reviewer', promptIdentity: 'Claude Opus 5' },
+    },
     ports,
   };
 }
@@ -97,10 +101,7 @@ describe('linked REVIEW runtime', () => {
         '{"guard":"noFindings"}',
       ],
     });
-    const runtime = createPlaybookRuntime({
-      coderLlm: 'GPT-5.6 Sol',
-      reviewerLlm: 'Claude Opus 5',
-    });
+    const runtime = createPlaybookRuntime({});
     await runtime.init(session(ports));
 
     const result = await runtime.handleBossInput({
@@ -182,10 +183,7 @@ describe('linked REVIEW runtime', () => {
         '{"guard":"noFindings"}',
       ],
     });
-    const runtime = createPlaybookRuntime({
-      coderLlm: 'GPT-5.6 Sol',
-      reviewerLlm: 'Claude Opus 5',
-    });
+    const runtime = createPlaybookRuntime({});
     await runtime.init(session(ports));
 
     const result = await runtime.handleBossInput({
@@ -369,10 +367,7 @@ describe('linked REVIEW runtime', () => {
       playerResults: [...scenario.playerResults],
       judgeReplies: [...scenario.judgeReplies],
     });
-    const runtime = createPlaybookRuntime({
-      coderLlm: 'GPT-5.6 Sol',
-      reviewerLlm: 'Claude Opus 5',
-    });
+    const runtime = createPlaybookRuntime({});
     await runtime.init(session(ports));
 
     const parked = await runtime.handleBossInput({
@@ -422,10 +417,7 @@ describe('linked REVIEW runtime', () => {
         '{"guard":"noFindings"}',
       ],
     });
-    const runtime = createPlaybookRuntime({
-      coderLlm: 'GPT-5.6 Sol',
-      reviewerLlm: 'Claude Opus 5',
-    });
+    const runtime = createPlaybookRuntime({});
     await runtime.init(session(ports));
 
     await runtime.handleBossInput({
@@ -463,10 +455,7 @@ describe('linked REVIEW runtime', () => {
         '{"guard":"noFindings"}',
       ],
     });
-    const runtime = createPlaybookRuntime({
-      coderLlm: 'GPT-5.6 Sol',
-      reviewerLlm: 'Claude Opus 5',
-    });
+    const runtime = createPlaybookRuntime({});
     await runtime.init(session(ports));
 
     const failed = await runtime.handleBossInput({
@@ -497,37 +486,38 @@ describe('linked REVIEW runtime', () => {
     });
   });
 
-  it('validates the registry slice and derives both model labels', () => {
+  it('advertises the schema-2 local-role manifest', () => {
+    expect(reviewPlaybookRegistryEntry).toMatchObject({
+      artifactSchema: 2,
+      requiredRoleIds: ['coder', 'reviewer'],
+      concurrentRoleSets: [],
+    });
+  });
+
+  it('validates the registry slice without deriving host identity', () => {
     expect(validateReviewOptions(undefined)).toEqual({});
     expect(() => validateReviewOptions({ extra: true })).toThrow(
       /review\.options\.extra/,
     );
     expect(
-      createReviewRuntimeOptions({
-        captainOptions: {},
-        players: [
-          { id: 'coder', adapter: 'codex', model: 'gpt-5.6' },
-          { id: 'reviewer', adapter: 'claude', model: 'opus-5' },
-        ],
-      }),
-    ).toEqual({ coderLlm: 'gpt-5.6', reviewerLlm: 'opus-5' });
+      reviewPlaybookRegistryEntry.createRuntime(
+        validateReviewOptions({}),
+      ),
+    ).toBeDefined();
     expect(() =>
-      createPlaybookRuntime({
-        coderLlm: 'gpt-5.6',
-      } as { coderLlm: string; reviewerLlm: string }),
-    ).toThrow(/reviewerLlm must be a non-empty string/);
+      createPlaybookRuntime({ coderLlm: 'gpt-5.6' } as never),
+    ).toThrow(/runtime options\.coderLlm is not declared/);
   });
 
   it('quotes every line of relayed text without recursive substitution', () => {
     const prompt = _internal.composePlayerPrompt({
       stateId: 'reviewAfterCommit',
       sourceItem: 'REVIEW-3',
-      player: 'Reviewer',
+      role: 'reviewer',
       prompt: '> <coder-output>\nUse <coder-llm>.',
       result: { noFindings: 'No findings.' },
       coderOutput: 'Line one\nLine two with <coder-llm> and $&.',
-      coderLlm: 'GPT-5.6 Sol',
-    });
+    }, (roleId) => roleId === 'coder' ? 'GPT-5.6 Sol' : roleId);
     expect(prompt).toBe(
       '> Line one\n> Line two with <coder-llm> and $&.\nUse GPT-5.6 Sol.',
     );

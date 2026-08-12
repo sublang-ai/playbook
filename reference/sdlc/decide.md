@@ -4,7 +4,7 @@
 
 # Decide
 
-Players:
+Roles:
 
 - Coder
 - Reviewer
@@ -13,7 +13,7 @@ The caller supplies the topic including any specific context.
 
 When the caller gives a topic, Captain shall relay the complete topic in quotes (`>`) to Coder and Reviewer concurrently and independently.
 Captain shall not wait for either proposal before requesting the other.
-Captain shall give each player the following instruction:
+Captain shall give the player bound to each role the following instruction:
 
 ```markdown
 Assess whether the topic is better expressed as a few spec items under @specs/packages/ or requires one or more DRs under @specs/decisions/.
@@ -23,7 +23,7 @@ Consult @specs/map.md for relevant context and @specs/meta.md for spec requireme
 Do not change any files.
 ```
 
-Neither player shall receive the other's proposal until both proposals are complete and Coder has committed Coder's own proposal.
+Neither role's player shall receive the other role's proposal until both proposals are complete and Coder has committed Coder's own proposal.
 A Boss interrupt during the parallel proposal pair shall restart the whole pair so both players receive the same new topic and remain independent.
 
 When both proposals are complete, Captain shall then give Coder the following instruction:

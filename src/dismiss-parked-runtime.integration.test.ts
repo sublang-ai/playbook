@@ -26,7 +26,10 @@ import type {
   PlayerRunResult,
 } from '@sublang/cligent/tmux-play';
 import type { PlaybookRuntime } from './runtime.js';
-import { createXStatePlaybookRuntime } from './xstate-playbook-runtime.js';
+import {
+  createXStatePlaybookRuntime,
+  RUNTIME_ABI,
+} from './xstate-playbook-runtime.js';
 import {
   createPlaybookCaptainShell,
   type PlaybookCaptainRegistryEntry,
@@ -97,8 +100,11 @@ const notesMachine = createMachine({
 
 const createChecklistRuntime = createXStatePlaybookRuntime(checklistMachine, {
   label: 'CHECKLIST',
+  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
+  roleStates: {},
+  classificationStatus: () => undefined,
   statusesForState: (state) =>
     state.stateId === undefined || state.stateId === 'ready'
       ? []
@@ -109,8 +115,11 @@ const createChecklistRuntime = createXStatePlaybookRuntime(checklistMachine, {
 
 const createNotesRuntime = createXStatePlaybookRuntime(notesMachine, {
   label: 'NOTES',
+  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'topic' },
+  roleStates: {},
+  classificationStatus: () => undefined,
   statusesForState: (state) =>
     state.stateId === undefined || state.stateId === 'ready'
       ? []
@@ -126,7 +135,9 @@ function registryEntry(
     id,
     command,
     intent: `${id} dismissal-status fixture`,
+    artifactSchema: 2,
     requiredRoleIds: [],
+    concurrentRoleSets: [],
     validateOptions: (options) => options,
     createRuntime,
   };

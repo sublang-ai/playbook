@@ -1,14 +1,18 @@
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | {
     readonly [key: string]: JsonValue;
 };
-type Player = 'Coder' | 'Reviewer';
+type Role = 'coder' | 'reviewer';
+export declare const concurrentRoleSets: readonly [readonly ["coder", "reviewer"]];
 type JumpableStateId = 'independentProposals';
 type ResumableStateId = 'askCoderProposal' | 'askReviewerProposal' | 'commitCoderProposal';
 export interface PendingBossQuestion {
     questionId: ResumableStateId;
     resumeStateId: ResumableStateId;
     sourceItem: string;
-    player: Player;
+    asker: {
+        kind: 'role';
+        roleId: Role;
+    };
     question: string;
 }
 type PendingBossQuestions = Partial<Record<ResumableStateId, PendingBossQuestion>>;
@@ -37,7 +41,6 @@ interface ChildFailure {
     };
 }
 export interface DecideContext {
-    coderLlm: string;
     callerTopic?: string;
     coderProposal?: string;
     reviewerProposal?: string;
@@ -63,17 +66,14 @@ export type DecideEvent = {
     questionId?: ResumableStateId;
     answer: string;
 };
-export interface DecideInput {
-    coderLlm: string;
-}
+export type DecideInput = Readonly<Record<string, never>>;
 export interface PlayerInput {
     stateId: ResumableStateId;
     sourceItem: string;
     prompt: string;
     result: Record<string, string>;
-    player: Player;
+    role: Role;
     callerTopic?: string;
-    coderLlm?: string;
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 }
@@ -205,7 +205,7 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
         coder: "complete" | "working" | "waiting";
         reviewer: "complete" | "working" | "waiting";
     };
-}, string, DecideInput, ReviewSuccessOutput | DecideFailureOutput, import("xstate").EventObject, import("xstate").MetaObject, {
+}, string, Readonly<Record<string, never>>, ReviewSuccessOutput | DecideFailureOutput, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "decide";
     states: {
         readonly ready: {

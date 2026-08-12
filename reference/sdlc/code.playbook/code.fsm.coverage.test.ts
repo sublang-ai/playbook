@@ -42,7 +42,6 @@ const APPROVED = {
 } as const;
 
 const CONTEXT: CodingContext = {
-  coderPlayer: 'GPT-5.6 Sol',
   runResults: '',
   callerInput: 'Implement the request.',
   coderOutput: 'Completed the phase.\nCommit: abc123',
@@ -69,7 +68,7 @@ const pendingContext = (
     questionId: stateId,
     resumeStateId: stateId,
     sourceItem,
-    player: 'Coder',
+    asker: { kind: 'role', roleId: 'coder' },
     question: 'Which branch?',
   },
 });
@@ -330,7 +329,7 @@ function createWorkflow(
     },
   });
   const actor = createActor(machine, {
-    input: { coderPlayer: 'GPT-5.6 Sol', runResults: '' },
+    input: { runResults: '' },
   });
   actor.start();
   return { actor, playerInputs, reviewInputs };

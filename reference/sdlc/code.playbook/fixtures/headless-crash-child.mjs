@@ -54,10 +54,10 @@ function createFixtureCaptainRuntime({ controller }) {
     exportSnapshot() {
       const state = activeState();
       return {
-        schemaVersion: 2,
+        schemaVersion: 3,
         playbookId: 'captain',
         machine: { value: state.value, status: state.status },
-        playerResumeTokens: {},
+        roleResumeTokens: {},
         sequences: {
           trace: 0,
           turn,

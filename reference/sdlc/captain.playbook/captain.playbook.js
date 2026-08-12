@@ -31,7 +31,7 @@
 //                deterministic entry mapping, the controller captain-call
 //                strategy with its single corrective re-ask (CAPPLAY-18),
 //                controller-port submission, and status formatting.
-// Compat:        spec.compat = { artifactSchema: 1, runtimeAbi: 1 }
+// Compat:        spec.compat = { artifactSchema: 2, runtimeAbi: 1 }
 //                (DR-022; checked at construction by the loading engine).
 import { createXStatePlaybookRuntime, defaultComposeCaptainPrompt, normalizeError, normalizeErrorCompact, parseJudgeJson, snapshotJsonValue, RUNTIME_ABI, } from '../../../src/xstate-runtime.js';
 import { captainMachine, } from './captain.fsm.js';
@@ -516,11 +516,11 @@ export const _internal = {
 // describe/apply control surface — lives in @sublang/playbook/xstate-runtime.
 const runtimeSpec = {
     label: 'CAPTAIN',
-    compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI },
+    compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
     snapshotOptions: snapshotCaptainOptions,
     machineInput: (options) => ({ enabledPlaybooks: options.enabledPlaybooks }),
     classifyBossText: (text, ports, signal, snapshotOrState, boundary, options) => classifyControllerTurn(text, ports, signal, snapshotOrState, boundary, options),
-    playerStates: {},
+    roleStates: {},
     classificationStatus: () => undefined,
     captainStrategy: controllerCaptainStrategy,
     // CAPPLAY-10 / PBRT-52: the Captain's own ControlView context projection —

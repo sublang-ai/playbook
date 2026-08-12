@@ -6,11 +6,13 @@ import { describe, expect, it } from 'vitest';
 
 import { parseGearsContract } from '../../../scripts/check-slc-source-gears.mjs';
 import {
+  concurrentRoleSets,
   decideMachine,
   type DecideContext,
   type PlayerInput,
   type PlaybookInput,
 } from './decide.fsm.js';
+import decideRegistry, { validateDecideOptions } from './decide.registry.js';
 
 interface RawInvoke {
   src?: unknown;
@@ -58,7 +60,6 @@ const machineConfig = (
 const states = machineConfig.states;
 
 const CONTEXT: DecideContext = {
-  coderLlm: 'GPT-5.6 Sol',
   callerTopic: 'Choose a durable design.',
   coderProposal: 'Coder proposes package items.',
   reviewerProposal: 'Reviewer proposes one DR.',
@@ -109,7 +110,7 @@ const actorDoneFixtures = (
 const pendingContext = (
   stateId: 'askCoderProposal' | 'askReviewerProposal' | 'commitCoderProposal',
   sourceItem: 'DECIDE-1' | 'DECIDE-2' | 'DECIDE-3',
-  player: 'Coder' | 'Reviewer',
+  roleId: 'coder' | 'reviewer',
 ): DecideContext => ({
   ...CONTEXT,
   pendingBossQuestions: {
@@ -117,7 +118,7 @@ const pendingContext = (
       questionId: stateId,
       resumeStateId: stateId,
       sourceItem,
-      player,
+      asker: { kind: 'role', roleId },
       question: 'Which scope?',
     },
   },
@@ -126,11 +127,11 @@ const pendingContext = (
 const bossReplyFixtures = (
   stateId: 'askCoderProposal' | 'askReviewerProposal' | 'commitCoderProposal',
   sourceItem: 'DECIDE-1' | 'DECIDE-2' | 'DECIDE-3',
-  player: 'Coder' | 'Reviewer',
+  roleId: 'coder' | 'reviewer',
   emptyTarget: string,
   answerTarget: string,
 ): readonly TransitionFixture[] => {
-  const pending = pendingContext(stateId, sourceItem, player);
+  const pending = pendingContext(stateId, sourceItem, roleId);
   return [
     {
       guard: '<inline>',
@@ -174,7 +175,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
   'independentProposals.coder.waiting.on.BOSS_REPLY': bossReplyFixtures(
     'askCoderProposal',
     'DECIDE-1',
-    'Coder',
+    'coder',
     '#failed',
     'working',
   ),
@@ -188,7 +189,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
   'independentProposals.reviewer.waiting.on.BOSS_REPLY': bossReplyFixtures(
     'askReviewerProposal',
     'DECIDE-2',
-    'Reviewer',
+    'reviewer',
     '#failed',
     'working',
   ),
@@ -206,7 +207,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
   'awaitBossReply.on.BOSS_REPLY': bossReplyFixtures(
     'commitCoderProposal',
     'DECIDE-3',
-    'Coder',
+    'coder',
     'failed',
     '#commitCoderProposal',
   ),
@@ -359,6 +360,31 @@ function evaluateGuard(
 }
 
 describe('DECIDE GEARS to FSM compilation', () => {
+  it('declares local roles without source-level player bindings', () => {
+    expect(sourceText).toContain('\nRoles:\n\n- Coder\n- Reviewer\n');
+    expect(sourceText).not.toContain('\nPlayers:\n');
+    expect(gearsText).toContain('\n## Roles\n\n- Coder\n- Reviewer\n');
+    expect(gearsText).not.toContain('\n## Players\n');
+  });
+
+  it('advertises its schema-2 roles and parallel constraint', () => {
+    expect(concurrentRoleSets).toEqual([['coder', 'reviewer']]);
+    expect(decideRegistry).toMatchObject({
+      id: 'decide',
+      command: 'decide',
+      artifactSchema: 2,
+      requiredRoleIds: ['coder', 'reviewer'],
+      concurrentRoleSets: [['coder', 'reviewer']],
+    });
+    expect(decideRegistry.concurrentRoleSets).toEqual(concurrentRoleSets);
+    const options = validateDecideOptions(undefined);
+    expect(options).toEqual({});
+    expect(typeof decideRegistry.createRuntime(options).init).toBe('function');
+    expect(() => validateDecideOptions({ coderLlm: 'stale' })).toThrow(
+      'captain.options.playbooks.decide.options.coderLlm',
+    );
+  });
+
   it('maps exactly DECIDE-1 through DECIDE-4 to the declared actor topology', () => {
     expect(gears.map(({ id }) => id)).toEqual([
       'DECIDE-1',
@@ -410,7 +436,7 @@ describe('DECIDE GEARS to FSM compilation', () => {
     ).toBe('commitCoderProposal');
   });
 
-  it('preserves each delegated player, prompt, and result contract exactly', () => {
+  it('preserves each delegated role, prompt, and result contract exactly', () => {
     for (const expected of expectedPlayerStates) {
       const item = byId.get(expected.sourceItem);
       const state = stateAt(expected.path);
@@ -420,7 +446,7 @@ describe('DECIDE GEARS to FSM compilation', () => {
       expect(input).toMatchObject({
         stateId: expected.stateId,
         sourceItem: expected.sourceItem,
-        player: item?.player,
+        role: item?.player?.toLowerCase(),
       });
       expect('prompt' in (input ?? {}) ? input.prompt : undefined).toBe(
         item?.prompt.join('\n'),
@@ -436,7 +462,7 @@ describe('DECIDE GEARS to FSM compilation', () => {
         playbook: {
           stateId: expected.stateId,
           description: state?.description,
-          player: item?.player,
+          role: item?.player?.toLowerCase(),
         },
       });
     }

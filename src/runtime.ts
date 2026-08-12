@@ -19,15 +19,20 @@ export interface PlayerCallOptions {
   resume: string | false;
 }
 
-// DR-030: a composing host may supply one frame-local view of the root
-// engagement's player continuation. The runtime selects through this store
+// DR-032: a composing host may supply one frame-local role view of the
+// Captain session's player continuation. The runtime selects through this store
 // before tracing/calling and updates it from the validated result. Hosts that
 // omit it retain the runtime's private per-session store.
 export interface PlayerSessionStore {
-  select(playerId: string): string | false;
-  update(playerId: string, resumeToken?: string): void;
+  select(roleId: string): string | false;
+  update(roleId: string, resumeToken?: string): void;
   snapshot(): Readonly<Record<string, string>>;
   restore(tokens: Readonly<Record<string, string>>): void;
+}
+
+export interface PlaybookRoleBinding {
+  readonly playerId: string;
+  readonly promptIdentity: string;
 }
 
 export interface CaptainCallOptions {
@@ -137,7 +142,7 @@ export type PlaybookRunResult =
 
 export interface PlaybookPorts {
   callPlayer(
-    playerId: string,
+    roleId: string,
     prompt: string,
     signal: AbortSignal,
     options: PlayerCallOptions,
@@ -163,6 +168,7 @@ export interface PlaybookSession {
   parentSessionId?: string;
   parentCallId?: string;
   depth: number;
+  roleBindings?: Readonly<Record<string, PlaybookRoleBinding>>;
   playerSessions?: PlayerSessionStore;
   ports: PlaybookPorts;
 }
@@ -186,7 +192,7 @@ export type PlaybookTraceType =
   | 'session.disposed';
 
 export interface PlaybookTraceEvent {
-  schemaVersion: 2;
+  schemaVersion: 3;
   sessionId: string;
   playbookId: string;
   rootSessionId: string;
@@ -203,19 +209,20 @@ export interface PlaybookTraceEvent {
 
 export interface PlaybookPendingBossQuestion {
   questionId: string;
-  player: string;
+  asker: { kind: 'captain' } | { kind: 'role'; roleId: string };
   question: string;
   sourceItem?: string;
 }
 
-// DR-014 §1 / DR-031 §5: JSON-safe capture of a parked or nested-call
+// DR-014 §1 / DR-031 §5 / DR-032: JSON-safe capture of a parked or nested-call
 // suspended session. `machine` is the opaque XState persisted snapshot;
-// pending Boss questions and a schema-2 suspended call are first-class so a
+// pending Boss questions and a suspended call are first-class so a
 // host never has to reconstruct durable ownership from presentation records.
-interface PlaybookRuntimeSnapshotFields {
+export interface PlaybookRuntimeSnapshot {
+  schemaVersion: 3;
   playbookId: string;
   machine: JsonValue;
-  playerResumeTokens: { readonly [playerId: string]: string };
+  roleResumeTokens: { readonly [roleId: string]: string };
   sequences: {
     trace: number;
     turn: number;
@@ -226,19 +233,8 @@ interface PlaybookRuntimeSnapshotFields {
   };
   state: PlaybookState;
   pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
+  suspendedCall?: PlaybookSuspendedCall;
 }
-
-export type PlaybookRuntimeSnapshot = PlaybookRuntimeSnapshotFields &
-  (
-    | {
-        schemaVersion: 1;
-        suspendedCall?: never;
-      }
-    | {
-        schemaVersion: 2;
-        suspendedCall?: PlaybookSuspendedCall;
-      }
-  );
 
 // DR-029: one currently valid, runtime-advertised control action. The id
 // is stable within the returned view; the label is runtime-written,

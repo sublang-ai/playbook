@@ -4,12 +4,17 @@ export interface PlaybookPendingBossQuestionContext {
     questionId: string;
     resumeStateId: string;
     sourceItem: string;
-    player: string;
+    asker: {
+        kind: 'captain';
+    } | {
+        kind: 'role';
+        roleId: string;
+    };
     question: string;
 }
 export interface PlaybookPlayerInput {
     stateId: string;
-    player: string;
+    role: string;
     sourceItem: string;
     prompt: string;
     result: Readonly<Record<string, string>>;
@@ -46,7 +51,7 @@ export type JudgePurpose = 'boss-input-classification' | 'player-output-adjudica
  * exercise composition/adjudication without a live runtime.
  */
 export interface RuntimeBoundaryCalls {
-    callPlayer(input: PlaybookPlayerInput, playerId: string, prompt: string, signal: AbortSignal): Promise<PlayerResult>;
+    callPlayer(input: PlaybookPlayerInput, roleId: string, prompt: string, signal: AbortSignal): Promise<PlayerResult>;
     callJudge(purpose: JudgePurpose, stateId: string | undefined, prompt: string, signal: AbortSignal): Promise<string>;
     callCaptain?(input: PlaybookCaptainInput, prompt: string, signal: AbortSignal, callOptions?: XStateCaptainCallOptions): Promise<CaptainResult>;
 }
@@ -68,10 +73,12 @@ export interface ScheduledStatus {
     data?: JsonValue;
 }
 /** Boss-facing identity for one FSM state whose invoked actor is `player`. */
-export interface XStatePlayerStateStatus {
-    player: string;
+export interface XStateRoleStateStatus {
+    role: string;
     label: string;
 }
+/** Invocation-scoped lookup exposed only while composing a player prompt. */
+export type XStatePromptIdentity = (roleId: string) => string;
 export interface XStateBossEventFieldSpec {
     /** The judge supplies routing data; the runtime supplies exact Boss text. */
     source: 'judge' | 'text';
@@ -144,8 +151,8 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
     label?: string;
     /**
      * Link-time compatibility declaration checked at construction against the
-     * loaded engine's self-report (DR-022). Absent: a legacy artifact emitted
-     * before the contract — constructed with no compatibility check.
+     * loaded engine's self-report (DR-022). Absent declarations reject because
+     * their overloaded player metadata has no safe local-role interpretation.
      */
     compat?: XStatePlaybookRuntimeCompat;
     /** Validate and JSON-snapshot the caller's per-run options. */
@@ -182,14 +189,12 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
      * recoverable FSM-result failures instead.
      */
     captainStrategy?: XStateCaptainStrategy<TOptions>;
-    /** Status line emitted after classification; canonical metadata defaults to the event type, legacy artifacts to none. */
+    /** Status line emitted after classification; metadata defaults to the event type. */
     classificationStatus?: (event: EventObject) => string | undefined;
-    /** Complete FSM-derived Boss-facing metadata for every `player` state; its presence selects the canonical status profile. */
-    playerStates?: Readonly<Record<string, XStatePlayerStateStatus>>;
-    /** Map a player-invoking state's input to the host player id. Default: lowercased player name. */
-    resolvePlayerId?: (input: PlaybookPlayerInput, options: TOptions) => string;
+    /** Complete FSM-derived Boss-facing metadata for every `player` state. */
+    roleStates?: Readonly<Record<string, XStateRoleStateStatus>>;
     /** Compose the player prompt. Default: continuation blocks + `<field>` placeholder substitution. */
-    composePlayerPrompt?: (input: PlaybookPlayerInput) => string;
+    composePlayerPrompt?: (input: PlaybookPlayerInput, promptIdentity: XStatePromptIdentity) => string;
     /** Compose the direct-Captain prompt. Default: continuation blocks + placeholder substitution with deterministic JSON rendering. */
     composeCaptainPrompt?: (input: PlaybookCaptainInput) => string;
     /** Linker-known exceptions to the default kebab-token → camel-field mapping. */
@@ -253,8 +258,6 @@ export declare function defaultComposePlayerPrompt(input: PlaybookPlayerInput, p
  * with lexicographically sorted keys at every depth.
  */
 export declare function defaultComposeCaptainPrompt(input: PlaybookCaptainInput, placeholderFields?: Readonly<Record<string, string>>): string;
-/** Default player binding: each player to its lowercased name. */
-export declare function defaultResolvePlayerId(input: PlaybookPlayerInput): string;
 /**
  * Default required-field extraction (slc/link.md §Captain adjudication).
  * Limited to the description's `Output shall include` / `输出应包含` clause;
@@ -278,8 +281,8 @@ export interface PlayerAdjudicationSpec {
  * long-form prose through judge JSON.
  */
 export declare function adjudicatePlayerOutput(spec: PlayerAdjudicationSpec, input: PlaybookPlayerInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal, boundary?: RuntimeBoundaryCalls): Promise<PlaybookActorOutput>;
-export interface PlayerBridgeSpec {
-    resolvePlayerId: (input: PlaybookPlayerInput) => string;
+interface PlayerBridgeSpec {
+    resolveRoleId: (input: PlaybookPlayerInput) => string;
     composePlayerPrompt: (input: PlaybookPlayerInput) => string;
     adjudication: PlayerAdjudicationSpec;
     resumableStateIds: ReadonlySet<string>;
@@ -315,3 +318,4 @@ export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): 
  * runtimes.
  */
 export declare function createXStatePlaybookRuntime<TOptions>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpec<TOptions>): PlaybookRuntimeFactory<TOptions>;
+export {};

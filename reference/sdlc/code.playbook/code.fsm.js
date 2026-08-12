@@ -55,12 +55,12 @@ const STATE_DESCRIPTIONS = {
     failed: 'The coding workflow failed and is waiting for a new coding intent.',
     done: 'The coding workflow completed after REVIEW found no unsettled findings.',
 };
-function playbookMeta(stateId, player) {
+function playbookMeta(stateId, role) {
     return {
         playbook: {
             stateId,
             description: STATE_DESCRIPTIONS[stateId],
-            ...(player === undefined ? {} : { player }),
+            ...(role === undefined ? {} : { role }),
         },
     };
 }
@@ -324,7 +324,6 @@ const machineSetup = setup({
             if (event.type !== 'START_CODE')
                 return {};
             return {
-                coderPlayer: context.coderPlayer,
                 runResults: context.runResults,
                 callerInput: event.callerInput,
                 coderOutput: undefined,
@@ -389,7 +388,7 @@ const machineSetup = setup({
                     questionId: stateId,
                     resumeStateId: stateId,
                     sourceItem: stateId === 'runFirstPhase' ? 'CODE-1' : 'CODE-3',
-                    player: 'Coder',
+                    asker: { kind: 'role', roleId: 'coder' },
                     question,
                 },
                 bossReply: undefined,
@@ -430,7 +429,6 @@ export const codingMachine = machineSetup.createMachine({
     id: 'code',
     initial: 'ready',
     context: ({ input }) => ({
-        coderPlayer: isNonEmptyString(input.coderPlayer) ? input.coderPlayer : 'Coder',
         runResults: typeof input.runResults === 'string' ? input.runResults : '',
     }),
     output: ({ context }) => {
@@ -465,19 +463,18 @@ export const codingMachine = machineSetup.createMachine({
         runFirstPhase: {
             id: 'runFirstPhase',
             description: STATE_DESCRIPTIONS.runFirstPhase,
-            meta: playbookMeta('runFirstPhase', 'Coder'),
+            meta: playbookMeta('runFirstPhase', 'coder'),
             tags: ['playbook.busy'],
             invoke: {
                 src: 'player',
                 input: ({ context }) => ({
                     stateId: 'runFirstPhase',
-                    player: 'Coder',
+                    role: 'coder',
                     sourceItem: 'CODE-1',
                     prompt: FIRST_PHASE_PROMPT,
                     result: FIRST_PHASE_RESULTS,
                     callerInput: context.callerInput ?? '',
                     runResults: context.runResults,
-                    coderPlayer: context.coderPlayer,
                     ...(context.pendingBossQuestion === undefined
                         ? {}
                         : { pendingBossQuestion: context.pendingBossQuestion }),
@@ -550,19 +547,18 @@ export const codingMachine = machineSetup.createMachine({
         runIrTask: {
             id: 'runIrTask',
             description: STATE_DESCRIPTIONS.runIrTask,
-            meta: playbookMeta('runIrTask', 'Coder'),
+            meta: playbookMeta('runIrTask', 'coder'),
             tags: ['playbook.busy'],
             invoke: {
                 src: 'player',
                 input: ({ context }) => ({
                     stateId: 'runIrTask',
-                    player: 'Coder',
+                    role: 'coder',
                     sourceItem: 'CODE-3',
                     prompt: IR_TASK_PROMPT,
                     result: IR_TASK_RESULTS,
                     callerInput: context.callerInput ?? '',
                     runResults: context.runResults,
-                    coderPlayer: context.coderPlayer,
                     ...(context.irNumber === undefined
                         ? {}
                         : { irNumber: context.irNumber }),

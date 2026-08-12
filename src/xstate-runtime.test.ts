@@ -50,14 +50,13 @@ const RESTORED_CALL: PlaybookSuspendedCall = {
 };
 
 function runtimeSnapshot(
-  schemaVersion: 1 | 2,
   suspendedCall?: PlaybookSuspendedCall,
 ): PlaybookRuntimeSnapshot {
   const stateId = suspendedCall?.stateId ?? 'await-boss';
   const fields = {
     playbookId: 'parent',
     machine: { status: 'active', value: stateId },
-    playerResumeTokens: { coder: 'thread-1' },
+    roleResumeTokens: { coder: 'thread-1' },
     sequences: {
       trace: 12,
       turn: 3,
@@ -75,15 +74,13 @@ function runtimeSnapshot(
     },
     pendingBossQuestions: [],
   };
-  return schemaVersion === 1
-    ? { schemaVersion: 1, ...fields }
-    : {
-        schemaVersion: 2,
-        ...fields,
-        ...(suspendedCall === undefined
-          ? {}
-          : { suspendedCall: { ...suspendedCall } }),
-      };
+  return {
+    schemaVersion: 3,
+    ...fields,
+    ...(suspendedCall === undefined
+      ? {}
+      : { suspendedCall: { ...suspendedCall } }),
+  };
 }
 
 function pendingCall(
@@ -299,23 +296,13 @@ describe('public XState snapshot normalization', () => {
 });
 
 describe('runtime snapshot schema validation', () => {
-  it('accepts legacy schema 1 and explicitly opted-in schema 2', () => {
-    const legacy = assertPlaybookRuntimeSnapshot(
-      runtimeSnapshot(1),
-      'parent',
-    );
-    expect(legacy.schemaVersion).toBe(1);
-    expect('suspendedCall' in legacy).toBe(false);
-
-    const source = runtimeSnapshot(2, RESTORED_CALL) as Extract<
-      PlaybookRuntimeSnapshot,
-      { schemaVersion: 2 }
-    >;
+  it('accepts schema 3 and rejects released legacy schemas', () => {
+    const source = runtimeSnapshot(RESTORED_CALL);
     const restored = assertPlaybookRuntimeSnapshot(source, 'parent', {
       allowSuspendedCall: true,
     });
     expect(restored).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       suspendedCall: RESTORED_CALL,
     });
     expect(Object.isFrozen(restored)).toBe(true);
@@ -325,26 +312,25 @@ describe('runtime snapshot schema validation', () => {
     (source.suspendedCall as { text: string }).text = 'mutated';
     expect(restored.sequences.turn).toBe(3);
     expect(restored.suspendedCall?.text).toBe(INPUT.text);
+
+    for (const schemaVersion of [1, 2]) {
+      expect(() =>
+        assertPlaybookRuntimeSnapshot(
+          { ...runtimeSnapshot(), schemaVersion },
+          'parent',
+        ),
+      ).toThrow('expected 3');
+    }
   });
 
   it('fails closed unless suspended-call restoration is explicit', () => {
     expect(() =>
       assertPlaybookRuntimeSnapshot(
-        runtimeSnapshot(2, RESTORED_CALL),
+        runtimeSnapshot(RESTORED_CALL),
         'parent',
       ),
     ).toThrow('explicitly allows it');
 
-    expect(() =>
-      assertPlaybookRuntimeSnapshot(
-        {
-          ...runtimeSnapshot(1),
-          suspendedCall: RESTORED_CALL,
-        },
-        'parent',
-        { allowSuspendedCall: true },
-      ),
-    ).toThrow('schemaVersion 1 must not carry suspendedCall');
   });
 
   it.each([
@@ -362,7 +348,7 @@ describe('runtime snapshot schema validation', () => {
   ])('rejects a malformed %s', (_name, suspendedCall, message) => {
     expect(() =>
       assertPlaybookRuntimeSnapshot(
-        runtimeSnapshot(2, suspendedCall as PlaybookSuspendedCall),
+        runtimeSnapshot(suspendedCall as PlaybookSuspendedCall),
         'parent',
         { allowSuspendedCall: true },
       ),
@@ -370,10 +356,7 @@ describe('runtime snapshot schema validation', () => {
   });
 
   it('rejects impossible suspended-call state and counters', () => {
-    const noCall = runtimeSnapshot(2, RESTORED_CALL) as Extract<
-      PlaybookRuntimeSnapshot,
-      { schemaVersion: 2 }
-    >;
+    const noCall = runtimeSnapshot(RESTORED_CALL);
     (noCall.sequences as { playbookCall: number }).playbookCall = 0;
     expect(() =>
       assertPlaybookRuntimeSnapshot(noCall, 'parent', {
@@ -381,10 +364,7 @@ describe('runtime snapshot schema validation', () => {
       }),
     ).toThrow('sequences.playbookCall greater than zero');
 
-    const wrongState = runtimeSnapshot(2, RESTORED_CALL) as Extract<
-      PlaybookRuntimeSnapshot,
-      { schemaVersion: 2 }
-    >;
+    const wrongState = runtimeSnapshot(RESTORED_CALL);
     (wrongState.state.tags as string[])[0] = 'playbook.parked';
     expect(() =>
       assertPlaybookRuntimeSnapshot(wrongState, 'parent', {
@@ -392,10 +372,7 @@ describe('runtime snapshot schema validation', () => {
       }),
     ).toThrow('requires state tag playbook.suspended');
 
-    const wrongSource = runtimeSnapshot(2, RESTORED_CALL) as Extract<
-      PlaybookRuntimeSnapshot,
-      { schemaVersion: 2 }
-    >;
+    const wrongSource = runtimeSnapshot(RESTORED_CALL);
     (wrongSource.state.activeStateIds as string[])[0] = 'other-state';
     (wrongSource.state as { stateId?: string }).stateId = 'other-state';
     expect(() =>
@@ -404,15 +381,15 @@ describe('runtime snapshot schema validation', () => {
       }),
     ).toThrow('suspendedCall.stateId must be active');
 
-    const stripped = runtimeSnapshot(1);
+    const stripped = runtimeSnapshot();
     (stripped.state.tags as string[])[0] = 'playbook.suspended';
     expect(() => assertPlaybookRuntimeSnapshot(stripped, 'parent')).toThrow(
-      'requires schemaVersion 2 suspendedCall',
+      'requires suspendedCall',
     );
   });
 
   it('captures the complete snapshot once and rejects accessors or extras', () => {
-    const accessor = runtimeSnapshot(2, RESTORED_CALL) as unknown as Record<
+    const accessor = runtimeSnapshot(RESTORED_CALL) as unknown as Record<
       string,
       unknown
     >;
@@ -430,12 +407,12 @@ describe('runtime snapshot schema validation', () => {
 
     expect(() =>
       assertPlaybookRuntimeSnapshot(
-        { ...runtimeSnapshot(1), internal: true },
+        { ...runtimeSnapshot(), internal: true },
         'parent',
       ),
     ).toThrow('runtime snapshot.internal is not a declared property');
 
-    const sequenceExtra = runtimeSnapshot(1);
+    const sequenceExtra = runtimeSnapshot();
     (sequenceExtra.sequences as Record<string, unknown>).internal = true;
     expect(() =>
       assertPlaybookRuntimeSnapshot(sequenceExtra, 'parent'),
@@ -443,7 +420,7 @@ describe('runtime snapshot schema validation', () => {
       'runtime snapshot sequences.internal is not a declared property',
     );
 
-    const questionExtra = runtimeSnapshot(1);
+    const questionExtra = runtimeSnapshot();
     (
       questionExtra.pendingBossQuestions as unknown as Record<
         string,
@@ -451,7 +428,7 @@ describe('runtime snapshot schema validation', () => {
       >[]
     ).push({
       questionId: 'question-1',
-      player: 'coder',
+      asker: { kind: 'role', roleId: 'coder' },
       question: 'Which target?',
       sourceItem: 'REVIEW-1',
       internal: true,
@@ -461,6 +438,155 @@ describe('runtime snapshot schema validation', () => {
     ).toThrow(
       'runtime snapshot pendingBossQuestions[0].internal is not a declared property',
     );
+  });
+});
+
+describe('DR-032 schema-3 runtime boundaries', () => {
+  const schema3Snapshot = () => ({
+    schemaVersion: 3,
+    playbookId: 'parent',
+    machine: { status: 'active', value: 'await-boss' },
+    roleResumeTokens: { coder: 'thread-1' },
+    sequences: {
+      trace: 12,
+      turn: 3,
+      judgeCall: 1,
+      playerCall: 2,
+      playbookCall: 0,
+    },
+    state: {
+      value: 'await-boss',
+      activeStateIds: ['await-boss'],
+      tags: ['playbook.parked'],
+      status: 'active',
+      quiescent: true,
+      stateId: 'await-boss',
+    },
+    pendingBossQuestions: [
+      {
+        questionId: 'question-1',
+        asker: { kind: 'role', roleId: 'coder' },
+        question: 'Which target?',
+        sourceItem: 'CODE-1',
+      },
+    ],
+  });
+
+  it('accepts only detached schema 3 with role tokens and discriminated askers', () => {
+    const source = schema3Snapshot();
+    const snapshot = assertPlaybookRuntimeSnapshot(source, 'parent');
+    expect(snapshot).toMatchObject({
+      schemaVersion: 3,
+      roleResumeTokens: { coder: 'thread-1' },
+      pendingBossQuestions: [
+        { asker: { kind: 'role', roleId: 'coder' } },
+      ],
+    });
+    source.roleResumeTokens.coder = 'mutated';
+    source.pendingBossQuestions[0].asker.roleId = 'mutated';
+    expect(snapshot.roleResumeTokens.coder).toBe('thread-1');
+    expect(snapshot.pendingBossQuestions[0].asker).toEqual({
+      kind: 'role',
+      roleId: 'coder',
+    });
+    expect(Object.isFrozen(snapshot)).toBe(true);
+    expect(Object.isFrozen(snapshot.pendingBossQuestions[0].asker)).toBe(true);
+
+    for (const schemaVersion of [1, 2]) {
+      expect(() =>
+        assertPlaybookRuntimeSnapshot(
+          { ...schema3Snapshot(), schemaVersion },
+          'parent',
+        ),
+      ).toThrow('expected 3');
+    }
+    expect(() =>
+      assertPlaybookRuntimeSnapshot(
+        {
+          ...schema3Snapshot(),
+          pendingBossQuestions: [
+            {
+              questionId: 'question-1',
+              player: 'coder',
+              question: 'Which target?',
+            },
+          ],
+        },
+        'parent',
+      ),
+    ).toThrow('player is not a declared property');
+  });
+
+  it('detaches exact role bindings and rejects malformed identities', () => {
+    const ports = {
+      callPlayer: vi.fn(),
+      callCaptain: vi.fn(),
+      callJudge: vi.fn(),
+      callPlaybook: vi.fn(),
+      emitStatus: vi.fn(),
+      emitTelemetry: vi.fn(),
+    };
+    const binding = {
+      playerId: 'dev.coder',
+      promptIdentity: 'GPT-5.6 Sol',
+    };
+    const captured = snapshotPlaybookSession({
+      sessionId: 'root-role-binding',
+      playbookId: 'code',
+      rootSessionId: 'root-role-binding',
+      depth: 0,
+      roleBindings: { coder: binding },
+      ports,
+    });
+    binding.playerId = 'mutated.player';
+    binding.promptIdentity = 'mutated model';
+    expect(captured.roleBindings).toEqual({
+      coder: {
+        playerId: 'dev.coder',
+        promptIdentity: 'GPT-5.6 Sol',
+      },
+    });
+    expect(Object.isFrozen(captured.roleBindings)).toBe(true);
+    expect(Object.isFrozen(captured.roleBindings?.coder)).toBe(true);
+
+    expect(() =>
+      snapshotPlaybookSession({
+        sessionId: 'root-bad-binding',
+        playbookId: 'code',
+        rootSessionId: 'root-bad-binding',
+        depth: 0,
+        roleBindings: {
+          coder: { playerId: 'dev.coder', promptIdentity: ' ' },
+        },
+        ports,
+      }),
+    ).toThrow('promptIdentity must be a non-empty string');
+    expect(() =>
+      snapshotPlaybookSession({
+        sessionId: 'root-extra-binding',
+        playbookId: 'code',
+        rootSessionId: 'root-extra-binding',
+        depth: 0,
+        roleBindings: {
+          coder: {
+            playerId: 'dev.coder',
+            promptIdentity: 'Coder',
+            adapter: 'claude',
+          } as never,
+        },
+        ports,
+      }),
+    ).toThrow('adapter is not a declared property');
+  });
+
+  it('rejects an explicitly empty player resume token', () => {
+    expect(() =>
+      validatePlayerResult({
+        status: 'ok',
+        resumeToken: ' \t ',
+        finalText: 'done',
+      }),
+    ).toThrow('resumeToken must be a non-empty string');
   });
 });
 

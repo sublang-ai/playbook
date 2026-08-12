@@ -1,4 +1,4 @@
-import { type PlaybookRuntime, type PlaybookRuntimeOptions } from './decide.playbook.js';
+import { type PlaybookRuntime } from './decide.playbook.js';
 export interface PlaybookSummaryPolicy {
     stateCountLabels: Readonly<Record<string, string>>;
     copyPasteGuardNames: readonly string[];
@@ -7,24 +7,17 @@ export interface PlaybookSummaryPolicy {
         copyPastes: number;
     }, rounds: number): string;
 }
-export interface RegistryPlayer {
-    id: string;
-    adapter?: string;
-    model?: string;
-}
-export interface CreateDecideRuntimeOptions {
-    captainOptions: unknown;
-    players: readonly RegistryPlayer[];
-}
 export type DecideOptions = Readonly<Record<string, never>>;
 export interface DecidePlaybookRegistryEntry {
     id: 'decide';
     command: 'decide';
     intent: string;
+    artifactSchema: 2;
     requiredRoleIds: readonly ['coder', 'reviewer'];
+    concurrentRoleSets: readonly [readonly ['coder', 'reviewer']];
     summaryPolicy: PlaybookSummaryPolicy;
-    validateOptions(captainOptions: unknown): DecideOptions;
-    createRuntime(options: CreateDecideRuntimeOptions): PlaybookRuntime;
+    validateOptions(optionSlice: unknown): DecideOptions;
+    createRuntime(options: DecideOptions): PlaybookRuntime;
 }
 export declare const decideStateCountLabels: {
     readonly independentProposals: "proposal round";
@@ -36,6 +29,5 @@ export declare function decideSavedCountsLine(counts: {
 }, rounds: number): string;
 export declare const decideSummaryPolicy: PlaybookSummaryPolicy;
 export declare function validateDecideOptions(optionSlice: unknown): DecideOptions;
-export declare function createDecideRuntimeOptions({ captainOptions, players, }: CreateDecideRuntimeOptions): PlaybookRuntimeOptions;
 export declare const decidePlaybookRegistryEntry: DecidePlaybookRegistryEntry;
 export default decidePlaybookRegistryEntry;

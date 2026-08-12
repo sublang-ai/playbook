@@ -15,7 +15,9 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
-type Player = 'Coder' | 'Reviewer';
+type Role = 'coder' | 'reviewer';
+
+export const concurrentRoleSets = [['coder', 'reviewer']] as const;
 
 type JumpableStateId = 'independentProposals';
 
@@ -28,7 +30,7 @@ export interface PendingBossQuestion {
   questionId: ResumableStateId;
   resumeStateId: ResumableStateId;
   sourceItem: string;
-  player: Player;
+  asker: { kind: 'role'; roleId: Role };
   question: string;
 }
 
@@ -67,7 +69,6 @@ interface ChildFailure {
 }
 
 export interface DecideContext {
-  coderLlm: string;
   callerTopic?: string;
   coderProposal?: string;
   reviewerProposal?: string;
@@ -95,18 +96,15 @@ export type DecideEvent =
       answer: string;
     };
 
-export interface DecideInput {
-  coderLlm: string;
-}
+export type DecideInput = Readonly<Record<string, never>>;
 
 export interface PlayerInput {
   stateId: ResumableStateId;
   sourceItem: string;
   prompt: string;
   result: Record<string, string>;
-  player: Player;
+  role: Role;
   callerTopic?: string;
-  coderLlm?: string;
   pendingBossQuestion?: PendingBossQuestion;
   bossReply?: string;
 }
@@ -503,11 +501,20 @@ function resumableStates(ids: readonly ResumableStateId[]): any[] {
 
 const stateMetadata: Record<
   ResumableStateId,
-  { sourceItem: string; player: Player }
+  { sourceItem: string; asker: { kind: 'role'; roleId: Role } }
 > = {
-  askCoderProposal: { sourceItem: 'DECIDE-1', player: 'Coder' },
-  askReviewerProposal: { sourceItem: 'DECIDE-2', player: 'Reviewer' },
-  commitCoderProposal: { sourceItem: 'DECIDE-3', player: 'Coder' },
+  askCoderProposal: {
+    sourceItem: 'DECIDE-1',
+    asker: { kind: 'role', roleId: 'coder' },
+  },
+  askReviewerProposal: {
+    sourceItem: 'DECIDE-2',
+    asker: { kind: 'role', roleId: 'reviewer' },
+  },
+  commitCoderProposal: {
+    sourceItem: 'DECIDE-3',
+    asker: { kind: 'role', roleId: 'coder' },
+  },
 };
 
 export const decideMachine = setup({
@@ -671,9 +678,7 @@ export const decideMachine = setup({
 }).createMachine({
   id: 'decide',
   initial: 'ready',
-  context: ({ input }): DecideContext => ({
-    coderLlm: input.coderLlm,
-  }),
+  context: (): DecideContext => ({}),
   output: ({ context }): DecideOutput => {
     if (context.reviewResult) return context.reviewResult;
     if (!context.latestCommit || !context.reviewFailure) {
@@ -732,7 +737,7 @@ export const decideMachine = setup({
                 playbook: {
                   stateId: 'askCoderProposal',
                   description: 'Coder independently proposes a spec design.',
-                  player: 'Coder',
+                  role: 'coder',
                 },
               },
               invoke: {
@@ -740,7 +745,7 @@ export const decideMachine = setup({
                 input: ({ context }): PlayerInput => ({
                   stateId: 'askCoderProposal',
                   sourceItem: 'DECIDE-1',
-                  player: 'Coder',
+                  role: 'coder',
                   prompt: INDEPENDENT_PROPOSAL_PROMPT,
                   result: withNeedsBossReply({
                     proposed:
@@ -851,7 +856,7 @@ export const decideMachine = setup({
                   stateId: 'askReviewerProposal',
                   description:
                     'Reviewer independently proposes a spec design.',
-                  player: 'Reviewer',
+                  role: 'reviewer',
                 },
               },
               invoke: {
@@ -859,7 +864,7 @@ export const decideMachine = setup({
                 input: ({ context }): PlayerInput => ({
                   stateId: 'askReviewerProposal',
                   sourceItem: 'DECIDE-2',
-                  player: 'Reviewer',
+                  role: 'reviewer',
                   prompt: INDEPENDENT_PROPOSAL_PROMPT,
                   result: withNeedsBossReply({
                     proposed:
@@ -974,7 +979,7 @@ export const decideMachine = setup({
         playbook: {
           stateId: 'commitCoderProposal',
           description: 'Coder writes and commits Coder’s independent proposal.',
-          player: 'Coder',
+          role: 'coder',
         },
       },
       invoke: {
@@ -982,13 +987,12 @@ export const decideMachine = setup({
         input: ({ context }): PlayerInput => ({
           stateId: 'commitCoderProposal',
           sourceItem: 'DECIDE-3',
-          player: 'Coder',
+          role: 'coder',
           prompt: COMMIT_CODER_PROMPT,
           result: withNeedsBossReply({
             committed:
               "Coder committed Coder's proposal. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.",
           }),
-          coderLlm: context.coderLlm,
           ...bossReplyFields(context, 'commitCoderProposal'),
         }),
         onDone: [

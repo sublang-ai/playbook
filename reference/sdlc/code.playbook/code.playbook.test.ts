@@ -12,7 +12,9 @@ import createPlaybookRuntime, {
 } from './code.playbook.js';
 import {
   codeCopyPasteGuardNames,
+  codePlaybookRegistryEntry,
   codeStateCountLabels,
+  validateCodeOptions,
 } from './code.registry.js';
 
 const APPROVED = {
@@ -88,6 +90,9 @@ function rootSession(ports: PlaybookPorts): PlaybookSession {
     playbookId: 'code',
     rootSessionId: 'code-root',
     depth: 0,
+    roleBindings: {
+      coder: { playerId: 'coder', promptIdentity: 'GPT-5.6 Sol' },
+    },
     ports,
   };
 }
@@ -115,6 +120,15 @@ describe('linked CODE runtime', () => {
     ]);
   });
 
+  it('advertises the schema-2 local-role manifest', () => {
+    expect(codePlaybookRegistryEntry).toMatchObject({
+      artifactSchema: 2,
+      requiredRoleIds: ['coder'],
+      concurrentRoleSets: [],
+    });
+    expect(codePlaybookRegistryEntry.createRuntime(validateCodeOptions({}))).toBeDefined();
+  });
+
   it('runs one direct commit and calls REVIEW with exact quoted context', async () => {
     const host = harness({
       players: [
@@ -127,7 +141,7 @@ describe('linked CODE runtime', () => {
       judges: [{ guard: 'directCommit', latestCommit: 'abc123' }],
       children: [approvedChild(1)],
     });
-    const runtime = createPlaybookRuntime({ coderPlayer: 'GPT-5.6 Sol' });
+    const runtime = createPlaybookRuntime({});
     await runtime.init(rootSession(host.ports));
 
     const result = await runtime.handleBossInput({
@@ -269,7 +283,7 @@ describe('linked CODE runtime', () => {
       ],
       children: [approvedChild(1), approvedChild(2), approvedChild(3)],
     });
-    const runtime = createPlaybookRuntime({ coderPlayer: 'GPT-5.6 Sol' });
+    const runtime = createPlaybookRuntime({});
     await runtime.init(rootSession(host.ports));
 
     const result = await runtime.handleBossInput({
@@ -585,15 +599,15 @@ describe('linked CODE runtime', () => {
   });
 
   it('validates and snapshots the small runtime option surface', () => {
-    expect(() => createPlaybookRuntime({ coderPlayer: 'GPT', extra: true } as never)).toThrow(
+    expect(() => createPlaybookRuntime({ extra: true } as never)).toThrow(
       'CODE runtime options.extra is not declared',
     );
-    expect(() => createPlaybookRuntime({ coderPlayer: 5 } as never)).toThrow(
-      'CODE runtime options.coderPlayer must be a string',
+    expect(() => createPlaybookRuntime({ runResults: 5 } as never)).toThrow(
+      'CODE runtime options.runResults must be a string',
     );
-    const mutable = { coderPlayer: 'GPT' };
+    const mutable = { runResults: 'previous verification' };
     const runtime = createPlaybookRuntime(mutable);
-    mutable.coderPlayer = 'changed';
+    mutable.runResults = 'changed';
     expect(runtime).toBeDefined();
   });
 

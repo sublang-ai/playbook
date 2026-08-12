@@ -3,10 +3,8 @@
 
 # Decide
 
-## Players
+## Roles
 
-- Boss: the human user (default)
-- Captain: the coordinating agent (default)
 - Coder
 - Reviewer
 
@@ -14,7 +12,7 @@
 
 The caller supplies a topic as `callerTopic`.
 Coder and Reviewer receive the complete topic concurrently and independently.
-Neither player receives the other player's proposal before both proposals finish and Coder commits Coder's own proposal.
+Neither role's player receives the other role's proposal before both proposals finish and Coder commits Coder's own proposal.
 A Boss interrupt during the parallel proposal pair restarts the complete pair with the new `callerTopic`.
 
 ### DECIDE-1

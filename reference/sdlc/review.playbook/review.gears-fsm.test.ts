@@ -57,8 +57,6 @@ const expected = [
 ] as const;
 
 const context: ReviewContext = {
-  coderLlm: 'GPT-5.6 Sol',
-  reviewerLlm: 'Claude Opus 5',
   callerInput: 'Initial request',
   reviewerOutput: 'Reviewer findings',
   coderOutput: 'Coder disposition',
@@ -76,14 +74,14 @@ const pendingContext = (
     | 'reviewAfterCommit'
     | 'reviewAfterRebuttal',
   sourceItem: 'REVIEW-1' | 'REVIEW-2' | 'REVIEW-3' | 'REVIEW-4',
-  player: 'Coder' | 'Reviewer',
+  roleId: 'coder' | 'reviewer',
 ): ReviewContext => ({
   ...context,
   pendingBossQuestion: {
     questionId: stateId,
     resumeStateId: stateId,
     sourceItem,
-    player,
+    asker: { kind: 'role', roleId },
     question: 'Which requirement applies?',
   },
 });
@@ -176,19 +174,19 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     {
       guard: 'emptyBossReply',
       target: '#failed',
-      context: pendingContext('reviewInitial', 'REVIEW-1', 'Reviewer'),
+      context: pendingContext('reviewInitial', 'REVIEW-1', 'reviewer'),
       event: { type: 'BOSS_REPLY', questionId: 'reviewInitial', answer: '  ' },
     },
     {
       guard: 'resumeReviewInitial',
       target: '#reviewInitial',
-      context: pendingContext('reviewInitial', 'REVIEW-1', 'Reviewer'),
+      context: pendingContext('reviewInitial', 'REVIEW-1', 'reviewer'),
       event: { type: 'BOSS_REPLY', questionId: 'reviewInitial', answer: 'Answer' },
     },
     {
       guard: 'resumeAddressFindings',
       target: '#addressFindings',
-      context: pendingContext('addressFindings', 'REVIEW-2', 'Coder'),
+      context: pendingContext('addressFindings', 'REVIEW-2', 'coder'),
       event: {
         type: 'BOSS_REPLY',
         questionId: 'addressFindings',
@@ -198,7 +196,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     {
       guard: 'resumeReviewAfterCommit',
       target: '#reviewAfterCommit',
-      context: pendingContext('reviewAfterCommit', 'REVIEW-3', 'Reviewer'),
+      context: pendingContext('reviewAfterCommit', 'REVIEW-3', 'reviewer'),
       event: {
         type: 'BOSS_REPLY',
         questionId: 'reviewAfterCommit',
@@ -208,7 +206,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     {
       guard: 'resumeReviewAfterRebuttal',
       target: '#reviewAfterRebuttal',
-      context: pendingContext('reviewAfterRebuttal', 'REVIEW-4', 'Reviewer'),
+      context: pendingContext('reviewAfterRebuttal', 'REVIEW-4', 'reviewer'),
       event: {
         type: 'BOSS_REPLY',
         questionId: 'reviewAfterRebuttal',
@@ -251,7 +249,7 @@ function guardName(guard: unknown): string | undefined {
 }
 
 describe('REVIEW GEARS to FSM compilation', () => {
-  it('maps every REVIEW item once with its exact player and prompt', () => {
+  it('maps every REVIEW item once with its canonical role and exact prompt', () => {
     expect([...gears.keys()]).toEqual(expected.map(([, item]) => item));
     for (const [stateId, sourceItem] of expected) {
       const item = gears.get(sourceItem);
@@ -260,14 +258,14 @@ describe('REVIEW GEARS to FSM compilation', () => {
       expect(input?.stateId).toBe(stateId);
       expect(input?.sourceItem).toBe(sourceItem);
       expect(item?.player).toBeDefined();
-      expect(input?.player).toBe(item?.player);
+      expect(input?.role).toBe(item?.player?.toLowerCase());
       expect(input?.prompt).toBe(item?.prompt.join('\n'));
       expect(states[stateId]?.tags).toContain('playbook.busy');
       expect(states[stateId]?.meta).toEqual({
         playbook: {
           stateId,
           description: expect.any(String),
-          player: item?.player,
+          role: item?.player?.toLowerCase(),
         },
       });
     }

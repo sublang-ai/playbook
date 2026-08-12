@@ -24,17 +24,16 @@ Implement explicit playbook-local roles bound to stable Captain-session players,
 ## Tasks
 
 1. Record this implementation sequence and its map entry in one commit.
-2. Add segmented player ids and complete per-call player and Captain settings, including explicit provider-default model and effort selection, to cligent with its governing specs and focused compatibility tests in one cligent-repository commit.
-3. Cut the shared Playbook runtime and public contract over to canonical role bindings, trace schema `3`, runtime snapshot schema `3`, artifact schema `2`, resolved-player concurrency, and safe token preservation, with focused runtime and package-surface tests in one commit.
-4. Update the maintained CODE and REVIEW source, GEARS, FSM, linked runtime, registry, generated siblings, and conformance tests for `Roles:`, host-supplied prompt identity, and artifact schema `2` in one commit.
-5. Update the bespoke DECIDE source, parallel FSM, runtime, registry, generated siblings, and conformance tests for canonical roles, `concurrentRoleSets`, schema-version-3 snapshots and traces, and host-supplied bindings in one commit.
-6. Replace the launch plan's per-playbook player blocks with flat top-level players, exact role bindings, complete tuning selections, referenced-player-only projection, and pre-host concurrent-role validation, updating the starter and focused config tests in one commit.
-7. Replace root-frame token ownership and same-role inheritance with the Captain-session player ledger, explicit frame bindings, complete per-call settings, and shell snapshot schema `3`, with focused shell tests in one commit.
-8. Upgrade durable records and ordinary headless continuation to record schema `3`, authoritative stored-catalog projection, compatible current tuning, exact uncertain-attempt settings, and fail-closed legacy rejection in one commit.
-9. Make fresh and selected interactive sessions use the durable UUID, lease, turn-zero settlement, per-turn write-ahead, restoration, and cross-front-end hand-off boundaries, with focused interactive integration tests in one commit.
-10. Update public documentation, CLI help, configuration migration guidance, changelog, and package dependency floor for explicit roles and session players in one commit.
-11. Update deterministic release guards, packed smoke, and selected live acceptance for segmented ids, explicit sharing and isolation, cross-process retuning, and both-front session continuation in one commit.
-12. Prepare the next-major candidate metadata and run sufficient deterministic, packed, acceptance, and any conditionally required manual verification; record this intent complete and stop for review without tagging, pushing, publishing, or creating a release in one commit.
+2. Add segmented player ids, atomic complete per-call player and Captain settings with explicit provider-default selection, and an embedding-owned transactional interactive lifecycle to cligent with its governing specs and focused compatibility tests in one cligent-repository commit.
+3. Cut over the complete published workflow/runtime surface atomically: introduce canonical role bindings, invocation-scoped prompt identity, trace and runtime-snapshot schema `3`, artifact schema `2`, resolved-player concurrency, and safe token preservation in the shared runtime; migrate the playerless session-Captain plus CODE, REVIEW, and DECIDE source, GEARS, FSM, linked or bespoke runtime, registries, generated siblings, and conformance tests; and leave no public schema-1 adapter or legacy player metadata in one commit.
+   This combines the former workflow-specific tasks because a strict schema-2 factory committed before its exported workflows would make the public package unusable.
+4. Replace the launch plan's per-playbook player blocks with flat top-level players, exact role bindings, complete tuning selections, referenced-player-only projection, and pre-host concurrent-role validation, updating the starter and focused config tests in one commit.
+5. Replace root-frame token ownership and same-role inheritance with the Captain-session player ledger, explicit frame bindings, complete per-call settings, and shell snapshot schema `3`, with focused shell tests in one commit.
+6. Upgrade durable records and ordinary headless continuation to record schema `3`, authoritative stored-catalog projection, compatible current tuning, exact uncertain-attempt settings, and fail-closed legacy rejection in one commit.
+7. Make fresh and selected interactive sessions use the durable UUID, lease, turn-zero settlement, per-turn write-ahead, restoration, and cross-front-end hand-off boundaries, with focused interactive integration tests in one commit.
+8. Update public documentation, CLI help, configuration migration guidance, changelog, and package dependency floor for explicit roles and session players in one commit.
+9. Update deterministic release guards, packed smoke, and selected live acceptance for segmented ids, explicit sharing and isolation, cross-process retuning, and both-front session continuation in one commit.
+10. Prepare the next-major candidate metadata and run sufficient deterministic, packed, acceptance, and any conditionally required manual verification; record this intent complete and stop for review without tagging, pushing, publishing, or creating a release in one commit.
 
 ## Verification
 

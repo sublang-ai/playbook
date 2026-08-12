@@ -65,8 +65,8 @@ interface PlaybookSession {
 }
 
 interface PlaybookRoleBinding {
-  playerId: string;
-  promptIdentity: string;
+  readonly playerId: string;
+  readonly promptIdentity: string;
 }
 
 interface PlaybookPendingBossQuestion {
@@ -115,6 +115,30 @@ interface PlaybookPendingCall {
   callId: string;
   playbookId: string;
   childSessionId: string;
+}
+
+interface PlaybookSuspendedCall extends PlaybookPendingCall {
+  stateId: string;
+  text: string;
+  turnId?: number;
+}
+
+interface PlaybookRuntimeSnapshot {
+  schemaVersion: 3;
+  playbookId: string;
+  machine: JsonValue;
+  roleResumeTokens: { readonly [roleId: string]: string };
+  sequences: {
+    trace: number;
+    turn: number;
+    judgeCall: number;
+    playerCall: number;
+    playbookCall: number;
+    captainCall?: number;
+  };
+  state: PlaybookState;
+  pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
+  suspendedCall?: PlaybookSuspendedCall;
 }
 
 type PlaybookRunResult =
@@ -537,6 +561,14 @@ The linker shall reject an alias-shaped role declaration rather than choose a ru
 
 The runtime shall compose the actual player prompt from the state's
 `PlayerInput`.
+The shared-factory `composePlayerPrompt` seam shall receive an
+invocation-scoped `promptIdentity(roleId)` lookup as its second argument.
+The lookup shall return the current detached session binding's prompt identity,
+or the canonical local role id when bindings are absent, and shall reject an
+undeclared role.
+It shall expose neither the resolved player id nor the binding map, and the
+runtime shall not place the lookup or any value read through it in options,
+machine input, FSM context, or a persisted snapshot.
 `input.prompt` is the GEARS-derived domain prompt body and shall not be mutated, re-flowed, or treated as a place to store framework control instructions.
 A leading `>` inside that body is authored quoted-context content and shall reach the player unchanged.
 

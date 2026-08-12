@@ -57,7 +57,11 @@ function interfaceBody(src: string, name: string): string {
 }
 
 function interfaceProperties(src: string, name: string): string[] {
-  return [...interfaceBody(src, name).matchAll(/^\s*(\w+)(\??):\s*([^;]+);/gm)]
+  return [
+    ...interfaceBody(src, name).matchAll(
+      /^\s*(?:readonly\s+)?(\w+)(\??):\s*([^;]+);/gm,
+    ),
+  ]
     .map((match) => `${match[1]}${match[2]}:${normalizeType(match[3])}`)
     .sort();
 }
@@ -249,7 +253,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       interfaceProperties(linkSpec, 'CaptainResult'),
     );
     expect(callPlayerParameters(runtimeDts)).toBe(
-      'playerId:string,prompt:string,signal:AbortSignal,options:PlayerCallOptions',
+      'roleId:string,prompt:string,signal:AbortSignal,options:PlayerCallOptions',
     );
     expect(callPlayerParameters(runtimeDts)).toBe(
       callPlayerParameters(linkSpec),
@@ -306,6 +310,29 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(interfaceProperties(runtimeDts, 'PlaybookPendingCall')).toEqual(
       interfaceProperties(linkSpec, 'PlaybookPendingCall'),
     );
+    expect(interfaceProperties(runtimeDts, 'PlaybookRoleBinding')).toEqual([
+      'playerId:string',
+      'promptIdentity:string',
+    ]);
+    expect(interfaceProperties(runtimeDts, 'PlaybookRoleBinding')).toEqual(
+      interfaceProperties(linkSpec, 'PlaybookRoleBinding'),
+    );
+    expect(
+      interfaceProperties(runtimeSource, 'PlaybookPendingBossQuestion'),
+    ).toEqual([
+      "asker:{kind:'captain'}|{kind:'role'",
+      'question:string',
+      'questionId:string',
+      'sourceItem?:string',
+    ]);
+    expect(
+      interfaceProperties(runtimeSource, 'PlaybookPendingBossQuestion'),
+    ).toEqual(interfaceProperties(linkSpec, 'PlaybookPendingBossQuestion'));
+    for (const source of [runtimeSource, linkSpec]) {
+      expect(interfaceBody(source, 'PlaybookPendingBossQuestion')).toMatch(
+        /asker:\s*\{\s*kind:\s*'captain';?\s*\}\s*\|\s*\{\s*kind:\s*'role';\s*roleId:\s*string;?\s*\}/,
+      );
+    }
     expect(runtimeDts).toMatch(
       /interface PlaybookSuspendedCall extends PlaybookPendingCall/,
     );
@@ -315,9 +342,9 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'turnId?:number',
     ]);
     expect(
-      normalizeType(typeAliasBody(runtimeDts, 'PlaybookRuntimeSnapshot')),
+      normalizeType(interfaceBody(runtimeSource, 'PlaybookRuntimeSnapshot')),
     ).toBe(
-      'PlaybookRuntimeSnapshotFields&({schemaVersion:1;suspendedCall?:never}|{schemaVersion:2;suspendedCall?:PlaybookSuspendedCall})',
+      normalizeType(interfaceBody(linkSpec, 'PlaybookRuntimeSnapshot')),
     );
     expect(interfaceProperties(runtimeDts, 'PlaybookCallRequest')).toEqual([
       'callId:string',
@@ -342,6 +369,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'playbookId:string',
       'playerSessions?:PlayerSessionStore',
       'ports:PlaybookPorts',
+      'roleBindings?:Readonly<Record<string,PlaybookRoleBinding>>',
       'rootSessionId:string',
       'sessionId:string',
     ]);
@@ -353,13 +381,13 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
         parameters: 'tokens:Readonly<Record<string,string>>',
         result: 'void',
       },
-      select: { parameters: 'playerId:string', result: 'string|false' },
+      select: { parameters: 'roleId:string', result: 'string|false' },
       snapshot: {
         parameters: '',
         result: 'Readonly<Record<string,string>>',
       },
       update: {
-        parameters: 'playerId:string,resumeToken?:string',
+        parameters: 'roleId:string,resumeToken?:string',
         result: 'void',
       },
     };
@@ -419,7 +447,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'payload:JsonValue',
       'playbookId:string',
       'rootSessionId:string',
-      'schemaVersion:2',
+      'schemaVersion:3',
       'sequence:number',
       'sessionId:string',
       'timestamp:number',
@@ -501,6 +529,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     for (const name of [
       'PlayerResult',
       'PlayerCallOptions',
+      'PlaybookRoleBinding',
       'PlayerSessionStore',
       'CaptainResult',
       'CaptainCallOptions',
@@ -514,6 +543,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'PlaybookPorts',
       'PlaybookSession',
       'PlaybookTraceEvent',
+      'PlaybookRuntimeSnapshot',
       'PlaybookRuntime',
     ]) {
       expect(runtimeDts).toMatch(new RegExp(`export interface ${name}\\b`));
@@ -524,7 +554,6 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'PlaybookCallResult',
       'PlaybookCallStart',
       'PlaybookRunResult',
-      'PlaybookRuntimeSnapshot',
       'PlaybookControlReceipt',
       'PlaybookTraceType',
       'PlaybookRuntimeFactory',

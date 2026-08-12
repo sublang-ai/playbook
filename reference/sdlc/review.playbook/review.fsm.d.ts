@@ -1,22 +1,22 @@
-type Player = 'Coder' | 'Reviewer';
+type Role = 'coder' | 'reviewer';
 type JumpableStateId = 'reviewInitial';
 export type ResumableStateId = 'reviewInitial' | 'addressFindings' | 'reviewAfterCommit' | 'reviewAfterRebuttal';
 export interface PendingBossQuestion {
     questionId: ResumableStateId;
     resumeStateId: ResumableStateId;
     sourceItem: `REVIEW-${1 | 2 | 3 | 4}`;
-    player: Player;
+    asker: {
+        readonly kind: 'role';
+        readonly roleId: Role;
+    };
     question: string;
 }
 export interface ReviewOutput {
     approvedCommit: 'latest';
     noUnsettledFindings: true;
 }
-export interface ReviewInput {
-    coderLlm: string;
-    reviewerLlm: string;
-}
-export interface ReviewContext extends ReviewInput {
+export type ReviewInput = Readonly<Record<string, never>>;
+export interface ReviewContext {
     callerInput?: string;
     reviewerOutput?: string;
     coderOutput?: string;
@@ -39,14 +39,12 @@ export type ReviewEvent = {
 export interface PlayerInput {
     stateId: ResumableStateId;
     sourceItem: `REVIEW-${1 | 2 | 3 | 4}`;
-    player: Player;
+    role: Role;
     prompt: string;
     result: Readonly<Record<string, string>>;
     callerInput?: string;
     reviewerOutput?: string;
     coderOutput?: string;
-    coderLlm?: string;
-    reviewerLlm?: string;
     pendingBossQuestion?: PendingBossQuestion;
     bossReply?: string;
 }
@@ -151,7 +149,7 @@ export declare const reviewMachine: import("xstate").StateMachine<ReviewContext,
 } | {
     type: "restartInitialReview";
     params: unknown;
-}, never, "done" | "failed" | "awaitBossReply" | "ready" | "reviewInitial" | "addressFindings" | "reviewAfterCommit" | "reviewAfterRebuttal", string, ReviewInput, ReviewOutput, import("xstate").EventObject, import("xstate").MetaObject, {
+}, never, "done" | "failed" | "awaitBossReply" | "ready" | "reviewInitial" | "addressFindings" | "reviewAfterCommit" | "reviewAfterRebuttal", string, Readonly<Record<string, never>>, ReviewOutput, import("xstate").EventObject, import("xstate").MetaObject, {
     id: "review";
     states: {
         readonly ready: {

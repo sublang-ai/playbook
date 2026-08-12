@@ -268,6 +268,25 @@ function capturedSessionStore(descriptors) {
         restore: method('restore'),
     });
 }
+function capturedRoleBindings(descriptors) {
+    const captured = snapshotJsonValue(capturedDataValue(descriptors, 'roleBindings', 'playbook session roleBindings'), 'playbook session roleBindings');
+    if (!isRecord(captured)) {
+        throw new TypeError('playbook session roleBindings must be an object');
+    }
+    const bindings = {};
+    for (const [roleId, value] of Object.entries(captured)) {
+        requireNonEmptyString(roleId, 'playbook session roleBindings role id');
+        if (!isRecord(value)) {
+            throw new TypeError(`playbook session roleBindings.${roleId} must be an object`);
+        }
+        rejectUnknownKeys(value, ['playerId', 'promptIdentity'], `playbook session roleBindings.${roleId}`);
+        defineEnumerableDataProperty(bindings, roleId, Object.freeze({
+            playerId: requireNonEmptyString(value.playerId, `playbook session roleBindings.${roleId}.playerId`),
+            promptIdentity: requireNonEmptyString(value.promptIdentity, `playbook session roleBindings.${roleId}.promptIdentity`),
+        }));
+    }
+    return Object.freeze(bindings);
+}
 /** Validate session causality and detach its immutable identity from the host. */
 export function snapshotPlaybookSession(session) {
     if (!isRecord(session)) {
@@ -287,6 +306,7 @@ export function snapshotPlaybookSession(session) {
     const hasParentSessionId = Object.prototype.hasOwnProperty.call(sessionDescriptors, 'parentSessionId');
     const hasParentCallId = Object.prototype.hasOwnProperty.call(sessionDescriptors, 'parentCallId');
     const hasPlayerSessions = Object.prototype.hasOwnProperty.call(sessionDescriptors, 'playerSessions');
+    const hasRoleBindings = Object.prototype.hasOwnProperty.call(sessionDescriptors, 'roleBindings');
     let parentSessionId;
     let parentCallId;
     if (depth === 0) {
@@ -320,6 +340,9 @@ export function snapshotPlaybookSession(session) {
     const playerSessions = hasPlayerSessions
         ? capturedSessionStore(sessionDescriptors)
         : undefined;
+    const roleBindings = hasRoleBindings
+        ? capturedRoleBindings(sessionDescriptors)
+        : undefined;
     return Object.freeze({
         sessionId,
         playbookId,
@@ -327,6 +350,7 @@ export function snapshotPlaybookSession(session) {
         ...(parentSessionId === undefined ? {} : { parentSessionId }),
         ...(parentCallId === undefined ? {} : { parentCallId }),
         depth,
+        ...(roleBindings === undefined ? {} : { roleBindings }),
         ...(playerSessions === undefined ? {} : { playerSessions }),
         ports,
     });
@@ -548,9 +572,10 @@ function snapshotSuspendedCall(value, path = 'runtime snapshot suspendedCall') {
     }
     return Object.freeze(call);
 }
-// DR-014 §1 / DR-031 §5: validate and detach a host-supplied runtime
-// snapshot before restore touches any state. A suspended schema-2 call is
-// rejected unless the restore path explicitly promises to seed and claim it.
+// DR-014 §1 / DR-031 §5 / DR-032: validate and detach a host-supplied
+// schema-3 runtime snapshot before restore touches any state. A suspended
+// call is rejected unless the restore path explicitly promises to seed and
+// claim it; older schemas are rejected rather than guessing role identity.
 export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options = {}) {
     const snapshot = snapshotJsonValue(value, 'runtime snapshot');
     if (!isRecord(snapshot)) {
@@ -566,25 +591,21 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
         throw new TypeError('runtime snapshot validation options.allowSuspendedCall must be boolean');
     }
     const allowSuspendedCall = capturedOptions.allowSuspendedCall ?? false;
-    if (snapshot.schemaVersion !== 1 && snapshot.schemaVersion !== 2) {
-        throw new TypeError(`runtime snapshot schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 1 or 2)`);
+    if (snapshot.schemaVersion !== 3) {
+        throw new TypeError(`runtime snapshot schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 3)`);
     }
-    const schemaVersion = snapshot.schemaVersion;
     rejectUnknownKeys(snapshot, [
         'schemaVersion',
         'playbookId',
         'machine',
-        'playerResumeTokens',
+        'roleResumeTokens',
         'sequences',
         'state',
         'pendingBossQuestions',
         'suspendedCall',
     ], 'runtime snapshot');
-    if (schemaVersion === 1 && own(snapshot, 'suspendedCall')) {
-        throw new TypeError('runtime snapshot schemaVersion 1 must not carry suspendedCall');
-    }
     let suspendedCall;
-    if (schemaVersion === 2 && own(snapshot, 'suspendedCall')) {
+    if (own(snapshot, 'suspendedCall')) {
         suspendedCall = snapshotSuspendedCall(snapshot.suspendedCall);
         if (!allowSuspendedCall) {
             throw new TypeError('runtime snapshot suspendedCall requires a restore path that explicitly allows it');
@@ -598,12 +619,12 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
         throw new TypeError('runtime snapshot machine must be an object');
     }
     const machine = snapshot.machine;
-    if (!isRecord(snapshot.playerResumeTokens)) {
-        throw new TypeError('runtime snapshot playerResumeTokens must be an object');
+    if (!isRecord(snapshot.roleResumeTokens)) {
+        throw new TypeError('runtime snapshot roleResumeTokens must be an object');
     }
-    const playerResumeTokens = {};
-    for (const [playerId, token] of Object.entries(snapshot.playerResumeTokens)) {
-        defineEnumerableDataProperty(playerResumeTokens, playerId, requireNonEmptyString(token, `runtime snapshot playerResumeTokens.${playerId}`));
+    const roleResumeTokens = {};
+    for (const [roleId, token] of Object.entries(snapshot.roleResumeTokens)) {
+        defineEnumerableDataProperty(roleResumeTokens, requireNonEmptyString(roleId, 'runtime snapshot roleResumeTokens role id'), requireNonEmptyString(token, `runtime snapshot roleResumeTokens.${roleId}`));
     }
     if (!isRecord(snapshot.sequences)) {
         throw new TypeError('runtime snapshot sequences must be an object');
@@ -627,7 +648,7 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
     validateState(snapshot.state, 'runtime snapshot state');
     const state = snapshot.state;
     if (state.tags.includes(SUSPENDED_TAG) && suspendedCall === undefined) {
-        throw new TypeError(`runtime snapshot state tagged ${SUSPENDED_TAG} requires schemaVersion 2 suspendedCall`);
+        throw new TypeError(`runtime snapshot state tagged ${SUSPENDED_TAG} requires suspendedCall`);
     }
     if (suspendedCall) {
         if (sequences.playbookCall === 0) {
@@ -654,10 +675,28 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
         const path = `runtime snapshot pendingBossQuestions[${index}]`;
         if (!isRecord(entry))
             throw new TypeError(`${path} must be an object`);
-        rejectUnknownKeys(entry, ['questionId', 'player', 'question', 'sourceItem'], path);
+        rejectUnknownKeys(entry, ['questionId', 'asker', 'question', 'sourceItem'], path);
+        if (!isRecord(entry.asker)) {
+            throw new TypeError(`${path}.asker must be an object`);
+        }
+        let asker;
+        if (entry.asker.kind === 'captain') {
+            rejectUnknownKeys(entry.asker, ['kind'], `${path}.asker`);
+            asker = Object.freeze({ kind: 'captain' });
+        }
+        else if (entry.asker.kind === 'role') {
+            rejectUnknownKeys(entry.asker, ['kind', 'roleId'], `${path}.asker`);
+            asker = Object.freeze({
+                kind: 'role',
+                roleId: requireNonEmptyString(entry.asker.roleId, `${path}.asker.roleId`),
+            });
+        }
+        else {
+            throw new TypeError(`${path}.asker.kind must be "captain" or "role"`);
+        }
         const question = {
             questionId: requireNonEmptyString(entry.questionId, `${path}.questionId`),
-            player: requireNonEmptyString(entry.player, `${path}.player`),
+            asker,
             question: requireNonEmptyString(entry.question, `${path}.question`),
             ...(entry.sourceItem === undefined
                 ? {}
@@ -670,16 +709,13 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
     const fields = {
         playbookId,
         machine,
-        playerResumeTokens: Object.freeze(playerResumeTokens),
+        roleResumeTokens: Object.freeze(roleResumeTokens),
         sequences: Object.freeze(sequences),
         state,
         pendingBossQuestions: Object.freeze(pendingBossQuestions),
     };
-    if (schemaVersion === 1) {
-        return Object.freeze({ schemaVersion: 1, ...fields });
-    }
     return Object.freeze({
-        schemaVersion: 2,
+        schemaVersion: 3,
         ...fields,
         ...(suspendedCall === undefined ? {} : { suspendedCall }),
     });
@@ -773,6 +809,9 @@ export function validatePlayerResult(value, path = 'player result') {
     rejectUnknownKeys(result, ['status', 'resumeToken', 'finalText', 'error'], path);
     validateRunStatus(result.status, `${path}.status`);
     validateOptionalString(result, 'resumeToken', path);
+    if (result.resumeToken !== undefined) {
+        requireNonEmptyString(result.resumeToken, `${path}.resumeToken`);
+    }
     validateOptionalString(result, 'finalText', path);
     validateOptionalString(result, 'error', path);
     return result;

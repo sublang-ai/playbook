@@ -138,10 +138,10 @@ function runtimeSnapshot(
 ): PlaybookRuntimeSnapshot {
   const state = activeState('playbook.parked');
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     playbookId,
     machine: { value: state.value, status: state.status },
-    playerResumeTokens: {},
+    roleResumeTokens: {},
     sequences: {
       trace: 0,
       turn,
@@ -228,7 +228,9 @@ function nestedEntries(events: string[]) {
     id: 'code',
     command: 'code',
     intent: 'implement with review',
+    artifactSchema: 2 as const,
     requiredRoleIds: ['coder'],
+    concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
     createRuntime(): PlaybookRuntime {
       let session: PlaybookSession;
@@ -285,7 +287,9 @@ function nestedEntries(events: string[]) {
     id: 'review',
     command: 'review',
     intent: 'review work',
+    artifactSchema: 2 as const,
     requiredRoleIds: ['coder', 'reviewer'],
+    concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
     createRuntime(): PlaybookRuntime {
       let session: PlaybookSession;
@@ -345,7 +349,9 @@ function nestedParkedEntries(
     id: 'code',
     command: 'code',
     intent: 'park on nested review',
+    artifactSchema: 2 as const,
     requiredRoleIds: ['coder'],
+    concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
     createRuntime(): PlaybookRuntime {
       let session: PlaybookSession;
@@ -366,10 +372,10 @@ function nestedParkedEntries(
         },
         exportSnapshot() {
           return {
-            schemaVersion: 2,
+            schemaVersion: 3,
             playbookId: 'code',
             machine: { value: state.value, status: state.status },
-            playerResumeTokens: {},
+            roleResumeTokens: {},
             sequences: {
               trace: 0,
               turn: turnCount,
@@ -435,7 +441,9 @@ function nestedParkedEntries(
     id: 'review',
     command: 'review',
     intent: 'park then accept exact Boss reply',
+    artifactSchema: 2 as const,
     requiredRoleIds: ['coder', 'reviewer'],
+    concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,
     createRuntime(): PlaybookRuntime {
       let state = activeState();
@@ -453,10 +461,10 @@ function nestedParkedEntries(
         },
         exportSnapshot() {
           return {
-            schemaVersion: 2,
+            schemaVersion: 3,
             playbookId: 'review',
             machine: { value: state.value, status: state.status },
-            playerResumeTokens: {},
+            roleResumeTokens: {},
             sequences: {
               trace: 0,
               turn: turnCount,
@@ -2144,7 +2152,9 @@ const active = {
 };
 export default {
   id: 'fixture', command: 'fixture', intent: 'filesystem fixture',
+  artifactSchema: 2,
   requiredRoleIds: [], validateOptions(value) { return value; },
+  concurrentRoleSets: [],
   createRuntime() {
     return {
       async init() {},

@@ -6,7 +6,7 @@
 
 import { assign, fromPromise, setup } from 'xstate';
 
-type Player = 'Coder' | 'Reviewer';
+type Role = 'coder' | 'reviewer';
 
 type JumpableStateId = 'reviewInitial';
 
@@ -20,7 +20,7 @@ export interface PendingBossQuestion {
   questionId: ResumableStateId;
   resumeStateId: ResumableStateId;
   sourceItem: `REVIEW-${1 | 2 | 3 | 4}`;
-  player: Player;
+  asker: { readonly kind: 'role'; readonly roleId: Role };
   question: string;
 }
 
@@ -29,12 +29,9 @@ export interface ReviewOutput {
   noUnsettledFindings: true;
 }
 
-export interface ReviewInput {
-  coderLlm: string;
-  reviewerLlm: string;
-}
+export type ReviewInput = Readonly<Record<string, never>>;
 
-export interface ReviewContext extends ReviewInput {
+export interface ReviewContext {
   callerInput?: string;
   reviewerOutput?: string;
   coderOutput?: string;
@@ -59,14 +56,12 @@ export type ReviewEvent =
 export interface PlayerInput {
   stateId: ResumableStateId;
   sourceItem: `REVIEW-${1 | 2 | 3 | 4}`;
-  player: Player;
+  role: Role;
   prompt: string;
   result: Readonly<Record<string, string>>;
   callerInput?: string;
   reviewerOutput?: string;
   coderOutput?: string;
-  coderLlm?: string;
-  reviewerLlm?: string;
   pendingBossQuestion?: PendingBossQuestion;
   bossReply?: string;
 }
@@ -183,12 +178,12 @@ const stateDescriptions = {
 
 const playbookMeta = <StateId extends keyof typeof stateDescriptions>(
   stateId: StateId,
-  player?: Player,
+  role?: Role,
 ) => ({
   playbook: {
     stateId,
     description: stateDescriptions[stateId],
-    ...(player === undefined ? {} : { player }),
+    ...(role === undefined ? {} : { role }),
   },
 });
 
@@ -199,13 +194,28 @@ const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
 const stateMetadata = {
-  reviewInitial: { sourceItem: 'REVIEW-1', player: 'Reviewer' },
-  addressFindings: { sourceItem: 'REVIEW-2', player: 'Coder' },
-  reviewAfterCommit: { sourceItem: 'REVIEW-3', player: 'Reviewer' },
-  reviewAfterRebuttal: { sourceItem: 'REVIEW-4', player: 'Reviewer' },
+  reviewInitial: {
+    sourceItem: 'REVIEW-1',
+    asker: { kind: 'role', roleId: 'reviewer' },
+  },
+  addressFindings: {
+    sourceItem: 'REVIEW-2',
+    asker: { kind: 'role', roleId: 'coder' },
+  },
+  reviewAfterCommit: {
+    sourceItem: 'REVIEW-3',
+    asker: { kind: 'role', roleId: 'reviewer' },
+  },
+  reviewAfterRebuttal: {
+    sourceItem: 'REVIEW-4',
+    asker: { kind: 'role', roleId: 'reviewer' },
+  },
 } as const satisfies Record<
   ResumableStateId,
-  { sourceItem: `REVIEW-${1 | 2 | 3 | 4}`; player: Player }
+  {
+    sourceItem: `REVIEW-${1 | 2 | 3 | 4}`;
+    asker: { readonly kind: 'role'; readonly roleId: Role };
+  }
 >;
 
 const playerPlaceholder = fromPromise<PlayerOutput, PlayerInput>(async () => {
@@ -391,10 +401,7 @@ export const reviewMachine = setup({
   },
 }).createMachine({
   id: 'review',
-  context: ({ input }) => ({
-    coderLlm: input.coderLlm,
-    reviewerLlm: input.reviewerLlm,
-  }),
+  context: {},
   initial: 'ready',
   on: {
     BOSS_INTERRUPT: {
@@ -421,14 +428,14 @@ export const reviewMachine = setup({
     reviewInitial: {
       id: 'reviewInitial',
       description: stateDescriptions.reviewInitial,
-      meta: playbookMeta('reviewInitial', 'Reviewer'),
+      meta: playbookMeta('reviewInitial', 'reviewer'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
         input: ({ context }): PlayerInput => ({
           stateId: 'reviewInitial',
           sourceItem: 'REVIEW-1',
-          player: 'Reviewer',
+          role: 'reviewer',
           prompt: INITIAL_REVIEW_PROMPT,
           result: REVIEW_RESULTS,
           callerInput: context.callerInput,
@@ -461,19 +468,17 @@ export const reviewMachine = setup({
     addressFindings: {
       id: 'addressFindings',
       description: stateDescriptions.addressFindings,
-      meta: playbookMeta('addressFindings', 'Coder'),
+      meta: playbookMeta('addressFindings', 'coder'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
         input: ({ context }): PlayerInput => ({
           stateId: 'addressFindings',
           sourceItem: 'REVIEW-2',
-          player: 'Coder',
+          role: 'coder',
           prompt: CODER_DISPOSITION_PROMPT,
           result: CODER_RESULTS,
           reviewerOutput: context.reviewerOutput,
-          coderLlm: context.coderLlm,
-          reviewerLlm: context.reviewerLlm,
           pendingBossQuestion: context.pendingBossQuestion,
           bossReply: context.bossReply,
         }),
@@ -503,14 +508,14 @@ export const reviewMachine = setup({
     reviewAfterCommit: {
       id: 'reviewAfterCommit',
       description: stateDescriptions.reviewAfterCommit,
-      meta: playbookMeta('reviewAfterCommit', 'Reviewer'),
+      meta: playbookMeta('reviewAfterCommit', 'reviewer'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
         input: ({ context }): PlayerInput => ({
           stateId: 'reviewAfterCommit',
           sourceItem: 'REVIEW-3',
-          player: 'Reviewer',
+          role: 'reviewer',
           prompt: POST_COMMIT_REVIEW_PROMPT,
           result: REVIEW_RESULTS,
           coderOutput: context.coderOutput,
@@ -543,14 +548,14 @@ export const reviewMachine = setup({
     reviewAfterRebuttal: {
       id: 'reviewAfterRebuttal',
       description: stateDescriptions.reviewAfterRebuttal,
-      meta: playbookMeta('reviewAfterRebuttal', 'Reviewer'),
+      meta: playbookMeta('reviewAfterRebuttal', 'reviewer'),
       tags: ['playbook.busy'],
       invoke: {
         src: 'player',
         input: ({ context }): PlayerInput => ({
           stateId: 'reviewAfterRebuttal',
           sourceItem: 'REVIEW-4',
-          player: 'Reviewer',
+          role: 'reviewer',
           prompt: REBUTTAL_REVIEW_PROMPT,
           result: REBUTTAL_RESULTS,
           coderOutput: context.coderOutput,

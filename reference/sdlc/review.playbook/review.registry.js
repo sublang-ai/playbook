@@ -44,30 +44,17 @@ export function validateReviewOptions(optionSlice) {
     }
     return Object.freeze({});
 }
-function playerIdentity(players, id) {
-    const player = players.find((entry) => entry.id === id);
-    const identity = player?.model ?? player?.adapter;
-    if (identity === undefined || identity.trim().length === 0) {
-        throw new Error(`REVIEW requires configured player ${id}`);
-    }
-    return identity;
-}
-export function createReviewRuntimeOptions({ captainOptions, players, }) {
-    validateReviewOptions(captainOptions);
-    return {
-        coderLlm: playerIdentity(players, 'coder'),
-        reviewerLlm: playerIdentity(players, 'reviewer'),
-    };
-}
 export const reviewPlaybookRegistryEntry = {
     id: 'review',
     command: 'review',
     intent: 'review the latest commit until no material correctness or spec findings remain',
+    artifactSchema: 2,
     requiredRoleIds: ['coder', 'reviewer'],
+    concurrentRoleSets: [],
     summaryPolicy: reviewSummaryPolicy,
     validateOptions: validateReviewOptions,
     createRuntime(options) {
-        return createPlaybookRuntime(createReviewRuntimeOptions(options));
+        return createPlaybookRuntime(options);
     },
 };
 export default reviewPlaybookRegistryEntry;

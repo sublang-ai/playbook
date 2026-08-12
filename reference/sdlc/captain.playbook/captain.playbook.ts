@@ -31,7 +31,7 @@
 //                deterministic entry mapping, the controller captain-call
 //                strategy with its single corrective re-ask (CAPPLAY-18),
 //                controller-port submission, and status formatting.
-// Compat:        spec.compat = { artifactSchema: 1, runtimeAbi: 1 }
+// Compat:        spec.compat = { artifactSchema: 2, runtimeAbi: 1 }
 //                (DR-022; checked at construction by the loading engine).
 
 import {
@@ -798,7 +798,7 @@ export const _internal = {
 // describe/apply control surface — lives in @sublang/playbook/xstate-runtime.
 const runtimeSpec: XStatePlaybookRuntimeSpec<ValidatedCaptainOptions> = {
   label: 'CAPTAIN',
-  compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI },
+  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: snapshotCaptainOptions,
   machineInput: (options) => ({ enabledPlaybooks: options.enabledPlaybooks }),
   classifyBossText: (text, ports, signal, snapshotOrState, boundary, options) =>
@@ -810,7 +810,7 @@ const runtimeSpec: XStatePlaybookRuntimeSpec<ValidatedCaptainOptions> = {
       boundary,
       options,
     ) as Promise<import('xstate').EventObject | undefined>,
-  playerStates: {},
+  roleStates: {},
   classificationStatus: () => undefined,
   captainStrategy: controllerCaptainStrategy,
   // CAPPLAY-10 / PBRT-52: the Captain's own ControlView context projection —

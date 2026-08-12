@@ -8,18 +8,20 @@ export type PendingBossQuestion = {
     readonly questionId: 'runFirstPhase' | 'runIrTask';
     readonly resumeStateId: 'runFirstPhase' | 'runIrTask';
     readonly sourceItem: 'CODE-1' | 'CODE-3';
-    readonly player: 'Coder';
+    readonly asker: {
+        readonly kind: 'role';
+        readonly roleId: 'coder';
+    };
     readonly question: string;
 };
 export type PlayerInput = {
     readonly stateId: 'runFirstPhase' | 'runIrTask';
-    readonly player: 'Coder';
+    readonly role: 'coder';
     readonly sourceItem: 'CODE-1' | 'CODE-3';
     readonly prompt: string;
     readonly result: Readonly<Record<string, string>>;
     readonly callerInput: string;
     readonly runResults: string;
-    readonly coderPlayer: string;
     readonly irNumber?: string;
     readonly irTask?: string;
     readonly pendingBossQuestion?: PendingBossQuestion;
@@ -77,11 +79,9 @@ export type CodePlaybookOutput = {
     readonly error: CompactError;
 };
 export type CodingInput = {
-    readonly coderPlayer?: string;
     readonly runResults?: string;
 };
 export type CodingContext = {
-    readonly coderPlayer: string;
     readonly runResults: string;
     readonly callerInput?: string;
     readonly coderOutput?: string;

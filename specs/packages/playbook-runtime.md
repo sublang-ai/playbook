@@ -384,6 +384,7 @@ Where a factory-backed artifact supplies artifact schema `2`, the runtime shall 
 
 Where the shell constructs CODE, REVIEW, or DECIDE, the initialized runtime shall receive each local role's resolved player id and prompt identity only through the host-supplied `PlaybookSession.roleBindings` of [[playbook-captain-10](playbook-captain.md#playbook-captain-10)]; the runtime and registry shall neither derive nor override those host identities and shall not copy model or player identity into runtime options, machine input, or persisted FSM context.
 Prompt composition shall read the current role binding at invocation time, so restoring an opaque machine snapshot under compatible changed model tuning cannot retain the earlier model identity in a player prompt.
+For a factory-backed artifact, `composePlayerPrompt` shall receive only an invocation-scoped `promptIdentity(roleId)` lookup as its second argument; that lookup shall resolve the current detached binding, fall back to the canonical local role id when bindings are absent, reject undeclared roles, expose no player id or binding map, and remain absent from runtime options, machine input, FSM context, and snapshots.
 Each registry shall publish only the summary labels and handoff guards its current FSM owns, with CODE excluding REVIEW's child rounds, REVIEW labeling its review and rebuttal rounds, and DECIDE labeling its independent-proposal round.
 
 #### playbook-runtime-16
@@ -1052,7 +1053,7 @@ Host results shall fail unless they are validated, detached, and frozen before a
 
 #### playbook-runtime-60
 
-When the integration suite initializes a runtime with valid and malformed `PlaybookSession.roleBindings`, it shall fail unless the valid exact local-role map is detached for the runtime lifetime; empty identities, missing or extra local roles, and later caller mutation reject or cannot alter targeting; and the FSM options, input, context, and snapshot contain no host player id or prompt identity (verifying [[playbook-runtime-6](#playbook-runtime-6)]).
+When the integration suite initializes a runtime with valid and malformed `PlaybookSession.roleBindings`, it shall fail unless the valid exact local-role map is detached for the runtime lifetime; empty identities, missing or extra local roles, and later caller mutation reject or cannot alter targeting; the invocation-scoped prompt-identity lookup returns the detached current identity or standalone role fallback, rejects undeclared roles, and exposes no player id or binding map; and the FSM options, input, context, and snapshot contain no host player id or prompt identity (verifying [[playbook-runtime-6](#playbook-runtime-6)] and [[playbook-runtime-15](#playbook-runtime-15)]).
 
 #### playbook-runtime-56
 

@@ -3,7 +3,6 @@
 
 import createPlaybookRuntime, {
   type PlaybookRuntime,
-  type ReviewPlaybookOptions,
 } from './review.playbook.js';
 
 export interface PlaybookSummaryPolicy {
@@ -15,27 +14,18 @@ export interface PlaybookSummaryPolicy {
   ): string;
 }
 
-export interface RegistryPlayer {
-  id: string;
-  adapter?: string;
-  model?: string;
-}
-
-export interface CreateReviewRuntimeOptions {
-  captainOptions: unknown;
-  players: readonly RegistryPlayer[];
-}
-
 export type ReviewOptions = Readonly<Record<string, never>>;
 
 export interface ReviewPlaybookRegistryEntry {
   id: 'review';
   command: 'review';
   intent: string;
+  artifactSchema: 2;
   requiredRoleIds: readonly ['coder', 'reviewer'];
+  concurrentRoleSets: readonly [];
   summaryPolicy: PlaybookSummaryPolicy;
-  validateOptions(captainOptions: unknown): ReviewOptions;
-  createRuntime(options: CreateReviewRuntimeOptions): PlaybookRuntime;
+  validateOptions(optionSlice: unknown): ReviewOptions;
+  createRuntime(options: ReviewOptions): PlaybookRuntime;
 }
 
 export const reviewStateCountLabels = {
@@ -99,39 +89,18 @@ export function validateReviewOptions(optionSlice: unknown): ReviewOptions {
   return Object.freeze({});
 }
 
-function playerIdentity(
-  players: readonly RegistryPlayer[],
-  id: 'coder' | 'reviewer',
-): string {
-  const player = players.find((entry) => entry.id === id);
-  const identity = player?.model ?? player?.adapter;
-  if (identity === undefined || identity.trim().length === 0) {
-    throw new Error(`REVIEW requires configured player ${id}`);
-  }
-  return identity;
-}
-
-export function createReviewRuntimeOptions({
-  captainOptions,
-  players,
-}: CreateReviewRuntimeOptions): ReviewPlaybookOptions {
-  validateReviewOptions(captainOptions);
-  return {
-    coderLlm: playerIdentity(players, 'coder'),
-    reviewerLlm: playerIdentity(players, 'reviewer'),
-  };
-}
-
 export const reviewPlaybookRegistryEntry: ReviewPlaybookRegistryEntry = {
   id: 'review',
   command: 'review',
   intent:
     'review the latest commit until no material correctness or spec findings remain',
+  artifactSchema: 2,
   requiredRoleIds: ['coder', 'reviewer'],
+  concurrentRoleSets: [],
   summaryPolicy: reviewSummaryPolicy,
   validateOptions: validateReviewOptions,
   createRuntime(options) {
-    return createPlaybookRuntime(createReviewRuntimeOptions(options));
+    return createPlaybookRuntime(options);
   },
 };
 

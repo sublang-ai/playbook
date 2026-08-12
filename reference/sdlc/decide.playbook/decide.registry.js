@@ -38,23 +38,17 @@ export function validateDecideOptions(optionSlice) {
     }
     return Object.freeze({});
 }
-function playerIdentity(players, id) {
-    const player = players.find((entry) => entry.id === id);
-    return player?.model ?? player?.adapter ?? id;
-}
-export function createDecideRuntimeOptions({ captainOptions, players, }) {
-    validateDecideOptions(captainOptions);
-    return { coderLlm: playerIdentity(players, 'coder') };
-}
 export const decidePlaybookRegistryEntry = {
     id: 'decide',
     command: 'decide',
     intent: 'turn independent Coder and Reviewer proposals into an approved spec-design commit',
+    artifactSchema: 2,
     requiredRoleIds: ['coder', 'reviewer'],
+    concurrentRoleSets: [['coder', 'reviewer']],
     summaryPolicy: decideSummaryPolicy,
     validateOptions: validateDecideOptions,
     createRuntime(options) {
-        return createPlaybookRuntime(createDecideRuntimeOptions(options));
+        return createPlaybookRuntime(options);
     },
 };
 export default decidePlaybookRegistryEntry;

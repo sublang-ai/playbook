@@ -1,11 +1,7 @@
 import type { Captain, CaptainSession } from '@sublang/cligent/tmux-play';
 import type { JsonValue, PlaybookRuntime, PlaybookRuntimeSnapshot } from '@sublang/playbook/runtime';
 import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';
-import type { PlaybookSummaryPolicy, RegistryPlayer } from './code.registry.js';
-export interface CreatePlaybookRuntimeOptions {
-    captainOptions: unknown;
-    players: readonly RegistryPlayer[];
-}
+import type { PlaybookSummaryPolicy } from './code.registry.js';
 export interface PlaybookCaptainDeps {
     loadModule?: (specifier: string) => Promise<unknown>;
     createSessionId?: () => string;
@@ -22,10 +18,12 @@ export interface PlaybookCaptainRegistryEntry {
     id: string;
     command: string;
     intent: string;
+    artifactSchema: 2;
     requiredRoleIds: readonly string[];
+    concurrentRoleSets: readonly (readonly string[])[];
     summaryPolicy?: PlaybookSummaryPolicy;
-    validateOptions(captainOptions: unknown): unknown;
-    createRuntime(options: CreatePlaybookRuntimeOptions): PlaybookRuntime;
+    validateOptions(optionSlice: unknown): unknown;
+    createRuntime(options: unknown): PlaybookRuntime;
 }
 type PlaybookCaptainConversationSnapshot = {
     readonly kind: 'unopened';

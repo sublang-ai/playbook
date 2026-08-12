@@ -78,15 +78,15 @@ function isEmptyOkRetryFailure(error) {
 export const RUNTIME_ABI = 1;
 /** The linked-artifact schema versions this engine accepts (DR-022). */
 export const SUPPORTED_ARTIFACT_SCHEMAS = Object.freeze([
-    1,
+    2,
 ]);
 // PBRT-50: validate a declaration against the loaded engine, schema first,
-// so one clear diagnostic covers a fully skewed artifact. Absent means a
-// legacy artifact emitted before the DR-022 contract; those must keep
-// loading unchanged (DR-019 §4), so there is nothing to check.
+// so one clear diagnostic covers a fully skewed artifact. Declaration-free
+// artifacts are schema 1 and cannot be interpreted as local-role artifacts.
 function assertRuntimeCompat(compat, label) {
-    if (compat === undefined)
-        return;
+    if (compat === undefined) {
+        throw new TypeError(`${label} spec.compat is required for local-role artifacts`);
+    }
     if (compat === null || typeof compat !== 'object') {
         throw new TypeError(`${label} spec.compat must be an object`);
     }
@@ -249,15 +249,31 @@ export function pendingBossQuestionFromContext(context) {
     if (typeof candidate.questionId !== 'string' ||
         typeof candidate.resumeStateId !== 'string' ||
         typeof candidate.sourceItem !== 'string' ||
-        typeof candidate.player !== 'string' ||
+        !isPlainObject(candidate.asker) ||
         typeof candidate.question !== 'string') {
+        return undefined;
+    }
+    let asker;
+    if (candidate.asker.kind === 'captain') {
+        if (Object.keys(candidate.asker).some((key) => key !== 'kind')) {
+            return undefined;
+        }
+        asker = { kind: 'captain' };
+    }
+    else if (candidate.asker.kind === 'role' &&
+        typeof candidate.asker.roleId === 'string' &&
+        candidate.asker.roleId.trim().length > 0 &&
+        Object.keys(candidate.asker).every((key) => key === 'kind' || key === 'roleId')) {
+        asker = { kind: 'role', roleId: candidate.asker.roleId };
+    }
+    else {
         return undefined;
     }
     return {
         questionId: candidate.questionId,
         resumeStateId: candidate.resumeStateId,
         sourceItem: candidate.sourceItem,
-        player: candidate.player,
+        asker,
         question: candidate.question,
     };
 }
@@ -339,10 +355,6 @@ export function defaultComposeCaptainPrompt(input, placeholderFields = {}) {
     blocks.push(body);
     return blocks.join('\n\n');
 }
-/** Default player binding: each player to its lowercased name. */
-export function defaultResolvePlayerId(input) {
-    return input.player.toLowerCase();
-}
 /**
  * Default required-field extraction (slc/link.md §Captain adjudication).
  * Limited to the description's `Output shall include` / `输出应包含` clause;
@@ -375,7 +387,7 @@ export function defaultBuildJudgePrompt(input, finalText) {
         'seek external evidence. Decide only from the supplied player output ' +
         'and outcome descriptions. Reply with exactly one JSON object and no prose.');
     lines.push('');
-    lines.push(`The ${input.player} just produced this output:`);
+    lines.push(`The ${input.role} role just produced this output:`);
     lines.push('');
     lines.push('```');
     lines.push(finalText);
@@ -447,11 +459,19 @@ function validateBossReplyOutput(input, output, resumableStateIds) {
 export function createPlayerBridge(spec, ports, getActiveSignal, boundary, onControlPlaneError) {
     return fromPromise(async ({ input, signal }) => {
         const activeSignal = combineAbortSignals(signal, getActiveSignal?.());
-        const playerId = spec.resolvePlayerId(input);
-        const prompt = spec.composePlayerPrompt(input);
+        let roleId;
+        let prompt;
+        try {
+            roleId = spec.resolveRoleId(input);
+            prompt = spec.composePlayerPrompt(input);
+        }
+        catch (error) {
+            onControlPlaneError?.(error);
+            throw error;
+        }
         const callPlayer = (resume) => boundary
-            ? boundary.callPlayer(input, playerId, prompt, activeSignal)
-            : ports.callPlayer(playerId, prompt, activeSignal, { resume });
+            ? boundary.callPlayer(input, roleId, prompt, activeSignal)
+            : ports.callPlayer(roleId, prompt, activeSignal, { resume });
         let result = await callPlayer(false);
         if (result.status === 'ok' && isEmptyFinalText(result.finalText)) {
             // An abort that lands between the empty first result and the
@@ -589,8 +609,8 @@ function collectInvokeSources(machine) {
     visit(machine.config);
     return sources;
 }
-function collectPlayerStatePlayers(machine) {
-    const players = new Map();
+function collectPlayerStateRoles(machine) {
+    const roles = new Map();
     const visit = (stateDef, stateKey) => {
         if (!isPlainObject(stateDef))
             return;
@@ -609,13 +629,13 @@ function collectPlayerStatePlayers(machine) {
             if (stateId.trim().length === 0) {
                 throw new TypeError('player state metadata must use a non-empty state id');
             }
-            const player = isPlainObject(playbookMeta)
-                ? playbookMeta.player
+            const role = isPlainObject(playbookMeta)
+                ? playbookMeta.role
                 : undefined;
-            if (typeof player !== 'string' || player.trim().length === 0) {
-                throw new TypeError(`player state ${stateId} meta.playbook.player must be a non-empty string`);
+            if (typeof role !== 'string' || role.trim().length === 0) {
+                throw new TypeError(`player state ${stateId} meta.playbook.role must be a non-empty string`);
             }
-            players.set(stateId, player);
+            roles.set(stateId, role);
         }
         if (isPlainObject(stateDef.states)) {
             for (const [childKey, child] of Object.entries(stateDef.states)) {
@@ -629,7 +649,7 @@ function collectPlayerStatePlayers(machine) {
             visit(stateDef, stateKey);
         }
     }
-    return players;
+    return roles;
 }
 function transitionTargets(transition) {
     const arms = Array.isArray(transition) ? transition : [transition];
@@ -774,40 +794,48 @@ function makeDefaultNormalizeTransitionEvent(transitionEventFields) {
         return snapshotJsonValue(out, 'FSM event');
     };
 }
-function snapshotPlayerStateStatuses(value, label, machine, stateDescriptions) {
-    if (value === undefined)
-        return new Map();
-    if (!isPlainObject(value)) {
-        throw new TypeError(`${label} playerStates must be an object`);
+function snapshotRoleStateStatuses(value, label, machine, stateDescriptions) {
+    if (value === undefined) {
+        throw new TypeError(`${label} roleStates must be supplied for schema 2`);
     }
-    const declared = collectPlayerStatePlayers(machine);
+    const captured = snapshotJsonValue(value, `${label} roleStates`);
+    if (!isPlainObject(captured)) {
+        throw new TypeError(`${label} roleStates must be an object`);
+    }
+    const declared = collectPlayerStateRoles(machine);
     const statuses = new Map();
-    for (const [stateId, candidate] of Object.entries(value)) {
+    for (const [stateId, candidate] of Object.entries(captured)) {
         if (!declared.has(stateId)) {
-            throw new TypeError(`${label} playerStates.${stateId} does not name a player state`);
+            throw new TypeError(`${label} roleStates.${stateId} does not name a player state`);
+        }
+        if (isPlainObject(candidate)) {
+            const extra = Object.keys(candidate).find((key) => key !== 'role' && key !== 'label');
+            if (extra !== undefined) {
+                throw new TypeError(`${label} roleStates.${stateId}.${extra} is not allowed`);
+            }
         }
         if (!isPlainObject(candidate) ||
-            typeof candidate.player !== 'string' ||
-            candidate.player.trim().length === 0 ||
+            typeof candidate.role !== 'string' ||
+            candidate.role.trim().length === 0 ||
             typeof candidate.label !== 'string' ||
             candidate.label.trim().length === 0) {
-            throw new TypeError(`${label} playerStates.${stateId} must carry non-empty player and label strings`);
+            throw new TypeError(`${label} roleStates.${stateId} must carry non-empty role and label strings`);
         }
         const expectedLabel = stateDescriptions.get(stateId);
         if (candidate.label !== expectedLabel) {
-            throw new TypeError(`${label} playerStates.${stateId}.label must equal its FSM description`);
+            throw new TypeError(`${label} roleStates.${stateId}.label must equal its FSM description`);
         }
-        if (candidate.player !== declared.get(stateId)) {
-            throw new TypeError(`${label} playerStates.${stateId}.player must equal its FSM player`);
+        if (candidate.role !== declared.get(stateId)) {
+            throw new TypeError(`${label} roleStates.${stateId}.role must equal its FSM role`);
         }
         statuses.set(stateId, {
-            player: candidate.player,
+            role: candidate.role,
             label: candidate.label,
         });
     }
     for (const stateId of declared.keys()) {
         if (!statuses.has(stateId)) {
-            throw new TypeError(`${label} playerStates must declare player state ${stateId}`);
+            throw new TypeError(`${label} roleStates must declare player state ${stateId}`);
         }
     }
     return statuses;
@@ -820,34 +848,10 @@ function settlingGuard(event) {
         ? guard
         : undefined;
 }
-function legacyStatusesForState(state, context) {
-    const stateId = state.stateId;
-    if (stateId === undefined || SUPPRESSED_ENTRY_STATES.has(stateId))
-        return [];
-    if (stateId === 'awaitBossReply') {
-        const pending = pendingBossQuestionFromContext(context);
-        return [
-            {
-                message: pending === undefined
-                    ? 'Awaiting Boss reply.'
-                    : `${pending.player} asks: ${pending.question}`,
-            },
-        ];
-    }
-    if (stateId === 'failed') {
-        const lastError = normalizeErrorFull(context.lastError);
-        return [
-            {
-                message: 'Workflow failed; awaiting Boss recovery.',
-                ...(lastError === undefined
-                    ? {}
-                    : { data: snapshotJsonValue({ lastError }, 'failed status data') }),
-            },
-        ];
-    }
-    return [{ message: `Entered ${stateId}.` }];
+function askerLabel(asker) {
+    return asker.kind === 'captain' ? 'Captain' : asker.roleId;
 }
-function makeDefaultStatusesForState(playerStates) {
+function makeDefaultStatusesForState(roleStates) {
     return (state, context, event) => {
         const statuses = [];
         const guard = settlingGuard(event);
@@ -864,10 +868,10 @@ function makeDefaultStatusesForState(playerStates) {
             }
             return [
                 ...statuses,
-                { message: `${pending.player} asks: ${pending.question}` },
+                { message: `${askerLabel(pending.asker)} asks: ${pending.question}` },
                 {
                     message: `◆ awaiting Boss reply · ${pending.resumeStateId} · ` +
-                        `${pending.player} · ${pending.sourceItem}`,
+                        `${askerLabel(pending.asker)} · ${pending.sourceItem}`,
                 },
             ];
         }
@@ -885,10 +889,10 @@ function makeDefaultStatusesForState(playerStates) {
                 },
             ];
         }
-        const playerState = playerStates.get(stateId);
-        if (playerState !== undefined) {
+        const roleState = roleStates.get(stateId);
+        if (roleState !== undefined) {
             statuses.push({
-                message: `⤷ ${playerState.player}: ${playerState.label}`,
+                message: `⤷ ${roleState.role}: ${roleState.label}`,
             });
         }
         return statuses;
@@ -1071,7 +1075,7 @@ function makeDefaultClassifyBossText(machine, entryEvent, bossEvents) {
             `Current state: ${currentState}`,
         ];
         if (pending !== undefined) {
-            lines.push(`Pending question id: ${pending.questionId}`, `Pending asking player: ${pending.player}`, `Pending Boss question: ${pending.question}`);
+            lines.push(`Pending question id: ${pending.questionId}`, `Pending asker: ${askerLabel(pending.asker)}`, `Pending Boss question: ${pending.question}`);
         }
         lines.push('', 'Allowed JSON objects:', '- { "type": "NO_ACTION" }');
         for (const contract of applicable) {
@@ -1191,6 +1195,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
     // DR-022 / PBRT-50: reject an incompatible artifact declaration before any
     // machine interpretation, against this loaded engine's own self-report.
     assertRuntimeCompat(spec.compat, label);
+    const specDescriptors = Object.getOwnPropertyDescriptors(spec);
+    if (Object.prototype.hasOwnProperty.call(specDescriptors, 'playerStates')) {
+        throw new TypeError(`${label} schema-2 artifacts must supply roleStates, not playerStates`);
+    }
+    if (Object.prototype.hasOwnProperty.call(specDescriptors, 'resolvePlayerId')) {
+        throw new TypeError(`${label} schema-2 artifacts must not derive concrete player bindings`);
+    }
     if (machineDeclaresParallelState(machine)) {
         throw new Error(`${label} uses a parallel state; the shared runtime supports only single-region FSMs`);
     }
@@ -1199,8 +1210,15 @@ export function createXStatePlaybookRuntime(machine, spec) {
     // DR-029: source state descriptions label the control actions the
     // runtime advertises through `describe()`.
     const stateDescriptions = stateDescriptionsFromMachine(machine);
-    const hasCanonicalStatusProfile = spec.playerStates !== undefined;
-    const playerStates = snapshotPlayerStateStatuses(spec.playerStates, label, machine, stateDescriptions);
+    const roleStatesDescriptor = specDescriptors.roleStates;
+    if (roleStatesDescriptor !== undefined &&
+        !Object.prototype.hasOwnProperty.call(roleStatesDescriptor, 'value')) {
+        throw new TypeError(`${label} roleStates must be an own data property`);
+    }
+    const roleStates = snapshotRoleStateStatuses(roleStatesDescriptor?.value, label, machine, stateDescriptions);
+    const declaredRoleIds = Object.freeze([
+        ...new Set([...roleStates.values()].map(({ role }) => role)),
+    ]);
     // PBRT-52: the artifact's own ControlView context projection. Nothing is
     // exported by default, so an FSM context member — including one added
     // after this artifact was linked — is private until named here. The two
@@ -1215,7 +1233,6 @@ export function createXStatePlaybookRuntime(machine, spec) {
             throw new Error(`${label} controlContextFields must not name ${field}: the control view surfaces it first-class`);
         }
     }
-    const resolvePlayerIdSpec = spec.resolvePlayerId;
     const composePlayerPrompt = spec.composePlayerPrompt ??
         ((input) => defaultComposePlayerPrompt(input, spec.placeholderFields));
     const composeCaptainPrompt = spec.composeCaptainPrompt ??
@@ -1241,13 +1258,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
     const normalizeTransitionEvent = spec.normalizeTransitionEvent ??
         makeDefaultNormalizeTransitionEvent(spec.transitionEventFields ?? []);
     const statusesForState = spec.statusesForState ??
-        (hasCanonicalStatusProfile
-            ? makeDefaultStatusesForState(playerStates)
-            : legacyStatusesForState);
+        makeDefaultStatusesForState(roleStates);
     const classificationStatus = spec.classificationStatus ??
-        (hasCanonicalStatusProfile
-            ? (event) => event.type
-            : () => undefined);
+        ((event) => event.type);
     const machineInput = spec.machineInput ?? ((options) => options);
     const scriptCwd = spec.scriptCwd ??
         ((options) => {
@@ -1294,8 +1307,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // acceptance records nothing, so a later call with that key may still
         // execute.
         const appliedReceipts = new Map();
-        const playerResumeTokens = new Map();
-        const activePlayerIds = new Set();
+        const privateResumeTokens = new Map();
+        const activePlayerKeys = new Set();
         const playbookCallTurnIds = new Map();
         // Captain and judge work share one serialized lane (slc/link.md
         // §Session lifecycle).
@@ -1306,55 +1319,143 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // Inspection callbacks enqueue a complete ordered batch synchronously;
         // imperative boundaries await their queued work directly.
         let emissionFailure;
-        function selectPlayerResume(playerId) {
+        function bindSession(nextSession) {
+            const bound = snapshotPlaybookSession(nextSession);
+            if (bound.roleBindings === undefined)
+                return bound;
+            const actual = Object.keys(bound.roleBindings).sort();
+            const expected = [...declaredRoleIds].sort();
+            const missing = expected.filter((roleId) => !actual.includes(roleId));
+            const extra = actual.filter((roleId) => !expected.includes(roleId));
+            if (missing.length > 0 || extra.length > 0) {
+                throw new TypeError(`${label} session roleBindings must cover exactly [${expected.join(', ')}]` +
+                    `${missing.length === 0 ? '' : `; missing [${missing.join(', ')}]`}` +
+                    `${extra.length === 0 ? '' : `; extra [${extra.join(', ')}]`}`);
+            }
+            return bound;
+        }
+        function requireRoleId(input) {
+            const roleId = input.role;
+            if (typeof roleId !== 'string' ||
+                roleId.trim().length === 0 ||
+                !declaredRoleIds.includes(roleId)) {
+                throw new TypeError(`${label} player input role must name a declared local role`);
+            }
+            return roleId;
+        }
+        function resolvedPlayerId(roleId) {
+            return session?.roleBindings?.[roleId]?.playerId;
+        }
+        function promptIdentity(roleId) {
+            if (!declaredRoleIds.includes(roleId)) {
+                throw new TypeError(`${label} prompt identity lookup rejected undeclared role ${roleId}`);
+            }
+            return session?.roleBindings?.[roleId]?.promptIdentity ?? roleId;
+        }
+        function composeBoundPlayerPrompt(input) {
+            let active = true;
+            const lookup = (roleId) => {
+                if (!active) {
+                    throw new Error(`${label} prompt identity lookup is no longer active`);
+                }
+                return promptIdentity(roleId);
+            };
+            try {
+                return composePlayerPrompt(input, lookup);
+            }
+            finally {
+                active = false;
+            }
+        }
+        function continuationKey(roleId, playerId) {
+            return playerId ?? roleId;
+        }
+        function roleTokensByContinuationKey(tokens) {
+            const byKey = new Map();
+            for (const [roleId, token] of Object.entries(tokens)) {
+                if (!declaredRoleIds.includes(roleId)) {
+                    throw new TypeError(`runtime role tokens contain unknown role ${roleId}`);
+                }
+                const key = continuationKey(roleId, resolvedPlayerId(roleId));
+                const existing = byKey.get(key);
+                if (existing !== undefined && existing !== token) {
+                    throw new TypeError(`runtime snapshot assigns conflicting tokens to roles bound to player ${key}`);
+                }
+                byKey.set(key, token);
+            }
+            const rolesByKey = new Map();
+            for (const roleId of declaredRoleIds) {
+                const key = continuationKey(roleId, resolvedPlayerId(roleId));
+                rolesByKey.set(key, [...(rolesByKey.get(key) ?? []), roleId]);
+            }
+            for (const [key, roles] of rolesByKey) {
+                if (roles.length < 2)
+                    continue;
+                const present = roles.filter((roleId) => tokens[roleId] !== undefined);
+                if (present.length !== 0 && present.length !== roles.length) {
+                    throw new TypeError(`runtime role tokens must project player ${key} through every aliased role [${roles.join(', ')}]`);
+                }
+            }
+            return byKey;
+        }
+        function selectPlayerResume(roleId, playerId) {
+            const key = continuationKey(roleId, playerId);
             const selected = session?.playerSessions
-                ? session.playerSessions.select(playerId)
-                : playerResumeTokens.get(playerId) ?? false;
+                ? session.playerSessions.select(roleId)
+                : privateResumeTokens.get(key) ?? false;
             if (selected !== false &&
                 (typeof selected !== 'string' || selected.trim().length === 0)) {
-                throw new TypeError(`player session store returned an invalid resume token for ${playerId}`);
+                throw new TypeError(`player session store returned an invalid resume token for role ${roleId}`);
             }
             return selected;
         }
-        function updatePlayerResume(playerId, resumeToken) {
+        function updatePlayerResume(roleId, playerId, result) {
+            const resumeToken = result.resumeToken;
+            if (resumeToken === undefined && result.status !== 'ok')
+                return;
+            const key = continuationKey(roleId, playerId);
             if (session?.playerSessions) {
-                session.playerSessions.update(playerId, resumeToken);
+                session.playerSessions.update(roleId, resumeToken);
             }
-            else if (resumeToken !== undefined && resumeToken.trim().length > 0) {
-                playerResumeTokens.set(playerId, resumeToken);
+            else if (resumeToken !== undefined) {
+                privateResumeTokens.set(key, resumeToken);
             }
             else {
-                playerResumeTokens.delete(playerId);
+                privateResumeTokens.delete(key);
             }
         }
-        function snapshotPlayerResumeTokens() {
-            const raw = session?.playerSessions
+        function snapshotRoleResumeTokens() {
+            const raw = snapshotJsonValue(session?.playerSessions
                 ? session.playerSessions.snapshot()
-                : Object.fromEntries(playerResumeTokens);
+                : Object.fromEntries(declaredRoleIds.flatMap((roleId) => {
+                    const token = privateResumeTokens.get(continuationKey(roleId, resolvedPlayerId(roleId)));
+                    return token === undefined ? [] : [[roleId, token]];
+                })), 'player session store snapshot');
             if (!isPlainObject(raw)) {
                 throw new TypeError('player session store snapshot must be an object');
             }
             const detached = {};
-            for (const [playerId, token] of Object.entries(raw)) {
-                if (playerId.trim().length === 0) {
-                    throw new TypeError('player session store snapshot player ids must be non-empty');
+            for (const [roleId, token] of Object.entries(raw)) {
+                if (!declaredRoleIds.includes(roleId)) {
+                    throw new TypeError(`player session store snapshot contains unknown role ${roleId}`);
                 }
                 if (typeof token !== 'string' || token.trim().length === 0) {
-                    throw new TypeError(`player session store snapshot token for ${playerId} must be a non-empty string`);
+                    throw new TypeError(`player session store snapshot token for ${roleId} must be a non-empty string`);
                 }
-                detached[playerId] = token;
+                detached[roleId] = token;
             }
+            roleTokensByContinuationKey(detached);
             return detached;
         }
-        function restorePlayerResumeTokens(tokens) {
+        function restoreRoleResumeTokens(tokens) {
+            const byKey = roleTokensByContinuationKey(tokens);
             if (session?.playerSessions) {
                 session.playerSessions.restore(tokens);
                 return;
             }
-            playerResumeTokens.clear();
-            for (const [playerId, token] of Object.entries(tokens)) {
-                playerResumeTokens.set(playerId, token);
-            }
+            privateResumeTokens.clear();
+            for (const [key, token] of byKey)
+                privateResumeTokens.set(key, token);
         }
         function enqueueEmission(fn) {
             const queued = emissionQueue.add(fn).then(() => undefined);
@@ -1399,7 +1500,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             const currentSession = requireSession();
             const safePayload = snapshotJsonValue(payload, `trace ${type} payload`);
             return {
-                schemaVersion: 2,
+                schemaVersion: 3,
                 sessionId: currentSession.sessionId,
                 playbookId: currentSession.playbookId,
                 rootSessionId: currentSession.rootSessionId,
@@ -1508,15 +1609,16 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
         }
         const boundary = {
-            async callPlayer(input, playerId, prompt, signal) {
+            async callPlayer(input, roleId, prompt, signal) {
                 // State-entry telemetry/status must precede the call they describe.
                 await drainEmissions();
                 const turnId = activeTurnId;
                 const stateId = input.stateId;
+                const playerId = resolvedPlayerId(roleId);
                 let resume;
                 try {
                     signal.throwIfAborted();
-                    resume = selectPlayerResume(playerId);
+                    resume = selectPlayerResume(roleId, playerId);
                 }
                 catch (error) {
                     if (!signal.aborted)
@@ -1525,23 +1627,24 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 const callId = `player-${++playerCallSequence}`;
                 const identity = {
-                    purpose: 'captain',
                     ...stateIdentity(stateId),
                     sourceItem: input.sourceItem,
-                    playerId,
+                    roleId,
+                    ...(playerId === undefined ? {} : { playerId }),
                     resume,
                 };
                 const position = {
                     ...(turnId !== undefined ? { turnId } : {}),
                     callId,
                 };
-                if (activePlayerIds.has(playerId)) {
-                    const error = new Error(`simultaneous calls to resolved player ${playerId} are not allowed`);
+                const playerKey = continuationKey(roleId, playerId);
+                if (activePlayerKeys.has(playerKey)) {
+                    const error = new Error(`simultaneous calls to player key ${playerKey} are not allowed`);
                     await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt }, position);
                     await emitTrace('player.call.finished', { ...identity, status: 'error', error: normalizeError(error) }, position);
                     throw error;
                 }
-                activePlayerIds.add(playerId);
+                activePlayerKeys.add(playerKey);
                 try {
                     await emitTrace('player.call.started', { ...identity, prompt }, position);
                     let rawResult;
@@ -1551,7 +1654,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         // never start after abort, so settle the already-started pair
                         // as `aborted` through the catch below.
                         signal.throwIfAborted();
-                        rawResult = await requireHostPorts().callPlayer(playerId, prompt, signal, { resume });
+                        rawResult = await requireHostPorts().callPlayer(roleId, prompt, signal, { resume });
                         // A host promise is not required to honor cancellation. Do not let
                         // a late result mutate continuity or publish a successful finish.
                         signal.throwIfAborted();
@@ -1589,10 +1692,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         throw error;
                     }
                     try {
-                        updatePlayerResume(playerId, typeof result.resumeToken === 'string' &&
-                            result.resumeToken.trim().length > 0
-                            ? result.resumeToken
-                            : undefined);
+                        updatePlayerResume(roleId, playerId, result);
                     }
                     catch (error) {
                         if (!signal.aborted)
@@ -1621,7 +1721,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     return result;
                 }
                 finally {
-                    activePlayerIds.delete(playerId);
+                    activePlayerKeys.delete(playerKey);
                 }
             },
             async callJudge(purpose, stateId, prompt, signal) {
@@ -1786,15 +1886,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 });
             },
         };
-        function resolvePlayerId(input) {
-            return resolvePlayerIdSpec
-                ? resolvePlayerIdSpec(input, boundOptions)
-                : defaultResolvePlayerId(input);
-        }
         function playerActor(ports) {
             return createPlayerBridge({
-                resolvePlayerId,
-                composePlayerPrompt,
+                resolveRoleId: requireRoleId,
+                composePlayerPrompt: composeBoundPlayerPrompt,
                 adjudication,
                 resumableStateIds,
             }, ports, () => activeSignal, boundary, (error) => {
@@ -2210,8 +2305,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     // The session-start error remains authoritative.
                 }
             }
-            playerResumeTokens.clear();
-            activePlayerIds.clear();
+            privateResumeTokens.clear();
+            activePlayerKeys.clear();
             playbookCallTurnIds.clear();
             activeEmissionCalls.clear();
             emissionQueue.clear();
@@ -2394,7 +2489,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 if (initialized || disposed || disposalPromise !== undefined) {
                     throw new Error('createPlaybookRuntime.init: already initialized');
                 }
-                const boundSession = snapshotPlaybookSession(nextSession);
+                const boundSession = bindSession(nextSession);
                 initialized = true;
                 let finishInitialization;
                 const initialization = new Promise((resolve) => {
@@ -2468,10 +2563,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     .context;
                 const pending = pendingBossQuestionFromContext(context ?? {});
                 return {
-                    schemaVersion: 2,
+                    schemaVersion: 3,
                     playbookId: session.playbookId,
                     machine: machineSnapshot,
-                    playerResumeTokens: snapshotPlayerResumeTokens(),
+                    roleResumeTokens: snapshotRoleResumeTokens(),
                     sequences: {
                         trace: traceSequence,
                         turn: turnSequence,
@@ -2488,7 +2583,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         : [
                             {
                                 questionId: pending.questionId,
-                                player: pending.player,
+                                asker: pending.asker,
                                 question: pending.question,
                                 sourceItem: pending.sourceItem,
                             },
@@ -2505,11 +2600,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 if (initialized || disposed || disposalPromise !== undefined) {
                     throw new Error('createPlaybookRuntime.restore: already initialized');
                 }
-                const boundSession = snapshotPlaybookSession(nextSession);
+                const boundSession = bindSession(nextSession);
                 const boundSnapshot = assertPlaybookRuntimeSnapshot(snapshot, boundSession.playbookId, { allowSuspendedCall: true });
-                const suspendedCall = boundSnapshot.schemaVersion === 2
-                    ? boundSnapshot.suspendedCall
-                    : undefined;
+                if (declaredActors.has('captain') &&
+                    boundSnapshot.sequences.captainCall === undefined) {
+                    throw new TypeError('runtime snapshot sequences.captainCall is required for a direct-Captain artifact');
+                }
+                const suspendedCall = boundSnapshot.suspendedCall;
                 let priorExternalPlayerTokens;
                 let externalStoreRestoreAttempted = false;
                 initialized = true;
@@ -2527,22 +2624,17 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     judgeCallSequence = boundSnapshot.sequences.judgeCall;
                     playerCallSequence = boundSnapshot.sequences.playerCall;
                     playbookCallSequence = boundSnapshot.sequences.playbookCall;
-                    captainCallSequence =
-                        boundSnapshot.sequences.captainCall ??
-                            // Legacy schema-v1 snapshots predate this dedicated counter.
-                            // Every Captain call already consumed at least one trace number,
-                            // so the global trace counter is a collision-safe id floor.
-                            boundSnapshot.sequences.trace;
+                    captainCallSequence = boundSnapshot.sequences.captainCall ?? 0;
                     // The runtime snapshot carries no apply counter (PBRT-50); every
                     // apply boundary consumed trace numbers, so the persisted trace
                     // counter is a collision-safe id floor here too, keeping
                     // `apply-<n>` call ids unique across restore.
                     applyCallSequence = boundSnapshot.sequences.trace;
                     if (boundSession.playerSessions) {
-                        priorExternalPlayerTokens = snapshotPlayerResumeTokens();
+                        priorExternalPlayerTokens = snapshotRoleResumeTokens();
                         externalStoreRestoreAttempted = true;
                     }
-                    restorePlayerResumeTokens(boundSnapshot.playerResumeTokens);
+                    restoreRoleResumeTokens(boundSnapshot.roleResumeTokens);
                     nestedBridge.prepareRestore(suspendedCall);
                     if (suspendedCall !== undefined) {
                         playbookCallTurnIds.set(suspendedCall.callId, suspendedCall.turnId);
@@ -2632,7 +2724,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         : [
                             {
                                 questionId: pending.questionId,
-                                player: pending.player,
+                                asker: pending.asker,
                                 question: pending.question,
                                 sourceItem: pending.sourceItem,
                             },
@@ -3126,9 +3218,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         // engagement tree. Child disposal must not erase a token its
                         // caller will resume. The private fallback remains runtime-owned.
                         if (session?.playerSessions === undefined) {
-                            playerResumeTokens.clear();
+                            privateResumeTokens.clear();
                         }
-                        activePlayerIds.clear();
+                        activePlayerKeys.clear();
                         playbookCallTurnIds.clear();
                         activeEmissionCalls.clear();
                         emissionQueue.clear();

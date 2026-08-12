@@ -4,6 +4,7 @@
 // This module defines only the machine, actor contracts, and typed inputs.
 // The linked runtime supplies the player and nested-playbook actors.
 import { assign, fromPromise, setup } from 'xstate';
+export const concurrentRoleSets = [['coder', 'reviewer']];
 const NEEDS_BOSS_REPLY_DESCRIPTION = "The acting agent's prose surfaces a clarifying question for Boss that the agent cannot answer alone. Output shall include `question: <verbatim question text from the acting agent's prose>`.";
 const INDEPENDENT_PROPOSAL_PROMPT = [
     '> <caller-topic>',
@@ -275,9 +276,18 @@ function resumableStates(ids) {
     }));
 }
 const stateMetadata = {
-    askCoderProposal: { sourceItem: 'DECIDE-1', player: 'Coder' },
-    askReviewerProposal: { sourceItem: 'DECIDE-2', player: 'Reviewer' },
-    commitCoderProposal: { sourceItem: 'DECIDE-3', player: 'Coder' },
+    askCoderProposal: {
+        sourceItem: 'DECIDE-1',
+        asker: { kind: 'role', roleId: 'coder' },
+    },
+    askReviewerProposal: {
+        sourceItem: 'DECIDE-2',
+        asker: { kind: 'role', roleId: 'reviewer' },
+    },
+    commitCoderProposal: {
+        sourceItem: 'DECIDE-3',
+        asker: { kind: 'role', roleId: 'coder' },
+    },
 };
 export const decideMachine = setup({
     types: {
@@ -424,9 +434,7 @@ export const decideMachine = setup({
 }).createMachine({
     id: 'decide',
     initial: 'ready',
-    context: ({ input }) => ({
-        coderLlm: input.coderLlm,
-    }),
+    context: () => ({}),
     output: ({ context }) => {
         if (context.reviewResult)
             return context.reviewResult;
@@ -486,7 +494,7 @@ export const decideMachine = setup({
                                 playbook: {
                                     stateId: 'askCoderProposal',
                                     description: 'Coder independently proposes a spec design.',
-                                    player: 'Coder',
+                                    role: 'coder',
                                 },
                             },
                             invoke: {
@@ -494,7 +502,7 @@ export const decideMachine = setup({
                                 input: ({ context }) => ({
                                     stateId: 'askCoderProposal',
                                     sourceItem: 'DECIDE-1',
-                                    player: 'Coder',
+                                    role: 'coder',
                                     prompt: INDEPENDENT_PROPOSAL_PROMPT,
                                     result: withNeedsBossReply({
                                         proposed: 'Coder completed an independent proposal. Output shall include `coderProposal: <verbatim final text>`.',
@@ -602,7 +610,7 @@ export const decideMachine = setup({
                                 playbook: {
                                     stateId: 'askReviewerProposal',
                                     description: 'Reviewer independently proposes a spec design.',
-                                    player: 'Reviewer',
+                                    role: 'reviewer',
                                 },
                             },
                             invoke: {
@@ -610,7 +618,7 @@ export const decideMachine = setup({
                                 input: ({ context }) => ({
                                     stateId: 'askReviewerProposal',
                                     sourceItem: 'DECIDE-2',
-                                    player: 'Reviewer',
+                                    role: 'reviewer',
                                     prompt: INDEPENDENT_PROPOSAL_PROMPT,
                                     result: withNeedsBossReply({
                                         proposed: 'Reviewer completed an independent proposal. Output shall include `reviewerProposal: <verbatim final text>`.',
@@ -721,7 +729,7 @@ export const decideMachine = setup({
                 playbook: {
                     stateId: 'commitCoderProposal',
                     description: 'Coder writes and commits Coder’s independent proposal.',
-                    player: 'Coder',
+                    role: 'coder',
                 },
             },
             invoke: {
@@ -729,12 +737,11 @@ export const decideMachine = setup({
                 input: ({ context }) => ({
                     stateId: 'commitCoderProposal',
                     sourceItem: 'DECIDE-3',
-                    player: 'Coder',
+                    role: 'coder',
                     prompt: COMMIT_CODER_PROMPT,
                     result: withNeedsBossReply({
                         committed: "Coder committed Coder's proposal. Output shall include `coderOutput: <verbatim final text>` and `latestCommit: <commit identity>`.",
                     }),
-                    coderLlm: context.coderLlm,
                     ...bossReplyFields(context, 'commitCoderProposal'),
                 }),
                 onDone: [

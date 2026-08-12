@@ -8,10 +8,14 @@ export interface PlayerCallOptions {
     resume: string | false;
 }
 export interface PlayerSessionStore {
-    select(playerId: string): string | false;
-    update(playerId: string, resumeToken?: string): void;
+    select(roleId: string): string | false;
+    update(roleId: string, resumeToken?: string): void;
     snapshot(): Readonly<Record<string, string>>;
     restore(tokens: Readonly<Record<string, string>>): void;
+}
+export interface PlaybookRoleBinding {
+    readonly playerId: string;
+    readonly promptIdentity: string;
 }
 export interface CaptainCallOptions {
     visibility: 'visible' | 'hidden';
@@ -100,7 +104,7 @@ export type PlaybookRunResult = {
     pendingCall: PlaybookPendingCall;
 };
 export interface PlaybookPorts {
-    callPlayer(playerId: string, prompt: string, signal: AbortSignal, options: PlayerCallOptions): Promise<PlayerResult>;
+    callPlayer(roleId: string, prompt: string, signal: AbortSignal, options: PlayerCallOptions): Promise<PlayerResult>;
     callCaptain(prompt: string, signal: AbortSignal, options: CaptainCallOptions): Promise<CaptainResult>;
     callJudge(prompt: string, signal: AbortSignal): Promise<string>;
     callPlaybook(request: PlaybookCallRequest, signal: AbortSignal): Promise<PlaybookCallStart>;
@@ -117,12 +121,13 @@ export interface PlaybookSession {
     parentSessionId?: string;
     parentCallId?: string;
     depth: number;
+    roleBindings?: Readonly<Record<string, PlaybookRoleBinding>>;
     playerSessions?: PlayerSessionStore;
     ports: PlaybookPorts;
 }
 export type PlaybookTraceType = 'session.started' | 'boss.input.received' | 'judge.call.started' | 'judge.call.finished' | 'player.call.started' | 'player.call.finished' | 'captain.call.started' | 'captain.call.finished' | 'playbook.call.started' | 'playbook.call.finished' | 'apply.started' | 'apply.finished' | 'fsm.transition' | 'status.emitted' | 'boss.input.settled' | 'session.disposed';
 export interface PlaybookTraceEvent {
-    schemaVersion: 2;
+    schemaVersion: 3;
     sessionId: string;
     playbookId: string;
     rootSessionId: string;
@@ -138,15 +143,21 @@ export interface PlaybookTraceEvent {
 }
 export interface PlaybookPendingBossQuestion {
     questionId: string;
-    player: string;
+    asker: {
+        kind: 'captain';
+    } | {
+        kind: 'role';
+        roleId: string;
+    };
     question: string;
     sourceItem?: string;
 }
-interface PlaybookRuntimeSnapshotFields {
+export interface PlaybookRuntimeSnapshot {
+    schemaVersion: 3;
     playbookId: string;
     machine: JsonValue;
-    playerResumeTokens: {
-        readonly [playerId: string]: string;
+    roleResumeTokens: {
+        readonly [roleId: string]: string;
     };
     sequences: {
         trace: number;
@@ -158,14 +169,8 @@ interface PlaybookRuntimeSnapshotFields {
     };
     state: PlaybookState;
     pendingBossQuestions: readonly PlaybookPendingBossQuestion[];
-}
-export type PlaybookRuntimeSnapshot = PlaybookRuntimeSnapshotFields & ({
-    schemaVersion: 1;
-    suspendedCall?: never;
-} | {
-    schemaVersion: 2;
     suspendedCall?: PlaybookSuspendedCall;
-});
+}
 export interface PlaybookControlAction {
     id: string;
     label: string;
@@ -210,4 +215,3 @@ export interface PlaybookRuntime {
     dispose(): Promise<void>;
 }
 export type PlaybookRuntimeFactory<Options = unknown> = (options: Options) => PlaybookRuntime;
-export {};

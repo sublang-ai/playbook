@@ -12,7 +12,6 @@ import {
 } from './code.fsm.introspect.js';
 
 const CONTEXT: CodingContext = {
-  coderPlayer: 'GPT-5.6 Sol',
   runResults: 'unit tests passed',
   callerInput: 'Implement the intent.',
   coderOutput: 'Committed.\nCommit: abc123',
@@ -28,9 +27,9 @@ describe('CODE FSM introspection', () => {
       { stateId: 'runFirstPhase', sourceItem: 'CODE-1' },
       { stateId: 'runIrTask', sourceItem: 'CODE-3' },
     ]);
-    expect(states.map((state) => state.getInput(CONTEXT).player)).toEqual([
-      'Coder',
-      'Coder',
+    expect(states.map((state) => state.getInput(CONTEXT).role)).toEqual([
+      'coder',
+      'coder',
     ]);
   });
 
