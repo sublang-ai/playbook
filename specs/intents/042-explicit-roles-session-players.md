@@ -1,0 +1,48 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai> -->
+
+# IR-042: Explicit roles and session players
+
+## Status
+
+In progress
+
+## Intent
+
+Implement explicit playbook-local roles bound to stable Captain-session players, including compatible model and effort retuning across durable interactive and headless continuation.
+
+## Deliverables
+
+- [ ] Authored and compiled workflows carry canonical local roles and parallel-role constraints without host player identity.
+- [ ] The runtime accepts explicit role bindings, emits distinct role and player trace identity, and persists only schema-version-3 local-role continuation projections.
+- [ ] The Captain shell owns one durable player ledger per logical session and shares a conversation only where role bindings name the same player id.
+- [ ] Shared config declares flat session players and exact per-playbook role bindings, including segmented ids and launch-time concurrent-role validation.
+- [ ] Ordinary reopen retains stored structure while applying compatible current model and effort, and uncertain retry retains its exact attempted settings.
+- [ ] Fresh interactive sessions use the same durable record, lease, and write-ahead boundary as headless sessions and can reopen across either front end.
+- [ ] Required cligent host capabilities, migration guidance, deterministic gates, packed smoke, and selected acceptance checks pass without publishing or tagging a release.
+
+## Tasks
+
+1. Record this implementation sequence and its map entry in one commit.
+2. Add segmented player ids and complete per-call player and Captain settings, including explicit provider-default model and effort selection, to cligent with its governing specs and focused compatibility tests in one cligent-repository commit.
+3. Cut the shared Playbook runtime and public contract over to canonical role bindings, trace schema `3`, runtime snapshot schema `3`, artifact schema `2`, resolved-player concurrency, and safe token preservation, with focused runtime and package-surface tests in one commit.
+4. Update the maintained CODE and REVIEW source, GEARS, FSM, linked runtime, registry, generated siblings, and conformance tests for `Roles:`, host-supplied prompt identity, and artifact schema `2` in one commit.
+5. Update the bespoke DECIDE source, parallel FSM, runtime, registry, generated siblings, and conformance tests for canonical roles, `concurrentRoleSets`, schema-version-3 snapshots and traces, and host-supplied bindings in one commit.
+6. Replace the launch plan's per-playbook player blocks with flat top-level players, exact role bindings, complete tuning selections, referenced-player-only projection, and pre-host concurrent-role validation, updating the starter and focused config tests in one commit.
+7. Replace root-frame token ownership and same-role inheritance with the Captain-session player ledger, explicit frame bindings, complete per-call settings, and shell snapshot schema `3`, with focused shell tests in one commit.
+8. Upgrade durable records and ordinary headless continuation to record schema `3`, authoritative stored-catalog projection, compatible current tuning, exact uncertain-attempt settings, and fail-closed legacy rejection in one commit.
+9. Make fresh and selected interactive sessions use the durable UUID, lease, turn-zero settlement, per-turn write-ahead, restoration, and cross-front-end hand-off boundaries, with focused interactive integration tests in one commit.
+10. Update public documentation, CLI help, configuration migration guidance, changelog, and package dependency floor for explicit roles and session players in one commit.
+11. Update deterministic release guards, packed smoke, and selected live acceptance for segmented ids, explicit sharing and isolation, cross-process retuning, and both-front session continuation in one commit.
+12. Prepare the next-major candidate metadata and run sufficient deterministic, packed, acceptance, and any conditionally required manual verification; record this intent complete and stop for review without tagging, pushing, publishing, or creating a release in one commit.
+
+## Verification
+
+- CODE, REVIEW, and DECIDE expose canonical local roles and registry-derived concurrent role sets, with no host player identity in machine state.
+- Two roles bound to one player reuse one sequential provider conversation across nested and later root engagements, while distinct player ids remain isolated.
+- A configuration that aliases concurrently active DECIDE roles rejects before host or agent work.
+- A session created by either front end reopens through either front end with one public id, one exclusive writer, and no replay of settled or pending effects.
+- A stored player token created with one model resumes under a compatible current model or effort selection, while adapter, instruction, permissions, working directory, and active bindings remain protected.
+- Adding an unrelated current playbook or player cannot invalidate or enter a reopened stored catalog and causes no preparation, import, readiness, or host work.
+- Legacy artifact, trace, runtime snapshot, shell snapshot, and durable record schemas reject before effects rather than guessing role or player identity.
+- The packed candidate passes deterministic release smoke and selected real-agent acceptance without publication or tagging.

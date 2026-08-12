@@ -102,6 +102,7 @@ meta.md       The spec of specs
 | [IR-039](intents/039-unified-captain-results.md) | 039-unified-captain-results.md | Complete DR-029 with one conversational result path, complete recovery history, action-safe recovery, and faithful multi-turn task handoff |
 | [IR-040](intents/040-compiled-composed-workflows.md) | 040-compiled-composed-workflows.md | Establish and release-gate a linked CODE, REVIEW, and DECIDE baseline with shared mapped-player continuity, current SLC preservation rules, and package-only specs |
 | [IR-041](intents/041-shared-captain-session.md) | 041-shared-captain-session.md | Make `playbook` and `playbook run` two presentations of one configurable, nested, durable compiled Captain session |
+| [IR-042](intents/042-explicit-roles-session-players.md) | 042-explicit-roles-session-players.md | Implement explicit local roles, Captain-session players, compatible retuning, and durable continuation through either front end |
 
 ## Packages
 
