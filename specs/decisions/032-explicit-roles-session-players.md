@@ -39,11 +39,13 @@ The exact id `captain` is reserved for the session Captain.
 A player value shall be an adapter shorthand or a normalized agent block whose `adapter` is part of that player's identity and whose remaining fields are defaults; a logical Captain session freezes the adapter of every referenced player, while a new session may choose another adapter.
 
 Every enabled playbook shall explicitly bind each manifest `requiredRoleIds` member through `playbooks.<id>.roles`.
-A binding shall be either a scalar player id or a block containing `player` and optional `model` and `effort` overrides.
+A binding shall be either a scalar player id or a block containing `player` and optional `model` and `effort` overrides; each override shall be a concrete string or the boolean `false` sentinel selecting the provider default, while omission shall inherit that player's top-level default.
 Adapter, instruction, permissions, workspace, and tool posture belong to the player session envelope and shall not be overridden by a role binding.
 Bindings shall cover the required role set exactly; unknown players, missing or extra roles, implicit name matching, ancestor inheritance, and generated fallback players are errors.
+When a manifest requires no roles, its exact binding map shall be empty and it shall contribute no player to the session roster; the launcher shall not invent a role merely to satisfy presentation.
 Each manifest shall declare `concurrentRoleSets` derived from its fixed parallel groups, and the launcher shall require the roles in each declared set to bind to pairwise-distinct player ids before host work.
 Unused top-level players are permitted and do not enter the host roster or readiness gate until a binding references them.
+The launch plan shall retain each referenced player's normalized top-level defaults separately from each role's resolved tuning selections; a role override shall not mutate or replace the shared player's defaults for another role.
 
 ### 3. Player continuity belongs to the Captain session
 

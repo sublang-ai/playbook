@@ -345,11 +345,12 @@ function helpText({
     '  vendors your config actually names.',
     '',
     'Agent swap recipe:',
-    '  - set each agent inline: the top-level captain and every',
-    '    playbooks.<id>.players.<role> takes an adapter shorthand',
-    '    (claude, codex) or a block with adapter/model/effort/permissions',
-    '  - the launcher injects captain.from and the namespaced <id>-<role>',
-    '    host players',
+    '  - set the top-level captain and each stable players.<id> to an',
+    '    adapter shorthand (claude, codex) or an inline agent block',
+    '  - bind every playbooks.<id>.roles.<role> explicitly to a player id;',
+    '    reusing one id deliberately shares that provider conversation',
+    '  - the launcher injects captain.from and retains referenced player ids',
+    '    verbatim',
     '',
   ].join('\n');
 }

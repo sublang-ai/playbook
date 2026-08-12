@@ -22,21 +22,6 @@ export function liveConfig(): string {
   const { claude: claudeModel, codex: codexModel } = liveModels();
   // DR-021: agent settings are inline per captain and player; a config
   // carrying a `profiles` map is rejected by the launcher.
-  const claudePlayer = (effort: string): string[] => [
-    '        adapter: claude',
-    `        model: ${JSON.stringify(claudeModel)}`,
-    `        effort: ${effort}`,
-    '        permissions:',
-    '          mode: auto',
-  ];
-  const codexPlayer = (effort: string): string[] => [
-    '        adapter: codex',
-    `        model: ${JSON.stringify(codexModel)}`,
-    `        effort: ${effort}`,
-    '        permissions:',
-    '          mode: auto',
-    "          writablePaths: ['.git']",
-  ];
   return [
     'captain:',
     '  adapter: claude',
@@ -48,26 +33,30 @@ export function liveConfig(): string {
     '  player_finished: off',
     '  turn_finished: off',
     '  turn_aborted: off',
+    'players:',
+    '  dev.coder:',
+    '    adapter: claude',
+    `    model: ${JSON.stringify(claudeModel)}`,
+    '    effort: xhigh',
+    '    permissions:',
+    '      mode: auto',
+    '  dev.reviewer:',
+    '    adapter: codex',
+    `    model: ${JSON.stringify(codexModel)}`,
+    '    effort: xhigh',
+    '    permissions:',
+    '      mode: auto',
+    "      writablePaths: ['.git']",
     'playbooks:',
     '  code:',
     '    from: "@sublang/playbook/code/registry"',
-    '    players:',
-    '      coder:',
-    ...claudePlayer('xhigh'),
+    '    roles: { coder: dev.coder }',
     '  review:',
     '    from: "@sublang/playbook/review/registry"',
-    '    players:',
-    '      coder:',
-    ...claudePlayer('xhigh'),
-    '      reviewer:',
-    ...codexPlayer('xhigh'),
+    '    roles: { coder: dev.coder, reviewer: dev.reviewer }',
     '  decide:',
     '    from: "@sublang/playbook/decide/registry"',
-    '    players:',
-    '      coder:',
-    ...claudePlayer('xhigh'),
-    '      reviewer:',
-    ...codexPlayer('xhigh'),
+    '    roles: { coder: dev.coder, reviewer: dev.reviewer }',
     '',
   ].join('\n');
 }
@@ -90,39 +79,34 @@ export function hermeticConfig(repo: string): string {
     '  player_finished: off',
     '  turn_finished: off',
     '  turn_aborted: off',
+    'players:',
+    '  release.worker:',
+    '    adapter: claude',
+    `    model: ${JSON.stringify(claudeModel)}`,
+    '    effort: low',
+    '    permissions:',
+    '      mode: auto',
     'playbooks:',
     '  hermetic:',
     `    from: ${JSON.stringify(
       pathToFileURL(join(repo, 'hermetic.playbook.mjs')).href,
     )}`,
-    '    players:',
-    '      worker:',
-    '        adapter: claude',
-    `        model: ${JSON.stringify(claudeModel)}`,
-    '        effort: low',
-    '        permissions:',
-    '          mode: auto',
+    '    roles: { worker: release.worker }',
     '',
   ].join('\n');
 }
 
 // RELEASE-25 fifth case: the config that enables exactly the two fixture
 // playbooks the conversational session engages (`live-fixtures.ts`). The
-// Captain block matches `liveConfig`'s own; the fixtures need no player call
-// at all, but the launcher requires each playbook to resolve at least one
-// visible role, so one claude role is bound and never used.
+// Captain block matches `liveConfig`'s own; these fixtures delegate no player
+// work, so their exact role maps are empty. The unreferenced player remains a
+// valid authored default but does not enter the normalized session roster.
 export function conversationConfig(repo: string): string {
   const { claude: claudeModel } = liveModels();
   const fixture = (id: string, file: string): string[] => [
     `  ${id}:`,
     `    from: ${JSON.stringify(pathToFileURL(join(repo, file)).href)}`,
-    '    players:',
-    '      worker:',
-    '        adapter: claude',
-    `        model: ${JSON.stringify(claudeModel)}`,
-    '        effort: low',
-    '        permissions:',
-    '          mode: auto',
+    '    roles: {}',
   ];
   return [
     'captain:',
@@ -135,6 +119,13 @@ export function conversationConfig(repo: string): string {
     '  player_finished: off',
     '  turn_finished: off',
     '  turn_aborted: off',
+    'players:',
+    '  release.worker:',
+    '    adapter: claude',
+    `    model: ${JSON.stringify(claudeModel)}`,
+    '    effort: low',
+    '    permissions:',
+    '      mode: auto',
     'playbooks:',
     ...fixture('checklist', 'checklist.registry.mjs'),
     ...fixture('notes', 'notes.registry.mjs'),

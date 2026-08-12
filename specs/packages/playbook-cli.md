@@ -63,7 +63,7 @@ The enabled playbook id, effective command, player id, and local role id shall n
 A player id shall match `[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*`; dots shall remain literal characters rather than config hierarchy.
 Interactive and headless host projections shall preserve that exact id under [[playbook-cli-8](#playbook-cli-8)] and shall reject a host implementation that cannot represent the segmented grammar rather than mangle it.
 A scalar `captain` or `players.<player-id>` value shall name an adapter shorthand such as `claude` or `codex`; a full block shall follow the host tmux-play agent-block schema and shall carry its own adapter and default model, effort, instruction, and permissions as needed.
-Each `playbooks.<id>.roles.<role>` value shall be either a scalar player id or a block containing exactly `player` plus optional `model` and `effort`; adapter, instruction, permissions, workspace, and tool settings shall be forbidden in a role binding.
+Each `playbooks.<id>.roles.<role>` value shall be either a scalar player id or a block containing exactly `player` plus optional `model` and `effort`; each tuning override shall be a nonempty concrete string or boolean `false` selecting `provider-default`, omission shall inherit the top-level player default, and adapter, instruction, permissions, workspace, and tool settings shall be forbidden in a role binding.
 Every binding shall resolve each model and effort field from its own override or the player default into an explicit concrete-value or provider-default selection, so each resumed call can reapply complete tuning rather than inherit another role's provider state.
 Every enabled playbook's `roles` map shall cover its manifest `requiredRoleIds` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] exactly, and no role shall bind by matching names, ancestry, or an inferred fallback.
 The roles in each manifest `concurrentRoleSets` member under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall bind to pairwise-distinct player ids.
@@ -261,10 +261,10 @@ captain agent's adapter, which the shell cannot otherwise read from the
 tmux-play Captain context and needs to decide whether an explicit empty tool
 allowlist can be enforced
 ([DR-013](../decisions/013-routing-only-captain-control.md) A1).
-`TuningSelection` shall be exactly `{ kind: 'value'; value: string } | { kind: 'provider-default' }`.
+`TuningSelection` shall be exactly `{ kind: 'value'; value: string } | { kind: 'provider-default' }` and shall map without loss to cligent's public complete-call setting selection.
 Each normalized `captain.options.playbooks.<id>` entry shall carry the canonical prepared `from`, normalized effective `command`, exact `roles: Readonly<Record<roleId, { playerId: string; model: TuningSelection; effort: TuningSelection }>>`, and an `options` slice built from every non-launcher key of the block; `from`, `command`, and `roles` shall not appear in the option slice.
 `PermissionPolicy` shall be the exact normalized cligent shape `{ mode?: 'auto' | 'bypass'; fileWrite?: 'allow' | 'ask' | 'deny'; shellExecute?: 'allow' | 'ask' | 'deny'; networkAccess?: 'allow' | 'ask' | 'deny'; writablePaths?: readonly string[] }`.
-The launcher shall also set `captain.options.sessionAgents` to exactly `{ captain: SessionAgent; players: Readonly<Record<playerId, SessionAgent>> }`, where `SessionAgent` is the complete normalized `{ adapter: string; model: TuningSelection; effort: TuningSelection; instruction?: string; permissions?: PermissionPolicy }`, `players` contains exactly referenced ids, and every model and effort is one explicit selection after normalizing agent defaults and resolving role overrides against them; the shell uses this projection for player calls under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], Captain calls under [[playbook-captain-31](playbook-captain.md#playbook-captain-31)], and durable envelopes under [[playbook-captain-41](playbook-captain.md#playbook-captain-41)].
+The launcher shall also set `captain.options.sessionAgents` to exactly `{ captain: SessionAgent; players: Readonly<Record<playerId, SessionAgent>> }`, where `SessionAgent` is the normalized top-level default `{ adapter: string; model: TuningSelection; effort: TuningSelection; instruction?: string; permissions?: PermissionPolicy }`, `players` contains exactly referenced ids, and each role's independently resolved model and effort remain in its own binding; the shell uses the agent envelope plus that binding to form cligent's atomic complete-call settings for player calls under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], Captain calls under [[playbook-captain-31](playbook-captain.md#playbook-captain-31)], and durable envelopes under [[playbook-captain-41](playbook-captain.md#playbook-captain-41)].
 The command shall resolve a scalar `captain` or `players.<player-id>` value as an adapter shorthand and shall normalize a full block as a self-contained tmux-play agent block through the installed cligent loader ([DR-021](../decisions/021-inline-agent-settings.md)).
 Before composing, the command shall reject — with a path-named
 diagnostic naming the offending key and the inline replacement, and
@@ -292,14 +292,15 @@ a manifest's `requiredRoleIds`, `concurrentRoleSets`, top-level `players`, or `p
 `captain` is reserved for the tmux-play host Captain, and the
 diagnostic shall name whether the reserved collision is an internal playbook
 name or player/role identity — a manifest `requiredRoleIds`
-entry that is missing from the exact role-binding map, a malformed concurrent role set, a role binding naming an unknown player, an extra configured role, two roles in one concurrent role set bound to the same player id, or an enabled playbook that resolves no visible player.
+entry that is missing from the exact role-binding map, a malformed concurrent role set, a role binding naming an unknown player, an extra configured role, or two roles in one concurrent role set bound to the same player id.
+An enabled playbook whose manifest requires no roles shall carry the exact empty `roles: {}` map and contribute no player to the referenced roster; the launcher shall not invent a visible role or fallback player for it.
 At runtime `init` the Playbook Captain shell re-validates only the
 loading checks it shares with
 [[playbook-captain-16](playbook-captain.md#playbook-captain-16)] — missing `from`, failed
 import, invalid entry, key / manifest-`id` mismatch, duplicate id, and
 duplicate effective command, plus the reserved playbook id and effective
 command.
-The roster-resolution, reserved-role, exact-binding, concurrent-player, and visible-player checks above
+The roster-resolution, reserved-role, exact-binding, and concurrent-player checks above
 are launcher-owned
 ([DR-009](../decisions/009-generic-playbook-cli-and-registry.md) §4);
 the shell relies on that validation and treats any residual
@@ -309,7 +310,7 @@ re-validating the roster itself.
 
 #### playbook-cli-10
 
-Where `playbook` composes the runtime config, the command shall set the composed tmux-play `layout.initialVisible` to the first enabled playbook's distinct bound player ids in role order, and shall own that field even when the user config sets other `layout` fields.
+Where `playbook` composes the runtime config, the command shall set the composed tmux-play `layout.initialVisible` from the first enabled playbook with any bound players, using that playbook's distinct player ids in role order, and shall own that field even when the user config sets other `layout` fields; a catalog whose playbooks are all exactly roleless shall retain an empty host-neutral visible set without inventing a player.
 The command shall carry through the user config's tmux-play `layout`
 window size and column-weight fields, including cligent's
 `singlePlayerColumnWeights` and `multiPlayerColumnWeights`, which are
@@ -551,12 +552,12 @@ Where any `playbooks.<id>.players` block remains, the command shall reject it be
 Where either front end prepares a new or ordinarily reopened Captain session from the generic config, when the launcher resolves that config, it shall use one leaf launch-config module to perform the following ordered pipeline:
 
 1. Resolve the primary path per [[playbook-cli-3](#playbook-cli-3)], seed and migrate that primary file before applying overlays, and merge every [[playbook-cli-25](#playbook-cli-25)] overlay in argument order without mutating an input.
-2. For an ordinary reopen, use the selected record to retain only its stored `playbooks` entries and referenced `players` entries before any later validation or hook, so an additional current entry is neither inspected nor admitted; for a new session, retain the complete authored maps.
+2. For an ordinary reopen, use the selected record's ordered playbook ids and referenced player ids to retain only those own map members before cloning or inspecting any member value and before any later migration, validation, or hook; reject a selected id absent from the current map, perform no whole-file profile rewrite, and neither inspect nor admit an additional current entry. For a new session, retain the complete authored maps.
 3. Resolve a relative retained filesystem `playbooks.<id>.from` against the primary config's directory, including one introduced by an overlay, canonicalize an absolute filesystem path to a file URL, and preserve an existing file URL, bare package specifier, or custom specifier unchanged.
 4. Reject non-JSON data, retired or unknown root keys, malformed retained launcher-owned structure, invalid or reserved retained player and role ids, unknown retained players, incomplete or extra retained role bindings, adapter overrides, and authority-key smuggling before an external side effect.
 5. Serialize a detached provisional tmux-play config to an isolated explicit temporary path, validate and normalize it through the installed cligent `loadTmuxPlayConfig`, feed its Captain, player, layout, notification, and theme values back into the authoritative plan, and remove the temporary path without modifying the primary config or overlays.
 6. Canonicalize and prepare every retained registry module before importing any of them, use a preparation hook's returned canonical specifier for both the one import and normalized catalog, and perform no registry import when validation or any preparation fails.
-7. Validate retained registry manifests and launcher-owned identities, reject any `concurrentRoleSets` member under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] whose roles do not bind to pairwise-distinct players, resolve each effective command and exact role binding, and produce one detached, deeply frozen, JSON-safe plan separating Captain, referenced players, complete catalog, and presentation with no imported function retained.
+7. Validate retained registry manifest shape and launcher-owned identities without invoking its runtime-option validator, whose one semantic owner is shell initialization under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)]; reject any `concurrentRoleSets` member whose roles do not bind to pairwise-distinct players, resolve each effective command and exact role binding, carry the detached option slice unchanged, and produce one deeply frozen, JSON-safe plan separating Captain, referenced players, complete catalog, and presentation with no imported function retained.
 8. Derive adapter readiness from the plan's Captain and referenced players independently of presentation, project a detached tmux-play config only for the interactive host, and project a detached presentation-free execution config only for the headless host while keeping `--list` ahead of readiness.
 
 The module shall import neither CLI host, both CLI hosts shall resolve the user-config path through it without a circular import, both shall use the same preparation hook and normalized effective commands, and the packed package shall include the module.
@@ -583,7 +584,7 @@ command leaves it unchanged and does not reseed (verifying [[playbook-cli-3](#pl
 
 #### playbook-cli-14
 
-When the test suite composes a top-level config enabling one or more playbooks, the test suite shall fail unless a dotted player id survives both interactive and headless projections byte-for-byte and an incapable host rejects it; the composed tmux-play config sets `captain.from` to `@sublang/playbook/playbook-captain`; carries exact `captain.options.sessionAgents` with one complete Captain block and exactly the referenced player blocks; carries one `captain.options.playbooks.<id>` entry per playbook with canonical prepared `from`, normalized effective `command`, exact closed role values `{ playerId, model, effort }` using the tagged tuning selections, and an option slice containing no launcher key; resolves scalar Captain and player values as adapter shorthands; normalizes full agent blocks; generates one roster entry per referenced player id; shares an entry only when role bindings name the same id; sets `layout.initialVisible` to the first enabled playbook's distinct bound ids; sets `captain.options.captainAdapter`; and carries normalized presentation fields (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)], [[playbook-cli-10](#playbook-cli-10)]).
+When the test suite composes a top-level config enabling one or more playbooks, the test suite shall fail unless a dotted player id survives both interactive and headless projections byte-for-byte and an incapable host rejects it; the composed tmux-play config sets `captain.from` to `@sublang/playbook/playbook-captain`; carries exact `captain.options.sessionAgents` with one complete Captain block and exactly the referenced player blocks; carries one `captain.options.playbooks.<id>` entry per playbook with canonical prepared `from`, normalized effective `command`, exact closed role values `{ playerId, model, effort }` using the tagged tuning selections, and an option slice containing no launcher key; resolves scalar Captain and player values as adapter shorthands; normalizes full agent blocks; generates one roster entry per referenced player id; shares an entry only when role bindings name the same id; sets `layout.initialVisible` from the first enabled playbook with any bound players while leaving an all-roleless host-neutral plan empty; sets `captain.options.captainAdapter`; and carries normalized presentation fields (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)], [[playbook-cli-10](#playbook-cli-10)]).
 
 ### Validation
 
@@ -652,7 +653,7 @@ It shall fail unless the workflow config composes against the real CODE, REVIEW,
 It shall further fail unless the conversational config composes against
 the fixture playbook modules the gate generates from its own sources,
 written to the paths that config names, enabling `checklist` and `notes`
-under those effective commands and binding both worker roles explicitly to the intended `claude` players (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], and [[playbook-cli-9](#playbook-cli-9)]).
+under those effective commands with exact empty role maps because neither fixture delegates player work (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], and [[playbook-cli-9](#playbook-cli-9)]).
 The gate itself is excluded from `pnpm test` and CI, so without this
 check a config-model change would break the release gate silently and
 surface only during a manual pre-tag run.

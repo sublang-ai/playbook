@@ -35,9 +35,10 @@ const DEFAULT_TEMPLATE_PATH = resolve(
 // PBCLI-1/8: the tmux projection uses the Playbook Captain shell adapter.
 export const PLAYBOOK_CAPTAIN_MODULE =
   '@sublang/playbook/playbook-captain';
-const PLAYBOOK_LAUNCHER_KEYS = ['from', 'command', 'players'];
+const PLAYBOOK_LAUNCHER_KEYS = ['from', 'command', 'roles'];
 const PLAYBOOK_TOP_LEVEL_KEYS = new Set([
   'captain',
+  'players',
   'playbooks',
   'layout',
   'notifications',
@@ -45,6 +46,8 @@ const PLAYBOOK_TOP_LEVEL_KEYS = new Set([
 ]);
 const RESERVED_CAPTAIN_PLAYBOOK_ID = 'captain';
 const RESERVED_CAPTAIN_ROLE_ID = 'captain';
+const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
+const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
 
 // PBCLI-26: split ordered `--with <path>` pairs out of an argument vector.
 // The returned arrays are new values; the caller's vector is never changed.
@@ -145,9 +148,14 @@ export async function loadLaunchPlan({
   prepareRegistryModule,
   templatePath = DEFAULT_TEMPLATE_PATH,
   onNotice = () => {},
+  selectedMembers,
 }) {
   seedUserConfigIfMissing(userConfigPath, templatePath, onNotice);
-  migrateUserConfigIfRetired(userConfigPath, onNotice);
+  // PBCLI-22/46: a reopen must not rewrite, validate, or otherwise inspect
+  // config members outside the stored projection.
+  if (selectedMembers === undefined) {
+    migrateUserConfigIfRetired(userConfigPath, onNotice);
+  }
 
   let top = parseYaml(readFileSync(userConfigPath, 'utf8')) ?? {};
   if (overlayPaths.length > 0 && !isObject(top)) {
@@ -162,6 +170,7 @@ export async function loadLaunchPlan({
     loadModule,
     configPath: userConfigPath,
     prepareRegistryModule,
+    selectedMembers,
   });
 }
 
@@ -190,15 +199,16 @@ export function resolveAgent(value, path, reservedKeys = []) {
 // consulted for validation and then discarded.
 export async function normalizeLaunchPlan(
   top,
-  { loadModule, configPath, prepareRegistryModule } = {},
+  { loadModule, configPath, prepareRegistryModule, selectedMembers } = {},
 ) {
   const importModule = loadModule ?? ((specifier) => import(specifier));
+  top = projectSelectedMembers(top, selectedMembers);
   top = cloneJson(top, 'config');
   assertNoRetiredProfiles(top, configPath);
   if (hasOwn(top, 'run')) {
     throw new Error(
       'top-level "run" was removed: configure the shared Captain under ' +
-        'captain and playbooks.<id>.players instead',
+        'captain, top-level players, and playbooks.<id>.roles instead',
     );
   }
   const unknownTopLevel = Object.keys(top).filter(
@@ -211,6 +221,23 @@ export async function normalizeLaunchPlan(
   }
   if (top.layout !== undefined && !isObject(top.layout)) {
     throw new Error('layout must be a map');
+  }
+
+  const playersCfg = requireObject(top.players, 'players');
+  const allPlayerIds = Object.keys(playersCfg);
+  const configuredAgents = new Map();
+  for (const playerId of allPlayerIds) {
+    assertPlayerId(playerId, `players.${playerId}`);
+    const agent = resolveAgent(playersCfg[playerId], `players.${playerId}`, [
+      'id',
+    ]);
+    if (
+      typeof agent.adapter !== 'string' ||
+      agent.adapter.trim().length === 0
+    ) {
+      throw new Error(`players.${playerId} must resolve an adapter`);
+    }
+    configuredAgents.set(playerId, agent);
   }
 
   const playbooksCfg = requireObject(top.playbooks, 'playbooks');
@@ -230,10 +257,11 @@ export async function normalizeLaunchPlan(
     throw new Error('captain must resolve an adapter');
   }
 
-  // Validate and detach every config-owned value before provisioning or
-  // importing any registry. That keeps malformed config side-effect free.
+  // Validate and detach every retained config-owned value before provisioning
+  // or importing any registry. That keeps malformed config side-effect free.
   const configuredPlaybooks = [];
-  const seenHostIds = new Set();
+  const tuningChecks = [];
+  let tuningCheckIndex = 0;
   for (const id of ids) {
     if (id === RESERVED_CAPTAIN_PLAYBOOK_ID) {
       throw new Error(
@@ -241,6 +269,9 @@ export async function normalizeLaunchPlan(
       );
     }
     const block = requireObject(playbooksCfg[id], `playbooks.${id}`);
+    if (hasOwn(block, 'players')) {
+      throw legacyPlayersError(`playbooks.${id}.players`, configPath);
+    }
     const from = block.from;
     if (typeof from !== 'string' || from.trim().length === 0) {
       throw new Error(`playbooks.${id}.from must be a module specifier`);
@@ -256,51 +287,44 @@ export async function normalizeLaunchPlan(
         `playbooks.${id}.command collides with the reserved internal Captain command`,
       );
     }
-    const playersMap = requireObject(block.players, `playbooks.${id}.players`);
-    const roles = Object.keys(playersMap);
-    if (roles.length === 0) {
-      throw new Error(`playbooks.${id} resolves no visible local role`);
-    }
+    const rolesMap = requireObject(block.roles, `playbooks.${id}.roles`);
+    const roles = Object.keys(rolesMap);
     if (roles.some((role) => role.trim().length === 0)) {
-      throw new Error(`playbooks.${id}.players keys must be nonblank role ids`);
+      throw new Error(`playbooks.${id}.roles keys must be nonblank role ids`);
     }
     if (roles.includes(RESERVED_CAPTAIN_ROLE_ID)) {
       throw new Error(
-        `playbooks.${id}.players.${RESERVED_CAPTAIN_ROLE_ID} binds local ` +
+        `playbooks.${id}.roles.${RESERVED_CAPTAIN_ROLE_ID} binds local ` +
           `role "${RESERVED_CAPTAIN_ROLE_ID}", which is reserved for the ` +
           'tmux-play Captain',
       );
     }
-    const normalizedPlayers = [];
-    const generated = [];
-    const playerIdEntries = [];
+    const bindings = Object.create(null);
     for (const role of roles) {
-      const agent = resolveAgent(
-        playersMap[role],
-        `playbooks.${id}.players.${role}`,
-        ['id'],
+      assertRoleId(role, `playbooks.${id}.roles.${role}`);
+      const binding = resolveRoleBinding(
+        rolesMap[role],
+        `playbooks.${id}.roles.${role}`,
       );
-      if (
-        typeof agent.adapter !== 'string' ||
-        agent.adapter.trim().length === 0
-      ) {
+      const agent = configuredAgents.get(binding.playerId);
+      if (agent === undefined) {
         throw new Error(
-          `playbooks.${id}.players.${role} must resolve an adapter`,
+          `playbooks.${id}.roles.${role} names unknown player ` +
+            JSON.stringify(binding.playerId),
         );
       }
-      const hostId = `${id}-${role}`;
-      if (seenHostIds.has(hostId)) {
-        throw new Error(`generated host player id "${hostId}" is not unique`);
+      bindings[role] = binding;
+      if (binding.model !== undefined || binding.effort !== undefined) {
+        let checkId;
+        do {
+          checkId = `binding-check-${tuningCheckIndex}`;
+          tuningCheckIndex += 1;
+        } while (configuredAgents.has(checkId));
+        tuningChecks.push({
+          id: checkId,
+          agent: applyTuningOverrides(agent, binding),
+        });
       }
-      seenHostIds.add(hostId);
-      normalizedPlayers.push({
-        id: hostId,
-        playbookId: id,
-        roleId: role,
-        agent,
-      });
-      playerIdEntries.push([role, hostId]);
-      generated.push(hostId);
     }
     const optionSlice = Object.fromEntries(
       Object.entries(block).filter(
@@ -314,9 +338,7 @@ export async function normalizeLaunchPlan(
       configuredFrom,
       commandOverride: block.command,
       roles,
-      normalizedPlayers,
-      generated,
-      playerIds: Object.fromEntries(playerIdEntries),
+      bindings,
       optionSlice,
     });
   }
@@ -325,22 +347,40 @@ export async function normalizeLaunchPlan(
   // detached provisional projection before any registry preparation/import,
   // then feed its agent and presentation fields back into the authoritative
   // plan. The interactive child will only revalidate these same values.
-  const firstVisible = configuredPlaybooks[0].generated;
+  const firstRoleful = configuredPlaybooks.find(
+    (configured) => configured.roles.length > 0,
+  );
+  const provisionalVisible =
+    firstRoleful === undefined
+      ? []
+      : distinct(
+          firstRoleful.roles.map(
+            (role) => firstRoleful.bindings[role].playerId,
+          ),
+        );
+  // An all-roleless catalog still validates every authored player through
+  // cligent, but the validation-only projection must respect tmux-play's
+  // invariant that a nonempty roster has at least one visible pane.
+  const validationVisible =
+    provisionalVisible.length === 0
+      ? allPlayerIds.slice(0, 1)
+      : provisionalVisible;
   const provisional = {
     captain: {
       ...captain,
       from: PLAYBOOK_CAPTAIN_MODULE,
       options: {},
     },
-    players: configuredPlaybooks.flatMap((configured) =>
-      configured.normalizedPlayers.map(({ id, agent }) => ({
+    players: [
+      ...allPlayerIds.map((id) => ({
         id,
-        ...agent,
+        ...configuredAgents.get(id),
       })),
-    ),
+      ...tuningChecks.map(({ id, agent }) => ({ id, ...agent })),
+    ],
     layout: {
       ...(isObject(top.layout) ? top.layout : {}),
-      initialVisible: firstVisible,
+      initialVisible: validationVisible,
     },
     ...(top.notifications === undefined
       ? {}
@@ -348,17 +388,30 @@ export async function normalizeLaunchPlan(
     ...(top.theme === undefined ? {} : { theme: top.theme }),
   };
   const normalizedHost = await normalizeHostConfig(provisional);
+  // The authoritative all-roleless projection is Boss-only. Normalize that
+  // exact empty host shape separately so derived presentation aliases (most
+  // notably active `columnWeights`) match zero visible player panes rather
+  // than the temporary validation pane above.
+  const normalizedPresentationHost =
+    provisionalVisible.length === 0 && allPlayerIds.length > 0
+      ? await normalizeHostConfig({
+          ...provisional,
+          players: [],
+          layout: { ...provisional.layout, initialVisible: [] },
+        })
+      : normalizedHost;
   const { from: _captainFrom, options: _captainOptions, ...normalizedCaptain } =
     normalizedHost.captain;
-  captain = normalizedCaptain;
+  captain = sessionAgentFromHostAgent(normalizedCaptain);
   const hostAgents = new Map(
     normalizedHost.players.map(({ id, ...agent }) => [id, agent]),
   );
-  for (const configured of configuredPlaybooks) {
-    configured.normalizedPlayers = configured.normalizedPlayers.map(
-      (player) => ({ ...player, agent: hostAgents.get(player.id) }),
-    );
-  }
+  const normalizedPlayerAgents = new Map(
+    allPlayerIds.map((id) => [
+      id,
+      sessionAgentFromHostAgent(hostAgents.get(id)),
+    ]),
+  );
 
   // Preparation is a transaction-like pre-import phase across the complete
   // configured catalog. A provisioning failure therefore cannot leave some
@@ -394,7 +447,6 @@ export async function normalizeLaunchPlan(
   }
 
   const catalogEntries = [];
-  const players = [];
   const seenCommands = new Map();
   const seenIds = new Set();
 
@@ -404,8 +456,7 @@ export async function normalizeLaunchPlan(
     preparedFrom,
     commandOverride,
     roles,
-    normalizedPlayers,
-    playerIds,
+    bindings,
     optionSlice,
   } of preparedPlaybooks) {
     let mod;
@@ -417,9 +468,11 @@ export async function normalizeLaunchPlan(
       );
     }
     const entry = mod?.default;
-    if (!isValidRegistryEntry(entry)) {
+    const registryProblem = invalidRegistryEntryReason(entry);
+    if (registryProblem !== undefined) {
       throw new Error(
-        `playbooks.${id}.from "${from}" exposes no valid registry entry`,
+        `playbooks.${id}.from "${from}" exposes no valid registry entry: ` +
+          registryProblem,
       );
     }
     if (entry.id !== id) {
@@ -443,21 +496,29 @@ export async function normalizeLaunchPlan(
     }
     seenCommands.set(command, id);
 
-    if (entry.requiredRoleIds.includes(RESERVED_CAPTAIN_ROLE_ID)) {
-      throw new Error(
-        `playbooks.${id} requires local role "${RESERVED_CAPTAIN_ROLE_ID}", ` +
-          'which is reserved for the tmux-play Captain',
-      );
-    }
-    for (const required of entry.requiredRoleIds) {
-      if (!roles.includes(required)) {
-        throw new Error(
-          `playbooks.${id} required role "${required}" has no players entry`,
-        );
-      }
-    }
+    assertExactRoleBindings(id, roles, entry.requiredRoleIds);
+    const resolvedRoles = Object.fromEntries(
+      entry.requiredRoleIds.map((role) => {
+        const binding = bindings[role];
+        const agent = normalizedPlayerAgents.get(binding.playerId);
+        return [
+          role,
+          {
+            playerId: binding.playerId,
+            model:
+              binding.model === undefined
+                ? agent.model
+                : overrideTuningSelection(binding.model),
+            effort:
+              binding.effort === undefined
+                ? agent.effort
+                : overrideTuningSelection(binding.effort),
+          },
+        ];
+      }),
+    );
+    assertConcurrentPlayers(id, entry.concurrentRoleSets, resolvedRoles);
 
-    players.push(...normalizedPlayers);
     catalogEntries.push([
       id,
       {
@@ -470,19 +531,43 @@ export async function normalizeLaunchPlan(
         command,
         ...(commandOverride === undefined ? {} : { commandOverride }),
         intent: entry.intent,
+        artifactSchema: entry.artifactSchema,
         requiredRoleIds: [...entry.requiredRoleIds],
-        playerIds,
+        concurrentRoleSets: entry.concurrentRoleSets.map((set) => [...set]),
+        roles: resolvedRoles,
         options: optionSlice,
       },
     ]);
   }
 
+  // Registry role order is the canonical role order. Derive the one roster
+  // union only after every exact role map is closed against its manifest.
+  const referencedPlayerIds = distinct(
+    catalogEntries.flatMap(([, item]) =>
+      Object.values(item.roles).map((binding) => binding.playerId),
+    ),
+  );
+
+  const firstVisibleCatalog = catalogEntries.find(
+    ([, item]) => Object.keys(item.roles).length > 0,
+  );
+  const initialVisible =
+    firstVisibleCatalog === undefined
+      ? []
+      : distinct(
+          Object.values(firstVisibleCatalog[1].roles).map(
+            (binding) => binding.playerId,
+          ),
+        );
   const presentation = {
-    layout: normalizedHost.layout,
-    notifications: normalizedHost.notifications,
-    ...(normalizedHost.theme === undefined
+    layout: {
+      ...normalizedPresentationHost.layout,
+      initialVisible,
+    },
+    notifications: normalizedPresentationHost.notifications,
+    ...(normalizedPresentationHost.theme === undefined
       ? {}
-      : { theme: normalizedHost.theme }),
+      : { theme: normalizedPresentationHost.theme }),
   };
 
   return deepFreeze(
@@ -490,7 +575,10 @@ export async function normalizeLaunchPlan(
       {
         schemaVersion: 1,
         captain,
-        players,
+        players: referencedPlayerIds.map((id) => ({
+          id,
+          agent: normalizedPlayerAgents.get(id),
+        })),
         catalog: Object.fromEntries(catalogEntries),
         presentation,
       },
@@ -522,16 +610,26 @@ export function projectTmuxConfig(plan) {
       {
         from: item.from,
         command: item.command,
+        roles: cloneJson(item.roles, `catalog.${id}.roles`),
         options: cloneJson(item.options, `catalog.${id}.options`),
       },
     ]),
   );
   const captain = {
-    ...cloneJson(plan.captain, 'captain'),
+    ...projectHostAgent(plan.captain, 'captain'),
     from: PLAYBOOK_CAPTAIN_MODULE,
   };
   captain.options = {
     playbooks,
+    sessionAgents: {
+      captain: cloneJson(plan.captain, 'captain'),
+      players: Object.fromEntries(
+        plan.players.map(({ id, agent }) => [
+          id,
+          cloneJson(agent, `players.${id}.agent`),
+        ]),
+      ),
+    },
     ...(typeof captain.adapter === 'string' && captain.adapter.length > 0
       ? { captainAdapter: captain.adapter }
       : {}),
@@ -539,7 +637,7 @@ export function projectTmuxConfig(plan) {
   const config = {
     captain,
     players: plan.players.map(({ id, agent }) => ({
-      ...cloneJson(agent, `players.${id}.agent`),
+      ...projectHostAgent(agent, `players.${id}.agent`),
       id,
     })),
     layout: projectHostLayout(plan.presentation.layout),
@@ -653,6 +751,9 @@ function migrateUserConfigIfRetired(userConfigPath, onNotice) {
   try {
     migrated = migrateRetiredProfiles(text);
   } catch (error) {
+    if (error?.code === 'PLAYBOOK_LEGACY_PLAYERS') {
+      throw legacyPlayersError(error.legacyPath, userConfigPath);
+    }
     throw new Error(
       `cannot migrate the retired profiles config at ${userConfigPath}: ` +
         `${errorMessage(error)} — edit it by hand: each agent takes its own ` +
@@ -684,17 +785,21 @@ export function migrateRetiredProfiles(text) {
   const doc = parseYamlDocument(text);
   const contents = doc.contents;
   if (!contents || !Array.isArray(contents.items)) return undefined;
-  const profiles = doc.get('profiles');
-  const agentPaths = [['captain']];
   const playbooks = doc.get('playbooks');
   if (playbooks && Array.isArray(playbooks.items)) {
     for (const entry of playbooks.items) {
       const id = String(entry.key);
-      const players = doc.getIn(['playbooks', id, 'players']);
-      if (!players || !Array.isArray(players.items)) continue;
-      for (const player of players.items) {
-        agentPaths.push(['playbooks', id, 'players', String(player.key)]);
+      if (doc.getIn(['playbooks', id, 'players']) !== undefined) {
+        throw legacyPlayersError(`playbooks.${id}.players`);
       }
+    }
+  }
+  const profiles = doc.get('profiles');
+  const agentPaths = [['captain']];
+  const players = doc.get('players');
+  if (players && Array.isArray(players.items)) {
+    for (const player of players.items) {
+      agentPaths.push(['players', String(player.key)]);
     }
   }
 
@@ -787,18 +892,16 @@ function assertNoRetiredProfiles(top, configPath) {
   if (top.profiles !== undefined) {
     throw new Error(
       `top-level "profiles" was removed${where}: write each agent's settings ` +
-        'inline under captain and each playbooks.<id>.players.<role> ' +
+        'inline under captain and each top-level players.<player-id> ' +
         '(adapter, model, effort, permissions)',
     );
   }
+  const legacyPath = findLegacyPlayersPath(top);
+  if (legacyPath !== undefined) throw legacyPlayersError(legacyPath, configPath);
   const blocks = [['captain', top.captain]];
-  const playbooksCfg = isObject(top.playbooks) ? top.playbooks : {};
-  for (const [id, block] of Object.entries(playbooksCfg)) {
-    const playersMap =
-      isObject(block) && isObject(block.players) ? block.players : {};
-    for (const [role, agent] of Object.entries(playersMap)) {
-      blocks.push([`playbooks.${id}.players.${role}`, agent]);
-    }
+  const playersCfg = isObject(top.players) ? top.players : {};
+  for (const [playerId, agent] of Object.entries(playersCfg)) {
+    blocks.push([`players.${playerId}`, agent]);
   }
   for (const [path, block] of blocks) {
     if (isObject(block) && block.profile !== undefined) {
@@ -810,22 +913,341 @@ function assertNoRetiredProfiles(top, configPath) {
   }
 }
 
-function isValidRegistryEntry(value) {
-  if (!isObject(value)) return false;
-  return (
-    typeof value.id === 'string' &&
-    value.id.trim().length > 0 &&
-    typeof value.command === 'string' &&
-    value.command.trim().length > 0 &&
-    typeof value.intent === 'string' &&
-    Array.isArray(value.requiredRoleIds) &&
-    value.requiredRoleIds.every(
-      (role) => typeof role === 'string' && role.trim().length > 0,
-    ) &&
-    new Set(value.requiredRoleIds).size === value.requiredRoleIds.length &&
-    typeof value.validateOptions === 'function' &&
-    typeof value.createRuntime === 'function'
+function invalidRegistryEntryReason(value) {
+  if (!isObject(value)) return 'the default export must be an object';
+  if (typeof value.id !== 'string' || value.id.trim().length === 0) {
+    return 'id must be a nonblank string';
+  }
+  if (typeof value.command !== 'string' || value.command.trim().length === 0) {
+    return 'command must be a nonblank string';
+  }
+  if (typeof value.intent !== 'string') return 'intent must be a string';
+  if (value.artifactSchema !== 2) {
+    return 'artifactSchema must be exactly 2';
+  }
+  const roleProblem = invalidManifestRoles(value.requiredRoleIds);
+  if (roleProblem !== undefined) return `requiredRoleIds ${roleProblem}`;
+  const concurrentProblem = invalidConcurrentRoleSets(
+    value.concurrentRoleSets,
+    value.requiredRoleIds,
   );
+  if (concurrentProblem !== undefined) {
+    return `concurrentRoleSets ${concurrentProblem}`;
+  }
+  if (typeof value.validateOptions !== 'function') {
+    return 'validateOptions must be a function';
+  }
+  if (typeof value.createRuntime !== 'function') {
+    return 'createRuntime must be a function';
+  }
+  return undefined;
+}
+
+function projectSelectedMembers(top, selectedMembers) {
+  if (selectedMembers === undefined) return top;
+  const selected = cloneJson(selectedMembers, 'selectedMembers');
+  const unknownSelectionKeys = Object.keys(selected).filter(
+    (key) => !['playbookIds', 'playerIds'].includes(key),
+  );
+  if (unknownSelectionKeys.length > 0) {
+    throw new Error(
+      `selectedMembers has unknown ${formatKeyList(unknownSelectionKeys)}`,
+    );
+  }
+  const playbookIds = selectedIdList(
+    selected.playbookIds,
+    'selectedMembers.playbookIds',
+  );
+  const playerIds = selectedIdList(
+    selected.playerIds,
+    'selectedMembers.playerIds',
+  );
+  if (!isPlainObject(top)) {
+    throw new Error('config must contain only plain JSON objects');
+  }
+
+  const descriptors = Object.getOwnPropertyDescriptors(top);
+  const keys = Reflect.ownKeys(top);
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (
+      typeof key === 'symbol' ||
+      descriptor?.get !== undefined ||
+      descriptor?.set !== undefined ||
+      descriptor?.enumerable !== true
+    ) {
+      throw new Error(
+        `config.${String(key)} must be an enumerable data property`,
+      );
+    }
+  }
+  const projected = Object.fromEntries(
+    keys.map((key) => [key, descriptors[key].value]),
+  );
+  projected.playbooks = projectSelectedMap(
+    projected.playbooks,
+    playbookIds,
+    'playbooks',
+  );
+  projected.players = projectSelectedMap(
+    projected.players,
+    playerIds,
+    'players',
+  );
+  return projected;
+}
+
+function projectSelectedMap(value, ids, path) {
+  if (!isPlainObject(value)) {
+    throw new Error(`${path} must contain only plain JSON objects`);
+  }
+  return Object.fromEntries(
+    ids.map((id) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, id);
+      if (descriptor === undefined) {
+        throw new Error(
+          `selected ${path} member ${JSON.stringify(id)} is missing`,
+        );
+      }
+      if (
+        descriptor.get !== undefined ||
+        descriptor.set !== undefined ||
+        descriptor.enumerable !== true
+      ) {
+        throw new Error(`${path}.${id} must be an enumerable data property`);
+      }
+      return [id, descriptor.value];
+    }),
+  );
+}
+
+function selectedIdList(value, path) {
+  if (
+    !Array.isArray(value) ||
+    value.some((id) => typeof id !== 'string' || id.trim().length === 0) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new Error(`${path} must be a duplicate-free array of nonblank ids`);
+  }
+  return value;
+}
+
+function resolveRoleBinding(value, path) {
+  if (typeof value === 'string') {
+    assertPlayerId(value, path);
+    return { playerId: value };
+  }
+  const block = requireObject(value, path);
+  const unknown = Object.keys(block).filter(
+    (key) => !['player', 'model', 'effort'].includes(key),
+  );
+  if (unknown.length > 0) {
+    throw new Error(`${path} has unknown ${formatKeyList(unknown)}`);
+  }
+  assertPlayerId(block.player, `${path}.player`);
+  for (const field of ['model', 'effort']) {
+    if (
+      block[field] !== undefined &&
+      block[field] !== false &&
+      (typeof block[field] !== 'string' || block[field].trim().length === 0)
+    ) {
+      throw new Error(
+        `${path}.${field} must be a nonblank string or false for provider-default`,
+      );
+    }
+  }
+  return {
+    playerId: block.player,
+    ...(block.model === undefined ? {} : { model: block.model }),
+    ...(block.effort === undefined ? {} : { effort: block.effort }),
+  };
+}
+
+function applyTuningOverrides(agent, binding) {
+  const effective = { ...agent };
+  if (binding.model === false) delete effective.model;
+  else if (binding.model !== undefined) effective.model = binding.model;
+  if (binding.effort !== undefined) {
+    delete effective.reasoningEffort;
+    if (binding.effort === false) delete effective.effort;
+    else effective.effort = binding.effort;
+  }
+  return effective;
+}
+
+function sessionAgentFromHostAgent(agent) {
+  if (!isObject(agent)) {
+    throw new Error('installed cligent omitted a retained agent');
+  }
+  return {
+    adapter: agent.adapter,
+    model: tuningSelection(agent.model),
+    effort: tuningSelection(agent.effort),
+    ...(agent.instruction === undefined
+      ? {}
+      : { instruction: agent.instruction }),
+    ...(agent.permissions === undefined
+      ? {}
+      : { permissions: agent.permissions }),
+  };
+}
+
+// Shared by the interactive and headless host projections. A tagged
+// provider-default is represented to cligent by omitting that configured
+// default; the complete tagged selection remains in sessionAgents.
+export function projectHostAgent(agent, path = 'agent') {
+  const normalized = cloneJson(agent, path);
+  return {
+    adapter: normalized.adapter,
+    ...(normalized.model?.kind === 'value'
+      ? { model: normalized.model.value }
+      : {}),
+    ...(normalized.effort?.kind === 'value'
+      ? { effort: normalized.effort.value }
+      : {}),
+    ...(normalized.instruction === undefined
+      ? {}
+      : { instruction: normalized.instruction }),
+    ...(normalized.permissions === undefined
+      ? {}
+      : { permissions: normalized.permissions }),
+  };
+}
+
+function tuningSelection(value) {
+  return value === undefined
+    ? { kind: 'provider-default' }
+    : { kind: 'value', value };
+}
+
+function overrideTuningSelection(value) {
+  return value === false
+    ? { kind: 'provider-default' }
+    : tuningSelection(value);
+}
+
+function assertPlayerId(value, path) {
+  if (typeof value !== 'string' || !PLAYER_ID_PATTERN.test(value)) {
+    throw new Error(
+      `${path} must name a player matching ${PLAYER_ID_PATTERN.source}`,
+    );
+  }
+  if (value === RESERVED_CAPTAIN_ROLE_ID) {
+    throw new Error(`${path} uses reserved player id "captain"`);
+  }
+}
+
+function assertRoleId(value, path) {
+  if (typeof value !== 'string' || !ROLE_ID_PATTERN.test(value)) {
+    throw new Error(`${path} must use a canonical lowercase local role id`);
+  }
+  if (value === RESERVED_CAPTAIN_ROLE_ID) {
+    throw new Error(`${path} uses reserved local role id "captain"`);
+  }
+}
+
+function invalidManifestRoles(value) {
+  if (!Array.isArray(value)) return 'must be an array';
+  if (value.some((role) => typeof role !== 'string')) {
+    return 'must contain only strings';
+  }
+  const canonical = value.map((role) => role.toLowerCase());
+  if (new Set(canonical).size !== canonical.length) {
+    return 'contains roles that collide after canonical lowercase derivation';
+  }
+  const invalid = value.find((role) => !ROLE_ID_PATTERN.test(role));
+  if (invalid !== undefined) {
+    return `contains noncanonical role ${JSON.stringify(invalid)}`;
+  }
+  if (value.includes(RESERVED_CAPTAIN_ROLE_ID)) {
+    return 'contains reserved local role "captain"';
+  }
+  return undefined;
+}
+
+function invalidConcurrentRoleSets(value, requiredRoleIds) {
+  if (!Array.isArray(value)) return 'must be an array';
+  const required = new Set(requiredRoleIds);
+  const seen = new Set();
+  for (let index = 0; index < value.length; index += 1) {
+    const set = value[index];
+    if (!Array.isArray(set) || set.length < 2) {
+      return `[${index}] must contain at least two roles`;
+    }
+    if (
+      set.some(
+        (role) =>
+          typeof role !== 'string' ||
+          !ROLE_ID_PATTERN.test(role) ||
+          role === RESERVED_CAPTAIN_ROLE_ID ||
+          !required.has(role),
+      )
+    ) {
+      return `[${index}] must contain only required canonical local roles`;
+    }
+    if (new Set(set).size !== set.length) {
+      return `[${index}] must contain pairwise-distinct roles`;
+    }
+    const signature = JSON.stringify(set);
+    if (seen.has(signature)) return `contains duplicate set ${signature}`;
+    seen.add(signature);
+  }
+  return undefined;
+}
+
+function assertExactRoleBindings(id, configured, required) {
+  const missing = required.filter((role) => !configured.includes(role));
+  const extra = configured.filter((role) => !required.includes(role));
+  if (missing.length > 0 || extra.length > 0) {
+    throw new Error(
+      `playbooks.${id}.roles must exactly cover requiredRoleIds` +
+        `${missing.length === 0 ? '' : `; missing ${missing.map(JSON.stringify).join(', ')}`}` +
+        `${
+          extra.length === 0
+            ? ''
+            : `; extra ${extra.map(JSON.stringify).join(', ')}`
+        }`,
+    );
+  }
+}
+
+function assertConcurrentPlayers(id, sets, roles) {
+  for (const set of sets) {
+    const playerIds = set.map((role) => roles[role].playerId);
+    if (new Set(playerIds).size !== playerIds.length) {
+      throw new Error(
+        `playbooks.${id}.concurrentRoleSets ${JSON.stringify(set)} must bind ` +
+          'to pairwise-distinct player ids',
+      );
+    }
+  }
+}
+
+function distinct(values) {
+  return [...new Set(values)];
+}
+
+function findLegacyPlayersPath(top) {
+  const playbooks = isObject(top?.playbooks) ? top.playbooks : {};
+  for (const [id, block] of Object.entries(playbooks)) {
+    if (isObject(block) && hasOwn(block, 'players')) {
+      return `playbooks.${id}.players`;
+    }
+  }
+  return undefined;
+}
+
+function legacyPlayersError(path, configPath) {
+  const where = configPath ? ` in ${configPath}` : '';
+  const error = new Error(
+    `${path} was removed in the explicit-session-player major release${where}: ` +
+      'define stable ids in top-level players and bind them explicitly under ' +
+      'playbooks.<id>.roles; automatic migration would choose which prior ' +
+      'conversations share a session',
+  );
+  error.code = 'PLAYBOOK_LEGACY_PLAYERS';
+  error.legacyPath = path;
+  return error;
 }
 
 function cloneJson(value, path, seen = new Set()) {
@@ -916,6 +1338,12 @@ function deepFreeze(value) {
 
 function isObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isPlainObject(value) {
+  if (!isObject(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function hasOwn(value, key) {

@@ -82,12 +82,16 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
       layout: { window: { columns: 100, rows: 40 } },
       notifications: { player_finished: 'bell', turn_finished: 'desktop' },
       theme: 'mocha',
+      players: {
+        'dev.coder': { adapter: 'codex', model: 'm-agent' },
+        'dev.reviewer': { adapter: 'claude' },
+      },
       playbooks: {
         code: {
           from: 'mod://code',
-          players: {
-            coder: { adapter: 'codex', model: 'm-agent' },
-            reviewer: { adapter: 'claude' },
+          roles: {
+            coder: 'dev.coder',
+            reviewer: 'dev.reviewer',
           },
           committer: 'coder',
         },
@@ -100,22 +104,34 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
 
     expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(config.captain).toMatchObject({ adapter: 'claude', model: 'm-judge' });
-    // Option slice carries non-launcher keys (committer); no players.
+    // Option slice carries non-launcher keys (committer); no roles.
     expect(config.captain.options.playbooks.code).toEqual({
       from: 'mod://code',
       command: 'code',
+      roles: {
+        coder: {
+          playerId: 'dev.coder',
+          model: { kind: 'value', value: 'm-agent' },
+          effort: { kind: 'provider-default' },
+        },
+        reviewer: {
+          playerId: 'dev.reviewer',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+      },
       options: { committer: 'coder' },
     });
-    // Namespaced <id>-<role> roster; scalar profile + full block resolved.
+    // Exact stable player ids survive the host roster.
     expect(config.players).toEqual([
-      { id: 'code-coder', adapter: 'codex', model: 'm-agent' },
-      { id: 'code-reviewer', adapter: 'claude' },
+      { id: 'dev.coder', adapter: 'codex', model: 'm-agent' },
+      { id: 'dev.reviewer', adapter: 'claude' },
     ]);
     // Launcher owns initialVisible (first playbook's generated players);
     // user window field carried through.
     expect(config.layout).toMatchObject({
       window: { columns: 100, rows: 40 },
-      initialVisible: ['code-coder', 'code-reviewer'],
+      initialVisible: ['dev.coder', 'dev.reviewer'],
     });
     // Top-level host fields (notifications, theme) use cligent normalization.
     expect(config.notifications).toEqual({
@@ -135,11 +151,12 @@ describe('playbook launcher — composition (PBCLI-14)', () => {
   it('applies a command override and a full inline captain block', async () => {
     const top = {
       captain: { adapter: 'claude', model: 'm', effort: 'high' },
+      players: { 'dev.coder': 'claude', 'dev.reviewer': 'codex' },
       playbooks: {
         code: {
           from: 'mod://code',
           command: 'dev',
-          players: { coder: 'claude', reviewer: 'codex' },
+          roles: { coder: 'dev.coder', reviewer: 'dev.reviewer' },
         },
       },
     };
@@ -185,12 +202,13 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
     'notifications:',
     '  player_finished: bell',
     'captain: claude-opus',
+    'players:',
+    '  dev.coder: { profile: claude-opus, model: m-coder }',
+    '  dev.reviewer: codex-gpt',
     'playbooks:',
     '  code:',
     '    from: "@sublang/playbook/code/registry"',
-    '    players:',
-    '      coder: { profile: claude-opus, model: m-coder }',
-    '      reviewer: codex-gpt',
+    '    roles: { coder: dev.coder }',
     '    committer: coder',
     '',
   ].join('\n');
@@ -228,12 +246,12 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
       permissions: { mode: 'auto' },
     });
     // A `profile`-bearing block keeps its own fields over the profile's.
-    expect(migrated.playbooks.code.players.coder).toEqual({
+    expect(migrated.players['dev.coder']).toEqual({
       adapter: 'claude',
       model: 'm-coder',
       permissions: { mode: 'auto' },
     });
-    expect(migrated.playbooks.code.players.reviewer).toEqual({
+    expect(migrated.players['dev.reviewer']).toEqual({
       adapter: 'codex',
       model: 'm-review',
     });
@@ -255,12 +273,11 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
         '  base: { adapter: claude, model: m1 }',
         '# why this captain',
         'captain: base # the judge agent',
+        'players: { dev.coder: base, dev.reviewer: codex }',
         'playbooks:',
         '  code:',
         '    from: "@sublang/playbook/code/registry"',
-        '    players:',
-        '      coder: base',
-        '      reviewer: codex',
+        '    roles: { coder: dev.coder }',
         '',
       ].join('\n'),
     );
@@ -280,12 +297,13 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
         '    permissions:',
         '      mode: auto',
         'captain: base',
+        'players:',
+        '  dev.coder: { profile: base, effort: xhigh }',
+        '  dev.reviewer: codex',
         'playbooks:',
         '  code:',
         '    from: "@sublang/playbook/code/registry"',
-        '    players:',
-        '      coder: { profile: base, effort: xhigh }',
-        '      reviewer: codex',
+        '    roles: { coder: dev.coder }',
         '',
       ].join('\n'),
     );
@@ -302,12 +320,13 @@ describe('playbook launcher — config migration (PBCLI-33)', () => {
       'profiles:',
       '  base: { adapter: claude }',
       'captain: base',
+      'players:',
+      '  dev.coder: { profile: nope, model: m2 }',
+      '  dev.reviewer: codex',
       'playbooks:',
       '  code:',
       '    from: "@sublang/playbook/code/registry"',
-      '    players:',
-      '      coder: { profile: nope, model: m2 }',
-      '      reviewer: codex',
+      '    roles: { coder: dev.coder }',
       '',
     ].join('\n');
     const { configPath, result, stderr } = await launchWith(broken);
@@ -378,13 +397,10 @@ describe('live acceptance gate config (PBCLI-32)', () => {
     ]);
     expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(config.captain.adapter).toBe('claude');
-    // The pane titles the gate asserts derive from these generated ids.
+    // The release gate intentionally shares these stable session players.
     expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
-      'code-coder claude',
-      'review-coder claude',
-      'review-reviewer codex',
-      'decide-coder claude',
-      'decide-reviewer codex',
+      'dev.coder claude',
+      'dev.reviewer codex',
     ]);
   });
 
@@ -434,11 +450,9 @@ describe('live acceptance gate config (PBCLI-32)', () => {
     ]);
     expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(config.captain.adapter).toBe('claude');
-    // One bound-but-unused claude role per fixture, namespaced the same way.
-    expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
-      'checklist-worker claude',
-      'notes-worker claude',
-    ]);
+    // Neither deterministic fixture delegates player work, so the authored
+    // but unreferenced default does not enter the host roster.
+    expect(config.players).toEqual([]);
   });
 
   it('composes the hermetic headless config with its real fixture module', async () => {
@@ -465,7 +479,7 @@ describe('live acceptance gate config (PBCLI-32)', () => {
     expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(config.captain.adapter).toBe('codex');
     expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
-      'hermetic-worker claude',
+      'release.worker claude',
     ]);
     expect(config.captain.options.playbooks.hermetic.from).toBe(
       pathToFileURL(registryPath).href,
@@ -488,21 +502,22 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
     'mod://invalid': { default: { id: 'code' } },
     'mod://t2g': { default: captainRoleEntry },
   });
-  const players = { coder: 'claude', reviewer: 'codex' };
+  const roster = { 'dev.coder': 'claude', 'dev.reviewer': 'codex' };
+  const roles = { coder: 'dev.coder' };
 
   it('rejects each enablement fault', async () => {
     await expect(
-      composeGenericConfig({ captain: 'claude', playbooks: {} }, ld),
+      composeGenericConfig({ captain: 'claude', players: {}, playbooks: {} }, ld),
     ).rejects.toThrow(/at least one playbook/);
     await expect(
       composeGenericConfig(
-        { captain: 'claude', playbooks: { code: { players } } },
+        { captain: 'claude', players: roster, playbooks: { code: { roles } } },
         ld,
       ),
     ).rejects.toThrow(/from must be a module specifier/);
     await expect(
       composeGenericConfig(
-        { captain: 'claude', playbooks: { code: { from: 'mod://x', players } } },
+        { captain: 'claude', players: roster, playbooks: { code: { from: 'mod://x', roles } } },
         ld,
       ),
     ).rejects.toThrow(/failed to import/);
@@ -510,14 +525,15 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
       composeGenericConfig(
         {
           captain: 'claude',
-          playbooks: { code: { from: 'mod://invalid', players } },
+          players: roster,
+          playbooks: { code: { from: 'mod://invalid', roles } },
         },
         ld,
       ),
     ).rejects.toThrow(/no valid registry entry/);
     await expect(
       composeGenericConfig(
-        { captain: 'claude', playbooks: { foo: { from: 'mod://code', players } } },
+        { captain: 'claude', players: roster, playbooks: { foo: { from: 'mod://code', roles } } },
         ld,
       ),
     ).rejects.toThrow(/manifest id/);
@@ -525,17 +541,12 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
       composeGenericConfig(
         {
           captain: 'claude',
-          playbooks: { code: { from: 'mod://code', players: { coder: 'claude' } } },
+          players: roster,
+          playbooks: { code: { from: 'mod://code', roles: {} } },
         },
         ld,
       ),
-    ).rejects.toThrow(/required role "reviewer"/);
-    await expect(
-      composeGenericConfig(
-        { captain: 'claude', playbooks: { code: { from: 'mod://code', players: {} } } },
-        ld,
-      ),
-    ).rejects.toThrow(/no visible local role/);
+    ).rejects.toThrow(/must exactly cover requiredRoleIds.*missing "coder"/);
     // DR-021: the user's own config migrates (PBCLI-33); anything that still
     // carries the retired model here — a --with overlay, say — is rejected
     // rather than silently misread, since a scalar that named a profile now
@@ -545,7 +556,8 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
         {
           profiles: { 'claude-opus': { adapter: 'claude' } },
           captain: 'claude',
-          playbooks: { code: { from: 'mod://code', players } },
+          players: roster,
+          playbooks: { code: { from: 'mod://code', roles } },
         },
         ld,
       ),
@@ -554,7 +566,8 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
       composeGenericConfig(
         {
           captain: { profile: 'base' },
-          playbooks: { code: { from: 'mod://code', players } },
+          players: roster,
+          playbooks: { code: { from: 'mod://code', roles } },
         },
         ld,
       ),
@@ -563,16 +576,20 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
       composeGenericConfig(
         {
           captain: 'claude',
+          players: {
+            'dev.coder': { profile: 'base' },
+            'dev.reviewer': 'codex',
+          },
           playbooks: {
             code: {
               from: 'mod://code',
-              players: { coder: { profile: 'base' }, reviewer: 'codex' },
+              roles,
             },
           },
         },
         ld,
       ),
-    ).rejects.toThrow(/playbooks\.code\.players\.coder\.profile was removed/);
+    ).rejects.toThrow(/players\.dev\.coder\.profile was removed/);
   });
 
   it('rejects the reserved captain role with a diagnostic naming it', async () => {
@@ -582,14 +599,15 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
       composeGenericConfig(
         {
           captain: 'claude',
+          players: { 'dev.worker': 'claude' },
           playbooks: {
-            t2g: { from: 'mod://t2g', players: { worker: 'claude' } },
+            t2g: { from: 'mod://t2g', roles: { worker: 'dev.worker' } },
           },
         },
         ld,
       ),
     ).rejects.toThrow(
-      /playbooks\.t2g requires local role "captain", which is reserved for the tmux-play Captain/,
+      /requiredRoleIds contains reserved local role "captain"/,
     );
     // Config fault: a players map may not bind `captain` even when the
     // manifest does not require it.
@@ -597,17 +615,18 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
       composeGenericConfig(
         {
           captain: 'claude',
+          players: roster,
           playbooks: {
             code: {
               from: 'mod://code',
-              players: { ...players, captain: 'claude' },
+              roles: { coder: 'dev.coder', captain: 'dev.coder' },
             },
           },
         },
         ld,
       ),
     ).rejects.toThrow(
-      /playbooks\.code\.players\.captain binds local role "captain", which is reserved for the tmux-play Captain/,
+      /playbooks\.code\.roles\.captain binds local role "captain", which is reserved for the tmux-play Captain/,
     );
   });
 
@@ -616,10 +635,11 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
       composeGenericConfig(
         {
           captain: 'claude',
+          players: roster,
           playbooks: {
             captain: {
               from: 'mod://code',
-              players,
+              roles,
             },
           },
         },
@@ -631,11 +651,12 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
       composeGenericConfig(
         {
           captain: 'claude',
+          players: roster,
           playbooks: {
             code: {
               from: 'mod://code',
               command: 'captain',
-              players,
+              roles,
             },
           },
         },
@@ -677,8 +698,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     expect(seeded).toContain('.git');
     expect(stderr.text()).toContain(`created config at ${configPath}`);
 
-    // PBCLI-11/13 (DR-021): the seed writes each agent's settings inline
-    // and ships no profiles map, so retuning one player cannot move another.
+    // PBCLI-11/13: the seed writes stable top-level players and explicit roles.
     const seededParsed = parseYaml(seeded);
     expect(seededParsed.profiles).toBeUndefined();
     expect(seededParsed.captain).toMatchObject({
@@ -687,30 +707,27 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       effort: 'high',
       permissions: { mode: 'auto' },
     });
-    expect(seededParsed.playbooks.code.players).toEqual({
-      coder: {
+    expect(seededParsed.players).toEqual({
+      'dev.coder': {
         adapter: 'claude',
         model: 'claude-opus-4-8[1m]',
         effort: 'xhigh',
         permissions: { mode: 'auto' },
       },
-    });
-    expect(seededParsed.playbooks.review.players).toEqual({
-      coder: {
-        adapter: 'claude',
-        model: 'claude-opus-4-8[1m]',
-        effort: 'xhigh',
-        permissions: { mode: 'auto' },
-      },
-      reviewer: {
+      'dev.reviewer': {
         adapter: 'codex',
         model: 'gpt-5.5',
         effort: 'xhigh',
         permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
     });
-    expect(seededParsed.playbooks.decide.players).toEqual(
-      seededParsed.playbooks.review.players,
+    expect(seededParsed.playbooks.code.roles).toEqual({ coder: 'dev.coder' });
+    expect(seededParsed.playbooks.review.roles).toEqual({
+      coder: 'dev.coder',
+      reviewer: 'dev.reviewer',
+    });
+    expect(seededParsed.playbooks.decide.roles).toEqual(
+      seededParsed.playbooks.review.roles,
     );
 
     expect(spawn.calls).toHaveLength(1);
@@ -726,7 +743,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     });
     expect(composed.players).toEqual([
       {
-        id: 'code-coder',
+        id: 'dev.coder',
         adapter: 'claude',
         model: 'claude-opus-4-8[1m]',
         effort: 'xhigh',
@@ -734,38 +751,27 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
         permissions: { mode: 'auto' },
       },
       {
-        id: 'review-coder',
-        adapter: 'claude',
-        model: 'claude-opus-4-8[1m]',
-        effort: 'xhigh',
-        permissions: { mode: 'auto' },
-      },
-      {
-        id: 'review-reviewer',
-        adapter: 'codex',
-        model: 'gpt-5.5',
-        effort: 'xhigh',
-        permissions: { mode: 'auto', writablePaths: ['.git'] },
-      },
-      {
-        id: 'decide-coder',
-        adapter: 'claude',
-        model: 'claude-opus-4-8[1m]',
-        effort: 'xhigh',
-        permissions: { mode: 'auto' },
-      },
-      {
-        id: 'decide-reviewer',
+        id: 'dev.reviewer',
         adapter: 'codex',
         model: 'gpt-5.5',
         effort: 'xhigh',
         permissions: { mode: 'auto', writablePaths: ['.git'] },
       },
     ]);
-    expect(composed.layout.initialVisible).toEqual(['code-coder']);
+    expect(composed.layout.initialVisible).toEqual(['dev.coder']);
     expect(composed.captain.options.playbooks.code).toEqual({
       from: '@sublang/playbook/code/registry',
       command: 'code',
+      roles: {
+        coder: {
+          playerId: 'dev.coder',
+          model: {
+            kind: 'value',
+            value: 'claude-opus-4-8[1m]',
+          },
+          effort: { kind: 'value', value: 'xhigh' },
+        },
+      },
       options: {},
     });
 
@@ -773,11 +779,8 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
     const loaded = await loadComposedConfig(spawn.configs[0].content);
     expect(loaded.config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
     expect(loaded.config.players.map((p: { id: string }) => p.id)).toEqual([
-      'code-coder',
-      'review-coder',
-      'review-reviewer',
-      'decide-coder',
-      'decide-reviewer',
+      'dev.coder',
+      'dev.reviewer',
     ]);
   });
 
@@ -925,7 +928,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
 
   it('blocks with the adapter id and its exact install command', async () => {
     const home = await makeTempHome();
-    await writeUserConfig(home, minimalConfig());
+    await writeUserConfig(home, twoAdapterConfig());
     const spawn = fakeSpawn();
     const stderr = writer();
 
@@ -960,7 +963,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
 
   it('reports a below-floor runtime with versions, never as absent', async () => {
     const home = await makeTempHome();
-    await writeUserConfig(home, minimalConfig());
+    await writeUserConfig(home, twoAdapterConfig());
     const spawn = fakeSpawn();
     const stderr = writer();
 
@@ -1230,7 +1233,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
 
   it('prints a one-hop re-run for a partially supplied exec tree', async () => {
     const home = await makeTempHome();
-    await writeUserConfig(home, minimalConfig());
+    await writeUserConfig(home, twoAdapterConfig());
     const spawn = fakeSpawn();
     const stderr = writer();
 
@@ -1327,6 +1330,10 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(stdout.text()).toContain('--retry-uncertain');
     expect(stdout.text()).toContain('fresh launch only');
     expect(stdout.text()).toContain('Agent swap recipe:');
+    expect(stdout.text()).toContain('stable players.<id>');
+    expect(stdout.text()).toContain('playbooks.<id>.roles.<role>');
+    expect(stdout.text()).not.toContain('playbooks.<id>.players.<role>');
+    expect(stdout.text()).not.toContain('<id>-<role>');
     expect(spawn.calls).toHaveLength(0);
   });
 
@@ -1415,13 +1422,28 @@ async function loadComposedConfig(content: string) {
 function minimalConfig(): string {
   return [
     'captain: claude',
+    'players:',
+    '  dev.coder: claude',
+    '  dev.reviewer: codex',
     'playbooks:',
     '  code:',
     '    from: "@sublang/playbook/code/registry"',
-    '    players:',
-    '      coder: claude',
-    '      reviewer: codex',
+    '    roles: { coder: dev.coder }',
     '    committer: coder',
+    '',
+  ].join('\n');
+}
+
+function twoAdapterConfig(): string {
+  return [
+    'captain: claude',
+    'players:',
+    '  dev.coder: claude',
+    '  dev.reviewer: codex',
+    'playbooks:',
+    '  review:',
+    '    from: "@sublang/playbook/review/registry"',
+    '    roles: { coder: dev.coder, reviewer: dev.reviewer }',
     '',
   ].join('\n');
 }
@@ -1429,12 +1451,13 @@ function minimalConfig(): string {
 function geminiConfig(): string {
   return [
     'captain: claude',
+    'players:',
+    '  dev.coder: gemini',
+    '  dev.reviewer: gemini',
     'playbooks:',
     '  code:',
     '    from: "@sublang/playbook/code/registry"',
-    '    players:',
-    '      coder: gemini',
-    '      reviewer: gemini',
+    '    roles: { coder: dev.coder }',
     '',
   ].join('\n');
 }
@@ -1481,12 +1504,13 @@ function writer() {
 describe('playbook --with overlays (PBCLI-27)', () => {
   const GLOBAL_CONFIG = [
     'captain: claude',
+    'players:',
+    '  dev.coder: claude',
+    '  dev.reviewer: codex',
     'playbooks:',
     '  code:',
     '    from: "mod://code"',
-    '    players:',
-    '      coder: claude',
-    '      reviewer: codex',
+    '    roles: { coder: dev.coder, reviewer: dev.reviewer }',
     '    committer: coder',
     '',
   ].join('\n');
@@ -1531,10 +1555,12 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     await writeFile(
       overlay,
       [
+        'players:',
+        '  dev.coder: { adapter: codex, model: m-turbo, effort: xhigh }',
         'playbooks:',
         '  code:',
-        '    players:',
-        '      coder: { adapter: codex, model: m-turbo, effort: xhigh }',
+        '    roles:',
+        '      coder: { player: dev.coder, model: false }',
         '',
       ].join('\n'),
       'utf8',
@@ -1546,9 +1572,12 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     expect(out.code).toBe(0);
     const composed = parseYaml(spawn.configs[0].content);
     expect(composed.players).toEqual([
-      { id: 'code-coder', adapter: 'codex', model: 'm-turbo', effort: 'xhigh' },
-      { id: 'code-reviewer', adapter: 'codex' },
+      { id: 'dev.coder', adapter: 'codex', model: 'm-turbo', effort: 'xhigh' },
+      { id: 'dev.reviewer', adapter: 'codex' },
     ]);
+    expect(
+      composed.captain.options.playbooks.code.roles.coder.model,
+    ).toEqual({ kind: 'provider-default' });
     // The global config is byte-identical after the overlaid launch.
     await expect(readFile(configPath, 'utf8')).resolves.toBe(GLOBAL_CONFIG);
     // The consumed flag is not forwarded to tmux-play.
@@ -1562,12 +1591,12 @@ describe('playbook --with overlays (PBCLI-27)', () => {
     const second = join(overlayDir, 'second.yaml');
     await writeFile(
       first,
-      'playbooks: { code: { players: { coder: { adapter: codex, model: m-one } } } }\n',
+      'players: { dev.coder: { adapter: codex, model: m-one } }\n',
       'utf8',
     );
     await writeFile(
       second,
-      'playbooks: { code: { players: { coder: { adapter: codex, model: m-two } } } }\n',
+      'players: { dev.coder: { adapter: codex, model: m-two } }\n',
       'utf8',
     );
     const spawn = fakeSpawn();
@@ -1576,7 +1605,7 @@ describe('playbook --with overlays (PBCLI-27)', () => {
 
     expect(out.code).toBe(0);
     const composed = parseYaml(spawn.configs[0].content);
-    expect(composed.players[0]).toMatchObject({ id: 'code-coder', model: 'm-two' });
+    expect(composed.players[0]).toMatchObject({ id: 'dev.coder', model: 'm-two' });
   });
 
   it('reflects an overlay-enabled playbook in --list', async () => {
@@ -1588,7 +1617,7 @@ describe('playbook --with overlays (PBCLI-27)', () => {
         'playbooks:',
         '  discuss:',
         '    from: "mod://discuss"',
-        '    players: { host: claude, participant: codex }',
+        '    roles: { host: dev.coder, participant: dev.reviewer }',
         '',
       ].join('\n'),
       'utf8',

@@ -2,14 +2,15 @@
 # SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
 # Shared `playbook` and `playbook run` launcher config.
-# Top-level host fields only — no `config:` wrapper, no top-level `players`.
-# The launcher injects captain.from and the namespaced <id>-<role> host
-# players, then hosts the same Playbook Captain shell interactively or headlessly.
+# Top-level host fields only — no `config:` wrapper. The launcher injects
+# captain.from, retains only players named by a role binding, and hosts the
+# same Playbook Captain shell interactively or headlessly.
 
-# Every agent — the Captain and each playbook role — carries its own
-# settings inline: an adapter shorthand (claude, codex) or a block with
-# adapter/model/effort/permissions. Retuning one agent never changes
-# another.
+# The Captain and each stable session player carries its own defaults inline:
+# an adapter shorthand (claude, codex) or a block with
+# adapter/model/effort/permissions. A role may override only model or effort.
+# Omit an override to inherit the player default; set it to false to select
+# that provider's current default explicitly.
 
 # Each adapter needs its vendor SDK installed as its own top-level
 # install root — they are optional peer dependencies, so you pay only
@@ -39,55 +40,46 @@ notifications:
   player_finished: bell
   turn_finished: desktop
 
+# Stable player ids are flat exact strings. Dots are a naming convention, not
+# YAML hierarchy. Naming the same id in several role bindings deliberately
+# shares one provider conversation across those playbooks.
+players:
+  dev.coder:
+    adapter: claude
+    model: claude-opus-4-8[1m]
+    effort: xhigh
+    permissions:
+      mode: auto
+
+  dev.reviewer:
+    adapter: codex
+    model: gpt-5.5
+    effort: xhigh
+    permissions:
+      mode: auto
+      writablePaths: ['.git']
+
 # Enabled playbooks. Each is loaded from its explicit `from` module; the
 # `<id>` key must equal that module's manifest id. `from`, `command`, and
-# `players` are launcher-owned; every other key is that playbook's option
+# `roles` are launcher-owned; every other key is that playbook's option
 # slice.
 #
-# Nested calls map roles by exact id. CODE and DECIDE call REVIEW with the
-# same `coder` and `reviewer` ids, so those child roles continue the nearest
-# ancestor sessions. A standalone REVIEW uses its own bindings below.
+# Every manifest role is bound explicitly. These three playbooks intentionally
+# reuse the same two stable players; change an id to isolate its conversation.
 playbooks:
   code:
     from: "@sublang/playbook/code/registry"
-    players:
-      coder:
-        adapter: claude
-        model: claude-opus-4-8[1m]
-        effort: xhigh
-        permissions:
-          mode: auto
+    roles:
+      coder: dev.coder
 
   review:
     from: "@sublang/playbook/review/registry"
-    players:
-      coder:
-        adapter: claude
-        model: claude-opus-4-8[1m]
-        effort: xhigh
-        permissions:
-          mode: auto
-      reviewer:
-        adapter: codex
-        model: gpt-5.5
-        effort: xhigh
-        permissions:
-          mode: auto
-          writablePaths: ['.git']
+    roles:
+      coder: dev.coder
+      reviewer: dev.reviewer
 
   decide:
     from: "@sublang/playbook/decide/registry"
-    players:
-      coder:
-        adapter: claude
-        model: claude-opus-4-8[1m]
-        effort: xhigh
-        permissions:
-          mode: auto
-      reviewer:
-        adapter: codex
-        model: gpt-5.5
-        effort: xhigh
-        permissions:
-          mode: auto
-          writablePaths: ['.git']
+    roles:
+      coder: dev.coder
+      reviewer: dev.reviewer
