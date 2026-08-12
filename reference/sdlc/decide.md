@@ -36,7 +36,6 @@ Do not change code or implement the proposal.
 
 Commit the result as one new commit, following @specs/packages/git.md.
 Make the commit message explain concisely what changed and why.
-Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.
 Coder is <coder-llm>; format the model token in conventional human form.
 ```
 

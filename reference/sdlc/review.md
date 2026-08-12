@@ -33,8 +33,6 @@ When Coder rejects every finding and makes no commit, Captain shall give Reviewe
 
 ```markdown
 No new commit was made because Coder rejected every finding.
-For any rebuttal, accept or challenge it.
-State which findings, if any, remain.
 ```
 
 At the start of *every* review round, Captain shall relay to Reviewer any Coder feedback from the preceding round and any relevant run results, in quotes (`>`) after the instruction.
@@ -44,6 +42,7 @@ At the start of *every* review round, Captain shall append the following instruc
 ```markdown
 Understand the full picture and think systematically about the underlying design.
 Continue to identify issues or improvements, if any (numbered; no duplication).
+For any rebuttal, accept or challenge it.
 Treat as settled, and do not raise again, any finding in this review rejected twice with reasoning.
 Flag only what materially affects correctness, behavior, or spec quality — not style, equally valid alternatives, or theoretical threats.
 For specs, flag stale, missing, over-specified, or under-specified ones.
