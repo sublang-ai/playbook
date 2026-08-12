@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [7.0.0] - 2026-08-11
+
 ### Added
 
 - **Complete headless Captain sessions can continue safely across processes.** Every settled `playbook run` turn is durably handed off before stdout with the compiled Captain conversation, engagement stack, mapped-player continuity, frozen execution config, working directory, and nested parked state intact. `--continue` selects the latest session and `--session <id>` selects one explicitly; exclusive leases and pre-effect uncertain markers reject competing writers and require explicit `--retry-uncertain` or `--discard-uncertain` recovery after interruption ([IR-041](specs/intents/041-shared-captain-session.md), [[playbook-cli-22](specs/packages/playbook-cli.md#playbook-cli-22)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)]).
@@ -401,7 +403,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v6.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v7.0.0...HEAD
+[7.0.0]: https://github.com/sublang-ai/playbook/compare/v6.0.0...v7.0.0
 [6.0.0]: https://github.com/sublang-ai/playbook/compare/v5.0.0...v6.0.0
 [5.0.0]: https://github.com/sublang-ai/playbook/compare/v4.0.0...v5.0.0
 [4.0.0]: https://github.com/sublang-ai/playbook/compare/v3.1.0...v4.0.0
