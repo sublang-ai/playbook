@@ -7,11 +7,14 @@ import {
   spawn,
   type ChildProcessWithoutNullStreams,
 } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
@@ -24,9 +27,14 @@ import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { conversationConfig, liveConfig, liveModels } from './live-config.js';
+import {
+  conversationConfig,
+  hermeticConfig,
+  liveConfig,
+} from './live-config.js';
 import {
   checklistFixtureSource,
+  hermeticArtifactSource,
   notesFixtureSource,
 } from './live-fixtures.js';
 
@@ -46,10 +54,10 @@ const diagnosticTailCharacters = 8 * 1024;
 const liveCommandMaxBufferBytes = 20 * 1024 * 1024;
 const liveTerminationGraceMs = 5_000;
 const failureSnapshotName = 'acceptance-failure.txt';
-// One scenario spends at most six startup-length waits — new session,
-// attached client, `boss>`, the started marker, and the root and nested pane
-// shapes — plus the live turn itself. Under-budgeting here is worse than a
-// slow failure:
+// The attached DECIDE scenario spends at most six startup-length waits — a
+// new session, attached client, `boss>`, the started marker, and the root and
+// nested pane shapes — plus the live turn itself. Under-budgeting here is
+// worse than a slow failure:
 // vitest's own timeout fires outside the try/finally, so teardown never
 // runs and `afterAll` would delete the artifacts while the agents are
 // still live.
@@ -141,9 +149,9 @@ const hermeticTask = 'Echo the hermetic acceptance token.';
 const hermeticToken = 'HERMETIC_ACCEPTANCE_OK';
 
 // RELEASE-25 fifth case (DR-029). The budget must dominate the scenario's
-// own waits for the same reason the four-case budget above does: vitest's
-// timeout fires outside the try/finally, so a scenario that outlives it
-// never kills its tmux session and `afterAll` deletes the artifacts while
+// own waits for the same reason the attached-workflow budget above does:
+// vitest's timeout fires outside the try/finally, so a scenario that outlives
+// it never kills its tmux session and `afterAll` deletes the artifacts while
 // the Captain is still live. The scenario spends thirteen live-length waits
 // (six Boss replies plus the started/failed/finished/stopped marker waits)
 // and five startup-length ones (session, client, `boss>`, and the two
@@ -206,56 +214,39 @@ describe.sequential('installed playbook live acceptance', () => {
   });
 
   it(
-    'runs bundled REVIEW headlessly with real Coder and Reviewer agents',
+    'runs and continues REVIEW headlessly through stdin without replaying effects',
     async () => {
       const scenario = createScenario('review');
       let commandOutput = '';
       try {
         const sessionsBefore = [...listTmuxSessions()].sort();
         const tmuxGuard = createNoTmuxGuard(scenario.root);
-        const models = liveModels();
-        const result = await execLiveTextAsync(
+        const continuityMarker =
+          `REVIEW_SESSION_${randomBytes(16).toString('hex').toUpperCase()}`;
+        const runEnv = privateTmuxEnv({
+          XDG_CONFIG_HOME: scenario.configHome,
+          XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
+          PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
+          PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
+        });
+        const first = await execLiveTextAsync(
           candidateBin,
-          [
-            'run',
-            '@sublang/playbook/review/registry',
-            reviewTask,
-            '--player',
-            `coder=claude:${models.claude}@low`,
-            '--player',
-            `reviewer=codex:${models.codex}@low`,
-            '--captain',
-            `codex:${models.codex}@low`,
-            '--cwd',
-            scenario.repo,
-            '--json',
-          ],
+          ['run', '--json'],
           scenario.repo,
-          privateTmuxEnv({
-            XDG_CONFIG_HOME: scenario.configHome,
-            XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
-            PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
-            PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
-            PLAYBOOK_ACCEPTANCE_REAL_TMUX: tmuxGuard.realTmux,
-          }),
+          runEnv,
+          `/review ${reviewTask} Preserve this private marker in the ` +
+            `Captain session for a later Boss question: ${continuityMarker}. ` +
+            'Do not write it to repository files or commits.',
         );
         commandOutput =
-          `stdout:\n${diagnosticTail(result.stdout)}\n` +
-          `stderr:\n${diagnosticTail(result.stderr)}`;
+          `stdout:\n${diagnosticTail(first.stdout)}\n` +
+          `stderr:\n${diagnosticTail(first.stderr)}`;
 
-        const envelope = JSON.parse(result.stdout);
-        expect(envelope).toEqual({
-          outcome: 'terminal',
-          sessionId: expect.stringMatching(
-            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-          ),
-          output: {
-            approvedCommit: 'latest',
-            noUnsettledFindings: true,
-          },
-        });
-        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
-        expect(existsSync(tmuxGuard.marker)).toBe(false);
+        const firstEnvelope = parseHeadlessEnvelope(first.stdout);
+        expectMarkersExactlyOnceInOrder(first.stderr, [
+          '◇ /review started',
+          '◇ /review finished',
+        ]);
         expect(
           readFileSync(join(scenario.repo, 'acceptance-review.txt'), 'utf8'),
         ).toBe(`${reviewToken}\n`);
@@ -263,6 +254,98 @@ describe.sequential('installed playbook live acceptance', () => {
           `${reviewToken}\n`,
         );
         expect(changedPaths(scenario)).toEqual(['acceptance-review.txt']);
+        expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
+        expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
+        expect(gitStatus(scenario.repo)).toBe('');
+        expect(ignoredUntracked(scenario.repo)).toBe('');
+
+        // A second installed CLI process restores the same complete Captain
+        // session. The reply is stdin again, while the completed REVIEW
+        // effect and commit remain settled rather than being replayed.
+        const settledRevision = headRevision(scenario.repo);
+        const continuityQuestion =
+          'Did the review complete successfully, and what private marker ' +
+          'did I ask you to remember? Please answer without starting ' +
+          'another workflow or changing any file.';
+        expect(continuityQuestion).not.toContain(continuityMarker);
+        const continued = await execLiveTextAsync(
+          candidateBin,
+          ['run', '--session', firstEnvelope.sessionId, '--json'],
+          scenario.repo,
+          runEnv,
+          continuityQuestion,
+        );
+        commandOutput +=
+          `\ncontinued stdout:\n${diagnosticTail(continued.stdout)}\n` +
+          `continued stderr:\n${diagnosticTail(continued.stderr)}`;
+        const continuedEnvelope = parseHeadlessEnvelope(continued.stdout);
+        expect(continuedEnvelope.sessionId).toBe(firstEnvelope.sessionId);
+        expect(continuedEnvelope.reply).toContain(continuityMarker);
+        expect(continued.stderr).not.toMatch(/(?:◇ \/|◆ failed|⤷ )/);
+        expect(headRevision(scenario.repo)).toBe(settledRevision);
+        expect(changedPaths(scenario)).toEqual(['acceptance-review.txt']);
+        expect(gitStatus(scenario.repo)).toBe('');
+        expect(ignoredUntracked(scenario.repo)).toBe('');
+        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
+        expect(existsSync(tmuxGuard.marker)).toBe(false);
+      } catch (error) {
+        preserveArtifacts = true;
+        const detailed =
+          commandOutput === ''
+            ? error
+            : new Error(`${errorMessage(error)}\n${commandOutput}`);
+        writeFailureSnapshot(
+          scenario.root,
+          undefined,
+          undefined,
+          detailed,
+          scenario,
+        );
+        throw withArtifactPath(detailed, scenario.root);
+      }
+    },
+    2 * liveTimeoutMs + 60_000,
+  );
+
+  it(
+    'runs /code headlessly with ordered nested REVIEW lifecycle',
+    async () => {
+      const scenario = createScenario('code');
+      let commandOutput = '';
+      try {
+        const sessionsBefore = [...listTmuxSessions()].sort();
+        const tmuxGuard = createNoTmuxGuard(scenario.root);
+        const result = await execLiveTextAsync(
+          candidateBin,
+          ['run', '--json', codeCommand],
+          scenario.repo,
+          privateTmuxEnv({
+            XDG_CONFIG_HOME: scenario.configHome,
+            XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
+            PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
+            PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
+          }),
+        );
+        commandOutput =
+          `stdout:\n${diagnosticTail(result.stdout)}\n` +
+          `stderr:\n${diagnosticTail(result.stderr)}`;
+
+        parseHeadlessEnvelope(result.stdout);
+        expectMarkersExactlyOnceInOrder(result.stderr, [
+          '◇ /code started',
+          '◇ /review called by /code',
+          '◇ /review returned to /code',
+          '◇ /code finished',
+        ]);
+        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
+        expect(existsSync(tmuxGuard.marker)).toBe(false);
+        expect(
+          readFileSync(join(scenario.repo, 'acceptance-code.txt'), 'utf8'),
+        ).toBe('CODE_ACCEPTANCE_OK\n');
+        expect(headFile(scenario.repo, 'acceptance-code.txt')).toBe(
+          'CODE_ACCEPTANCE_OK\n',
+        );
+        expect(changedPaths(scenario)).toEqual(['acceptance-code.txt']);
         expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
         expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
         expect(gitStatus(scenario.repo)).toBe('');
@@ -284,58 +367,6 @@ describe.sequential('installed playbook live acceptance', () => {
       }
     },
     liveTimeoutMs + 60_000,
-  );
-
-  it(
-    'runs /code with real Claude and Codex agents in a fresh repository',
-    async () => {
-      const scenario = createScenario('code');
-      try {
-        await drivePlaybookTurn(scenario, codeCommand, {
-          started: '◇ /code started',
-          nestedCalled: '◇ /review called by /code',
-          nestedReturned: '◇ /review returned to /code',
-          finished: '◇ /code finished',
-          rootPaneTitles: [
-            'Captain · claude',
-            'Code-coder · claude',
-          ],
-          // REVIEW inherits CODE's Coder instead of exposing a replacement
-          // Review-coder, while its unmatched Reviewer stays child-owned.
-          nestedPaneTitles: [
-            'Captain · claude',
-            'Code-coder · claude',
-            'Review-reviewer · codex',
-          ],
-          nestedActivity: {
-            paneTitle: 'Review-reviewer · codex',
-            text: 'A new review begins on the latest commit.',
-          },
-        });
-        expect(
-          readFileSync(join(scenario.repo, 'acceptance-code.txt'), 'utf8'),
-        ).toBe('CODE_ACCEPTANCE_OK\n');
-        expect(headFile(scenario.repo, 'acceptance-code.txt')).toBe(
-          'CODE_ACCEPTANCE_OK\n',
-        );
-        expect(changedPaths(scenario)).toEqual(['acceptance-code.txt']);
-        expect(headRevision(scenario.repo)).not.toBe(scenario.baselineCommit);
-        expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
-        expect(gitStatus(scenario.repo)).toBe('');
-        expect(ignoredUntracked(scenario.repo)).toBe('');
-      } catch (error) {
-        preserveArtifacts = true;
-        writeFailureSnapshot(
-          scenario.root,
-          undefined,
-          undefined,
-          error,
-          scenario,
-        );
-        throw withArtifactPath(error, scenario.root);
-      }
-    },
-    scenarioTimeoutMs,
   );
 
   it(
@@ -426,6 +457,8 @@ describe.sequential('installed playbook live acceptance', () => {
       let commandOutput = '';
       try {
         const globalBin = await installGlobalCandidate();
+        const sessionsBefore = [...listTmuxSessions()].sort();
+        const tmuxGuard = createNoTmuxGuard(scenario.root);
         // PBCLI-36 / RELEASE-25: neither engine import resolves from the
         // fixture before the run — the directory is genuinely bare.
         const probe = createRequire(join(scenario.repo, 'probe.js'));
@@ -436,22 +469,16 @@ describe.sequential('installed playbook live acceptance', () => {
           expect(() => probe.resolve(specifier)).toThrow();
         }
 
-        const models = liveModels();
         const runArgs = [
           'run',
-          './hermetic.playbook.mjs',
-          hermeticTask,
-          '--player',
-          `worker=claude:${models.claude}@low`,
-          '--captain',
-          `codex:${models.codex}@low`,
-          '--cwd',
-          scenario.repo,
           '--json',
+          `/hermetic ${hermeticTask}`,
         ];
         const runEnv = privateTmuxEnv({
           XDG_CONFIG_HOME: scenario.configHome,
           XDG_STATE_HOME: join(scenario.root, 'xdg-state'),
+          PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
+          PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
         });
         const first = await execLiveTextAsync(
           globalBin,
@@ -463,13 +490,8 @@ describe.sequential('installed playbook live acceptance', () => {
           `stdout:\n${diagnosticTail(first.stdout)}\n` +
           `stderr:\n${diagnosticTail(first.stderr)}`;
 
-        const xstateLink = join(scenario.repo, 'node_modules', 'xstate');
-        const playbookLink = join(
-          scenario.repo,
-          'node_modules',
-          '@sublang',
-          'playbook',
-        );
+        const { xstateLink, playbookLink } =
+          expectExactHermeticEngineLinks(scenario.repo);
         expect(first.stderr.match(/provisioned/g)).toHaveLength(1);
         expect(first.stderr).toContain(xstateLink);
         expect(first.stderr).toContain(playbookLink);
@@ -484,14 +506,12 @@ describe.sequential('installed playbook live acceptance', () => {
           true,
         );
 
-        const envelope = JSON.parse(first.stdout);
-        expect(envelope).toEqual({
-          outcome: 'terminal',
-          sessionId: expect.stringMatching(
-            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-          ),
-          output: { token: hermeticToken },
-        });
+        const envelope = parseHeadlessEnvelope(first.stdout);
+        expect(envelope.reply).toContain(hermeticToken);
+        expectMarkersExactlyOnceInOrder(first.stderr, [
+          '◇ /hermetic started',
+          '◇ /hermetic finished',
+        ]);
         expect(headRevision(scenario.repo)).toBe(scenario.baselineCommit);
         // The fixture's .gitignore covers node_modules/, so a clean status
         // also proves the provisioned links stay out of player commits.
@@ -507,7 +527,16 @@ describe.sequential('installed playbook live acceptance', () => {
           `\nsecond stdout:\n${diagnosticTail(second.stdout)}\n` +
           `second stderr:\n${diagnosticTail(second.stderr)}`;
         expect(second.stderr).not.toContain('provisioned');
-        expect(JSON.parse(second.stdout).outcome).toBe('terminal');
+        const secondEnvelope = parseHeadlessEnvelope(second.stdout);
+        expect(secondEnvelope.sessionId).not.toBe(envelope.sessionId);
+        expect(secondEnvelope.reply).toContain(hermeticToken);
+        expectMarkersExactlyOnceInOrder(second.stderr, [
+          '◇ /hermetic started',
+          '◇ /hermetic finished',
+        ]);
+        expectExactHermeticEngineLinks(scenario.repo);
+        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
+        expect(existsSync(tmuxGuard.marker)).toBe(false);
       } catch (error) {
         preserveArtifacts = true;
         const detailed =
@@ -536,7 +565,7 @@ describe.sequential('installed playbook live acceptance', () => {
   // question moves nothing, and whether ordinary prose can switch an
   // engagement that is still active.
   //
-  // It lives in this file, after the four cases above, deliberately: the
+  // It lives in this file, after the four preceding cases, deliberately: the
   // pack/install helpers are file-private and RELEASE-24/25 pin one pack and
   // one install per run, and `vitest.acceptance.config.ts` declares no
   // sequencer, so in-file source order under the serial runner is what puts
@@ -802,10 +831,74 @@ interface TurnObservation {
   continuityMarker?: string;
 }
 
+interface HeadlessEnvelope {
+  sessionId: string;
+  reply: string;
+}
+
 interface Launcher {
   child: ChildProcessWithoutNullStreams;
   output(): string;
   exit(): { code: number | null; signal: NodeJS.Signals | null } | undefined;
+}
+
+function parseHeadlessEnvelope(stdout: string): HeadlessEnvelope {
+  const value: unknown = JSON.parse(stdout);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('headless stdout was not one JSON object');
+  }
+  const record = value as Record<string, unknown>;
+  expect(Object.keys(record).sort()).toEqual(['reply', 'sessionId']);
+  expect(record.sessionId).toEqual(
+    expect.stringMatching(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    ),
+  );
+  expect(record.reply).toEqual(expect.stringMatching(/\S/));
+  return record as unknown as HeadlessEnvelope;
+}
+
+function expectExactHermeticEngineLinks(repo: string): {
+  xstateLink: string;
+  playbookLink: string;
+} {
+  const nodeModules = join(repo, 'node_modules');
+  const sublangScope = join(nodeModules, '@sublang');
+  const xstateLink = join(nodeModules, 'xstate');
+  const playbookLink = join(sublangScope, 'playbook');
+
+  expect(readdirSync(nodeModules).sort()).toEqual(['@sublang', 'xstate']);
+  expect(lstatSync(sublangScope).isDirectory()).toBe(true);
+  expect(readdirSync(sublangScope).sort()).toEqual(['playbook']);
+  expect(lstatSync(xstateLink).isSymbolicLink()).toBe(true);
+  expect(lstatSync(playbookLink).isSymbolicLink()).toBe(true);
+  return { xstateLink, playbookLink };
+}
+
+function expectMarkersExactlyOnceInOrder(
+  output: string,
+  markers: readonly string[],
+): void {
+  let priorIndex = -1;
+  for (const marker of markers) {
+    const index = output.indexOf(marker);
+    if (index === -1) {
+      throw new Error(
+        `headless stderr is missing lifecycle marker ${JSON.stringify(marker)}`,
+      );
+    }
+    if (index <= priorIndex) {
+      throw new Error(
+        `headless lifecycle marker ${JSON.stringify(marker)} is out of order`,
+      );
+    }
+    if (output.indexOf(marker, index + marker.length) !== -1) {
+      throw new Error(
+        `headless lifecycle marker ${JSON.stringify(marker)} appeared more than once`,
+      );
+    }
+    priorIndex = index;
+  }
 }
 
 function assertLocalPrerequisites(): void {
@@ -1024,9 +1117,9 @@ function createScenario(
       `live acceptance suite root must be an absolute path, got "${suiteRoot}"`,
     );
   }
-  // PBCLI-36: standalone REVIEW nests under the candidate consumer tree so
-  // its package subpath resolves from an ancestor node_modules. The hermetic
-  // fixture stays outside every node_modules ancestry on purpose.
+  // PBCLI-36: headless REVIEW nests under the candidate consumer tree, while
+  // the hermetic fixture stays outside every node_modules ancestry on
+  // purpose.
   // The conversational fixtures nest under the same consumer tree for the
   // same reason: their registry modules import `xstate` and
   // `@sublang/playbook/xstate-runtime` by bare specifier, and the installed
@@ -1134,6 +1227,11 @@ function createScenario(
       checklistFixtureSource(join(root, 'checklist.flag')),
     );
     writeFileSync(join(repo, 'notes.registry.mjs'), notesFixtureSource());
+  } else if (name === 'hermetic') {
+    writeFileSync(
+      join(configHome, 'playbook/playbook.config.yaml'),
+      hermeticConfig(repo),
+    );
   } else {
     writeFileSync(
       join(configHome, 'playbook/playbook.config.yaml'),
@@ -1168,10 +1266,12 @@ function createScenario(
   return { root, repo, configHome, baselineCommit };
 }
 
+// Installed headless children receive this PATH shim, while the gate's own
+// tmux probes keep the parent PATH. Any child tmux use is therefore a hard
+// failure, including probes that happen before session creation.
 function createNoTmuxGuard(root: string): {
   binDir: string;
   marker: string;
-  realTmux: string;
 } {
   const binDir = join(root, 'no-tmux-bin');
   const marker = join(root, 'tmux-was-called');
@@ -1181,20 +1281,13 @@ function createNoTmuxGuard(root: string): {
     shim,
     [
       '#!/bin/sh',
-      'for argument in "$@"; do',
-      '  case "$argument" in',
-      '    new|new-s*)',
-      '      printf "%s\\n" "$*" > "$PLAYBOOK_ACCEPTANCE_TMUX_CALLED"',
-      '      exit 97',
-      '      ;;',
-      '  esac',
-      'done',
-      'exec "$PLAYBOOK_ACCEPTANCE_REAL_TMUX" "$@"',
+      'printf "%s\\n" "$*" > "$PLAYBOOK_ACCEPTANCE_TMUX_CALLED"',
+      'exit 97',
       '',
     ].join('\n'),
   );
   chmodSync(shim, 0o755);
-  return { binDir, marker, realTmux: execText('which', ['tmux']) };
+  return { binDir, marker };
 }
 
 async function drivePlaybookTurn(
@@ -1991,6 +2084,7 @@ function execLiveTextAsync(
   args: readonly string[],
   cwd: string,
   env: NodeJS.ProcessEnv,
+  stdin?: string,
 ): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolveCommand, rejectCommand) => {
     // A detached child is a new POSIX process group. That lets timeout
@@ -1999,7 +2093,7 @@ function execLiveTextAsync(
       cwd,
       env,
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
     let stdout = '';
     let stderr = '';
@@ -2080,129 +2174,18 @@ function execLiveTextAsync(
       clearTimers();
       resolveCommand({ stdout, stderr });
     });
+    child.stdin.setDefaultEncoding('utf8');
+    child.stdin.once('error', (error: NodeJS.ErrnoException) => {
+      // A fast CLI argument/config failure may close stdin before the parent
+      // finishes writing. Its exit and stderr remain the authoritative
+      // diagnostic; every other producer failure terminates the process
+      // group so a partial Boss turn is never left running.
+      if (error.code !== 'EPIPE' && !settled) {
+        stop(`cannot write stdin: ${error.message}`);
+      }
+    });
+    child.stdin.end(stdin ?? '');
   });
-}
-
-// RELEASE-25 fourth case: a compiled-style thin artifact whose bare
-// `xstate` and `@sublang/playbook/xstate-runtime` imports resolve only
-// through provisioning. One player state, deterministic START entry (no
-// classifier call), one hidden judge adjudication, machine output in the
-// terminal envelope.
-function hermeticArtifactSource(): string {
-  return `// Hermetic acceptance fixture: a compiled-style thin artifact.
-import { assign, fromPromise, setup } from 'xstate';
-import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
-
-const machine = setup({
-  actors: {
-    player: fromPromise(async () => {
-      throw new Error('player actor must be provided by the runner');
-    }),
-  },
-}).createMachine({
-  id: 'hermetic',
-  initial: 'ready',
-  context: {},
-  states: {
-    ready: {
-      id: 'ready',
-      description: 'Waits for the Boss task.',
-      meta: {
-        playbook: { stateId: 'ready', description: 'Waits for the Boss task.' },
-      },
-      tags: ['playbook.parked'],
-      on: {
-        START: {
-          target: 'work',
-          actions: assign({ task: ({ event }) => event.task }),
-        },
-      },
-    },
-    work: {
-      id: 'work',
-      description: 'HERMETIC-1: Worker echoes the fixture token.',
-      meta: {
-        playbook: {
-          stateId: 'work',
-          description: 'HERMETIC-1: Worker echoes the fixture token.',
-        },
-      },
-      tags: ['playbook.busy'],
-      invoke: {
-        src: 'player',
-        input: ({ context }) => ({
-          stateId: 'work',
-          player: 'Worker',
-          sourceItem: 'HERMETIC-1',
-          prompt: [
-            'Read acceptance-hermetic-token.txt in the working directory and',
-            'reply with exactly its trimmed content. Do not modify any file.',
-            \`Task context: \${context.task}\`,
-          ].join('\\n'),
-          result: {
-            done: 'Worker replied with the token. Output shall include \`token: <the exact token text>\`.',
-          },
-        }),
-        onDone: {
-          target: 'done',
-          actions: assign({ token: ({ event }) => event.output.token }),
-        },
-        onError: {
-          target: 'failed',
-          actions: assign({
-            lastError: ({ event }) => String(event.error),
-          }),
-        },
-      },
-    },
-    failed: {
-      id: 'failed',
-      description: 'Recoverable failure awaiting a fresh Boss task.',
-      meta: {
-        playbook: {
-          stateId: 'failed',
-          description: 'Recoverable failure awaiting a fresh Boss task.',
-        },
-      },
-      tags: ['playbook.parked'],
-      on: {
-        START: {
-          target: 'work',
-          actions: assign({ task: ({ event }) => event.task }),
-        },
-      },
-    },
-    done: {
-      id: 'done',
-      description: 'The token was echoed.',
-      meta: {
-        playbook: { stateId: 'done', description: 'The token was echoed.' },
-      },
-      type: 'final',
-    },
-  },
-  output: ({ context }) => ({ token: context.token ?? '' }),
-});
-
-const createRuntime = createXStatePlaybookRuntime(machine, {
-  label: 'HERMETIC',
-  snapshotOptions: () => ({}),
-  entryEvent: { type: 'START', textField: 'task' },
-});
-
-export default {
-  id: 'hermetic',
-  command: 'hermetic',
-  intent: 'hermetic global-only acceptance fixture',
-  requiredRoleIds: ['worker'],
-  validateOptions(value) {
-    return value ?? {};
-  },
-  createRuntime() {
-    return createRuntime({});
-  },
-};
-`;
 }
 
 function positiveIntegerEnv(name: string, fallback: number): number {

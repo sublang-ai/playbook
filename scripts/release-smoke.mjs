@@ -5,13 +5,15 @@
 // RELEASE-28: the local, model-free release smoke — `pnpm smoke:release`.
 //
 // It packs the candidate, installs it into throwaway npm prefixes in both
-// documented DR-026 shapes, exercises the installed CLI, drives the DR-024
-// hermetic provisioning path deterministically, and checks that what the
-// tarball carries is byte-for-byte what the repository committed.
+// documented DR-026 shapes, exercises the installed CLI, drives the shared
+// compiled Captain over a provisioned filesystem registry deterministically,
+// and checks that what the tarball carries is byte-for-byte what the
+// repository committed.
 //
-// No model calls, no credentials, and no tmux: every agent-shaped step is
-// either an availability probe or a DR-016 script actor. Registry access IS
-// required — steps 2 and 3 install from npm.
+// No model calls, no credentials, and no tmux: agent availability is probed,
+// the shared-Captain turn uses a deterministic injected adapter, and working
+// playbook behavior is a DR-016 script actor. Registry access IS required —
+// steps 2 and 3 install from npm.
 //
 // This is the gate that runs between `pnpm test` and `pnpm test:acceptance`
 // (RELEASE-10). It fails fast, prints the failing step's own evidence, and
@@ -34,7 +36,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -46,7 +48,10 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const keepArtifacts = process.argv.includes('--keep');
 const maxBuffer = 64 * 1024 * 1024;
 const smokeToken = 'RELEASE_SMOKE_OK';
+const smokeContinuedReply = 'RELEASE_SMOKE_CONTINUED';
 const smokeTask = 'Run the deterministic release smoke probe.';
+const sessionIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const adapterSdks = ['@anthropic-ai/claude-agent-sdk', '@openai/codex-sdk'];
 let isolatedNpmCache;
 
@@ -93,7 +98,8 @@ function run(command, args, options = {}) {
     env: options.env ?? smokeEnv(),
     encoding: 'utf8',
     maxBuffer,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+    ...(options.input === undefined ? {} : { input: options.input }),
   });
   const stdout = result.stdout ?? '';
   const stderr = result.stderr ?? '';
@@ -225,9 +231,85 @@ function expectContains(haystack, needle, what) {
   }
 }
 
+function parseExactHeadlessReply(stdout, expectedReply, expectedSessionId) {
+  let envelope;
+  try {
+    envelope = JSON.parse(stdout);
+  } catch (error) {
+    fail(
+      'the installed headless Captain did not emit one JSON object',
+      `${error instanceof Error ? error.message : String(error)}\n${tail(stdout)}`,
+    );
+  }
+  if (
+    envelope === null ||
+    Array.isArray(envelope) ||
+    typeof envelope !== 'object' ||
+    typeof envelope.sessionId !== 'string' ||
+    !sessionIdPattern.test(envelope.sessionId) ||
+    envelope.reply !== expectedReply ||
+    (expectedSessionId !== undefined && envelope.sessionId !== expectedSessionId)
+  ) {
+    fail(
+      'the installed headless Captain returned the wrong reply envelope',
+      `expected reply ${JSON.stringify(expectedReply)}` +
+        (expectedSessionId === undefined
+          ? ''
+          : ` and session ${JSON.stringify(expectedSessionId)}`) +
+        `\nactual ${stdout.trimEnd()}`,
+    );
+  }
+  const exact = `${JSON.stringify({
+    sessionId: envelope.sessionId,
+    reply: expectedReply,
+  })}\n`;
+  if (stdout !== exact) {
+    fail(
+      'headless JSON exposed fields or bytes beyond sessionId and reply',
+      `expected ${JSON.stringify(exact)}\nactual   ${JSON.stringify(stdout)}`,
+    );
+  }
+  return envelope;
+}
+
+function assertProvisionedEngineTree(repo, prefix) {
+  const nodeModules = join(repo, 'node_modules');
+  const scope = join(nodeModules, '@sublang');
+  const nodeModulesEntries = readdirSync(nodeModules).sort();
+  const scopeEntries = readdirSync(scope).sort();
+  if (
+    !lstatSync(nodeModules).isDirectory() ||
+    !lstatSync(scope).isDirectory() ||
+    JSON.stringify(nodeModulesEntries) !==
+      JSON.stringify(['@sublang', 'xstate']) ||
+    JSON.stringify(scopeEntries) !== JSON.stringify(['playbook'])
+  ) {
+    fail(
+      'provisioning created an unexpected node_modules shape',
+      JSON.stringify({
+        nodeModules: nodeModulesEntries,
+        '@sublang': scopeEntries,
+      }),
+    );
+  }
+  const prefixReal = `${realpathSync(prefix)}${sep}`;
+  for (const name of ['xstate', join('@sublang', 'playbook')]) {
+    const link = join(nodeModules, name);
+    if (!lstatSync(link).isSymbolicLink()) {
+      fail(`${link} is not a symbolic link`);
+    }
+    const target = realpathSync(readlinkSync(link));
+    if (!target.startsWith(prefixReal)) {
+      fail(`${link} resolves outside the isolated prefix`, target);
+    }
+  }
+}
+
 // A thin compiled-style artifact whose one working state is a DR-016 script
-// actor: no player, no captain, no judge, so the whole run is deterministic
-// and needs no credentials. The exit-status guards are the DR-016 pair.
+// actor. It declares the shared config's mapped worker but never calls it;
+// the command leaves one durable effect so continuation can prove that the
+// completed root action was not replayed. The exit-status guards are the
+// DR-016 pair.
 function smokeArtifactSource() {
   return `// Release smoke fixture: a thin artifact with one script state.
 import { assign, setup } from 'xstate';
@@ -267,7 +349,7 @@ const machine = setup({}).createMachine({
         input: () => ({
           stateId: 'work',
           sourceItem: 'SMOKE-1',
-          command: 'exit 0',
+          command: "echo effect >> .release-smoke-effects",
           result: {
             probed: 'The command exited zero.',
             probeFailed: 'The command exited nonzero.',
@@ -332,10 +414,10 @@ const createRuntime = createXStatePlaybookRuntime(machine, {
 });
 
 export default {
-  id: 'releasesmoke',
-  command: 'releasesmoke',
+  id: 'smoke',
+  command: 'smoke',
   intent: 'deterministic release smoke fixture',
-  requiredRoleIds: [],
+  requiredRoleIds: ['worker'],
   validateOptions(value) {
     return value ?? {};
   },
@@ -343,6 +425,78 @@ export default {
     return createRuntime({});
   },
 };
+`;
+}
+
+// Run from the packed installation's own module scope. The injected adapter
+// and SDK probe make the boundary deterministic, while omitting both
+// createCaptainRuntime and createHostRuntime deliberately selects the shipped
+// compiled Captain and cligent's real no-presenter runtime core.
+function installedHeadlessDriverSource() {
+  return `import { appendFileSync } from 'node:fs';
+import { createEvent } from '@sublang/cligent';
+import { runPlaybookCli } from './reference/sdlc/code.playbook/bin/playbook.js';
+
+const closingReply = ${JSON.stringify(smokeToken)};
+const continuedReply = ${JSON.stringify(smokeContinuedReply)};
+const callLog = requiredEnv('PLAYBOOK_SMOKE_AGENT_LOG');
+let sequence = 0;
+
+class DeterministicAdapter {
+  agent = 'claude-code';
+
+  async *run(prompt, options = {}) {
+    let kind;
+    let result;
+    if (prompt.includes('closing reply and turn summary')) {
+      kind = 'closing';
+      result = closingReply;
+    } else if (prompt.includes('Select exactly one action from the closed set')) {
+      kind = 'selection';
+      result = JSON.stringify({ action: 'respond', text: continuedReply });
+    } else {
+      throw new Error('release smoke received an unexpected Captain prompt');
+    }
+    sequence += 1;
+    appendFileSync(
+      callLog,
+      JSON.stringify({ kind, resume: options.resume ?? null }) + '\\n',
+    );
+    yield createEvent(
+      'done',
+      this.agent,
+      {
+        status: 'success',
+        result,
+        resumeToken: \`release-smoke:\${kind}:\${sequence}\`,
+        usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+        durationMs: 1,
+      },
+      \`release-smoke-transport-\${sequence}\`,
+    );
+  }
+
+  async isAvailable() {
+    return true;
+  }
+}
+
+function requiredEnv(name) {
+  const value = process.env[name];
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(\`\${name} is required\`);
+  }
+  return value;
+}
+
+const result = await runPlaybookCli({
+  argv: process.argv.slice(2),
+  env: process.env,
+  userConfigPath: requiredEnv('PLAYBOOK_SMOKE_CONFIG'),
+  adapterImports: { claude: async () => DeterministicAdapter },
+  probeAdapterSdk: async () => true,
+});
+process.exitCode = result.code ?? 0;
 `;
 }
 
@@ -452,7 +606,7 @@ async function main() {
     ['install the lean global shape', () => stepLean(root, state)],
     ['install the opted-in global shape', () => stepOptedIn(root, state)],
     ['run the installed CLI surfaces', () => stepInstalledCli(root, state)],
-    ['drive the hermetic provisioning run', () => stepHermetic(root, state)],
+    ['drive the installed headless Captain', () => stepHermetic(root, state)],
     ['check compiled runtime integrity', () => stepCompiledRuntimeIntegrity(state)],
     ['check compiled-artifact fidelity', () => stepCompiledFidelity(state)],
     ['guard the nested cligent floor', () => stepCligentFloor(root, state)],
@@ -607,8 +761,15 @@ function stepInstalledCli(root, state) {
     XDG_STATE_HOME: join(home, '.local', 'state'),
   });
   const help = run(state.optinBin, ['--help'], { cwd: root, env });
-  expectContains(help.stdout, 'playbook run <from>', '--help output');
+  expectContains(help.stdout, 'playbook run [--with <path>]', '--help output');
+  expectContains(help.stdout, '--session <id>', '--help output');
   expectContains(help.stdout, 'Default config:', '--help output');
+  const runHelp = run(state.optinBin, ['run', '--help'], { cwd: root, env });
+  expectContains(runHelp.stdout, 'playbook run [--with <path>]', 'run help');
+  expectContains(runHelp.stdout, '--continue', 'run help');
+  expectContains(runHelp.stdout, '--retry-uncertain', 'run help');
+  expectContains(runHelp.stdout, '--discard-uncertain', 'run help');
+  expectContains(runHelp.stdout, 'Default config:', 'run help');
   const list = run(state.optinBin, ['--list'], { cwd: root, env });
   for (const expected of [
     '/code  code  —',
@@ -618,22 +779,39 @@ function stepInstalledCli(root, state) {
     expectContains(list.stdout, expected, '--list output');
   }
   return [
-    '--help printed usage and the resolved config path',
+    'top-level and run help printed current grammar and the resolved config path',
     ...list.stdout.trimEnd().split('\n'),
   ];
 }
 
-// Step 5 — DR-024 §7 / RELEASE-24 §hermetic, deterministic variant: a bare
-// repository with no project-local packages at any level, a thin artifact
-// whose only working state is a script actor, and the installed global host
-// driving it. No agent call is ever made, so no credential is needed — the
-// captain's SDK only has to be loadable, which step 3's shape guarantees.
+// Step 5 — DR-024 §7 plus DR-031's shared Captain boundary: a bare repository
+// with no project-local packages at any level enables a thin filesystem
+// registry in the shared config. Two separate processes drive the installed
+// compiled Captain and real no-presenter host with a deterministic injected
+// adapter: first from stdin, then by durable session id from another cwd.
+// No model, credential, or tmux process participates.
 function stepHermetic(root, state) {
   const scenario = join(root, 'hermetic');
   const repo = join(scenario, 'repo');
   mkdirSync(repo, { recursive: true });
-  writeFileSync(join(repo, '.gitignore'), 'node_modules/\n');
+  writeFileSync(
+    join(repo, '.gitignore'),
+    ['node_modules/', '.release-smoke-effects', ''].join('\n'),
+  );
   writeFileSync(join(repo, 'smoke.playbook.mjs'), smokeArtifactSource());
+  const configPath = join(repo, 'playbook.config.yaml');
+  writeFileSync(
+    configPath,
+    [
+      'captain: { adapter: claude, model: release-smoke-captain }',
+      'playbooks:',
+      '  smoke:',
+      '    from: ./smoke.playbook.mjs',
+      '    players:',
+      '      worker: { adapter: claude, model: release-smoke-worker }',
+      '',
+    ].join('\n'),
+  );
   for (const args of [
     ['init', '-b', 'main'],
     ['config', 'user.name', 'Playbook Release Smoke'],
@@ -666,20 +844,42 @@ function stepHermetic(root, state) {
     }
   }
 
+  const sentinelBin = join(scenario, 'sentinel-bin');
+  const tmuxMarker = join(scenario, 'tmux-was-invoked');
+  mkdirSync(sentinelBin, { recursive: true });
+  writeFileSync(
+    join(sentinelBin, 'tmux'),
+    [
+      '#!/bin/sh',
+      ': > "$PLAYBOOK_SMOKE_TMUX_MARKER"',
+      'exit 97',
+      '',
+    ].join('\n'),
+    { mode: 0o700 },
+  );
   const env = smokeEnv({
     HOME: join(scenario, 'home'),
     XDG_CONFIG_HOME: join(scenario, 'xdg'),
     XDG_STATE_HOME: join(scenario, 'xdg-state'),
+    PATH: [sentinelBin, process.env.PATH].filter(Boolean).join(delimiter),
+    // A synthetic readiness sentinel, consumed only by the launch gate. The
+    // adapter itself is injected below and reads no credential.
+    ANTHROPIC_API_KEY: 'release-smoke-synthetic-readiness',
+    PLAYBOOK_SMOKE_CONFIG: configPath,
+    PLAYBOOK_SMOKE_AGENT_LOG: join(scenario, 'captain-calls.ndjson'),
+    PLAYBOOK_SMOKE_TMUX_MARKER: tmuxMarker,
   });
-  const args = [
-    'run',
-    './smoke.playbook.mjs',
-    smokeTask,
-    '--cwd',
-    repo,
-    '--json',
-  ];
-  const first = run(state.optinBin, args, { cwd: repo, env });
+  const driverPath = join(
+    installedPackageRoot(state.optinPrefix),
+    'release-smoke-headless.mjs',
+  );
+  writeFileSync(driverPath, installedHeadlessDriverSource());
+
+  const first = run(process.execPath, [driverPath, 'run', '--json'], {
+    cwd: repo,
+    env,
+    input: `/smoke ${smokeTask}\n`,
+  });
   const provisioningLines = first.stderr.match(/provisioned/g) ?? [];
   if (provisioningLines.length !== 1) {
     fail(
@@ -687,43 +887,127 @@ function stepHermetic(root, state) {
       `stderr:\n${tail(first.stderr)}`,
     );
   }
-  const prefixReal = `${realpathSync(state.optinPrefix)}${sep}`;
-  for (const name of ['xstate', join('@sublang', 'playbook')]) {
-    const link = join(repo, 'node_modules', name);
-    if (!lstatSync(link).isSymbolicLink()) {
-      fail(`${link} is not a symbolic link`);
-    }
-    const target = realpathSync(readlinkSync(link));
-    if (!target.startsWith(prefixReal)) {
-      fail(`${link} resolves outside the isolated prefix`, target);
-    }
-  }
-  const envelope = JSON.parse(first.stdout);
-  const expected = {
-    outcome: 'terminal',
-    output: { token: smokeToken, exitStatus: 0 },
-  };
+  const startedAt = first.stderr.indexOf('/smoke started');
+  const finishedAt = first.stderr.indexOf('/smoke finished');
   if (
-    envelope.outcome !== expected.outcome ||
-    envelope.output?.token !== smokeToken ||
-    envelope.output?.exitStatus !== 0 ||
-    typeof envelope.sessionId !== 'string'
+    startedAt < 0 ||
+    startedAt !== first.stderr.lastIndexOf('/smoke started') ||
+    finishedAt < 0 ||
+    finishedAt !== first.stderr.lastIndexOf('/smoke finished') ||
+    startedAt >= finishedAt
   ) {
     fail(
-      'the hermetic run did not return the expected terminal envelope',
-      `expected ${JSON.stringify(expected)}\nactual   ${first.stdout.trim()}`,
+      'the first headless turn did not emit one ordered /smoke lifecycle',
+      `stderr:\n${tail(first.stderr)}`,
+    );
+  }
+  assertProvisionedEngineTree(repo, state.optinPrefix);
+  const firstEnvelope = parseExactHeadlessReply(first.stdout, smokeToken);
+  const sessionsDir = join(env.XDG_STATE_HOME, 'playbook', 'sessions');
+  const sessionPath = join(sessionsDir, `${firstEnvelope.sessionId}.json`);
+  const firstRecord = readJson(sessionPath);
+  const frozenCwd = realpathSync(repo);
+  if (
+    firstRecord.schemaVersion !== 2 ||
+    firstRecord.kind !== 'captain-session' ||
+    firstRecord.state !== 'settled' ||
+    firstRecord.cwd !== frozenCwd ||
+    firstRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
+    firstRecord.snapshot?.captain?.conversation?.token !==
+      'release-smoke:closing:1'
+  ) {
+    fail(
+      'the first headless turn did not persist its complete Captain boundary',
+      JSON.stringify({
+        schemaVersion: firstRecord.schemaVersion,
+        kind: firstRecord.kind,
+        state: firstRecord.state,
+        cwd: firstRecord.cwd,
+        conversation: firstRecord.snapshot?.captain?.conversation,
+      }),
     );
   }
 
-  const second = run(state.optinBin, args, { cwd: repo, env });
+  const continuationCwd = join(scenario, 'continuation-cwd');
+  mkdirSync(continuationCwd, { recursive: true });
+  const second = run(
+    process.execPath,
+    [driverPath, 'run', '--session', firstEnvelope.sessionId, '--json'],
+    {
+      cwd: continuationCwd,
+      env,
+      input: 'Continue without replaying the completed action.\n',
+    },
+  );
   if (second.stderr.includes('provisioned')) {
     fail(
-      'the second hermetic run provisioned again',
+      'the continued headless turn provisioned again',
       `stderr:\n${tail(second.stderr)}`,
     );
   }
-  if (JSON.parse(second.stdout).outcome !== 'terminal') {
-    fail('the second hermetic run did not reach a terminal outcome', second.stdout);
+  if (second.stderr.includes('/smoke')) {
+    fail(
+      'the continued headless turn replayed /smoke lifecycle status',
+      `stderr:\n${tail(second.stderr)}`,
+    );
+  }
+  assertProvisionedEngineTree(repo, state.optinPrefix);
+  parseExactHeadlessReply(
+    second.stdout,
+    smokeContinuedReply,
+    firstEnvelope.sessionId,
+  );
+  const secondRecord = readJson(sessionPath);
+  if (
+    secondRecord.state !== 'settled' ||
+    secondRecord.cwd !== frozenCwd ||
+    secondRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
+    secondRecord.snapshot?.captain?.conversation?.token !==
+      'release-smoke:selection:1'
+  ) {
+    fail(
+      'continuation replaced the frozen cwd or lost Captain continuity',
+      JSON.stringify({
+        state: secondRecord.state,
+        cwd: secondRecord.cwd,
+        conversation: secondRecord.snapshot?.captain?.conversation,
+      }),
+    );
+  }
+
+  const effects = readFileSync(
+    join(repo, '.release-smoke-effects'),
+    'utf8',
+  )
+    .trimEnd()
+    .split('\n');
+  if (effects.length !== 1 || effects[0] !== 'effect') {
+    fail(
+      'continuation replayed or lost the completed filesystem effect',
+      JSON.stringify(effects),
+    );
+  }
+  const captainCalls = readFileSync(env.PLAYBOOK_SMOKE_AGENT_LOG, 'utf8')
+    .trimEnd()
+    .split('\n')
+    .map((line) => JSON.parse(line));
+  if (
+    captainCalls.length !== 2 ||
+    captainCalls[0]?.kind !== 'closing' ||
+    captainCalls[0]?.resume !== null ||
+    captainCalls[1]?.kind !== 'selection' ||
+    captainCalls[1]?.resume !== 'release-smoke:closing:1'
+  ) {
+    fail(
+      'the installed compiled Captain did not cross the expected two turn boundaries',
+      JSON.stringify(captainCalls),
+    );
+  }
+  if (existsSync(tmuxMarker)) {
+    fail(
+      'the installed headless Captain invoked tmux',
+      'The private PATH sentinel was executed during a no-presenter turn.',
+    );
   }
   const status = run('git', ['status', '--porcelain'], { cwd: repo });
   if (status.stdout.trim() !== '') {
@@ -732,10 +1016,13 @@ function stepHermetic(root, state) {
       status.stdout,
     );
   }
+  rmSync(driverPath);
   return [
     'one provisioning line; both engine links resolve into the prefix',
-    `terminal envelope with ${smokeToken} (exit status 0)`,
-    'the second run provisioned nothing and stayed terminal',
+    `stdin produced exact {sessionId,reply} with ${smokeToken}`,
+    `a second process continued Captain session ${firstEnvelope.sessionId}`,
+    'continuation kept the frozen cwd, replayed no effect, and reprovisioned nothing',
+    'the failing tmux PATH sentinel was never invoked',
   ];
 }
 
@@ -816,6 +1103,9 @@ function stepCompiledFidelity(state) {
     'code.playbook/code.prompt-contract.test.ts',
     'code.playbook/code.playbook.contract.test.ts',
     'code.playbook/code.playbook.test.ts',
+    'code.playbook/headless-run.test.ts',
+    'code.playbook/session-store.test.ts',
+    'code.playbook/headless-crash.test.ts',
     'review.playbook/review.gears-fsm.test.ts',
     'review.playbook/review.playbook.test.ts',
     'decide.playbook/decide.gears-fsm.test.ts',

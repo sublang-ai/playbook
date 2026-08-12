@@ -17,6 +17,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   AGENT_RUNTIME_TARGETS,
   classifyRuntime,
@@ -436,6 +437,37 @@ describe('live acceptance gate config (PBCLI-32)', () => {
       'checklist-worker claude',
       'notes-worker claude',
     ]);
+  });
+
+  it('composes the hermetic headless config with its real fixture module', async () => {
+    const { hermeticConfig } = await import(
+      new URL('../../../acceptance/live-config.ts', import.meta.url).href
+    );
+    const { hermeticArtifactSource } = await import(
+      new URL('../../../acceptance/live-fixtures.ts', import.meta.url).href
+    );
+    const repo = await mkdtemp(join(tmpdir(), 'playbook-live-hermetic-'));
+    tempDirs.push(repo);
+    const registryPath = join(repo, 'hermetic.playbook.mjs');
+    await writeFile(registryPath, hermeticArtifactSource(), 'utf8');
+
+    const top = parseYaml(hermeticConfig(repo));
+    const { config, playbooks } = await composeGenericConfig(
+      top,
+      (specifier: string) => import(specifier),
+    );
+
+    expect(playbooks.map((p: any) => `${p.id} ${p.command}`)).toEqual([
+      'hermetic hermetic',
+    ]);
+    expect(config.captain.from).toBe(PLAYBOOK_CAPTAIN_MODULE);
+    expect(config.captain.adapter).toBe('codex');
+    expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
+      'hermetic-worker claude',
+    ]);
+    expect(config.captain.options.playbooks.hermetic.from).toBe(
+      pathToFileURL(registryPath).href,
+    );
   });
 });
 

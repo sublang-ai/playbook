@@ -1,12 +1,134 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
 
-// The two fixture playbook modules the live release gate writes into the
-// conversational scenario's repository. They live here, beside the config
-// that enables them (`live-config.ts`), for the same reason: the gate is
-// excluded from `pnpm test` and CI, so an ordinary test in the normal suite
-// can write these sources out, import them, and prove they still link and
-// still expose the registry entries that config names.
+// The fixture playbook modules the live release gate writes for its hermetic
+// and conversational scenarios. They live here, beside the configs that
+// enable them (`live-config.ts`), for the same reason: the gate is excluded
+// from `pnpm test` and CI, so an ordinary test in the normal suite can write
+// these sources out, import them, and prove they still link and expose the
+// registry entries that their configs name.
+
+// RELEASE-25 fourth case: a compiled-style thin artifact whose bare
+// `xstate` and `@sublang/playbook/xstate-runtime` imports resolve only
+// through provisioning. One player state, deterministic START entry (no
+// classifier call), one hidden judge adjudication, and a terminal result
+// that the shared Captain grounds its visible reply in.
+export function hermeticArtifactSource(): string {
+  return `// Hermetic acceptance fixture: a compiled-style thin artifact.
+import { assign, fromPromise, setup } from 'xstate';
+import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+
+const machine = setup({
+  actors: {
+    player: fromPromise(async () => {
+      throw new Error('player actor must be provided by the runner');
+    }),
+  },
+}).createMachine({
+  id: 'hermetic',
+  initial: 'ready',
+  context: {},
+  states: {
+    ready: {
+      id: 'ready',
+      description: 'Waits for the Boss task.',
+      meta: {
+        playbook: { stateId: 'ready', description: 'Waits for the Boss task.' },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({ task: ({ event }) => event.task }),
+        },
+      },
+    },
+    work: {
+      id: 'work',
+      description: 'HERMETIC-1: Worker echoes the fixture token.',
+      meta: {
+        playbook: {
+          stateId: 'work',
+          description: 'HERMETIC-1: Worker echoes the fixture token.',
+        },
+      },
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          player: 'Worker',
+          sourceItem: 'HERMETIC-1',
+          prompt: [
+            'Read acceptance-hermetic-token.txt in the working directory and',
+            'reply with exactly its trimmed content. Do not modify any file.',
+            \`Task context: \${context.task}\`,
+          ].join('\\n'),
+          result: {
+            done: 'Worker replied with the token. Output shall include \`token: <the exact token text>\`.',
+          },
+        }),
+        onDone: {
+          target: 'done',
+          actions: assign({ token: ({ event }) => event.output.token }),
+        },
+        onError: {
+          target: 'failed',
+          actions: assign({
+            lastError: ({ event }) => String(event.error),
+          }),
+        },
+      },
+    },
+    failed: {
+      id: 'failed',
+      description: 'Recoverable failure awaiting a fresh Boss task.',
+      meta: {
+        playbook: {
+          stateId: 'failed',
+          description: 'Recoverable failure awaiting a fresh Boss task.',
+        },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({ task: ({ event }) => event.task }),
+        },
+      },
+    },
+    done: {
+      id: 'done',
+      description: 'The token was echoed.',
+      meta: {
+        playbook: { stateId: 'done', description: 'The token was echoed.' },
+      },
+      type: 'final',
+    },
+  },
+  output: ({ context }) => ({ token: context.token ?? '' }),
+});
+
+const createRuntime = createXStatePlaybookRuntime(machine, {
+  label: 'HERMETIC',
+  snapshotOptions: () => ({}),
+  entryEvent: { type: 'START', textField: 'task' },
+});
+
+export default {
+  id: 'hermetic',
+  command: 'hermetic',
+  intent: 'hermetic global-only acceptance fixture',
+  requiredRoleIds: ['worker'],
+  validateOptions(value) {
+    return value ?? {};
+  },
+  createRuntime() {
+    return createRuntime({});
+  },
+};
+`;
+}
 
 // A three-step checklist whose middle step is a DR-016 script actor reading
 // a flag file. With the flag absent the exit-status guard routes to

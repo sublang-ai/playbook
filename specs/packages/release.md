@@ -303,22 +303,13 @@ step below holds of the packed candidate:
    named as its own top-level install root reports every adapter
    **available** when probed from that same location
    ([DR-026](../decisions/026-optional-adapter-sdks.md) §3).
-4. **Installed CLI.** The installed `playbook` executable prints its usage
-   and resolved config path for `--help`, and for `--list` names the
-   `code`, `review`, and `decide` entries of a config enabling the bundled
-   registries ([[release-20](#release-20)]).
-5. **Hermetic provisioning.** The deterministic variant of the
-   [DR-024](../decisions/024-runtime-engine-provisioning.md) §7
-   case: a bare fixture repository with no `package.json`, lockfile, or
-   `node_modules` at any level, holding a thin artifact that imports
-   `xstate` and `@sublang/playbook/xstate-runtime` and whose single working
-   state is a [DR-016](../decisions/016-script-actors-and-optimize-pass.md)
-   script actor, so the run needs no agent and no key. Neither engine
-   import resolves from the fixture before the run; the run prints one
-   provisioning line, creates exactly the two engine links and both resolve
-   into the isolated prefix, and returns its terminal JSON envelope; a
-   second run provisions nothing further; the fixture repository stays
-   clean.
+4. **Installed CLI.** The installed `playbook` executable prints its top-level and `run` usage, resolved config path, continuation and uncertain-recovery grammar, and for `--list` names the `code`, `review`, and `decide` entries of a config enabling the bundled registries ([[release-20](#release-20)]).
+5. **Hermetic shared-Captain run.** A bare fixture repository with no `package.json`, lockfile, or `node_modules` at any level shall hold a configured thin registry importing `xstate` and `@sublang/playbook/xstate-runtime` whose work is a [DR-016](../decisions/016-script-actors-and-optimize-pass.md) script actor.
+   Neither engine import shall resolve from the fixture before launch.
+   A subprocess driver beside the globally installed candidate shall invoke the packed launcher's existing dependency-injection seam with a deterministic adapter, the shared config, and a `/command` Boss turn supplied on stdin, without replacing the compiled Captain or constructing tmux.
+   The first process shall print one provisioning line, create exactly the two engine links resolving into the isolated prefix, and return exactly one `{sessionId, reply}` JSON object only after persisting the complete Captain session.
+   A second process shall continue that same public session id from stdin with the stored Captain continuation and frozen working directory, shall not replay the completed fixture lifecycle, and shall provision nothing further.
+   The fixture repository shall stay clean.
 6. **Compiled runtime integrity.** The installed Captain, CODE, REVIEW, and DECIDE playbook subpaths import and construct runtimes carrying the declared contract surface.
 7. **Compiled-artifact fidelity.** Every packed file other than the manifest is byte-identical to the repository's own, and the committed Captain, CODE, REVIEW, and DECIDE artifact-conformance suites pass with their source/GEARS/FSM, transition, prompt, and topology checks named among those that ran.
 8. **Nested cligent floor.** The nested installed `@sublang/cligent`
@@ -364,16 +355,12 @@ suite's real model calls.
 Before tagging a release, the developer/agent shall run
 `pnpm test:acceptance` locally. This live acceptance suite shall pack and
 install the candidate package once and create isolated fresh git repositories.
-It shall launch the installed `playbook` executable through real attached tmux-play sessions and complete `/code` and `/decide`, including their nested REVIEW calls, using the locally authenticated real Claude and Codex adapters.
-It shall also run the installed executable's non-interactive `playbook run` path over the bundled REVIEW registry with real Coder and Reviewer agents, using `--json` and no tmux-play session.
-It shall additionally run the hermetic global-only case
-([DR-024](../decisions/024-runtime-engine-provisioning.md) §7):
-install the packed candidate globally into an isolated npm prefix and
-drive a compiled thin fixture artifact — one importing `xstate` and
-`@sublang/playbook/xstate-runtime` — from a fresh repository with no
-project-local packages anywhere, asserting automatic engine
-provisioning triggers, the run reaches its terminal JSON outcome, and a
-repeated run provisions nothing further.
+It shall run the installed executable's headless shared-Captain path with real Claude and Codex adapters for bundled REVIEW and CODE, using stdin as well as argument input, exact `{sessionId, reply}` JSON output, and no tmux-play session.
+The REVIEW case shall continue the same public session in a second process from stdin and shall prove that continuation reuses the durable Captain conversation without repeating REVIEW or its repository effects.
+The CODE case shall complete its nested REVIEW call and shall report the ordered start, child-call, child-return, and finish lifecycle exactly once.
+It shall retain one installed interactive `/decide` case through a real attached tmux-play session so the live gate still observes inherited same-role player panes and Boss/Captain focus while DECIDE completes nested REVIEW.
+It shall additionally run the hermetic global-only case ([DR-024](../decisions/024-runtime-engine-provisioning.md) §7): install the packed candidate globally into an isolated npm prefix, enable a compiled thin fixture registry importing `xstate` and `@sublang/playbook/xstate-runtime` in the shared config of a fresh repository with no project-local packages anywhere, and invoke its slash command through the installed headless Captain.
+The case shall assert automatic engine provisioning triggers exactly once, both runs return only `{sessionId, reply}`, each reply grounds the fixture token, and a repeated fresh run provisions nothing further.
 Documentation shall drop the project-local install and `npx`
 consumption story only after this case passes.
 
@@ -397,8 +384,8 @@ It shall fail unless the literal `Saved you 0` appears nowhere in the
 whole session, no turn-failure marker appears beyond the two engineered
 script failures, and the fixture repository is left clean.
 
-The suite shall fail unless `/code` implements and commits its fixture requirement, reaches nested REVIEW approval, and leaves a clean worktree, and unless `/decide` commits and reaches nested REVIEW approval for its fixture design without implementing that design, also with a clean worktree.
-The non-interactive REVIEW case shall fail unless it returns the approved terminal JSON envelope, leaves the fixture repository clean, and creates no tmux session.
+The suite shall fail unless headless `/code` implements and commits its fixture requirement, reaches nested REVIEW approval, and leaves a clean worktree, and unless interactive `/decide` commits and reaches nested REVIEW approval for its fixture design without implementing that design, also with a clean worktree.
+The headless REVIEW case shall fail unless both processes return the same public session id with one Captain reply each, the first reaches approval, the continuation repeats no lifecycle or repository effect, the fixture repository remains clean, and neither process creates a tmux session.
 Missing local authentication or required executables shall be a clear failure,
 not a skip.
 Because these checks spend real model calls and require local credentials and
@@ -416,9 +403,7 @@ Before tagging a release, the developer/agent shall verify, in this order:
 - [ ] All tests pass (`pnpm test` from the repo root).
 - [ ] The local model-free release smoke passes (`pnpm smoke:release`;
       [[release-28](#release-28)]).
-- [ ] The local real-agent acceptance suite passes, covering both attached
-      CODE and DECIDE workflows and standalone REVIEW through non-interactive `playbook run`
-      (`pnpm test:acceptance`; [[release-24](#release-24)]).
+- [ ] The local real-agent acceptance suite passes, covering headless REVIEW with process-crossing continuation, headless CODE with nested REVIEW, and attached DECIDE (`pnpm test:acceptance`; [[release-24](#release-24)]).
 - [ ] If the release changes the interactive CLI presentation or layout, or
       changes the declared or locked `@sublang/cligent` version, the
       conditional manual tmux UX smoke passes
@@ -684,12 +669,9 @@ unless all of the following hold:
   tarball alone and **available** with each SDK named as its own top-level
   install root, and the lean closure carries no `@anthropic-ai` or
   `@openai` directory at any depth;
-- the installed executable answers `--help` and `--list`, the latter naming
-  the CODE, REVIEW, and DECIDE registries;
-- the hermetic fixture resolves neither engine import before the run, is
-  provisioned exactly once into the isolated prefix, returns its terminal
-  JSON envelope from a script-actor-only artifact, provisions nothing on a
-  second run, and is left clean;
+- the installed executable answers top-level and `run` help with the fresh, continuation, and uncertain-recovery grammar, and `--list` names the CODE, REVIEW, and DECIDE registries;
+- the hermetic fixture resolves neither engine import before launch, and a subprocess driver using the packed launcher's injected deterministic adapter drives its configured slash command through the compiled Captain with no tmux;
+- the first process provisions the fixture exactly once into the isolated prefix and returns only `{sessionId, reply}` after durable hand-off, while a second process continues the same id from stdin with the stored Captain continuation and frozen working directory, repeats no fixture lifecycle, provisions nothing, and leaves the repository clean;
 - the installed Captain, CODE, REVIEW, and DECIDE playbook subpaths construct, every packed file other than the manifest is byte-identical to the repository's own, the deterministic source-preservation check passes, and each compiled artifact's conformance suites pass with their declared coverage named among those that ran; and
 - the nested installed `@sublang/cligent` satisfies the packed manifest's
   caret range and ships both `CaptainContext.emitReply` and
@@ -726,30 +708,14 @@ selected by the normal `pnpm test` configuration or by GitHub CI.
 #### release-25
 
 
-The opt-in local `pnpm test:acceptance` suite shall pack and install the
-candidate package once, then exercise five independent fresh git repositories
-through the installed npm `playbook` command shim.
-The first case shall invoke `playbook run @sublang/playbook/review/registry` with `--json` over a prepared commit using real Coder and Reviewer agents.
-It shall fail unless REVIEW returns its approved terminal result, creates no tmux session, and leaves the repository clean.
-The second case shall submit `/code` to real Claude and Codex agents and fail
-unless the start, nested REVIEW call/return, and finish lifecycle markers appear, only the requested implementation changes, the approved result is present in `HEAD`, and the worktree is clean.
-The third, independent `/decide` case shall fail unless its start, nested REVIEW call/return, and finish markers appear, only the requested spec-design files change, the design is committed without implementation, and the worktree is clean.
-Each interactive case shall also fail unless the nested REVIEW leaf exposes its distinct effective players: CODE's inherited Coder plus REVIEW's Reviewer, or DECIDE's inherited Coder and Reviewer, with no replacement same-role session and with the Boss/Captain pane focused.
-The fourth, hermetic global-only case shall install the packed
-candidate into an isolated npm global prefix with inherited npm prefix
-configuration neutralized, place a compiled thin fixture playbook —
-importing `xstate` and `@sublang/playbook/xstate-runtime` and making
-one real Claude player call and one real Codex judge call — in a fresh
-git repository containing no `package.json`, lockfile, or
-`node_modules` at any level, and invoke the prefix's `playbook` command
-by absolute path.
-It shall fail unless: neither engine import resolves from the fixture
-before the run; the run prints one provisioning line and creates
-exactly the `node_modules/xstate` and `node_modules/@sublang/playbook`
-links resolving into the isolated prefix; the run returns its terminal
-JSON envelope; a second run creates nothing further and prints no
-provisioning line; and `@sublang/cligent` resolves from beneath the
-prefix's `@sublang/playbook` rather than from any machine-global copy (verifying [[release-24](#release-24)]).
+The opt-in local `pnpm test:acceptance` suite shall pack and install the candidate package once, then exercise five independent fresh git repositories through the installed npm `playbook` command shim.
+The first case shall pipe `/review <request>` to installed `playbook run --json` over a prepared commit using the shared config and real Captain, Coder, and Reviewer agents.
+It shall launch a second installed process selected by the first process's public session id, pipe one natural status question to that continuation, and fail unless both outputs are exact `{sessionId, reply}` objects carrying the same id, REVIEW's approval and repository effects occur exactly once, neither process creates tmux, and the worktree stays clean.
+The second case shall invoke installed `playbook run --json "/code <task>"` with real Claude and Codex agents and shall fail unless the start, nested REVIEW call, nested REVIEW return, and finish lifecycle markers appear once in order on stderr, only the requested implementation changes, the approved result is present in `HEAD`, the worktree is clean, and no tmux process is created.
+The third, independent `/decide` case shall remain attached to tmux-play and shall fail unless its start, nested REVIEW call/return, and finish markers appear, only the requested spec-design files change, the design is committed without implementation, and the worktree is clean.
+The DECIDE case shall also fail unless the nested REVIEW leaf exposes DECIDE's inherited Coder and Reviewer with no replacement same-role session and with the Boss/Captain pane focused.
+The fourth, hermetic global-only case shall install the packed candidate into an isolated npm global prefix with inherited npm prefix configuration neutralized, place a configured compiled thin fixture registry importing `xstate` and `@sublang/playbook/xstate-runtime` and making one real Claude player call under a real Codex Captain in a fresh git repository containing no `package.json`, lockfile, or `node_modules` at any level, and invoke the prefix's `playbook run --json` command by absolute path with `/hermetic <task>`.
+It shall fail unless neither engine import resolves from the fixture before launch; the first process prints one provisioning line and creates exactly the `node_modules/xstate` and `node_modules/@sublang/playbook` links resolving into the isolated prefix; both processes return exact `{sessionId, reply}` objects whose replies ground the fixture token; a repeated fresh run creates nothing further and prints no provisioning line; and `@sublang/cligent` resolves from beneath the prefix's `@sublang/playbook` rather than from any machine-global copy (verifying [[release-24](#release-24)]).
 
 The fifth, conversational case
 ([DR-029](../decisions/029-session-scoped-conversational-captain.md)) shall

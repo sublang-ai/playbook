@@ -72,6 +72,40 @@ export function liveConfig(): string {
   ].join('\n');
 }
 
+// RELEASE-25 fourth case: the globally installed candidate resolves this
+// filesystem registry through the same shared config and Captain path as any
+// other headless command. Keeping the exact config here lets the normal suite
+// compose it without spending a model call (PBCLI-32).
+export function hermeticConfig(repo: string): string {
+  const { claude: claudeModel, codex: codexModel } = liveModels();
+  return [
+    'captain:',
+    '  adapter: codex',
+    `  model: ${JSON.stringify(codexModel)}`,
+    '  effort: low',
+    '  permissions:',
+    '    mode: auto',
+    "    writablePaths: ['.git']",
+    'notifications:',
+    '  player_finished: off',
+    '  turn_finished: off',
+    '  turn_aborted: off',
+    'playbooks:',
+    '  hermetic:',
+    `    from: ${JSON.stringify(
+      pathToFileURL(join(repo, 'hermetic.playbook.mjs')).href,
+    )}`,
+    '    players:',
+    '      worker:',
+    '        adapter: claude',
+    `        model: ${JSON.stringify(claudeModel)}`,
+    '        effort: low',
+    '        permissions:',
+    '          mode: auto',
+    '',
+  ].join('\n');
+}
+
 // RELEASE-25 fifth case: the config that enables exactly the two fixture
 // playbooks the conversational session engages (`live-fixtures.ts`). The
 // Captain block matches `liveConfig`'s own; the fixtures need no player call
