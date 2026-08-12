@@ -748,6 +748,7 @@ The result-phase prompt shall include no shell ledger JSON and shall
 not render the current or resulting runtime state by raw state id;
 state meaning shall come from the runtime-published description and
 the `summaryPolicy` labels above.
+Before disposing a terminal root, the shell shall append exactly one settlement fact stating that the root command completed and carrying the escaped, bounded Boss-facing `stateDescription` published by the still-live runtime, or stating that the runtime published no result description when that field is absent or empty; this central fact shall apply whether completion follows start, delivery, a runtime action, or a nested return, shall survive in the durable outcome journal, and shall never include the opaque `PlaybookRunResult.output`.
 
 ### Lifecycle
 
@@ -1290,6 +1291,7 @@ transition / guard names, internal state counts, or how-it-was-done
 narration, and without shell ledger JSON, followed by the
 saved-counts line exactly when the supplied counted activity is
 nonzero (verifying [[playbook-captain-7](#playbook-captain-7)], [[playbook-captain-19](#playbook-captain-19)], [[playbook-captain-20](#playbook-captain-20)]).
+The suite shall fail unless a root that reaches final completion on its first input contributes exactly one completion fact carrying its quoted runtime-published result meaning before disposal, the hidden prompt and surfaced reply contain no opaque run output, and a root that instead parks and then finishes on delivery retains the established delivery fact plus the same single central completion fact without a second disposal-only completion message (verifying [[playbook-captain-20](#playbook-captain-20)]).
 
 ### Playbook Session Bridge Coverage
 

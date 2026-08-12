@@ -152,6 +152,7 @@ It shall retain no playbook session id, call id, child state, stack
 ledger, resume token, or opaque runtime result in Captain-visible
 context, and the result-phase prompt shall carry the settlement facts
 verbatim ([[playbook-captain-20](playbook-captain.md#playbook-captain-20)]).
+The shell-authored fact that a terminal root completed may carry the escaped and bounded Boss-facing state description published by that runtime, but that description is not the opaque run output and grants Captain no access to that output.
 
 ### captain-playbook-16
 
@@ -241,6 +242,7 @@ guard or result-property schema, no model-authored paraphrase replaces
 Boss text, the surfaced captain speech is the exact validated prose of
 its call, and a closing reply communicates the settlement-backed
 result rather than a bare acknowledgement or completion announcement.
+For an immediately terminal root, the closing reply shall be grounded in the root runtime's published final meaning retained before disposal rather than reporting only that the workflow started (verifying [[captain-playbook-10](#captain-playbook-10)]).
 The suite shall further fail unless a parse-resolved `start` or `switch`
 uses its exact command remainder as a scalar input, while one reached
 after conversational planning uses a nonempty standalone input that

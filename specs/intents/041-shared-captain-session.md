@@ -34,7 +34,8 @@ Make interactive `playbook` and headless `playbook run` two presentations of the
 9. Update the starter config, README, CLI and configuration guides, changelog, and migration diagnostics for unified Captain sessions in one commit.
 10. Update deterministic packed smoke, release specifications, and real-agent acceptance to prove installed headless Captain parity, nested REVIEW, stdin, and process-crossing continuation in one commit.
 11. Prepare the dated 7.0.0 changelog and manifest candidate without tagging, pushing, publishing, or creating a GitHub Release in one commit.
-12. Run the complete pre-release and acceptance verification against the candidate, record the verified intent as complete, and stop for Boss review and approval without tagging, pushing, publishing, or creating a GitHub Release in one commit.
+12. Correct the live-gate-exposed terminal-root settlement so Captain retains the runtime-published final meaning without exposing opaque output, and align deterministic and real-agent acceptance with that contract in one commit.
+13. Run the complete pre-release and acceptance verification against the corrected candidate, record the verified intent as complete, and stop for Boss review and approval without tagging, pushing, publishing, or creating a GitHub Release in one commit.
 
 ## Verification
 

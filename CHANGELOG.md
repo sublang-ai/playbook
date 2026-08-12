@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Completed root playbooks now give Captain their published final meaning before the shell disposes them.** Headless and interactive closing replies can report what an immediately terminal REVIEW, CODE, or custom workflow actually accomplished instead of saying only that it started; the shell retains one escaped and bounded runtime-authored state description as settlement evidence while opaque runtime output remains excluded ([[playbook-captain-20](specs/packages/playbook-captain.md#playbook-captain-20)], [[captain-playbook-10](specs/packages/captain-playbook.md#captain-playbook-10)]).
+
 - **Restoring a parent parked behind a nested playbook no longer reopens or loses its child call.** Runtime snapshot schema 2 preserves exact suspended-call identity; restore reconnects the existing child without another host call or start trace and resumes the parent exactly once from the original child result, while ordinary schema-1 snapshots remain compatible ([[playbook-runtime-42](specs/packages/playbook-runtime.md#playbook-runtime-42)], [[playbook-runtime-45](specs/packages/playbook-runtime.md#playbook-runtime-45)], [[playbook-captain-42](specs/packages/playbook-captain.md#playbook-captain-42)]).
 
 ## [6.0.0] - 2026-08-11

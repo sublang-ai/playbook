@@ -148,6 +148,27 @@ const reviewToken = 'REVIEW_ACCEPTANCE_OK';
 const hermeticTask = 'Echo the hermetic acceptance token.';
 const hermeticToken = 'HERMETIC_ACCEPTANCE_OK';
 
+function expectReviewApprovalReply(reply: string): void {
+  expect(reply).toMatch(
+    /\b(?:approved|passed)\b|\bno\s+(?:unsettled|outstanding|remaining)\s+findings?\b/i,
+  );
+}
+
+function expectReviewCompletionReply(reply: string): void {
+  expect(reply).toMatch(
+    /\b(?:approved|passed|completed|finished|successful)\b|\bno\s+(?:unsettled|outstanding|remaining)\s+findings?\b/i,
+  );
+}
+
+function expectHermeticCompletionReply(reply: string): void {
+  expect(reply).toMatch(
+    /(?:\b(?:returned|echoed|matched|verified|produced|confirmed|received)\b[\s\S]{0,80}\btoken\b|\btoken\b[\s\S]{0,80}\b(?:returned|echoed|matched|verified|produced|confirmed|received|correct)\b)/i,
+  );
+  expect(reply).toMatch(
+    /\b(?:completed|finished|succeeded|done|successful)\b|\b(?:is|was|has been)\s+complete\b/i,
+  );
+}
+
 // RELEASE-25 fifth case (DR-029). The budget must dominate the scenario's
 // own waits for the same reason the attached-workflow budget above does:
 // vitest's timeout fires outside the try/finally, so a scenario that outlives
@@ -243,6 +264,7 @@ describe.sequential('installed playbook live acceptance', () => {
           `stderr:\n${diagnosticTail(first.stderr)}`;
 
         const firstEnvelope = parseHeadlessEnvelope(first.stdout);
+        expectReviewApprovalReply(firstEnvelope.reply);
         expectMarkersExactlyOnceInOrder(first.stderr, [
           '◇ /review started',
           '◇ /review finished',
@@ -281,6 +303,7 @@ describe.sequential('installed playbook live acceptance', () => {
         const continuedEnvelope = parseHeadlessEnvelope(continued.stdout);
         expect(continuedEnvelope.sessionId).toBe(firstEnvelope.sessionId);
         expect(continuedEnvelope.reply).toContain(continuityMarker);
+        expectReviewCompletionReply(continuedEnvelope.reply);
         expect(continued.stderr).not.toMatch(/(?:◇ \/|◆ failed|⤷ )/);
         expect(headRevision(scenario.repo)).toBe(settledRevision);
         expect(changedPaths(scenario)).toEqual(['acceptance-review.txt']);
@@ -507,7 +530,7 @@ describe.sequential('installed playbook live acceptance', () => {
         );
 
         const envelope = parseHeadlessEnvelope(first.stdout);
-        expect(envelope.reply).toContain(hermeticToken);
+        expectHermeticCompletionReply(envelope.reply);
         expectMarkersExactlyOnceInOrder(first.stderr, [
           '◇ /hermetic started',
           '◇ /hermetic finished',
@@ -529,7 +552,7 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(second.stderr).not.toContain('provisioned');
         const secondEnvelope = parseHeadlessEnvelope(second.stdout);
         expect(secondEnvelope.sessionId).not.toBe(envelope.sessionId);
-        expect(secondEnvelope.reply).toContain(hermeticToken);
+        expectHermeticCompletionReply(secondEnvelope.reply);
         expectMarkersExactlyOnceInOrder(second.stderr, [
           '◇ /hermetic started',
           '◇ /hermetic finished',

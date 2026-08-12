@@ -1691,6 +1691,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 await resumeParent(frame, callResultFor(frame, result), context);
             }
             else {
+                // CAPTAIN-20: the root is still alive here, so this is the one
+                // authoritative boundary that can retain the Boss-facing meaning its
+                // runtime publishes before disposal removes the frame. The opaque run
+                // output remains runtime-to-runtime data and never becomes Captain
+                // evidence (CAPPLAY-10).
+                activeTurn?.settlementFacts.push(rootCompletionFact(frame));
                 await runEffect(() => disposeStack('final'));
             }
             return;
@@ -2531,6 +2537,13 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return undefined;
         }
     };
+    const rootCompletionFact = (frame) => {
+        const published = leafStateDescription(frame);
+        const description = published === undefined ? '' : compactEvidence(published);
+        return description === ''
+            ? `${frameLabel(frame)} completed; its runtime published no result description.`
+            : `${frameLabel(frame)} completed; its runtime-published result meaning was ${quoteEvidence(description)}.`;
+    };
     const leafStateSummary = () => {
         const leaf = leafFrame();
         if (!leaf)
@@ -2928,9 +2941,6 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     status: 'failed',
                 };
                 throw outcome.error;
-            }
-            if (!frames.includes(leaf)) {
-                facts.push(`${frameLabel(leaf)} finished and was disposed.`);
             }
             const runFailed = drainRunFailureFacts(facts);
             const summary = leafStateSummary();

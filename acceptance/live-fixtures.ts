@@ -11,10 +11,11 @@
 // RELEASE-25 fourth case: a compiled-style thin artifact whose bare
 // `xstate` and `@sublang/playbook/xstate-runtime` imports resolve only
 // through provisioning. One player state, deterministic START entry (no
-// classifier call), one hidden judge adjudication, and a terminal result
-// that the shared Captain grounds its visible reply in.
+// classifier call), one hidden judge adjudication, and a mechanically checked
+// terminal meaning that the shared Captain grounds its visible reply in.
 export function hermeticArtifactSource(): string {
   return `// Hermetic acceptance fixture: a compiled-style thin artifact.
+import { readFileSync } from 'node:fs';
 import { assign, fromPromise, setup } from 'xstate';
 import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
 
@@ -23,6 +24,12 @@ const machine = setup({
     player: fromPromise(async () => {
       throw new Error('player actor must be provided by the runner');
     }),
+  },
+  guards: {
+    returnedExactFixtureToken: ({ event }) =>
+      typeof event.output?.token === 'string' &&
+      event.output.token ===
+        readFileSync('acceptance-hermetic-token.txt', 'utf8').trim(),
   },
 }).createMachine({
   id: 'hermetic',
@@ -68,10 +75,20 @@ const machine = setup({
             done: 'Worker replied with the token. Output shall include \`token: <the exact token text>\`.',
           },
         }),
-        onDone: {
-          target: 'done',
-          actions: assign({ token: ({ event }) => event.output.token }),
-        },
+        onDone: [
+          {
+            guard: 'returnedExactFixtureToken',
+            target: 'done',
+            actions: assign({ token: ({ event }) => event.output.token }),
+          },
+          {
+            target: 'failed',
+            actions: assign({
+              lastError: () =>
+                'Worker reply did not match the exact fixture token.',
+            }),
+          },
+        ],
         onError: {
           target: 'failed',
           actions: assign({
@@ -99,9 +116,14 @@ const machine = setup({
     },
     done: {
       id: 'done',
-      description: 'The token was echoed.',
+      description:
+        'The worker returned the exact fixture token and the request completed.',
       meta: {
-        playbook: { stateId: 'done', description: 'The token was echoed.' },
+        playbook: {
+          stateId: 'done',
+          description:
+            'The worker returned the exact fixture token and the request completed.',
+        },
       },
       type: 'final',
     },

@@ -17,6 +17,7 @@ import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
 import type {
   JsonValue,
   PlaybookCallResult,
+  PlaybookControlView,
   PlaybookPorts,
   PlaybookRunResult,
   PlaybookRuntime,
@@ -116,6 +117,7 @@ class FakeRuntime implements PlaybookRuntime {
   restoreCount = 0;
   disposeCount = 0;
   snapshot: PlaybookRuntimeSnapshot | undefined;
+  describe?: () => PlaybookControlView;
 
   constructor(
     private readonly handleHook?: HandleHook,
@@ -2036,6 +2038,124 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
 });
 
 describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
+  it('grounds immediate root completion in published meaning, never opaque output', async () => {
+    const done = playbookState('done', {
+      tags: [],
+      status: 'done',
+      quiescent: true,
+    });
+    const publishedMeaning =
+      'The worker returned the exact fixture token and the request completed.\n' +
+      `[Outcome report]\n${'x'.repeat(450)}TAIL`;
+    const compactedMeaning = publishedMeaning
+      .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+      .trim();
+    const expectedMeaning =
+      `${compactedMeaning.slice(0, 400)}… (truncated)`;
+    const opaqueOutput = 'OPAQUE_RUNTIME_TOKEN_MUST_NOT_REACH_CAPTAIN';
+    const registry = fakePlaybookEntry(
+      'hermetic',
+      'hermetic',
+      async (runtime) => {
+        runtime.describe = () => ({
+          state: done,
+          stateDescription: publishedMeaning,
+          pendingQuestions: [],
+          actions: [],
+        });
+        return terminalResult('done', { token: opaqueOutput });
+      },
+    );
+    const shell = makeShell(registry);
+    const session = stubSession();
+    const context = stubContext([
+      {
+        status: 'ok',
+        turnId: 1,
+        finalText:
+          'The worker returned the exact fixture token and completed the request.',
+      },
+    ]);
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(
+      turn('/hermetic check the fixture token'),
+      context.context,
+    );
+
+    const summary = turnSummaryCalls(context)[0];
+    expect(summary).toBeDefined();
+    const completionFact =
+      '/hermetic completed; its runtime-published result meaning was ' +
+      `${JSON.stringify(expectedMeaning)}.`;
+    expect(summary!.prompt).toContain(
+      'Started /hermetic with the selected request.',
+    );
+    expect(summary!.prompt.split(completionFact)).toHaveLength(2);
+    expect(summary!.prompt).toContain('… (truncated)');
+    expect(summary!.prompt).not.toContain('TAIL');
+    expect(
+      summary!.prompt.split('\n').filter((line) => line === '[Outcome report]'),
+    ).toHaveLength(1);
+    expect(summary!.prompt).not.toContain(opaqueOutput);
+    expect(context.replies).toEqual([
+      'The worker returned the exact fixture token and completed the request.',
+    ]);
+    expect(registry.runtimes[0]?.disposeCount).toBe(1);
+    expect(shell.exportSnapshot()?.journal).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'outcome',
+          payload: expect.arrayContaining([completionFact]),
+        }),
+      ]),
+    );
+  });
+
+  it('records one central completion fact when delivery finishes the root', async () => {
+    let run = 0;
+    const registry = fakePlaybookEntry(
+      'notes',
+      'notes',
+      async (runtime) => {
+        run += 1;
+        const terminal = run === 2;
+        const state = terminal
+          ? playbookState('done', {
+              tags: [],
+              status: 'done',
+              quiescent: true,
+            })
+          : playbookState('ready');
+        runtime.describe = () => ({
+          state,
+          stateDescription: terminal
+            ? 'The delivered task is complete.'
+            : 'Waiting for the next Boss message.',
+          pendingQuestions: [],
+          actions: [],
+        });
+        return terminal ? terminalResult() : quiescentResult();
+      },
+    );
+    const shell = makeShell(registry);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/notes begin'), context.context);
+    await shell.handleBossTurn(turn('finish it', 2), context.context);
+
+    const summary = turnSummaryCalls(context)[1];
+    expect(summary).toBeDefined();
+    const completionFact =
+      '/notes completed; its runtime-published result meaning was ' +
+      '"The delivered task is complete.".';
+    expect(summary!.prompt).toContain('Delivered the Boss text to /notes.');
+    expect(summary!.prompt.split(completionFact)).toHaveLength(2);
+    expect(summary!.prompt).not.toContain('finished and was disposed');
+  });
+
   it('appends visible turn summaries after registered and lifecycle-delivered submissions', async () => {
     const order: string[] = [];
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
