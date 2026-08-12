@@ -6,6 +6,7 @@
 ## Status
 
 Accepted as amended by [DR-031](031-shared-captain-session-front-ends.md).
+[DR-032](032-explicit-roles-session-players.md) supersedes the frozen-lineup and no-continuation-overlay rules for an ordinary settled reopen: current model and effort plus opening overlays may retune a stable player id, instruction and permissions remain structurally frozen, and uncertain retry retains its attempted settings.
 
 ## Context
 
@@ -20,7 +21,7 @@ Trying a stronger reviewer model, dropping the Coder's effort for a cheap smoke 
 ### 1. Agent tuning uses the shared config
 
 Interactive and headless Captain sessions shall obtain each agent's adapter, model, effort, and permissions from the same inline top-level config and optional launch overlays.
-A headless continuation shall use the normalized settings frozen with that session rather than accept run-only binding flags or re-read changed config.
+An ordinary settled continuation shall preserve the session's structural settings while re-reading current model and effort tuning plus opening overlays under [DR-032](032-explicit-roles-session-players.md); an uncertain retry shall use its exact attempted settings, and neither path shall accept run-only binding flags.
 
 ### 2. `--with` config overlays for a configured session launch
 
@@ -32,9 +33,9 @@ The global config file is never modified by an overlaid launch, and `--with` com
 
 ### 3. Preserved scope
 
-- No mid-session re-tuning: overlays bind at launch; changing a live session's lineup remains out of scope.
+- No in-process mutation: tuning is resolved only when a process opens a new or settled session; an already attached process retains its launch projection.
 - No deletion semantics: an overlay can add and replace but not remove keys; disabling a playbook for one run means overlaying a config that does not carry it only via replacement of a whole map value.
-- No `--with` on continuation: a continued headless session uses its frozen normalized config.
+- An ordinary settled continuation may use `--with` under [DR-032](032-explicit-roles-session-players.md); an uncertain retry rejects overlays and uses its recorded attempt.
 - Host fields beyond the agent lineup (notifications, theme, layout) merge like any other top-level key; no special casing.
 
 ## Consequences

@@ -8,6 +8,7 @@
 Accepted.
 [DR-010](010-playbook-session-tracing-and-resume.md) permits the resumed player call to continue its backend conversation in addition to receiving explicit question-and-answer context.
 [DR-011](011-composable-playbook-execution.md) extends the same contract to independently parked parallel branches.
+[DR-032](032-explicit-roles-session-players.md) replaces the question record's overloaded player label with a discriminated Captain-or-local-role asker.
 
 ## Context
 
@@ -46,6 +47,7 @@ The next Boss turn shall reach the active leaf runtime, and only the selected pe
 
 The resumed prompt shall always carry the explicit question and answer so behavior remains deterministic across adapters.
 Where the player result supplied a continuation token, the resumed call may additionally continue that backend conversation under [DR-010](010-playbook-session-tracing-and-resume.md) and [DR-030](030-shared-mapped-player-continuity.md).
+Under [DR-032](032-explicit-roles-session-players.md), the host resolves that continuation from the explicit session player rather than same-role inheritance.
 
 ## Consequences
 

@@ -7,6 +7,8 @@
 
 Accepted.
 [DR-030](030-shared-mapped-player-continuity.md) amends §3: a composing host may supply the continuation authority shared by mapped roles across nested runtime frames.
+[DR-032](032-explicit-roles-session-players.md) supersedes that root-engagement authority with a logical-Captain-session ledger keyed by explicitly bound player id and preserves a prior token when an aborted or error result omits a replacement.
+[DR-032](032-explicit-roles-session-players.md) also advances trace schema `2` to `3`, replacing its overloaded player identity with a required local `roleId` and optional resolved `playerId`.
 
 ## Context
 

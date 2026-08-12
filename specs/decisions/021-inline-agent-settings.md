@@ -7,6 +7,7 @@
 
 Accepted.
 Supersedes the top-level `profiles` map and the agent-block `profile` key of [DR-009](009-generic-playbook-cli-and-registry.md).
+[DR-032](032-explicit-roles-session-players.md) moves inline agent blocks to identity-bearing top-level players and explicit role bindings; they do not regain profile indirection.
 
 ## Context
 
@@ -27,12 +28,12 @@ Duplication across two or three agents is cheaper than an indirection layer plus
 ### 1. Agent settings are inline
 
 The top-level `profiles` map and the agent-block `profile` key are removed.
-Every `captain` and `players.<role>` value is either an adapter shorthand or a complete tmux-play agent block carrying its own `adapter`, `model`, `effort`, and `permissions` as needed.
+Every `captain` and top-level `players.<player-id>` value is either an adapter shorthand or a complete tmux-play agent block carrying its own `adapter`, `model`, `effort`, and `permissions` as needed.
 A scalar therefore has exactly one meaning — an adapter shorthand — and an agent block is self-contained, so a reader learns an agent's full settings from the block in front of them and retuning one player cannot move another.
 
 ### 2. The seeded config inlines its lineup
 
-The starter config ships the same three agents with their settings written out under `captain` and each `playbooks.<id>.players.<role>`.
+The starter config ships its agents with settings written under `captain` and top-level `players`, while every playbook role binds explicitly under `playbooks.<id>.roles` per [DR-032](032-explicit-roles-session-players.md).
 The seeded lineup, models, efforts, and permissions are unchanged; only the indirection is gone.
 
 ### 3. An existing config migrates itself once
@@ -46,8 +47,8 @@ Migration is idempotent: a migrated config carries nothing to migrate on the nex
 
 ### 4. Preserved scope
 
-- No change to the `playbooks` model, the launcher-owned keys, roster generation, or readiness.
-- [DR-031](031-shared-captain-session-front-ends.md) subsequently retired the separate `run` defaults block and the run-only `<adapter>[:<model>][@<effort>]` grammar; both front ends now use these same inline `captain` and `playbooks.<id>.players.<role>` blocks.
+- The original release did not change the `playbooks` model, launcher-owned keys, roster generation, or readiness; [DR-032](032-explicit-roles-session-players.md) subsequently changes those surfaces for explicit bindings.
+- [DR-031](031-shared-captain-session-front-ends.md) subsequently retired the separate `run` defaults block and run-only agent grammar; [DR-032](032-explicit-roles-session-players.md) gives both front ends the same inline Captain, top-level player, and role-binding blocks.
 - Agent-block schema and per-agent fields stay exactly as the installed cligent tmux-play loader defines and normalizes them.
 
 ## Consequences

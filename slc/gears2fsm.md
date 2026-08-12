@@ -36,7 +36,7 @@ map for every actor kind the GEARS artifact uses, using typed actor logic such
 as `fromPromise<Output, Input>(...)` [[11]]:
 
 - `captain` for direct work performed by Captain;
-- `player` for work Captain delegates to a named player;
+- `player` for work Captain delegates to a named role;
 - `playbook` for a nested playbook call; and
 - `script` for a deterministic shell script an
   [optimizer-introduced script item](text2gears.md#script-behaviors-optimizer-introduced)
@@ -73,7 +73,7 @@ comment delimiters into a TypeScript target.
 `PlayerInput` shall be a typed object with at least:
 
 - `stateId`: the stable id of the invoking working leaf;
-- `player`: the [player](text2gears.md#players) Captain is to invoke;
+- `role`: the canonical lowercase local id derived from the [role](text2gears.md#roles) Captain is to delegate;
 - `sourceItem`: the GEARS item ID this state realizes;
 - `prompt`: the source item's full final prompt, verbatim;
 - `result`: a record whose keys are the valid guard names this invocation may return.
@@ -244,22 +244,22 @@ Each state shall declare:
 - a stable `id` (for `#id` targeting and Boss interrupts);
 - an intuitive state key (the property name under `states: { ... }`);
 - a one-line `description` (for inspector tools and documentation);
-- JSON-safe `meta: { playbook: { stateId, description, player? } }` repeating
+- JSON-safe `meta: { playbook: { stateId, description, role? } }` repeating
   its stable id and description so linked runtimes can discover active public
   identities through `snapshot.getMeta()` without private XState nodes. A
-  delegated-player state shall also carry the exact source player in
-  `meta.playbook.player`; every other state shall omit `player`;
+  delegated-role state shall also carry the canonical lowercase source role id in
+  `meta.playbook.role`; every other state shall omit `role`;
 - if it invokes the direct `captain` actor: `invoke.input` carrying
   `sourceItem`, `prompt`, and `result` (per [Setup](#setup));
 - if it invokes the delegated `player` actor: `invoke.input` additionally
-  carrying the same source-derived `player` as `meta.playbook.player`;
+  carrying the same source-derived `role` as `meta.playbook.role`;
 - if it invokes the `script` actor: `invoke.input` carrying `stateId`,
   `sourceItem`, `command`, and `result` (per [Setup](#setup)) — no `prompt`
-  and no `player`.
+  and no `role`.
 
 The source item ID shall live in `invoke.input.sourceItem`, not in a comment — this keeps the GEARS-to-state mapping machine-readable.
-A delegated state's `invoke.input.player` shall match its source item's named
-player. A direct Captain state shall not invent a `Captain` player binding.
+A delegated state's `invoke.input.role` shall match the canonical lowercase id of its source item's named role.
+A direct Captain state shall not invent a `Captain` role binding.
 
 Every invoking working leaf — sequential or parallel, whatever its actor
 kind — shall carry the tag `playbook.busy`: the shared quiescence helper
@@ -281,7 +281,7 @@ invoke: {
     src: 'player',
     input: ({ context }): PlayerInput => ({
         stateId: '<stable-state-id>',
-        player: 'Reviewer',
+        role: 'reviewer',
         sourceItem: '<ITEM-A>',
         prompt: [
             'Flag any issues or improvements (numbered; no duplication).',
@@ -299,17 +299,17 @@ invoke: {
 
 For an item in which Captain acts directly, the corresponding invocation uses
 `src: 'captain'` and a `CaptainInput` with the same static mapping fields but no
-`player` field.
+`role` field.
 
 ## Mapping
 
 Each Source spec item shall map to exactly one state in Target.
 A state's `invoke.input.sourceItem` shall be that item's ID, and `invoke.input.prompt` shall carry the item's prompt verbatim.
 
-An item written as direct Captain work shall map to exactly one `captain`
-invocation. An item that prompts or relays to a named player shall map to
-exactly one `player` invocation. A nested-call item shall map to exactly one
-`playbook` invocation. A script item (`Captain shall run:`) shall map to
+An item written as direct Captain work shall map to exactly one `captain` invocation.
+An item that prompts or relays to a named role shall map to exactly one `player` invocation.
+A nested-call item shall map to exactly one `playbook` invocation.
+A script item (`Captain shall run:`) shall map to
 exactly one `script` invocation whose `input.command` carries the blockquote
 verbatim and whose `result` preserves the item's two guards in declared order.
 The compiler shall not infer one actor kind from a
@@ -333,7 +333,7 @@ Each member shall be a delegated-player item; a direct-Captain or nested-call
 member is malformed because those actor kinds share one Captain control lane or one
 pending-child slot. Each region shall contain a delegated-player working leaf
 and a local final state; the working leaf retains the item's stable state id,
-`sourceItem`, player, prompt, and result contract.
+`sourceItem`, role, prompt, and result contract.
 The parallel parent shall use `onDone` as the join, which XState takes only
 after every region reaches final.
 
@@ -527,8 +527,8 @@ the number of sequential child calls without an arbitrary runtime call limit.
 Prompts shall pass only the **specific extracted fields** the player needs.
 The compiler shall not dump `JSON.stringify(lastResult)` or any opaque blob: it leaks internal `guard` strings, wastes tokens, and confuses the LLM.
 
-Player bindings and per-run parameters shall flow in via the machine's `input` and be copied into context at start-up.
-The artifact shall not bake in player bindings, model names, or per-run values.
+Player bindings and prompt identities shall enter only through `PlaybookSession.roleBindings` at runtime call, prompt, and trace boundaries.
+The artifact shall not bake them into machine input, options, or context; model names and other host settings shall remain host policy rather than persisted FSM state.
 Host-owned configuration such as an enabled-playbook catalog shall remain
 immutable machine input/context for the session. Boss events and actor outputs
 shall not carry, replace, append to, or otherwise overwrite that catalog.
@@ -585,7 +585,7 @@ Phases may set typed routing fields so terminal outcomes return to the originati
 
 ## Boss control
 
-[Boss](text2gears.md#players) input enters the machine through three surfaces: pre-emptive interrupts on active states, typed entry events on idle or recoverable states, and Boss replies to player questions that suspended the FSM in a dedicated wait state.
+[Boss](text2gears.md#roles) input enters the machine through three surfaces: pre-emptive interrupts on active states, typed entry events on idle or recoverable states, and Boss replies to delegated-role questions that suspended the FSM in a dedicated wait state.
 
 ### Boss interrupts
 
@@ -667,12 +667,12 @@ the colon as the JSON field name.
 The linked runtime composes player prompts per [link.md "Player prompt composition"](link.md#player-prompt-composition), without adding a player-visible Boss-question instruction.
 
 The question record shall be
-`{ questionId, resumeStateId, sourceItem, player, question }`.
+`{ questionId, resumeStateId, sourceItem, asker, question }`, where `asker` is exactly `{ kind: 'captain' }` or `{ kind: 'role', roleId }`.
 `questionId` and `resumeStateId` shall both equal the stable working-leaf
 `stateId`.
-`questionId`, `resumeStateId`, and `sourceItem` shall come from the suspended
-working leaf's stable invocation metadata. `player` shall come from a delegated
-`PlayerInput`, or be the literal `Captain` for a direct-Captain state. Only
+`questionId`, `resumeStateId`, and `sourceItem` shall come from the suspended working leaf's stable invocation metadata.
+A delegated `PlayerInput` shall produce the role asker with its canonical local role id, while a direct-Captain state shall produce the Captain asker without inventing a role.
+Only
 `question` shall come from adjudicated actor output.
 
 A machine with at most one active Captain or player task may use the scalar

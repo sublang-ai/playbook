@@ -18,24 +18,24 @@ The second phase (spec items → state machine) is out of scope.
 | source | text   | .md       |
 | target | gears  | .md       |
 
-## Players
+## Roles
 
-Players name AI agents and the user.
+Roles name playbook-local delegated work functions.
 
-Two default players:
+Two fixed actors remain outside the role list:
 
 - Boss: the human user
 - Captain: the coordinating agent
 
-Source may declare additional players in an opening `Players:` section.
-A player may alias other players with `=` and `|`; Boss picks one at runtime.
+Source may declare delegated roles in an opening `Roles:` section.
+Each role shall be unique and shall not alias another role; concrete player selection and sharing belong to explicit host configuration.
+Role names shall also be unique after canonical lowercase-id derivation, so declarations such as `Coder` and `coder` reject rather than collapse to one manifest role.
 E.g.:
 
 - Coder
 - Reviewer
-- Committer = Coder | Reviewer
 
-Capitalize English player names (e.g., `Writer`); quote non-English names (e.g., `作者`) when needed to distinguish from prose.
+Capitalize English role names (e.g., `Writer`); quote non-English names (e.g., `作者`) when needed to distinguish from prose.
 
 ## Behaviors
 
@@ -47,15 +47,15 @@ will not be visible to downstream compilers or verification.
 The behavior kind shall be one of:
 
 - direct Captain work, written `Captain shall <behavior>:` without naming a
-  delegated player;
-- delegated player work, written `Captain shall prompt <Player>:` or the
-  existing `Captain shall relay ... to <Player> ...:` form; or
+  delegated role;
+- delegated-role work, written `Captain shall prompt <Role>:` or the
+  existing `Captain shall relay ... to <Role> ...:` form; or
 - a literal or dynamic nested playbook call as defined below.
 
 Direct Captain work means the coordinating Captain performs the behavior
 itself. It shall not be rewritten as `Captain shall prompt Captain`, because
-Captain is a distinct runtime actor rather than a player binding.
-Delegated work shall name the declared player that receives the prompt.
+Captain is a distinct runtime actor rather than a role binding.
+Delegated work shall name the declared role that receives the prompt.
 Prompts shall be blockquoted, one point per line.
 When Source already supplies the complete blockquoted acting prompt for a
 behavior, text2gears shall preserve those prompt lines exactly (apart from the
@@ -210,10 +210,11 @@ heading.
 Every item in one parallel group shall receive the same completed-prior-group
 inputs; no item prompt may depend on another member's result from the current
 group.
-Every member shall delegate to a named player, and the source shall permit
-those members to resolve to distinct players. Direct-Captain work shares one
+Every member shall delegate to a named role, and the source shall permit those roles to bind to distinct players.
+Direct-Captain work shares one
 Captain session and nested calls share one pending-child stack slot, so neither
-kind may receive parallel-group metadata. If Source explicitly requires either
+kind may receive parallel-group metadata.
+If Source explicitly requires either
 unsupported kind to run concurrently, text2gears shall report that the source
 cannot be represented rather than silently serialize it or emit metadata the
 next phase cannot compile.
@@ -311,15 +312,15 @@ prose, acting prompts, and result descriptions follow the Source language,
 read per the matching localization of the GEARS definition [[1]].
 The four `Captain shall` acting-clause forms defined above (direct,
 delegated, nested playbook call, and script), guard names, and the
-`Players:` and `Results:` labels are fixed machine syntax and stay in this
+`Roles:` and `Results:` labels are fixed machine syntax and stay in this
 exact English form regardless of Source language.
 
 ## Transformation-spec sources
 
 A Source may itself be the normative specification of a transformation — e.g., a compiler phase definition, as when a meta pipeline compiles this file.
-Such a Source declares no players and prompts none; its implied procedure is that Captain performs the specified transformation on request.
+Such a Source declares no roles and prompts none; its implied procedure is that Captain performs the specified transformation on request.
 Compose Captain-acting spec items for it: when a transformation request names the specification's source and target, Captain shall carry out the transformation as specified.
-Prompts shall carry the specification's normative requirements as instructions to Captain — deduplicated, one point per line — without inventing players, triggers, or requirements the specification does not state.
+Prompts shall carry the specification's normative requirements as instructions to Captain — deduplicated, one point per line — without inventing roles, triggers, or requirements the specification does not state.
 
 ## Composition
 

@@ -26,12 +26,12 @@ When the judge returns no valid event and payload, the runtime shall report the 
 
 #### playbook-runtime-3
 
-Where a factory-backed artifact supplies linker-emitted `playerStates` and no artifact-specific status override, while a Boss turn is in progress, the runtime shall surface the canonical human-readable status stream below without exposing judge JSON, raw state-id fallbacks, or the Boss text already visible at the prompt:
+Where a factory-backed artifact supplies linker-emitted `roleStates` and no artifact-specific status override, while a Boss turn is in progress, the runtime shall surface the canonical human-readable status stream below without exposing judge JSON, raw state-id fallbacks, or the Boss text already visible at the prompt:
 
 - Before sending a selected Boss event, emit its bare type such as `START_CODE` as Captain speech.
 - Whenever a settling actor output carries a guard, emit exactly `→ <guard>` with no payload tally, rider, or leading whitespace.
-- On entry to a state named by `playerStates`, emit `⤷ <Player>: <label>` from that metadata with no source-item or context rider.
-- On entry to a Boss-reply wait, emit the untruncated `<player> asks: <question>` as Captain speech followed by `◆ awaiting Boss reply · <resumeStateId> · <player> · <sourceItem>` with no question excerpt.
+- On entry to a state named by `roleStates`, emit `⤷ <Role>: <label>` from that metadata with no source-item or context rider.
+- On entry to a Boss-reply wait, emit the untruncated `<asker> asks: <question>` as Captain speech followed by `◆ awaiting Boss reply · <resumeStateId> · <asker> · <sourceItem>` with no question excerpt, rendering the Captain asker as `Captain` and a role asker by its local role id.
 - On entry to failure, emit `◆ workflow failed; awaiting Boss recovery.` with the compact normalized error as status data.
 - Emit no canonical status on entry to an idle, terminal, or other unlisted state.
 
@@ -41,7 +41,7 @@ The runtime shall compose only each line's meaningful content, while the host ow
 
 #### playbook-runtime-4
 
-Where CODE, REVIEW, or DECIDE runs through the Playbook Captain shell, the shell shall bind each local role through that frame's effective player binding and route each player call to the resulting host player per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
+Where CODE, REVIEW, or DECIDE runs through the Playbook Captain shell, the shell shall bind each local role through that frame's explicit player id and route each player call to the resulting host player per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
 The CODE registry shall require `coder`, and the REVIEW and DECIDE registries shall require `coder` and `reviewer`.
 Each registry shall derive a prompt's player identity from the effective binding's model when present and its adapter otherwise.
 
@@ -64,16 +64,17 @@ An artifact-specific host capability shall enter through that artifact's typed o
 The package shall provide a type-only module resolvable as
 `@sublang/playbook/runtime` that is the single authored source of the
 runtime contract types `PlayerResult`, `PlayerCallOptions`,
-`PlayerSessionStore`, `CaptainResult`, `CaptainCallOptions`,
+`PlaybookRoleBinding`, `PlayerSessionStore`, `CaptainResult`, `CaptainCallOptions`,
 `JsonValue`, `NormalizedError`,
 `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
 `PlaybookStateValue`, `PlaybookState`, `PlaybookPendingCall`,
-`PlaybookRunResult`, `PlaybookControlAction`, `PlaybookControlView`,
+`PlaybookRunResult`, `PlaybookPendingBossQuestion`, `PlaybookControlAction`, `PlaybookControlView`,
 `PlaybookControlReceipt`, `PlaybookPorts`, `PlaybookSession`,
 `PlaybookTraceType`, `PlaybookTraceEvent`,
 `PlaybookRuntime`, and `PlaybookRuntimeFactory<Options = unknown>`, as
 the TypeScript projection of
 [slc/link.md](../../slc/link.md#playbookruntime-contract).
+`PlaybookPendingBossQuestion` shall carry `questionId`, exact `question`, optional `sourceItem`, and an `asker` discriminated as `{ kind: 'captain' }` or `{ kind: 'role', roleId: string }`; it shall expose no overloaded player field.
 `PlayerResult.status` shall be the union `'ok' | 'aborted' | 'error'`,
 `PlayerResult` shall expose optional `resumeToken`, `PlayerCallOptions`
 shall require `resume: string | false`, `CaptainResult.status` shall be the
@@ -82,7 +83,7 @@ same union without a resume token, `CaptainCallOptions` shall require
 expose optional `allowedTools?: readonly string[]` so an explicit empty list
 requests tool isolation while omission preserves the host Captain's configured
 tools. `PlaybookRuntime.init` shall
-accept a `PlaybookSession` whose optional `playerSessions` implements the exact synchronous store contract in [[playbook-runtime-58](#playbook-runtime-58)], and `PlaybookPorts` shall declare exactly
+accept a `PlaybookSession` whose optional `roleBindings` maps each local role to exact `playerId` and `promptIdentity` strings and whose optional `playerSessions` implements the exact synchronous store contract in [[playbook-runtime-58](#playbook-runtime-58)], and `PlaybookPorts` shall declare exactly
 the members `callPlayer`,
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
 `emitTelemetry`.
@@ -125,11 +126,11 @@ Where `PlaybookSession.playerSessions` is supplied, the `PlayerSessionStore` sha
 
 | Operation | Contract |
 | --- | --- |
-| `select(playerId: string): string \| false` | Return the current nonempty resume token for that local role or `false` when none exists. |
-| `update(playerId: string, resumeToken?: string): void` | Replace that local role's token with the supplied nonempty token, or clear it when the token is omitted. |
+| `select(roleId: string): string \| false` | Return the current nonempty resume token for that local role or `false` when none exists. |
+| `update(roleId: string, resumeToken?: string): void` | Replace that local role's token with the supplied nonempty token, or clear it when the validated `ok` result authorizes an omitted token; aborted/error omission does not call `update`. |
 | `snapshot(): Readonly<Record<string, string>>` | Return the complete current view as local-role keys mapped to nonempty tokens. |
 | `restore(tokens: Readonly<Record<string, string>>): void` | Replace the complete current view by clearing every binding visible to the frame and then installing exactly the supplied local-role entries. |
-| Host-provided frame view | Reject an unknown local role, map every accepted local role through the frame's effective host-player binding before accessing the root-owned token map, and leave effective bindings outside that frame view unchanged during `restore`. |
+| Host-provided frame view | Reject an unknown local role, map every accepted local role through the frame's explicit player binding before accessing the Captain-session ledger of [[playbook-captain-26](playbook-captain.md#playbook-captain-26)], reject inconsistent restored tokens when two local roles map to one player, and leave players outside that frame view unchanged during `restore`. |
 
 ### Runtime compatibility
 
@@ -140,6 +141,7 @@ export its compatibility self-report
 ([DR-022](../decisions/022-runtime-compatibility-contract.md)): the
 integer `RUNTIME_ABI` it implements and the read-only integer array
 `SUPPORTED_ARTIFACT_SCHEMAS` it accepts.
+The supported set shall contain local-role artifact schema `2` and shall exclude schema `1`; schema `2` shall require the canonical `role` field and shall supply no concrete host binding.
 When `createXStatePlaybookRuntime(machine, spec)` is called with a
 `spec.compat` declaration `{ artifactSchema, runtimeAbi }`, the factory
 shall check that declaration against the self-report of the engine
@@ -152,18 +154,18 @@ when the schema is supported but `runtimeAbi` differs from
 declared and the implemented value; when `compat` is present but not an
 object carrying integer `artifactSchema` and `runtimeAbi` members,
 construction shall throw a `TypeError` naming the offending member.
-When `spec.compat` is absent, the factory shall construct the runtime
-with no compatibility check, so linked modules emitted before the
-contract stay loadable.
+When `spec.compat` is absent, the factory shall reject the declaration-free
+artifact because its legacy player metadata has no safe session-player
+interpretation.
+Every public playbook registry, including a bespoke runtime profile, shall advertise `artifactSchema: 2`; a shared-factory registry's value shall equal its `spec.compat.artifactSchema`, and the Captain host shall reject a missing, unsupported, or disagreeing value before runtime construction per [[playbook-captain-5](playbook-captain.md#playbook-captain-5)].
 
 ### Session lifecycle
 
 #### playbook-runtime-6
 
 When `init({ sessionId, playbookId, rootSessionId, parentSessionId,
-parentCallId, depth, ports })` is called with valid identity fields, the
-runtime shall bind that identity immutably for its
-lifetime, construct the FSM actor from the options, and start it,
+parentCallId, depth, roleBindings, playerSessions, ports })` is called with valid identity fields, the
+runtime shall bind that identity and detached optional binding metadata immutably for its lifetime, validate an exact local-role key set with nonempty player and prompt identities when supplied, construct the FSM actor from options that contain no host identity, and start it,
 leaving the FSM in its idle
 state. When `dispose()` is called, the runtime shall stop the
 actor, abort a pending nested call, and drain any pending port
@@ -198,10 +200,10 @@ When resolving a compiled workflow's player invocation, the runtime shall map so
 #### playbook-runtime-9
 
 While driving a Boss turn, for each FSM player invocation the
-runtime shall resolve the player id ([[playbook-runtime-8](#playbook-runtime-8)]), compose
+runtime shall resolve the local role id ([[playbook-runtime-8](#playbook-runtime-8)]), compose
 the player prompt ([[playbook-5](playbook.md#playbook-5)] and
 [[playbook-6](playbook.md#playbook-6)]), and call
-`callPlayer(playerId, prompt, signal, options)` with the explicit
+`callPlayer(roleId, prompt, signal, options)` with the explicit
 resume selection required by [[playbook-runtime-38](#playbook-runtime-38)]. When the result status is
 `ok` with a non-empty, non-whitespace-only `finalText`, the
 runtime shall adjudicate that text
@@ -365,7 +367,7 @@ can debug fail-stop paths without losing the original stack.
 instance for downstream FSM consumers; normalization happens only
 at emission boundaries.
 
-Where a factory-backed artifact supplies linker-emitted `playerStates` and no artifact-specific status override, the runtime shall emit the canonical stream of [[playbook-runtime-3](#playbook-runtime-3)]: the selected event type before dispatch, exact `→ <guard>` for every settling actor output carrying a guard, metadata-derived player entry, failure, and two-line Boss-wait statuses, with no payload tally or raw state-id fallback.
+Where a factory-backed artifact supplies linker-emitted `roleStates` and no artifact-specific status override, the runtime shall emit the canonical stream of [[playbook-runtime-3](#playbook-runtime-3)]: the selected event type before dispatch, exact `→ <guard>` for every settling actor output carrying a guard, metadata-derived role entry, failure, and two-line Boss-wait statuses, with no payload tally or raw state-id fallback.
 The canonical failure status shall carry `lastError` as compact `{ name, message }` data rather than a raw Error.
 The corresponding Boss-wait telemetry shall carry the selected pending question verbatim alongside the other transition fields so a non-tmux host can render it.
 
@@ -376,13 +378,15 @@ runtime method shall drain the queue before resolving or rejecting.
 
 #### playbook-runtime-57
 
-Where a factory-backed artifact supplies neither `playerStates` nor an artifact-specific status override, the runtime shall preserve the metadata-absent legacy defaults: no classification line or settling-guard line, `Entered <stateId>.` for each ordinary non-suppressed state, one untruncated `<player> asks: <question>` line with no routing marker, and the unglyphed `Workflow failed; awaiting Boss recovery.` line carrying full normalized `lastError` data.
+Where a factory-backed artifact supplies artifact schema `2`, the runtime shall require complete local-role `roleStates` metadata even when an artifact-specific status override exists; missing metadata shall reject at construction instead of selecting metadata-absent legacy status defaults.
 
 ### Host adapter and registry
 
 #### playbook-runtime-15
 
-Where the shell constructs CODE, REVIEW, or DECIDE, the registry shall derive each player-identity prompt field from the frame's effective role bindings per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)] and shall override any caller-supplied identity value.
+Where the shell constructs CODE, REVIEW, or DECIDE, the registry shall receive each local role's resolved player id and prompt identity from the frame's explicit bindings per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], shall derive prompt identity from current effective model when present and adapter otherwise, and shall override any caller-supplied identity value.
+The registry shall supply that metadata only as `PlaybookSession.roleBindings`; it shall not copy model or player identity into runtime options, machine input, or persisted FSM context.
+Prompt composition shall read the current role binding at invocation time, so restoring an opaque machine snapshot under compatible changed model tuning cannot retain the earlier model identity in a player prompt.
 Each registry shall publish only the summary labels and handoff guards its current FSM owns, with CODE excluding REVIEW's child rounds, REVIEW labeling its review and rebuttal rounds, and DECIDE labeling its independent-proposal round.
 
 #### playbook-runtime-16
@@ -402,16 +406,14 @@ The registry shall validate only the option slice the shell passes it and shall 
 Where a host initializes a linked playbook runtime with a
 `PlaybookSession`, the runtime shall emit telemetry topic
 `playbook.trace` carrying the immutable session and playbook ids and
-the schema defined by
-[DR-011](../decisions/011-composable-playbook-execution.md) §5,
-including the session causality and version-2 extensions to
-[DR-010](../decisions/010-playbook-session-tracing-and-resume.md) §2.
+trace schema version `3` defined by [slc/link.md](../../slc/link.md#playbook-trace), retaining the session causality introduced by [DR-011](../decisions/011-composable-playbook-execution.md) §5 and replacing trace schema `2`'s overloaded player identity from [DR-010](../decisions/010-playbook-session-tracing-and-resume.md) §2.
 The trace sequence shall be contiguous and one-based for that session;
 Boss turns and player/Captain/judge calls shall receive one-based ids, and a
 call's started and finished events shall share its call id.
 The runtime shall trace session start/disposal, exact Boss input and
 settlement, exact player, Captain, and judge prompts and results, normalized
 errors, every FSM transition, and every status emission.
+Each player-call trace pair shall carry the local `roleId` and, where the host supplied binding metadata, the resolved `playerId`; its start and finish shall retain the same values.
 Direct Captain calls shall use paired `captain.call.started` and
 `captain.call.finished` events carrying state identity, exact prompt,
 visibility, status, final text, and normalized error without player identity or
@@ -432,31 +434,26 @@ error, clear the failed binding, and permit a fresh `init` attempt.
 
 #### playbook-runtime-38
 
-Where a linked runtime invokes a resolved player within one playbook
-session, when no resume token is recorded for that player, the runtime
+Where a standalone linked runtime invokes a local role within one playbook
+session, when no resume token is recorded for that role, the runtime
 shall call `PlaybookPorts.callPlayer` with `{ resume: false }`; when a
 token is recorded, it shall pass that exact token.
 After every resolved call, before interpreting its status, the runtime
-shall replace the player's token with a non-empty
-`PlayerResult.resumeToken` or clear it when the result omits one.
-An aborted or error result carrying a token shall therefore remain
-resumable; a rejected call carrying no result shall preserve the prior
-token and shall not trigger a silent fresh retry.
+shall replace the role's token with a non-empty `PlayerResult.resumeToken`, clear it only when an `ok` result omits one, and preserve it when an `aborted` or `error` result omits one.
+A rejected call carrying no result shall likewise preserve the prior token and shall not trigger a silent fresh retry.
 Before any of those reads or mutations, the runtime shall validate the host
 result as the exact declared JSON-safe shape, detach it from caller mutation,
 and freeze the accepted snapshot. After the host promise resolves, it shall
 re-check the combined invocation/public signal before validation or token
 adoption, so a late result from a port that ignored abort cannot mutate
 continuity or be traced as success.
-The runtime shall key tokens by the resolved player id, keep separate
-players independent, preserve the map across parked turns and actor
-reconstruction within the runtime session, and discard it on dispose.
+The standalone runtime shall key its private fallback tokens by resolved player id when binding metadata is supplied and by local role id otherwise, so equal bound ids share sequential continuity while distinct keys remain independent; it shall preserve the map across parked turns and actor reconstruction within that runtime session and discard it on dispose, while a supplied store shall override that lifetime under [[playbook-runtime-55](#playbook-runtime-55)].
 
 #### playbook-runtime-55
 
-Where `PlaybookSession.playerSessions` is supplied, when a linked runtime invokes a player, the runtime shall call the synchronous store with that frame's resolved local role id, select continuity before the player-start trace and host call, then update or clear it from the validated host result before the player-finish trace and result interpretation.
+Where `PlaybookSession.playerSessions` is supplied, when a linked runtime invokes a role, the runtime shall call the synchronous store with that frame-local role id, select continuity before the player-start trace and host call, then replace from a validated returned token or clear only for a validated `ok` omission before the player-finish trace and result interpretation; an aborted/error omission shall leave the store untouched.
 Where the runtime exports or restores its parked snapshot with that store supplied, it shall use the store's snapshot and restore operations instead of a private token map.
-Where no store is supplied, the runtime shall retain the private per-session continuity of [[playbook-runtime-38](#playbook-runtime-38)].
+Where no store is supplied, the runtime shall retain the private per-runtime-session continuity of [[playbook-runtime-38](#playbook-runtime-38)].
 
 ### Structured and composed execution
 
@@ -468,8 +465,7 @@ state, the FSM shall represent the tasks as XState parallel regions
 whose working leaves invoke their declared `player` actor and whose local final states join
 through the parallel parent's `onDone` transition, per
 [DR-011](../decisions/011-composable-playbook-execution.md) §1.
-The runtime shall permit overlap only for distinct resolved player ids,
-shall reject a concurrent call to a player id already in flight, and
+The runtime shall permit overlap only for distinct player ids supplied by explicit binding metadata, shall reject concurrent calls whose roles resolve to one player id, and
 shall serialize its concurrent hidden `callJudge` operations through one local
 abort-aware FIFO with concurrency one. The host shall additionally serialize
 all direct `callCaptain` and hidden `callJudge` port operations together
@@ -544,7 +540,7 @@ finish and parent continuation shall retain the call-start turn id.
 The runtime shall reject an unknown, stale, or already settled call id,
 a result whose playbook id differs from the pending target, or a result
 whose child session id differs from the suspended child session;
-shall preserve the parent's player resume-token map while suspended;
+shall preserve the parent's local-role resume-token projection while suspended;
 and shall finish an outstanding call as aborted before parent session
 disposal.
 It shall use the shared nested bridge to validate the start discriminant,
@@ -576,28 +572,26 @@ the runtime shall implement `exportSnapshot` and `restore` together.
 When `exportSnapshot` is called at a safe capture point — initialized,
 not disposing or disposed, no active public boundary, and the root actor
 quiescent with actor status `active` — it shall return a JSON-safe
-`PlaybookRuntimeSnapshot` carrying schema version `2`, the session's playbook
+`PlaybookRuntimeSnapshot` carrying schema version `3`, the session's playbook
 id, the persisted machine snapshot
 with any raw `Error` context value normalized to `{ name, message,
-stack? }`, the player resume-token map, the trace/turn/judge-call/
+stack? }`, the `roleResumeTokens` local-role resume-token projection, the trace/turn/judge-call/
 player-call/playbook-call sequence counters, the direct-Captain-call
 counter when the runtime supports direct Captain calls, the current normalized
-state descriptor, and the pending Boss questions as
-`{ questionId, player, question, sourceItem? }` entries.
+state descriptor, and the pending Boss questions as `{ questionId, asker, question, sourceItem? }` entries whose `asker` is exactly `{ kind: 'captain' }` or `{ kind: 'role', roleId }`.
 Where exactly one nested playbook call is suspended, that snapshot shall also carry its bridge-owned `callId`, `stateId`, `playbookId`, exact `text`, and `childSessionId`, enriched with the matching call-to-turn owner when present; export shall return `undefined` if the pending bridge identity, complete descriptor, or recorded call-to-turn ownership is absent or inconsistent.
-Where no nested playbook call is suspended, the schema-version-2 snapshot shall omit `suspendedCall`; at any other unsafe capture point `exportSnapshot` shall return `undefined`.
-A direct-Captain-capable runtime shall persist the `captainCall` member of `sequences` in every exported schema-version-2 snapshot.
-That member shall remain optional in a legacy schema-version-1 snapshot, which `restore` shall accept by using the persisted global `trace` counter as a collision-safe floor for subsequent Captain call ids.
-The public `PlaybookRuntimeSnapshot` contract shall admit schema version `2`, whose optional `suspendedCall` descriptor carries `callId`, `stateId`, `playbookId`, exact `text`, `childSessionId`, and optional positive `turnId`, and shall continue to admit schema version `1` without that member.
-The shared snapshot validator shall capture the complete supplied value once as detached frozen JSON, reject accessors and undeclared snapshot, sequence, pending-question, or suspended-call fields, and preserve schema-version-1 snapshots that contain no suspended call.
-The validator shall reject a schema-version-2 suspended call unless its caller explicitly opts into handling it, its playbook-call counter is positive, its optional turn id does not exceed the turn counter, and its normalized state is active, quiescent, tagged `playbook.suspended`, and contains the descriptor's source state among its active state ids.
-Conversely, the validator shall reject any snapshot whose normalized state is tagged `playbook.suspended` without a schema-version-2 suspended-call descriptor.
+Where no nested playbook call is suspended, the schema-version-3 snapshot shall omit `suspendedCall`; at any other unsafe capture point `exportSnapshot` shall return `undefined`.
+A direct-Captain-capable runtime shall persist the `captainCall` member of `sequences` in every exported schema-version-3 snapshot.
+The public `PlaybookRuntimeSnapshot` contract shall admit only schema version `3`, shall name its token member `roleResumeTokens`, and shall permit an optional `suspendedCall` descriptor carrying `callId`, `stateId`, `playbookId`, exact `text`, `childSessionId`, and optional positive `turnId`; schemas `1` and `2` shall reject before binding because their token and pending-question identities are ambiguous under [DR-032](../decisions/032-explicit-roles-session-players.md).
+The shared snapshot validator shall capture the complete supplied value once as detached frozen JSON and reject accessors and undeclared snapshot, sequence, pending-question, asker, or suspended-call fields.
+The validator shall reject a schema-version-3 suspended call unless its caller explicitly opts into handling it, its playbook-call counter is positive, its optional turn id does not exceed the turn counter, and its normalized state is active, quiescent, tagged `playbook.suspended`, and contains the descriptor's source state among its active state ids.
+Conversely, the validator shall reject any snapshot whose normalized state is tagged `playbook.suspended` without a schema-version-3 suspended-call descriptor.
 When `restore` is called on an unused runtime instance with the same
 immutable session identity the snapshot was exported under, the runtime
 shall validate the snapshot's schema version and that its playbook id
 equals `session.playbookId` — module identity stays a host check
 ([[playbook-cli-23](playbook-cli.md#playbook-cli-23)]) — bind the session, restore the
-resume-token map,
+current detached `session.roleBindings`, the local-role token projection,
 sequence counters, and prior-state descriptor, reconstruct the actor
 from the persisted machine snapshot, and start it without emitting
 `session.started`, transition traces, or human status, so the next
@@ -803,8 +797,8 @@ to the named state and `handleBossInput` returns (verifying [[playbook-runtime-1
 When the integration suite drives transition and status profiles, it shall fail unless every case in this matrix holds:
 
 - Every runtime emits `playbook.fsm.state` telemetry for each transition, normalizes transition and failure errors, and preserves enqueue order, single-flight emission, contiguous trace sequence, and trace-before-actor-call ordering (verifying [[playbook-runtime-14](#playbook-runtime-14)]).
-- A factory-backed fixture with complete `playerStates` and no status override emits the bare classification before dispatch, only metadata-backed `⤷ <Player>: <label>` entries, exact `→ <guard>` for every settling actor output carrying a guard with no tally, rider, or leading whitespace, the compact-data failure marker, and both exact Boss-wait lines, while idle, terminal, and unlisted states produce no canonical fallback (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-14](#playbook-runtime-14)]).
-- A factory-backed schema-1 fixture with neither `playerStates` nor a status override emits no classification or settling-guard line, preserves `Entered <stateId>.` for ordinary entries, emits only the single question line for a Boss wait, and emits the unglyphed legacy failure line with full normalized error data (verifying [[playbook-runtime-57](#playbook-runtime-57)]).
+- A factory-backed fixture with complete `roleStates` and no status override emits the bare classification before dispatch, only metadata-backed `⤷ <Role>: <label>` entries, exact `→ <guard>` for every settling actor output carrying a guard with no tally, rider, or leading whitespace, the compact-data failure marker, and both exact Boss-wait lines, while idle, terminal, and unlisted states produce no canonical fallback (verifying [[playbook-runtime-3](#playbook-runtime-3)] and [[playbook-runtime-14](#playbook-runtime-14)]).
+- A schema-2 factory-backed fixture with missing or incomplete `roleStates` rejects during construction even when a status override exists, before machine interpretation or a host call (verifying [[playbook-runtime-57](#playbook-runtime-57)]).
 
 ### Host adapter
 
@@ -955,7 +949,7 @@ When a runtime is driven outside a Boss-reply wait with nonempty ordinary or sla
 #### playbook-runtime-26
 
 
-When the CODE, REVIEW, and DECIDE suites drive every player-invoking state, they shall fail unless every Coder invocation uses local role `coder` and every Reviewer invocation uses local role `reviewer` (verifying [[playbook-runtime-8](#playbook-runtime-8)]).
+When the CODE, REVIEW, and DECIDE suites drive every delegated-role state, they shall fail unless every Coder invocation uses local role `coder` and every Reviewer invocation uses local role `reviewer` (verifying [[playbook-runtime-8](#playbook-runtime-8)]).
 
 #### playbook-runtime-27
 
@@ -985,7 +979,7 @@ unmoved, and empty text makes no judge call, player call, status
 emission, or FSM transition while still emitting the received/settled
 session trace.
 The classifier prompt shall carry the exact pending question ids, questions,
-and asking players; an initial or post-child answer shall resume the matching
+and discriminated Captain-or-role askers; an initial or post-child answer shall resume the matching
 task with the same original intent, plan, completed results, and exactly ordered
 Q+A continuation blocks (verifying [[playbook-runtime-2](#playbook-runtime-2)], [[playbook-runtime-7](#playbook-runtime-7)]).
 
@@ -1009,7 +1003,7 @@ contract agrees with
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
 `emitTelemetry`.
 The test suite shall additionally fail unless the module exports
-the player-call, player-session-store, Captain-call, nested-call, JSON value/error, structured-state,
+the role-binding, player-call, pending-question, player-session-store, Captain-call, nested-call, JSON value/error, structured-state,
 session, trace, run-result, runtime, and runtime-factory contract types,
 unless `PlayerResult`
 exposes optional `resumeToken`, unless `callPlayer` requires explicit
@@ -1019,9 +1013,9 @@ requires visible-or-hidden visibility plus explicit resume selection and
 exposes an optional tool allowlist whose omission is distinct from an explicit
 empty list,
 unless `PlaybookRuntime.init` accepts a causal
-`PlaybookSession` with the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-58](#playbook-runtime-58)], and unless `handleBossInput` and
+`PlaybookSession` with optional exact `PlaybookRoleBinding` metadata and the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-58](#playbook-runtime-58)], unless pending Boss questions use the exact asker union without a player field, and unless `handleBossInput` and
 `resumePlaybookCall` return `PlaybookRunResult`; its import graph
-includes no CODE or FSM module.
+includes no CODE or FSM module (verifying [[playbook-runtime-34](#playbook-runtime-34)] and [[playbook-runtime-58](#playbook-runtime-58)]).
 The test suite shall additionally fail unless the linker contract
 itself still states the clauses the shipped artifacts depend on, since
 that contract is the source they are generated from and a rule stated
@@ -1031,7 +1025,7 @@ the linked runtime authors, shall name the `controlContextFields` spec
 member that carries it, shall state that a runtime naming no member
 carries no `context`, and shall no longer describe the view as a
 sanitized serialization of the FSM context; and its output section
-shall list `controlContextFields` and complete `playerStates` among the members an emitted module
+shall list `controlContextFields` and complete `roleStates` among the members an emitted module
 supplies, shall state that the context projection's default is nothing rather than
 everything, and shall require the `_internal` composers the artifact's
 own machine uses rather than a fixed player-and-Captain pair.
@@ -1054,13 +1048,18 @@ assignable to the shared types and would therefore pass while an artifact still 
 #### playbook-runtime-39
 
 
-Where the integration suite drives CODE, REVIEW, DECIDE, and a direct-Captain runtime through complete sessions, it shall fail unless session identity is immutable, causality is validated, trace sequences are contiguous and boundary-complete, initialization and disposal faults preserve their first causal error, and every started call has exactly one finish (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
-The suite shall fail unless a standalone runtime starts each player fresh, resumes and rotates that player's validated token, clears an omitted token, keeps different players independent, preserves continuity across parked turns, and discards it on disposal (verifying [[playbook-runtime-38](#playbook-runtime-38)]).
+Where the integration suite drives CODE, REVIEW, DECIDE, and a direct-Captain runtime through complete sessions, it shall fail unless every emitted trace event has schema version `3`, session identity is immutable, causality is validated, trace sequences are contiguous and boundary-complete, initialization and disposal faults preserve their first causal error, and every started call has exactly one finish (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
+The suite shall fail unless every shell-hosted player-call pair retains both its semantic `roleId` and resolved `playerId`, while a standalone call retains its role without inventing a host player id; restoring under compatible changed model tuning shall also make the next composed prompt use the current `promptIdentity` rather than a value persisted in machine context (verifying [[playbook-runtime-15](#playbook-runtime-15)] and [[playbook-runtime-37](#playbook-runtime-37)]).
+The suite shall fail unless a standalone runtime without bindings starts each local role fresh, resumes and rotates that role's validated token in `roleResumeTokens`, clears an omitted token only on `ok`, preserves the prior token when `aborted` or `error` omits one, keeps different roles independent, preserves continuity across parked turns, and discards it on disposal; with bindings but no external store, two sequential roles mapped to one player id shall select and rotate one shared private token while the snapshot projects that token back to both local-role keys (verifying [[playbook-runtime-38](#playbook-runtime-38)] and [[playbook-runtime-45](#playbook-runtime-45)]).
 Host results shall fail unless they are validated, detached, and frozen before any final text, error, or resume token is consumed, and a late result after abort shall not mutate continuity or trace success (verifying [[playbook-runtime-37](#playbook-runtime-37)] and [[playbook-runtime-38](#playbook-runtime-38)]).
+
+#### playbook-runtime-60
+
+When the integration suite initializes a runtime with valid and malformed `PlaybookSession.roleBindings`, it shall fail unless the valid exact local-role map is detached for the runtime lifetime; empty identities, missing or extra local roles, and later caller mutation reject or cannot alter targeting; and the FSM options, input, context, and snapshot contain no host player id or prompt identity (verifying [[playbook-runtime-6](#playbook-runtime-6)]).
 
 #### playbook-runtime-56
 
-Where the integration suite initializes a runtime with a fake `PlayerSessionStore` and drives a host-mapped nested frame, it shall fail unless the declared store methods have the exact synchronous signatures of [[playbook-runtime-58](#playbook-runtime-58)], every call uses the frame-local role key, the host view maps that key to the effective root binding, selection occurs before the player-start trace and call, update or clearing occurs before the player-finish trace and adjudication, snapshot returns local-role keys, restore replaces exactly the frame view without clearing another binding, and a rejected host call preserves the prior selection (verifying [[playbook-runtime-55](#playbook-runtime-55)] and [[playbook-runtime-58](#playbook-runtime-58)]).
+Where the integration suite initializes a runtime with a fake `PlayerSessionStore` and drives a host-mapped nested frame, it shall fail unless the declared store methods have the exact synchronous signatures of [[playbook-runtime-58](#playbook-runtime-58)], every call uses the frame-local role key, the host view maps that key to the Captain-session player ledger, selection occurs before the player-start trace and call, replacement or authorized `ok` clearing occurs before the player-finish trace and adjudication, aborted/error omission performs no update, snapshot returns local-role keys, aliased roles cannot restore conflicting tokens, restore replaces exactly the frame view without clearing another player, and a rejected host call preserves the prior selection (verifying [[playbook-runtime-55](#playbook-runtime-55)] and [[playbook-runtime-58](#playbook-runtime-58)]).
 
 ### Structured and Composed Execution Coverage
 
@@ -1073,7 +1072,7 @@ fail unless both independent proposals start before either result is required, b
 The test suite shall fail unless one or two branch-local Boss questions
 park and resume independently without restarting a completed or still
 waiting sibling, a branch failure stops its sibling and reaches
-`failed`, distinct players overlap, same-player overlap rejects, and
+`failed`, roles bound to distinct player ids overlap, roles bound to the same player id reject overlap (verifying [[playbook-runtime-40](#playbook-runtime-40)]), and
 direct Captain and hidden judge calls never overlap.
 It shall fail unless a Boss interrupt restarts both proposal branches with the replacement topic, clears both prior branch results and questions, and does not target an individual branch or wait state.
 Structured state telemetry and trace shall remain JSON-safe, identify
@@ -1101,7 +1100,7 @@ returns parent outcome `suspended` without holding the Boss turn open,
 and a later matching resume drives the parent from the child output.
 The test suite shall fail unless child aborted/error results reach
 parent `onError`, unknown or duplicate call ids reject, parent disposal
-aborts a pending call, the parent's player token map survives
+aborts a pending call, the parent's local-role token projection survives
 suspension, and `playbook.call.started` / `playbook.call.finished` form
 one causally ordered trace pair around the child session, with the finish
 event preceding the parent transition caused by that return and retaining the
@@ -1126,18 +1125,18 @@ finish and shall reject disposal with the original cleanup error (verifying [[pl
 Where the integration suite drives the real CODE linked runtime through
 scripted ports to `awaitBossReply` and calls `exportSnapshot`, the test
 suite shall fail unless the snapshot is JSON-round-trip safe and carries
-schema version `2` without a suspended-call descriptor, the playbook id, the parked state descriptor, the
-recorded player resume token, the live sequence counters, and one
-pending Boss question with the asking player and verbatim question
-text.
+schema version `3` without a suspended-call descriptor, the playbook id, the parked state descriptor, the
+recorded local-role resume token, the live sequence counters, and one
+pending Boss question with a discriminated role asker and verbatim question
+text (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 The test suite shall fail unless a fresh runtime instance created by
 the same factory `restore`s that snapshot under the original session
 identity without emitting `session.started`, and a following Boss reply
 re-enters the recorded resume state, passes the pre-park resume token
 to the resumed player call, and continues the trace with contiguous
-sequence numbers across the export/restore boundary.
-Where the integration suite exports a shared-factory runtime suspended behind a nested playbook and restores it in a fresh instance, the suite shall fail unless the schema-version-2 descriptor preserves the original call, child, input, and turn ownership; restore reattaches the reconstructed promise actor without another host call or start trace; exact resume emits one finish under the original call and turn before continuing the parent; and a failed pre-confirm state comparison rolls back without a finish and permits exact retry (verifying [[playbook-runtime-42](#playbook-runtime-42)] and [[playbook-runtime-45](#playbook-runtime-45)]).
-Where a descriptor-free legacy snapshot's opaque machine attempts to reconstruct a nested invocation, the suite shall fail unless restore rejects without invoking the host child port or emitting another start or finish (verifying [[playbook-runtime-42](#playbook-runtime-42)] and [[playbook-runtime-45](#playbook-runtime-45)]).
+sequence numbers across the export/restore boundary (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
+Where the integration suite exports a shared-factory runtime suspended behind a nested playbook and restores it in a fresh instance, the suite shall fail unless the schema-version-3 descriptor preserves the original call, child, input, and turn ownership; restore reattaches the reconstructed promise actor without another host call or start trace; exact resume emits one finish under the original call and turn before continuing the parent; and a failed pre-confirm state comparison rolls back without a finish and permits exact retry (verifying [[playbook-runtime-42](#playbook-runtime-42)] and [[playbook-runtime-45](#playbook-runtime-45)]).
+Where a schema-1 or schema-2 snapshot is supplied, the suite shall fail unless restore rejects before actor construction, host child invocation, or another start or finish (verifying [[playbook-runtime-42](#playbook-runtime-42)] and [[playbook-runtime-45](#playbook-runtime-45)]).
 It shall fail unless `exportSnapshot` returns `undefined` during an
 active turn and after disposal; unless `restore` rejects a
 schema-version mismatch, a playbook-id mismatch, and an already
@@ -1150,7 +1149,7 @@ The suite shall also fail unless the compiled default Captain exposes both snaps
 
 Where the integration suite arms the shared nested bridge and starts a real XState parent in its nested promise actor's invoking state, the test suite shall fail unless an exact descriptor remains unpublished before confirmation, confirms without allocating or emitting a second start or invoking the host port, preserves its detached full identity, and eventually emits one finish before the parent's `onDone` transition.
 The suite shall fail unless mismatched state, target, or text, a second claim, an invoke without a descriptor, and an unclaimed descriptor each reject; unless a failed or aborted pre-confirmation attempt emits no finish and leaves its call id reusable; and unless a confirmed call id remains spent after exact resume (verifying [[playbook-runtime-42](#playbook-runtime-42)]).
-Where the suite validates public runtime snapshots, it shall fail unless schema version `1` remains accepted without a suspended call, schema version `2` requires explicit suspended-call support on the handling path, the returned snapshot and descriptor are detached and frozen, and malformed ownership, impossible state/counter combinations, undeclared fields, and accessors are rejected (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
+Where the suite validates public runtime snapshots, it shall fail unless schemas `1` and `2` reject before binding, schema version `3` requires explicit suspended-call support on the handling path, Captain and role question askers are discriminated exactly, the returned snapshot and descriptor are detached and frozen, and malformed ownership, impossible state/counter combinations, undeclared fields, and accessors are rejected (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 
 ### Control Surface Coverage
 
@@ -1258,4 +1257,4 @@ projected run result and no start-only field, `stateId` appearing on
 
 #### playbook-runtime-54
 
-Where the integration suite loads a linked artifact through the real run host, when its compatibility declaration is malformed or disagrees with the loaded engine, the suite shall fail unless runtime construction rejects before any machine interpretation or agent call with a diagnostic naming the offending declaration and supported engine value; a compatible or declaration-free artifact shall construct normally (verifying [[playbook-runtime-50](#playbook-runtime-50)]).
+Where the integration suite loads a linked artifact through the real run host, when its registry artifact schema is absent or not `2`, its shared-factory declaration is absent, malformed, schema `1`, or disagrees with the registry or loaded engine, the suite shall fail unless runtime construction rejects before any machine interpretation or agent call with a diagnostic naming the offending declaration and supported value; compatible schema-2 `{ role, label }` metadata and the bespoke DECIDE profile shall preserve local roles without creating a host binding (verifying [[playbook-runtime-50](#playbook-runtime-50)]).

@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+[DR-032](032-explicit-roles-session-players.md) uses the declared transition path to replace artifact schema `1` with schema `2`; every registry now advertises the artifact schema of every runtime profile, and declaration-free or schema-1 linked artifacts are incompatible with explicit local-role metadata in the next major.
 
 ## Context
 
@@ -30,19 +31,19 @@ Consumers that vendor and pin the `slc/link.md` text and adopt playbook releases
   - otherwise a `runtimeAbi` different from `RUNTIME_ABI` throws a `TypeError` naming the declared and the implemented value;
   - when both disagree, the schema error alone is raised — one clear diagnostic suffices;
   - a malformed `compat` value throws a `TypeError` naming the offending member.
-- An absent `spec.compat` is a legacy artifact emitted before this contract: the factory constructs exactly as before, because [DR-019](019-shared-linked-runtime-factory.md) §4 keeps previously linked artifacts loadable.
+- The original absent-`spec.compat` compatibility path is superseded by [DR-032](032-explicit-roles-session-players.md): the next-major factory rejects that artifact before interpretation because its player metadata cannot be reclassified safely as local roles.
 - `slc/link.md` §Output binds newly emitted thin modules to supply `compat` with the values current at link time.
 
 ### 3. Scope
 
-- No entry-registry-level compatibility fields are added in this iteration: the factory call is on every execution path — `playbook run`, test suites, embedding hosts — so the factory check already covers them all; a registry-level advertisement can be layered on later without changing this contract.
+- Under [DR-032](032-explicit-roles-session-players.md), every entry registry adds required `artifactSchema: 2`; the Captain host validates it before runtime construction, and a shared-factory entry must agree with its `spec.compat.artifactSchema`.
 - `playbook run` gains no compatibility flags: a construction-time throw from a selected entry's `createRuntime` settles through the shared Captain action and reply path, while a throw during headless host construction before a Boss turn starts remains a `playbook run: <message>` configuration diagnostic with exit `1` ([[playbook-cli-20](../packages/playbook-cli.md#playbook-cli-20)]), as amended by [DR-031](031-shared-captain-session-front-ends.md).
-- The DECIDE parallel-region runtime does not use the shared factory, carries no declaration, and remains out of scope until it converges on a compatible engine profile under its own record.
+- Under [DR-032](032-explicit-roles-session-players.md), the DECIDE parallel-region registry carries the same schema-2 advertisement and its bespoke runtime implements the local-role artifact contract without claiming a shared-engine ABI.
 
 ## Consequences
 
 - A skew-linked artifact fails loudly at load with a diagnostic naming both sides, instead of running under semantics it was not linked against.
-- The metadata is additive: every existing artifact, host, and export keeps working, so this ships as a minor release.
+- The original metadata addition was additive, but [DR-032](032-explicit-roles-session-players.md) makes removal of schema `1`, required registry advertisement, and declaration-free rejection a breaking next-major transition.
 - Future format changes have a signal: a new artifact schema or engine ABI is declared by number, checked by the loaded engine, and rejected by name ([DR-023](023-data-only-machine-ir.md) stages the first planned use).
 
 ## References

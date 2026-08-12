@@ -5,7 +5,7 @@
 
 ## Intent
 
-This package specifies agreement among the maintained CODE, REVIEW, and DECIDE sources, their GEARS and FSM artifacts, and their compiled workflow behavior.
+This package specifies agreement among the maintained CODE, REVIEW, and DECIDE sources, their local roles, GEARS and FSM artifacts, and compiled workflow behavior.
 
 ## External Behavior
 
@@ -13,15 +13,17 @@ This package specifies agreement among the maintained CODE, REVIEW, and DECIDE s
 
 #### playbook-1
 
-Where a maintained workflow source declares player instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, or `DECIDE-1` through `DECIDE-4`, while the compiled FSM and runtime shall implement every preserved outcome.
+Where a maintained workflow source declares an opening `Roles:` list, delegated-role instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve the exact unique role list and every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, or `DECIDE-1` through `DECIDE-4`, while the compiled FSM and runtime shall implement every preserved outcome.
+Boss and Captain shall remain fixed actors outside `Roles:`, and the source and GEARS shall declare no role alias.
+The registry manifest's `requiredRoleIds` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall equal the canonical lowercase local ids derived from that exact `Roles:` list, and source roles that collide after canonicalization shall reject.
 
 #### playbook-2
 
-Where a player-invoking FSM state references a GEARS item through `sourceItem`, its authored prompt body shall equal that item's blockquote body verbatim, including fenced instruction text, quoted relay fragments, and placeholder tokens.
+Where a delegated-role FSM state references a GEARS item through `sourceItem`, its authored prompt body shall equal that item's blockquote body verbatim, including fenced instruction text, quoted relay fragments, and placeholder tokens.
 
 #### playbook-3
 
-Where a player-invoking FSM state references a GEARS item, its `input.player` shall equal the `Coder` or `Reviewer` section under which that item is declared.
+Where a delegated-role FSM state references a GEARS item, its `input.role` and `meta.playbook.role` shall equal the canonical local id of the `Coder` or `Reviewer` role under which that item is declared, and the compiled state metadata shall define no host-binding or player-id field.
 
 #### playbook-4
 
@@ -77,11 +79,11 @@ When the nested REVIEW call fails outside that authored result contract, DECIDE 
 
 #### playbook-12
 
-Where a player-invoking state can return `needsBossReply`, the FSM shall declare the result guard and a matching `BOSS_REPLY` resume arm that reenters that same state with the answer in context.
+Where a delegated-role state can return `needsBossReply`, the FSM shall declare the result guard, record that local role in the pending question's discriminated asker, and declare a matching `BOSS_REPLY` resume arm that reenters that same state with the answer in context.
 
 #### playbook-13
 
-Where execution leaves a player-invoking state without suspending for its Boss question, or abandons a Boss-reply wait through another transition, the FSM shall clear the pending reply context.
+Where execution leaves a delegated-role state without suspending for its Boss question, or abandons a Boss-reply wait through another transition, the FSM shall clear the pending reply context.
 
 ## Verification
 
@@ -89,15 +91,15 @@ Where execution leaves a player-invoking state without suspending for its Boss q
 
 #### playbook-7
 
-When the workflow conformance suites run, they shall fail unless every protected source instruction, acting-result contract, and workflow outcome appears in at least one corresponding GEARS item in the required ordered set, no compiled item lacks source authority, and every GEARS-preserved workflow outcome is pinned at the compiled FSM and runtime boundary (verifying [[playbook-1](#playbook-1)]).
+When the workflow conformance suites run, they shall fail unless source and GEARS carry the same exact `Roles:` declaration with no Boss, Captain, alias, exact duplicate, or canonical-lowercase collision; the registry manifest declares exactly their canonical local ids; every protected source instruction, acting-result contract, and workflow outcome appears in at least one corresponding GEARS item in the required ordered set; no compiled item lacks source authority; and every GEARS-preserved workflow outcome is pinned at the compiled FSM and runtime boundary (verifying [[playbook-1](#playbook-1)]).
 
 #### playbook-8
 
-When the workflow conformance suites run, they shall fail if a player-invoking state's prompt body differs from its GEARS item, including any fenced instruction, quote marker, relayed blockquote, or placeholder (verifying [[playbook-2](#playbook-2)]).
+When the workflow conformance suites run, they shall fail if a delegated-role state's prompt body differs from its GEARS item, including any fenced instruction, quote marker, relayed blockquote, or placeholder (verifying [[playbook-2](#playbook-2)]).
 
 #### playbook-9
 
-When the workflow conformance suites run, they shall fail if any player-invoking state's declared player differs from its GEARS section (verifying [[playbook-3](#playbook-3)]).
+When the workflow conformance suites run, they shall fail if any delegated-role state's `input.role` or `meta.playbook.role` differs from its GEARS role or if its compiled metadata declares a host-binding or player-id field (verifying [[playbook-3](#playbook-3)]).
 
 #### playbook-10
 
@@ -127,7 +129,7 @@ When the CODE, REVIEW, and DECIDE workflow suites run, they shall fail unless CO
 
 #### playbook-14
 
-When a workflow FSM can receive a player question, its conformance suite shall fail unless the question parks execution and a matching Boss reply reenters only the originating state with the answer in context (verifying [[playbook-12](#playbook-12)]).
+When a workflow FSM can receive a delegated-role question, its conformance suite shall fail unless the question parks execution, records that local role as its discriminated asker, and a matching Boss reply reenters only the originating state with the answer in context (verifying [[playbook-12](#playbook-12)]).
 
 #### playbook-15
 

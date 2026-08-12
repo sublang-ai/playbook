@@ -6,6 +6,7 @@
 ## Status
 
 Superseded by [DR-031](031-shared-captain-session-front-ends.md).
+[DR-032](032-explicit-roles-session-players.md) also replaces the legacy runtime snapshot's overloaded player question and token identities with schema `3` local-role projections and discriminated askers.
 
 ## Context
 

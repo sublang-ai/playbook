@@ -31,7 +31,7 @@ That needs an execution primitive the definitions do not have: a state kind that
 ### 2. Observability without new trace types
 
 - Script execution emits one status line (`Executed script for <stateId> (exit <status>).`) and one telemetry event under the `playbook.script` topic.
-- No `*.call.*` trace pair is added: trace schema v2 consumers ([DR-010](010-playbook-session-tracing-and-resume.md)) are unaffected; the FSM transition trace plus the `playbook.script` topic record the step.
+- No `*.call.*` trace pair is added: trace consumers ([DR-010](010-playbook-session-tracing-and-resume.md), as advanced to schema `3` by [DR-032](032-explicit-roles-session-players.md)) are unaffected; the FSM transition trace plus the `playbook.script` topic record the step.
 - Script stdout/stderr never enter machine context, prompts, or traces; a script's effect is on the environment plus its exit status.
 
 ### 3. The `optimize` pass definition

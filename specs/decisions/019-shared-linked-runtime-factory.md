@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+[DR-032](032-explicit-roles-session-players.md) replaces `resolvePlayerId`, alias exceptions, optional player-state metadata, and legacy compatibility with canonical required local-role metadata under artifact schema `2`; concrete player binding is host policy.
 
 ## Context
 
@@ -29,21 +30,21 @@ Accepted.
 ### 2. The `spec` parameter surface
 
 - Required: `snapshotOptions` — validate and JSON-snapshot the caller's per-run options.
-- Optional strategy members, each with a generic default derived from the FSM artifact's own data per `slc/link.md`: `label`, `machineInput`, `entryEvent` (deterministic textual entry), `bossEvents` (the exact judge-vs-runtime field metadata erased with the FSM's TypeScript event union), `classifyBossText`, `classificationStatus`, `resolvePlayerId` (default: lowercased player name), `composePlayerPrompt` / `composeCaptainPrompt` (default: continuation blocks plus canonical kebab-token-to-camel-field placeholder substitution), `placeholderFields` (linker-known exceptions such as an authored alias), `buildJudgePrompt`, `extractRequiredFields` (default: bilingual `Output shall include` clause scan), `verbatimPayloadFields`, `resumableStateIds` (default: the FSM's `awaitBossReply` BOSS_REPLY targets), `playerStates` (complete player and display-label metadata that selects the canonical status and classification defaults unless explicitly overridden; omission preserves the metadata-absent legacy defaults), `statusesForState`, `normalizeTransitionEvent` / `transitionEventFields`, and `scriptCwd` (default: the validated options' `cwd`).
-- A linker-emitted thin module therefore normally supplies `snapshotOptions`, `entryEvent`, complete `playerStates`, any additional `bossEvents` contracts and `placeholderFields` exceptions that cannot survive TypeScript erasure, and `transitionEventFields`; hand-maintained artifacts override members to preserve their existing observable behavior exactly.
+- Optional strategy members, each with a generic default derived from the FSM artifact's own data per `slc/link.md`: `label`, `machineInput`, `entryEvent` (deterministic textual entry), `bossEvents` (the exact judge-vs-runtime field metadata erased with the FSM's TypeScript event union), `classifyBossText`, `classificationStatus`, `composePlayerPrompt` / `composeCaptainPrompt` (default: continuation blocks plus canonical kebab-token-to-camel-field placeholder substitution), `buildJudgePrompt`, `extractRequiredFields` (default: bilingual `Output shall include` clause scan), `verbatimPayloadFields`, `resumableStateIds` (default: the FSM's `awaitBossReply` BOSS_REPLY targets), `roleStates` (complete local-role and display-label metadata that selects the canonical status and classification defaults), `statusesForState`, `normalizeTransitionEvent` / `transitionEventFields`, and `scriptCwd` (default: the validated options' `cwd`).
+- A linker-emitted thin module therefore supplies `snapshotOptions`, `entryEvent`, complete `roleStates`, any additional `bossEvents` contracts, and `transitionEventFields`; hand-maintained schema-2 artifacts override members only to preserve behavior that does not invent host binding.
 - The shared classifier always uses the flat exact `{ type, ...declaredFields }` wire shape, keeps textual fields runtime-owned, and permits applicable entry or interrupt directives while parked.
 - Supplied metadata may extend a runtime-derived contract but shall not replace or weaken an entry text field or derived closed interrupt target; conflicting duplicates fail factory construction.
 
 ### 3. The linker emits thin modules for factory-backed FSMs
 
 - For an FSM in the shared factory's single-region domain, `slc/link.md` §Output specifies the thin artifact: the relative FSM import, the derived `PlaybookRuntimeOptions` interface (plus `cwd` when a script state exists), the shared-contract type re-exports, the `_internal` composer surface, and the default-exported factory call.
-- Every newly emitted thin artifact shall include `playerStates` as the complete map of its typed player-invoking states to the GEARS player and exact FSM description, using an empty map when no such state exists.
+- Every newly emitted thin artifact shall include `roleStates` as the complete map of its typed delegated-role states to the canonical GEARS role and exact FSM description, using an empty map when no such state exists.
 - Emitted output stays erasable TypeScript with a source-only relative FSM import and bare package specifiers for the shared engine and contract modules.
 
-### 4. Additive compatibility
+### 4. Compatibility transition
 
-- Every pre-existing export of `@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` keeps working unchanged, so previously linked fat artifacts continue to run against this package.
-- The reference CODE artifact is ported to the thin form under its unchanged test suites.
+- [DR-032](032-explicit-roles-session-players.md) makes declaration-free and schema-1 player metadata incompatible with explicit local roles, so the next-major factory and host reject those artifacts rather than preserve the original additive path.
+- The reference CODE artifact is ported to the schema-2 thin form under its conformance suites.
   The DECIDE runtime keeps its own machinery because it interprets a parallel proposal pair with observably different boundary tracking, cancellation, and status scheduling that its suites pin.
   Converging DECIDE onto the shared factory requires a future parallel profile.
 

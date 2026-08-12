@@ -9,6 +9,8 @@ Accepted.
 [DR-029](029-session-scoped-conversational-captain.md) amends §4: the Captain is placed outside the engagement stack as an always-present controller, the manual-slash-selection sentence is superseded by the absent-from-path `switch`, and leaf-only Boss input is recast as leaf-only *delivery* — the Captain receives every turn.
 The stack semantics themselves stay intact.
 [DR-030](030-shared-mapped-player-continuity.md) amends §4 and the player-isolation consequence: runtime frames remain distinct, while exact same-name nested roles inherit player bindings and continuation from their active ancestor path.
+[DR-032](032-explicit-roles-session-players.md) supersedes that inheritance with explicit role-to-player bindings while retaining rejection of simultaneous calls to one player.
+[DR-032](032-explicit-roles-session-players.md) also advances the linked trace schema from `2` to `3` for distinct role and player identities while retaining this decision's nested causality fields.
 
 ## Context
 

@@ -59,13 +59,27 @@ interface PlaybookSession {
   parentSessionId?: string;
   parentCallId?: string;
   depth: number;
+  roleBindings?: Readonly<Record<string, PlaybookRoleBinding>>;
   playerSessions?: PlayerSessionStore;
   ports: PlaybookPorts;
 }
 
+interface PlaybookRoleBinding {
+  playerId: string;
+  promptIdentity: string;
+}
+
+interface PlaybookPendingBossQuestion {
+  questionId: string;
+  asker: { kind: 'captain' } | { kind: 'role'; roleId: string };
+  question: string;
+  sourceItem?: string;
+}
+
 interface PlayerSessionStore {
-  select(playerId: string): string | false;
-  update(playerId: string, resumeToken?: string): void;
+  select(roleId: string): string | false;
+  // Called only for a replacement token or an authorized ok-status clear.
+  update(roleId: string, resumeToken?: string): void;
   snapshot(): Readonly<Record<string, string>>;
   restore(tokens: Readonly<Record<string, string>>): void;
 }
@@ -151,7 +165,7 @@ exactly one `pendingCall` is active.
 Control-plane exceptions reject the runtime method rather than masquerade as a
 recoverable workflow `failed` result.
 
-`PlaybookRuntimeOptions` is host-agnostic and carries only _per-run_ knobs such as identity strings (e.g., model names a playbook substitutes into prompt placeholders), strategy overrides the linker exposes, and — where the compiled playbook's policy needs a host seam — host-supplied port-shaped callbacks the linker exposes as option members whose types the artifact itself declares, so the six-member `PlaybookPorts` contract and the shared contract module stay free of host types.
+`PlaybookRuntimeOptions` is host-agnostic and carries only _per-run_ workflow knobs, strategy overrides the linker exposes, and — where the compiled playbook's policy needs a host seam — host-supplied port-shaped callbacks the linker exposes as option members whose types the artifact itself declares, so the six-member `PlaybookPorts` contract and the shared contract module stay free of host types.
 The link compiler emits a typed options interface per playbook based on the FSM's `CodingInput` (or equivalent).
 The CLI's absence of `--link-option` values does not mean that
 `PlaybookRuntimeOptions` is empty. CLI link options are compile-time inputs;
@@ -162,15 +176,16 @@ remain a required readonly runtime option passed through to machine input; the
 linker shall neither invent an empty catalog nor require it to be baked into a
 CLI link option.
 
-Player binding is a _linker-time_ input baked into the emitted runtime by default.
-A linker may also expose it via `PlaybookRuntimeOptions` for per-run remapping; the contract requires only that the runtime ship with a deterministic binding it applies at every `callPlayer` site.
+Concrete player binding and prompt identity are host policy and shall not enter `PlaybookRuntimeOptions`, machine input, or the emitted artifact.
+For a shell-hosted runtime, `PlaybookSession.roleBindings` shall carry exactly the runtime's local roles, map each to its resolved player id and current prompt identity, and be the sole source for call targeting, player-facing prompt identity, concurrency keys, and trace player ids.
+The host shall derive `promptIdentity` from the current effective model when present and the established adapter otherwise; a standalone runtime may omit the map and retain only its local role identity.
 
 ## PlaybookPorts contract
 
 ```typescript
 interface PlaybookPorts {
   callPlayer(
-    playerId: string,
+    roleId: string,
     prompt: string,
     signal: AbortSignal,
     options: PlayerCallOptions,
@@ -289,7 +304,7 @@ emission drain. Absent such a control-plane failure, if the combined signal
 has aborted, ordinary abort settlement remains authoritative after the actor
 reaches its error path.
 
-Every linked runtime owns a map from resolved player id to its latest non-empty `resumeToken`.
+Every standalone linked runtime owns a private continuation map keyed by resolved player id when `roleBindings` is supplied and by local role id otherwise.
 Before reading a resolved direct-Captain or delegated-player result, the
 runtime shall validate, detach, and freeze it through the shared
 `validateCaptainResult` or `validatePlayerResult` helper. The accepted object
@@ -297,17 +312,18 @@ shape is exact: only the declared status and optional string fields are
 allowed, JSON-unsafe members reject, and caller mutation after resolution
 cannot change trace evidence or player continuity. Validation happens before
 adopting a resume token or reading final text.
-The first call to each player in a playbook session shall pass `{ resume: false }`; later calls shall pass the exact stored token.
-After a resolved call, the runtime shall replace the token when the result carries one or clear it when absent before interpreting `status`; a rejected call with no result leaves the prior token unchanged.
+The first call to each private continuation key in a standalone playbook session shall pass `{ resume: false }`; later calls shall pass the exact stored token, so two sequential roles explicitly bound to one player id share one token even without a supplied `PlayerSessionStore`.
+After a validated resolved call, the runtime shall replace the token when the result carries one, clear it only for an `ok` result that omits one, and preserve it for an `aborted` or `error` result that omits one; a rejected call with no result likewise leaves the prior token unchanged.
 After awaiting a host Captain or player promise, the runtime shall re-check the
 combined invocation/public-boundary signal before validating the result,
 adopting a resume token, or emitting a successful finish. A host promise that
 ignores cancellation and resolves late shall be paired as aborted and shall
 not mutate continuity or masquerade as success.
 The map survives actor reconstruction inside the same runtime and is discarded at `dispose`.
-The runtime shall keep an in-flight set keyed by resolved player id and reject
-a second concurrent call to the same id before crossing the host port. Calls
-to distinct resolved player ids may overlap.
+The runtime shall keep an in-flight set keyed by resolved player id when the
+host supplies binding metadata, otherwise by local role id, and reject a
+second concurrent call to the same key before crossing the host port.
+Calls to distinct keys may overlap.
 
 `callJudge` returns free-form text.
 The runtime parses it per the state's adjudication strategy (§Captain adjudication).
@@ -346,7 +362,7 @@ The runtime never speaks to LLMs directly and never touches host types beyond `P
 ## Playbook trace
 
 Every linked runtime shall emit a boundary-complete, ordered trace through `emitTelemetry` topic `playbook.trace`.
-Each payload shall carry `schemaVersion: 2`, the immutable session identity and
+Each payload shall carry `schemaVersion: 3`, the immutable session identity and
 causality, a contiguous one-based `sequence`, a Unix-millisecond `timestamp`, a
 trace `type`, event `payload`, and the runtime-local `turnId` / paired `callId`
 where applicable.
@@ -371,7 +387,7 @@ type PlaybookTraceType =
   | 'session.disposed';
 
 interface PlaybookTraceEvent {
-  schemaVersion: 2;
+  schemaVersion: 3;
   sessionId: string;
   playbookId: string;
   rootSessionId: string;
@@ -387,7 +403,7 @@ interface PlaybookTraceEvent {
 }
 ```
 
-A composing host may supply `playerSessions` as a frame-local view of player continuation owned by the root engagement tree.
+A composing host may supply `playerSessions` as a frame-local view of player continuation owned by the logical Captain session.
 The runtime shall select through that view before allocating or tracing a player call and shall update or clear it from a validated player result before emitting the matching finish trace.
 Snapshot export and restore shall use the same view, failed restore shall leave its prior contents unchanged, and child disposal shall not clear host-owned continuation.
 A host that omits the view retains the runtime's private per-session continuation behavior.
@@ -401,7 +417,7 @@ The trace types are `session.started`, `boss.input.received`,
 `boss.input.settled`, and `session.disposed`.
 Call pairs carry exact prompts and replies, normalized failures, actor and state
 identity, and their boundary-specific options.
-`apply.started` and `apply.finished` are the paired schema-2 boundary of an
+`apply.started` and `apply.finished` are the paired apply boundary of a
 executed `apply()` call on a runtime implementing the optional control surface
 (§Control surface): both carry the action id and idempotency `key` (plus the
 singular `stateId` on start when one exists), the pair shares one
@@ -423,7 +439,8 @@ described top-level `state` and its singular `stateId` when present, as well as
 its message and optional data; consumers shall not have to recover state
 identity from a nested ad hoc object.
 Judge results use `reply`; player start and finish payloads both carry the
-selected `resume`; Captain start and finish payloads both carry
+local `roleId`, the resolved `playerId` when host binding metadata is
+available, and the selected `resume`; Captain start and finish payloads both carry
 the exact composed prompt, the boundary's selected `visibility`, the direct
 invocation's `stateId` and `sourceItem`, and no player resume selection or
 resume token — a visible workflow call carries its runtime-owned
@@ -498,46 +515,23 @@ Trace payloads never become Boss-visible status or prompt text.
 The link compiler shall accept:
 
 - The FSM artifact (path to a `.fsm.ts`).
-- A **player binding** mapping GEARS players (declared in the
-  [text2gears](text2gears.md#players) source) to opaque player-identifier
-  strings.
-  Where no binding is supplied, the linker shall apply the default
-  binding — each player to its lowercased name (e.g. `Coder` → `coder`)
-  — and record the applied binding in the emitted header.
 - An **adjudication strategy** (default: LLM-judge per state) and a
   **Boss-event mapping** (default: free-text judge classification).
   Both strategies are host-agnostic.
 
 The host's identity does not enter compilation; the linked module runs unchanged under any host that implements `PlaybookPorts`.
 
-## Player binding
+## Role identity
 
-Each delegated GEARS state names exactly one player
-(`player` actor `invoke.input.player`).
-The linker shall map every named player to a `playerId` string used in
-`PlaybookPorts.callPlayer(playerId, …)`.
-The host adapter routes that opaque string to its concrete primitive.
+Each delegated GEARS state names exactly one canonical local role id (`player` actor `invoke.input.role`).
+The linker shall retain that id in `PlaybookPorts.callPlayer(roleId, …)` without selecting a concrete player.
+The host shall bind that local role id explicitly when it constructs the runtime.
 Every direct-Captain and delegated-player invocation shall also carry its
 working leaf's explicit
 `stateId`; a linked runtime shall use that field for call identity and shall
 not infer one leaf from a structured root snapshot.
-Direct `captain` actor states bypass player binding and call
-`PlaybookPorts.callCaptain`; the linker shall not synthesize a player id named
-`captain` for them.
-
-For composite players declared with aliases (e.g., `Committer = Coder | Reviewer`), the linker shall resolve the alias **per source item**.
-Resolution inspects the `PlayerInput` fields populated at that state:
-
-- If only one `<playerName>Player` field is present, bind to that player.
-- If multiple are present, prefer the first-listed alternative in the alias declaration order.
-- If none are present, fall back to the alias's first alternative.
-
-Resolution shall be deterministic and recorded in the emitted module so future maintainers can audit it without re-running the linker.
-
-The linker shall not invent player identifiers beyond the recorded default
-binding, and shall not silently collapse aliases at the FSM level — composite
-players keep their `player: 'Committer'` value on `PlayerInput`; resolution
-decides only the `callPlayer` invocation.
+Direct `captain` actor states call `PlaybookPorts.callCaptain`; the linker shall not synthesize a local role or concrete player id named `captain` for them.
+The linker shall reject an alias-shaped role declaration rather than choose a runtime identity.
 
 ## Player prompt composition
 
@@ -687,7 +681,7 @@ classification is recoverable control input, not a public boundary rejection.
 If a recovered `BOSS_REPLY` names no question that is currently pending, it is
 such a malformed classification: emit the one recovery status, send no event,
 leave the actor unchanged, and return `no-action` after emissions drain.
-Host-owned runtime options, player bindings, and enabled-playbook catalogs are
+Host-owned runtime options, role-to-player bindings, and enabled-playbook catalogs are
 not Boss-event payload. The classifier schema and parser shall not invite or
 accept them, and classified prose shall never overwrite their machine context.
 Every recovered classifier object shall have exactly `type` plus the declared
@@ -705,14 +699,14 @@ aborted while the classifier finish emission was pending, return and trace the
 same structured `aborted` result against the unchanged actor.
 When the FSM supports a Boss-reply suspension state, the prompt shall inspect
 the actor snapshot context and include each exact pending Boss question,
-question id, and asking player so the judge can distinguish a reply from a
-fresh directive. With one pending question, a classified `BOSS_REPLY` that
-omits its optional id shall be filled with that sole id. With several pending
-questions, the classifier shall require a known id. A reply shall re-enter only
+question id, and discriminated Captain-or-role asker so the judge can distinguish a reply from a fresh directive.
+With one pending question, a classified `BOSS_REPLY` that omits its optional id shall be filled with that sole id.
+With several pending questions, the classifier shall require a known id.
+A reply shall re-enter only
 its recorded resume state and preserve the original intent, plan, prior child
 results, and Q+A continuation context.
-The classifier-facing pending-question block contains only `questionId`,
-`player`, and `question`. Internal `resumeStateId`, source-item identity, and
+The classifier-facing pending-question block contains only `questionId`, `asker`, and `question`.
+Internal `resumeStateId`, source-item identity, and
 other machine-routing fields remain authoritative in snapshot context and
 shall not be serialized into the judge prompt.
 The allowed fresh directives while parked include every applicable root entry
@@ -1191,23 +1185,20 @@ The `PlaybookRuntime` shall:
   failure cannot skip the parent disposal boundary or leave the runtime bound.
 
 The actor's `lastError` field shall be surfaced via `emitStatus` when the machine enters its `failed` state.
-Presence of linker-emitted `playerStates` selects the canonical
-factory-backed status profile. That profile shall emit the selected Boss event type
+Presence of linker-emitted `roleStates` selects the canonical factory-backed status profile.
+That profile shall emit the selected Boss event type
 before sending that event, exactly `→ <guard>` (with no payload-count or tally
 rider) when a settling actor output carries a guard, and
-`⤷ <Player>: <label>` only when the entered state appears in the
-linked module's `playerStates` metadata. It shall emit no raw state-id fallback
-for any other state. `playerStates` shall be a complete map of the FSM states
-that invoke the typed `player` actor; each value carries the exact player from
-that state's source-derived `meta.playbook.player` and the state's exact FSM
-description as `{ player, label }`. The factory shall reject an incomplete
-entry, a non-player state, or a player or label that differs from the FSM
-metadata. A schema-1 legacy module that predates this metadata
-shall preserve the prior factory status defaults, including no classification
-line, `Entered <stateId>.` for ordinary state entry, the single question line,
-and the unglyphed failure line. The new profile is opt-in so adding the seam
-does not silently reinterpret an already-linked artifact without an ABI or
-artifact-schema bump.
+`⤷ <Role>: <label>` only when the entered state appears in the linked module's `roleStates` metadata.
+It shall emit no raw state-id fallback for any other state.
+`roleStates` shall be a complete map of the FSM states
+that invoke the typed `player` actor; each schema-2 value carries the exact
+local role from that state's source-derived `meta.playbook.role` and the state's exact FSM description as `{ role, label }`.
+The factory shall reject an
+incomplete entry, a non-player state, or a role or label that differs from the FSM metadata.
+Artifact schema `1` and a missing compatibility declaration
+shall reject before interpretation because their legacy `player` values may
+encode bindings or aliases rather than canonical local roles.
 For the default Captain runtime, an initial `ready` state and a terminal `done`
 state shall not emit human status. The terminal response is already visible
 Captain prose; a synthetic “entered done” message would present it twice.
@@ -1245,22 +1236,22 @@ quiescent state with actor status `active`.
 At a safe capture point it shall return a JSON-safe
 `PlaybookRuntimeSnapshot` carrying:
 
-- `schemaVersion`: literal `2`.
+- `schemaVersion`: literal `3`.
 - `playbookId`: the bound session's playbook id.
 - `machine`: the root actor's `getPersistedSnapshot()` result, passed
   through the shared JSON detachment with any raw `Error` context value
   (for example FSM `lastError`) normalized to `{ name, message, stack? }`
   first. The value is opaque to hosts.
-- `playerResumeTokens`: the resume-token map as a plain object
+- `roleResumeTokens`: the local-role resume-token projection as a plain object
   (§PlaybookPorts contract).
 - `sequences`: the live `trace`, `turn`, `judgeCall`, `playerCall`, and
   `playbookCall` counters, plus `captainCall` when the runtime supports direct
-  Captain calls. A direct-Captain-capable runtime shall persist it in current
-  schema-version-2 exports; it remains optional in legacy schema-version-1
-  input, where restore uses `trace` as its collision-safe floor.
+  Captain calls.
+  A direct-Captain-capable runtime shall persist it in every schema-version-3 export.
 - `state`: the current normalized state descriptor.
 - `pendingBossQuestions`: the pending Boss question(s) from FSM context as
-  a list of `{ questionId, player, question, sourceItem? }`, empty when the
+  a list of `{ questionId, asker, question, sourceItem? }`, where `asker` is
+  `{ kind: 'captain' }` or `{ kind: 'role', roleId }`, empty when the
   parked state awaits no reply. This list exists so hosts can surface the
   question without parsing status lines or telemetry.
 - `suspendedCall`: omitted when no nested call is pending; otherwise the
@@ -1278,19 +1269,16 @@ unsafe and returns `undefined`.
 `restore(session, snapshot)` is an alternative to `init` under the same
 lifecycle guards (§Session lifecycle): it shall reject when already
 initialized, disposing, or disposed, and shall validate
-schema version `1` or `2` and that `snapshot.playbookId` equals
-`session.playbookId` before touching state. Schema version `1` remains a
-descriptor-free legacy input; schema version `2` may carry the suspended-call
-descriptor above.
+schema version `3` and that `snapshot.playbookId` equals `session.playbookId` before touching state.
+Runtime snapshot schemas `1` and `2` shall reject before state binding because their token and pending-question fields conflate local roles, concrete players, and Captain identity.
 The host supplies the same immutable `PlaybookSession` identity the
 snapshot was exported under and recreates the runtime through the same
 factory with equivalent options; the runtime does not diff options, and
 module identity — that the factory constructing this runtime still
 belongs to the snapshot's playbook — is likewise the host's check to
 make before calling `restore`.
-`restore` shall bind the session, restore the resume-token map, the
-sequence counters (using the persisted global `trace` counter as a
-collision-safe floor for an absent legacy `captainCall`), and the
+`restore` shall bind the session and its current detached role bindings, restore the local-role token projection, the
+sequence counters, and the
 prior-state descriptor from the snapshot,
 prepare the shared nested bridge with the suspended-call descriptor or its
 explicit absence, restore a descriptor's call-to-turn map entry, construct
@@ -1599,11 +1587,10 @@ The thin emitted module:
   under TypeScript erasure; `placeholderFields` only for authored token/field
   exceptions not covered by the canonical kebab-token-to-camel-field mapping
   and the canonical `<#>` → `irNumber` special case; the
-  transition-event payload fields the FSM's Boss union declares; a
-  non-default player binding where the linker inputs supplied one; the
-  complete `playerStates` status map derived from every FSM state that invokes
-  the typed `player` actor, with each `player` copied from that state's
-  source-derived `meta.playbook.player` (an empty map when there is no such
+  transition-event payload fields the FSM's Boss union declares; the
+  complete `roleStates` status map derived from every FSM state that invokes
+  the typed `player` actor, with each `role` copied from that state's
+  source-derived `meta.playbook.role` (an empty map when there is no such
   state); the
   `verbatimPayloadFields` set derived from annotated result fields above; the
   `controlContextFields` projection of §Control surface; and any
@@ -1641,13 +1628,13 @@ The thin emitted module:
     fields?: Readonly<Record<string, XStateBossEventFieldSpec>>;
   }
 
-  interface XStatePlayerStateStatus {
-    player: string;
+  interface XStateRoleStateStatus {
+    role: string;
     label: string;
   }
 
   bossEvents?: readonly XStateBossEventSpec[];
-  playerStates?: Readonly<Record<string, XStatePlayerStateStatus>>;
+  roleStates?: Readonly<Record<string, XStateRoleStateStatus>>;
   placeholderFields?: Readonly<Record<string, string>>;
   ```
 
@@ -1663,8 +1650,8 @@ The thin emitted module:
   runtime-owned arm to have lost payload detail under erasure shall report
   that gap rather than emit the entry.
 - Supplies `spec.compat` with the compatibility values current at link time:
-  `{ artifactSchema, runtimeAbi }`, where `artifactSchema` is `1` — the
-  schema number of the thin-module format this §Output defines — and
+  `{ artifactSchema, runtimeAbi }`, where `artifactSchema` is `2` — the
+  schema number of the local-role thin-module format this §Output defines — and
   `runtimeAbi` is the installed shared engine's `RUNTIME_ABI` self-report.
   The linker shall verify that the installed engine lists the emitted
   schema in `SUPPORTED_ARTIFACT_SCHEMAS` and treat its absence as a
@@ -1675,7 +1662,8 @@ The thin emitted module:
   declaration against the engine instance that actually loads the emitted
   module and fails construction on a mismatch, so an artifact linked under
   one engine cannot run silently skewed under another. Modules emitted
-  before this contract carry no `compat` member and remain loadable.
+  before this contract carry no `compat` member and shall reject before interpretation.
+- Requires the containing public registry manifest to advertise the same `artifactSchema: 2`; the Captain host shall reject a missing or disagreeing registry value before constructing this runtime, and a bespoke runtime profile shall advertise the same schema without claiming this shared factory's `runtimeAbi`.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
   `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`.
 - Exposes, under an `_internal` export, the pure helpers verification
@@ -1693,7 +1681,7 @@ The thin emitted module:
   speaks only `PlaybookPorts` for every agent and host concern; the
   `node:child_process` dependency of §Script execution lives in the shared
   factory, not in the emitted module.
-- Records the linker inputs (FSM path, player binding, strategies) in a
+- Records the linker inputs (FSM path and strategies) in a
   top-of-file header comment so the file is reproducible from the same
   inputs.
 - Sources the contract types (`PlayerResult`, `PlayerCallOptions`,

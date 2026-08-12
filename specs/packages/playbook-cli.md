@@ -23,7 +23,7 @@ whose Captain is `@sublang/playbook/playbook-captain`
 adapter readiness gate ([[playbook-cli-12](playbook-cli.md#playbook-cli-12)]),
 and, when readiness passes, launch cligent's `tmux-play` with that
 composed config and with stdin, stdout, and stderr inherited from the
-caller, forwarding every other user-supplied argument verbatim.
+caller, consuming launcher-owned session and overlay arguments and forwarding every other user-supplied argument verbatim.
 When the user supplies `--config <path>`, the command shall launch
 `tmux-play` with that path as a raw tmux-play config directly,
 bypassing config seeding, composition, and the readiness gate, and
@@ -55,29 +55,18 @@ shall use it unchanged and shall not reseed or overwrite it.
 
 #### playbook-cli-4
 
-Where the user authors the top-level generic config, the config shall
-keep tmux-play host fields at the top level and shall not wrap
-`playbooks`, `captain`, `layout`, `notifications`, or `theme` in a
-`config:` key.
-The config shall declare enabled playbooks under a top-level
-`playbooks` map, and shall declare neither a top-level `players`
-roster nor a top-level `profiles` map
-([DR-021](../decisions/021-inline-agent-settings.md)).
-The only accepted top-level keys shall be `captain`, `playbooks`, `layout`, `notifications`, and `theme`; the retired `run` key shall receive the migration diagnostic of [[playbook-cli-28](#playbook-cli-28)], and every other key shall be rejected before preparation or import.
-Within a `playbooks.<id>` block, `from`, `command`, and `players` are
-launcher-owned keys and every other key
-is that playbook's option slice; `from` is the explicit registry
-module specifier, `command` optionally overrides the playbook's
-default slash command, and the `<id>` key shall be the enabled
-playbook's own id, matching the registry module's manifest `id`.
-The enabled playbook id and effective command shall not equal the reserved
-internal name `captain`.
-A scalar `captain` value or a scalar `players.<role>` value shall name
-an adapter shorthand such as `claude` or `codex`; a full `captain` or
-`players.<role>` block shall follow the host tmux-play agent-block
-schema and shall carry its own settings — `adapter`, and as needed
-`model`, `effort`, and `permissions` — so each agent is tunable
-without affecting another.
+Where the user authors the top-level generic config, the config shall keep tmux-play host fields at the top level and shall not wrap `playbooks`, `players`, `captain`, `layout`, `notifications`, or `theme` in a `config:` key.
+The config shall declare concrete session players under one flat top-level `players` map and enabled playbooks under one top-level `playbooks` map, while retaining no top-level `profiles` map ([DR-032](../decisions/032-explicit-roles-session-players.md)).
+The only accepted top-level keys shall be `captain`, `players`, `playbooks`, `layout`, `notifications`, and `theme`; the retired `run` key shall receive the migration diagnostic of [[playbook-cli-28](#playbook-cli-28)], and every other key shall be rejected before preparation or import.
+Within a `playbooks.<id>` block, `from`, `command`, and `roles` shall be launcher-owned keys and every other key shall be that playbook's option slice; `from` is the explicit registry module specifier, `command` optionally overrides the playbook's default slash command, and the `<id>` key shall be the enabled playbook's own id, matching the registry module's manifest `id` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)].
+The enabled playbook id, effective command, player id, and local role id shall not equal the reserved internal name `captain`.
+A player id shall match `[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*`; dots shall remain literal characters rather than config hierarchy.
+Interactive and headless host projections shall preserve that exact id under [[playbook-cli-8](#playbook-cli-8)] and shall reject a host implementation that cannot represent the segmented grammar rather than mangle it.
+A scalar `captain` or `players.<player-id>` value shall name an adapter shorthand such as `claude` or `codex`; a full block shall follow the host tmux-play agent-block schema and shall carry its own adapter and default model, effort, instruction, and permissions as needed.
+Each `playbooks.<id>.roles.<role>` value shall be either a scalar player id or a block containing exactly `player` plus optional `model` and `effort`; adapter, instruction, permissions, workspace, and tool settings shall be forbidden in a role binding.
+Every binding shall resolve each model and effort field from its own override or the player default into an explicit concrete-value or provider-default selection, so each resumed call can reapply complete tuning rather than inherit another role's provider state.
+Every enabled playbook's `roles` map shall cover its manifest `requiredRoleIds` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] exactly, and no role shall bind by matching names, ancestry, or an inferred fallback.
+An unreferenced top-level player shall remain valid but shall enter neither the host roster nor readiness checks.
 The launcher shall validate and normalize those agent blocks and the presentation fields through the installed cligent tmux-play config loader before preparing or importing a registry, so both front ends consume the same adapter, effort, permission, layout, notification, and theme semantics.
 A config that still carries a top-level `profiles` map or an agent-block
 `profile` key shall be migrated in place on the next launch, with the
@@ -99,20 +88,24 @@ When the user invokes `playbook` with `--help` or `-h`, the command
 shall print its own help text to stdout, exit with status `0`, and
 shall not seed config, compose, run readiness checks, or launch
 tmux-play.
-The help text shall include the resolved top-level config path, the
-auth or CLI setup pointers for known adapters, and an agent-swap
-recipe showing that users may retune the top-level `captain` and each
-`playbooks.<id>.players` map in place.
+The help text shall include the resolved top-level config path, the auth or CLI setup pointers for known adapters, and a recipe showing how to retune top-level `captain` and `players` blocks while binding each playbook role explicitly.
+The help text shall identify `playbook --session <id>` and `playbook run --session <id> [reply]` as the two presentation-specific ways to reopen one logical Captain session through [[playbook-cli-49](#playbook-cli-49)].
 When the readiness gate ([[playbook-cli-12](playbook-cli.md#playbook-cli-12)])
 blocks a launch, the command shall print the same help content to
 stderr, additionally name every failing adapter id, exit non-zero with
 a status distinct from `127`, and shall not launch tmux-play.
 
+#### playbook-cli-49
+
+Where a settled logical Captain session exists, when the user invokes `playbook --session <id>`, the interactive front end shall acquire that session's exclusive writer lease, restore the same shell and stored working directory as `playbook run --session <id>`, resolve the current shared config plus any `--with` overlays under [[playbook-cli-22](#playbook-cli-22)], and retain ownership until a durable hand-off or process exit.
+The interactive command shall reject `--continue`, uncertain-session recovery flags, raw `--config`, and more than one session selector; it shall never create a second logical session merely because presentation changed.
+The durable session shall impose no age, turn-count, completed-root-count, or model-change limit, while provider continuation and stored compatibility remain valid.
+
 ### Non-interactive run
 
 #### playbook-cli-18
 
-When the user invokes `playbook run [input]`, the command shall create one logical session over the same configured compiled Captain, catalog, nested engagement stack, and mapped players as interactive `playbook` ([[playbook-cli-20](#playbook-cli-20)]).
+When the user invokes `playbook run [input]` without a continuation selector, the command shall create one logical session over the same configured compiled Captain, catalog, nested engagement stack, and players as interactive `playbook` ([[playbook-cli-20](#playbook-cli-20)]).
 The command shall accept exactly zero or one positional value: a present value is the exact Boss text, while zero values reads stdin completely as UTF-8 text and submits that verbatim stream as one Boss turn.
 The command shall use whitespace only to reject empty input and shall never trim or otherwise rewrite accepted argv or stdin text.
 The command shall drain omitted positional input from stdin before config preparation, registry import, credential readiness, or SDK readiness, so a producer such as `spex scaffold --update` cannot deadlock behind a full pipe.
@@ -125,11 +118,11 @@ A started-turn, reply-cardinality, snapshot, settled-record, or lease-release fa
 
 #### playbook-cli-44
 
-Where REVIEW is enabled in the shared config with Coder and Reviewer mappings, when the user invokes `playbook run "/review <request>"`, the shared Captain shall run REVIEW as a root engagement and print Captain's grounded reply without requiring CODE or DECIDE to be active.
+Where REVIEW is enabled with explicit `coder` and `reviewer` role bindings, when the user invokes `playbook run "/review <request>"`, the shared Captain shall run REVIEW as a root engagement and print Captain's grounded reply without requiring CODE or DECIDE to be active.
 
 #### playbook-cli-19
 
-Where `playbook run` resolves Captain and player agents, it shall use the same normalized top-level `captain` and `playbooks.<id>.players.<role>` blocks as interactive `playbook`, including model, instruction, permissions, and adapter-scoped effort ([[playbook-cli-4](#playbook-cli-4)]).
+Where `playbook run` resolves Captain, players, and role bindings, it shall use the same normalized top-level `captain`, top-level `players`, and `playbooks.<id>.roles` blocks as interactive `playbook`, including every effective per-call override ([[playbook-cli-4](#playbook-cli-4)]).
 The command shall reject the retired `--player`, `--captain`, `--option`, `--cwd`, `--last`, and raw `--config` surfaces with a diagnostic directing the user to the shared config or a `--with` overlay.
 A single positional value such as `resume` or `mod://registry` shall remain ordinary Boss text; the former `resume <id>` and `<from> [task]` forms have no special parsing and fail only when they supply more than one positional.
 
@@ -147,19 +140,21 @@ Every provisioning failure shall be a structured preparation failure that receiv
 
 Where a complete logical Captain session has been persisted ([[playbook-cli-23](#playbook-cli-23)]), when the user invokes `playbook run --continue [reply]`, the command shall select the latest resumable session and submit the exact argument or verbatim UTF-8 stdin text as its next Boss turn.
 When the user invokes `playbook run --session <id> [reply]`, the command shall select that logical session explicitly instead of the latest one; `--session` and `--continue` shall be mutually exclusive.
-Continuation shall use the frozen normalized execution config and absolute working directory stored when the logical session was created, shall restore the complete Captain shell through [[playbook-cli-20](#playbook-cli-20)], and shall never re-read current presentation config or replay a previously settled effect.
+Ordinary continuation shall restore the complete Captain shell through [[playbook-cli-20](#playbook-cli-20)], keep the stored normalized absolute working directory and structural projection, and resolve the current shared config plus any invocation overlays before the next call.
+The command shall require the current catalog, manifests, effective commands, runtime options, required roles, exact role-to-player ids, and Captain and referenced-player adapters, instructions, and permissions to match the stored projection; shall use current normalized model and effort on the next call; and shall fail without a fresh fallback when the provider rejects those settings on the stored token.
 `--json`, `--verbose`, the one-input grammar, output-channel rules, and readiness gate shall apply as on a new turn.
 An uncertain record shall never be continued automatically.
 The command shall exit `1` before host or agent work and print the exact explicit `playbook run --session <id> --retry-uncertain` and `playbook run --session <id> --discard-uncertain` remedies, warning that retry may duplicate external effects and discard abandons the attempted turn.
 Both recovery flags shall require one explicit `--session <id>`, be mutually exclusive, reject positional input, and never read stdin.
-Retry shall restore the stored pre-turn snapshot, reuse the exact stored input, durably increment the attempt before effects, and then follow the normal settlement boundary.
+Retry shall restore the stored pre-turn snapshot, reuse the exact stored input and attempted config, durably increment the attempt before effects, and then follow the normal settlement boundary without applying current config or overlays.
 Discard shall run no config, preparation, import, readiness, host, or agent work and shall either restore the exact prior settled boundary or durably delete a never-settled fresh session; because it presents no turn, discard shall also reject the inert `--json`, `--verbose`, and `--no-provision` flags.
 The retired `resume <session-id>`, `--last`, and runtime-only snapshot formats shall not select a shared Captain session.
+Released Captain-session record schema `2`, shell snapshot schema `1`, and runtime snapshot schemas `1` and `2` shall receive an incompatible-player-identity diagnostic rather than an inferred conversion to schema version `3`.
 
 #### playbook-cli-28
 
 Where the shared config at the resolved top-level path carries the retired top-level `run` key, when either front end resolves the config, the command shall reject it before preparation, import, readiness, or host creation.
-The diagnostic shall name the removed `run` key and direct the user to the shared top-level `captain` and `playbooks.<id>.players` blocks.
+The diagnostic shall name the removed `run` key and direct the user to the shared top-level `captain`, top-level `players`, and `playbooks.<id>.roles` blocks.
 The command shall never silently ignore the retired defaults, because doing so could bind a different Captain or player lineup after a major-version upgrade.
 
 ### Adapter SDK availability
@@ -261,17 +256,15 @@ captain agent's adapter, which the shell cannot otherwise read from the
 tmux-play Captain context and needs to decide whether an explicit empty tool
 allowlist can be enforced
 ([DR-013](../decisions/013-routing-only-captain-control.md) A1).
-Each normalized `captain.options.playbooks.<id>` entry shall carry the
-canonical prepared `from`, the normalized effective `command`, and an
-`options` slice built from every non-launcher key of the block; `from`, `command`, and `players` shall not
-appear in the option slice.
-The command shall resolve a scalar `captain` or `players.<role>` value
-as an adapter shorthand and shall normalize a full block as a self-contained tmux-play agent block through the installed cligent loader
-([DR-021](../decisions/021-inline-agent-settings.md)).
+`TuningSelection` shall be exactly `{ kind: 'value'; value: string } | { kind: 'provider-default' }`.
+Each normalized `captain.options.playbooks.<id>` entry shall carry the canonical prepared `from`, normalized effective `command`, exact `roles: Readonly<Record<roleId, { playerId: string; model: TuningSelection; effort: TuningSelection }>>`, and an `options` slice built from every non-launcher key of the block; `from`, `command`, and `roles` shall not appear in the option slice.
+`PermissionPolicy` shall be the exact normalized cligent shape `{ mode?: 'auto' | 'bypass'; fileWrite?: 'allow' | 'ask' | 'deny'; shellExecute?: 'allow' | 'ask' | 'deny'; networkAccess?: 'allow' | 'ask' | 'deny'; writablePaths?: readonly string[] }`.
+The launcher shall also set `captain.options.sessionAgents` to exactly `{ captain: SessionAgent; players: Readonly<Record<playerId, SessionAgent>> }`, where `SessionAgent` is the complete normalized `{ adapter: string; model: TuningSelection; effort: TuningSelection; instruction?: string; permissions?: PermissionPolicy }`, `players` contains exactly referenced ids, and every model and effort is one explicit selection after normalizing agent defaults and resolving role overrides against them; the shell uses this projection for player calls under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], Captain calls under [[playbook-captain-31](playbook-captain.md#playbook-captain-31)], and durable envelopes under [[playbook-captain-41](playbook-captain.md#playbook-captain-41)].
+The command shall resolve a scalar `captain` or `players.<player-id>` value as an adapter shorthand and shall normalize a full block as a self-contained tmux-play agent block through the installed cligent loader ([DR-021](../decisions/021-inline-agent-settings.md)).
 Before composing, the command shall reject — with a path-named
 diagnostic naming the offending key and the inline replacement, and
 without launching — a top-level `profiles` map or any `captain` /
-`players.<role>` block carrying a `profile` key that survives the
+`players.<player-id>` block carrying a `profile` key that survives the
 [[playbook-cli-33](#playbook-cli-33)] migration, such as one introduced by a `--with`
 overlay, because a scalar that formerly named a profile now reads as an
 adapter shorthand and would otherwise fail far downstream as an unknown
@@ -279,15 +272,8 @@ adapter.
 
 #### playbook-cli-9
 
-Where `playbook` composes the runtime config, the command shall
-generate the top-level tmux-play `players` roster as the launch-time
-union of every enabled playbook's players, binding local role
-`<role>` of playbook `<id>` to a host player whose `id` is
-`<id>-<role>`, where `<id>` is the `playbooks.<id>` config key.
-When two playbooks bind agents with identical settings, the command
-shall still emit separate playbook-scoped host players.
-The generated config shall not bind a playbook's role to a player from
-another playbook or to a shared top-level host player.
+Where `playbook` composes the runtime config, the command shall generate the top-level tmux-play roster as the ordered union of player ids referenced by enabled playbook role bindings, with one host player per exact id and no entry for an unreferenced player.
+Two roles naming the same player id shall use that one host player and continuation lane, while two distinct ids shall remain separate even when their agent blocks are equal.
 The command shall import each enabled playbook's `from` module to read
 its registry entry manifest
 ([[playbook-captain-5](playbook-captain.md#playbook-captain-5)]) and, before launching
@@ -296,20 +282,19 @@ missing `from`, a failed import, a module exposing no valid registry
 entry, a `playbooks.<id>` config key that does not equal the imported
 manifest's `id`, two playbooks sharing an `id`, two playbooks
 resolving to the same effective command, an enabled playbook id or effective
-command equal to the reserved internal name `captain`, a local role id `captain` in
-a manifest's `requiredRoleIds` or a `playbooks.<id>.players` map —
+command equal to the reserved internal name `captain`, a player id or local role id `captain`, two manifest role names that collide after canonical lowercase derivation, or `captain` in
+a manifest's `requiredRoleIds`, top-level `players`, or `playbooks.<id>.roles` map —
 `captain` is reserved for the tmux-play host Captain, and the
 diagnostic shall name whether the reserved collision is an internal playbook
-name or player role — a manifest `requiredRoleIds`
-entry that does not resolve to a generated roster id, or an enabled
-playbook that resolves no visible local role.
+name or player/role identity — a manifest `requiredRoleIds`
+entry that is missing from the exact role-binding map, a role binding naming an unknown player, an extra configured role, or an enabled playbook that resolves no visible player.
 At runtime `init` the Playbook Captain shell re-validates only the
 loading checks it shares with
 [[playbook-captain-16](playbook-captain.md#playbook-captain-16)] — missing `from`, failed
 import, invalid entry, key / manifest-`id` mismatch, duplicate id, and
 duplicate effective command, plus the reserved playbook id and effective
 command.
-The roster-resolution, reserved-role, and visible-role checks above
+The roster-resolution, reserved-role, exact-binding, and visible-player checks above
 are launcher-owned
 ([DR-009](../decisions/009-generic-playbook-cli-and-registry.md) §4);
 the shell relies on that validation and treats any residual
@@ -319,10 +304,7 @@ re-validating the roster itself.
 
 #### playbook-cli-10
 
-Where `playbook` composes the runtime config, the command shall set
-the composed tmux-play `layout.initialVisible` to the generated host
-player ids of the first enabled playbook in config order, and shall
-own that field even when the user config sets other `layout` fields.
+Where `playbook` composes the runtime config, the command shall set the composed tmux-play `layout.initialVisible` to the first enabled playbook's distinct bound player ids in role order, and shall own that field even when the user config sets other `layout` fields.
 The command shall carry through the user config's tmux-play `layout`
 window size and column-weight fields, including cligent's
 `singlePlayerColumnWeights` and `multiPlayerColumnWeights`, which are
@@ -342,18 +324,14 @@ access to `layout.initialVisible`
 Where `playbook` seeds the starter generic config
 ([[playbook-cli-3](playbook-cli.md#playbook-cli-3)]), the bundled starter
 config shall enable CODE, REVIEW, and DECIDE with their `playbooks.<id>.from` values set to the matching public registry modules.
-CODE shall configure `coder`, while REVIEW and DECIDE shall each configure `coder` and `reviewer` under the same role names used for nested inheritance.
+The starter shall define players `dev.coder` and `dev.reviewer`; CODE shall bind `coder` to `dev.coder`, while REVIEW and DECIDE shall bind `coder` to `dev.coder` and `reviewer` to `dev.reviewer`.
 The seeded lineup shall configure Captain with adapter `claude`, model
 `claude-opus-4-8`, and reasoning effort `high`; Coder with adapter
 `claude`, model `claude-opus-4-8[1m]`, and reasoning effort `xhigh`;
 and Reviewer with adapter `codex`, model `gpt-5.5`, and reasoning
 effort `xhigh`.
-The starter config shall carry no `profiles` map: each agent's
-settings are written inline under the top-level `captain` and each
-`playbooks.<id>.players.<role>` block
-([DR-021](../decisions/021-inline-agent-settings.md)), so retuning one
-player cannot change another.
-Every seeded agent — the Captain and both roles — shall set
+The starter config shall carry no `profiles` map: Captain settings shall be inline under top-level `captain`, player settings shall be inline under top-level `players`, and each playbook shall contain only explicit role bindings ([DR-032](../decisions/032-explicit-roles-session-players.md)).
+Every seeded agent — the Captain and both players — shall set
 `permissions.mode: auto`, so each runs in cligent's profile-scoped
 protected auto mode (claude maps `auto` to `permissionMode: auto`,
 codex to on-request + auto_review) without routine in-session approval
@@ -374,7 +352,7 @@ Where either shared front end runs the readiness gate
 ([[playbook-cli-1](playbook-cli.md#playbook-cli-1)],
 [[playbook-cli-6](playbook-cli.md#playbook-cli-6)]), the command shall collect
 the declared `adapter` values from the normalized launch plan — the
-`captain.adapter` and every generated player's `adapter` — and treat
+`captain.adapter` and every referenced player's `adapter` — and treat
 `claude` as ready when `ANTHROPIC_API_KEY` is set or `$HOME/.claude/`
 exists, and `codex` as ready when `OPENAI_API_KEY` is set or
 `$HOME/.codex/` exists.
@@ -436,12 +414,12 @@ A failure shall exit with the argument exit code and the same named remedy, with
 #### playbook-cli-20
 
 Where `playbook run` executes ([[playbook-cli-18](#playbook-cli-18)]), the command shall construct the exact `createPlaybookCaptainShell` ([[playbook-captain-17](playbook-captain.md#playbook-captain-17)]) over the normalized catalog and host it through cligent's `createTmuxPlayRuntime` core without constructing a tmux presenter or a separate `PlaybookPorts` implementation.
-The execution-only projection shall be detached and JSON-safe and shall retain the normalized Captain, namespaced players, and complete catalog identity — id, canonical prepared `from`, manifest command, effective command, intent, required roles, mapped player ids, and options — while excluding layout, notifications, and theme.
+The execution-only projection shall be detached and JSON-safe and shall retain the normalized Captain, referenced players, explicit role bindings, and complete catalog identity — id, canonical prepared `from`, artifact schema, manifest command, effective command, intent, required roles, and options — while excluding layout, notifications, and theme.
 The shell shall receive each catalog entry's effective command explicitly, so neither front end can silently re-read a changed registry default after planning.
-The host shall use the normalized Captain config and `{ id, ...agent }` players, the same adapter imports and working directory as the launch plan, and the shell's ordinary player, Captain, nested-call, mapped-continuity, status, telemetry, and presentation boundaries.
+The host shall use the normalized Captain config and one `{ id, ...agent }` entry per referenced player, the same adapter imports and working directory as the launch plan, and the shell's ordinary role binding, player continuation, Captain, nested-call, status, telemetry, and presentation boundaries.
 The command shall observe only host records: it shall buffer `captain_reply`, send `captain_status` to stderr, send only telemetry topic names to stderr under `--verbose`, and never write player or Captain events directly to stdout.
 The command shall submit exactly one Boss turn, require exactly one non-empty matching reply after it settles, and export the complete shell snapshot ([[playbook-captain-41](playbook-captain.md#playbook-captain-41)]) before durable hand-off or stdout presentation.
-The public logical `sessionId` shall be a fresh UUID distinct from every internal Captain and playbook runtime UUID.
+For a new session, the public logical `sessionId` shall be a fresh UUID distinct from every internal Captain and playbook runtime UUID; a restored session shall retain its existing public id.
 Headless driving and stdout presentation shall be separate operations so a persistence layer can durably hand off the snapshot before releasing the buffered reply.
 Where a restored snapshot is supplied by a continuation layer, the core host's one `captain.init(session)` call shall dispatch to `shell.restore(session, snapshot)` instead of `shell.init(session)` ([[playbook-captain-42](playbook-captain.md#playbook-captain-42)]), because a shell must be fresh when restored.
 Host setup or initialization failure shall exit `1`; once the Boss turn starts, turn, reply, snapshot, persistence, safe failure-disposal, and output failures shall exit `2`.
@@ -451,15 +429,16 @@ The normal CLI entry shall allow stdout and stderr to drain before process exit,
 #### playbook-cli-23
 
 Before every new, continued, or explicitly retried headless Boss turn, the command shall atomically persist an uncertain write-ahead record under `${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/`; after a non-empty turn settles, it shall atomically replace that marker with the complete settled logical Captain session and durably retire the exclusive lease before releasing the buffered reply ([[playbook-cli-18](#playbook-cli-18)]).
+An interactive session opened through [[playbook-cli-49](#playbook-cli-49)] shall use the same uncertain-marker and atomic-settlement boundary for each Boss turn while retaining its exclusive lease across turns until durable hand-off or exit.
 Each store-owned filename shall be the canonical lowercase `<session-id>.json`; the embedded id shall equal that filename, the managed sessions directory shall be a real non-symlink directory with mode `0700`, and every record shall be a regular non-symlink file with mode `0600`.
-The record shall be a closed, strictly plain-JSON Captain-session schema version `2`, distinct from the released direct-run-only boundary, and be an exact `settled` / `uncertain` union carrying the public logical session id, complete Captain shell snapshot, detached normalized execution config, normalized absolute working directory, and canonical creation and update timestamps.
+The record shall be a closed, strictly plain-JSON Captain-session schema version `3`, distinct from the released direct-run-only and root-owned-player boundaries, and be an exact `settled` / `uncertain` union carrying the public logical session id, complete Captain shell snapshot, detached structural and last-applied execution projections, normalized absolute working directory, and canonical creation and update timestamps.
 An uncertain record's common snapshot shall be the complete pre-turn baseline.
 Its exact `uncertain` member shall carry the prior settled `updatedAt` or null for a fresh never-settled session, exact input, UUID attempt id, positive attempt number, and marker timestamp equal to the root `updatedAt`.
 Retry shall preserve the baseline, input, and prior-boundary identity while replacing the attempt id, incrementing the attempt number, and advancing the marker time.
 Creation time shall remain fixed for the logical session; every forward marker, retry, and settlement update time shall be strictly newer than its predecessor even when the wall clock is equal or moves backward.
 Explicit discard is the sole rollback: it restores the exact prior settled `updatedAt` and bytes.
-The shell snapshot shall include the Captain runtime and durable conversation, recovery journal, issued internal UUIDs and counters, every active engagement frame and runtime snapshot, pending nested-call identity, mapped-player continuation tokens, pending Boss questions, and last settlement evidence as applicable ([[playbook-captain-41](playbook-captain.md#playbook-captain-41)]).
-The execution config shall retain the normalized Captain, namespaced players, and complete catalog identity required by [[playbook-cli-20](#playbook-cli-20)], including the registry-authored default command even where configuration freezes a different effective command, and shall exclude presentation-only layout, notification, and theme values.
+The shell snapshot shall include the Captain runtime and durable conversation, Captain-session player ledger, recovery journal, issued internal UUIDs and counters, every active engagement frame with its exact role bindings and runtime snapshot, pending nested-call identity, pending Boss questions, and last settlement evidence as applicable ([[playbook-captain-41](playbook-captain.md#playbook-captain-41)]).
+The stored execution projections shall retain the normalized Captain, referenced players, explicit role bindings, and complete catalog identity required by [[playbook-cli-20](#playbook-cli-20)], including the registry-authored default command, while separating live structural compatibility and an uncertain attempt's exact settings from model and effort tuning that ordinary continuation may refresh.
 Persistence shall use an unpredictable same-directory `0600` exclusive temporary regular file, sync its contents, publish only the initial fresh uncertain marker with an atomic no-replace operation, replace every later same-session state transition by atomic rename, and sync the containing directory as required for the platform contract; a fresh UUID shall never overwrite an existing record.
 A failed write-ahead marker before its durability call returns shall keep stdout empty, dispose the host safely, print a setup diagnostic, and exit `1`.
 Once that call returns, every abort, signal, turn, capture, or settlement failure before atomic replacement shall leave the marker uncertain, keep stdout empty, dispose safely, and exit `2`; a successful settlement and lease retirement shall release the buffered reply without semantic disposal.
@@ -475,9 +454,9 @@ Lease publication shall use a fully synced private staging directory with a sync
 SIGINT, SIGTERM, and SIGHUP observed before settlement shall abort the active host and preserve the already-written uncertain record; a signal arriving during a noncancellable atomic settlement may leave that record settled.
 In both cases the command shall retire the owned lease, withhold stdout, and then re-raise the signal.
 SIGKILL may leave the uncertain record and canonical lease for the same-host dead-PID recovery rule.
-Where [[playbook-cli-22](#playbook-cli-22)] selects a record, the command shall reject an unsafe id, missing or malformed record, unsupported schema, invalid frozen config, mismatched current registry manifest, or unrestorable shell snapshot ([[playbook-captain-42](playbook-captain.md#playbook-captain-42)]) with exit `1` before a Boss turn.
+Where [[playbook-cli-22](#playbook-cli-22)] selects a record, the command shall reject an unsafe id, missing or malformed record, unsupported schema, invalid stored projection, incompatible current structural projection, or unrestorable shell snapshot ([[playbook-captain-42](playbook-captain.md#playbook-captain-42)]) with exit `1` before a Boss turn.
 `--continue` shall select by canonical `updatedAt` with a deterministic session-id tie-break and shall fail closed on a malformed canonically named store record rather than silently falling back past corruption.
-The command shall never read current user config or overlays while continuing; it shall use the frozen effective command, mapped roles, agents, options, and absolute working directory while revalidating that each stored canonical module still exposes the recorded id, default command, intent, required roles, and compatible options, so a package or config change cannot silently rewire a conversation.
+Ordinary continuation shall read current user config and explicit opening overlays, preserve the stored working directory, require its structural projection to remain exact, and apply current model and effort on the next call; uncertain retry shall instead use the attempt's exact stored projection.
 
 #### playbook-cli-26
 
@@ -491,11 +470,11 @@ both sides, replaces every other collision with the fragment's value,
 and never mutates the parsed global config or the fragment objects.
 Where either front end normalizes an overlaid inline agent block ([[playbook-cli-19](#playbook-cli-19)]), the shared launch path shall validate its adapter-scoped `effort` and every other agent field through the installed cligent loader before registry preparation or import.
 The path shall normalize the deprecated `reasoningEffort` alias to `effort` only in its isolated projection and shall leave the primary config and overlays byte-identical; specifying both keys shall be rejected as a conflict.
-The normalized effort and permissions shall reach both interactive projection and headless execution config unchanged, and complete session records shall freeze them per [[playbook-cli-23](#playbook-cli-23)].
+The normalized model and effort shall reach both interactive and headless execution projections unchanged and may refresh from current config on an ordinary reopen; normalized instruction and permissions shall also reach both projections unchanged but shall remain structurally equal to the saved session; an uncertain retry shall retain every attempted setting exactly per [[playbook-cli-23](#playbook-cli-23)].
 
 #### playbook-cli-29
 
-Where `playbook run` resolves its shared config, the command shall use the same resolved or injected user-config path, primary-relative registry canonicalization, seeding, migration, overlays, and installed-cligent normalization as interactive `playbook` ([[playbook-cli-3](#playbook-cli-3)], [[playbook-cli-46](#playbook-cli-46)]).
+Where either front end creates a session or ordinarily reopens a settled session, the command shall use the same resolved or injected user-config path, primary-relative registry canonicalization, seeding, migration, opening overlays, and installed-cligent normalization ([[playbook-cli-3](#playbook-cli-3)], [[playbook-cli-46](#playbook-cli-46)]).
 A missing file shall be seeded from the same starter rather than treated as an empty direct-run default set.
 A surviving top-level `run` block shall fail closed through [[playbook-cli-28](#playbook-cli-28)] and shall never be used to derive a second lineup.
 
@@ -555,6 +534,7 @@ The command shall print one stderr line naming the config path and the
 backup path on a successful migration, and shall exit non-zero with a
 diagnostic naming the config path when the migration otherwise fails.
 A migrated config shall present nothing to migrate on the next launch.
+Where any `playbooks.<id>.players` block remains, the command shall reject it before profile migration with a major-version diagnostic requiring explicit top-level player ids and `playbooks.<id>.roles`; it shall not choose session-sharing semantics by rewriting that block.
 
 ## Internal Behavior
 
@@ -562,15 +542,15 @@ A migrated config shall present nothing to migrate on the next launch.
 
 #### playbook-cli-46
 
-Where either front end prepares a new Captain session from the generic config, when the launcher resolves that config, it shall use one leaf launch-config module to perform the following ordered pipeline:
+Where either front end prepares a new or ordinarily reopened Captain session from the generic config, when the launcher resolves that config, it shall use one leaf launch-config module to perform the following ordered pipeline:
 
 1. Resolve the primary path per [[playbook-cli-3](#playbook-cli-3)], seed and migrate that primary file before applying overlays, and merge every [[playbook-cli-25](#playbook-cli-25)] overlay in argument order without mutating an input.
 2. Resolve a relative configured filesystem `playbooks.<id>.from` against the primary config's directory, including one introduced by an overlay, canonicalize an absolute filesystem path to a file URL, and preserve an existing file URL, bare package specifier, or custom specifier unchanged.
-3. Reject non-JSON data, retired or unknown root keys, malformed launcher-owned structure, blank identities, authority-key smuggling, and colliding generated `<playbook>-<role>` ids before an external side effect.
+3. Reject non-JSON data, retired or unknown root keys, malformed launcher-owned structure, invalid or reserved player and role ids, unknown players, incomplete or extra role bindings, adapter overrides, and authority-key smuggling before an external side effect.
 4. Serialize a detached provisional tmux-play config to an isolated explicit temporary path, validate and normalize it through the installed cligent `loadTmuxPlayConfig`, feed its Captain, player, layout, notification, and theme values back into the authoritative plan, and remove the temporary path without modifying the primary config or overlays.
 5. Canonicalize and prepare every configured registry module before importing any of them, use a preparation hook's returned canonical specifier for both the one import and normalized catalog, and perform no registry import when validation or any preparation fails.
-6. Validate registry manifests and launcher-owned identities, resolve and freeze each effective command, and produce one detached, deeply frozen, JSON-safe plan separating Captain, namespaced players, complete catalog, and presentation with no imported function retained.
-7. Derive adapter readiness from the plan's Captain and players independently of presentation, project a detached tmux-play config only for the interactive host, and project a detached presentation-free execution config only for the headless host while keeping `--list` ahead of readiness.
+6. Validate registry manifests and launcher-owned identities, resolve each effective command and exact role binding, and produce one detached, deeply frozen, JSON-safe plan separating Captain, referenced players, complete catalog, and presentation with no imported function retained.
+7. Derive adapter readiness from the plan's Captain and referenced players independently of presentation, project a detached tmux-play config only for the interactive host, and project a detached presentation-free execution config only for the headless host while keeping `--list` ahead of readiness.
 
 The module shall import neither CLI host, both CLI hosts shall resolve the user-config path through it without a circular import, both shall use the same preparation hook and normalized effective commands, and the packed package shall include the module.
 
@@ -588,16 +568,7 @@ When the launcher resolves cligent's `tmux-play` CLI, it shall call synchronous 
 
 Where the test suite invokes `playbook` without `--config` against a
 config root with no `playbook/playbook.config.yaml`, the test suite
-shall fail unless the command creates that file from the bundled
-starter config, prints the resolved path to stderr, and the seeded
-file enables CODE, REVIEW, and DECIDE through their matching public registry modules with the
-[[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup (Captain
-`claude` / `claude-opus-4-8`, Coder `claude` / `claude-opus-4-8[1m]`,
-Reviewer `codex` / `gpt-5.5`, each written inline under `captain` and
-the `coder` / `reviewer` roles with no `profiles` map,
-`permissions.mode: auto` on every seeded agent with the Codex
-Reviewer's additional `.git` writable path, and the notification
-defaults).
+shall fail unless the command creates that file from the bundled starter config, prints the resolved path to stderr, and the seeded file enables CODE, REVIEW, and DECIDE through their matching public registry modules with the [[playbook-cli-11](playbook-cli.md#playbook-cli-11)] lineup: Captain `claude` / `claude-opus-4-8`; player `dev.coder` on `claude` / `claude-opus-4-8[1m]`; player `dev.reviewer` on `codex` / `gpt-5.5`; explicit CODE, REVIEW, and DECIDE role bindings; no `profiles` map; `permissions.mode: auto` on every seeded agent; the Codex Reviewer's additional `.git` writable path; and the notification defaults.
 When the file is already present, the test suite shall fail unless the
 command leaves it unchanged and does not reseed (verifying [[playbook-cli-3](#playbook-cli-3)], [[playbook-cli-11](#playbook-cli-11)]).
 
@@ -605,29 +576,14 @@ command leaves it unchanged and does not reseed (verifying [[playbook-cli-3](#pl
 
 #### playbook-cli-14
 
-When the test suite composes a top-level config enabling one or more
-playbooks, the test suite shall fail unless the composed tmux-play
-config sets `captain.from` to `@sublang/playbook/playbook-captain`;
-carries one `captain.options.playbooks.<id>` entry per playbook with
-that block's canonical prepared `from`, normalized effective `command`, and an `options` slice built
-from the block's non-launcher keys with no `from` / `command` / `players` in the slice; resolves scalar
-`captain` and `players.<role>` values as adapter shorthands and
-normalizes a full inline agent block through the installed cligent loader; generates the
-top-level roster as the union of each playbook's `<id>-<role>` host
-players with separate instances when two playbooks name the same
-adapter and model;
-sets `layout.initialVisible` to the first enabled playbook's
-generated player ids while carrying through the window and
-column-weight fields; sets `captain.options.captainAdapter` to the
-resolved captain adapter; and carries the user config's top-level
-`notifications` and `theme` fields into the composed config in cligent-normalized form (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)], [[playbook-cli-10](#playbook-cli-10)]).
+When the test suite composes a top-level config enabling one or more playbooks, the test suite shall fail unless a dotted player id survives both interactive and headless projections byte-for-byte and an incapable host rejects it; the composed tmux-play config sets `captain.from` to `@sublang/playbook/playbook-captain`; carries exact `captain.options.sessionAgents` with one complete Captain block and exactly the referenced player blocks; carries one `captain.options.playbooks.<id>` entry per playbook with canonical prepared `from`, normalized effective `command`, exact closed role values `{ playerId, model, effort }` using the tagged tuning selections, and an option slice containing no launcher key; resolves scalar Captain and player values as adapter shorthands; normalizes full agent blocks; generates one roster entry per referenced player id; shares an entry only when role bindings name the same id; sets `layout.initialVisible` to the first enabled playbook's distinct bound ids; sets `captain.options.captainAdapter`; and carries normalized presentation fields (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)], [[playbook-cli-10](#playbook-cli-10)]).
 
 ### Validation
 
 #### playbook-cli-15
 
-When the test suite composes top-level configs carrying pre-import faults — a missing or blank `from`, top-level `profiles` or `run`, an agent `profile`, an unknown root key, non-map `layout`, malformed or unknown agent fields, unknown adapter, conflicting or unsupported effort, malformed permissions, invalid layout / notification / theme, reserved or blank configured identities, an empty visible role map, authority-key smuggling, or a generated host-id collision — the suite shall fail unless each is rejected before registry preparation or import with a diagnostic naming the fault.
-When the suite composes configs carrying registry-dependent faults — a failed import, invalid default export, key / manifest-id mismatch, duplicate manifest id or effective command, reserved manifest role or effective command, or missing required mapped role — the suite shall fail unless each is rejected after only the imports needed to discover it and before readiness, host creation, or agent calls (verifying [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)]).
+When the test suite composes top-level configs carrying pre-import faults — a missing or blank `from`, top-level `profiles` or `run`, retired per-playbook `players`, an agent `profile`, an unknown root key, non-map `layout`, malformed or unknown agent fields, unknown adapter, conflicting or unsupported effort, malformed permissions, invalid presentation fields, invalid or reserved player or role ids, unknown bound players, role overrides outside model and effort, unresolved complete per-player tuning, authority-key smuggling, or non-JSON data — the suite shall fail unless each is rejected before registry preparation or import with a diagnostic naming the fault (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)], [[playbook-cli-28](#playbook-cli-28)], [[playbook-cli-33](#playbook-cli-33)], and [[playbook-cli-46](#playbook-cli-46)]).
+When the suite composes configs carrying registry-dependent faults — a failed import, invalid default export, key / manifest-id mismatch, duplicate manifest id or effective command, reserved manifest role or effective command, or a role map that does not exactly cover `requiredRoleIds` — the suite shall fail unless each is rejected after only the imports needed to discover it and before readiness, host creation, or agent calls (verifying [[playbook-cli-8](#playbook-cli-8)], [[playbook-cli-9](#playbook-cli-9)]).
 
 ### Readiness and CLI surface
 
@@ -640,6 +596,7 @@ credentials present launches tmux-play; a config with a missing
 content plus every failing adapter id to stderr, and exits non-zero
 with a status distinct from `127`; and a declared adapter with no
 known predicate produces one stderr warning without blocking launch (verifying [[playbook-cli-1](#playbook-cli-1)], [[playbook-cli-12](#playbook-cli-12)]).
+An unreferenced top-level player's unavailable or uncredentialed adapter shall not enter either readiness result (verifying [[playbook-cli-12](#playbook-cli-12)]).
 
 #### playbook-cli-17
 
@@ -654,17 +611,17 @@ exits `127` when it cannot launch tmux-play (verifying [[playbook-cli-1](#playbo
 
 #### playbook-cli-21
 
-When the integration suite exercises `playbook run` through the actual `createPlaybookCaptainShell` and actual no-presenter cligent runtime with deterministic adapters and synthetic configured registries, the suite shall fail unless one positional and verbatim stdin each enter one exact Captain Boss turn; `/code` completes a nested REVIEW and resumes the same mapped Coder token; statuses stay on stderr and telemetry appears only under `--verbose`; plain and JSON stdout carry only the one Captain reply in their exact formats; the public session id differs from internal UUIDs; and no tmux process or presenter is created (verifying [[playbook-cli-18](#playbook-cli-18)], [[playbook-cli-19](#playbook-cli-19)], [[playbook-cli-20](#playbook-cli-20)]).
+When the integration suite exercises `playbook run` through the actual `createPlaybookCaptainShell` and actual no-presenter cligent runtime with deterministic adapters and synthetic configured registries, the suite shall fail unless one positional and verbatim stdin each enter one exact Captain Boss turn; `/code` completes nested REVIEW and resumes the same Coder token only because both role maps bind that role to one player id; statuses stay on stderr and telemetry appears only under `--verbose`; plain and JSON stdout carry only the one Captain reply in their exact formats; the public session id differs from internal UUIDs; and no tmux process or presenter is created (verifying [[playbook-cli-18](#playbook-cli-18)], [[playbook-cli-19](#playbook-cli-19)], [[playbook-cli-20](#playbook-cli-20)]).
 
 #### playbook-cli-24
 
-When the integration suite exercises complete shared-Captain persistence and continuation in isolated state directories, the suite shall fail unless chat-only, completed-root, and nested-parked turns atomically persist the full shell snapshot, frozen execution config, normalized absolute working directory, manifest command, stable creation time, and monotonic update time with exact private permissions before stdout and without successful semantic disposal; `--continue` selects the latest logical session deterministically; `--session <id>` selects one explicitly; stdin and argv replies preserve exact text; restore occurs instead of init and does not repeat a settled or pending child start; current config cannot rewire the frozen lineup or effective command; a changed manifest default is rejected even under a command override; fresh id collision, malformed plain-JSON mutations, unsafe path-shaped frozen modules, symlink/non-private storage, corrupt latest records, and unwritable hand-off fail with the specified channel and exit behavior; a post-rename directory-sync failure exposes only one complete pre- or post-settlement record while withholding stdout; and the packed package carries the store leaf.
-The suite shall further fail unless every turn exposes a durable uncertain baseline before its first effect; a failed or killed turn remains uncertain with stdout empty; ordinary continuation refuses it; retry reads no stdin, reuses its byte-exact input, advances the attempt before effects, and settles only once; discard restores the exact prior bytes or deletes a fresh record without config or host work; and SIGINT, SIGTERM, and SIGHUP cleanly retire ownership before the executable re-raises them.
+When the integration suite exercises complete shared-Captain persistence and continuation in isolated state directories, the suite shall fail unless chat-only, completed-root, and nested-parked turns atomically persist Captain-session record schema `3`, the full shell snapshot, structural and last-applied execution projections, normalized absolute working directory, registry artifact schema and manifest command, stable creation time, and monotonic update time with exact private permissions before stdout and without successful semantic disposal; released record schema `2`, shell schema `1`, and runtime schemas `1` and `2` reject before host work; `--continue` selects the latest logical session deterministically; `--session <id>` selects one explicitly; stdin and argv replies preserve exact text; restore occurs instead of init and does not repeat a settled or pending child start; ordinary continuation reuses the prior token with a changed current model and effort under the same adapter; provider rejection preserves that token; an artifact-schema, catalog, runtime-option, role-to-player, adapter, instruction, or permissions change rejects before host work; a changed manifest default is rejected even under a command override; fresh id collision, malformed plain-JSON mutations, unsafe path-shaped stored modules, symlink/non-private storage, corrupt latest records, and unwritable hand-off fail with the specified channel and exit behavior; a post-rename directory-sync failure exposes only one complete pre- or post-settlement record while withholding stdout; and the packed package carries the store leaf (verifying [[playbook-cli-22](#playbook-cli-22)] and [[playbook-cli-23](#playbook-cli-23)]).
+The suite shall further fail unless every turn exposes a durable uncertain baseline before its first effect; a failed or killed turn remains uncertain with stdout empty; ordinary continuation refuses it; retry reads no stdin, reuses its byte-exact input and attempted settings despite current config changes, advances the attempt before effects, and settles only once; discard restores the exact prior bytes or deletes a fresh record without config or host work; and SIGINT, SIGTERM, and SIGHUP cleanly retire ownership before the executable re-raises them (verifying [[playbook-cli-22](#playbook-cli-22)] and [[playbook-cli-23](#playbook-cli-23)]).
 Mutation-sensitive store and real-child crash rows shall prove one writer, authoritative reread after selection, live/foreign/EPERM/malformed fail-closed behavior, same-host ESRCH recovery, persistent normal-release and stale-O tombstones, owner-exact mutation/release, and the delayed two-reclaimer interleaving in which R2 retires O and publishes N before R1 resumes yet R1 cannot move N and no third writer starts (verifying [[playbook-cli-18](#playbook-cli-18)], [[playbook-cli-22](#playbook-cli-22)], [[playbook-cli-23](#playbook-cli-23)]).
 
 #### playbook-cli-27
 
-When the integration suite exercises launch-time tuning through `--with`, the suite shall fail unless both front ends merge fragments in order over the same primary config; a fragment retuning one inline agent changes only that binding; scalar, sequence, and null collisions replace; the primary and overlays remain byte-identical; installed-cligent normalization rejects invalid adapter, model, instruction, effort, permission, layout, notification, and theme values before preparation/import; a legacy `reasoningEffort` normalizes only in the detached plan; interactive forwarding and headless Boss input contain no consumed `--with`; and the retired run-only binding flags fail with a shared-config migration diagnostic (verifying [[playbook-cli-19](#playbook-cli-19)], [[playbook-cli-25](#playbook-cli-25)], [[playbook-cli-26](#playbook-cli-26)]).
+When the integration suite exercises launch-time and ordinary-reopen tuning through `--with`, the suite shall fail unless both front ends merge fragments in order over the same primary config; a fragment retuning one shared player default affects every bound role lacking that override, while a fragment retuning one role binding affects only that invocation; scalar, sequence, and null collisions replace; the primary and overlays remain byte-identical; installed-cligent normalization rejects invalid adapter, model, instruction, effort, permission, layout, notification, and theme values before preparation/import; a legacy `reasoningEffort` normalizes only in the detached plan; interactive forwarding and headless Boss input contain no consumed `--with`; and the retired run-only binding flags fail with a shared-config migration diagnostic (verifying [[playbook-cli-19](#playbook-cli-19)], [[playbook-cli-25](#playbook-cli-25)], [[playbook-cli-26](#playbook-cli-26)]).
 
 #### playbook-cli-30
 
@@ -684,15 +641,14 @@ Where the live release gate writes top-level configs for its fixture repositorie
 test suite runs, the test suite shall fail unless each of those exact
 configs composes through the launcher against the real modules it
 enables.
-It shall fail unless the workflow config composes against the real CODE, REVIEW, and DECIDE registry modules and generates `code-coder`, `review-coder`, `review-reviewer`, `decide-coder`, and `decide-reviewer` with their expected adapters.
+It shall fail unless the workflow config composes against the real CODE, REVIEW, and DECIDE registry modules, defines its named top-level players once, and binds every required role explicitly with the expected shared or independent identity (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], and [[playbook-cli-9](#playbook-cli-9)]).
 It shall further fail unless the conversational config composes against
 the fixture playbook modules the gate generates from its own sources,
 written to the paths that config names, enabling `checklist` and `notes`
-under those effective commands and generating the `checklist-worker` /
-`notes-worker` roster on the `claude` adapter.
+under those effective commands and binding both worker roles explicitly to the intended `claude` players (verifying [[playbook-cli-4](#playbook-cli-4)], [[playbook-cli-8](#playbook-cli-8)], and [[playbook-cli-9](#playbook-cli-9)]).
 The gate itself is excluded from `pnpm test` and CI, so without this
 check a config-model change would break the release gate silently and
-surface only during a manual pre-tag run (verifying [[playbook-cli-8](#playbook-cli-8)]).
+surface only during a manual pre-tag run.
 
 #### playbook-cli-34
 
@@ -714,6 +670,7 @@ unless a second launch migrates nothing and
 leaves the file byte-identical, and unless a fresh legacy config beside
 an existing backup is backed up to the next free `<config>.bak.<n>`
 rather than overwriting it (verifying [[playbook-cli-33](#playbook-cli-33)]).
+The suite shall fail unless migrated agent values land only under `captain` and top-level `players`, while a config containing legacy `playbooks.<id>.players` rejects without rewriting or selecting whether sessions share (verifying [[playbook-cli-33](#playbook-cli-33)]).
 
 #### playbook-cli-38
 
@@ -730,14 +687,19 @@ Where a packed candidate is installed without a top-level `tmux-play` executable
 
 #### playbook-cli-45
 
-Where REVIEW is enabled in the shared config, when the CLI integration suite sends `/review <request>` through `playbook run`, the suite shall fail unless the shared Captain binds both mapped roles, REVIEW reaches its approved terminal result, Captain presents the grounded reply, and no tmux session or presenter is created (verifying [[playbook-cli-44](#playbook-cli-44)]).
+Where REVIEW is enabled in the shared config, when the CLI integration suite sends `/review <request>` through `playbook run`, the suite shall fail unless the shared Captain binds both roles to their explicit player ids, REVIEW reaches its approved terminal result, Captain presents the grounded reply, and no tmux session or presenter is created (verifying [[playbook-cli-44](#playbook-cli-44)]).
 
 ### Shared launch configuration verification
 
 #### playbook-cli-47
 
-When the integration suite exercises the shared launch-config pipeline over temporary primary configs, overlays, and synthetic registries and dry-packs the public package, it shall fail unless relative, absolute, file-URL, bare, and custom registry specifiers follow their defined resolution cases; installed-cligent normalization precedes every preparation/import; all preparation precedes every import; the prepared specifier, registry-authored manifest command, and frozen effective command reach interactive and headless projections; overlays and legacy-effort normalization leave source files unchanged; the plan is detached, deeply frozen, JSON-round-trippable, and free of imported functions; execution and presentation projections cannot mutate it; malformed host fields, authority-key smuggling, blank identities, collisions, accessors, sparse arrays, symbols, undefined values, non-finite numbers, cycles, and non-plain objects are rejected before external hooks; readiness derives from the plan; the leaf module has no host import and is re-exported compatibly; and the packed file list includes it (verifying [[playbook-cli-46](#playbook-cli-46)]).
+When the integration suite exercises the shared launch-config pipeline over temporary primary configs, overlays, and synthetic registries and dry-packs the public package, it shall fail unless relative, absolute, file-URL, bare, and custom registry specifiers follow their defined resolution cases; installed-cligent normalization precedes every preparation/import; all preparation precedes every import; the prepared specifier, registry-authored manifest command, effective command, referenced players, and exact role bindings reach interactive and headless projections; overlays and legacy-effort normalization leave source files unchanged; the plan is detached, deeply frozen, JSON-round-trippable, and free of imported functions; execution and presentation projections cannot mutate it; malformed host fields, authority-key smuggling, invalid identities or bindings, accessors, sparse arrays, symbols, undefined values, non-finite numbers, cycles, and non-plain objects are rejected before external hooks; readiness derives only from referenced agents; the leaf module has no host import and is re-exported compatibly; and the packed file list includes it (verifying [[playbook-cli-46](#playbook-cli-46)]).
 
 #### playbook-cli-48
 
-When the focused headless integration suite exercises argv, stdin, output, and failure boundaries over the actual shared shell/core, it shall fail unless help has no input/config/probe side effect; zero or one positional and `--` follow the exact grammar; stdin drains before prepare/import/readiness; a shipped compiled-Captain turn and deterministic nested CODE-to-REVIEW turn each emit one reply; JSON has only `sessionId` and `reply`; statuses and opt-in telemetry stay on stderr; output awaits persistence and stream backpressure; invalid config and host setup exit `1`; started-turn and zero, multiple, empty reply, or persistence failures exit `2`; the settled shell snapshot and full execution config exist before durable hand-off; successful hand-off performs no semantic disposal; and interactive/headless filesystem provisioning is equivalent (verifying [[playbook-cli-18](#playbook-cli-18)], [[playbook-cli-20](#playbook-cli-20)], [[playbook-cli-36](#playbook-cli-36)], [[playbook-cli-46](#playbook-cli-46)]).
+When the focused headless integration suite exercises argv, stdin, output, and failure boundaries over the actual shared shell/core, it shall fail unless help has no input/config/probe side effect; zero or one positional and `--` follow the exact grammar; stdin drains before prepare/import/readiness; a shipped compiled-Captain turn and deterministic nested CODE-to-REVIEW turn each emit one reply; JSON has only `sessionId` and `reply`; statuses and opt-in telemetry stay on stderr; output awaits persistence and stream backpressure; invalid config and host setup exit `1`; started-turn and zero, multiple, empty reply, or persistence failures exit `2`; the settled shell snapshot and structural plus last-applied execution projections exist before durable hand-off; successful hand-off performs no semantic disposal; and interactive/headless filesystem provisioning is equivalent (verifying [[playbook-cli-18](#playbook-cli-18)], [[playbook-cli-20](#playbook-cli-20)], [[playbook-cli-36](#playbook-cli-36)], [[playbook-cli-46](#playbook-cli-46)]).
+
+#### playbook-cli-50
+
+When the integration suite creates and reopens one logical session through both front ends, it shall fail unless `playbook --session <id>` and `playbook run --session <id>` preserve the same public id, shell state, and player ledger; each applies current model and effort with the prior token; interactive ownership spans its attached lifetime; headless ownership spans one settled turn; concurrent ownership rejects before agent work; and neither age, completed roots, turn count, nor a compatible model change makes the session ineligible (verifying [[playbook-cli-22](#playbook-cli-22)], [[playbook-cli-23](#playbook-cli-23)], and [[playbook-cli-49](#playbook-cli-49)]).
+The suite shall reject interactive `--continue`, uncertain recovery flags, raw `--config`, and combined or repeated selectors before config resolution, lease acquisition, or host work (verifying [[playbook-cli-49](#playbook-cli-49)]).

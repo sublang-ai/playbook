@@ -5,7 +5,7 @@
 
 ## Status
 
-Accepted.
+Superseded by [DR-032](032-explicit-roles-session-players.md).
 
 ## Context
 
