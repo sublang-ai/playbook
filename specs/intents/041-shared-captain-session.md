@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress
+Complete
 
 ## Intent
 
@@ -13,13 +13,13 @@ Make interactive `playbook` and headless `playbook run` two presentations of the
 
 ## Deliverables
 
-- [ ] A new headless turn uses the same normalized config, compiled Captain, controller, catalog, engagement stack, and mapped player sessions as interactive mode.
-- [ ] Argument and stdin input enter the same Boss-turn boundary, with the one Boss-visible Captain reply on stdout and operational output on stderr.
-- [ ] CODE and DECIDE can complete their nested REVIEW calls under headless execution.
-- [ ] Every successful headless turn persists the complete logical Captain session, including chat-only and nested parked states.
-- [ ] `--continue` resumes the latest session and `--session` selects one explicitly without replaying prior effects.
-- [ ] The separate `run:` config, positional registry execution, and run-only binding flags are retired with a clear major-version migration.
-- [ ] Deterministic, packed, real-agent, and manual release gates pass for the final candidate without publishing or tagging it.
+- [x] A new headless turn uses the same normalized config, compiled Captain, controller, catalog, engagement stack, and mapped player sessions as interactive mode.
+- [x] Argument and stdin input enter the same Boss-turn boundary, with the one Boss-visible Captain reply on stdout and operational output on stderr.
+- [x] CODE and DECIDE can complete their nested REVIEW calls under headless execution.
+- [x] Every successful headless turn persists the complete logical Captain session, including chat-only and nested parked states.
+- [x] `--continue` resumes the latest session and `--session` selects one explicitly without replaying prior effects.
+- [x] The separate `run:` config, positional registry execution, and run-only binding flags are retired with a clear major-version migration.
+- [x] Deterministic, packed, and real-agent release gates pass for the final candidate without publishing or tagging it; the conditional manual tmux gate does not trigger because presenter behavior and layout are unchanged.
 
 ## Tasks
 
