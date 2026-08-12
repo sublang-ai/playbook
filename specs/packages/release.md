@@ -162,6 +162,8 @@ available in `@sublang/cligent` 0.13.0, and shall admit the explicit
 [[playbook-captain-16](playbook-captain.md#playbook-captain-16)], and the isolated
 `CallCaptainOptions.resume` and `CallCaptainOptions.allowedTools`
 surface required by [[playbook-captain-31](playbook-captain.md#playbook-captain-31)].
+Before the segmented-player behavior under [[playbook-cli-4](playbook-cli.md#playbook-cli-4)] and complete per-call setting behavior under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)] and [[playbook-captain-31](playbook-captain.md#playbook-captain-31)] ship, the first published cligent version whose roster preserves `[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*` player ids and whose player and Captain call options carry complete per-call model, effort, instruction, and permissions with explicit concrete-value versus provider-default tuning shall become the declared caret range's floor.
+No candidate requiring those surfaces shall invent an unreleased floor or release while the declared range can select a cligent version without them.
 
 The repo-local `pnpm-lock.yaml` root importer shall use the same
 specifier and continue to pin a specific resolved cligent version,
@@ -173,6 +175,7 @@ the pre-close Captain lifecycle, and isolated fresh, tool-restricted
 Captain calls, first released together in `@sublang/cligent` 0.15.0;
 merely using a range that could admit a later compatible version shall
 not satisfy this requirement.
+Before a DR-032 candidate releases, the pin shall also expose the segmented-id grammar and complete per-call settings above; the candidate shall remain blocked until such a published cligent version is pinned.
 
 #### release-22
 
@@ -674,10 +677,14 @@ unless all of the following hold:
 - the first process provisions the fixture exactly once into the isolated prefix and returns only `{sessionId, reply}` after durable hand-off, while a second process continues the same id from stdin with the stored Captain continuation and frozen working directory, repeats no fixture lifecycle, provisions nothing, and leaves the repository clean;
 - the installed Captain, CODE, REVIEW, and DECIDE playbook subpaths construct, every packed file other than the manifest is byte-identical to the repository's own, the deterministic source-preservation check passes, and each compiled artifact's conformance suites pass with their declared coverage named among those that ran; and
 - the nested installed `@sublang/cligent` satisfies the packed manifest's
-  caret range and ships both `CaptainContext.emitReply` and
-  `CaptainRunResult.resumeToken`, each proven as a member of its own named
-  interface, reached through `@sublang/cligent/tmux-play` resolved from that
-  nested copy, and usable at the type the shell uses it at.
+  caret range; is reached through `@sublang/cligent/tmux-play` resolved from
+  that nested copy; ships `CaptainContext.emitReply` and
+  `CaptainRunResult.resumeToken` as usable members of their named interfaces;
+  accepts and preserves a segmented player id such as `dev.coder` through its
+  real config loader; and exposes player and Captain call options carrying
+  complete model, effort, instruction, and permissions at the shell's types,
+  with model and effort distinguishing an explicit value from an explicit
+  provider-default reset (verifying [[release-14](#release-14)]).
 
 The last clause is a standing guard, not a formality: the shell's durable
 conversation calls both surfaces, a global install resolves cligent from
@@ -685,16 +692,19 @@ that nested copy alone, and a candidate whose declared range admits only
 releases without them would install and then fail at the first Boss turn.
 
 Because that clause is the whole of the gate's protection against an
-incompatible dependency, the normal `pnpm test` suite shall fail unless the
-check backing it is itself falsifiable: for each of the two members, a
-fixture `@sublang/cligent` that declares the member's own interface without
-it shall make the check fail and name that member, while a scan for the two
-member names over that same fixture's declarations finds both — so a check
-that ever drifts back to matching names rather than resolving members fails
-these rows. The same rows shall cover a member kept under a shape the shell
-cannot call and a package that stops exporting the specifier, and one row
-shall run the check against the repository's own installed cligent, so the
-declared floor is proven compatible without a pack or an install.
+incompatible dependency, the normal `pnpm test` suite shall fail unless every
+check backing it is itself falsifiable: for each required interface member, a
+fixture `@sublang/cligent` that declares the owning interface without that
+member shall make the check fail and name it, while declaration enumeration
+over that same fixture finds every required member, so a check that drifts
+back to matching names rather than resolving members fails these rows.
+A fixture loader retaining the unsegmented player-id grammar, a call option
+missing any complete setting, a tuning type unable to express either explicit
+selection, a member kept under a shape the shell cannot call, or a package
+that stops exporting the specifier shall likewise fail with the unsupported
+capability named.
+One row shall run the checks against the repository's own installed cligent,
+so the declared floor is proven compatible without a pack or an install.
 
 Nothing here shall be asserted by recompiling a playbook.
 The SLC pipeline is agentic and its output is not reproducible byte-for-byte from the maintained source, so the gate shall instead run the deterministic source-preservation contract and the committed artifact suites before transferring their result to the packed candidate by byte equality.

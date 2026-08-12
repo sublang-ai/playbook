@@ -22,7 +22,7 @@ const COMMIT_CODER_PROMPT = [
     '',
     'Commit the result as one new commit, following @specs/packages/git.md.',
     'Make the commit message explain concisely what changed and why.',
-    'Report it as exactly one final-response line beginning `Commit: `, followed only by the exact commit identity.',
+    'Include exactly one final-response line beginning `Commit: `, followed only by the exact commit identity; other final-response content may appear on other lines.',
     'Coder is <coder-llm>; format the model token in conventional human form.',
 ].join('\n');
 const REVIEW_INPUT_TEMPLATE = [

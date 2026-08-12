@@ -326,7 +326,7 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
     });
     expect(playerCalls[2].prompt).toContain('Coder is GPT-5.6 Sol');
     expect(playerCalls[2].prompt).toContain(
-      'exactly one final-response line beginning `Commit: `',
+      'Include exactly one final-response line beginning `Commit: `, followed only by the exact commit identity; other final-response content may appear on other lines.',
     );
     expect(playerCalls[2].prompt).not.toContain(reviewerProposal);
     expect(nestedRequests).toEqual([

@@ -16,6 +16,7 @@ This package specifies agreement among the maintained CODE, REVIEW, and DECIDE s
 Where a maintained workflow source declares an opening `Roles:` list, delegated-role instructions, nested playbook calls, acting-result contracts, or workflow outcomes, its compiled GEARS shall preserve the exact unique role list and every instruction, contract, and outcome in source order, may attach a workflow outcome to its corresponding item without creating a separate acting item, and shall assign the complete ordered item set `CODE-1` through `CODE-4`, `REVIEW-1` through `REVIEW-4`, or `DECIDE-1` through `DECIDE-4`, while the compiled FSM and runtime shall implement every preserved outcome.
 Boss and Captain shall remain fixed actors outside `Roles:`, and the source and GEARS shall declare no role alias.
 The registry manifest's `requiredRoleIds` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall equal the canonical lowercase local ids derived from that exact `Roles:` list, and source roles that collide after canonicalization shall reject.
+The FSM artifact shall export and the registry manifest's `concurrentRoleSets` under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] shall declare the same canonical role-id arrays derived in source order from the GEARS parallel groups: CODE and REVIEW shall declare none, and DECIDE shall declare exactly `[['coder', 'reviewer']]`.
 
 #### playbook-2
 
@@ -91,7 +92,7 @@ Where execution leaves a delegated-role state without suspending for its Boss qu
 
 #### playbook-7
 
-When the workflow conformance suites run, they shall fail unless source and GEARS carry the same exact `Roles:` declaration with no Boss, Captain, alias, exact duplicate, or canonical-lowercase collision; the registry manifest declares exactly their canonical local ids; every protected source instruction, acting-result contract, and workflow outcome appears in at least one corresponding GEARS item in the required ordered set; no compiled item lacks source authority; and every GEARS-preserved workflow outcome is pinned at the compiled FSM and runtime boundary (verifying [[playbook-1](#playbook-1)]).
+When the workflow conformance suites run, they shall fail unless source and GEARS carry the same exact `Roles:` declaration with no Boss, Captain, alias, exact duplicate, or canonical-lowercase collision; the registry manifest declares exactly their canonical local ids; the FSM export and manifest agree on the ordered concurrent role sets derived from every GEARS parallel group; every protected source instruction, acting-result contract, and workflow outcome appears in at least one corresponding GEARS item in the required ordered set; no compiled item lacks source authority; and every GEARS-preserved workflow outcome is pinned at the compiled FSM and runtime boundary (verifying [[playbook-1](#playbook-1)]).
 
 #### playbook-8
 

@@ -210,7 +210,7 @@ heading.
 Every item in one parallel group shall receive the same completed-prior-group
 inputs; no item prompt may depend on another member's result from the current
 group.
-Every member shall delegate to a named role, and the source shall permit those roles to bind to distinct players.
+Every member shall delegate to a distinct named role; a group that repeats one canonical role is malformed because one role resolves to one player.
 Direct-Captain work shares one
 Captain session and nested calls share one pending-child stack slot, so neither
 kind may receive parallel-group metadata.

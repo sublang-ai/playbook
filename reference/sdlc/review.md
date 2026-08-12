@@ -20,13 +20,13 @@ At the first review round, Captain shall give Reviewer the following instruction
 
 ```markdown
 A new review begins on the latest commit.
-Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.
+Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.
 ```
 
 After every review-fix commit, Captain shall give Reviewer the following instruction:
 
 ```markdown
-Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.
+Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.
 ```
 
 When Coder rejects every finding and makes no commit, Captain shall give Reviewer the following instruction:

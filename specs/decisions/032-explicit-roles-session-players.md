@@ -42,6 +42,7 @@ Every enabled playbook shall explicitly bind each manifest `requiredRoleIds` mem
 A binding shall be either a scalar player id or a block containing `player` and optional `model` and `effort` overrides.
 Adapter, instruction, permissions, workspace, and tool posture belong to the player session envelope and shall not be overridden by a role binding.
 Bindings shall cover the required role set exactly; unknown players, missing or extra roles, implicit name matching, ancestor inheritance, and generated fallback players are errors.
+Each manifest shall declare `concurrentRoleSets` derived from its fixed parallel groups, and the launcher shall require the roles in each declared set to bind to pairwise-distinct player ids before host work.
 Unused top-level players are permitted and do not enter the host roster or readiness gate until a binding references them.
 
 ### 3. Player continuity belongs to the Captain session
@@ -51,6 +52,7 @@ The logical Captain session shall own one continuation ledger keyed by player id
 Equal player ids intentionally share that sequential conversation; distinct ids never share even when their settings are equal.
 A player id reused under a different adapter is incompatible with its established ledger entry.
 Simultaneous calls resolving to one player shall reject rather than fork or silently serialize one continuation chain.
+After a validated resolved call, the ledger shall replace the prior token when the result carries a non-empty token, clear it only when an `ok` result omits one, and preserve it when an `aborted` or `error` result omits one; a rejected call with no result shall likewise preserve the prior token.
 There is no time, turn-count, root-engagement-count, or model-change limit while the durable Captain session and provider continuation remain usable.
 
 The session Captain remains a distinguished top-level agent rather than an entry in `players`.
@@ -59,11 +61,14 @@ Its durable conversation follows the same immutable-adapter and current-tuning r
 ### 4. Reopening separates structure from tuning
 
 Both `playbook --session <id>` and `playbook run --session <id>` shall open the same durable logical Captain session through the same exclusive-writer boundary.
+A fresh launch through either front end shall create that same durable session kind; a fresh interactive launch shall expose its public id through operational output and persist its initialized settled boundary before accepting Boss input.
+Every submitted non-empty Boss turn in either front end shall persist an uncertain write-ahead boundary before agent work and an atomic settled replacement before presenting the reply.
 An attached interactive process shall retain ownership until it hands off or exits, while a headless invocation shall retain ownership through one durably settled turn.
 
 Opening a settled session shall restore its Captain and working-runtime state, retain its normalized absolute working directory, and resolve the current shared config plus any opening overlays.
-The current config shall reproduce the session's stored structural projection: enabled catalog and prepared module identities, manifest contracts, effective commands, runtime options, required roles, explicit role-to-player ids, Captain and referenced-player adapters, instructions, and permissions.
-Any structural mismatch shall reject before agent work; a new logical session is required to change that topology or provider identity.
+The stored enabled catalog and structural projection shall remain authoritative for the reopened session.
+The current structural projection restricted to the stored playbook ids, Captain, and players referenced by those stored playbooks shall reproduce their prepared module identities, manifest contracts, effective commands, runtime options, required roles, explicit role-to-player ids, adapters, instructions, and permissions.
+A missing or changed stored member shall reject before agent work, while additional current playbooks and players unreferenced by the stored catalog shall neither invalidate nor enter the reopened session; a new logical session is required to change that topology or provider identity.
 
 The next Captain or player call shall use the current normalized model and effort selection for its stable id while resuming the stored provider token under the established adapter.
 Normalization shall represent each model and effort selection explicitly as either one concrete value or `provider-default`, so removing a prior selection is not confused with inheriting mutable provider-session state or inventing a provider default.
@@ -93,5 +98,6 @@ Runtime and complete shell snapshots shall use schema `3` for session player led
 - A session can move from Opus 4.8 to Opus 5 without losing its Claude conversation, subject to provider support.
 - Top-level players are identity-bearing session lanes rather than the reusable setting profiles rejected by [DR-021](021-inline-agent-settings.md).
 - Active workflow state and security-sensitive provider identity remain stable while ordinary model and effort tuning can evolve.
+- A reopened session retains its saved catalog; newly enabled playbooks and their additional players become available only in a new logical session.
 - The tmux-play host contract must accept segmented player ids and complete per-call effective settings before this design can be implemented.
 - Source grammar, configuration, runtime metadata, snapshot shape, CLI continuation, and release acceptance change incompatibly and require a new major version.

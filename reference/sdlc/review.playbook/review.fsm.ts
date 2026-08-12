@@ -86,6 +86,7 @@ const NEEDS_BOSS_REPLY_DESCRIPTION =
 const SHARED_REVIEW_INSTRUCTION = [
   'Understand the full picture and think systematically about the underlying design.',
   'Continue to identify issues or improvements, if any (numbered; no duplication).',
+  'For any rebuttal, accept or challenge it.',
   'Treat as settled, and do not raise again, any finding in this review rejected twice with reasoning.',
   'Flag only what materially affects correctness, behavior, or spec quality — not style, equally valid alternatives, or theoretical threats.',
   'For specs, flag stale, missing, over-specified, or under-specified ones.',
@@ -100,7 +101,7 @@ const SHARED_REVIEW_INSTRUCTION = [
 
 const INITIAL_REVIEW_PROMPT = [
   'A new review begins on the latest commit.',
-  'Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.',
+  'Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.',
   '',
   '> <caller-input>',
   '',
@@ -108,7 +109,7 @@ const INITIAL_REVIEW_PROMPT = [
 ].join('\n');
 
 const POST_COMMIT_REVIEW_PROMPT = [
-  'Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.',
+  'Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.',
   '',
   '> <coder-output>',
   '',
@@ -117,8 +118,6 @@ const POST_COMMIT_REVIEW_PROMPT = [
 
 const REBUTTAL_REVIEW_PROMPT = [
   'No new commit was made because Coder rejected every finding.',
-  'For any rebuttal, accept or challenge it.',
-  'State which findings, if any, remain.',
   '',
   '> <coder-output>',
   '',

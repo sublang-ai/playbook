@@ -39,7 +39,8 @@ Operational status and diagnostics shall use stderr, and JSON mode shall expose 
 
 ### 4. Durable complete sessions
 
-After every settled non-empty headless turn, including chat and turns after a working playbook completes, the host shall atomically persist the complete logical Captain session under the XDG state directory with user-only permissions before releasing the buffered reply.
+A fresh launch through either front end shall create one public logical session id; a fresh interactive launch shall expose that id through operational output and atomically persist the initialized settled session under the XDG state directory with user-only permissions before accepting Boss input.
+Before agent work for every submitted non-empty turn in either front end, the host shall persist an uncertain write-ahead record; after the turn settles, including chat and turns after a working playbook completes, it shall atomically persist the complete logical Captain session before presenting the reply.
 The record shall contain the compiled Captain runtime snapshot, durable-conversation state and recovery journal, every engagement frame and runtime snapshot, pending nested-call identities, Captain-session player continuation ledger, counters, structural and attempted execution projections, and absolute working directory.
 `playbook run --continue [reply]` shall select the latest resumable session, while `--session <id>` shall select one explicitly; either shall read stdin when the reply is absent.
 A per-session exclusive lock shall reject concurrent writers, and a crash after a turn starts but before its replacement snapshot is committed shall leave an explicit uncertain record rather than make the prior boundary silently replayable.

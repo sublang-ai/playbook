@@ -43,7 +43,6 @@ The runtime shall compose only each line's meaningful content, while the host ow
 
 Where CODE, REVIEW, or DECIDE runs through the Playbook Captain shell, the shell shall bind each local role through that frame's explicit player id and route each player call to the resulting host player per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
 The CODE registry shall require `coder`, and the REVIEW and DECIDE registries shall require `coder` and `reviewer`.
-Each registry shall derive a prompt's player identity from the effective binding's model when present and its adapter otherwise.
 
 #### playbook-runtime-29
 
@@ -157,7 +156,6 @@ construction shall throw a `TypeError` naming the offending member.
 When `spec.compat` is absent, the factory shall reject the declaration-free
 artifact because its legacy player metadata has no safe session-player
 interpretation.
-Every public playbook registry, including a bespoke runtime profile, shall advertise `artifactSchema: 2`; a shared-factory registry's value shall equal its `spec.compat.artifactSchema`, and the Captain host shall reject a missing, unsupported, or disagreeing value before runtime construction per [[playbook-captain-5](playbook-captain.md#playbook-captain-5)].
 
 ### Session lifecycle
 
@@ -193,14 +191,14 @@ The runtime shall parse the judge reply with the tolerance of [[playbook-runtime
 
 #### playbook-runtime-8
 
-When resolving a compiled workflow's player invocation, the runtime shall map source role `Coder` to local role `coder` and source role `Reviewer` to local role `reviewer`, while leaving the host to resolve that local role to the frame's effective binding per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
+When resolving a compiled workflow's player invocation, the runtime shall use the invocation's compiler-supplied canonical local role id unchanged — `coder` for Coder and `reviewer` for Reviewer in the current workflows — while leaving the host to resolve that local role to the frame's effective binding per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)].
 
 ### Captain bridge
 
 #### playbook-runtime-9
 
 While driving a Boss turn, for each FSM player invocation the
-runtime shall resolve the local role id ([[playbook-runtime-8](#playbook-runtime-8)]), compose
+runtime shall consume the canonical local role id unchanged ([[playbook-runtime-8](#playbook-runtime-8)]), compose
 the player prompt ([[playbook-5](playbook.md#playbook-5)] and
 [[playbook-6](playbook.md#playbook-6)]), and call
 `callPlayer(roleId, prompt, signal, options)` with the explicit
@@ -384,8 +382,7 @@ Where a factory-backed artifact supplies artifact schema `2`, the runtime shall 
 
 #### playbook-runtime-15
 
-Where the shell constructs CODE, REVIEW, or DECIDE, the registry shall receive each local role's resolved player id and prompt identity from the frame's explicit bindings per [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], shall derive prompt identity from current effective model when present and adapter otherwise, and shall override any caller-supplied identity value.
-The registry shall supply that metadata only as `PlaybookSession.roleBindings`; it shall not copy model or player identity into runtime options, machine input, or persisted FSM context.
+Where the shell constructs CODE, REVIEW, or DECIDE, the initialized runtime shall receive each local role's resolved player id and prompt identity only through the host-supplied `PlaybookSession.roleBindings` of [[playbook-captain-10](playbook-captain.md#playbook-captain-10)]; the runtime and registry shall neither derive nor override those host identities and shall not copy model or player identity into runtime options, machine input, or persisted FSM context.
 Prompt composition shall read the current role binding at invocation time, so restoring an opaque machine snapshot under compatible changed model tuning cannot retain the earlier model identity in a player prompt.
 Each registry shall publish only the summary labels and handoff guards its current FSM owns, with CODE excluding REVIEW's child rounds, REVIEW labeling its review and rebuttal rounds, and DECIDE labeling its independent-proposal round.
 
@@ -465,7 +462,7 @@ state, the FSM shall represent the tasks as XState parallel regions
 whose working leaves invoke their declared `player` actor and whose local final states join
 through the parallel parent's `onDone` transition, per
 [DR-011](../decisions/011-composable-playbook-execution.md) §1.
-The runtime shall permit overlap only for distinct player ids supplied by explicit binding metadata, shall reject concurrent calls whose roles resolve to one player id, and
+The runtime shall key in-flight delegated calls by resolved player id when explicit binding metadata is supplied and by local role id otherwise, permit calls to distinct keys to overlap, reject a second concurrent call to the same key before crossing the host port, and
 shall serialize its concurrent hidden `callJudge` operations through one local
 abort-aware FIFO with concurrency one. The host shall additionally serialize
 all direct `callCaptain` and hidden `callJudge` port operations together
@@ -805,7 +802,7 @@ When the integration suite drives transition and status profiles, it shall fail 
 #### playbook-runtime-21
 
 
-When CODE, REVIEW, and DECIDE are driven through the shell from their real registry modules, the test suite shall fail unless each registry declares its current required roles, player calls reach the frame's effective host bindings, model-or-adapter identities reach the compiled placeholders, hidden adjudication reaches the shared Captain queue, and each registry exposes only its own current summary labels and handoff guards (verifying [[playbook-runtime-4](#playbook-runtime-4)], [[playbook-runtime-15](#playbook-runtime-15)], and [[playbook-runtime-16](#playbook-runtime-16)]).
+When CODE, REVIEW, and DECIDE are driven through the shell from their real registry modules, the test suite shall fail unless each registry declares its current required roles, player calls reach the frame's effective host bindings, host-supplied prompt identities reach the compiled placeholders unchanged, hidden adjudication reaches the shared Captain queue, and each registry exposes only its own current summary labels and handoff guards (verifying [[playbook-runtime-4](#playbook-runtime-4)], [[playbook-runtime-15](#playbook-runtime-15)], and [[playbook-runtime-16](#playbook-runtime-16)]).
 
 #### playbook-runtime-32
 
@@ -949,7 +946,7 @@ When a runtime is driven outside a Boss-reply wait with nonempty ordinary or sla
 #### playbook-runtime-26
 
 
-When the CODE, REVIEW, and DECIDE suites drive every delegated-role state, they shall fail unless every Coder invocation uses local role `coder` and every Reviewer invocation uses local role `reviewer` (verifying [[playbook-runtime-8](#playbook-runtime-8)]).
+When the CODE, REVIEW, and DECIDE suites drive every delegated-role state, they shall fail unless each player invocation reaches `callPlayer` with the compiler-supplied canonical local role id unchanged — `coder` for every Coder invocation and `reviewer` for every Reviewer invocation (verifying [[playbook-runtime-8](#playbook-runtime-8)]).
 
 #### playbook-runtime-27
 
@@ -1072,7 +1069,7 @@ fail unless both independent proposals start before either result is required, b
 The test suite shall fail unless one or two branch-local Boss questions
 park and resume independently without restarting a completed or still
 waiting sibling, a branch failure stops its sibling and reaches
-`failed`, roles bound to distinct player ids overlap, roles bound to the same player id reject overlap (verifying [[playbook-runtime-40](#playbook-runtime-40)]), and
+`failed`, roles bound to distinct player ids overlap, roles bound to the same player id reject overlap, and distinct local roles overlap when binding metadata is omitted (verifying [[playbook-runtime-40](#playbook-runtime-40)]), and
 direct Captain and hidden judge calls never overlap.
 It shall fail unless a Boss interrupt restarts both proposal branches with the replacement topic, clears both prior branch results and questions, and does not target an individual branch or wait state.
 Structured state telemetry and trace shall remain JSON-safe, identify
@@ -1257,4 +1254,4 @@ projected run result and no start-only field, `stateId` appearing on
 
 #### playbook-runtime-54
 
-Where the integration suite loads a linked artifact through the real run host, when its registry artifact schema is absent or not `2`, its shared-factory declaration is absent, malformed, schema `1`, or disagrees with the registry or loaded engine, the suite shall fail unless runtime construction rejects before any machine interpretation or agent call with a diagnostic naming the offending declaration and supported value; compatible schema-2 `{ role, label }` metadata and the bespoke DECIDE profile shall preserve local roles without creating a host binding (verifying [[playbook-runtime-50](#playbook-runtime-50)]).
+Where the integration suite constructs a linked artifact against the real shared engine, when its shared-factory declaration is absent, malformed, schema `1`, or disagrees with the loaded engine, the suite shall fail unless runtime construction rejects before any machine interpretation or agent call with a diagnostic naming the offending declaration and supported value; compatible schema-2 `{ role, label }` metadata and the bespoke DECIDE profile shall preserve local roles without creating a host binding (verifying [[playbook-runtime-50](#playbook-runtime-50)]).

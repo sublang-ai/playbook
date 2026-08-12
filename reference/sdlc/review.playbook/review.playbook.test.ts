@@ -128,6 +128,12 @@ describe('linked REVIEW runtime', () => {
     expect(playerCalls[0].prompt).toContain(
       '> Review the feature.\n> Run result: focused suite passed.',
     );
+    expect(playerCalls[0].prompt).toContain(
+      'read the commit message first for its intent, scope, and rationale.',
+    );
+    expect(playerCalls[0].prompt).toContain(
+      'For any rebuttal, accept or challenge it.',
+    );
     expect(playerCalls[1].prompt).toContain(
       '> 1. First finding\n>    Evidence.',
     );
@@ -136,6 +142,12 @@ describe('linked REVIEW runtime', () => {
     );
     expect(playerCalls[2].prompt).toContain(
       '> Accepted; fixed in abc123.\n> Tests: focused pass.',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      'read the commit message first for its intent, scope, and rationale.',
+    );
+    expect(playerCalls[2].prompt).toContain(
+      'For any rebuttal, accept or challenge it.',
     );
 
     await runtime.dispose();
@@ -204,15 +216,18 @@ describe('linked REVIEW runtime', () => {
     expect(playerCalls[2].prompt).toContain(
       'No new commit was made because Coder rejected every finding.',
     );
-    expect(playerCalls[2].prompt).toContain(
-      'For any rebuttal, accept or challenge it.',
+    expect(
+      playerCalls[2].prompt.match(/For any rebuttal, accept or challenge it\./g),
+    ).toHaveLength(1);
+    expect(playerCalls[2].prompt).not.toContain(
+      'State which findings, if any, remain.',
     );
     expect(playerCalls[2].prompt).toContain(
       '> Rejected item 1: the cited contract already requires it.\n' +
         '> No files changed and no commit was made.',
     );
     expect(playerCalls[2].prompt).not.toContain(
-      'Review the latest commit and resulting repository state; read the commit message first for its intent and rationale.',
+      'Review the latest commit and resulting repository state; read the commit message first for its intent, scope, and rationale.',
     );
 
     await runtime.dispose();

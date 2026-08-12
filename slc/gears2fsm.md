@@ -334,8 +334,12 @@ member is malformed because those actor kinds share one Captain control lane or 
 pending-child slot. Each region shall contain a delegated-player working leaf
 and a local final state; the working leaf retains the item's stable state id,
 `sourceItem`, role, prompt, and result contract.
+The members' canonical role ids shall be pairwise distinct; a repeated role in one group is malformed.
 The parallel parent shall use `onDone` as the join, which XState takes only
 after every region reaches final.
+
+The artifact shall export `concurrentRoleSets` as a deeply readonly array containing one role-id array per parallel group in first-item source order, with each inner array following that group's item order.
+An artifact with no parallel group shall export an empty array.
 
 Each branch shall assign only its own staged result.
 The join shall promote all staged results atomically before later work begins,
