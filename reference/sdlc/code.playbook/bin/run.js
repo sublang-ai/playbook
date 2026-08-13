@@ -466,8 +466,17 @@ export async function runPlaybookRun(options = {}) {
       assertBeforeBossTurn: () => lease.assertOwner(),
     });
   } catch (error) {
-    const releaseError = await releaseLease(lease);
+    const cleanupIncomplete = isCaptainSessionHostCleanupIncomplete(error);
+    const releaseError = cleanupIncomplete
+      ? undefined
+      : await releaseLease(lease);
     await writeStream(stderr, `playbook run: ${message(error)}\n`);
+    if (cleanupIncomplete) {
+      await writeStream(
+        stderr,
+        'playbook run: writer lease retained until process exit because host cleanup was incomplete\n',
+      );
+    }
     if (releaseError !== undefined) {
       await writeStream(
         stderr,
@@ -490,15 +499,31 @@ export async function runPlaybookRun(options = {}) {
       snapshot: settled.snapshot,
     });
   } catch (error) {
+    let cleanupError;
     try {
       await settled.dispose();
-    } catch {
-      // Preserve the failed durable hand-off as the primary diagnostic.
+    } catch (cause) {
+      cleanupError = cause;
     }
     await writeStream(
       stderr,
       `playbook run: cannot persist Captain session: ${message(error)}\n`,
     );
+    if (cleanupError !== undefined) {
+      const cleanupFailure = new CaptainSessionHostCleanupError(
+        [error, cleanupError],
+        `Captain session settlement failed (${message(error)}) and host cleanup also failed: ${message(cleanupError)}`,
+      );
+      await writeStream(
+        stderr,
+        `playbook run: ${message(cleanupFailure)}\n`,
+      );
+      await writeStream(
+        stderr,
+        'playbook run: writer lease retained until process exit because host cleanup was incomplete\n',
+      );
+      return { code: EXIT.turn };
+    }
     const releaseError = await releaseLease(lease);
     if (releaseError !== undefined) {
       await writeStream(
@@ -578,30 +603,11 @@ export async function driveHeadlessCaptainTurn({
   let uncertainRecord;
   try {
     try {
-      shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
-        loadModule,
-        ...(createCaptainRuntime ? { createCaptainRuntime } : {}),
-        ...(createCaptainSessionId
-          ? { createSessionId: createCaptainSessionId }
-          : {}),
-      });
-      const captain = captainHostBoundary(shell, restoreSnapshot);
-      host = await createHostRuntime({
-        captain,
-        captainConfig: projectHostAgent(
-          config.captain,
-          'Captain execution config.captain',
-        ),
-        players: config.players.map(({ id, ...agent }) => ({
-          id,
-          ...projectHostAgent(
-            agent,
-            `Captain execution config.players.${id}`,
-          ),
-        })),
+      const created = await createCaptainSessionHost({
+        config,
+        sessionId,
         cwd,
-        ...(signal ? { signal } : {}),
-        ...(adapterImports ? { adapterImports } : {}),
+        loadModule,
         observers: [
           {
             async onRecord(record) {
@@ -615,26 +621,14 @@ export async function driveHeadlessCaptainTurn({
             },
           },
         ],
+        ...(signal ? { signal } : {}),
+        ...(adapterImports ? { adapterImports } : {}),
+        ...(createCaptainRuntime ? { createCaptainRuntime } : {}),
+        ...(createCaptainSessionId ? { createCaptainSessionId } : {}),
+        createHostRuntime,
+        ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
       });
-      if (shell === undefined) {
-        throw new Error('Captain shell host initialized without a shell');
-      }
-      baselineSnapshot = shell.exportSnapshot();
-      if (baselineSnapshot === undefined) {
-        throw new Error(
-          'Captain shell initialized without an exportable session snapshot',
-        );
-      }
-      if (
-        restoreSnapshot !== undefined &&
-        !isDeepStrictEqual(baselineSnapshot, restoreSnapshot)
-      ) {
-        throw new Error('restored Captain snapshot changed before the Boss turn');
-      }
-      assertLogicalSessionIdDistinct({
-        sessionId,
-        snapshot: baselineSnapshot,
-      });
+      ({ shell, host, snapshot: baselineSnapshot } = created);
       uncertainRecord = await beforeBossTurn?.(baselineSnapshot);
     } catch (error) {
       throw new HeadlessHostSetupError(error);
@@ -682,9 +676,107 @@ export async function driveHeadlessCaptainTurn({
     if (host !== undefined) {
       try {
         await host.dispose();
-      } catch {
-        // Preserve the turn/capture failure as the primary diagnostic.
+      } catch (cleanupError) {
+        const cleanupFailure = new CaptainSessionHostCleanupError(
+          [error, cleanupError],
+          `Captain session turn failed (${message(error)}) and host cleanup also failed: ${message(cleanupError)}`,
+        );
+        throw error instanceof HeadlessHostSetupError
+          ? new HeadlessHostSetupError(cleanupFailure)
+          : cleanupFailure;
       }
+    }
+    throw error;
+  }
+}
+
+// PBCLI-20/49: both presentations construct the same shell and cligent core.
+// A caller supplies only observers and lifecycle ownership; the configured
+// Captain, referenced-player roster, working directory, and restore boundary
+// remain one implementation.
+export class CaptainSessionHostCleanupError extends AggregateError {
+  constructor(errors, messageText) {
+    super(errors, messageText);
+    this.name = 'CaptainSessionHostCleanupError';
+    this.code = 'PLAYBOOK_CAPTAIN_HOST_CLEANUP_INCOMPLETE';
+  }
+}
+
+function isCaptainSessionHostCleanupIncomplete(error) {
+  if (error instanceof CaptainSessionHostCleanupError) return true;
+  return (
+    error instanceof HeadlessHostSetupError &&
+    isCaptainSessionHostCleanupIncomplete(error.cause)
+  );
+}
+
+export async function createCaptainSessionHost({
+  config,
+  sessionId,
+  cwd,
+  loadModule,
+  observers,
+  adapterImports,
+  createCaptainRuntime,
+  createCaptainSessionId,
+  createHostRuntime = createTmuxPlayRuntime,
+  restoreSnapshot,
+  signal,
+}) {
+  const shell = createPlaybookCaptainShell(captainOptionsFromConfig(config), {
+    loadModule,
+    ...(createCaptainRuntime ? { createCaptainRuntime } : {}),
+    ...(createCaptainSessionId
+      ? { createSessionId: createCaptainSessionId }
+      : {}),
+  });
+  let host;
+  try {
+    const captain = captainHostBoundary(shell, restoreSnapshot);
+    host = await createHostRuntime({
+      captain,
+      captainConfig: projectHostAgent(
+        config.captain,
+        'Captain execution config.captain',
+      ),
+      players: config.players.map(({ id, ...agent }) => ({
+        id,
+        ...projectHostAgent(agent, `Captain execution config.players.${id}`),
+      })),
+      cwd,
+      observers,
+      ...(signal ? { signal } : {}),
+      ...(adapterImports ? { adapterImports } : {}),
+    });
+    const snapshot = shell.exportSnapshot();
+    if (snapshot === undefined) {
+      throw new Error(
+        'Captain shell initialized without an exportable session snapshot',
+      );
+    }
+    if (
+      restoreSnapshot !== undefined &&
+      !isDeepStrictEqual(snapshot, restoreSnapshot)
+    ) {
+      throw new Error('restored Captain snapshot changed before the Boss turn');
+    }
+    if (sessionId !== undefined) {
+      assertLogicalSessionIdDistinct({ sessionId, snapshot });
+    }
+    return { shell, host, snapshot };
+  } catch (error) {
+    let cleanupError;
+    try {
+      if (host !== undefined) await host.dispose();
+      else await shell.dispose?.();
+    } catch (cause) {
+      cleanupError = cause;
+    }
+    if (cleanupError !== undefined) {
+      throw new CaptainSessionHostCleanupError(
+        [error, cleanupError],
+        `Captain session host construction failed (${message(error)}) and cleanup also failed: ${message(cleanupError)}`,
+      );
     }
     throw error;
   }
@@ -859,7 +951,7 @@ function isValidRegistryEntry(value) {
   );
 }
 
-function captainOptionsFromConfig(config) {
+export function captainOptionsFromConfig(config) {
   return {
     playbooks: Object.fromEntries(
       Object.entries(config.catalog).map(([id, item]) => [

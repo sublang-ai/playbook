@@ -759,6 +759,8 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
     expect(manifest.exports).not.toHaveProperty('./discuss/registry');
     expect(manifest.exports).not.toHaveProperty('./captain/registry');
     expect(manifest.exports).not.toHaveProperty('./code/tmux-play');
+    expect(manifest.exports).not.toHaveProperty('./interactive-session');
+    expect(manifest.bin).not.toHaveProperty('playbook-managed-session');
   });
 
   // RELEASE-20: the semver-stable unit of a public subpath is the module's
@@ -1520,6 +1522,7 @@ if (snapshot.mode === 'engaged.parked') {
       `${CODE_BASE}bin/playbook.js`,
       `${CODE_BASE}bin/launch-config.js`,
       `${CODE_BASE}bin/run.js`,
+      `${CODE_BASE}bin/interactive-session.js`,
       `${CODE_BASE}bin/session-store.js`,
       `${CODE_BASE}bin/provision.js`,
       `${CODE_BASE}bin/adapter-sdk.js`,

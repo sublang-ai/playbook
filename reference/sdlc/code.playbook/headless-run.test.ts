@@ -898,6 +898,86 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     }
   });
 
+  it('retains the writer lease when headless host cleanup is incomplete', async () => {
+    for (const phase of ['setup', 'turn', 'settle'] as const) {
+      const stateRoot = await mkdtemp(
+        join(tmpdir(), `playbook-cleanup-quarantine-${phase}-`),
+      );
+      tempDirs.push(stateRoot);
+      const sessionsDir = join(stateRoot, 'sessions');
+      const store = createCaptainSessionStore({ sessionsDir });
+      let ownedLease: any;
+      const sessionStore = {
+        ...store,
+        async acquire(sessionId: string) {
+          const lease = await store.acquire(sessionId);
+          ownedLease = lease;
+          if (phase !== 'settle') return lease;
+          return {
+            ...lease,
+            async settle() {
+              throw new Error('synthetic settlement failed');
+            },
+          };
+        },
+      };
+
+      const out = await headlessHarness(['run', 'cleanup must quarantine'], {
+        sessionsDir,
+        sessionStore,
+        createLogicalSessionId: () =>
+          '90000000-0000-4000-8000-000000000091',
+        createHostRuntime: async (options: any) => {
+          const host = await createTmuxPlayRuntime(options);
+          return {
+            async runBossTurn(input: string) {
+              if (phase === 'setup') {
+                throw new Error('setup sentinel must not run');
+              }
+              if (phase === 'turn') {
+                throw new Error('synthetic turn failed');
+              }
+              await host.runBossTurn(input);
+            },
+            async dispose() {
+              throw new Error('synthetic dispose failed');
+            },
+          };
+        },
+        ...(phase === 'setup'
+          ? {
+              createCaptainSessionId: () =>
+                '90000000-0000-4000-8000-000000000091',
+            }
+          : {}),
+      });
+
+      expect(out.result.code).toBe(phase === 'setup' ? 1 : 2);
+      expect(out.stdout).toBe('');
+      expect(out.stderr).toContain('synthetic dispose failed');
+      expect(out.stderr).toContain(
+        'writer lease retained until process exit because host cleanup was incomplete',
+      );
+      if (phase !== 'setup') {
+        expect(
+          JSON.parse(
+            await readFile(
+              join(
+                sessionsDir,
+                '90000000-0000-4000-8000-000000000091.json',
+              ),
+              'utf8',
+            ),
+          ).state,
+        ).toBe('uncertain');
+      }
+      await expect(
+        store.acquire('90000000-0000-4000-8000-000000000091'),
+      ).rejects.toThrow(/lease is active/);
+      await ownedLease.release();
+    }
+  });
+
   it('drains stdin before config preparation, import, and readiness', async () => {
     const input = 'piped prompt';
     const order: string[] = [];
@@ -2570,6 +2650,16 @@ describe('configured engine provisioning parity (PBCLI-38/48)', () => {
       probeAdapterSdk: async () => true,
       tmuxPlayBin: '/tmp/tmux-play.js',
       spawn,
+      createLogicalSessionId: () =>
+        '90000000-0000-4000-8000-000000000001',
+      launchManagedTmuxPlay: async ({ sessionId }: { sessionId: string }) => {
+        spawnCalls.push(true);
+        return {
+          sessionId,
+          async attach() {},
+          async cancel() {},
+        };
+      },
       stdout: writer(),
       stderr: interactiveErr,
     });

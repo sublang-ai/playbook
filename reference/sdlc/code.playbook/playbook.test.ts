@@ -41,11 +41,24 @@ const {
 } = await import(
   new URL('./bin/provision.js', import.meta.url).href
 );
+const { executionConfigFromPlan } = await import(
+  new URL('./bin/run.js', import.meta.url).href
+);
+const {
+  projectCaptainSessionStructure,
+  validateCaptainSessionRecord,
+} = await import(new URL('./bin/session-store.js', import.meta.url).href);
+const { MANAGED_INTERACTIVE_PAYLOAD_FILE } = await import(
+  new URL('./bin/interactive-session.js', import.meta.url).href
+);
 
 const {
   runPlaybookCli,
+  runPlaybookCliEntry,
+  parseInteractiveArgs,
   resolveUserConfigPath,
   composeGenericConfig,
+  loadLaunchPlan,
   PLAYBOOK_CAPTAIN_MODULE,
 } = playbook;
 
@@ -680,6 +693,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
       tmuxPlayBin: '/tmp/tmux-play.js',
       // PBCLI-39: the real probe reads host state (installed SDKs, the
       // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
@@ -797,6 +811,7 @@ describe('playbook launcher — seeding and launch (PBCLI-13)', () => {
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
       tmuxPlayBin: '/tmp/tmux-play.js',
       // PBCLI-39: the real probe reads host state (installed SDKs, the
       // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
@@ -824,6 +839,7 @@ describe('playbook launcher — readiness (PBCLI-16)', () => {
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
       tmuxPlayBin: '/tmp/tmux-play.js',
       // PBCLI-39: the real probe reads host state (installed SDKs, the
       // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
@@ -851,6 +867,7 @@ describe('playbook launcher — readiness (PBCLI-16)', () => {
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
       tmuxPlayBin: '/tmp/tmux-play.js',
       // PBCLI-39: the real probe reads host state (installed SDKs, the
       // gemini/opencode CLIs on PATH), so a gated lineup would pass or fail
@@ -918,6 +935,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       stderr: writer(),
       stdout: writer(),
       spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
       tmuxPlayBin: '/tmp/tmux-play.js',
       probeAdapterSdk: probe.fn,
     });
@@ -939,6 +957,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
       tmuxPlayBin: '/tmp/tmux-play.js',
       probeAdapterSdk: fakeProbe(['codex']).fn,
       classifyRuntime: classifyWith({
@@ -1048,6 +1067,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
       stderr,
       stdout: writer(),
       spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
       tmuxPlayBin: '/tmp/tmux-play.js',
       probeAdapterSdk: probe.fn,
     });
@@ -1328,7 +1348,11 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       'playbook run (--continue | --session <id>) [reply]',
     );
     expect(stdout.text()).toContain('--retry-uncertain');
-    expect(stdout.text()).toContain('fresh launch only');
+    expect(stdout.text()).toContain('fresh managed launch accepts --cwd');
+    expect(stdout.text()).toContain('creates a durable logical');
+    expect(stdout.text()).toContain('playbook --session <id>');
+    expect(stdout.text()).toContain('stored working directory');
+    expect(stdout.text()).toContain('stock tmux-play');
     expect(stdout.text()).toContain('Agent swap recipe:');
     expect(stdout.text()).toContain('stable players.<id>');
     expect(stdout.text()).toContain('playbooks.<id>.roles.<role>');
@@ -1364,12 +1388,12 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     ]);
   });
 
-  it('propagates the tmux-play exit code, signal, and 127 launch failure', async () => {
+  it('propagates raw tmux-play exit code, signal, and 127 launch failure', async () => {
     const home = await makeTempHome();
     await writeUserConfig(home, minimalConfig());
     const env = { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' };
     const base = {
-      argv: [],
+      argv: ['--config', '/tmp/raw.yaml'],
       env,
       homeDir: home,
       stderr: writer(),
@@ -1398,7 +1422,589 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     });
     expect(fail).toEqual({ code: 127 });
   });
+
+  it('composes theme diagnostics through the stock subprocess path', async () => {
+    const home = await makeTempHome();
+    await writeUserConfig(home, minimalConfig());
+    const spawn = fakeSpawn();
+
+    const result = await runPlaybookCli({
+      argv: [
+        '--theme-diagnostics',
+        '--cwd=./presentation',
+        '--future-diagnostic-flag',
+        'verbatim-value',
+      ],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr: writer(),
+      stdout: writer(),
+      spawn: spawn.fn,
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: async () => true,
+    });
+
+    expect(result).toEqual({ code: 0 });
+    expect(spawn.calls).toHaveLength(1);
+    expect(spawn.calls[0].args).toEqual([
+      '/tmp/tmux-play.js',
+      '--config',
+      expect.stringMatching(/tmux-play\.config\.yaml$/),
+      '--theme-diagnostics',
+      '--cwd=./presentation',
+      '--future-diagnostic-flag',
+      'verbatim-value',
+    ]);
+  });
+
+  it('propagates diagnostic exit, signal, and launch failure without managed preparation', async () => {
+    const home = await makeTempHome();
+    await writeUserConfig(home, minimalConfig());
+    const env = { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' };
+    let managedCalls = 0;
+    const base = {
+      argv: ['--theme-diagnostics'],
+      env,
+      homeDir: home,
+      stderr: writer(),
+      stdout: writer(),
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      probeAdapterSdk: async () => true,
+      launchManagedTmuxPlay: async () => {
+        managedCalls += 1;
+        throw new Error('managed preparation must not run');
+      },
+    };
+
+    const exit4 = await runPlaybookCli({
+      ...base,
+      spawn: fakeSpawn({ exitCode: 4 }).fn,
+    });
+    expect(exit4).toEqual({ code: 4 });
+
+    const signal = await runPlaybookCli({
+      ...base,
+      spawn: fakeSpawn({ signal: 'SIGHUP' }).fn,
+    });
+    expect(signal).toEqual({ signal: 'SIGHUP' });
+
+    const failed = await runPlaybookCli({
+      ...base,
+      spawn: () => {
+        throw new Error('diagnostic spawn boom');
+      },
+    });
+    expect(failed).toEqual({ code: 127 });
+    expect(managedCalls).toBe(0);
+  });
+
+  it('enforces the managed selector grammar before launch work', () => {
+    const id = '90000000-0000-4000-8000-000000000051';
+    expect(parseInteractiveArgs(['--cwd', './present'])).toMatchObject({
+      cwd: './present',
+    });
+    expect(() => parseInteractiveArgs(['--session', id, '--cwd', '.'])).toThrow(
+      /stored working directory is authoritative/,
+    );
+    expect(() => parseInteractiveArgs(['--continue'])).toThrow(
+      /headless recovery syntax/,
+    );
+    expect(() => parseInteractiveArgs(['--list', '--theme-diagnostics'])).toThrow(
+      /cannot combine/,
+    );
+    expect(() => parseInteractiveArgs(['--list', '--cwd', '.'])).toThrow(
+      /fresh launch and cannot combine with --list/,
+    );
+    expect(() => parseInteractiveArgs(['--session', id, '--session', id])).toThrow(
+      /repeated or combined/,
+    );
+  });
+
+  it('carries --no-provision as closed managed-child control metadata', async () => {
+    const id = '90000000-0000-4000-8000-000000000060';
+    let descriptor: any;
+    const out = await managedCliHarness({
+      argv: ['--no-provision'],
+      sessionId: id,
+      launchManagedTmuxPlay: async (options: any) => {
+        const workDir = await mkdtemp(join(tmpdir(), 'playbook-managed-work-'));
+        const coordinationDir = await mkdtemp(
+          join(tmpdir(), 'playbook-managed-coordination-'),
+        );
+        tempDirs.push(workDir, coordinationDir);
+        await options.createSessionCommand({
+          sessionId: id,
+          cwd: options.cwd,
+          workDir,
+          readinessPath: join(coordinationDir, 'status.json'),
+          inputGatePath: join(coordinationDir, 'input-ready'),
+          inputActivePath: join(coordinationDir, 'input-active'),
+          shutdownRequestPath: join(coordinationDir, 'shutdown-request'),
+          shutdownCompletePath: join(coordinationDir, 'shutdown-complete'),
+        });
+        descriptor = JSON.parse(
+          await readFile(
+            join(workDir, MANAGED_INTERACTIVE_PAYLOAD_FILE),
+            'utf8',
+          ),
+        );
+        return {
+          sessionId: id,
+          async cancel() {},
+          async attach() {},
+        };
+      },
+    });
+
+    expect(out.result).toEqual({ code: 0 });
+    expect(descriptor).toMatchObject({
+      kind: 'playbook-managed-interactive-launch',
+      noProvision: true,
+    });
+  });
+
+  it('cancels a managed session on pre-launch, report-backpressure, and final pre-attach aborts', async () => {
+    const id = '90000000-0000-4000-8000-000000000052';
+    const prelaunch = new AbortController();
+    prelaunch.abort(new Error('pre-launch signal'));
+    let launchCalls = 0;
+    const before = await managedCliHarness({
+      sessionId: id,
+      signal: prelaunch.signal,
+      launchManagedTmuxPlay: async () => {
+        launchCalls += 1;
+        throw new Error('must not launch');
+      },
+    });
+    expect(before.result.code).toBe(1);
+    expect(launchCalls).toBe(0);
+
+    const report = new AbortController();
+    const reportEvents: string[] = [];
+    const blocked = new EventEmitter() as EventEmitter & {
+      write(value: string): boolean;
+      text(): string;
+    };
+    const reportChunks: string[] = [];
+    blocked.write = (value: string) => {
+      reportChunks.push(String(value));
+      queueMicrotask(() => report.abort(new Error('report signal')));
+      return false;
+    };
+    blocked.text = () => reportChunks.join('');
+    const during = await managedCliHarness({
+      sessionId: id,
+      signal: report.signal,
+      stderr: blocked,
+      launchManagedTmuxPlay: async () => ({
+        sessionId: id,
+        async cancel() {
+          reportEvents.push('cancel');
+        },
+        async attach() {
+          reportEvents.push('attach');
+        },
+      }),
+    });
+    expect(during.result.code).toBe(1);
+    expect(reportEvents).toEqual(['cancel']);
+
+    const final = new AbortController();
+    const finalEvents: string[] = [];
+    const preAttach = await managedCliHarness({
+      sessionId: id,
+      signal: final.signal,
+      stderr: {
+        write(value: string) {
+          finalEvents.push(`report:${String(value).trim()}`);
+          final.abort(new Error('pre-attach signal'));
+          return true;
+        },
+      },
+      launchManagedTmuxPlay: async () => ({
+        sessionId: id,
+        async cancel() {
+          finalEvents.push('cancel');
+        },
+        async attach() {
+          finalEvents.push('attach');
+        },
+      }),
+    });
+    expect(preAttach.result.code).toBe(1);
+    expect(finalEvents).toEqual([
+      `report:playbook: session ${id}`,
+      'cancel',
+      'report:playbook: failed to launch managed session: pre-attach signal',
+    ]);
+  });
+
+  it('aggregates report and cancellation failures instead of losing ownership risk', async () => {
+    const id = '90000000-0000-4000-8000-000000000053';
+    let writes = 0;
+    const diagnostics: string[] = [];
+    const out = await managedCliHarness({
+      sessionId: id,
+      stderr: {
+        write(value: string) {
+          writes += 1;
+          if (writes === 1) throw new Error('report failed');
+          diagnostics.push(String(value));
+          return true;
+        },
+      },
+      launchManagedTmuxPlay: async () => ({
+        sessionId: id,
+        async cancel() {
+          throw new Error('cancel failed');
+        },
+        async attach() {},
+      }),
+    });
+    expect(out.result.code).toBe(1);
+    expect(diagnostics.join('')).toContain(
+      'report failed) and cancellation could not prove ownership retirement: cancel failed',
+    );
+  });
+
+  it('waits for an aborted pending preparation, cancels its late handle, and leaks no signal listeners or id', async () => {
+    const id = '90000000-0000-4000-8000-000000000055';
+    const processLike = new FakeProcessLike();
+    const stderr = writer();
+    let resolvePreparation: (value: any) => void = () => {};
+    const prepared = new Promise((resolvePromise) => {
+      resolvePreparation = resolvePromise;
+    });
+    let launchStarted: () => void = () => {};
+    const started = new Promise<void>((resolvePromise) => {
+      launchStarted = resolvePromise;
+    });
+    const events: string[] = [];
+    const resultPromise = managedCliHarness({
+      sessionId: id,
+      entry: true,
+      processLike,
+      stderr,
+      launchManagedTmuxPlay: async () => {
+        launchStarted();
+        return prepared;
+      },
+    });
+    await started;
+    processLike.emit('SIGTERM');
+    resolvePreparation({
+      sessionId: id,
+      async cancel() {
+        events.push('cancel');
+      },
+      async attach() {
+        events.push('attach');
+      },
+    });
+    const out = await resultPromise;
+    expect(out.result).toEqual({ signal: 'SIGTERM' });
+    expect(events).toEqual(['cancel']);
+    expect(stderr.text()).not.toContain(`session ${id}\n`);
+    expect(processLike.listenerCount('SIGINT')).toBe(0);
+    expect(processLike.listenerCount('SIGTERM')).toBe(0);
+    expect(processLike.listenerCount('SIGHUP')).toBe(0);
+  });
+
+  it('cancels a prepared session whose public identity is mismatched', async () => {
+    const id = '90000000-0000-4000-8000-000000000056';
+    const events: string[] = [];
+    const out = await managedCliHarness({
+      sessionId: id,
+      launchManagedTmuxPlay: async () => ({
+        sessionId: '90000000-0000-4000-8000-000000000057',
+        async cancel() {
+          events.push('cancel');
+        },
+        async attach() {
+          events.push('attach');
+        },
+      }),
+    });
+    expect(out.result.code).toBe(1);
+    expect(events).toEqual(['cancel']);
+    expect(out.stderr.text()).toContain('prepared a mismatched session id');
+    expect(out.stderr.text()).not.toContain(`session ${id}\n`);
+  });
+
+  it('aborts managed activation before native signal hand-off', async () => {
+    const id = '90000000-0000-4000-8000-000000000061';
+    const processLike = new FakeProcessLike();
+    const events: string[] = [];
+    let activationStarted: () => void = () => {};
+    const started = new Promise<void>((resolvePromise) => {
+      activationStarted = resolvePromise;
+    });
+    const resultPromise = managedCliHarness({
+      sessionId: id,
+      entry: true,
+      processLike,
+      launchManagedTmuxPlay: async () => ({
+        sessionId: id,
+        async cancel() {
+          events.push('cancel');
+        },
+        async attach(options: any) {
+          events.push('activation');
+          expect(processLike.listenerCount('SIGTERM')).toBe(1);
+          activationStarted();
+          await new Promise<void>((resolvePromise) => {
+            options.signal.addEventListener('abort', () => resolvePromise(), {
+              once: true,
+            });
+          });
+          events.push('cleanup');
+          throw options.signal.reason;
+        },
+      }),
+    });
+    await started;
+    processLike.emit('SIGTERM');
+    const result = await resultPromise;
+    expect(result.result).toEqual({ signal: 'SIGTERM' });
+    expect(events).toEqual(['activation', 'cleanup']);
+    expect(processLike.kills).toEqual([]);
+    expect(processLike.listenerCount('SIGINT')).toBe(0);
+    expect(processLike.listenerCount('SIGTERM')).toBe(0);
+    expect(processLike.listenerCount('SIGHUP')).toBe(0);
+  });
+
+  it('transfers signal ownership synchronously before native attach begins', async () => {
+    const id = '90000000-0000-4000-8000-000000000054';
+    const processLike = new FakeProcessLike();
+    const events: string[] = [];
+    const result = await managedCliHarness({
+      sessionId: id,
+      entry: true,
+      processLike,
+      onBeforeManagedAttach() {
+        events.push('transferred');
+      },
+      launchManagedTmuxPlay: async () => ({
+        sessionId: id,
+        async cancel() {
+          events.push('cancel');
+        },
+        async attach(options: any) {
+          events.push('activation');
+          expect(processLike.listenerCount('SIGINT')).toBe(1);
+          options.beforeNativeAttach();
+          events.push('attach');
+          expect(processLike.listenerCount('SIGINT')).toBe(0);
+          processLike.emit('SIGINT');
+          events.push('post-signal');
+        },
+      }),
+    });
+    expect(result.result).toEqual({ code: 0 });
+    expect(events).toEqual([
+      'activation',
+      'transferred',
+      'attach',
+      'post-signal',
+    ]);
+    expect(processLike.kills).toEqual([]);
+  });
+
+  it('keeps selected outer planning data-only across a settled-to-uncertain race', async () => {
+    const id = '90000000-0000-4000-8000-000000000058';
+    const home = await makeTempHome();
+    const configPath = resolveUserConfigPath({}, home);
+    const selectedRegistry = {
+      ...fakeEntry,
+      requiredRoleIds: ['coder'],
+      validateOptions: (options: unknown) => options,
+    };
+    await writeUserConfig(
+      home,
+      [
+        'captain: { adapter: claude, model: baseline-captain }',
+        'players:',
+        '  dev.coder: { adapter: codex, model: baseline-player }',
+        'playbooks:',
+        '  code: { from: mod://code, roles: { coder: dev.coder } }',
+        '',
+      ].join('\n'),
+    );
+    const baseline = await loadLaunchPlan({
+      userConfigPath: configPath,
+      loadModule: loader({ 'mod://code': { default: selectedRegistry } }),
+    });
+    const execution = executionConfigFromPlan(baseline);
+    const structuralProjection = projectCaptainSessionStructure(execution);
+    const settled = validateCaptainSessionRecord({
+      schemaVersion: 3,
+      kind: 'captain-session',
+      state: 'settled',
+      sessionId: id,
+      createdAt: '2026-08-12T18:00:00.000Z',
+      updatedAt: '2026-08-12T18:00:00.001Z',
+      cwd: process.cwd(),
+      structuralProjection,
+      lastAppliedExecutionProjection: execution,
+      snapshot: selectedTurnZeroSnapshot(execution),
+    });
+    const uncertain = validateCaptainSessionRecord({
+      ...settled,
+      state: 'uncertain',
+      updatedAt: '2026-08-12T18:00:00.002Z',
+      uncertain: {
+        baseUpdatedAt: settled.updatedAt,
+        input: 'raced input',
+        attemptId: '90000000-0000-4000-8000-000000000059',
+        attemptNumber: 1,
+        markedAt: '2026-08-12T18:00:00.002Z',
+        attemptedExecutionProjection: execution,
+      },
+    });
+    await writeUserConfig(
+      home,
+      [
+        'captain: { adapter: claude, model: current-captain }',
+        'players:',
+        '  dev.coder: { adapter: codex, model: current-player, effort: high }',
+        'playbooks:',
+        '  code: { from: mod://code, roles: { coder: dev.coder } }',
+        '',
+      ].join('\n'),
+    );
+
+    let reads = 0;
+    const sessionStore = {
+      async read() {
+        reads += 1;
+        return reads === 1 ? settled : uncertain;
+      },
+    };
+    let prepares = 0;
+    let imports = 0;
+    let projected: any;
+    const stderr = writer();
+    const result = await runPlaybookCli({
+      argv: ['--session', id],
+      env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+      homeDir: home,
+      stderr,
+      stdout: writer(),
+      tmuxPlayBin: '/tmp/tmux-play.js',
+      sessionStore,
+      prepareRegistryModule: async () => {
+        prepares += 1;
+      },
+      loadModule: async () => {
+        imports += 1;
+        throw new Error('selected outer process must not import a registry');
+      },
+      probeAdapterSdk: async () => true,
+      launchManagedTmuxPlay: async ({ configPath: projectedPath }: any) => {
+        projected = parseYaml(readFileSync(projectedPath, 'utf8'));
+        const authoritative = validateCaptainSessionRecord(
+          await sessionStore.read(),
+        );
+        if (authoritative.state !== 'settled') {
+          throw new Error('pane child rejected the raced uncertain record');
+        }
+        throw new Error('unreachable');
+      },
+    });
+
+    expect(result).toEqual({ code: 1 });
+    expect(reads).toBe(2);
+    expect(prepares).toBe(0);
+    expect(imports).toBe(0);
+    expect(projected.captain.model).toBe('current-captain');
+    expect(projected.players).toContainEqual(
+      expect.objectContaining({
+        id: 'dev.coder',
+        model: 'current-player',
+        effort: 'high',
+      }),
+    );
+    expect(stderr.text()).toContain(
+      'pane child rejected the raced uncertain record',
+    );
+  });
 });
+
+async function managedCliHarness(options: any) {
+  const home = await makeTempHome();
+  await writeUserConfig(home, minimalConfig());
+  const stderr = options.stderr ?? writer();
+  const run = options.entry ? runPlaybookCliEntry : runPlaybookCli;
+  const result = await run({
+    argv: options.argv ?? [],
+    env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
+    homeDir: home,
+    stderr,
+    stdout: writer(),
+    tmuxPlayBin: '/tmp/tmux-play.js',
+    createLogicalSessionId: () => options.sessionId,
+    probeAdapterSdk: async () => true,
+    launchManagedTmuxPlay: options.launchManagedTmuxPlay,
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.processLike ? { processLike: options.processLike } : {}),
+    ...(options.onBeforeManagedAttach
+      ? { onBeforeManagedAttach: options.onBeforeManagedAttach }
+      : {}),
+  });
+  return { result, stderr };
+}
+
+class FakeProcessLike extends EventEmitter {
+  pid = 101;
+  argv = ['/usr/bin/node', '/tmp/playbook'];
+  kills: Array<{ pid: number; signal: string }> = [];
+  kill(pid: number, signal: string) {
+    this.kills.push({ pid, signal });
+  }
+}
+
+function selectedTurnZeroSnapshot(execution: any) {
+  const structural = projectCaptainSessionStructure(execution);
+  const parked = {
+    value: 'routing',
+    activeStateIds: ['routing'],
+    tags: ['playbook.parked'],
+    status: 'active',
+    quiescent: true,
+    stateId: 'routing',
+  };
+  return {
+    schemaVersion: 3,
+    captain: {
+      sessionId: '80000000-0000-4000-8000-000000000058',
+      runtime: {
+        schemaVersion: 3,
+        playbookId: 'captain',
+        machine: { value: parked.value, status: parked.status },
+        roleResumeTokens: {},
+        sequences: {
+          trace: 0,
+          turn: 0,
+          judgeCall: 0,
+          playerCall: 0,
+          playbookCall: 0,
+          captainCall: 0,
+        },
+        state: parked,
+        pendingBossQuestions: [],
+      },
+      agent: structural.captain,
+      conversation: { kind: 'unopened' },
+    },
+    playerSessions: Object.fromEntries(
+      structural.players.map(({ id, ...agent }: any) => [id, agent]),
+    ),
+    issuedSessionIds: ['80000000-0000-4000-8000-000000000058'],
+    sequences: { turn: 0, journal: 0 },
+    journal: [],
+    mode: 'chat',
+  };
+}
 
 async function makeTempHome(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'playbook-cli-test-'));
@@ -1490,6 +2096,28 @@ function fakeSpawn(opts: { exitCode?: number; signal?: string } = {}) {
   };
 }
 
+function fakeManagedLaunch(spawn: ReturnType<typeof fakeSpawn>) {
+  return async (options: {
+    configPath: string;
+    sessionId: string;
+    cwd: string;
+  }) => {
+    spawn.calls.push({
+      command: 'launchManagedTmuxPlay',
+      args: ['--config', options.configPath, '--session', options.sessionId],
+    });
+    spawn.configs.push({
+      path: options.configPath,
+      content: readFileSync(options.configPath, 'utf8'),
+    });
+    return {
+      sessionId: options.sessionId,
+      async attach() {},
+      async cancel() {},
+    };
+  };
+}
+
 function writer() {
   const chunks: string[] = [];
   return {
@@ -1541,6 +2169,7 @@ describe('playbook --with overlays (PBCLI-27)', () => {
       stdout: stdout as never,
       stderr: stderr as never,
       spawn: spawn.fn,
+      launchManagedTmuxPlay: fakeManagedLaunch(spawn),
       tmuxPlayBin: '/tmp/tmux-play.js',
       // PBCLI-39: overlay behavior is independent of host SDK availability;
       // adapter-preflight behavior has its own injected-probe tests above.

@@ -55,6 +55,45 @@ function oneRoleConfig() {
   };
 }
 
+function structuralProjection(plan: any) {
+  const fixed = (agent: any) => ({
+    adapter: agent.adapter,
+    ...(agent.instruction === undefined
+      ? {}
+      : { instruction: agent.instruction }),
+    ...(agent.permissions === undefined
+      ? {}
+      : { permissions: agent.permissions }),
+  });
+  return {
+    schemaVersion: 1,
+    captain: fixed(plan.captain),
+    players: plan.players.map(({ id, agent }: any) => ({ id, ...fixed(agent) })),
+    catalog: Object.fromEntries(
+      Object.entries(plan.catalog).map(([id, item]: any) => [
+        id,
+        {
+          id: item.id,
+          from: item.from,
+          manifestCommand: item.manifestCommand,
+          command: item.command,
+          intent: item.intent,
+          artifactSchema: item.artifactSchema,
+          requiredRoleIds: item.requiredRoleIds,
+          concurrentRoleSets: item.concurrentRoleSets,
+          roles: Object.fromEntries(
+            Object.entries(item.roles).map(([role, binding]: any) => [
+              role,
+              { playerId: binding.playerId },
+            ]),
+          ),
+          options: item.options,
+        },
+      ]),
+    ),
+  };
+}
+
 describe('shared launch-config plan (PBCLI-47)', () => {
   it('builds detached tagged session agents and an exact tmux projection', async () => {
     const top = {
@@ -785,6 +824,88 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(notices).toEqual([]);
     expect(await readFile(configPath, 'utf8')).toBe(source);
     await expect(access(`${configPath}.bak`)).rejects.toThrow();
+  });
+
+  it('projects a selected launch from stored catalog data without preparation or import', async () => {
+    const initial = await launchConfig.normalizeLaunchPlan(
+      {
+        captain: 'claude',
+        players: {
+          'dev.coder': 'codex',
+          'dev.reviewer': 'claude',
+        },
+        playbooks: {
+          code: {
+            from: 'mod://code',
+            roles: {
+              coder: 'dev.coder',
+              reviewer: 'dev.reviewer',
+            },
+          },
+        },
+      },
+      {
+        loadModule: moduleLoader({
+          'mod://code': entry('code', ['coder', 'reviewer']),
+        }),
+      },
+    );
+    const structural = structuralProjection(initial);
+    const root = await mkdtemp(join(tmpdir(), 'playbook-selected-data-only-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    await writeFile(
+      configPath,
+      [
+        'captain: { adapter: claude, model: current-captain }',
+        'players:',
+        '  dev.coder: { adapter: codex, model: current-player, effort: high }',
+        '  dev.reviewer: { adapter: claude, model: current-reviewer }',
+        'playbooks:',
+        '  code:',
+        '    from: mod://code',
+        '    roles: { reviewer: dev.reviewer, coder: dev.coder }',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const prepareRegistryModule = vi.fn();
+    const loadModule = vi.fn();
+
+    const plan = await launchConfig.loadSelectedLaunchPlanDataOnly({
+      userConfigPath: configPath,
+      structuralProjection: structural,
+      prepareRegistryModule,
+      loadModule,
+    });
+
+    expect(prepareRegistryModule).not.toHaveBeenCalled();
+    expect(loadModule).not.toHaveBeenCalled();
+    expect(plan.captain.model).toEqual({
+      kind: 'value',
+      value: 'current-captain',
+    });
+    expect(plan.players[0].agent).toMatchObject({
+      model: { kind: 'value', value: 'current-player' },
+      effort: { kind: 'value', value: 'high' },
+    });
+    expect(plan.catalog.code).toMatchObject({
+      from: 'mod://code',
+      manifestCommand: 'code',
+      requiredRoleIds: ['coder', 'reviewer'],
+      roles: {
+        coder: {
+          playerId: 'dev.coder',
+          model: { kind: 'value', value: 'current-player' },
+          effort: { kind: 'value', value: 'high' },
+        },
+        reviewer: {
+          playerId: 'dev.reviewer',
+          model: { kind: 'value', value: 'current-reviewer' },
+          effort: { kind: 'provider-default' },
+        },
+      },
+    });
   });
 
   it('merges selected overlay members without traversing poisoned additions', async () => {

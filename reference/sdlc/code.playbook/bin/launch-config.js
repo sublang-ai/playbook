@@ -18,6 +18,7 @@ import {
 import { homedir, tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import {
   parse as parseYaml,
   parseDocument as parseYamlDocument,
@@ -188,6 +189,314 @@ export async function loadLaunchPlan({
     prepareRegistryModule,
     selectedMembers,
   });
+}
+
+// PBCLI-22/49: an interactive selected launch may project current tuning and
+// presentation before its pane child owns the writer lease, but it must not
+// prepare or import a registry from an unlocked advisory read. Rebuild the
+// durable catalog from the validated stored structural projection and use the
+// current config only for compatible Captain/player tuning and presentation.
+export async function loadSelectedLaunchPlanDataOnly({
+  userConfigPath,
+  overlayPaths = [],
+  structuralProjection,
+  templatePath = DEFAULT_TEMPLATE_PATH,
+  onNotice = () => {},
+}) {
+  const stored = validateStoredStructuralProjection(structuralProjection);
+  const selectedMembers = selectedMembersFromStoredStructure(stored);
+  seedUserConfigIfMissing(userConfigPath, templatePath, onNotice);
+
+  let top = parseYaml(readFileSync(userConfigPath, 'utf8')) ?? {};
+  if (overlayPaths.length > 0 && !isObject(top)) {
+    throw new Error(
+      `the top-level config at ${userConfigPath} must be a YAML map before --with can overlay it`,
+    );
+  }
+  top = projectSelectedLayer(
+    top,
+    validateSelectedMembers(selectedMembers),
+    'config',
+  );
+  for (const overlayPath of overlayPaths) {
+    top = mergeSelectedConfigs(
+      top,
+      loadOverlayFragment(overlayPath),
+      selectedMembers,
+    );
+  }
+  return await normalizeSelectedLaunchPlanDataOnly(top, {
+    configPath: userConfigPath,
+    stored,
+    selectedMembers,
+  });
+}
+
+export async function normalizeSelectedLaunchPlanDataOnly(
+  top,
+  { configPath, stored, selectedMembers } = {},
+) {
+  stored = validateStoredStructuralProjection(stored);
+  const expectedMembers = selectedMembersFromStoredStructure(stored);
+  if (selectedMembers !== undefined) {
+    const supplied = validateSelectedMembers(selectedMembers);
+    if (
+      !isDeepStrictEqual(supplied.playbookIds, expectedMembers.playbookIds) ||
+      !isDeepStrictEqual(supplied.playerIds, expectedMembers.playerIds)
+    ) {
+      throw new Error(
+        'selected launch members do not match the stored structural projection',
+      );
+    }
+  }
+  top = projectSelectedMembers(top, expectedMembers);
+  top = cloneJson(top, 'config');
+  assertNoRetiredProfiles(top, configPath);
+  if (hasOwn(top, 'run')) {
+    throw new Error(
+      'top-level "run" was removed: configure the shared Captain under ' +
+        'captain, top-level players, and playbooks.<id>.roles instead',
+    );
+  }
+  const unknownTopLevel = Object.keys(top).filter(
+    (key) => !PLAYBOOK_TOP_LEVEL_KEYS.has(key),
+  );
+  if (unknownTopLevel.length > 0) {
+    throw new Error(
+      `config has unknown top-level ${formatKeyList(unknownTopLevel)}`,
+    );
+  }
+  if (top.layout !== undefined && !isObject(top.layout)) {
+    throw new Error('layout must be a map');
+  }
+
+  const playersCfg = requireObject(top.players, 'players');
+  const configuredAgents = new Map();
+  for (const playerId of expectedMembers.playerIds) {
+    assertPlayerId(playerId, `players.${playerId}`);
+    const agent = resolveAgent(playersCfg[playerId], `players.${playerId}`, [
+      'id',
+    ]);
+    configuredAgents.set(playerId, agent);
+  }
+  let captain = resolveAgent(top.captain, 'captain', ['from', 'options']);
+
+  const playbooksCfg = requireObject(top.playbooks, 'playbooks');
+  const tuningChecks = [];
+  let tuningCheckIndex = 0;
+  const authored = new Map();
+  for (const id of expectedMembers.playbookIds) {
+    const storedItem = stored.catalog[id];
+    const block = requireObject(playbooksCfg[id], `playbooks.${id}`);
+    if (hasOwn(block, 'players')) {
+      throw legacyPlayersError(`playbooks.${id}.players`, configPath);
+    }
+    if (
+      typeof block.from !== 'string' ||
+      block.from.trim().length === 0 ||
+      block.from !== block.from.trim()
+    ) {
+      throw new Error(
+        `playbooks.${id}.from must be a canonical trimmed module specifier`,
+      );
+    }
+    const configuredFrom = canonicalizeRegistrySpecifier(block.from, configPath);
+    if (configuredFrom !== storedItem.from) {
+      throw new Error(
+        `playbooks.${id}.from changed from the stored structural projection`,
+      );
+    }
+    const command = block.command ?? storedItem.manifestCommand;
+    if (command !== storedItem.command) {
+      throw new Error(
+        `playbooks.${id}.command changed from the stored structural projection`,
+      );
+    }
+    const rolesMap = requireObject(block.roles, `playbooks.${id}.roles`);
+    assertExactRoleBindings(
+      id,
+      Object.keys(rolesMap),
+      storedItem.requiredRoleIds,
+    );
+    const bindings = {};
+    for (const role of storedItem.requiredRoleIds) {
+      const binding = resolveRoleBinding(
+        rolesMap[role],
+        `playbooks.${id}.roles.${role}`,
+      );
+      if (binding.playerId !== storedItem.roles[role].playerId) {
+        throw new Error(
+          `playbooks.${id}.roles.${role} changed its stored player binding`,
+        );
+      }
+      bindings[role] = binding;
+      if (binding.model !== undefined || binding.effort !== undefined) {
+        let checkId;
+        do {
+          checkId = `binding-check-${tuningCheckIndex}`;
+          tuningCheckIndex += 1;
+        } while (configuredAgents.has(checkId));
+        tuningChecks.push({
+          id: checkId,
+          agent: applyTuningOverrides(
+            configuredAgents.get(binding.playerId),
+            binding,
+          ),
+        });
+      }
+    }
+    const optionSlice = Object.fromEntries(
+      Object.entries(block).filter(
+        ([key]) => !PLAYBOOK_LAUNCHER_KEYS.includes(key),
+      ),
+    );
+    if (!isDeepStrictEqual(optionSlice, storedItem.options)) {
+      throw new Error(
+        `playbooks.${id} options changed from the stored structural projection`,
+      );
+    }
+    authored.set(id, { bindings });
+  }
+
+  const firstRoleful = expectedMembers.playbookIds
+    .map((id) => stored.catalog[id])
+    .find((item) => item.requiredRoleIds.length > 0);
+  const initialVisible =
+    firstRoleful === undefined
+      ? []
+      : distinct(
+          firstRoleful.requiredRoleIds.map(
+            (role) => firstRoleful.roles[role].playerId,
+          ),
+        );
+  const validationVisible =
+    initialVisible.length === 0
+      ? expectedMembers.playerIds.slice(0, 1)
+      : initialVisible;
+  const provisional = {
+    captain: { ...captain, from: PLAYBOOK_CAPTAIN_MODULE, options: {} },
+    players: [
+      ...expectedMembers.playerIds.map((id) => ({
+        id,
+        ...configuredAgents.get(id),
+      })),
+      ...tuningChecks.map(({ id, agent }) => ({ id, ...agent })),
+    ],
+    layout: {
+      ...(isObject(top.layout) ? top.layout : {}),
+      initialVisible: validationVisible,
+    },
+    ...(top.notifications === undefined
+      ? {}
+      : { notifications: top.notifications }),
+    ...(top.theme === undefined ? {} : { theme: top.theme }),
+  };
+  const normalizedHost = await normalizeHostConfig(provisional);
+  const normalizedPresentationHost =
+    initialVisible.length === 0 && expectedMembers.playerIds.length > 0
+      ? await normalizeHostConfig({
+          ...provisional,
+          players: [],
+          layout: { ...provisional.layout, initialVisible: [] },
+        })
+      : normalizedHost;
+  const { from: _captainFrom, options: _captainOptions, ...normalizedCaptain } =
+    normalizedHost.captain;
+  captain = sessionAgentFromHostAgent(normalizedCaptain, 'captain');
+  const hostAgents = new Map(
+    normalizedHost.players.map(({ id, ...agent }) => [id, agent]),
+  );
+  const normalizedPlayerAgents = new Map(
+    expectedMembers.playerIds.map((id) => [
+      id,
+      sessionAgentFromHostAgent(hostAgents.get(id), `players.${id}`),
+    ]),
+  );
+
+  const catalog = Object.fromEntries(
+    expectedMembers.playbookIds.map((id) => {
+      const storedItem = stored.catalog[id];
+      const bindings = authored.get(id).bindings;
+      return [
+        id,
+        {
+          ...cloneJson(storedItem, `stored catalog.${id}`),
+          roles: Object.fromEntries(
+            storedItem.requiredRoleIds.map((role) => {
+              const binding = bindings[role];
+              const agent = normalizedPlayerAgents.get(binding.playerId);
+              return [
+                role,
+                {
+                  playerId: binding.playerId,
+                  model:
+                    binding.model === undefined
+                      ? agent.model
+                      : overrideTuningSelection(binding.model),
+                  effort:
+                    binding.effort === undefined
+                      ? agent.effort
+                      : overrideTuningSelection(binding.effort),
+                },
+              ];
+            }),
+          ),
+        },
+      ];
+    }),
+  );
+  const candidateStructure = {
+    schemaVersion: stored.schemaVersion,
+    captain: fixedAgentProjection(captain),
+    players: expectedMembers.playerIds.map((id) => ({
+      id,
+      ...fixedAgentProjection(normalizedPlayerAgents.get(id)),
+    })),
+    catalog: Object.fromEntries(
+      Object.entries(catalog).map(([id, item]) => [
+        id,
+        {
+          ...cloneJson(stored.catalog[id], `stored catalog.${id}`),
+          roles: Object.fromEntries(
+            Object.entries(item.roles).map(([role, binding]) => [
+              role,
+              { playerId: binding.playerId },
+            ]),
+          ),
+        },
+      ]),
+    ),
+  };
+  if (!isDeepStrictEqual(candidateStructure, stored)) {
+    throw new Error(
+      'current selected config does not reproduce the stored structural projection',
+    );
+  }
+
+  return deepFreeze(
+    cloneJson(
+      {
+        schemaVersion: 1,
+        captain,
+        players: expectedMembers.playerIds.map((id) => ({
+          id,
+          agent: normalizedPlayerAgents.get(id),
+        })),
+        catalog,
+        presentation: {
+          layout: {
+            ...normalizedPresentationHost.layout,
+            initialVisible,
+          },
+          notifications: normalizedPresentationHost.notifications,
+          ...(normalizedPresentationHost.theme === undefined
+            ? {}
+            : { theme: normalizedPresentationHost.theme }),
+        },
+      },
+      'selected launch config',
+    ),
+  );
 }
 
 // PBCLI-8 (DR-021): scalar agents are adapter shorthands and full blocks
@@ -979,6 +1288,99 @@ function invalidRegistryEntryReason(value) {
     return 'createRuntime must be a function';
   }
   return undefined;
+}
+
+function validateStoredStructuralProjection(value) {
+  const stored = cloneJson(value, 'stored structural projection');
+  if (!isPlainObject(stored) || stored.schemaVersion !== 1) {
+    throw new Error('stored structural projection schema 1 is required');
+  }
+  const captain = requireObject(stored.captain, 'stored structural captain');
+  if (typeof captain.adapter !== 'string' || captain.adapter.length === 0) {
+    throw new Error('stored structural captain must name an adapter');
+  }
+  if (!Array.isArray(stored.players) || !isPlainObject(stored.catalog)) {
+    throw new Error(
+      'stored structural projection must contain players and catalog',
+    );
+  }
+  const playerIds = stored.players.map((player, index) => {
+    const record = requireObject(player, `stored structural players.${index}`);
+    assertPlayerId(record.id, `stored structural players.${index}.id`);
+    if (typeof record.adapter !== 'string' || record.adapter.length === 0) {
+      throw new Error(
+        `stored structural players.${index} must name an adapter`,
+      );
+    }
+    return record.id;
+  });
+  if (new Set(playerIds).size !== playerIds.length) {
+    throw new Error('stored structural player ids must be unique');
+  }
+  for (const [id, itemValue] of Object.entries(stored.catalog)) {
+    const item = requireObject(itemValue, `stored structural catalog.${id}`);
+    if (item.id !== id || id === RESERVED_CAPTAIN_PLAYBOOK_ID) {
+      throw new Error(`stored structural catalog.${id}.id is invalid`);
+    }
+    for (const field of [
+      'from',
+      'manifestCommand',
+      'command',
+      'intent',
+    ]) {
+      if (typeof item[field] !== 'string') {
+        throw new Error(`stored structural catalog.${id}.${field} is invalid`);
+      }
+    }
+    if (
+      !Array.isArray(item.requiredRoleIds) ||
+      !Array.isArray(item.concurrentRoleSets) ||
+      !isPlainObject(item.roles) ||
+      !isPlainObject(item.options)
+    ) {
+      throw new Error(`stored structural catalog.${id} is malformed`);
+    }
+    if (
+      JSON.stringify(Object.keys(item.roles)) !==
+      JSON.stringify(item.requiredRoleIds)
+    ) {
+      throw new Error(
+        `stored structural catalog.${id}.roles must follow requiredRoleIds`,
+      );
+    }
+    for (const role of item.requiredRoleIds) {
+      assertRoleId(role, `stored structural catalog.${id}.roles.${role}`);
+      const binding = requireObject(
+        item.roles[role],
+        `stored structural catalog.${id}.roles.${role}`,
+      );
+      if (!playerIds.includes(binding.playerId)) {
+        throw new Error(
+          `stored structural catalog.${id}.roles.${role} names an absent player`,
+        );
+      }
+    }
+  }
+  return stored;
+}
+
+function selectedMembersFromStoredStructure(stored) {
+  return {
+    playbookIds: Object.keys(stored.catalog),
+    playerIds: stored.players.map((player) => player.id),
+  };
+}
+
+function fixedAgentProjection(agent) {
+  return {
+    adapter: agent.adapter,
+    ...(agent.instruction === undefined
+      ? {}
+      : { instruction: agent.instruction }),
+    ...(agent.permissions === undefined
+      ? {}
+      : { permissions: agent.permissions }),
+  };
 }
 
 function projectSelectedMembers(top, selectedMembers) {

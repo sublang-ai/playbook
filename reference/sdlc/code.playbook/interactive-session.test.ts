@@ -1,0 +1,977 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: 2026 SubLang International <https://sublang.ai>
+
+import { EventEmitter } from 'node:events';
+import {
+  chmod,
+  link,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  createManagedInteractiveLifecycle,
+  createManagedInteractiveSessionCommand,
+  MANAGED_INTERACTIVE_PAYLOAD_FILE,
+  MANAGED_INTERACTIVE_PAYLOAD_KIND,
+  MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,
+  runManagedInteractiveSessionChild,
+  runManagedInteractiveSessionChildEntry,
+} from './bin/interactive-session.js';
+import { captainOptionsFromConfig } from './bin/run.js';
+import {
+  createCaptainSessionStore,
+  projectCaptainSessionStructure,
+} from './bin/session-store.js';
+import {
+  PLAYBOOK_CAPTAIN_MODULE,
+  projectHostAgent,
+} from './bin/launch-config.js';
+
+const logicalSessionId = '90000000-0000-4000-8000-000000000041';
+const internalSessionId = '80000000-0000-4000-8000-000000000041';
+const attemptId = '90000000-0000-4000-8000-000000000042';
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
+  );
+});
+
+describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
+  it('rejects a mismatched tmux snapshot before lease acquisition', async () => {
+    const fixture = await lifecycleFixture();
+    let acquired = 0;
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: {
+        sessionsDir: fixture.sessionsDir,
+        async acquire() {
+          acquired += 1;
+          throw new Error('must not acquire');
+        },
+      },
+    });
+    await expect(
+      lifecycle.initializeRuntime({
+        ...fixture.context,
+        config: { ...fixture.context.config, players: [] },
+      }),
+    ).rejects.toThrow(/player roster does not match/);
+    expect(acquired).toBe(0);
+  });
+
+  it('persists turn zero before readiness, brackets each reply, and retains the lease until shutdown', async () => {
+    const fixture = await lifecycleFixture();
+    let snapshot = shellSnapshot(fixture.execution, 0);
+    const events: string[] = [];
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      createAttemptId: () => attemptId,
+      createSessionHost: async () => ({
+        host: fakeHost(events),
+        shell: { exportSnapshot: () => snapshot },
+        snapshot,
+      }),
+    });
+
+    await lifecycle.initializeRuntime(fixture.context);
+    expect((await fixture.store.read(logicalSessionId)).state).toBe('settled');
+    await expect(fixture.store.acquire(logicalSessionId)).rejects.toThrow(
+      /lease is active/,
+    );
+
+    await lifecycle.beforeNonEmptyTurn({
+      sessionId: logicalSessionId,
+      prompt: 'exact Boss input',
+    });
+    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+      state: 'uncertain',
+      uncertain: { input: 'exact Boss input', attemptId },
+    });
+    snapshot = shellSnapshot(fixture.execution, 1);
+    await lifecycle.afterTurn({
+      sessionId: logicalSessionId,
+      prompt: 'exact Boss input',
+      replies: [
+        { type: 'captain_reply', text: 'durable reply', turnId: 1 },
+      ],
+      terminal: { type: 'turn_finished', turnId: 1 },
+    });
+    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+      state: 'settled',
+      snapshot: { sequences: { turn: 1 } },
+    });
+
+    await lifecycle.shutdown();
+    const next = await fixture.store.acquire(logicalSessionId);
+    await next.release();
+    expect(events).toEqual([]);
+  });
+
+  it('authoritatively restores a selected settled session and leaves an aborted turn uncertain', async () => {
+    const fixture = await lifecycleFixture();
+    await seedSettled(fixture, shellSnapshot(fixture.execution, 0));
+    let restored: unknown;
+    const lifecycle = createManagedInteractiveLifecycle(
+      { ...fixture.payload, mode: 'selected' },
+      {
+        sessionStore: fixture.store,
+        loadModule: registryLoader(fixture.execution),
+        createAttemptId: () => attemptId,
+        createSessionHost: async (options: any) => {
+          restored = options.restoreSnapshot;
+          return {
+            host: fakeHost([]),
+            shell: { exportSnapshot: () => options.restoreSnapshot },
+            snapshot: options.restoreSnapshot,
+          };
+        },
+      },
+    );
+
+    await lifecycle.initializeRuntime(fixture.context);
+    expect(restored).toEqual(shellSnapshot(fixture.execution, 0));
+    await lifecycle.beforeNonEmptyTurn({
+      sessionId: logicalSessionId,
+      prompt: 'will abort',
+    });
+    await expect(
+      lifecycle.afterTurn({
+        sessionId: logicalSessionId,
+        prompt: 'will abort',
+        replies: [],
+        terminal: { type: 'turn_aborted', turnId: 1 },
+      }),
+    ).rejects.toThrow(/remains uncertain/);
+    expect((await fixture.store.read(logicalSessionId)).state).toBe('uncertain');
+    await lifecycle.shutdown();
+  });
+
+  it('rejects uncertain selected state before host work and retires ownership', async () => {
+    const fixture = await lifecycleFixture();
+    const seed = await fixture.store.acquire(logicalSessionId);
+    await seed.initializeSettled({
+      cwd: fixture.payload.cwd,
+      structuralProjection: projectCaptainSessionStructure(fixture.execution),
+      executionProjection: fixture.execution,
+      snapshot: shellSnapshot(fixture.execution, 0),
+    });
+    await seed.beginTurn({
+      input: 'uncertain',
+      attemptId,
+      attemptedExecutionProjection: fixture.execution,
+    });
+    await seed.release();
+    let hostCalls = 0;
+    let prepareCalls = 0;
+    let importCalls = 0;
+    const lifecycle = createManagedInteractiveLifecycle(
+      { ...fixture.payload, mode: 'selected' },
+      {
+        sessionStore: fixture.store,
+        prepareRegistryModule: async () => {
+          prepareCalls += 1;
+        },
+        loadModule: async () => {
+          importCalls += 1;
+          throw new Error('must not import');
+        },
+        createSessionHost: async () => {
+          hostCalls += 1;
+          throw new Error('must not construct');
+        },
+      },
+    );
+
+    await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
+      /uncertain turn/,
+    );
+    expect(hostCalls).toBe(0);
+    expect(prepareCalls).toBe(0);
+    expect(importCalls).toBe(0);
+    const next = await fixture.store.acquire(logicalSessionId);
+    await next.release();
+  });
+
+  it('rejects fresh manifest drift under the lease before host or turn-zero persistence', async () => {
+    const fixture = await lifecycleFixture();
+    let importCalls = 0;
+    let hostCalls = 0;
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      loadModule: async () => {
+        importCalls += 1;
+        return {
+          default: {
+            ...registryEntry(fixture.execution),
+            command: 'drifted-before-pane-start',
+          },
+        };
+      },
+      createSessionHost: async () => {
+        hostCalls += 1;
+        throw new Error('must not construct');
+      },
+    });
+
+    await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
+      /recorded manifest identity/,
+    );
+    expect(importCalls).toBe(1);
+    expect(hostCalls).toBe(0);
+    await expect(fixture.store.read(logicalSessionId)).rejects.toThrow(
+      /does not exist/,
+    );
+    const next = await fixture.store.acquire(logicalSessionId);
+    await next.release();
+  });
+
+  it.each([
+    {
+      label: 'manifest command',
+      execution: executionProjection,
+      mutate: (entry: any) => ({ ...entry, command: 'changed' }),
+    },
+    {
+      label: 'manifest intent',
+      execution: executionProjection,
+      mutate: (entry: any) => ({ ...entry, intent: 'changed' }),
+    },
+    {
+      label: 'artifact schema',
+      execution: executionProjection,
+      mutate: (entry: any) => ({ ...entry, artifactSchema: 1 }),
+    },
+    {
+      label: 'concurrent roles',
+      execution: concurrentExecutionProjection,
+      mutate: (entry: any) => ({
+        ...entry,
+        concurrentRoleSets: [['coder', 'reviewer']],
+      }),
+    },
+  ])(
+    'rejects selected $label drift under the lease before host work',
+    async ({ execution: createExecution, mutate }) => {
+      const fixture = await lifecycleFixture(createExecution());
+      await seedSettled(fixture, shellSnapshot(fixture.execution, 0));
+      let prepareCalls = 0;
+      let importCalls = 0;
+      let hostCalls = 0;
+      const lifecycle = createManagedInteractiveLifecycle(
+        { ...fixture.payload, mode: 'selected' },
+        {
+          sessionStore: fixture.store,
+          prepareRegistryModule: async ({ from }: any) => {
+            prepareCalls += 1;
+            await expect(
+              fixture.store.acquire(logicalSessionId),
+            ).rejects.toThrow(/lease is active/);
+            return from;
+          },
+          loadModule: async () => {
+            importCalls += 1;
+            return {
+              default: mutate(registryEntry(fixture.execution)),
+            };
+          },
+          createSessionHost: async () => {
+            hostCalls += 1;
+            throw new Error('must not construct');
+          },
+        },
+      );
+
+      await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
+        /recorded manifest identity|valid registry entry/,
+      );
+      expect(prepareCalls).toBe(1);
+      expect(importCalls).toBe(1);
+      expect(hostCalls).toBe(0);
+      const next = await fixture.store.acquire(logicalSessionId);
+      await next.release();
+    },
+  );
+
+  it.each([
+    { mode: 'fresh', noProvision: false, enabled: true },
+    { mode: 'fresh', noProvision: true, enabled: false },
+    { mode: 'selected', noProvision: false, enabled: true },
+    { mode: 'selected', noProvision: true, enabled: false },
+  ])(
+    'maps $mode noProvision=$noProvision to provisioning enabled=$enabled under the lease',
+    async ({ mode, noProvision, enabled }) => {
+      const fixture = await lifecycleFixture();
+      if (mode === 'selected') {
+        await seedSettled(fixture, shellSnapshot(fixture.execution, 0));
+      }
+      const factoryCalls: any[] = [];
+      let prepareCalls = 0;
+      let importCalls = 0;
+      const lifecycle = createManagedInteractiveLifecycle(
+        { ...fixture.payload, mode, noProvision },
+        {
+          sessionStore: fixture.store,
+          stderr: {
+            write() {
+              return true;
+            },
+          },
+          createRegistryPreparer(options: any) {
+            factoryCalls.push(options);
+            return async ({ from }: any) => {
+              prepareCalls += 1;
+              await expect(
+                fixture.store.acquire(logicalSessionId),
+              ).rejects.toThrow(/lease is active/);
+              return from;
+            };
+          },
+          loadModule: async () => {
+            importCalls += 1;
+            return { default: registryEntry(fixture.execution) };
+          },
+          createSessionHost: async (options: any) => ({
+            host: fakeHost([]),
+            shell: {
+              exportSnapshot: () =>
+                options.restoreSnapshot ?? shellSnapshot(fixture.execution, 0),
+            },
+            snapshot:
+              options.restoreSnapshot ?? shellSnapshot(fixture.execution, 0),
+          }),
+        },
+      );
+
+      await lifecycle.initializeRuntime(fixture.context);
+      expect(factoryCalls).toHaveLength(1);
+      expect(factoryCalls[0]).toMatchObject({
+        enabled,
+        commandName: 'playbook',
+      });
+      expect(prepareCalls).toBe(1);
+      expect(importCalls).toBe(1);
+      await lifecycle.shutdown();
+    },
+  );
+
+  it('quarantines the writer lease when partial host disposal cannot be proved', async () => {
+    const fixture = await lifecycleFixture();
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      createSessionHost: async () => ({
+        host: {
+          ...fakeHost([]),
+          async dispose() {
+            throw new Error('dispose failed');
+          },
+        },
+        shell: { exportSnapshot: () => undefined },
+        snapshot: undefined,
+      }),
+    });
+
+    await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
+      /cleanup could not prove complete host disposal/,
+    );
+    await lifecycle.shutdown();
+    await expect(fixture.store.acquire(logicalSessionId)).rejects.toThrow(
+      /lease is active/,
+    );
+  });
+
+  it('quarantines the writer lease when Cligent-observed runtime disposal fails', async () => {
+    const fixture = await lifecycleFixture();
+    const snapshot = shellSnapshot(fixture.execution, 0);
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      createSessionHost: async () => ({
+        host: {
+          ...fakeHost([]),
+          async dispose() {
+            throw new Error('runtime dispose failed');
+          },
+        },
+        shell: { exportSnapshot: () => snapshot },
+        snapshot,
+      }),
+    });
+
+    const runtime = await lifecycle.initializeRuntime(fixture.context);
+    await expect(runtime.dispose()).rejects.toThrow('runtime dispose failed');
+    await lifecycle.shutdown();
+    await expect(fixture.store.acquire(logicalSessionId)).rejects.toThrow(
+      /lease is active/,
+    );
+  });
+
+  it('quarantines the writer lease when shared host construction cannot roll back its host', async () => {
+    const fixture = await lifecycleFixture();
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      loadModule: async () => ({
+        default: {
+          ...registryEntry(fixture.execution),
+          validateOptions() {
+            throw new Error('shell init failed');
+          },
+        },
+      }),
+      createHostRuntime: async () => ({
+        abortActiveTurn() {},
+        async runBossTurn() {},
+        async dispose() {
+          throw new Error('rollback dispose failed');
+        },
+      }),
+    });
+
+    await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
+      /cleanup also failed/,
+    );
+    await lifecycle.shutdown();
+    await expect(fixture.store.acquire(logicalSessionId)).rejects.toThrow(
+      /lease is active/,
+    );
+  });
+
+  it('requires the exact prompt, one Captain reply, and the terminal turn id before settlement', async () => {
+    const fixture = await lifecycleFixture();
+    const snapshot = shellSnapshot(fixture.execution, 0);
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      createAttemptId: () => attemptId,
+      createSessionHost: async () => ({
+        host: fakeHost([]),
+        shell: { exportSnapshot: () => snapshot },
+        snapshot,
+      }),
+    });
+    await lifecycle.initializeRuntime(fixture.context);
+    await lifecycle.beforeNonEmptyTurn({
+      sessionId: logicalSessionId,
+      prompt: 'same prompt',
+    });
+    await expect(
+      lifecycle.afterTurn({
+        sessionId: logicalSessionId,
+        prompt: 'changed',
+        replies: [
+          { type: 'captain_reply', text: 'reply', turnId: 1 },
+        ],
+        terminal: { type: 'turn_finished', turnId: 1 },
+      }),
+    ).rejects.toThrow(/prompt changed/);
+    await expect(
+      lifecycle.afterTurn({
+        sessionId: logicalSessionId,
+        prompt: 'same prompt',
+        replies: [
+          { type: 'captain_reply', text: 'reply', turnId: 2 },
+        ],
+        terminal: { type: 'turn_finished', turnId: 1 },
+      }),
+    ).rejects.toThrow(/expected exactly one/);
+    expect((await fixture.store.read(logicalSessionId)).state).toBe('uncertain');
+    await lifecycle.shutdown();
+  });
+});
+
+describe('managed interactive private runner boundary (PBCLI-50)', () => {
+  it('writes one private descriptor, validates its Cligent boundary, and unlinks it before imports or host work', async () => {
+    const fixture = await lifecycleFixture();
+    const controls = await controlBoundary(fixture.payload.cwd);
+    const command = await createManagedInteractiveSessionCommand(
+      controls.context,
+      fixture.payload,
+      { execPath: '/usr/bin/node', selfBin: '/tmp/interactive-session.js' },
+    );
+    const descriptor = join(
+      controls.context.workDir,
+      MANAGED_INTERACTIVE_PAYLOAD_FILE,
+    );
+    expect(command).toBe(`/usr/bin/node /tmp/interactive-session.js ${descriptor}`);
+    expect((await stat(descriptor)).mode & 0o777).toBe(0o600);
+
+    await runManagedInteractiveSessionChild({
+      argv: [descriptor],
+      sessionStore: fixture.store,
+      createSessionHost: async () => {
+        throw new Error('host sentinel');
+      },
+      runManagedSession: async (options: any) => {
+        await expect(stat(descriptor)).rejects.toMatchObject({ code: 'ENOENT' });
+        await expect(options.lifecycle.initializeRuntime({
+          ...fixture.context,
+          observers: [],
+        })).rejects.toThrow('host sentinel');
+      },
+    });
+  });
+
+  it('does not unlink a caller-chosen descriptor outside a valid boundary', async () => {
+    const fixture = await lifecycleFixture();
+    const arbitrary = await mkdtemp(join(tmpdir(), 'playbook-arbitrary-'));
+    tempDirs.push(arbitrary);
+    await chmod(arbitrary, 0o700);
+    const descriptor = join(arbitrary, MANAGED_INTERACTIVE_PAYLOAD_FILE);
+    await writeFile(
+      descriptor,
+      `${JSON.stringify({
+        ...fixture.payload,
+        workDir: arbitrary,
+        readinessPath: join(arbitrary, 'status.json'),
+        inputGatePath: join(arbitrary, 'input-ready'),
+        inputActivePath: join(arbitrary, 'input-active'),
+        shutdownRequestPath: join(arbitrary, 'shutdown-request'),
+        shutdownCompletePath: join(arbitrary, 'shutdown-complete'),
+      })}\n`,
+      { mode: 0o600 },
+    );
+    await expect(
+      runManagedInteractiveSessionChild({ argv: [descriptor] }),
+    ).rejects.toThrow();
+    expect(await readFile(descriptor, 'utf8')).toContain(
+      MANAGED_INTERACTIVE_PAYLOAD_KIND,
+    );
+  });
+
+  it('rejects a multiply linked descriptor before consuming either name', async () => {
+    const fixture = await lifecycleFixture();
+    const controls = await controlBoundary(fixture.payload.cwd);
+    await createManagedInteractiveSessionCommand(controls.context, fixture.payload);
+    const descriptor = join(
+      controls.context.workDir,
+      MANAGED_INTERACTIVE_PAYLOAD_FILE,
+    );
+    const alias = join(controls.context.workDir, 'descriptor-alias.json');
+    await link(descriptor, alias);
+    await expect(
+      runManagedInteractiveSessionChild({ argv: [descriptor] }),
+    ).rejects.toThrow(/singly linked/);
+    await stat(descriptor);
+    await stat(alias);
+  });
+
+  it('rejects symlinked or non-private descriptors without running the child', async () => {
+    const fixture = await lifecycleFixture();
+    const controls = await controlBoundary(fixture.payload.cwd);
+    await createManagedInteractiveSessionCommand(controls.context, fixture.payload);
+    const descriptor = join(
+      controls.context.workDir,
+      MANAGED_INTERACTIVE_PAYLOAD_FILE,
+    );
+    const original = join(controls.context.workDir, 'original.json');
+    await rename(descriptor, original);
+    await symlink(original, descriptor);
+    let runnerCalls = 0;
+    await expect(
+      runManagedInteractiveSessionChild({
+        argv: [descriptor],
+        runManagedSession: async () => {
+          runnerCalls += 1;
+        },
+      }),
+    ).rejects.toThrow();
+    expect(runnerCalls).toBe(0);
+    await stat(original);
+
+    await rm(descriptor);
+    await rename(original, descriptor);
+    await chmod(descriptor, 0o644);
+    await expect(
+      runManagedInteractiveSessionChild({ argv: [descriptor] }),
+    ).rejects.toThrow(/private regular file/);
+    await stat(descriptor);
+  });
+
+  it('rejects non-private control directories and durable/ephemeral overlap without consuming the descriptor', async () => {
+    const fixture = await lifecycleFixture();
+    const controls = await controlBoundary(fixture.payload.cwd);
+    await createManagedInteractiveSessionCommand(controls.context, fixture.payload);
+    const descriptor = join(
+      controls.context.workDir,
+      MANAGED_INTERACTIVE_PAYLOAD_FILE,
+    );
+    await chmod(controls.context.workDir, 0o755);
+    await expect(
+      runManagedInteractiveSessionChild({ argv: [descriptor] }),
+    ).rejects.toThrow(/work directory is not private/);
+    await stat(descriptor);
+
+    await chmod(controls.context.workDir, 0o700);
+    await chmod(dirname(controls.context.readinessPath), 0o755);
+    await expect(
+      runManagedInteractiveSessionChild({ argv: [descriptor] }),
+    ).rejects.toThrow(/coordination directory is not private/);
+    await stat(descriptor);
+
+    await chmod(dirname(controls.context.readinessPath), 0o700);
+    const parsed = JSON.parse(await readFile(descriptor, 'utf8'));
+    parsed.sessionsDir = controls.context.workDir;
+    await writeFile(descriptor, `${JSON.stringify(parsed)}\n`, { mode: 0o600 });
+    await expect(
+      runManagedInteractiveSessionChild({ argv: [descriptor] }),
+    ).rejects.toThrow(/durable Captain session storage overlaps/);
+    await stat(descriptor);
+  });
+
+  it('detects descriptor pathname replacement before unlinking either inode', async () => {
+    const fixture = await lifecycleFixture();
+    const controls = await controlBoundary(fixture.payload.cwd);
+    await createManagedInteractiveSessionCommand(controls.context, fixture.payload);
+    const descriptor = join(
+      controls.context.workDir,
+      MANAGED_INTERACTIVE_PAYLOAD_FILE,
+    );
+    const opened = join(controls.context.workDir, 'opened.json');
+    let runnerCalls = 0;
+    await expect(
+      runManagedInteractiveSessionChild({
+        argv: [descriptor],
+        beforeDescriptorUnlink: async () => {
+          const contents = await readFile(descriptor, 'utf8');
+          await rename(descriptor, opened);
+          await writeFile(descriptor, contents, { mode: 0o600 });
+        },
+        runManagedSession: async () => {
+          runnerCalls += 1;
+        },
+      }),
+    ).rejects.toThrow(/changed during validation/);
+    expect(runnerCalls).toBe(0);
+    await stat(descriptor);
+    await stat(opened);
+  });
+
+  it('re-raises a child signal only after the managed runner completes cleanup', async () => {
+    const fixture = await lifecycleFixture();
+    const controls = await controlBoundary(fixture.payload.cwd);
+    await createManagedInteractiveSessionCommand(controls.context, fixture.payload);
+    const descriptor = join(
+      controls.context.workDir,
+      MANAGED_INTERACTIVE_PAYLOAD_FILE,
+    );
+    const signalTarget = new FakeSignalTarget();
+    const events: string[] = [];
+    const result = await runManagedInteractiveSessionChildEntry({
+      argv: [descriptor],
+      signalTarget,
+      runManagedSession: async () => {
+        signalTarget.emit('SIGTERM');
+        await Promise.resolve();
+        events.push('cleanup-complete');
+        throw new Error('turn aborted after cleanup');
+      },
+    });
+    events.push(`returned:${result.signal}`);
+    expect(events).toEqual(['cleanup-complete', 'returned:SIGTERM']);
+    expect(result.error).toMatchObject({ message: 'turn aborted after cleanup' });
+  });
+
+  it('does not start Cligent when a signal arrives while consuming the descriptor', async () => {
+    const fixture = await lifecycleFixture();
+    const controls = await controlBoundary(fixture.payload.cwd);
+    await createManagedInteractiveSessionCommand(controls.context, fixture.payload);
+    const descriptor = join(
+      controls.context.workDir,
+      MANAGED_INTERACTIVE_PAYLOAD_FILE,
+    );
+    const signalTarget = new FakeSignalTarget();
+    let enterConsume: () => void = () => {};
+    const consuming = new Promise<void>((resolvePromise) => {
+      enterConsume = resolvePromise;
+    });
+    let releaseConsume: () => void = () => {};
+    const consumeGate = new Promise<void>((resolvePromise) => {
+      releaseConsume = resolvePromise;
+    });
+    let runnerCalls = 0;
+    const resultPromise = runManagedInteractiveSessionChildEntry({
+      argv: [descriptor],
+      signalTarget,
+      beforeDescriptorUnlink: async () => {
+        enterConsume();
+        await consumeGate;
+      },
+      runManagedSession: async () => {
+        runnerCalls += 1;
+      },
+    });
+
+    await consuming;
+    signalTarget.emit('SIGTERM');
+    releaseConsume();
+    const result = await resultPromise;
+    expect(runnerCalls).toBe(0);
+    expect(result).toMatchObject({
+      signal: 'SIGTERM',
+      error: { message: 'received SIGTERM' },
+    });
+  });
+});
+
+async function lifecycleFixture(
+  execution: ReturnType<typeof executionProjection> = executionProjection(),
+) {
+  const root = await mkdtemp(join(tmpdir(), 'playbook-interactive-'));
+  tempDirs.push(root);
+  const sessionsDir = join(root, 'sessions');
+  const cwd = join(root, 'cwd');
+  await mkdir(cwd);
+  const controls = await controlBoundary(cwd);
+  const payload = {
+    schemaVersion: MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,
+    kind: MANAGED_INTERACTIVE_PAYLOAD_KIND,
+    mode: 'fresh' as const,
+    sessionId: logicalSessionId,
+    cwd,
+    sessionsDir,
+    noProvision: false,
+    executionProjection: execution,
+    workDir: controls.context.workDir,
+    readinessPath: controls.context.readinessPath,
+    inputGatePath: controls.context.inputGatePath,
+    inputActivePath: controls.context.inputActivePath,
+    shutdownRequestPath: controls.context.shutdownRequestPath,
+    shutdownCompletePath: controls.context.shutdownCompletePath,
+  };
+  const context = {
+    sessionId: logicalSessionId,
+    cwd,
+    config: tmuxConfig(execution),
+    observers: [],
+  };
+  return {
+    root,
+    sessionsDir,
+    execution,
+    payload,
+    context,
+    store: createCaptainSessionStore({ sessionsDir }),
+  };
+}
+
+async function controlBoundary(cwd: string) {
+  const workDir = await mkdtemp(join(tmpdir(), 'tmux-play-managed-test-'));
+  const coordinationDir = await mkdtemp(join(tmpdir(), 'tmux-play-ready-test-'));
+  tempDirs.push(workDir, coordinationDir);
+  await chmod(workDir, 0o700);
+  await chmod(coordinationDir, 0o700);
+  await writeFile(join(workDir, '.tmux-play-session'), logicalSessionId);
+  return {
+    context: {
+      sessionId: logicalSessionId,
+      cwd,
+      workDir,
+      readinessPath: join(coordinationDir, 'status.json'),
+      inputGatePath: join(coordinationDir, 'input-ready'),
+      inputActivePath: join(coordinationDir, 'input-active'),
+      shutdownRequestPath: join(coordinationDir, 'shutdown-request'),
+      shutdownCompletePath: join(coordinationDir, 'shutdown-complete'),
+    },
+  };
+}
+
+function executionProjection() {
+  return {
+    schemaVersion: 2,
+    captain: {
+      adapter: 'claude',
+      model: { kind: 'provider-default' },
+      effort: { kind: 'provider-default' },
+      permissions: { mode: 'auto' },
+    },
+    players: [
+      {
+        id: 'dev.coder',
+        adapter: 'codex',
+        model: { kind: 'provider-default' },
+        effort: { kind: 'value', value: 'high' },
+        permissions: { fileWrite: 'ask' },
+      },
+    ],
+    catalog: {
+      code: {
+        id: 'code',
+        from: '@sublang/playbook/code/registry',
+        manifestCommand: 'code',
+        command: 'code',
+        intent:
+          'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
+        artifactSchema: 2,
+        requiredRoleIds: ['coder'],
+        concurrentRoleSets: [],
+        roles: {
+          coder: {
+            playerId: 'dev.coder',
+            model: { kind: 'provider-default' },
+            effort: { kind: 'value', value: 'high' },
+          },
+        },
+        options: {},
+      },
+    },
+  };
+}
+
+function concurrentExecutionProjection(): ReturnType<
+  typeof executionProjection
+> {
+  const execution = executionProjection();
+  return {
+    ...execution,
+    players: [
+      ...execution.players,
+      {
+        id: 'dev.reviewer',
+        adapter: 'claude',
+        model: { kind: 'provider-default' as const },
+        effort: { kind: 'provider-default' as const },
+        permissions: { mode: 'auto' },
+      },
+    ],
+    catalog: {
+      code: {
+        ...execution.catalog.code,
+        requiredRoleIds: ['coder', 'reviewer'],
+        roles: {
+          ...execution.catalog.code.roles,
+          reviewer: {
+            playerId: 'dev.reviewer',
+            model: { kind: 'provider-default' as const },
+            effort: { kind: 'provider-default' as const },
+          },
+        },
+      },
+    },
+  } as ReturnType<typeof executionProjection>;
+}
+
+function registryEntry(execution: ReturnType<typeof executionProjection>) {
+  const item = execution.catalog.code;
+  return {
+    id: item.id,
+    command: item.manifestCommand,
+    intent: item.intent,
+    artifactSchema: item.artifactSchema,
+    requiredRoleIds: [...item.requiredRoleIds],
+    concurrentRoleSets: item.concurrentRoleSets.map((set) => [...set]),
+    validateOptions: (value: unknown) => value,
+    createRuntime: () => ({}),
+  };
+}
+
+function registryLoader(execution: ReturnType<typeof executionProjection>) {
+  return async () => ({ default: registryEntry(execution) });
+}
+
+function tmuxConfig(execution: ReturnType<typeof executionProjection>) {
+  return {
+    captain: {
+      ...projectHostAgent(execution.captain, 'test captain'),
+      from: PLAYBOOK_CAPTAIN_MODULE,
+      options: captainOptionsFromConfig(execution),
+    },
+    players: execution.players.map(({ id, ...agent }) => ({
+      id,
+      ...projectHostAgent(agent, `test player ${id}`),
+    })),
+  };
+}
+
+function shellSnapshot(
+  execution: ReturnType<typeof executionProjection>,
+  turn: number,
+) {
+  const structural = projectCaptainSessionStructure(execution);
+  const state = {
+    value: 'routing',
+    activeStateIds: ['routing'],
+    tags: ['playbook.parked'],
+    status: 'active',
+    quiescent: true,
+    stateId: 'routing',
+  };
+  const journal = Array.from({ length: turn }, (_, index) => ({
+    seq: index + 1,
+    turnId: index + 1,
+    kind: 'boss',
+    payload: `turn-${index + 1}`,
+  }));
+  return {
+    schemaVersion: 3,
+    captain: {
+      sessionId: internalSessionId,
+      runtime: {
+        schemaVersion: 3,
+        playbookId: 'captain',
+        machine: { value: state.value, status: state.status },
+        roleResumeTokens: {},
+        sequences: {
+          trace: 0,
+          turn,
+          judgeCall: 0,
+          playerCall: 0,
+          playbookCall: 0,
+          captainCall: 0,
+        },
+        state,
+        pendingBossQuestions: [],
+      },
+      agent: structural.captain,
+      conversation:
+        turn === 0
+          ? { kind: 'unopened' }
+          : { kind: 'pinned', token: `captain-token-${turn}` },
+    },
+    playerSessions: Object.fromEntries(
+      structural.players.map(({ id, ...agent }) => [id, agent]),
+    ),
+    issuedSessionIds: [internalSessionId],
+    sequences: { turn, journal: journal.length },
+    journal,
+    ...(turn === 0
+      ? {}
+      : { lastAction: 'respond', lastSettlementStatus: 'ok' }),
+    mode: 'chat',
+  };
+}
+
+async function seedSettled(
+  fixture: Awaited<ReturnType<typeof lifecycleFixture>>,
+  snapshot: ReturnType<typeof shellSnapshot>,
+) {
+  const lease = await fixture.store.acquire(logicalSessionId);
+  await lease.initializeSettled({
+    cwd: fixture.payload.cwd,
+    structuralProjection: projectCaptainSessionStructure(fixture.execution),
+    executionProjection: fixture.execution,
+    snapshot,
+  });
+  await lease.release();
+}
+
+function fakeHost(events: string[]) {
+  return {
+    abortActiveTurn() {},
+    async runBossTurn() {},
+    async dispose() {
+      events.push('disposed');
+    },
+  };
+}
+
+class FakeSignalTarget extends EventEmitter {
+  pid = 101;
+  kill() {}
+}

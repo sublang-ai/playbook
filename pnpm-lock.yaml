@@ -474,7 +474,7 @@ packages:
     resolution: {integrity: sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==}
 
   '@sublang/cligent@0.21.0':
-    resolution: {integrity: sha512-Entmt0EI58eE3NULY3j7q2C+kpLUWSSe7nS7HZjrS03+/vbaGOFwFMBeyqyjJAXi8Nmpp3OCkkJmmD7E7HvLZw==}
+    resolution: {integrity: sha512-q427V+VcoomjrjcZ62HDu8/TJ3qmx7gh1QPsNsZuBobUg7gIQAXwiRXPWtey8QbDp/aM+JG1EkXEC9eiqtZW3g==}
     engines: {node: '>=18.3.0'}
     hasBin: true
     peerDependencies:

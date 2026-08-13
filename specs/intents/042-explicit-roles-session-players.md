@@ -31,10 +31,11 @@ Implement explicit playbook-local roles bound to stable Captain-session players,
 5. Prepare cligent `0.21.0` as the unreleased feature candidate that contains task 2, including exact version metadata, changelog rollover, deterministic packed-artifact evidence, and release smoke in one cligent-repository commit without tagging, pushing, or publishing it.
 6. Atomically replace root-frame token ownership and same-role inheritance with the Captain-session player ledger, explicit frame bindings, complete per-call settings, the prepared cligent capability floor, and shell snapshot schema `3`, while upgrading durable records and ordinary headless continuation to record schema `3`, authoritative stored-catalog projection, compatible current tuning, exact uncertain-attempt settings, and fail-closed legacy rejection in one commit.
    This combines the former shell and durable-headless tasks because a schema-3 shell committed atop the schema-2 store would persist fresh sessions that the same checkout cannot reopen.
-7. Make fresh and selected interactive sessions use the durable UUID, lease, turn-zero settlement, per-turn write-ahead, restoration, and cross-front-end hand-off boundaries, with focused interactive integration tests in one commit.
-8. Update public documentation, CLI help, configuration migration guidance, and changelog for explicit roles and session players in one commit.
-9. Update deterministic release guards, packed smoke, and selected live acceptance for segmented ids, explicit sharing and isolation, cross-process retuning, and both-front session continuation in one commit.
-10. Prepare the next-major candidate metadata and run sufficient deterministic, packed, acceptance, and any conditionally required manual verification; record this intent complete and stop for review without tagging, pushing, publishing, or creating a release in one commit.
+7. Make cligent's prepared managed attachment accept an activation `AbortSignal` plus a synchronous native-client hand-off callback, retire its managed child before rejecting an interrupted activation, and preserve cleanup failures without changing the launcher's session lifecycle in one cligent-repository commit.
+8. Make fresh and selected interactive sessions use the durable UUID, pane-child-owned lease, turn-zero settlement, per-turn write-ahead, authoritative selected-session restoration, cancellation-safe attachment, and cross-front-end hand-off boundaries, with focused interactive integration tests in one commit.
+9. Update public documentation, CLI help, configuration migration guidance, and changelog for explicit roles and session players in one commit.
+10. Update deterministic release guards, packed smoke, and selected live acceptance for segmented ids, explicit sharing and isolation, cross-process retuning, and both-front session continuation in one commit.
+11. Prepare the next-major candidate metadata and run sufficient deterministic, packed, acceptance, and any conditionally required manual verification; record this intent complete and stop for review without tagging, pushing, publishing, or creating a release in one commit.
 
 ## Verification
 
