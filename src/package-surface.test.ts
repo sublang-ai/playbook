@@ -17,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 import { parse as parseYaml } from 'yaml';
+import { checkCligentReleaseCapabilities } from '../scripts/cligent-release-capabilities.mjs';
 
 const packageRootUrl = new URL('../', import.meta.url);
 const repoRoot = fileURLToPath(packageRootUrl);
@@ -404,68 +405,41 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     }
   });
 
-  it('pins cligent lifecycle, continuation, and complete-setting contracts', () => {
-    const script = `
-      import { readFileSync } from 'node:fs';
-      import { dirname, join } from 'node:path';
-      import { fileURLToPath } from 'node:url';
-      const entry = fileURLToPath(import.meta.resolve('@sublang/cligent/tmux-play'));
-      const contract = readFileSync(join(dirname(entry), 'contract.d.ts'), 'utf8');
-      const captainOptionsStart = contract.indexOf('export interface CallCaptainOptions {');
-      const playerOptionsStart = contract.indexOf('export interface CallPlayerOptions {');
-      const captainContextStart = contract.indexOf('export interface CaptainContext {');
-      const settingsStart = contract.indexOf('export interface AgentCallSettings {');
-      if (
-        settingsStart < 0 ||
-        captainOptionsStart < 0 ||
-        playerOptionsStart <= captainOptionsStart ||
-        captainContextStart <= playerOptionsStart
-      ) {
-        throw new Error('cligent tmux-play call option contracts are missing');
-      }
-      const captainOptions = contract.slice(captainOptionsStart, playerOptionsStart);
-      const playerOptions = contract.slice(playerOptionsStart, captainContextStart);
-      if (!/prepareDispose\\?\\(\\): Promise<void>/.test(contract)) {
-        throw new Error('cligent Captain contract lacks prepareDispose');
-      }
-      if (!captainOptions.includes('readonly resume?: string | false;')) {
-        throw new Error('cligent CallCaptainOptions lacks explicit resume selection');
-      }
-      if (!captainOptions.includes('readonly allowedTools?: readonly string[];')) {
-        throw new Error('cligent CallCaptainOptions lacks an explicit tool allowlist');
-      }
-      if (!playerOptions.includes('readonly resume?: string | false;')) {
-        throw new Error('cligent CallPlayerOptions lacks explicit resume selection');
-      }
-      if (!captainOptions.includes('readonly settings?: AgentCallSettings;')) {
-        throw new Error('cligent CallCaptainOptions lacks atomic complete settings');
-      }
-      if (!playerOptions.includes('readonly settings?: AgentCallSettings;')) {
-        throw new Error('cligent CallPlayerOptions lacks atomic complete settings');
-      }
-      if (!contract.includes('export type TuningSelection<T extends string = string> =')) {
-        throw new Error('cligent lacks explicit tuning selections');
-      }
-      if (!contract.includes('export declare class AgentCallSettingsError extends Error')) {
-        throw new Error('cligent lacks the typed complete-settings rejection');
-      }
-      if (!contract.includes('export declare function isAgentCallSettingsError(')) {
-        throw new Error('cligent lacks the complete-settings rejection predicate');
-      }
-      if (!contract.includes('callPlayer(playerId: string, prompt: string, options?: CallPlayerOptions): Promise<PlayerRunResult>;')) {
-        throw new Error('cligent CaptainContext.callPlayer does not accept CallPlayerOptions');
-      }
-      if (!contract.includes('callCaptain(prompt: string, options?: CallCaptainOptions): Promise<CaptainRunResult>;')) {
-        throw new Error('cligent CaptainContext.callCaptain does not accept CallCaptainOptions');
-      }
-      process.stdout.write('OK');
-    `;
-    const out = execFileSync(
-      process.execPath,
-      ['--input-type=module', '-e', script],
-      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-    );
-    expect(out).toBe('OK');
+  it('pins the complete cligent release capabilities', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-cligent-release-'));
+    try {
+      const result = checkCligentReleaseCapabilities({
+        cligentRoot: join(repoRoot, 'node_modules', '@sublang', 'cligent'),
+        workRoot: join(scratch, 'check'),
+      });
+      expect(result.otherDiagnostics).toEqual([]);
+      expect(result.unproven).toEqual([]);
+      expect(result.proven).toEqual([
+        'CaptainContext.emitReply',
+        'CaptainRunResult.resumeToken',
+        'Captain.prepareDispose',
+        'CaptainContext.callPlayer options',
+        'CaptainContext.callCaptain options',
+        'CallPlayerOptions.resume',
+        'CallPlayerOptions.settings',
+        'CallCaptainOptions.resume',
+        'CallCaptainOptions.allowedTools',
+        'CallCaptainOptions.settings',
+        'AgentCallSettings.model',
+        'AgentCallSettings.effort',
+        'AgentCallSettings.instruction',
+        'AgentCallSettings.permissions',
+        'AgentCallSettingsError',
+        'isAgentCallSettingsError',
+        'ManagedTmuxPlayAttachOptions.signal',
+        'ManagedTmuxPlayAttachOptions.beforeNativeAttach',
+        'PreparedManagedTmuxPlayLaunch.attach options',
+        'loadTmuxPlayConfig segmented player id',
+      ]);
+      expect(result.ok).toBe(true);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 

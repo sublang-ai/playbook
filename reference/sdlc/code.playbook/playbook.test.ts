@@ -59,6 +59,7 @@ const {
   resolveUserConfigPath,
   composeGenericConfig,
   loadLaunchPlan,
+  mergeConfigs,
   PLAYBOOK_CAPTAIN_MODULE,
 } = playbook;
 
@@ -412,9 +413,42 @@ describe('live acceptance gate config (PBCLI-32)', () => {
     expect(config.captain.adapter).toBe('claude');
     // The release gate intentionally shares these stable session players.
     expect(config.players.map((p: any) => `${p.id} ${p.adapter}`)).toEqual([
-      'dev.coder claude',
-      'dev.reviewer codex',
+      'acceptance.dev.coder claude',
+      'acceptance.dev.reviewer codex',
     ]);
+  });
+
+  it('composes the selected DECIDE current-tuning overlay', async () => {
+    const { liveConfig, liveRetuneOverlay } = await import(
+      new URL('../../../acceptance/live-config.ts', import.meta.url).href
+    );
+    const top = mergeConfigs(
+      parseYaml(liveConfig()),
+      parseYaml(liveRetuneOverlay()),
+    );
+    const { config } = await composeGenericConfig(
+      top,
+      (specifier: string) => import(specifier),
+    );
+
+    expect(config.captain.effort).toBe('low');
+    expect(config.players).toEqual([
+      expect.objectContaining({
+        id: 'acceptance.dev.coder',
+        effort: 'high',
+      }),
+      expect.objectContaining({
+        id: 'acceptance.dev.reviewer',
+        effort: 'high',
+      }),
+    ]);
+    expect(
+      config.captain.options.playbooks.decide.roles.reviewer,
+    ).toMatchObject({
+      playerId: 'acceptance.dev.reviewer',
+      model: { kind: 'provider-default' },
+      effort: { kind: 'provider-default' },
+    });
   });
 
   it('composes the conversational config with its real fixture modules', async () => {

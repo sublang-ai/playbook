@@ -40,9 +40,9 @@ import { delimiter, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  CAPTAIN_SURFACE_SPECIFIER,
-  checkCligentCaptainSurface,
-} from './cligent-captain-surface.mjs';
+  CLIGENT_RELEASE_SPECIFIER,
+  checkCligentReleaseCapabilities,
+} from './cligent-release-capabilities.mjs';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const keepArtifacts = process.argv.includes('--keep');
@@ -313,7 +313,10 @@ function assertProvisionedEngineTree(repo, prefix) {
 function smokeArtifactSource() {
   return `// Release smoke fixture: a thin artifact with one script state.
 import { assign, setup } from 'xstate';
-import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
+import {
+  RUNTIME_ABI,
+  createXStatePlaybookRuntime,
+} from '@sublang/playbook/xstate-runtime';
 
 const machine = setup({}).createMachine({
   id: 'releasesmoke',
@@ -409,20 +412,95 @@ const machine = setup({}).createMachine({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'SMOKE',
+  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
+  roleStates: {},
 });
 
 export default {
   id: 'smoke',
   command: 'smoke',
   intent: 'deterministic release smoke fixture',
-  requiredRoleIds: ['worker'],
+  artifactSchema: 2,
+  requiredRoleIds: [],
+  concurrentRoleSets: [],
   validateOptions(value) {
     return value ?? {};
   },
   createRuntime() {
     return createRuntime({});
+  },
+};
+`;
+}
+
+// A second packed-smoke registry exercises the DR-032 identity boundary with
+// no live model call: two sequential local roles share one segmented player,
+// while a third role has an equal-shaped but distinct segmented player.
+function laneArtifactSource() {
+  return `// Release smoke fixture: explicit shared and isolated player lanes.
+export default {
+  id: 'lanes',
+  command: 'lanes',
+  intent: 'exercise segmented shared and isolated session players',
+  artifactSchema: 2,
+  requiredRoleIds: ['first', 'second', 'isolated'],
+  concurrentRoleSets: [],
+  validateOptions(value) {
+    return value ?? {};
+  },
+  createRuntime() {
+    let session;
+    return {
+      async init(next) {
+        session = next;
+      },
+      async handleBossInput({ text, signal }) {
+        const results = [];
+        // Exercise the shared ledger in both directions across the two
+        // processes: A runs first -> second; B runs second -> first.
+        const roles = text.includes('second pass')
+          ? ['second', 'first', 'isolated']
+          : ['first', 'second', 'isolated'];
+        for (const role of roles) {
+          const result = await session.ports.callPlayer(
+            role,
+            \`release-lane:\${role}:\${text}\`,
+            signal,
+            { resume: session.playerSessions.select(role) },
+          );
+          session.playerSessions.update(role, result.resumeToken);
+          results.push(result.finalText);
+        }
+        return {
+          outcome: 'terminal',
+          state: {
+            value: 'done',
+            activeStateIds: ['done'],
+            tags: [],
+            status: 'done',
+            quiescent: true,
+            stateId: 'done',
+          },
+          output: { results },
+        };
+      },
+      async resumePlaybookCall() {
+        return {
+          outcome: 'no-action',
+          state: {
+            value: 'ready',
+            activeStateIds: ['ready'],
+            tags: ['playbook.parked'],
+            status: 'active',
+            quiescent: true,
+            stateId: 'ready',
+          },
+        };
+      },
+      async dispose() {},
+    };
   },
 };
 `;
@@ -440,6 +518,7 @@ import { runPlaybookCli } from './reference/sdlc/code.playbook/bin/playbook.js';
 const closingReply = ${JSON.stringify(smokeToken)};
 const continuedReply = ${JSON.stringify(smokeContinuedReply)};
 const callLog = requiredEnv('PLAYBOOK_SMOKE_AGENT_LOG');
+const processName = requiredEnv('PLAYBOOK_SMOKE_PROCESS');
 let sequence = 0;
 
 class DeterministicAdapter {
@@ -448,19 +527,46 @@ class DeterministicAdapter {
   async *run(prompt, options = {}) {
     let kind;
     let result;
-    if (prompt.includes('closing reply and turn summary')) {
+    let lane;
+    let role;
+    let resumeToken;
+    const laneMatch = /release-lane:(first|second|isolated):/.exec(prompt);
+    if (
+      prompt.includes('The closing reply is the turn summary') ||
+      prompt.includes('Outcome report facts (verbatim):')
+    ) {
       kind = 'closing';
       result = closingReply;
     } else if (prompt.includes('Select exactly one action from the closed set')) {
       kind = 'selection';
       result = JSON.stringify({ action: 'respond', text: continuedReply });
+    } else if (laneMatch) {
+      kind = 'player';
+      role = laneMatch[1];
+      lane = role === 'isolated' ? 'isolated' : 'shared';
+      const prior = new RegExp(\`^release-lane:\${lane}:(\\\\d+)$\`).exec(
+        options.resume ?? '',
+      );
+      const laneSequence = prior === null ? 1 : Number(prior[1]) + 1;
+      result = \`lane result \${lane}:\${laneSequence}\`;
+      resumeToken = \`release-lane:\${lane}:\${laneSequence}\`;
     } else {
       throw new Error('release smoke received an unexpected Captain prompt');
     }
     sequence += 1;
+    resumeToken ??= \`release-smoke:\${kind}:\${processName}:\${sequence}\`;
     appendFileSync(
       callLog,
-      JSON.stringify({ kind, resume: options.resume ?? null }) + '\\n',
+      JSON.stringify({
+        process: processName,
+        kind,
+        role: role ?? null,
+        lane: lane ?? null,
+        resume: options.resume === undefined ? null : options.resume,
+        model: options.model ?? null,
+        effort: options.effort ?? null,
+        resumeToken,
+      }) + '\\n',
     );
     yield createEvent(
       'done',
@@ -468,17 +574,21 @@ class DeterministicAdapter {
       {
         status: 'success',
         result,
-        resumeToken: \`release-smoke:\${kind}:\${sequence}\`,
+        resumeToken,
         usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
         durationMs: 1,
       },
-      \`release-smoke-transport-\${sequence}\`,
+      \`release-smoke-transport-\${processName}-\${sequence}\`,
     );
   }
 
   async isAvailable() {
     return true;
   }
+}
+
+class DeterministicCodexAdapter extends DeterministicAdapter {
+  agent = 'codex';
 }
 
 function requiredEnv(name) {
@@ -493,7 +603,10 @@ const result = await runPlaybookCli({
   argv: process.argv.slice(2),
   env: process.env,
   userConfigPath: requiredEnv('PLAYBOOK_SMOKE_CONFIG'),
-  adapterImports: { claude: async () => DeterministicAdapter },
+  adapterImports: {
+    claude: async () => DeterministicAdapter,
+    codex: async () => DeterministicCodexAdapter,
+  },
   probeAdapterSdk: async () => true,
 });
 process.exitCode = result.code ?? 0;
@@ -737,21 +850,19 @@ function stepInstalledCli(root, state) {
     [
       'captain:',
       '  adapter: claude',
+      'players:',
+      '  release.coder: { adapter: claude }',
+      '  release.reviewer: { adapter: codex }',
       'playbooks:',
       '  code:',
       '    from: "@sublang/playbook/code/registry"',
-      '    players:',
-      '      coder: claude',
+      '    roles: { coder: release.coder }',
       '  review:',
       '    from: "@sublang/playbook/review/registry"',
-      '    players:',
-      '      coder: claude',
-      '      reviewer: codex',
+      '    roles: { coder: release.coder, reviewer: release.reviewer }',
       '  decide:',
       '    from: "@sublang/playbook/decide/registry"',
-      '    players:',
-      '      coder: claude',
-      '      reviewer: codex',
+      '    roles: { coder: release.coder, reviewer: release.reviewer }',
       '',
     ].join('\n'),
   );
@@ -799,19 +910,11 @@ function stepHermetic(root, state) {
     ['node_modules/', '.release-smoke-effects', ''].join('\n'),
   );
   writeFileSync(join(repo, 'smoke.playbook.mjs'), smokeArtifactSource());
+  writeFileSync(join(repo, 'lanes.playbook.mjs'), laneArtifactSource());
   const configPath = join(repo, 'playbook.config.yaml');
-  writeFileSync(
-    configPath,
-    [
-      'captain: { adapter: claude, model: release-smoke-captain }',
-      'playbooks:',
-      '  smoke:',
-      '    from: ./smoke.playbook.mjs',
-      '    players:',
-      '      worker: { adapter: claude, model: release-smoke-worker }',
-      '',
-    ].join('\n'),
-  );
+  writeFileSync(configPath, smokeConfig('a'));
+  const retunePath = join(scenario, 'retune-b.yaml');
+  writeFileSync(retunePath, smokeRetuneOverlay());
   for (const args of [
     ['init', '-b', 'main'],
     ['config', 'user.name', 'Playbook Release Smoke'],
@@ -862,13 +965,13 @@ function stepHermetic(root, state) {
     XDG_CONFIG_HOME: join(scenario, 'xdg'),
     XDG_STATE_HOME: join(scenario, 'xdg-state'),
     PATH: [sentinelBin, process.env.PATH].filter(Boolean).join(delimiter),
-    // A synthetic readiness sentinel, consumed only by the launch gate. The
-    // adapter itself is injected below and reads no credential.
     ANTHROPIC_API_KEY: 'release-smoke-synthetic-readiness',
+    OPENAI_API_KEY: 'release-smoke-synthetic-readiness',
     PLAYBOOK_SMOKE_CONFIG: configPath,
-    PLAYBOOK_SMOKE_AGENT_LOG: join(scenario, 'captain-calls.ndjson'),
+    PLAYBOOK_SMOKE_AGENT_LOG: join(scenario, 'agent-calls.ndjson'),
     PLAYBOOK_SMOKE_TMUX_MARKER: tmuxMarker,
   });
+  const processEnv = (name) => ({ ...env, PLAYBOOK_SMOKE_PROCESS: name });
   const driverPath = join(
     installedPackageRoot(state.optinPrefix),
     'release-smoke-headless.mjs',
@@ -877,7 +980,7 @@ function stepHermetic(root, state) {
 
   const first = run(process.execPath, [driverPath, 'run', '--json'], {
     cwd: repo,
-    env,
+    env: processEnv('first'),
     input: `/smoke ${smokeTask}\n`,
   });
   const provisioningLines = first.stderr.match(/provisioned/g) ?? [];
@@ -887,42 +990,42 @@ function stepHermetic(root, state) {
       `stderr:\n${tail(first.stderr)}`,
     );
   }
-  const startedAt = first.stderr.indexOf('/smoke started');
-  const finishedAt = first.stderr.indexOf('/smoke finished');
-  if (
-    startedAt < 0 ||
-    startedAt !== first.stderr.lastIndexOf('/smoke started') ||
-    finishedAt < 0 ||
-    finishedAt !== first.stderr.lastIndexOf('/smoke finished') ||
-    startedAt >= finishedAt
-  ) {
-    fail(
-      'the first headless turn did not emit one ordered /smoke lifecycle',
-      `stderr:\n${tail(first.stderr)}`,
-    );
-  }
+  expectOneOrderedLifecycle(first.stderr, 'smoke');
   assertProvisionedEngineTree(repo, state.optinPrefix);
   const firstEnvelope = parseExactHeadlessReply(first.stdout, smokeToken);
   const sessionsDir = join(env.XDG_STATE_HOME, 'playbook', 'sessions');
   const sessionPath = join(sessionsDir, `${firstEnvelope.sessionId}.json`);
   const firstRecord = readJson(sessionPath);
   const frozenCwd = realpathSync(repo);
+  const firstPlayerIds = firstRecord.structuralProjection?.players?.map(
+    (player) => player.id,
+  );
   if (
-    firstRecord.schemaVersion !== 2 ||
+    firstRecord.schemaVersion !== 3 ||
     firstRecord.kind !== 'captain-session' ||
     firstRecord.state !== 'settled' ||
     firstRecord.cwd !== frozenCwd ||
+    JSON.stringify(firstPlayerIds) !==
+      JSON.stringify(['release.shared', 'release.isolated']) ||
+    firstRecord.structuralProjection?.catalog?.lanes?.roles?.first?.playerId !==
+      'release.shared' ||
+    firstRecord.structuralProjection?.catalog?.lanes?.roles?.second?.playerId !==
+      'release.shared' ||
+    firstRecord.structuralProjection?.catalog?.lanes?.roles?.isolated?.playerId !==
+      'release.isolated' ||
     firstRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
     firstRecord.snapshot?.captain?.conversation?.token !==
-      'release-smoke:closing:1'
+      'release-smoke:closing:first:1'
   ) {
     fail(
-      'the first headless turn did not persist its complete Captain boundary',
+      'the first headless turn did not persist its schema-3 identity boundary',
       JSON.stringify({
         schemaVersion: firstRecord.schemaVersion,
         kind: firstRecord.kind,
         state: firstRecord.state,
         cwd: firstRecord.cwd,
+        playerIds: firstPlayerIds,
+        laneRoles: firstRecord.structuralProjection?.catalog?.lanes?.roles,
         conversation: firstRecord.snapshot?.captain?.conversation,
       }),
     );
@@ -935,19 +1038,13 @@ function stepHermetic(root, state) {
     [driverPath, 'run', '--session', firstEnvelope.sessionId, '--json'],
     {
       cwd: continuationCwd,
-      env,
+      env: processEnv('continued'),
       input: 'Continue without replaying the completed action.\n',
     },
   );
-  if (second.stderr.includes('provisioned')) {
+  if (second.stderr.includes('provisioned') || second.stderr.includes('/smoke')) {
     fail(
-      'the continued headless turn provisioned again',
-      `stderr:\n${tail(second.stderr)}`,
-    );
-  }
-  if (second.stderr.includes('/smoke')) {
-    fail(
-      'the continued headless turn replayed /smoke lifecycle status',
+      'the continued headless turn provisioned or replayed /smoke',
       `stderr:\n${tail(second.stderr)}`,
     );
   }
@@ -963,7 +1060,7 @@ function stepHermetic(root, state) {
     secondRecord.cwd !== frozenCwd ||
     secondRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
     secondRecord.snapshot?.captain?.conversation?.token !==
-      'release-smoke:selection:1'
+      'release-smoke:selection:continued:1'
   ) {
     fail(
       'continuation replaced the frozen cwd or lost Captain continuity',
@@ -975,10 +1072,105 @@ function stepHermetic(root, state) {
     );
   }
 
-  const effects = readFileSync(
-    join(repo, '.release-smoke-effects'),
-    'utf8',
-  )
+  const laneA = run(
+    process.execPath,
+    [
+      driverPath,
+      'run',
+      '--session',
+      firstEnvelope.sessionId,
+      '--json',
+      '/lanes first pass',
+    ],
+    { cwd: continuationCwd, env: processEnv('lane-a') },
+  );
+  expectOneOrderedLifecycle(laneA.stderr, 'lanes');
+  parseExactHeadlessReply(laneA.stdout, smokeToken, firstEnvelope.sessionId);
+
+  const laneB = run(
+    process.execPath,
+    [
+      driverPath,
+      'run',
+      '--session',
+      firstEnvelope.sessionId,
+      '--with',
+      retunePath,
+      '--json',
+      '/lanes second pass',
+    ],
+    { cwd: continuationCwd, env: processEnv('lane-b') },
+  );
+  expectOneOrderedLifecycle(laneB.stderr, 'lanes');
+  parseExactHeadlessReply(laneB.stdout, smokeToken, firstEnvelope.sessionId);
+  const finalRecord = readJson(sessionPath);
+  const finalExecution = finalRecord.lastAppliedExecutionProjection;
+  const finalPlayers = Object.fromEntries(
+    (finalExecution?.players ?? []).map((player) => [player.id, player]),
+  );
+  const finalRoles = finalExecution?.catalog?.lanes?.roles;
+  const finalLedgerIds = Object.keys(
+    finalRecord.snapshot?.playerSessions ?? {},
+  ).sort();
+  const finalPlayerIds = Object.keys(finalPlayers).sort();
+  const finalRoleIds = Object.keys(finalRoles ?? {}).sort();
+  if (
+    finalRecord.schemaVersion !== 3 ||
+    finalRecord.kind !== 'captain-session' ||
+    finalRecord.sessionId !== firstEnvelope.sessionId ||
+    finalRecord.state !== 'settled' ||
+    finalRecord.cwd !== frozenCwd ||
+    JSON.stringify(finalRecord.structuralProjection) !==
+      JSON.stringify(firstRecord.structuralProjection) ||
+    JSON.stringify(finalLedgerIds) !==
+      JSON.stringify(['release.isolated', 'release.shared']) ||
+    JSON.stringify(finalPlayerIds) !==
+      JSON.stringify(['release.isolated', 'release.shared']) ||
+    JSON.stringify(finalRoleIds) !==
+      JSON.stringify(['first', 'isolated', 'second']) ||
+    finalRecord.snapshot?.playerSessions?.['release.shared']?.resumeToken !==
+      'release-lane:shared:4' ||
+    finalRecord.snapshot?.playerSessions?.['release.isolated']?.resumeToken !==
+      'release-lane:isolated:2' ||
+    finalRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
+    finalRecord.snapshot?.captain?.conversation?.token !==
+      'release-smoke:closing:lane-b:4' ||
+    finalExecution?.captain?.model?.value !== 'release-smoke-captain-b' ||
+    finalExecution?.captain?.effort?.value !== 'max' ||
+    finalPlayers['release.shared']?.model?.value !== 'release-player-b' ||
+    finalPlayers['release.shared']?.effort?.value !== 'max' ||
+    finalPlayers['release.isolated']?.model?.value !== 'release-player-b' ||
+    finalPlayers['release.isolated']?.effort?.value !== 'max' ||
+    finalRoles?.first?.model?.value !== 'release-player-b' ||
+    finalRoles?.first?.effort?.value !== 'max' ||
+    finalRoles?.second?.model?.kind !== 'provider-default' ||
+    finalRoles?.second?.effort?.kind !== 'provider-default' ||
+    finalRoles?.isolated?.model?.value !== 'release-player-b' ||
+    finalRoles?.isolated?.effort?.value !== 'max'
+  ) {
+    fail(
+      'cross-process lane continuation lost identity or current tuning',
+      JSON.stringify({
+        cwd: finalRecord.cwd,
+        schemaVersion: finalRecord.schemaVersion,
+        kind: finalRecord.kind,
+        sessionId: finalRecord.sessionId,
+        captainConversation: finalRecord.snapshot?.captain?.conversation,
+        playerSessions: finalRecord.snapshot?.playerSessions,
+        finalLedgerIds,
+        finalPlayerIds,
+        finalRoleIds,
+        structureUnchanged:
+          JSON.stringify(finalRecord.structuralProjection) ===
+          JSON.stringify(firstRecord.structuralProjection),
+        captain: finalExecution?.captain,
+        players: finalPlayers,
+        roles: finalRoles,
+      }),
+    );
+  }
+
+  const effects = readFileSync(join(repo, '.release-smoke-effects'), 'utf8')
     .trimEnd()
     .split('\n');
   if (effects.length !== 1 || effects[0] !== 'effect') {
@@ -987,22 +1179,11 @@ function stepHermetic(root, state) {
       JSON.stringify(effects),
     );
   }
-  const captainCalls = readFileSync(env.PLAYBOOK_SMOKE_AGENT_LOG, 'utf8')
+  const calls = readFileSync(env.PLAYBOOK_SMOKE_AGENT_LOG, 'utf8')
     .trimEnd()
     .split('\n')
     .map((line) => JSON.parse(line));
-  if (
-    captainCalls.length !== 2 ||
-    captainCalls[0]?.kind !== 'closing' ||
-    captainCalls[0]?.resume !== null ||
-    captainCalls[1]?.kind !== 'selection' ||
-    captainCalls[1]?.resume !== 'release-smoke:closing:1'
-  ) {
-    fail(
-      'the installed compiled Captain did not cross the expected two turn boundaries',
-      JSON.stringify(captainCalls),
-    );
-  }
+  assertSmokeCalls(calls);
   if (existsSync(tmuxMarker)) {
     fail(
       'the installed headless Captain invoked tmux',
@@ -1020,10 +1201,144 @@ function stepHermetic(root, state) {
   return [
     'one provisioning line; both engine links resolve into the prefix',
     `stdin produced exact {sessionId,reply} with ${smokeToken}`,
-    `a second process continued Captain session ${firstEnvelope.sessionId}`,
-    'continuation kept the frozen cwd, replayed no effect, and reprovisioned nothing',
-    'the failing tmux PATH sentinel was never invoked',
+    `four processes continued Captain session ${firstEnvelope.sessionId}`,
+    'schema 3 retained two segmented player identities and frozen structure',
+    'shared roles chained one token; the isolated player kept its own token',
+    'ordinary reopen applied current model and effort, including provider-default',
+    'continuation replayed no settled effect and invoked no tmux',
   ];
+}
+
+function smokeConfig(tuning) {
+  const suffix = tuning === 'a' ? 'a' : 'b';
+  return [
+    `captain: { adapter: claude, model: release-smoke-captain-${suffix}, effort: low }`,
+    'players:',
+    `  release.shared: { adapter: codex, model: release-player-${suffix}, effort: high }`,
+    `  release.isolated: { adapter: codex, model: release-player-${suffix}, effort: high }`,
+    'playbooks:',
+    '  smoke:',
+    '    from: ./smoke.playbook.mjs',
+    '    roles: {}',
+    '  lanes:',
+    '    from: ./lanes.playbook.mjs',
+    '    roles:',
+    '      first: release.shared',
+    `      second: { player: release.shared, model: release-second-${suffix}, effort: low }`,
+    '      isolated: release.isolated',
+    '',
+  ].join('\n');
+}
+
+function smokeRetuneOverlay() {
+  return [
+    'captain: { model: release-smoke-captain-b, effort: max }',
+    'players:',
+    '  release.shared: { model: release-player-b, effort: max }',
+    '  release.isolated: { model: release-player-b, effort: max }',
+    'playbooks:',
+    '  lanes:',
+    '    roles:',
+    '      second: { player: release.shared, model: false, effort: false }',
+    '',
+  ].join('\n');
+}
+
+function expectOneOrderedLifecycle(stderr, id) {
+  const started = `/${id} started`;
+  const finished = `/${id} finished`;
+  const startedAt = stderr.indexOf(started);
+  const finishedAt = stderr.indexOf(finished);
+  if (
+    startedAt < 0 ||
+    startedAt !== stderr.lastIndexOf(started) ||
+    finishedAt < 0 ||
+    finishedAt !== stderr.lastIndexOf(finished) ||
+    startedAt >= finishedAt
+  ) {
+    fail(
+      `the headless turn did not emit one ordered /${id} lifecycle`,
+      `stderr:\n${tail(stderr)}`,
+    );
+  }
+}
+
+function assertSmokeCalls(calls) {
+  const expected = [
+    ['first', 'closing', null, null, 'release-smoke-captain-a', 'low'],
+    [
+      'continued',
+      'selection',
+      null,
+      'release-smoke:closing:first:1',
+      'release-smoke-captain-a',
+      'low',
+    ],
+    ['lane-a', 'player', 'first', null, 'release-player-a', 'high'],
+    [
+      'lane-a',
+      'player',
+      'second',
+      'release-lane:shared:1',
+      'release-second-a',
+      'low',
+    ],
+    ['lane-a', 'player', 'isolated', null, 'release-player-a', 'high'],
+    [
+      'lane-a',
+      'closing',
+      null,
+      'release-smoke:selection:continued:1',
+      'release-smoke-captain-a',
+      'low',
+    ],
+    [
+      'lane-b',
+      'player',
+      'second',
+      'release-lane:shared:2',
+      null,
+      null,
+    ],
+    [
+      'lane-b',
+      'player',
+      'first',
+      'release-lane:shared:3',
+      'release-player-b',
+      'max',
+    ],
+    [
+      'lane-b',
+      'player',
+      'isolated',
+      'release-lane:isolated:1',
+      'release-player-b',
+      'max',
+    ],
+    [
+      'lane-b',
+      'closing',
+      null,
+      'release-smoke:closing:lane-a:4',
+      'release-smoke-captain-b',
+      'max',
+    ],
+  ];
+  const actual = calls.map((call) => [
+    call.process,
+    call.kind,
+    call.role,
+    call.resume,
+    call.model,
+    call.effort,
+  ]);
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    fail(
+      'the deterministic calls did not preserve shared/isolated tokens and tuning',
+      JSON.stringify({ expected, actual, calls }),
+    );
+  }
 }
 
 // Step 6 — every installed compiled runtime: each public playbook subpath
@@ -1161,17 +1476,11 @@ function compareAgainstCommitted(packedPackage, roots) {
   return compared;
 }
 
-// Step 8 — the nested cligent floor. This is the standing regression guard for
-// the dependency bump: the shell's durable conversation needs
-// `CaptainRunResult.resumeToken` and `CaptainContext.emitReply`, and a global
-// install resolves cligent from this nested copy alone.
-//
-// The two members are proven by type-checking one fixture apiece against the
-// nested copy (`scripts/cligent-captain-surface.mjs`), not by searching the
-// installed declarations for their names: `resumeToken` names members of four
-// unrelated cligent declarations and `emitReply` survives in a neighboring
-// record type's doc comment, so a name search stays green with both members
-// deleted from the interfaces the shell actually calls.
+// Step 8 — the nested cligent floor. The complete release contract is proven
+// by one type-checking fixture per capability against the nested copy through
+// `scripts/cligent-release-capabilities.mjs`. This avoids name searching,
+// which stays green when a spelling survives on an unrelated declaration or
+// comment after the owning public interface loses or narrows its member.
 function stepCligentFloor(root, state) {
   const declared = state.packedManifest.dependencies?.['@sublang/cligent'];
   if (typeof declared !== 'string') {
@@ -1191,16 +1500,16 @@ function stepCligentFloor(root, state) {
       `the installed @sublang/cligent ${installedVersion} does not satisfy ${declared}`,
     );
   }
-  const surface = checkCligentCaptainSurface({
+  const surface = checkCligentReleaseCapabilities({
     cligentRoot,
-    workRoot: join(root, 'cligent-captain-surface'),
+    workRoot: join(root, 'cligent-release-capabilities'),
   });
   if (!surface.ok) {
     fail(
       `the installed @sublang/cligent ${installedVersion} does not carry ` +
         (surface.unproven.length > 0
           ? surface.unproven.map((member) => member.id).join(' or ')
-          : `${CAPTAIN_SURFACE_SPECIFIER} as the shell imports it`),
+          : `${CLIGENT_RELEASE_SPECIFIER} as the shell imports it`),
       [
         ...surface.unproven.flatMap((member) => [
           `${member.id} — ${member.why}`,
@@ -1209,8 +1518,8 @@ function stepCligentFloor(root, state) {
         ...surface.otherDiagnostics,
         `Type-checked against ${surface.specifier} resolved from ${cligentRoot}.`,
         `Fixtures preserved at ${surface.workRoot}.`,
-        'The published release the manifest range admits must carry both ' +
-          'surfaces before this candidate can ship.',
+        'The published release the manifest range admits must carry every ' +
+          'required capability before this candidate can ship.',
       ].join('\n'),
     );
   }
@@ -1220,4 +1529,16 @@ function stepCligentFloor(root, state) {
   ];
 }
 
-await main();
+export const _testing = Object.freeze({
+  stepHermetic,
+  smokeConfig,
+  smokeRetuneOverlay,
+  assertSmokeCalls,
+});
+
+if (
+  process.argv[1] !== undefined &&
+  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  await main();
+}

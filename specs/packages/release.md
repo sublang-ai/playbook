@@ -309,33 +309,21 @@ step below holds of the packed candidate:
    **available** when probed from that same location
    ([DR-026](../decisions/026-optional-adapter-sdks.md) §3).
 4. **Installed CLI.** The installed `playbook` executable prints its top-level and `run` usage, resolved config path, continuation and uncertain-recovery grammar, and for `--list` names the `code`, `review`, and `decide` entries of a config enabling the bundled registries ([[release-20](#release-20)]).
-5. **Hermetic shared-Captain run.** A bare fixture repository with no `package.json`, lockfile, or `node_modules` at any level shall hold a configured thin registry importing `xstate` and `@sublang/playbook/xstate-runtime` whose work is a [DR-016](../decisions/016-script-actors-and-optimize-pass.md) script actor.
+5. **Hermetic shared-Captain and player-ledger run.** A bare fixture repository with no `package.json`, lockfile, or `node_modules` at any level shall hold one configured thin registry importing `xstate` and `@sublang/playbook/xstate-runtime` whose work is a [DR-016](../decisions/016-script-actors-and-optimize-pass.md) script actor and one explicit-role registry whose two sequential roles share one segmented player id while a third role binds an equal-configured distinct segmented id ([[playbook-captain-26](playbook-captain.md#playbook-captain-26)], [[playbook-cli-4](playbook-cli.md#playbook-cli-4)]).
    Neither engine import shall resolve from the fixture before launch.
    A subprocess driver beside the globally installed candidate shall invoke the packed launcher's existing dependency-injection seam with a deterministic adapter, the shared config, and a `/command` Boss turn supplied on stdin, without replacing the compiled Captain or constructing tmux.
    The first process shall print one provisioning line, create exactly the two engine links resolving into the isolated prefix, and return exactly one `{sessionId, reply}` JSON object only after persisting the complete Captain session.
    A second process shall continue that same public session id from stdin with the stored Captain continuation and frozen working directory, shall not replay the completed fixture lifecycle, and shall provision nothing further.
+   A third process shall run the explicit-role registry with the shared roles ordered first-to-second, and a fourth process shall select the same id under compatible current Captain, player, and role tuning and run those roles second-to-first.
+   The four-process trace and complete schema-3 record shall prove one shared token chain across both role orders, one independent token chain for the equal-configured distinct player id, retained structural identity and working directory, current model and effort application to prior tokens, and explicit provider-default selections ([[playbook-cli-23](playbook-cli.md#playbook-cli-23)]).
    The fixture repository shall stay clean.
 6. **Compiled runtime integrity.** The installed Captain, CODE, REVIEW, and DECIDE playbook subpaths import and construct runtimes carrying the declared contract surface.
 7. **Compiled-artifact fidelity.** Every packed file other than the manifest is byte-identical to the repository's own, and the committed Captain, CODE, REVIEW, and DECIDE artifact-conformance suites pass with their source/GEARS/FSM, transition, prompt, and topology checks named among those that ran.
-8. **Nested cligent floor.** The nested installed `@sublang/cligent`
-   satisfies the caret range the packed manifest declares
-   ([[release-14](#release-14)]), and carries the two surfaces the Playbook
-   Captain shell's durable conversation depends on:
-   `CaptainContext.emitReply` and `CaptainRunResult.resumeToken`
-   ([DR-029](../decisions/029-session-scoped-conversational-captain.md)).
-   Each shall be proven as a member of its own named interface, reached
-   through the same public specifier the shell imports
-   (`@sublang/cligent/tmux-play`) resolved from that nested copy, and usable
-   at the type the shell uses it at — an awaited `emitReply(text)` and a
-   string-valued `resumeToken`. The occurrence of either name elsewhere in
-   the installed declarations shall not discharge this step: each also occurs
-   away from the interface it must be proven on — on unrelated declarations,
-   and inside doc comments — so a check that searches the shipped text cannot
-   fail for the regression this step exists to catch, and a check that reads
-   one declaration file by path cannot see the `exports` entry the shell
-   resolves through.
-   A candidate whose declared range admits only published cligent releases
-   without both surfaces shall fail here rather than at a Boss turn.
+8. **Nested cligent floor.** The nested installed `@sublang/cligent` shall satisfy the caret range the packed manifest declares and expose the complete enumerated release-floor capability set through `@sublang/cligent/tmux-play` resolved from that nested copy ([[release-14](#release-14)]).
+   The guard shall prove the exact usable type and optionality of `CaptainContext.emitReply`, `CaptainRunResult.resumeToken`, `Captain.prepareDispose`, the player and Captain call-option parameters, each continuation and complete-setting option, every complete setting and tuning selection, the typed settings rejection and predicate, both managed attach activation members, and the prepared attach parameter.
+   It shall additionally pass a segmented player id such as `dev.coder` through the real public config loader unchanged.
+   Every interface-member proof shall resolve the owning public type rather than search declarations by spelling, because an unrelated member or documentation reference can retain the same spelling after the required interface loses or narrows it.
+   A candidate whose declared range admits only published cligent releases without any one of these capabilities shall fail here rather than at a Boss turn or attachment.
 
 Step 7 shall claim no more than it proves. The SLC pipeline is agentic, so
 this gate shall not attempt to re-derive the compiled artifacts and shall
@@ -361,9 +349,10 @@ Before tagging a release, the developer/agent shall run
 `pnpm test:acceptance` locally. This live acceptance suite shall pack and
 install the candidate package once and create isolated fresh git repositories.
 It shall run the installed executable's headless shared-Captain path with real Claude and Codex adapters for bundled REVIEW and CODE, using stdin as well as argument input, exact `{sessionId, reply}` JSON output, and no tmux-play session.
-The REVIEW case shall continue the same public session in a second process from stdin and shall prove that continuation reuses the durable Captain conversation without repeating REVIEW or its repository effects.
+The REVIEW case shall create the public session headlessly from stdin, retire that writer, and select the same public id through a second managed interactive process whose natural status question proves that the durable Captain and player conversations survive the front-end hand-off without repeating REVIEW or its repository effects ([[playbook-cli-23](playbook-cli.md#playbook-cli-23)], [[playbook-cli-49](playbook-cli.md#playbook-cli-49)]).
 The CODE case shall complete its nested REVIEW call and shall report the ordered start, child-call, child-return, and finish lifecycle exactly once.
 It shall retain one installed interactive `/decide` case through a real attached tmux-play session so the live gate observes panes for DECIDE's explicitly bound players under [[playbook-captain-22](playbook-captain.md#playbook-captain-22)] and Boss/Captain focus while DECIDE completes nested REVIEW through the same player ids explicitly shared by both role maps under [[playbook-captain-29](playbook-captain.md#playbook-captain-29)].
+After the attached DECIDE turn settles and its pane child retires the lease, a headless process shall select that exact public id under compatible current tuning and prove that the Captain conversation, retained player tokens, explicit role bindings, frozen working directory, and completed repository effect survive without lifecycle replay, replacement player conversations, or a new tmux session ([[playbook-cli-22](playbook-cli.md#playbook-cli-22)], [[playbook-cli-23](playbook-cli.md#playbook-cli-23)], [[playbook-cli-49](playbook-cli.md#playbook-cli-49)]).
 It shall additionally run the hermetic global-only case ([DR-024](../decisions/024-runtime-engine-provisioning.md) §7): install the packed candidate globally into an isolated npm prefix, enable a compiled thin fixture registry importing `xstate` and `@sublang/playbook/xstate-runtime` in the shared config of a fresh repository with no project-local packages anywhere, and invoke its slash command through the installed headless Captain.
 The fixture shall mechanically reject a worker result that does not equal the repository token before it can enter its final state; the case shall assert automatic engine provisioning triggers exactly once, both runs return only `{sessionId, reply}`, each reply grounds the fixture's published terminal meaning that the exact token was returned and the request completed, and a repeated fresh run provisions nothing further.
 Documentation shall drop the project-local install and `npx`
@@ -390,7 +379,8 @@ whole session, no turn-failure marker appears beyond the two engineered
 script failures, and the fixture repository is left clean.
 
 The suite shall fail unless headless `/code` implements and commits its fixture requirement, reaches nested REVIEW approval, and leaves a clean worktree, and unless interactive `/decide` commits and reaches nested REVIEW approval for its fixture design without implementing that design, also with a clean worktree.
-The headless REVIEW case shall fail unless both processes return the same public session id with one Captain reply each, the first reaches approval, the continuation repeats no lifecycle or repository effect, the fixture repository remains clean, and neither process creates a tmux session.
+The REVIEW case shall fail unless the headless process returns the public id and one Captain reply, the selected interactive process reports that same id and one new Captain reply, the first reaches approval, the continuation repeats no lifecycle or repository effect, the fixture repository remains clean, and the interactive pane child releases its lease after shutdown.
+The DECIDE case shall fail unless the attached and selected headless processes report the same public id, the compatible reopening tuning is retained for the existing Captain and player continuations without changing their role bindings or tokens' ownership, the continuation repeats no lifecycle or repository effect, and no tmux session remains after the hand-off.
 Missing local authentication or required executables shall be a clear failure,
 not a skip.
 Because these checks spend real model calls and require local credentials and
@@ -408,7 +398,7 @@ Before tagging a release, the developer/agent shall verify, in this order:
 - [ ] All tests pass (`pnpm test` from the repo root).
 - [ ] The local model-free release smoke passes (`pnpm smoke:release`;
       [[release-28](#release-28)]).
-- [ ] The local real-agent acceptance suite passes, covering headless REVIEW with process-crossing continuation, headless CODE with nested REVIEW, and attached DECIDE (`pnpm test:acceptance`; [[release-24](#release-24)]).
+- [ ] The local real-agent acceptance suite passes, covering REVIEW headless-to-interactive continuation, headless CODE with nested REVIEW, DECIDE interactive-to-headless continuation, and the remaining hermetic and conversational cases (`pnpm test:acceptance`; [[release-24](#release-24)]).
 - [ ] If the release changes the interactive CLI presentation or layout, or
       changes the declared or locked `@sublang/cligent` version, the
       conditional manual tmux UX smoke passes
@@ -676,37 +666,17 @@ unless all of the following hold:
   `@openai` directory at any depth;
 - the installed executable answers top-level and `run` help with the fresh, continuation, and uncertain-recovery grammar, and `--list` names the CODE, REVIEW, and DECIDE registries;
 - the hermetic fixture resolves neither engine import before launch, and a subprocess driver using the packed launcher's injected deterministic adapter drives its configured slash command through the compiled Captain with no tmux;
-- the first process provisions the fixture exactly once into the isolated prefix and returns only `{sessionId, reply}` after durable hand-off, while a second process continues the same id from stdin with the stored Captain continuation and frozen working directory, repeats no fixture lifecycle, provisions nothing, and leaves the repository clean;
+- the first process provisions the fixture exactly once into the isolated prefix and returns only `{sessionId, reply}` after durable hand-off, a second process continues the same id from stdin with the stored Captain continuation and frozen working directory without replay or provisioning, and two further processes run one explicit-role fixture against that same id before and after compatible current retuning;
+- the explicit-role fixture binds two sequential roles to one segmented player id and a third role to an equal-configured distinct segmented id, orders the shared roles first-to-second before retuning and second-to-first afterward, and fails unless the shared roles advance one token chain in both directions while the distinct id advances only its own chain (verifying [[release-28](#release-28)]);
+- the retuned process applies the current Captain, player, and role model and effort values to the retained tokens, including explicit provider-default resets, while the stored structural projection, working directory, settled effects, public id, and repository remain unchanged (verifying [[release-28](#release-28)]);
 - the installed Captain, CODE, REVIEW, and DECIDE playbook subpaths construct, every packed file other than the manifest is byte-identical to the repository's own, the deterministic source-preservation check passes, and each compiled artifact's conformance suites pass with their declared coverage named among those that ran; and
-- the nested installed `@sublang/cligent` satisfies the packed manifest's
-  caret range; is reached through `@sublang/cligent/tmux-play` resolved from
-  that nested copy; ships `CaptainContext.emitReply` and
-  `CaptainRunResult.resumeToken` as usable members of their named interfaces;
-  accepts and preserves a segmented player id such as `dev.coder` through its
-  real config loader; and exposes player and Captain call options carrying
-  complete model, effort, instruction, and permissions at the shell's types,
-  with model and effort distinguishing an explicit value from an explicit
-  provider-default reset (verifying [[release-14](#release-14)]).
+- the nested installed `@sublang/cligent` satisfies the packed manifest's caret range; is reached through `@sublang/cligent/tmux-play` resolved from that nested copy; exposes the enumerated Captain lifecycle, context call, continuation, complete-setting, typed-rejection, managed-attachment activation, and synchronous native-hand-off release-floor members at the exact optionality and callable type Playbook relies on; accepts and preserves a segmented player id such as `dev.coder` through its real config loader; and carries full model and effort tuning selections that distinguish every concrete shell value from an explicit provider-default reset (verifying [[release-14](#release-14)]).
 
-The last clause is a standing guard, not a formality: the shell's durable
-conversation calls both surfaces, a global install resolves cligent from
-that nested copy alone, and a candidate whose declared range admits only
-releases without them would install and then fail at the first Boss turn.
+The last clause is a standing guard, not a formality: Playbook relies on every enumerated lifecycle, conversation, settings, and attachment capability, a global install resolves cligent from that nested copy alone, and a candidate whose declared range admits only releases without one of them would install and then fail during initialization, a Boss turn, or managed attachment.
 
-Because that clause is the whole of the gate's protection against an
-incompatible dependency, the normal `pnpm test` suite shall fail unless every
-check backing it is itself falsifiable: for each required interface member, a
-fixture `@sublang/cligent` that declares the owning interface without that
-member shall make the check fail and name it, while declaration enumeration
-over that same fixture finds every required member, so a check that drifts
-back to matching names rather than resolving members fails these rows.
-A fixture loader retaining the unsegmented player-id grammar, a call option
-missing any complete setting, a tuning type unable to express either explicit
-selection, a member kept under a shape the shell cannot call, or a package
-that stops exporting the specifier shall likewise fail with the unsupported
-capability named.
-One row shall run the checks against the repository's own installed cligent,
-so the declared floor is proven compatible without a pack or an install.
+Because that clause is the whole of the gate's protection against an incompatible dependency, the normal `pnpm test` suite shall fail unless every check backing it is itself falsifiable: for each required interface member, a fixture `@sublang/cligent` that declares the owning interface without that member shall make the check fail and name that exact member, while declaration enumeration over the same mutated fixture still finds every required spelling, so a guard that drifts back to matching names rather than resolving owning members fails these rows.
+A fixture loader retaining the unsegmented player-id grammar, a call option missing or narrowing any continuation or complete-setting member, a tuning type unable to express the full shell value domain or either explicit selection, an optional member made required, a synchronous lifecycle or native-hand-off member where Playbook requires an asynchronous or synchronous shape respectively, a managed attach that omits either activation option, or a package that stops exporting the public specifier shall likewise fail with the exact unsupported capability named.
+One row shall run the complete checks against the repository's own installed cligent, so the declared floor is proven compatible without a pack or an install.
 
 Nothing here shall be asserted by recompiling a playbook.
 The SLC pipeline is agentic and its output is not reproducible byte-for-byte from the maintained source, so the gate shall instead run the deterministic source-preservation contract and the committed artifact suites before transferring their result to the packed candidate by byte equality.
@@ -722,10 +692,11 @@ selected by the normal `pnpm test` configuration or by GitHub CI.
 
 The opt-in local `pnpm test:acceptance` suite shall pack and install the candidate package once, then exercise five independent fresh git repositories through the installed npm `playbook` command shim.
 The first case shall pipe `/review <request>` to installed `playbook run --json` over a prepared commit using the shared config and real Captain, Coder, and Reviewer agents.
-It shall launch a second installed process selected by the first process's public session id, pipe one natural status question to that continuation, and fail unless both outputs are exact `{sessionId, reply}` objects carrying the same id, REVIEW's approval and repository effects occur exactly once, neither process creates tmux, and the worktree stays clean.
+After that headless process retires its lease, it shall launch a managed interactive process selected by the returned public session id, verify its one matching operational id line, ask one natural status question through the attached Boss pane, and fail unless the reply preserves the private Captain marker, REVIEW's approval and repository effects occur exactly once, the public id and stored working directory remain unchanged, the selected child retires its lease on shutdown, and the worktree stays clean (verifying [[release-24](#release-24)]).
 The second case shall invoke installed `playbook run --json "/code <task>"` with real Claude and Codex agents and shall fail unless the start, nested REVIEW call, nested REVIEW return, and finish lifecycle markers appear once in order on stderr, only the requested implementation changes, the approved result is present in `HEAD`, the worktree is clean, and no tmux process is created.
-The third, independent `/decide` case shall remain attached to tmux-play and shall fail unless its start, nested REVIEW call/return, and finish markers appear, only the requested spec-design files change, the design is committed without implementation, and the worktree is clean.
-The DECIDE case shall also fail unless the nested REVIEW leaf exposes exactly the Coder and Reviewer players explicitly shared with DECIDE, creates no replacement conversation for either player id, and keeps the Boss/Captain pane focused (verifying [[release-24](#release-24)]).
+The third, independent `/decide` case shall begin attached to tmux-play and shall fail unless its start, nested REVIEW call/return, and finish markers appear, only the requested spec-design files change, the design is committed without implementation, and the worktree is clean.
+The DECIDE case shall also fail unless the nested REVIEW leaf exposes exactly the Coder and Reviewer players explicitly shared with DECIDE, creates no replacement conversation for either player id, and keeps the Boss/Captain pane focused.
+After the interactive pane child shuts down, the case shall reopen that exact public id through installed `playbook run --session <id> --json` with a compatible current-tuning overlay and a natural status question, and shall fail unless the exact `{sessionId, reply}` result preserves the prior Captain and player continuations, records the current Captain, player, and role model and effort selections including provider-default selections, repeats no lifecycle or repository effect, creates no tmux session, and leaves the worktree clean (verifying [[release-24](#release-24)]).
 The fourth, hermetic global-only case shall install the packed candidate into an isolated npm global prefix with inherited npm prefix configuration neutralized, place a configured compiled thin fixture registry importing `xstate` and `@sublang/playbook/xstate-runtime` and making one real Claude player call under a real Codex Captain in a fresh git repository containing no `package.json`, lockfile, or `node_modules` at any level, and invoke the prefix's `playbook run --json` command by absolute path with `/hermetic <task>`.
 It shall fail unless neither engine import resolves from the fixture before launch; the first process prints one provisioning line and creates exactly the `node_modules/xstate` and `node_modules/@sublang/playbook` links resolving into the isolated prefix; the fixture mechanically proves the player result equals the repository token before final completion; both processes return exact `{sessionId, reply}` objects whose replies ground the published terminal meaning that the exact token was returned and the request completed; a repeated fresh run creates nothing further and prints no provisioning line; and `@sublang/cligent` resolves from beneath the prefix's `@sublang/playbook` rather than from any machine-global copy (verifying [[release-24](#release-24)]).
 

@@ -34,13 +34,13 @@ export function liveConfig(): string {
     '  turn_finished: off',
     '  turn_aborted: off',
     'players:',
-    '  dev.coder:',
+    '  acceptance.dev.coder:',
     '    adapter: claude',
     `    model: ${JSON.stringify(claudeModel)}`,
     '    effort: xhigh',
     '    permissions:',
     '      mode: auto',
-    '  dev.reviewer:',
+    '  acceptance.dev.reviewer:',
     '    adapter: codex',
     `    model: ${JSON.stringify(codexModel)}`,
     '    effort: xhigh',
@@ -50,13 +50,33 @@ export function liveConfig(): string {
     'playbooks:',
     '  code:',
     '    from: "@sublang/playbook/code/registry"',
-    '    roles: { coder: dev.coder }',
+    '    roles: { coder: acceptance.dev.coder }',
     '  review:',
     '    from: "@sublang/playbook/review/registry"',
-    '    roles: { coder: dev.coder, reviewer: dev.reviewer }',
+    '    roles: { coder: acceptance.dev.coder, reviewer: acceptance.dev.reviewer }',
     '  decide:',
     '    from: "@sublang/playbook/decide/registry"',
-    '    roles: { coder: dev.coder, reviewer: dev.reviewer }',
+    '    roles: { coder: acceptance.dev.coder, reviewer: acceptance.dev.reviewer }',
+    '',
+  ].join('\n');
+}
+
+// RELEASE-25 selected DECIDE continuation: only compatible execution tuning
+// changes. Fixed adapters, instruction, permissions, roles, and player ids
+// remain supplied by the primary config and therefore stay structural.
+export function liveRetuneOverlay(): string {
+  return [
+    'captain:',
+    '  effort: low',
+    'players:',
+    '  acceptance.dev.coder:',
+    '    effort: high',
+    '  acceptance.dev.reviewer:',
+    '    effort: high',
+    'playbooks:',
+    '  decide:',
+    '    roles:',
+    '      reviewer: { player: acceptance.dev.reviewer, model: false, effort: false }',
     '',
   ].join('\n');
 }

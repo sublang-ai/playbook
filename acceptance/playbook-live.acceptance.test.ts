@@ -31,6 +31,8 @@ import {
   conversationConfig,
   hermeticConfig,
   liveConfig,
+  liveModels,
+  liveRetuneOverlay,
 } from './live-config.js';
 import {
   checklistFixtureSource,
@@ -235,7 +237,7 @@ describe.sequential('installed playbook live acceptance', () => {
   });
 
   it(
-    'runs and continues REVIEW headlessly through stdin without replaying effects',
+    'continues headless REVIEW interactively without replaying effects',
     async () => {
       const scenario = createScenario('review');
       let commandOutput = '';
@@ -264,6 +266,12 @@ describe.sequential('installed playbook live acceptance', () => {
           `stderr:\n${diagnosticTail(first.stderr)}`;
 
         const firstEnvelope = parseHeadlessEnvelope(first.stdout);
+        const firstRecord = readDurableSession(
+          scenario,
+          firstEnvelope.sessionId,
+        );
+        expectSettledSessionBoundary(firstRecord, scenario);
+        expectLiveRoleBindings(firstRecord);
         expectReviewApprovalReply(firstEnvelope.reply);
         expectMarkersExactlyOnceInOrder(first.stderr, [
           '◇ /review started',
@@ -280,35 +288,94 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
         expect(gitStatus(scenario.repo)).toBe('');
         expect(ignoredUntracked(scenario.repo)).toBe('');
+        await expectLeaseRetired(scenario, firstEnvelope.sessionId, 1);
 
-        // A second installed CLI process restores the same complete Captain
-        // session. The reply is stdin again, while the completed REVIEW
-        // effect and commit remain settled rather than being replayed.
+        // A selected interactive process restores the exact headless UUID.
+        // Its natural status turn must use the durable Captain conversation
+        // while the completed REVIEW effect and commit stay settled.
         const settledRevision = headRevision(scenario.repo);
         const continuityQuestion =
           'Did the review complete successfully, and what private marker ' +
           'did I ask you to remember? Please answer without starting ' +
           'another workflow or changing any file.';
         expect(continuityQuestion).not.toContain(continuityMarker);
-        const continued = await execLiveTextAsync(
-          candidateBin,
-          ['run', '--session', firstEnvelope.sessionId, '--json'],
-          scenario.repo,
-          runEnv,
-          continuityQuestion,
+        const launcher = spawnLauncher(scenario, firstEnvelope.sessionId);
+        let selectedSession: string | undefined;
+        try {
+          selectedSession = await waitForNewSession(
+            new Set(sessionsBefore),
+            launcher,
+          );
+          const selectedId = await waitForOperationalSessionId(
+            launcher,
+            startupTimeoutMs,
+          );
+          expect(selectedId).toBe(firstEnvelope.sessionId);
+          expect(selectedSession).toBe(`tmux-play-${selectedId}`);
+          const target = `${selectedSession}:0.0`;
+          await waitForAttachedClient(
+            selectedSession,
+            startupTimeoutMs,
+            launcher,
+          );
+          await waitForPaneText(target, 'boss>', startupTimeoutMs, launcher);
+          const before = capturePane(target, sessionHistoryLines);
+          const repliesBefore = captainProseBlocks(before).length;
+          const lifecycleBefore = lifecycleMarkerCounts(before);
+          sendBossTurn(target, continuityQuestion);
+          const reply = await waitForCaptainProse(
+            target,
+            repliesBefore + 1,
+            liveTimeoutMs,
+            launcher,
+            turnFailureMarkers,
+          );
+          expect(reply).toContain(continuityMarker);
+          expectReviewCompletionReply(reply);
+          expect(
+            lifecycleMarkerCounts(capturePane(target, sessionHistoryLines)),
+          ).toEqual(lifecycleBefore);
+          expect(
+            captainProseBlocks(
+              capturePane(target, sessionHistoryLines),
+            ),
+          ).toHaveLength(repliesBefore + 1);
+          expect(headRevision(scenario.repo)).toBe(settledRevision);
+          expect(changedPaths(scenario)).toEqual(['acceptance-review.txt']);
+          expect(gitStatus(scenario.repo)).toBe('');
+          expect(ignoredUntracked(scenario.repo)).toBe('');
+        } finally {
+          commandOutput += `\ncontinued interactive:\n${launcher.output()}`;
+          if (
+            selectedSession !== undefined &&
+            listTmuxSessions().includes(selectedSession)
+          ) {
+            try {
+              tmuxText(['kill-session', '-t', selectedSession]);
+            } catch {
+              // Preserve the primary assertion failure; stopping the launcher
+              // below is the remaining bounded cleanup path.
+            }
+          }
+          await stopLauncher(launcher);
+          expectOneOperationalSessionId(
+            launcher,
+            firstEnvelope.sessionId,
+          );
+        }
+        await expectLeaseRetired(scenario, firstEnvelope.sessionId, 2);
+        const continuedRecord = readDurableSession(
+          scenario,
+          firstEnvelope.sessionId,
         );
-        commandOutput +=
-          `\ncontinued stdout:\n${diagnosticTail(continued.stdout)}\n` +
-          `continued stderr:\n${diagnosticTail(continued.stderr)}`;
-        const continuedEnvelope = parseHeadlessEnvelope(continued.stdout);
-        expect(continuedEnvelope.sessionId).toBe(firstEnvelope.sessionId);
-        expect(continuedEnvelope.reply).toContain(continuityMarker);
-        expectReviewCompletionReply(continuedEnvelope.reply);
-        expect(continued.stderr).not.toMatch(/(?:◇ \/|◆ failed|⤷ )/);
-        expect(headRevision(scenario.repo)).toBe(settledRevision);
-        expect(changedPaths(scenario)).toEqual(['acceptance-review.txt']);
-        expect(gitStatus(scenario.repo)).toBe('');
-        expect(ignoredUntracked(scenario.repo)).toBe('');
+        expectSettledSessionBoundary(continuedRecord, scenario);
+        expectLiveRoleBindings(continuedRecord);
+        expect(continuedRecord.structuralProjection).toEqual(
+          firstRecord.structuralProjection,
+        );
+        expect(continuedRecord.snapshot?.playerSessions).toEqual(
+          firstRecord.snapshot?.playerSessions,
+        );
         expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
         expect(existsSync(tmuxGuard.marker)).toBe(false);
       } catch (error) {
@@ -327,7 +394,7 @@ describe.sequential('installed playbook live acceptance', () => {
         throw withArtifactPath(detailed, scenario.root);
       }
     },
-    2 * liveTimeoutMs + 60_000,
+    2 * liveTimeoutMs + 5 * startupTimeoutMs + 60_000,
   );
 
   it(
@@ -393,13 +460,19 @@ describe.sequential('installed playbook live acceptance', () => {
   );
 
   it(
-    'runs /decide with real Claude and Codex agents in a fresh repository',
+    'continues interactive DECIDE headlessly without replaying effects',
     async () => {
       const scenario = createScenario('decide');
+      let commandOutput = '';
       try {
+        const sessionsBefore = [...listTmuxSessions()].sort();
+        const captainMarker =
+          `DECIDE_SESSION_${randomBytes(16).toString('hex').toUpperCase()}`;
         const observation = await drivePlaybookTurn(
           scenario,
-          decideCommand,
+          `${decideCommand} Preserve this private Boss marker only in the ` +
+            `Captain conversation: ${captainMarker}. Do not write it to ` +
+            'repository files or commits.',
           {
             started: '◇ /decide started',
             nestedCalled: '◇ /review called by /decide',
@@ -427,6 +500,14 @@ describe.sequential('installed playbook live acceptance', () => {
             },
           },
         );
+        const interactiveRecord = readDurableSession(
+          scenario,
+          observation.sessionId,
+        );
+        expectSettledSessionBoundary(interactiveRecord, scenario);
+        expectLiveRoleBindings(interactiveRecord);
+        const retunePath = join(scenario.root, 'decide-retune.yaml');
+        writeFileSync(retunePath, liveRetuneOverlay());
         const acceptanceSpec = readFileSync(
           join(scenario.repo, 'specs/packages/acceptance.md'),
           'utf8',
@@ -447,6 +528,8 @@ describe.sequential('installed playbook live acceptance', () => {
           /^REVIEW_CONTINUITY_[A-Z0-9]{12}$/,
         );
         expect(headAcceptanceSpec).toContain(continuityMarker);
+        expect(acceptanceSpec).not.toContain(captainMarker);
+        expect(headAcceptanceSpec).not.toContain(captainMarker);
         expect(existsSync(join(scenario.repo, 'acceptance-decide.txt'))).toBe(
           false,
         );
@@ -458,19 +541,137 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(isAncestor(scenario.repo, scenario.baselineCommit)).toBe(true);
         expect(gitStatus(scenario.repo)).toBe('');
         expect(ignoredUntracked(scenario.repo)).toBe('');
+        await expectLeaseRetired(scenario, observation.sessionId, 1);
+        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
+
+        const settledRevision = headRevision(scenario.repo);
+        const tmuxGuard = createNoTmuxGuard(scenario.root);
+        const continuityQuestion =
+          'Did the design workflow finish successfully, and what private ' +
+          'Boss marker did I ask you to remember? Answer without starting ' +
+          'another workflow or changing any file.';
+        expect(continuityQuestion).not.toContain(captainMarker);
+        const continued = await execLiveTextAsync(
+          candidateBin,
+          [
+            'run',
+            '--session',
+            observation.sessionId,
+            '--with',
+            retunePath,
+            '--json',
+          ],
+          scenario.root,
+          privateTmuxEnv({
+            XDG_CONFIG_HOME: scenario.configHome,
+            XDG_STATE_HOME: scenario.stateHome,
+            PATH: `${tmuxGuard.binDir}:${process.env.PATH ?? ''}`,
+            PLAYBOOK_ACCEPTANCE_TMUX_CALLED: tmuxGuard.marker,
+          }),
+          continuityQuestion,
+        );
+        commandOutput =
+          `continued stdout:\n${diagnosticTail(continued.stdout)}\n` +
+          `continued stderr:\n${diagnosticTail(continued.stderr)}`;
+        const continuedEnvelope = parseHeadlessEnvelope(continued.stdout);
+        expect(continuedEnvelope.sessionId).toBe(observation.sessionId);
+        expect(continuedEnvelope.reply).toContain(captainMarker);
+        expectReviewCompletionReply(continuedEnvelope.reply);
+        expect(continued.stderr).not.toMatch(/(?:◇ \/|◆ failed|⤷ )/);
+        expect(headRevision(scenario.repo)).toBe(settledRevision);
+        expect(changedPaths(scenario)).toEqual([
+          'specs/packages/acceptance.md',
+        ]);
+        expect(gitStatus(scenario.repo)).toBe('');
+        expect(ignoredUntracked(scenario.repo)).toBe('');
+        expect([...listTmuxSessions()].sort()).toEqual(sessionsBefore);
+        expect(existsSync(tmuxGuard.marker)).toBe(false);
+        await expectLeaseRetired(scenario, observation.sessionId, 2);
+        const continuedRecord = readDurableSession(
+          scenario,
+          observation.sessionId,
+        );
+        expectSettledSessionBoundary(continuedRecord, scenario);
+        expectLiveRoleBindings(continuedRecord);
+        expect(continuedRecord.structuralProjection).toEqual(
+          interactiveRecord.structuralProjection,
+        );
+        expect(continuedRecord.snapshot?.playerSessions).toEqual(
+          interactiveRecord.snapshot?.playerSessions,
+        );
+        expect(continuedRecord.lastAppliedExecutionProjection?.captain?.effort)
+          .toEqual({ kind: 'value', value: 'low' });
+        const { claude, codex } = liveModels();
+        expect(continuedRecord.lastAppliedExecutionProjection?.captain?.model)
+          .toEqual({ kind: 'value', value: claude });
+        const selectedPlayers = Object.fromEntries(
+          continuedRecord.lastAppliedExecutionProjection?.players?.map(
+            (player: any) => [player.id, player],
+          ) ?? [],
+        );
+        expect(selectedPlayers['acceptance.dev.coder']?.effort).toEqual({
+          kind: 'value',
+          value: 'high',
+        });
+        expect(selectedPlayers['acceptance.dev.coder']?.model).toEqual({
+          kind: 'value',
+          value: claude,
+        });
+        expect(selectedPlayers['acceptance.dev.reviewer']?.effort).toEqual({
+          kind: 'value',
+          value: 'high',
+        });
+        expect(selectedPlayers['acceptance.dev.reviewer']?.model).toEqual({
+          kind: 'value',
+          value: codex,
+        });
+        expect(
+          continuedRecord.lastAppliedExecutionProjection?.catalog?.decide
+            ?.roles,
+        ).toEqual({
+          coder: {
+            playerId: 'acceptance.dev.coder',
+            model: { kind: 'value', value: claude },
+            effort: { kind: 'value', value: 'high' },
+          },
+          reviewer: {
+            playerId: 'acceptance.dev.reviewer',
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+          },
+        });
+        expect(
+          continuedRecord.lastAppliedExecutionProjection?.catalog?.review
+            ?.roles,
+        ).toEqual({
+          coder: {
+            playerId: 'acceptance.dev.coder',
+            model: { kind: 'value', value: claude },
+            effort: { kind: 'value', value: 'high' },
+          },
+          reviewer: {
+            playerId: 'acceptance.dev.reviewer',
+            model: { kind: 'value', value: codex },
+            effort: { kind: 'value', value: 'high' },
+          },
+        });
       } catch (error) {
         preserveArtifacts = true;
+        const detailed =
+          commandOutput === ''
+            ? error
+            : new Error(`${errorMessage(error)}\n${commandOutput}`);
         writeFailureSnapshot(
           scenario.root,
           undefined,
           undefined,
-          error,
+          detailed,
           scenario,
         );
-        throw withArtifactPath(error, scenario.root);
+        throw withArtifactPath(detailed, scenario.root);
       }
     },
-    scenarioTimeoutMs,
+    scenarioTimeoutMs + liveTimeoutMs,
   );
 
   it(
@@ -830,6 +1031,7 @@ interface Scenario {
   root: string;
   repo: string;
   configHome: string;
+  stateHome: string;
   baselineCommit: string;
 }
 
@@ -851,12 +1053,77 @@ interface TurnExpectation {
 }
 
 interface TurnObservation {
+  sessionId: string;
   continuityMarker?: string;
 }
 
 interface HeadlessEnvelope {
   sessionId: string;
   reply: string;
+}
+
+interface DurableSessionRecord {
+  state?: unknown;
+  cwd?: unknown;
+  structuralProjection?: unknown;
+  lastAppliedExecutionProjection?: any;
+  snapshot?: any;
+}
+
+function readDurableSession(
+  scenario: Scenario,
+  sessionId: string,
+): DurableSessionRecord {
+  return JSON.parse(
+    readFileSync(
+      join(
+        scenario.stateHome,
+        'playbook',
+        'sessions',
+        `${sessionId}.json`,
+      ),
+      'utf8',
+    ),
+  ) as DurableSessionRecord;
+}
+
+function expectSettledSessionBoundary(
+  record: DurableSessionRecord,
+  scenario: Scenario,
+): void {
+  expect(record.state).toBe('settled');
+  expect(record.cwd).toBe(realpathSync(scenario.repo));
+  expect(Object.keys(record.snapshot?.playerSessions ?? {}).sort()).toEqual([
+    'acceptance.dev.coder',
+    'acceptance.dev.reviewer',
+  ]);
+  expect(
+    (record.structuralProjection as any)?.players
+      ?.map((player: any) => player.id)
+      .sort(),
+  ).toEqual(['acceptance.dev.coder', 'acceptance.dev.reviewer']);
+  expect(record.snapshot?.playerSessions).toEqual(
+    expect.objectContaining({
+      'acceptance.dev.coder': expect.objectContaining({
+        adapter: 'claude',
+        resumeToken: expect.stringMatching(/\S/),
+      }),
+      'acceptance.dev.reviewer': expect.objectContaining({
+        adapter: 'codex',
+        resumeToken: expect.stringMatching(/\S/),
+      }),
+    }),
+  );
+}
+
+function expectLiveRoleBindings(record: DurableSessionRecord): void {
+  const structural: any = record.structuralProjection;
+  for (const id of ['review', 'decide']) {
+    expect(structural?.catalog?.[id]?.roles).toEqual({
+      coder: { playerId: 'acceptance.dev.coder' },
+      reviewer: { playerId: 'acceptance.dev.reviewer' },
+    });
+  }
 }
 
 interface Launcher {
@@ -1153,6 +1420,7 @@ function createScenario(
       : join(suiteRoot, name);
   const repo = join(root, 'repo');
   const configHome = join(root, 'xdg');
+  const stateHome = join(root, 'xdg-state');
   mkdirSync(join(repo, 'specs/packages'), { recursive: true });
   mkdirSync(join(configHome, 'playbook'), { recursive: true });
 
@@ -1286,7 +1554,7 @@ function createScenario(
   execText('git', ['add', '.'], repo);
   execText('git', ['commit', '-m', 'Initialize acceptance fixture'], repo);
   const baselineCommit = headRevision(repo);
-  return { root, repo, configHome, baselineCommit };
+  return { root, repo, configHome, stateHome, baselineCommit };
 }
 
 // Installed headless children receive this PATH shim, while the gate's own
@@ -1324,9 +1592,17 @@ async function drivePlaybookTurn(
   let continuityMarker: string | undefined;
   try {
     sessionName = await waitForNewSession(sessionsBefore, launcher);
+    const sessionId = await waitForOperationalSessionId(
+      launcher,
+      startupTimeoutMs,
+    );
+    expect(sessionName).toBe(`tmux-play-${sessionId}`);
     const target = `${sessionName}:0.0`;
     await waitForAttachedClient(sessionName, startupTimeoutMs, launcher);
     await waitForPaneText(target, 'boss>', startupTimeoutMs, launcher);
+    const repliesBefore = captainProseBlocks(
+      capturePane(target, sessionHistoryLines),
+    ).length;
     console.info(`[acceptance] ${scenario.root.split('/').at(-1)}: ${command}`);
     // Bound the whole real-agent workflow, not each nested milestone. A
     // stalled call must not multiply the model-call budget by three merely
@@ -1390,10 +1666,28 @@ async function drivePlaybookTurn(
       launcher,
       turnFailureMarkers,
     );
+    await waitForCaptainProse(
+      target,
+      repliesBefore + 1,
+      remainingTime(liveDeadline),
+      launcher,
+      turnFailureMarkers,
+    );
+    expectMarkersExactlyOnceInOrder(
+      capturePane(target, sessionHistoryLines),
+      [
+        expectation.started,
+        expectation.nestedCalled,
+        expectation.nestedReturned,
+        expectation.finished,
+      ],
+    );
     console.info(
       `[acceptance] ${scenario.root.split('/').at(-1)}: ${expectation.finished}`,
     );
-    return continuityMarker === undefined ? {} : { continuityMarker };
+    return continuityMarker === undefined
+      ? { sessionId }
+      : { sessionId, continuityMarker };
   } catch (error) {
     writeFailureSnapshot(
       scenario.root,
@@ -1416,13 +1710,17 @@ async function drivePlaybookTurn(
   }
 }
 
-function spawnLauncher(scenario: Scenario): Launcher {
+function spawnLauncher(scenario: Scenario, sessionId?: string): Launcher {
   // Keep the launched session on the gate's private tmux server, so it is
   // the only session this run can see, drive, or kill.
   const env = privateTmuxEnv({
     XDG_CONFIG_HOME: scenario.configHome,
+    XDG_STATE_HOME: scenario.stateHome,
     PLAYBOOK_ACCEPTANCE_BIN: candidateBin,
     PLAYBOOK_ACCEPTANCE_REPO: scenario.repo,
+    ...(sessionId === undefined
+      ? {}
+      : { PLAYBOOK_ACCEPTANCE_SESSION: sessionId }),
     TERM: 'xterm-256color',
     COLORTERM: 'truecolor',
   });
@@ -1431,11 +1729,13 @@ function spawnLauncher(scenario: Scenario): Launcher {
     'set stty_init "rows 49 columns 174"',
     'set timeout -1',
     'log_user 1',
-    'spawn -noecho $env(PLAYBOOK_ACCEPTANCE_BIN) --cwd $env(PLAYBOOK_ACCEPTANCE_REPO)',
+    sessionId === undefined
+      ? 'spawn -noecho $env(PLAYBOOK_ACCEPTANCE_BIN) --cwd $env(PLAYBOOK_ACCEPTANCE_REPO)'
+      : 'spawn -noecho $env(PLAYBOOK_ACCEPTANCE_BIN) --session $env(PLAYBOOK_ACCEPTANCE_SESSION)',
     'expect eof',
   ].join('\n');
   const child = spawn('expect', ['-c', expectScript], {
-    cwd: scenario.repo,
+    cwd: sessionId === undefined ? scenario.repo : scenario.root,
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -1460,6 +1760,57 @@ function spawnLauncher(scenario: Scenario): Launcher {
       `stderr:\n${diagnosticTail(stderr)}`,
     exit: () => exit,
   };
+}
+
+async function waitForOperationalSessionId(
+  launcher: Launcher,
+  timeoutMs: number,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  const uuid =
+    '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+  const line = new RegExp(`^playbook: session (${uuid})$`, 'gim');
+  while (Date.now() < deadline) {
+    const clean = stripVTControlCharacters(launcher.output()).replaceAll(
+      '\r',
+      '',
+    );
+    const matches = [...clean.matchAll(line)];
+    if (matches.length === 1) return matches[0]![1]!;
+    if (matches.length > 1) {
+      throw new Error(
+        `launcher printed multiple operational session ids\n${launcher.output()}`,
+      );
+    }
+    const exit = launcher.exit();
+    if (exit) {
+      throw new Error(
+        `launcher exited before printing its operational session id ` +
+          `(code=${String(exit.code)}, signal=${String(exit.signal)})\n` +
+          launcher.output(),
+      );
+    }
+    await delay(pollIntervalMs);
+  }
+  throw new Error(
+    `timed out waiting for the operational session id\n${launcher.output()}`,
+  );
+}
+
+function expectOneOperationalSessionId(
+  launcher: Launcher,
+  expectedId: string,
+): void {
+  const clean = stripVTControlCharacters(launcher.output()).replaceAll(
+    '\r',
+    '',
+  );
+  const uuid =
+    '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+  const matches = [
+    ...clean.matchAll(new RegExp(`^playbook: session (${uuid})$`, 'gim')),
+  ];
+  expect(matches.map((match) => match[1])).toEqual([expectedId]);
 }
 
 async function waitForNewSession(
@@ -1913,14 +2264,49 @@ async function stopLauncher(launcher: Launcher): Promise<void> {
   if (launcher.child.exitCode !== null || launcher.child.signalCode !== null) {
     return;
   }
+  const gracefulExit = new Promise<boolean>((resolveExit) => {
+    launcher.child.once('exit', () => resolveExit(true));
+  });
   launcher.child.kill('SIGTERM');
   const exited = await Promise.race([
-    new Promise<boolean>((resolveExit) => {
-      launcher.child.once('exit', () => resolveExit(true));
-    }),
+    gracefulExit,
     delay(5_000).then(() => false),
   ]);
-  if (!exited) launcher.child.kill('SIGKILL');
+  if (!exited) {
+    const forcedExit = new Promise<void>((resolveExit) => {
+      launcher.child.once('exit', () => resolveExit());
+    });
+    launcher.child.kill('SIGKILL');
+    await Promise.race([
+      forcedExit,
+      delay(5_000).then(() => {
+        throw new Error('playbook launcher did not exit after SIGKILL');
+      }),
+    ]);
+  }
+}
+
+async function expectLeaseRetired(
+  scenario: Scenario,
+  sessionId: string,
+  expectedTombstones: number,
+): Promise<void> {
+  const sessionsDir = join(scenario.stateHome, 'playbook', 'sessions');
+  const lease = join(sessionsDir, `.${sessionId}.lock`);
+  const retiredPrefix = `.${sessionId}.lock.retired.`;
+  const retired = (): string[] =>
+    readdirSync(sessionsDir)
+      .filter((name) => name.startsWith(retiredPrefix))
+      .sort();
+  const deadline = Date.now() + 5_000;
+  while (
+    (existsSync(lease) || retired().length !== expectedTombstones) &&
+    Date.now() < deadline
+  ) {
+    await delay(pollIntervalMs);
+  }
+  expect(existsSync(lease)).toBe(false);
+  expect(retired()).toHaveLength(expectedTombstones);
 }
 
 function listTmuxSessions(): string[] {
