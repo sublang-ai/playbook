@@ -58,6 +58,24 @@ const UNCERTAIN_KEYS = [
   'markedAt',
   'attemptedExecutionProjection',
 ];
+const RELEASED_SCHEMA_2_COMMON_RECORD_KEYS = [
+  'schemaVersion',
+  'kind',
+  'state',
+  'sessionId',
+  'createdAt',
+  'updatedAt',
+  'cwd',
+  'config',
+  'snapshot',
+];
+const RELEASED_SCHEMA_2_UNCERTAIN_KEYS = [
+  'baseUpdatedAt',
+  'input',
+  'attemptId',
+  'attemptNumber',
+  'markedAt',
+];
 const LEASE_SCHEMA_VERSION = 1;
 const LEASE_KIND = 'captain-session-lease';
 const LEASE_OWNER_FILE = 'owner.json';
@@ -81,6 +99,15 @@ const DEFAULT_FS_OPERATIONS = Object.freeze({
   rmdir,
   unlink,
 });
+
+class CaptainSessionRecordSchemaError extends Error {
+  constructor(schemaVersion, message, cause) {
+    super(message);
+    this.name = 'CaptainSessionRecordSchemaError';
+    this.schemaVersion = schemaVersion;
+    this.cause = cause;
+  }
+}
 
 export function defaultCaptainSessionsDir(
   env = process.env,
@@ -144,11 +171,11 @@ export function createCaptainSessionStore(options = {}) {
       if (cause?.code === 'ENOENT' && missing === 'undefined') return undefined;
       if (cause?.code === 'ENOENT') {
         throw new Error(
-          `Captain session ${JSON.stringify(sessionId)} does not exist`,
+          `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} does not exist`,
         );
       }
       throw new Error(
-        `cannot read Captain session ${JSON.stringify(sessionId)}: ${errorMessage(cause)}`,
+        `cannot read Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)}: ${errorMessage(cause)}`,
       );
     }
     let value;
@@ -156,13 +183,36 @@ export function createCaptainSessionStore(options = {}) {
       value = JSON.parse(text);
     } catch (cause) {
       throw new Error(
-        `Captain session ${JSON.stringify(sessionId)} is not valid JSON: ${errorMessage(cause)}`,
+        `Captain session ${JSON.stringify(sessionId)} at ${JSON.stringify(path)} is not valid JSON: ${errorMessage(cause)}`,
       );
     }
-    const record = validateCaptainSessionRecord(value);
+    let record;
+    try {
+      record = validateCaptainSessionRecord(value);
+    } catch (cause) {
+      const context =
+        `Captain session ${JSON.stringify(sessionId)} at ` +
+        `${JSON.stringify(path)}`;
+      if (cause instanceof CaptainSessionRecordSchemaError) {
+        if (cause.schemaVersion === 2 && value.sessionId !== sessionId) {
+          throw new Error(
+            `Captain session file ${JSON.stringify(path)} contains record ` +
+              JSON.stringify(value.sessionId),
+          );
+        }
+        throw new CaptainSessionRecordSchemaError(
+          cause.schemaVersion,
+          `${context}: ${cause.message}`,
+          cause,
+        );
+      }
+      throw new Error(`${context} is invalid: ${errorMessage(cause)}`, {
+        cause,
+      });
+    }
     if (record.sessionId !== sessionId) {
       throw new Error(
-        `Captain session file ${JSON.stringify(sessionId)} contains record ` +
+        `Captain session file ${JSON.stringify(path)} contains record ` +
           JSON.stringify(record.sessionId),
       );
     }
@@ -171,7 +221,15 @@ export function createCaptainSessionStore(options = {}) {
 
   const read = (sessionId) => readRecord(sessionId);
 
-  const latest = async () => {
+  const latest = async ({ onLegacyRecord } = {}) => {
+    if (
+      onLegacyRecord !== undefined &&
+      typeof onLegacyRecord !== 'function'
+    ) {
+      throw new Error(
+        'Captain session legacy-record observer must be a function',
+      );
+    }
     let names;
     try {
       await assertPrivateDirectory(sessionsDir, fs);
@@ -189,7 +247,24 @@ export function createCaptainSessionStore(options = {}) {
       if (!SESSION_ID_PATTERN.test(sessionId)) continue;
       // Canonically named records are store-owned. Corruption must not make
       // --continue silently select an older logical session.
-      candidates.push(await readRecord(sessionId));
+      try {
+        candidates.push(await readRecord(sessionId));
+      } catch (error) {
+        if (
+          error instanceof CaptainSessionRecordSchemaError &&
+          error.schemaVersion === 2
+        ) {
+          await onLegacyRecord?.(
+            Object.freeze({
+              sessionId,
+              path: recordPathFor(sessionId),
+              schemaVersion: 2,
+            }),
+          );
+          continue;
+        }
+        throw error;
+      }
     }
     candidates.sort((left, right) => {
       const byUpdated = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
@@ -1002,11 +1077,14 @@ export function validateCaptainSessionRecord(value) {
   );
   if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
     if (record.schemaVersion === 2) {
-      throw new Error(
+      assertReleasedSchema2CaptainSessionRecord(record);
+      throw new CaptainSessionRecordSchemaError(
+        record.schemaVersion,
         'Captain session record schema 2 has incompatible root-owned player identity; schema 3 is required',
       );
     }
-    throw new Error(
+    throw new CaptainSessionRecordSchemaError(
+      record.schemaVersion,
       `Captain session record schema ${JSON.stringify(record.schemaVersion)} is not supported`,
     );
   }
@@ -1123,6 +1201,87 @@ export function validateCaptainSessionRecord(value) {
   }
 
   return record;
+}
+
+function assertReleasedSchema2CaptainSessionRecord(record) {
+  if (record.state !== 'settled' && record.state !== 'uncertain') {
+    throw new Error('Captain session record state is not supported');
+  }
+  rejectUnknownOrMissingKeys(
+    record,
+    record.state === 'uncertain'
+      ? [...RELEASED_SCHEMA_2_COMMON_RECORD_KEYS, 'uncertain']
+      : RELEASED_SCHEMA_2_COMMON_RECORD_KEYS,
+    'Captain session record',
+  );
+  if (record.kind !== CAPTAIN_SESSION_RECORD_KIND) {
+    throw new Error('Captain session record kind is not supported');
+  }
+  assertSessionId(record.sessionId);
+  const createdAt = canonicalTimestamp(record.createdAt, 'createdAt');
+  const updatedAt = canonicalTimestamp(record.updatedAt, 'updatedAt');
+  if (Date.parse(updatedAt) < Date.parse(createdAt)) {
+    throw new Error('Captain session record updatedAt precedes createdAt');
+  }
+  if (record.state === 'settled' && updatedAt === createdAt) {
+    throw new Error(
+      'settled Captain session updatedAt must follow its creation marker',
+    );
+  }
+  if (typeof record.cwd !== 'string' || !isAbsolute(record.cwd)) {
+    throw new Error('Captain session record cwd must be an absolute path');
+  }
+  if (resolve(record.cwd) !== record.cwd) {
+    throw new Error('Captain session record cwd must be normalized');
+  }
+  requireRecord(record.config, 'Captain session record config');
+  requireRecord(record.snapshot, 'Captain session record snapshot');
+
+  if (record.state !== 'uncertain') return;
+  const uncertain = requireRecord(
+    record.uncertain,
+    'Captain session record uncertain',
+  );
+  rejectUnknownOrMissingKeys(
+    uncertain,
+    RELEASED_SCHEMA_2_UNCERTAIN_KEYS,
+    'Captain session record uncertain',
+  );
+  if (uncertain.baseUpdatedAt !== null) {
+    canonicalTimestamp(uncertain.baseUpdatedAt, 'uncertain.baseUpdatedAt');
+    if (
+      Date.parse(uncertain.baseUpdatedAt) < Date.parse(createdAt) ||
+      Date.parse(uncertain.baseUpdatedAt) >= Date.parse(updatedAt)
+    ) {
+      throw new Error(
+        'Captain session uncertain baseUpdatedAt must identify an earlier settled boundary',
+      );
+    }
+  } else {
+    const isFirstAttempt = uncertain.attemptNumber === 1;
+    if (isFirstAttempt !== (updatedAt === createdAt)) {
+      throw new Error(
+        'fresh Captain session retry timestamps must match the attempt boundary',
+      );
+    }
+  }
+  assertAcceptedInput(uncertain.input);
+  assertUuid(uncertain.attemptId, 'Captain session attempt id');
+  if (
+    !Number.isSafeInteger(uncertain.attemptNumber) ||
+    uncertain.attemptNumber <= 0
+  ) {
+    throw new Error('Captain session attempt number must be a positive integer');
+  }
+  const markedAt = canonicalTimestamp(
+    uncertain.markedAt,
+    'uncertain.markedAt',
+  );
+  if (markedAt !== updatedAt) {
+    throw new Error(
+      'Captain session uncertain markedAt must equal updatedAt',
+    );
+  }
 }
 
 function validateFreshBoundary(value) {

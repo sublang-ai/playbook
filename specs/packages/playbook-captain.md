@@ -180,7 +180,7 @@ beginning `Saved you` never follows a turn that saved nothing.
 
 Where the Playbook Captain shell is running under tmux-play with two
 or more playbooks enabled, when the shell engages, resumes, or routes
-a Boss turn to an enabled external playbook, the shell shall make that playbook's panes
+a Boss turn to an enabled external playbook with one or more bound roles, the shell shall make that playbook's panes
 the visible ones in the main tmux window and not the panes of the
 other enabled playbooks.
 The session Captain shall make no visibility request and may leave
@@ -610,7 +610,7 @@ Before each call, the shell shall combine the current normalized player instruct
 The host shall interpret a value selection literally and a provider-default selection as an explicit reset rather than omission; inability to enforce either selection on the resumed conversation shall reject the call.
 The wrapper shall route a sub-runtime `callPlayer(localRole, …, { resume })` to `context.callPlayer(<effectiveHostPlayerId>, …)`, return the host result's `resumeToken`, and reject a setting or provider-continuation failure without clearing the prior token or retrying fresh.
 The shell shall track one delegated-call transaction by resolved player id across the logical session and reject a simultaneous second call to the same id rather than fork or serialize its continuation.
-A token-changing result shall remain logically in flight after the host promise resolves until the owning runtime synchronously validates it and `PlayerSessionStore.update` atomically publishes the exact returned transition; no other frame, role, or unsourced store call may publish, clear, cancel, or reuse that lane meanwhile.
+A token-changing result shall remain logically in flight after the host promise resolves until the owning runtime synchronously validates it and `PlayerSessionStore.update` atomically publishes the exact returned transition ([[playbook-runtime-55](playbook-runtime.md#playbook-runtime-55)], [[playbook-runtime-58](playbook-runtime.md#playbook-runtime-58)]); no other frame, role, or unsourced store call may publish, clear, cancel, or reuse that lane meanwhile.
 A resolved result that is malformed, arrives after its runtime operation, or is not committed by that exact update shall quarantine the player lane for the rest of the logical session, block later calls on its uncertain prior token, and make snapshot capture unsafe; a rejected call that produced no result shall preserve and release the prior token after the provider promise settles.
 The wrapper shall route sub-runtime
 `callCaptain(prompt, signal, options)` through the shared Captain queue to
@@ -862,7 +862,7 @@ exclusion rule, pass sub-runtime
 `playbook.trace` telemetry through unchanged, forward every explicit
 player `resume` selection to cligent's `context.callPlayer`, and
 return the authoritative host `resumeToken` unchanged.
-The logical Captain session shall own one player ledger keyed by explicit player id, initialized for every referenced player with immutable adapter, instruction, and permissions plus an optional resume token, and the shell shall initialize every frame runtime with a `PlayerSessionStore` view that resolves local roles through that common ledger per [[playbook-runtime-55](playbook-runtime.md#playbook-runtime-55)].
+The logical Captain session shall own one player ledger keyed by explicit player id, initialized for every referenced player with immutable adapter, instruction, and permissions plus an optional resume token, and the shell shall initialize every frame runtime with a `PlayerSessionStore` view that resolves local roles through that common ledger per [[playbook-runtime-55](playbook-runtime.md#playbook-runtime-55)] and [[playbook-runtime-58](playbook-runtime.md#playbook-runtime-58)].
 Child return, frame disposal, root completion or dismissal, return to chat, later root engagement, process hand-off, and front-end changes shall retain that ledger; only final disposal of the logical Captain session may end its in-memory ownership after durable hand-off.
 The shell shall put neither resume tokens nor trace payloads in model
 prompts, visible status messages, or turn summaries.
@@ -928,12 +928,13 @@ including the causal fields on child `session.started` and parent
 
 Where the Playbook Captain shell runs under tmux-play with one or more
 playbooks enabled, when the shell selects, resumes, routes a Boss turn to,
-pushes, or returns to an enabled external leaf, the shell shall request tmux-play
+pushes, or returns to an enabled external leaf with one or more bound roles, the shell shall request tmux-play
 visibility for that leaf playbook's explicitly bound player ids through
 `setVisiblePlayers` before dispatching Boss text to the playbook
 runtime.
 The requested visible set shall be the external leaf's distinct effective
 host player ids and shall never be empty.
+When the selected external leaf is roleless, the shell shall make no visibility request and may leave the prior pane selection unchanged.
 The playerless session Captain shall make no visibility request;
 when an external child is active, that child's non-empty explicit set
 shall apply.
@@ -1053,7 +1054,7 @@ Validation shall reject cycles, accessors, symbol or unknown keys, non-plain ins
 Only current-config compatibility — enabled catalog membership, fixed Captain and player envelopes, frame options, and exact role maps — shall remain restore-owned; current model and effort selections may differ and shall govern the next call without changing the snapshot.
 After validation, the shell shall rebuild the same compiled Captain, catalog, and controller, reconstruct working frames from root to leaf under their saved options, bindings, session, root, parent-call, and depth identities, and give every frame a view of the one restored Captain-session player ledger ([[playbook-captain-26](#playbook-captain-26)], [[playbook-captain-29](#playbook-captain-29)]).
 The shell shall keep every host-facing emission and call gate closed while it restores the Captain runtime and each working runtime through [[playbook-runtime-45](playbook-runtime.md#playbook-runtime-45)], and shall verify before commit that no restore-time host emission or call was attempted, every restored normalized runtime state equals its snapshot, and every local and session-ledger token view remains exact.
-`PlayerSessionStore.restore` shall mutate the common ledger only for the exact frame while the shell awaits that frame's runtime restore; the same call during initialization, a Boss turn, resume, apply, or disposal shall reject before mutation.
+`PlayerSessionStore.restore` shall mutate the common ledger only for the exact frame while the shell awaits that frame's runtime restore ([[playbook-runtime-55](playbook-runtime.md#playbook-runtime-55)], [[playbook-runtime-58](playbook-runtime.md#playbook-runtime-58)]); the same call during initialization, a Boss turn, resume, apply, or disposal shall reject before mutation.
 Only after every validation, reconstruction, restore, and verification succeeds shall the shell install the saved mode, conversation, recovery journal, counters, issued identities, last action, and last settlement status and open the host gate as a final non-failing commit.
 Successful restore shall emit no session start, transition, status, telemetry, reply, player-visibility, model-call, nested-call-start, or nested-call-finish record; allocate no replacement identity; and leave the next Boss turn to continue the same chat or active leaf through the ordinary routing and settlement paths.
 Where a nested stack was restored, the eventual leaf result shall return through the saved edges and resume each parent exactly once without starting any child again, while roles sharing an explicit player id shall continue through that ledger entry.

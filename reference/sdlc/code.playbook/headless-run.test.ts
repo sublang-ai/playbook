@@ -1544,6 +1544,25 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       now: () => new Date('2026-08-11T20:20:01.000Z'),
     });
     expect([first.result.code, second.result.code]).toEqual([0, 0]);
+    const legacyPath = join(sessionsDir, `${thirdId}.json`);
+    const settledRecord = JSON.parse(
+      await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
+    );
+    await writeFile(
+      legacyPath,
+      `${JSON.stringify({
+        schemaVersion: 2,
+        kind: settledRecord.kind,
+        state: settledRecord.state,
+        sessionId: thirdId,
+        createdAt: settledRecord.createdAt,
+        updatedAt: settledRecord.updatedAt,
+        cwd: settledRecord.cwd,
+        config: {},
+        snapshot: {},
+      })}\n`,
+      { mode: 0o600 },
+    );
 
     const continued = await headlessHarness(
       ['run', '--continue', 'latest reply'],
@@ -1555,6 +1574,12 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(continued.result.code).toBe(0);
     expect(continued.result.sessionId).toBe(secondId);
     expect(continued.inputs).toEqual(['latest reply']);
+    expect(continued.stderr).toContain(
+      `skipping legacy Captain session "${thirdId}" at "${legacyPath}"`,
+    );
+    expect(continued.stderr).toContain(
+      'move it outside the sessions directory or remove it',
+    );
   });
 
   it('rereads the selected session under its lease before deciding whether to run', async () => {

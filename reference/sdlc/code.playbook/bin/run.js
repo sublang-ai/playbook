@@ -123,7 +123,16 @@ export async function runPlaybookRun(options = {}) {
     try {
       if (args.sessionId === undefined) {
         const selected = validateCaptainSessionRecord(
-          await awaitWithAbort(store.latest(), options.signal),
+          await awaitWithAbort(
+            store.latest({
+              onLegacyRecord: ({ sessionId: legacyId, path }) =>
+                writeStream(
+                  stderr,
+                  `playbook run: skipping legacy Captain session ${JSON.stringify(legacyId)} at ${JSON.stringify(path)} because schema 2 has incompatible player identity; move it outside the sessions directory or remove it to silence this warning\n`,
+                ),
+            }),
+            options.signal,
+          ),
         );
         sessionId = selected.sessionId;
       } else {

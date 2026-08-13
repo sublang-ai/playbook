@@ -243,6 +243,21 @@ function settledRecord(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function releasedSchema2Record(overrides: Record<string, unknown> = {}) {
+  return {
+    schemaVersion: 2,
+    kind: 'captain-session',
+    state: 'settled',
+    sessionId,
+    createdAt: '2026-08-11T21:00:00.000Z',
+    updatedAt: '2026-08-11T21:00:00.001Z',
+    cwd: process.cwd(),
+    config: {},
+    snapshot: {},
+    ...overrides,
+  };
+}
+
 function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
@@ -466,7 +481,7 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       }),
     ).toThrow(/does not reproduce/);
     expect(() =>
-      validateCaptainSessionRecord({ schemaVersion: 2 }),
+      validateCaptainSessionRecord(releasedSchema2Record()),
     ).toThrow(/incompatible root-owned player identity/);
   });
 
@@ -933,7 +948,7 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     await lease.release();
   });
 
-  it('selects tied records deterministically and fails closed on canonical corruption', async () => {
+  it('selects tied records, skips released schema 2, and fails closed on corruption', async () => {
     const { sessionsDir } = await fixtureDir();
     for (const [id, token, attempt] of [
       [sessionId, tokenO, attempt1],
@@ -964,13 +979,50 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     await expect(store.read(secondSessionId)).rejects.toThrow(
       /contains record/,
     );
-    await writeFile(
-      secondPath,
-      '{"schemaVersion":2}\n',
-      'utf8',
+    const legacyRecord = releasedSchema2Record({
+      sessionId: secondSessionId,
+      createdAt: wrongEmbeddedId.createdAt,
+      updatedAt: wrongEmbeddedId.updatedAt,
+      cwd: wrongEmbeddedId.cwd,
+    });
+    await writeFile(secondPath, `${JSON.stringify(legacyRecord)}\n`, 'utf8');
+    const legacyRecords: unknown[] = [];
+    expect(
+      (
+        await store.latest({
+          onLegacyRecord: (record: unknown) => legacyRecords.push(record),
+        })
+      ).sessionId,
+    ).toBe(sessionId);
+    expect(legacyRecords).toEqual([
+      {
+        sessionId: secondSessionId,
+        path: secondPath,
+        schemaVersion: 2,
+      },
+    ]);
+    await expect(store.read(secondSessionId)).rejects.toThrow(
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 2`),
     );
+
+    await writeFile(secondPath, '{"schemaVersion":2}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(
-      /incompatible root-owned player identity/,
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*state`),
+    );
+
+    await writeFile(secondPath, '{"schemaVersion":99}\n', 'utf8');
+    await expect(store.latest()).rejects.toThrow(
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 99`),
+    );
+
+    await writeFile(secondPath, '{"schemaVersion":3}\n', 'utf8');
+    await expect(store.latest()).rejects.toThrow(
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*state`),
+    );
+
+    await writeFile(secondPath, '{not-json\n', 'utf8');
+    await expect(store.latest()).rejects.toThrow(
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*valid JSON`),
     );
   });
 

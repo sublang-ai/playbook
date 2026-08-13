@@ -20,9 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Ordinary continuation can apply compatible current model and effort selections without losing provider continuity.** Each Captain and player call receives complete settings, including an explicit provider-default reset, while stored catalog membership, role bindings, adapter, instruction, permissions, and working directory remain fixed. A settings rejection retains the prior token instead of falling back fresh, and uncertain retry keeps its byte-exact input and attempted settings regardless of current config ([DR-032](specs/decisions/032-explicit-roles-session-players.md), [[playbook-cli-22](specs/packages/playbook-cli.md#playbook-cli-22)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)]).
 
+- **The required `@sublang/cligent` range rises from `^0.19.0` to `^0.21.0`.** The new floor supplies segmented player ids, complete per-call settings and typed rejection, empty-roster sessions, and managed attachment with abort-safe native-client hand-off; Playbook release remains blocked until the exact reviewed artifact is registry-served and passes an override-free frozen install ([[release-14](specs/packages/release.md#release-14)]).
+
 ### Removed
 
 - **Breaking: per-playbook `players` blocks and implicit same-role inheritance are removed.** Move agent definitions to top-level `players`, choose stable IDs, and bind every required role under `playbooks.<id>.roles`. This shape is deliberately not auto-migrated: choosing equal versus distinct IDs decides conversation sharing versus isolation, which the launcher cannot infer safely ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-33](specs/packages/playbook-cli.md#playbook-cli-33)]).
+
+- **Breaking: runtime-option builders and host-player helper types are no longer public registry or Captain exports.** `createCodeRuntimeOptions`, `createReviewRuntimeOptions`, `createDecideRuntimeOptions`, their `Create*RuntimeOptions` and `RegistryPlayer` types, `CreatePlaybookRuntimeOptions`, `defaultResolvePlayerId`, and `PlayerBridgeSpec` are removed; `XStatePlayerStateStatus` is replaced by role-oriented `XStateRoleStateStatus` ([[release-20](specs/packages/release.md#release-20)]).
 
 ## [7.0.0] - 2026-08-11
 
