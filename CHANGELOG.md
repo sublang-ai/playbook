@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Interactive and headless commands now create and reopen the same durable Captain session.** A managed interactive pane child owns the session lease, persists a complete turn-zero boundary before input opens, writes each turn uncertain before effects, and settles before releasing its reply. The public UUID reported by either front end reopens through either `playbook --session <id>` or `playbook run --session <id>`, retaining the Captain conversation, engagement stack, stable-player ledger, stored working directory, and exact settled boundary across presentation changes ([IR-042](specs/intents/042-explicit-roles-session-players.md), [[playbook-cli-49](specs/packages/playbook-cli.md#playbook-cli-49)], [[playbook-cli-50](specs/packages/playbook-cli.md#playbook-cli-50)]).
+
+### Changed
+
+- **Breaking: playbook-local roles now bind explicitly to stable Captain-session players.** Workflow artifacts declare semantic roles without host identity; the flat top-level `players` map declares provider agents, and each `playbooks.<id>.roles` entry names the exact player that owns its conversation. Equal player IDs deliberately share continuity across nested and later root engagements, distinct IDs remain isolated even with identical settings, and concurrent roles must name distinct players. Artifact schema 2 and trace, runtime-snapshot, shell-snapshot, and durable-record schema 3 preserve role and player identity separately and reject legacy schemas before effects ([DR-032](specs/decisions/032-explicit-roles-session-players.md), [IR-042](specs/intents/042-explicit-roles-session-players.md)).
+
+- **Ordinary continuation can apply compatible current model and effort selections without losing provider continuity.** Each Captain and player call receives complete settings, including an explicit provider-default reset, while stored catalog membership, role bindings, adapter, instruction, permissions, and working directory remain fixed. A settings rejection retains the prior token instead of falling back fresh, and uncertain retry keeps its byte-exact input and attempted settings regardless of current config ([DR-032](specs/decisions/032-explicit-roles-session-players.md), [[playbook-cli-22](specs/packages/playbook-cli.md#playbook-cli-22)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)]).
+
+### Removed
+
+- **Breaking: per-playbook `players` blocks and implicit same-role inheritance are removed.** Move agent definitions to top-level `players`, choose stable IDs, and bind every required role under `playbooks.<id>.roles`. This shape is deliberately not auto-migrated: choosing equal versus distinct IDs decides conversation sharing versus isolation, which the launcher cannot infer safely ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-33](specs/packages/playbook-cli.md#playbook-cli-33)]).
+
 ## [7.0.0] - 2026-08-11
 
 ### Added

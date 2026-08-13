@@ -1356,6 +1356,11 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(stdout.text()).toContain('Agent swap recipe:');
     expect(stdout.text()).toContain('stable players.<id>');
     expect(stdout.text()).toContain('playbooks.<id>.roles.<role>');
+    expect(stdout.text()).toContain('boolean false selects the provider default');
+    expect(stdout.text()).toContain('distinct ids stay isolated');
+    expect(stdout.text()).toContain('Migration warning:');
+    expect(stdout.text()).toContain('playbooks.<id>.players is removed');
+    expect(stdout.text()).toContain('not auto-migrated');
     expect(stdout.text()).not.toContain('playbooks.<id>.players.<role>');
     expect(stdout.text()).not.toContain('<id>-<role>');
     expect(spawn.calls).toHaveLength(0);

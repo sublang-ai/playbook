@@ -56,9 +56,11 @@ following it cannot install a version the gate refuses again
 ## Interactive
 
 ```sh
-playbook            # launch the configured playbooks in tmux-play
-playbook --list     # ids, slash commands, and intents; no launch
-playbook --help     # config path, auth pointers, agent-swap recipe
+playbook                         # fresh durable session in this directory
+playbook --cwd /path/to/repo     # fresh session in an explicit directory
+playbook --session <id>          # reopen either front end's settled session
+playbook --list                  # ids, slash commands, and intents; no launch
+playbook --help                  # config path, auth pointers, binding recipe
 ```
 
 Without a global install, `npx` runs the same bin — but name each
@@ -78,10 +80,21 @@ already present, since each distinct package set is a distinct tree —
 and replaying your original arguments, so the printed command works in
 one hop.
 
-The command resolves its config (seeding it on first run), composes a
-`tmux-play` config, checks adapter readiness, and launches. It exits
-with tmux-play's status, re-raises a terminating signal on itself, and
-exits `127` when it cannot launch at all
+For a managed launch, the outer command resolves current config (seeding it on
+first use), prepares the complete stored catalog and presenter, waits for the
+pane child to acquire the session lease and publish its settled turn-zero
+record, prints the verified session ID, and then attaches. A normal outer
+detach exits `0`; the pane child keeps owning the durable session and accepting
+turns until it shuts down. Preparation, attachment, or required cleanup
+failure prints its diagnostics and exits nonzero.
+
+Before native-client hand-off, SIGHUP, SIGINT, or SIGTERM aborts activation,
+joins the child, retires the lease, and only then re-raises the signal. At the
+synchronous native-client hand-off, ownership transfers before tmux starts, so
+later signals use native client detach or termination semantics and do not
+retire the pane child's session. Only `--config` and composed
+`--theme-diagnostics` use the stock subprocess boundary: those forms mirror
+its exit status or signal and exit `127` when it cannot be spawned
 ([[playbook-cli-1](../specs/packages/playbook-cli.md#playbook-cli-1)],
 [[playbook-cli-2](../specs/packages/playbook-cli.md#playbook-cli-2)]).
 
@@ -106,10 +119,12 @@ untouched
 [[playbook-captain-2](../specs/packages/playbook-captain.md#playbook-captain-2)]).
 
 The current CODE, REVIEW, and DECIDE workflows take their deterministic
-initial event from the selecting Boss turn. CODE and DECIDE then call
-REVIEW as a nested playbook: an exact same-name child role continues the
-ancestor's player pane and backend conversation, while any additional
-role uses REVIEW's configured fallback. When a player surfaces a
+initial event from the selecting Boss turn. CODE and DECIDE then call REVIEW
+as a nested playbook. Local role names do not imply continuity: each frame
+uses the exact stable player IDs configured under its `roles` map. Equal IDs
+share one pane and provider conversation across nested and later root
+engagements; distinct IDs remain isolated even when their agent settings are
+identical. When a player surfaces a
 clarifying question the FSM parks, the pane shows the question, and a
 judge classifies your next turn as its reply or a fresh directive that
 abandons it
@@ -147,7 +162,7 @@ stderr, and `--verbose` adds only telemetry topic names to stderr.
 
 | Flag | Meaning |
 | --- | --- |
-| `--with <path>` | overlay the shared config for a new session; repeatable |
+| `--with <path>` | overlay current config for a fresh session or compatible ordinary reopen; repeatable |
 | `--no-provision` | do not create missing engine links for configured filesystem registries |
 | `--json` | print exactly one `sessionId` / `reply` object |
 | `--verbose` | add Captain telemetry topic names to stderr |
@@ -168,9 +183,14 @@ uncertain boundary, withhold stdout, and are re-raised after lease retirement
 
 The former positional `<from>`, `resume`, `--player`, `--captain`,
 `--option`, `--cwd`, `--last`, run-only `--config`, and top-level `run:`
-config are removed. Enable a registry under `playbooks`, tune its inline
-agents and options there or in a fresh `--with` overlay, invoke its effective
-`/command`, and run from the working directory you want agents to use.
+config are removed from `playbook run`. Enable a registry under `playbooks`,
+declare provider agents once under top-level `players`, bind every local role
+under `playbooks.<id>.roles`, tune compatible model and effort in a `--with`
+overlay, invoke the effective `/command`, and run from the working directory
+you want agents to use. Legacy `playbooks.<id>.players` blocks are rejected and
+are not auto-migrated because choosing equal or distinct new player IDs chooses
+conversation sharing or isolation; see [Migrating per-playbook
+players](configuration.md#migrating-per-playbook-players).
 
 ### Piping a Spex update prompt
 
@@ -208,23 +228,38 @@ module's directory is a git repository, add `node_modules/` to its
 
 ### Continuing a Captain session
 
-Every successfully presented headless turn is stored under
-`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/` before stdout.
-Continue the newest logical session, or select the id returned by `--json`:
+Interactive and headless commands write the same logical-session records under
+`${XDG_STATE_HOME:-$HOME/.local/state}/playbook/sessions/`. A fresh interactive
+child persists turn zero before printing `playbook: session <id>` and opening
+Boss input; a fresh headless turn returns the same kind of ID in `--json`.
+After the current writer exits or explicitly hands off, either presentation
+can reopen either origin:
 
 ```sh
+# Reopen the latest settled session headlessly:
 playbook run --continue "keep the scope small; skip the docs"
+
+# Reopen one exact session in either presentation:
+playbook --session 4f2c0000-0000-4000-8000-000000009ab1
 playbook run --session 4f2c0000-0000-4000-8000-000000009ab1
 ```
 
-A missing reply is read verbatim from stdin. Continuation restores the exact
+A missing headless reply is read verbatim from stdin. Reopening restores the
 compiled Captain conversation, engagement stack, nested child boundary,
-mapped-player conversations, normalized execution config, and absolute
-working directory. It does not reread current config, does not repeat a
-settled or pending child start, and rejects `--with` because an existing
-session's lineup is frozen
+stable-player ledger, and absolute working directory without replaying a
+settled or pending child start. One exclusive writer owns the session, so a
+detached interactive pane child remains the owner until it shuts down; a
+competing front end fails closed instead of forking the history.
+
+An ordinary reopen reads current config and any opening `--with` fragments,
+projects them to the stored catalog and player roster, and requires the stored
+role bindings plus every structural setting to remain exact. Compatible
+current `model` and `effort` selections apply to the next call, including an
+explicit boolean `false` provider-default reset. The retained provider token
+is never silently replaced by a fresh conversation if that selection is not
+supported
 ([[playbook-cli-22](../specs/packages/playbook-cli.md#playbook-cli-22)],
-[DR-031](../specs/decisions/031-shared-captain-session-front-ends.md)).
+[DR-032](../specs/decisions/032-explicit-roles-session-players.md)).
 
 ### Recovering an uncertain turn
 
@@ -238,8 +273,12 @@ playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 --retry-uncertain
 playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 --discard-uncertain
 ```
 
-Retry reads no input and reuses the byte-exact recorded turn; it may duplicate
-external effects. Discard reads no input and runs no model: it restores the
-exact prior settled boundary, or deletes a never-settled fresh session, while
-abandoning the attempted work. Session files written by the removed direct
-v6 runner are not shared-Captain sessions and cannot be continued.
+Retry reads no input and reuses the byte-exact recorded turn and its exact
+attempted Captain, player, and per-role model/effort selections; current config
+cannot retune that attempt, and retry may duplicate external effects. Discard
+reads no input and runs no model: it restores the exact prior settled boundary,
+or deletes a never-settled fresh session, while abandoning the attempted work.
+An interrupted interactive turn uses the same uncertain record and is
+recovered with these headless commands. Session files written by the removed
+direct v6 runner and legacy record schemas are not shared schema-3 Captain
+sessions and cannot be continued.

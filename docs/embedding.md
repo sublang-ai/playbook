@@ -16,8 +16,8 @@ your own host.
 The port and runtime contracts live in the type-only module
 [`@sublang/playbook/runtime`](../src/runtime.ts) — a public,
 semver-stable surface (`PlayerResult`, `PlaybookPorts`,
-`PlaybookRuntime`, `PlaybookSession`, `PlayerCallOptions`,
-`PlayerSessionStore`, `CaptainCallOptions`, `CaptainResult`,
+`PlaybookRuntime`, `PlaybookSession`, `PlaybookRoleBinding`,
+`PlayerCallOptions`, `PlayerSessionStore`, `CaptainCallOptions`, `CaptainResult`,
 `PlaybookTraceEvent`, and `PlaybookRuntimeFactory`) that imports no CODE
 or FSM types, so a host satisfies it once and inherits every playbook.
 The generated CODE, REVIEW, and DECIDE modules re-export their shared
@@ -37,6 +37,9 @@ import type {
   CaptainCallOptions,
   CaptainResult,
   PlaybookPorts,
+  PlaybookRoleBinding,
+  PlayerResult,
+  PlayerSessionStore,
 } from '@sublang/playbook/runtime';
 import { randomUUID } from 'node:crypto';
 import PQueue from 'p-queue';
@@ -52,6 +55,33 @@ declare const captainAdapter: {
     },
   ): Promise<CaptainResult>;
 };
+
+declare const playerAdapter: {
+  run(
+    playerId: string,
+    prompt: string,
+    options: { signal: AbortSignal; resume: string | false },
+  ): Promise<PlayerResult>;
+};
+
+// Roles are local workflow identities. Players are stable provider
+// conversations owned by the logical Captain session. `promptIdentity` is
+// the current model name, or the player's adapter when provider-default is
+// selected; rebuild it from current compatible tuning on restore.
+const roleBindings = {
+  coder: {
+    playerId: 'team.coder',
+    promptIdentity: 'claude-opus-4-8[1m]',
+  },
+  reviewer: {
+    playerId: 'team.reviewer',
+    promptIdentity: 'gpt-5.5',
+  },
+} satisfies Readonly<Record<string, PlaybookRoleBinding>>;
+
+// Supply a frame-local role view over your session-wide player ledger.
+// Equal player IDs must select/update the same token; distinct IDs must not.
+declare const playerSessions: PlayerSessionStore;
 
 // Construct one host-wide lane and reuse it for every runtime. Passing each
 // call's signal to both the lane and adapter cancels queued and active work.
@@ -69,10 +99,16 @@ async function runCaptain(
 }
 
 const ports: PlaybookPorts = {
-  callPlayer: async (playerId, prompt, signal, { resume }) => {
+  callPlayer: async (roleId, prompt, signal, { resume }) => {
+    const binding = roleBindings[roleId as keyof typeof roleBindings];
+    if (binding === undefined) throw new Error(`Unknown role: ${roleId}`);
     // `resume === false` starts fresh; a string selects that player's
-    // prior backend conversation. Return the adapter's next token.
-    return { status: 'ok', finalText: 'done', resumeToken: 'next-token' };
+    // prior backend conversation. Return the adapter's next token; the
+    // runtime updates `playerSessions` only after validating this result.
+    return await playerAdapter.run(binding.playerId, prompt, {
+      signal,
+      resume,
+    });
   },
   callCaptain: async (prompt, signal, options) => {
     // Forward every option exactly: omission preserves configured tools, while
@@ -103,10 +139,7 @@ const ports: PlaybookPorts = {
   },
 };
 
-const runtime = createPlaybookRuntime({
-  coderLlm: 'claude-opus-4-8[1m]',
-  reviewerLlm: 'gpt-5.5',
-});
+const runtime = createPlaybookRuntime({});
 
 const playbookSessionId = randomUUID();
 await runtime.init({
@@ -114,6 +147,8 @@ await runtime.init({
   playbookId: 'review',
   rootSessionId: playbookSessionId,
   depth: 0,
+  roleBindings,
+  playerSessions,
   ports,
 });
 await runtime.handleBossInput({
@@ -125,23 +160,34 @@ await runtime.dispose();
 
 ## Sessions and traces
 
-Every init-to-dispose lifecycle is one playbook session. Its
+Every init-to-dispose lifecycle is one playbook session. Schema-3
 `playbook.trace` telemetry carries that immutable ID plus a contiguous
-sequence across exact Boss input, judge/player calls, FSM transitions,
-visible Captain work, nested playbook calls, status, settlement, and
-disposal. Without `PlaybookSession.playerSessions`, a standalone runtime
-starts each player fresh and privately retains the latest opaque
-`resumeToken` its adapter returned.
+sequence across exact Boss input, judge/player calls, FSM transitions, visible
+Captain work, nested playbook calls, status, settlement, and disposal. A
+shell-hosted player boundary keeps both identities: `roleId` says which local
+workflow job made the call, while `playerId` says which stable session
+conversation owned it. A standalone runtime retains the role without
+inventing host player identity.
 
-A composing host can instead supply a frame-local `PlayerSessionStore`
-view over one root-owned continuation map. The host maps each local role
-to its effective binding, so a nested exact same-name role selects and
-updates the ancestor conversation while an unmatched child role gets
-its own binding. Child return or disposal does not clear the root's
-token, and a new root engagement starts fresh. Trace data and tokens
-never enter Boss-visible status text. Because trace observers do receive
-opaque resume tokens, persisted traces should be protected as sensitive
-data.
+Without `PlaybookSession.playerSessions`, a standalone runtime starts each
+local role fresh and privately retains the latest opaque `resumeToken` its
+adapter returned. A composing host instead supplies a frame-local
+`PlayerSessionStore` view over one Captain-session ledger and explicit
+`roleBindings`. The store's methods receive local role IDs; the view resolves
+them to the configured stable player IDs. Equal IDs share one token and
+sequential call lane across every frame that names them, while distinct IDs
+remain isolated. Child return, frame disposal, and a later root engagement do
+not clear the session ledger.
+
+Runtime snapshots are schema 3. Their `roleResumeTokens` projection remains
+role-local, while the composing shell's own schema-3 snapshot persists the
+stable player ledger and every frame's exact role bindings. Do not restore
+schema 1 or 2 by guessing identity. On a compatible restore, rebuild
+`promptIdentity` from the current model selection (or adapter for an explicit
+provider-default selection) so the next prompt and trace describe the current
+invocation rather than stale machine state. Trace data and tokens never enter
+Boss-visible status text. Because trace observers do receive opaque resume
+tokens, persisted traces should be protected as sensitive data.
 
 See
 [`code.playbook.test.ts`](../reference/sdlc/code.playbook/code.playbook.test.ts)

@@ -19,7 +19,11 @@ SubLang Playbook addresses both:
 
 ![Venn diagram: Skill is flexible, Workflow is deterministic, and Playbook sits in the intersection as both.](docs/assets/playbook-venn.svg)
 
-Vocabulary: the **Boss** is you; the **Captain** is the coordinating agent you talk to; **players** are the agents a playbook delegates work to.
+Vocabulary: the **Boss** is you; the **Captain** is the coordinating agent you
+talk to; a **role** is a playbook-local job such as `coder`; and a **player** is
+a stable Captain-session agent and provider conversation to which one or more
+roles bind. Roles describe the workflow, while player IDs decide which work
+shares conversation continuity.
 
 Run `playbook` for an interactive tmux UI powered by [cligent](https://github.com/sublang-ai/cligent), or `playbook run` for the same Captain session without tmux in scripts and CI.
 
@@ -28,7 +32,10 @@ Run `playbook` for an interactive tmux UI powered by [cligent](https://github.co
 Out of the box, Playbook includes **CODE** for implementation, **REVIEW** for commit-based review and fixes, and **DECIDE** for independently proposed and reviewed specification decisions.
 CODE and DECIDE call REVIEW as a nested playbook.
 
-The shared starter config uses Claude as both Captain and Coder, and Codex as Reviewer.
+The shared starter config uses Claude as both Captain and the `dev.coder`
+player, and Codex as `dev.reviewer`. CODE, REVIEW, and DECIDE bind their local
+roles explicitly to those two stable players, so nested and later engagements
+share a conversation only where their bindings name the same player ID.
 
 ```sh
 npm install -g @sublang/playbook
@@ -58,12 +65,18 @@ Type a task, enter `/code <task>` for implementation, or enter
 
 On first launch, Playbook writes its config to `${XDG_CONFIG_HOME:-$HOME/.config}/playbook/playbook.config.yaml`.
 
-The same config, compiled Captain, enabled playbooks, players, and nested calls power headless turns.
+The same config, compiled Captain, enabled playbooks, stable players, and
+nested calls power headless turns. Both front ends create the same durable
+logical session: copy the reported session ID to reopen an interactive session
+headlessly or a headless session interactively.
 Run REVIEW explicitly, or pipe a longer request to Captain:
 
 ```sh
 playbook run "/review review the latest commit"
 printf '%s\n' 'Implement the approved specification, then review it.' | playbook run
+# Later, either presentation can reopen the returned/reported session id:
+playbook --session 4f2c0000-0000-4000-8000-000000009ab1
+playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 "continue"
 ```
 
 `playbook run` prints the one Boss-visible Captain reply to stdout and operational status to stderr; CODE and DECIDE can complete their nested REVIEW calls there too.

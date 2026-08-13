@@ -794,9 +794,17 @@ function helpText({
     '  - set the top-level captain and each stable players.<id> to an',
     '    adapter shorthand (claude, codex) or an inline agent block',
     '  - bind every playbooks.<id>.roles.<role> explicitly to a player id;',
-    '    reusing one id deliberately shares that provider conversation',
+    '    a scalar names the id, while { player, model?, effort? } may retune',
+    '    one role; boolean false selects the provider default explicitly',
+    '  - reusing one id deliberately shares that provider conversation;',
+    '    distinct ids stay isolated even when their agent blocks are equal',
     '  - the launcher injects captain.from and retains referenced player ids',
     '    verbatim',
+    '',
+    'Migration warning:',
+    '  playbooks.<id>.players is removed and is not auto-migrated. Move each',
+    '  agent to top-level players, choose ids for sharing or isolation, and',
+    '  bind every local role under playbooks.<id>.roles.',
     '',
   ].join('\n');
 }

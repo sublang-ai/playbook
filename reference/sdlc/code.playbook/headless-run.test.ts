@@ -779,6 +779,12 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     });
     expect(help.code).toBe(0);
     expect(stdout.text()).toContain('playbook run [--with <path>]');
+    expect(stdout.text()).toContain('Stable agents live under top-level players');
+    expect(stdout.text()).toContain('playbooks.<id>.roles');
+    expect(stdout.text()).toContain('Equal player ids share one');
+    expect(stdout.text()).toContain('distinct ids remain isolated');
+    expect(stdout.text()).toContain('playbooks.<id>.players is rejected');
+    expect(stdout.text()).toContain('not auto-migrated');
     expect({ reads, loads, probes }).toEqual({ reads: 0, loads: 0, probes: 0 });
     await expect(readFile(join(home, '.config', 'playbook', 'playbook.config.yaml')))
       .rejects.toThrow();
