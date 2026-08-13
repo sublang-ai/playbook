@@ -47,6 +47,7 @@ const tempDirs: string[] = [];
 
 afterEach(async () => {
   FakeAdapter.calls = [];
+  FakeAdapter.options = [];
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
@@ -65,6 +66,7 @@ function writer() {
 
 class FakeAdapter implements AgentAdapter {
   static calls: Array<{ prompt: string; resume: string | undefined }> = [];
+  static options: Array<AgentOptions | undefined> = [];
   readonly agent = 'claude-code';
 
   async *run(
@@ -72,6 +74,7 @@ class FakeAdapter implements AgentAdapter {
     options?: AgentOptions,
   ): AsyncGenerator<AgentEvent, void, void> {
     FakeAdapter.calls.push({ prompt, resume: options?.resume });
+    FakeAdapter.options.push(options);
     const result = prompt.includes(
       'Select exactly one action from the closed set',
     )
@@ -513,16 +516,18 @@ async function writeConfig(contents: string) {
 function sharedConfig() {
   return [
     'captain: { adapter: claude, model: captain-model }',
+    'players:',
+    '  dev.coder: { adapter: claude, model: coder-model }',
+    '  dev.reviewer: { adapter: codex, model: reviewer-model }',
     'playbooks:',
     '  code:',
     '    from: mod://code',
-    '    players:',
-    '      coder: { adapter: claude, model: coder-model }',
+    '    roles: { coder: dev.coder }',
     '  review:',
     '    from: mod://review',
-    '    players:',
-    '      coder: { adapter: claude, model: review-coder-fallback }',
-    '      reviewer: { adapter: codex, model: reviewer-model }',
+    '    roles:',
+    '      coder: { player: dev.coder, model: review-coder-fallback }',
+    '      reviewer: dev.reviewer',
     '',
   ].join('\n');
 }
@@ -606,6 +611,14 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     ]);
     expect(FakeAdapter.calls[4]?.prompt).toContain('compose closing reply');
     expect(FakeAdapter.calls[4]?.resume).toBeUndefined();
+    expect(FakeAdapter.options.slice(0, 5).map((options) => options?.model))
+      .toEqual([
+        'coder-model',
+        'review-coder-fallback',
+        'reviewer-model',
+        'coder-model',
+        'captain-model',
+      ]);
     expect(out.result.snapshot).toMatchObject({
       mode: 'chat',
       sequences: { turn: 1 },
@@ -614,15 +627,32 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
       out.result.snapshot.captain.sessionId,
     );
     expect(out.result.config).toMatchObject({
-      captain: { model: 'captain-model' },
+      schemaVersion: 2,
+      captain: { model: { kind: 'value', value: 'captain-model' } },
       players: [
-        { id: 'code-coder', model: 'coder-model' },
-        { id: 'review-coder', model: 'review-coder-fallback' },
-        { id: 'review-reviewer', model: 'reviewer-model' },
+        {
+          id: 'dev.coder',
+          model: { kind: 'value', value: 'coder-model' },
+        },
+        {
+          id: 'dev.reviewer',
+          model: { kind: 'value', value: 'reviewer-model' },
+        },
       ],
       catalog: {
-        code: { id: 'code', command: 'code' },
-        review: { id: 'review', command: 'review' },
+        code: {
+          id: 'code',
+          command: 'code',
+          roles: { coder: { playerId: 'dev.coder' } },
+        },
+        review: {
+          id: 'review',
+          command: 'review',
+          roles: {
+            coder: { playerId: 'dev.coder' },
+            reviewer: { playerId: 'dev.reviewer' },
+          },
+        },
       },
     });
     expect(out.result.config).not.toHaveProperty('presentation');
@@ -963,17 +993,18 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     expect(result.code).toBe(1);
     expect(stdout.text()).toBe('');
     expect(stderr.text()).toContain('top-level "run" was removed');
-    expect(stderr.text()).toContain('playbooks.<id>.players');
+    expect(stderr.text()).toContain('playbooks.<id>.roles');
   });
 
   it('rejects invalid shared agent config before prepare, import, or host creation', async () => {
     const configPath = await writeConfig(
       [
         'captain: { adapter: claude, model: { invalid: true } }',
+        'players: { dev.coder: codex }',
         'playbooks:',
         '  code:',
         '    from: mod://code',
-        '    players: { coder: codex }',
+        '    roles: { coder: dev.coder }',
         '',
       ].join('\n'),
     );
@@ -1011,7 +1042,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
   const secondId = '90000000-0000-4000-8000-000000000012';
   const thirdId = '90000000-0000-4000-8000-000000000013';
 
-  it('persists a closed v2 record before stdout without semantic disposal', async () => {
+  it('persists a closed v3 record before stdout without semantic disposal', async () => {
     const order: string[] = [];
     let disposals = 0;
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-order-state-'));
@@ -1070,20 +1101,26 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       'stdout:Captain acknowledged the message.\n',
     ]);
     expect(record).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: 'captain-session',
       state: 'settled',
       sessionId: firstId,
       createdAt: '2026-08-11T20:00:00.000Z',
       updatedAt: '2026-08-11T20:00:00.001Z',
       cwd: process.cwd(),
-      config: {
+      structuralProjection: {
         schemaVersion: 1,
         catalog: {
           code: { manifestCommand: 'code', command: 'code' },
         },
       },
-      snapshot: { schemaVersion: 1, mode: 'chat' },
+      lastAppliedExecutionProjection: {
+        schemaVersion: 2,
+        catalog: {
+          code: { manifestCommand: 'code', command: 'code' },
+        },
+      },
+      snapshot: { schemaVersion: 3, mode: 'chat' },
     });
     expect((await stat(out.sessionsDir)).mode & 0o777).toBe(0o700);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
@@ -1116,7 +1153,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(await readFile(path, 'utf8')).toBe(before);
   });
 
-  it('restores an explicit session instead of init and freezes config, cwd, and timestamps', async () => {
+  it('restores an explicit session instead of init and preserves cwd and timestamps', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-continue-'));
     const frozenCwd = await mkdtemp(join(tmpdir(), 'playbook-frozen-cwd-'));
     tempDirs.push(stateRoot, frozenCwd);
@@ -1147,15 +1184,35 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       now: () => frozen,
     });
     expect(first.result.code).toBe(0);
+    const tuningOverlay = await writeConfig(
+      [
+        'captain: { model: captain-next }',
+        'players:',
+        '  dev.coder: { model: coder-next }',
+        '',
+      ].join('\n'),
+    );
+    let reopenedHostOptions: any;
 
     const second = await headlessHarness(
-      ['run', '--session', firstId, '  exact follow-up  '],
+      [
+        'run',
+        '--session',
+        firstId,
+        '--with',
+        tuningOverlay,
+        '  exact follow-up  ',
+      ],
       {
         sessionsDir,
         cwd: '/must/not/replace/frozen/cwd',
-        userConfigPath: join(stateRoot, 'missing-current-config.yaml'),
+        userConfigPath: first.configPath,
         createCaptainRuntime: createRuntime,
         now: () => new Date('2026-01-01T00:00:00.000Z'),
+        createHostRuntime: async (options: any) => {
+          reopenedHostOptions = options;
+          return createTmuxPlayRuntime(options);
+        },
       },
     );
 
@@ -1164,6 +1221,14 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(second.result.cwd).toBe(frozenCwd);
     expect(seen).toEqual(['first', '  exact follow-up  ']);
     expect(lifecycle).toEqual({ init: 1, restore: 1 });
+    expect(reopenedHostOptions).toMatchObject({
+      captainConfig: { model: 'captain-next' },
+      players: [
+        { id: 'dev.coder', model: 'coder-next' },
+        { id: 'dev.reviewer', model: 'reviewer-model' },
+      ],
+    });
+    expect(FakeAdapter.options.at(-1)?.model).toBe('captain-next');
     const record = JSON.parse(
       await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
     );
@@ -1171,6 +1236,116 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(record.updatedAt).toBe('2026-08-11T20:10:00.003Z');
     expect(record.cwd).toBe(frozenCwd);
     expect(record.snapshot.sequences.turn).toBe(2);
+    expect(record.lastAppliedExecutionProjection.captain.model).toEqual({
+      kind: 'value',
+      value: 'captain-next',
+    });
+    expect(
+      record.lastAppliedExecutionProjection.players.find(
+        (player: any) => player.id === 'dev.coder',
+      ).model,
+    ).toEqual({ kind: 'value', value: 'coder-next' });
+  });
+
+  it('prunes additive current config members before continuation hooks', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-pruned-reopen-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'settle selected catalog'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+
+    await writeFile(
+      first.configPath,
+      [
+        'captain: { adapter: claude, model: captain-model }',
+        'players:',
+        '  dev.coder: { adapter: claude, model: coder-model }',
+        '  dev.reviewer: { adapter: codex, model: reviewer-model }',
+        '  ignored.worker: { adapter: gemini, model: poison-primary }',
+        'playbooks:',
+        '  code:',
+        '    from: mod://code',
+        '    roles: { coder: dev.coder }',
+        '  review:',
+        '    from: mod://review',
+        '    roles:',
+        '      coder: { player: dev.coder, model: review-coder-fallback }',
+        '      reviewer: dev.reviewer',
+        '  ignored:',
+        '    from: mod://ignored-primary',
+        '    roles: { worker: ignored.worker }',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const overlay = await writeConfig(
+      [
+        'captain: { model: captain-current }',
+        'players:',
+        '  ignored.worker: { model: poison-overlay }',
+        'playbooks:',
+        '  ignored: { from: mod://ignored-malformed }',
+        '',
+      ].join('\n'),
+    );
+    const entries = nestedEntries([]);
+    const prepares: string[] = [];
+    const imports: string[] = [];
+    const probes: string[] = [];
+    let hostPlayers: string[] = [];
+
+    const continued = await headlessHarness(
+      [
+        'run',
+        '--session',
+        firstId,
+        '--with',
+        overlay,
+        'continue selected catalog',
+      ],
+      {
+        sessionsDir,
+        userConfigPath: first.configPath,
+        prepareRegistryModule: async ({ id, from }: any) => {
+          prepares.push(id);
+          return from;
+        },
+        loadModule: async (specifier: string) => {
+          imports.push(specifier);
+          if (specifier === 'mod://code') return { default: entries.code };
+          if (specifier === 'mod://review') return { default: entries.review };
+          return { default: { id: 'ignored' } };
+        },
+        probeAdapterSdk: async (adapter: string) => {
+          probes.push(adapter);
+          return true;
+        },
+        createHostRuntime: async (options: any) => {
+          hostPlayers = options.players.map((player: any) => player.id);
+          return createTmuxPlayRuntime(options);
+        },
+      },
+    );
+
+    expect(continued.result.code).toBe(0);
+    expect(continued.inputs).toEqual(['continue selected catalog']);
+    expect(prepares).toEqual(['code', 'review']);
+    expect(imports).toEqual(['mod://code', 'mod://review']);
+    expect(probes).toEqual(['claude', 'codex']);
+    expect(hostPlayers).toEqual(['dev.coder', 'dev.reviewer']);
+    expect(continued.result.config.captain.model).toEqual({
+      kind: 'value',
+      value: 'captain-current',
+    });
+    expect(Object.keys(continued.result.config.catalog)).toEqual([
+      'code',
+      'review',
+    ]);
+    expect(continued.result.config.players.map((player: any) => player.id))
+      .toEqual(['dev.coder', 'dev.reviewer']);
   });
 
   it('persists completed-root settlement evidence as a continuable chat snapshot', async () => {
@@ -1205,6 +1380,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       reviewRestores: 0,
     };
     const entries = nestedParkedEntries(events, lifecycle);
+    entries.review.validateOptions = () => ({ normalizedByRegistry: true });
     const captainRuntime = scriptedCaptainRuntime([], { action: 'deliver' });
     const loadModule = async (specifier: string) => ({
       default: specifier === 'mod://code' ? entries.code : entries.review,
@@ -1224,9 +1400,14 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       mode: 'engaged.parked',
       frames: [
         { playbookId: 'code', runtime: { suspendedCall: { callId: 'code:review:durable' } } },
-        { playbookId: 'review', parentCallId: 'code:review:durable' },
+        {
+          playbookId: 'review',
+          parentCallId: 'code:review:durable',
+          options: { normalizedByRegistry: true },
+        },
       ],
     });
+    expect(parked.structuralProjection.catalog.review.options).toEqual({});
     expect(lifecycle.childCalls).toBe(1);
 
     const exactReply = '  exact review reply\nwith context\n';
@@ -1314,6 +1495,8 @@ describe('durable Captain continuation (PBCLI-24)', () => {
             await lease.beginTurn({
               input: 'concurrent uncertain boundary',
               attemptId: thirdId,
+              attemptedExecutionProjection:
+                first.result.record.lastAppliedExecutionProjection,
             });
             return lease;
           },
@@ -1354,14 +1537,16 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(first.result.config.catalog.code).toMatchObject({
       manifestCommand: 'code',
       command: 'ship',
-      commandOverride: 'ship',
     });
+    expect(first.result.config.catalog.code).not.toHaveProperty(
+      'commandOverride',
+    );
 
     const frozenCommand = await headlessHarness(
       ['run', '--session', firstId, '/ship continue'],
       {
         sessionsDir,
-        userConfigPath: join(stateRoot, 'missing-current-config.yaml'),
+        userConfigPath: overrideConfig,
       },
     );
     expect(frozenCommand.result.code).toBe(0);
@@ -1373,6 +1558,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       ['run', '--session', firstId, 'continue'],
       {
         sessionsDir,
+        userConfigPath: overrideConfig,
         loadModule: async (specifier: string) => ({
           default:
             specifier === 'mod://code' ? changed.code : changed.review,
@@ -1381,7 +1567,9 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
     expect(rejected.result.code).toBe(1);
     expect(rejected.stdout).toBe('');
-    expect(rejected.stderr).toContain('no longer matches its recorded manifest identity');
+    expect(rejected.stderr).toContain(
+      'does not reproduce the stored structural projection',
+    );
     expect(rejected.inputs).toEqual([]);
   });
 
@@ -1618,6 +1806,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       ['run', '--session', firstId, '--retry-uncertain'],
       {
         sessionsDir,
+        userConfigPath: join(stateRoot, 'must-not-read-current.yaml'),
         createAttemptId: () => thirdId,
         readStdin: async () => {
           reads += 1;
@@ -1649,6 +1838,12 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       },
     });
     expect(retryMarker.uncertain.markedAt).toBe(retryMarker.updatedAt);
+    expect(retryMarker.uncertain.attemptedExecutionProjection).toEqual(
+      markerDuringTurn.uncertain.attemptedExecutionProjection,
+    );
+    expect(retried.result.config).toEqual(
+      markerDuringTurn.uncertain.attemptedExecutionProjection,
+    );
     expect(Date.parse(retryMarker.updatedAt)).toBeGreaterThan(
       Date.parse(markerDuringTurn.updatedAt),
     );
@@ -1657,6 +1852,130 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
     expect(settled.state).toBe('settled');
     expect(settled).not.toHaveProperty('uncertain');
+    expect(settled.lastAppliedExecutionProjection).toEqual(
+      markerDuringTurn.uncertain.attemptedExecutionProjection,
+    );
+  });
+
+  it('retries the exact attempted tuning instead of settled or current tuning', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-retuned-retry-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'settle configuration A'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    const baselineA = first.result.record.lastAppliedExecutionProjection;
+    const overlayB = await writeConfig(
+      [
+        'captain: { model: captain-B }',
+        'players:',
+        '  dev.coder: { model: coder-B }',
+        '  dev.reviewer: { model: reviewer-B }',
+        '',
+      ].join('\n'),
+    );
+    const attemptedInput = 'attempt configuration B';
+    let hostB: any;
+    let markerB: any;
+
+    const failed = await headlessHarness(
+      [
+        'run',
+        '--session',
+        firstId,
+        '--with',
+        overlayB,
+        attemptedInput,
+      ],
+      {
+        sessionsDir,
+        userConfigPath: first.configPath,
+        createAttemptId: () => secondId,
+        createHostRuntime: async (options: any) => {
+          hostB = options;
+          const host = await createTmuxPlayRuntime(options);
+          return {
+            async runBossTurn() {
+              markerB = JSON.parse(
+                await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+              );
+              throw new Error('synthetic configuration B crash');
+            },
+            dispose: () => host.dispose(),
+          };
+        },
+      },
+    );
+
+    expect(failed.result.code).toBe(2);
+    expect(failed.stdout).toBe('');
+    expect(hostB).toMatchObject({
+      captainConfig: { model: 'captain-B' },
+      players: [
+        { id: 'dev.coder', model: 'coder-B' },
+        { id: 'dev.reviewer', model: 'reviewer-B' },
+      ],
+    });
+    expect(markerB.lastAppliedExecutionProjection).toEqual(baselineA);
+    expect(markerB.uncertain).toMatchObject({
+      input: attemptedInput,
+      attemptId: secondId,
+      attemptNumber: 1,
+      attemptedExecutionProjection: {
+        captain: { model: { kind: 'value', value: 'captain-B' } },
+        players: [
+          {
+            id: 'dev.coder',
+            model: { kind: 'value', value: 'coder-B' },
+          },
+          {
+            id: 'dev.reviewer',
+            model: { kind: 'value', value: 'reviewer-B' },
+          },
+        ],
+      },
+    });
+    const attemptedB = markerB.uncertain.attemptedExecutionProjection;
+    expect(attemptedB).not.toEqual(baselineA);
+
+    const configC = await writeConfig(
+      sharedConfig()
+        .replace('captain-model', 'captain-C')
+        .replace('coder-model', 'coder-C')
+        .replace('reviewer-model', 'reviewer-C'),
+    );
+    let retryHost: any;
+    const retried = await headlessHarness(
+      ['run', '--session', firstId, '--retry-uncertain'],
+      {
+        sessionsDir,
+        userConfigPath: configC,
+        createAttemptId: () => thirdId,
+        createHostRuntime: async (options: any) => {
+          retryHost = options;
+          return createTmuxPlayRuntime(options);
+        },
+      },
+    );
+
+    expect(retried.result.code).toBe(0);
+    expect(retried.inputs).toEqual([attemptedInput]);
+    expect(retryHost).toMatchObject({
+      captainConfig: { model: 'captain-B' },
+      players: [
+        { id: 'dev.coder', model: 'coder-B' },
+        { id: 'dev.reviewer', model: 'reviewer-B' },
+      ],
+    });
+    expect(retried.result.config).toEqual(attemptedB);
+    const settled = JSON.parse(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(settled.state).toBe('settled');
+    expect(settled).not.toHaveProperty('uncertain');
+    expect(settled.lastAppliedExecutionProjection).toEqual(attemptedB);
   });
 
   it('rechecks lease ownership after the marker and immediately before model work', async () => {
@@ -2039,7 +2358,8 @@ describe('durable Captain continuation (PBCLI-24)', () => {
 
     const pathShaped = JSON.parse(await readFile(originalPath, 'utf8'));
     pathShaped.sessionId = secondId;
-    pathShaped.config.catalog.code.from = '../rewired.js';
+    pathShaped.structuralProjection.catalog.code.from = '../rewired.js';
+    pathShaped.lastAppliedExecutionProjection.catalog.code.from = '../rewired.js';
     await writeFile(
       join(first.sessionsDir, `${secondId}.json`),
       `${JSON.stringify(pathShaped)}\n`,
@@ -2051,7 +2371,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
     expect(unsafe.result.code).toBe(1);
     expect(unsafe.stdout).toBe('');
-    expect(unsafe.stderr).toContain('not a canonical module specifier');
+    expect(unsafe.stderr).toContain('must be a canonical module specifier');
     expect(unsafe.inputs).toEqual([]);
 
     const malformedRecord = JSON.parse(await readFile(originalPath, 'utf8'));
@@ -2084,8 +2404,11 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(() =>
       parseRunArgs(['--continue', '--session', firstId, 'yes']),
     ).toThrow(/mutually exclusive/);
-    expect(() => parseRunArgs(['--continue', '--with', 'x', 'yes']))
-      .toThrow(/frozen continued/);
+    expect(parseRunArgs(['--continue', '--with', 'x', 'yes'])).toMatchObject({
+      continue: true,
+      withPaths: ['x'],
+      input: 'yes',
+    });
     expect(() => parseRunArgs(['--session', '../escape', 'yes']))
       .toThrow(/canonical UUID/);
     expect(parseRunArgs(['--', '--continue'])).toMatchObject({
@@ -2112,6 +2435,15 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(() =>
       parseRunArgs(['--session', firstId, '--retry-uncertain', 'input']),
     ).toThrow(/no input/);
+    expect(() =>
+      parseRunArgs([
+        '--session',
+        firstId,
+        '--retry-uncertain',
+        '--with',
+        'x',
+      ]),
+    ).toThrow(/unavailable during uncertain-turn recovery/);
     expect(() =>
       parseRunArgs([
         '--session',
@@ -2206,10 +2538,11 @@ async function filesystemConfig() {
     configPath,
     [
       'captain: claude',
+      'players: {}',
       'playbooks:',
       '  fixture:',
       '    from: ./registry.mjs',
-      '    players: { worker: claude }',
+      '    roles: {}',
       '',
     ].join('\n'),
   );

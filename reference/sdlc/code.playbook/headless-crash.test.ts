@@ -47,7 +47,9 @@ async function crashFixture() {
     [
       'export default {',
       "  id: 'fixture', command: 'fixture', intent: 'crash fixture',",
+      '  artifactSchema: 2,',
       "  requiredRoleIds: ['worker'],",
+      '  concurrentRoleSets: [],',
       '  validateOptions(value) { return value; },',
       "  createRuntime() { throw new Error('fixture playbook must not start'); }",
       '};',
@@ -58,10 +60,12 @@ async function crashFixture() {
     configPath,
     [
       'captain: claude',
+      'players:',
+      '  fixture.worker: claude',
       'playbooks:',
       '  fixture:',
       '    from: ./fixture-registry.mjs',
-      '    players: { worker: claude }',
+      '    roles: { worker: fixture.worker }',
       '',
     ].join('\n'),
   );

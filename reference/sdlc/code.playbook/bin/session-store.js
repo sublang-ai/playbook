@@ -19,12 +19,24 @@ import {
 } from 'node:fs/promises';
 import { homedir, hostname as systemHostname } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
+import { assertSupportedEffort } from '@sublang/cligent';
+import { KNOWN_PLAYER_ADAPTERS } from '@sublang/cligent/tmux-play';
 import { snapshotJsonValue } from '../../../../src/xstate-runtime.js';
+import { assertPlaybookCaptainShellSnapshot } from '../playbook-captain.js';
 
-export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 2;
+export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
 export const SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+export const CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION = 1;
+export const CAPTAIN_SESSION_EXECUTION_PROJECTION_SCHEMA_VERSION = 2;
+
+const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
+const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
+const RESERVED_ID = 'captain';
+const KNOWN_ADAPTERS = new Set(KNOWN_PLAYER_ADAPTERS);
 
 const COMMON_RECORD_KEYS = [
   'schemaVersion',
@@ -34,7 +46,8 @@ const COMMON_RECORD_KEYS = [
   'createdAt',
   'updatedAt',
   'cwd',
-  'config',
+  'structuralProjection',
+  'lastAppliedExecutionProjection',
   'snapshot',
 ];
 const UNCERTAIN_KEYS = [
@@ -43,6 +56,7 @@ const UNCERTAIN_KEYS = [
   'attemptId',
   'attemptNumber',
   'markedAt',
+  'attemptedExecutionProjection',
 ];
 const LEASE_SCHEMA_VERSION = 1;
 const LEASE_KIND = 'captain-session-lease';
@@ -647,10 +661,55 @@ function createLease({
       return record;
     });
 
-  const beginTurn = ({ input, attemptId, fresh } = {}) =>
+  const initializeSettled = ({
+    cwd,
+    structuralProjection,
+    executionProjection,
+    snapshot,
+  } = {}) =>
+    runExclusive(async () => {
+      const initial = validateFreshBoundary({
+        cwd,
+        structuralProjection,
+        snapshot,
+      });
+      const applied = assertCaptainSessionExecutionCompatible(
+        initial.structuralProjection,
+        executionProjection,
+      );
+      const createdAt = timestampFrom(now(), 'session timestamp');
+      const updatedAt = nextTimestamp(now(), createdAt);
+      const record = validateCaptainSessionRecord({
+        schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+        kind: CAPTAIN_SESSION_RECORD_KIND,
+        state: 'settled',
+        sessionId,
+        createdAt,
+        updatedAt,
+        cwd: initial.cwd,
+        structuralProjection: initial.structuralProjection,
+        lastAppliedExecutionProjection: applied,
+        snapshot: initial.snapshot,
+      });
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: true });
+      await assertOwnerUnchecked();
+      return record;
+    });
+
+  const beginTurn = ({
+    input,
+    attemptId,
+    attemptedExecutionProjection,
+    fresh,
+  } = {}) =>
     runExclusive(async () => {
       assertAcceptedInput(input);
       assertUuid(attemptId, 'Captain session attempt id');
+      const attempted = validateCaptainSessionExecutionProjection(
+        attemptedExecutionProjection,
+        'Captain session attempted execution projection',
+      );
       await assertOwnerUnchecked();
       const prior = await readRecord(sessionId, { missing: 'undefined' });
       let record;
@@ -668,7 +727,8 @@ function createLease({
           createdAt: timestamp,
           updatedAt: timestamp,
           cwd: initial.cwd,
-          config: initial.config,
+          structuralProjection: initial.structuralProjection,
+          lastAppliedExecutionProjection: attempted,
           snapshot: initial.snapshot,
           uncertain: {
             baseUpdatedAt: null,
@@ -676,6 +736,7 @@ function createLease({
             attemptId,
             attemptNumber: 1,
             markedAt: timestamp,
+            attemptedExecutionProjection: attempted,
           },
         });
         await assertOwnerUnchecked();
@@ -696,7 +757,9 @@ function createLease({
           createdAt: prior.createdAt,
           updatedAt: timestamp,
           cwd: prior.cwd,
-          config: prior.config,
+          structuralProjection: prior.structuralProjection,
+          lastAppliedExecutionProjection:
+            prior.lastAppliedExecutionProjection,
           snapshot: prior.snapshot,
           uncertain: {
             baseUpdatedAt: prior.updatedAt,
@@ -704,6 +767,7 @@ function createLease({
             attemptId,
             attemptNumber: 1,
             markedAt: timestamp,
+            attemptedExecutionProjection: attempted,
           },
         });
         await assertOwnerUnchecked();
@@ -737,7 +801,9 @@ function createLease({
         createdAt: prior.createdAt,
         updatedAt: timestamp,
         cwd: prior.cwd,
-        config: prior.config,
+        structuralProjection: prior.structuralProjection,
+        lastAppliedExecutionProjection:
+          prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
         uncertain: {
           baseUpdatedAt: prior.uncertain.baseUpdatedAt,
@@ -745,6 +811,8 @@ function createLease({
           attemptId: nextAttemptId,
           attemptNumber: prior.uncertain.attemptNumber + 1,
           markedAt: timestamp,
+          attemptedExecutionProjection:
+            prior.uncertain.attemptedExecutionProjection,
         },
       });
       await assertOwnerUnchecked();
@@ -770,7 +838,9 @@ function createLease({
         createdAt: prior.createdAt,
         updatedAt: timestamp,
         cwd: prior.cwd,
-        config: prior.config,
+        structuralProjection: prior.structuralProjection,
+        lastAppliedExecutionProjection:
+          prior.uncertain.attemptedExecutionProjection,
         snapshot,
       });
       await assertOwnerUnchecked();
@@ -803,7 +873,9 @@ function createLease({
         createdAt: prior.createdAt,
         updatedAt: prior.uncertain.baseUpdatedAt,
         cwd: prior.cwd,
-        config: prior.config,
+        structuralProjection: prior.structuralProjection,
+        lastAppliedExecutionProjection:
+          prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
       });
       await writeRecord(record, { noReplace: false });
@@ -822,6 +894,7 @@ function createLease({
     sessionId,
     ownerToken: owner.ownerToken,
     read,
+    initializeSettled,
     beginTurn,
     beginRetry,
     settle,
@@ -831,11 +904,112 @@ function createLease({
   });
 }
 
+export function validateCaptainSessionExecutionProjection(
+  value,
+  path = 'Captain session execution projection',
+) {
+  const projection = requireRecord(snapshotJsonValue(value, path), path);
+  validateCaptainSessionProjection(projection, { path, structural: false });
+  return projection;
+}
+
+export function validateCaptainSessionStructuralProjection(
+  value,
+  path = 'Captain session structural projection',
+) {
+  const projection = requireRecord(snapshotJsonValue(value, path), path);
+  validateCaptainSessionProjection(projection, { path, structural: true });
+  return projection;
+}
+
+export function projectCaptainSessionStructure(value) {
+  const execution = validateCaptainSessionExecutionProjection(value);
+  const fixedAgent = (agent) => ({
+    adapter: agent.adapter,
+    ...(agent.instruction === undefined
+      ? {}
+      : { instruction: agent.instruction }),
+    ...(agent.permissions === undefined
+      ? {}
+      : { permissions: agent.permissions }),
+  });
+  return validateCaptainSessionStructuralProjection({
+    schemaVersion: CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION,
+    captain: fixedAgent(execution.captain),
+    players: execution.players.map(({ id, ...agent }) => ({
+      id,
+      ...fixedAgent(agent),
+    })),
+    catalog: Object.fromEntries(
+      Object.entries(execution.catalog).map(([id, item]) => [
+        id,
+        {
+          id: item.id,
+          from: item.from,
+          manifestCommand: item.manifestCommand,
+          command: item.command,
+          intent: item.intent,
+          artifactSchema: item.artifactSchema,
+          requiredRoleIds: item.requiredRoleIds,
+          concurrentRoleSets: item.concurrentRoleSets,
+          roles: Object.fromEntries(
+            Object.entries(item.roles).map(([roleId, binding]) => [
+              roleId,
+              { playerId: binding.playerId },
+            ]),
+          ),
+          options: item.options,
+        },
+      ]),
+    ),
+  });
+}
+
+export function assertCaptainSessionExecutionCompatible(
+  structuralProjection,
+  executionProjection,
+) {
+  const structural = validateCaptainSessionStructuralProjection(
+    structuralProjection,
+  );
+  const execution = validateCaptainSessionExecutionProjection(
+    executionProjection,
+  );
+  const projected = projectCaptainSessionStructure(execution);
+  if (!isDeepStrictEqual(projected, structural)) {
+    throw new Error(
+      'Captain session execution projection does not reproduce the stored structural projection',
+    );
+  }
+  return execution;
+}
+
+export function captainSessionSelectedMembers(value) {
+  const structural = validateCaptainSessionStructuralProjection(value);
+  return snapshotJsonValue(
+    {
+      playbookIds: Object.keys(structural.catalog),
+      playerIds: referencedPlayerIds(structural.catalog),
+    },
+    'Captain session selected members',
+  );
+}
+
 export function validateCaptainSessionRecord(value) {
   const record = requireRecord(
     snapshotJsonValue(value, 'Captain session record'),
     'Captain session record',
   );
+  if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
+    if (record.schemaVersion === 2) {
+      throw new Error(
+        'Captain session record schema 2 has incompatible root-owned player identity; schema 3 is required',
+      );
+    }
+    throw new Error(
+      `Captain session record schema ${JSON.stringify(record.schemaVersion)} is not supported`,
+    );
+  }
   if (record.state !== 'settled' && record.state !== 'uncertain') {
     throw new Error('Captain session record state is not supported');
   }
@@ -846,11 +1020,6 @@ export function validateCaptainSessionRecord(value) {
       : COMMON_RECORD_KEYS,
     'Captain session record',
   );
-  if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
-    throw new Error(
-      `Captain session record schema ${JSON.stringify(record.schemaVersion)} is not supported`,
-    );
-  }
   if (record.kind !== CAPTAIN_SESSION_RECORD_KIND) {
     throw new Error('Captain session record kind is not supported');
   }
@@ -871,8 +1040,25 @@ export function validateCaptainSessionRecord(value) {
   if (resolve(record.cwd) !== record.cwd) {
     throw new Error('Captain session record cwd must be normalized');
   }
-  requireRecord(record.config, 'Captain session record config');
-  requireRecord(record.snapshot, 'Captain session record snapshot');
+  const structural = validateCaptainSessionStructuralProjection(
+    record.structuralProjection,
+    'Captain session record structuralProjection',
+  );
+  const lastApplied = assertCaptainSessionExecutionCompatible(
+    structural,
+    record.lastAppliedExecutionProjection,
+  );
+  void lastApplied;
+  const snapshot = assertPlaybookCaptainShellSnapshot(record.snapshot);
+  assertSnapshotMatchesStructure(snapshot, structural);
+  if (
+    snapshot.captain.sessionId === record.sessionId ||
+    snapshot.issuedSessionIds.includes(record.sessionId)
+  ) {
+    throw new Error(
+      'Captain session public id collides with an internal Captain session id',
+    );
+  }
 
   if (record.state === 'uncertain') {
     const uncertain = requireRecord(
@@ -887,7 +1073,7 @@ export function validateCaptainSessionRecord(value) {
     if (uncertain.baseUpdatedAt !== null) {
       canonicalTimestamp(uncertain.baseUpdatedAt, 'uncertain.baseUpdatedAt');
       if (
-        Date.parse(uncertain.baseUpdatedAt) < Date.parse(createdAt) ||
+        Date.parse(uncertain.baseUpdatedAt) <= Date.parse(createdAt) ||
         Date.parse(uncertain.baseUpdatedAt) >= Date.parse(updatedAt)
       ) {
         throw new Error(
@@ -919,6 +1105,21 @@ export function validateCaptainSessionRecord(value) {
         'Captain session uncertain markedAt must equal updatedAt',
       );
     }
+    const attempted = assertCaptainSessionExecutionCompatible(
+      structural,
+      uncertain.attemptedExecutionProjection,
+    );
+    if (uncertain.baseUpdatedAt === null) {
+      if (!isDeepStrictEqual(lastApplied, attempted)) {
+        throw new Error(
+          'fresh Captain session baseline and attempted execution projections must match',
+        );
+      }
+      assertTurnZeroSnapshot(
+        snapshot,
+        'fresh Captain session record snapshot',
+      );
+    }
   }
 
   return record;
@@ -931,7 +1132,7 @@ function validateFreshBoundary(value) {
   );
   rejectUnknownOrMissingKeys(
     boundary,
-    ['cwd', 'config', 'snapshot'],
+    ['cwd', 'structuralProjection', 'snapshot'],
     'fresh Captain session boundary',
   );
   if (typeof boundary.cwd !== 'string' || !isAbsolute(boundary.cwd)) {
@@ -940,9 +1141,382 @@ function validateFreshBoundary(value) {
   if (resolve(boundary.cwd) !== boundary.cwd) {
     throw new Error('fresh Captain session cwd must be normalized');
   }
-  requireRecord(boundary.config, 'fresh Captain session config');
-  requireRecord(boundary.snapshot, 'fresh Captain session snapshot');
+  const structural = validateCaptainSessionStructuralProjection(
+    boundary.structuralProjection,
+    'fresh Captain session structuralProjection',
+  );
+  const snapshot = assertPlaybookCaptainShellSnapshot(boundary.snapshot);
+  assertSnapshotMatchesStructure(snapshot, structural);
+  assertTurnZeroSnapshot(snapshot, 'fresh Captain session boundary snapshot');
   return boundary;
+}
+
+function assertTurnZeroSnapshot(snapshot, path) {
+  if (
+    snapshot.sequences.turn !== 0 ||
+    snapshot.sequences.journal !== 0 ||
+    snapshot.journal.length !== 0 ||
+    snapshot.captain.conversation.kind !== 'unopened'
+  ) {
+    throw new Error(`${path} must be an initialized turn-zero shell snapshot`);
+  }
+}
+
+function validateCaptainSessionProjection(
+  projection,
+  { path, structural },
+) {
+  rejectUnknownOrMissingKeys(
+    projection,
+    ['schemaVersion', 'captain', 'players', 'catalog'],
+    path,
+  );
+  const expectedSchema = structural
+    ? CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION
+    : CAPTAIN_SESSION_EXECUTION_PROJECTION_SCHEMA_VERSION;
+  if (projection.schemaVersion !== expectedSchema) {
+    throw new Error(
+      `${path}.schemaVersion ${JSON.stringify(projection.schemaVersion)} is not supported (expected ${expectedSchema})`,
+    );
+  }
+  validateProjectedAgent(projection.captain, `${path}.captain`, {
+    structural,
+  });
+  if (!Array.isArray(projection.players)) {
+    throw new Error(`${path}.players must be an array`);
+  }
+  const playerIds = [];
+  for (let index = 0; index < projection.players.length; index += 1) {
+    const playerPath = `${path}.players[${index}]`;
+    const player = requireRecord(projection.players[index], playerPath);
+    exactOptionalKeys(
+      player,
+      structural
+        ? ['id', 'adapter']
+        : ['id', 'adapter', 'model', 'effort'],
+      ['instruction', 'permissions'],
+      playerPath,
+    );
+    assertPlayerId(player.id, `${playerPath}.id`);
+    validateProjectedAgent(player, playerPath, { structural, hasId: true });
+    playerIds.push(player.id);
+  }
+  if (new Set(playerIds).size !== playerIds.length) {
+    throw new Error(`${path}.players contains a duplicate player id`);
+  }
+
+  const catalog = requireRecord(projection.catalog, `${path}.catalog`);
+  const catalogEntries = Object.entries(catalog);
+  if (catalogEntries.length === 0) {
+    throw new Error(`${path}.catalog must not be empty`);
+  }
+  const commands = new Set();
+  for (const [id, rawItem] of catalogEntries) {
+    const itemPath = `${path}.catalog.${id}`;
+    const item = requireRecord(rawItem, itemPath);
+    rejectUnknownOrMissingKeys(
+      item,
+      [
+        'id',
+        'from',
+        'manifestCommand',
+        'command',
+        'intent',
+        'artifactSchema',
+        'requiredRoleIds',
+        'concurrentRoleSets',
+        'roles',
+        'options',
+      ],
+      itemPath,
+    );
+    if (requireCanonicalNonblank(item.id, `${itemPath}.id`) !== id) {
+      throw new Error(`${itemPath}.id must equal its catalog key`);
+    }
+    if (id === RESERVED_ID) {
+      throw new Error(`${itemPath}.id uses reserved id "captain"`);
+    }
+    validateCanonicalModuleSpecifier(item.from, `${itemPath}.from`);
+    requireCanonicalNonblank(
+      item.manifestCommand,
+      `${itemPath}.manifestCommand`,
+    );
+    const command = requireCanonicalNonblank(
+      item.command,
+      `${itemPath}.command`,
+    );
+    if (command === RESERVED_ID) {
+      throw new Error(`${itemPath}.command uses reserved command "captain"`);
+    }
+    if (commands.has(command)) {
+      throw new Error(`${path}.catalog contains duplicate command ${JSON.stringify(command)}`);
+    }
+    commands.add(command);
+    if (typeof item.intent !== 'string') {
+      throw new Error(`${itemPath}.intent must be a string`);
+    }
+    if (item.artifactSchema !== 2) {
+      throw new Error(`${itemPath}.artifactSchema must be exactly 2`);
+    }
+    const requiredRoleIds = validateRoleIds(
+      item.requiredRoleIds,
+      `${itemPath}.requiredRoleIds`,
+    );
+    validateConcurrentRoleSets(
+      item.concurrentRoleSets,
+      requiredRoleIds,
+      `${itemPath}.concurrentRoleSets`,
+    );
+    const roles = requireRecord(item.roles, `${itemPath}.roles`);
+    if (!isDeepStrictEqual(Object.keys(roles), requiredRoleIds)) {
+      throw new Error(`${itemPath}.roles must exactly follow requiredRoleIds`);
+    }
+    for (const roleId of requiredRoleIds) {
+      const bindingPath = `${itemPath}.roles.${roleId}`;
+      const binding = requireRecord(roles[roleId], bindingPath);
+      rejectUnknownOrMissingKeys(
+        binding,
+        structural
+          ? ['playerId']
+          : ['playerId', 'model', 'effort'],
+        bindingPath,
+      );
+      assertPlayerId(binding.playerId, `${bindingPath}.playerId`);
+      if (!structural) {
+        validateTuningSelection(binding.model, `${bindingPath}.model`);
+        const player = projection.players.find(
+          (candidate) => candidate.id === binding.playerId,
+        );
+        if (player === undefined) {
+          throw new Error(
+            `${bindingPath}.playerId names a player absent from ${path}.players`,
+          );
+        }
+        validateEffortSelection(
+          binding.effort,
+          player.adapter,
+          `${bindingPath}.effort`,
+        );
+      }
+    }
+    for (const [setIndex, set] of item.concurrentRoleSets.entries()) {
+      const concurrentPlayers = set.map(
+        (roleId) => roles[roleId].playerId,
+      );
+      if (new Set(concurrentPlayers).size !== concurrentPlayers.length) {
+        throw new Error(
+          `${itemPath}.concurrentRoleSets[${setIndex}] binds one player more than once`,
+        );
+      }
+    }
+    requireRecord(item.options, `${itemPath}.options`);
+  }
+  const referenced = referencedPlayerIds(catalog);
+  if (!isDeepStrictEqual(playerIds, referenced)) {
+    throw new Error(
+      `${path}.players must equal the ordered player ids referenced by catalog roles`,
+    );
+  }
+}
+
+function validateProjectedAgent(value, path, { structural, hasId = false }) {
+  const agent = requireRecord(value, path);
+  if (!hasId) {
+    exactOptionalKeys(
+      agent,
+      structural ? ['adapter'] : ['adapter', 'model', 'effort'],
+      ['instruction', 'permissions'],
+      path,
+    );
+  }
+  const adapter = requireCanonicalNonblank(agent.adapter, `${path}.adapter`);
+  if (!KNOWN_ADAPTERS.has(adapter)) {
+    throw new Error(`${path}.adapter ${JSON.stringify(adapter)} is not supported`);
+  }
+  if (!structural) {
+    validateTuningSelection(agent.model, `${path}.model`);
+    validateEffortSelection(agent.effort, adapter, `${path}.effort`);
+  }
+  if (agent.instruction !== undefined && typeof agent.instruction !== 'string') {
+    throw new Error(`${path}.instruction must be a string`);
+  }
+  if (agent.permissions !== undefined) {
+    validatePermissionPolicy(agent.permissions, `${path}.permissions`);
+  }
+}
+
+function validateTuningSelection(value, path) {
+  const selection = requireRecord(value, path);
+  if (selection.kind === 'provider-default') {
+    rejectUnknownOrMissingKeys(selection, ['kind'], path);
+    return;
+  }
+  if (selection.kind === 'value') {
+    rejectUnknownOrMissingKeys(selection, ['kind', 'value'], path);
+    requireNonblank(selection.value, `${path}.value`);
+    return;
+  }
+  throw new Error(`${path}.kind is not supported`);
+}
+
+function validateEffortSelection(value, adapter, path) {
+  validateTuningSelection(value, path);
+  if (value.kind !== 'value') return;
+  try {
+    assertSupportedEffort(adapter, value.value, `${path}.value`);
+  } catch (cause) {
+    throw new Error(errorMessage(cause));
+  }
+}
+
+function validatePermissionPolicy(value, path) {
+  const permissions = requireRecord(value, path);
+  exactOptionalKeys(
+    permissions,
+    [],
+    [
+      'mode',
+      'fileWrite',
+      'shellExecute',
+      'networkAccess',
+      'writablePaths',
+    ],
+    path,
+  );
+  if (
+    permissions.mode !== undefined &&
+    permissions.mode !== 'auto' &&
+    permissions.mode !== 'bypass'
+  ) {
+    throw new Error(`${path}.mode must be "auto" or "bypass"`);
+  }
+  for (const key of ['fileWrite', 'shellExecute', 'networkAccess']) {
+    if (
+      permissions[key] !== undefined &&
+      !['allow', 'ask', 'deny'].includes(permissions[key])
+    ) {
+      throw new Error(`${path}.${key} must be "allow", "ask", or "deny"`);
+    }
+  }
+  if (permissions.writablePaths !== undefined) {
+    if (
+      !Array.isArray(permissions.writablePaths) ||
+      permissions.writablePaths.some(
+        (entry) => typeof entry !== 'string' || entry.length === 0,
+      )
+    ) {
+      throw new Error(
+        `${path}.writablePaths must be an array of non-empty strings`,
+      );
+    }
+  }
+}
+
+function validateRoleIds(value, path) {
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (roleId) =>
+        typeof roleId !== 'string' ||
+        !ROLE_ID_PATTERN.test(roleId) ||
+        roleId === RESERVED_ID,
+    ) ||
+    new Set(value).size !== value.length
+  ) {
+    throw new Error(`${path} must contain distinct canonical local role ids`);
+  }
+  return value;
+}
+
+function validateConcurrentRoleSets(value, requiredRoleIds, path) {
+  if (!Array.isArray(value)) {
+    throw new Error(`${path} must be an array`);
+  }
+  const required = new Set(requiredRoleIds);
+  const signatures = new Set();
+  for (let index = 0; index < value.length; index += 1) {
+    const set = value[index];
+    if (
+      !Array.isArray(set) ||
+      set.length < 2 ||
+      set.some((roleId) => !required.has(roleId)) ||
+      new Set(set).size !== set.length
+    ) {
+      throw new Error(
+        `${path}[${index}] must contain at least two distinct required roles`,
+      );
+    }
+    const signature = JSON.stringify(set);
+    if (signatures.has(signature)) {
+      throw new Error(`${path} contains duplicate set ${signature}`);
+    }
+    signatures.add(signature);
+  }
+}
+
+function referencedPlayerIds(catalog) {
+  const seen = new Set();
+  const ids = [];
+  for (const item of Object.values(catalog)) {
+    for (const roleId of item.requiredRoleIds) {
+      const playerId = item.roles[roleId].playerId;
+      if (!seen.has(playerId)) {
+        seen.add(playerId);
+        ids.push(playerId);
+      }
+    }
+  }
+  return ids;
+}
+
+function assertSnapshotMatchesStructure(snapshot, structural) {
+  if (!isDeepStrictEqual(snapshot.captain.agent, structural.captain)) {
+    throw new Error(
+      'Captain session snapshot Captain envelope differs from structuralProjection',
+    );
+  }
+  const structuralPlayers = new Map(
+    structural.players.map(({ id, ...agent }) => [id, agent]),
+  );
+  if (
+    !isDeepStrictEqual(
+      Object.keys(snapshot.playerSessions),
+      [...structuralPlayers.keys()],
+    )
+  ) {
+    throw new Error(
+      'Captain session snapshot player ledger differs from structuralProjection roster',
+    );
+  }
+  for (const [playerId, agent] of structuralPlayers) {
+    const { resumeToken: _resumeToken, ...savedAgent } =
+      snapshot.playerSessions[playerId];
+    if (!isDeepStrictEqual(savedAgent, agent)) {
+      throw new Error(
+        `Captain session snapshot player ${JSON.stringify(playerId)} envelope differs from structuralProjection`,
+      );
+    }
+  }
+  if (snapshot.mode !== 'engaged.parked') return;
+  for (const frame of snapshot.frames) {
+    const item = structural.catalog[frame.playbookId];
+    if (item === undefined) {
+      throw new Error(
+        `Captain session snapshot frame names unknown stored playbook ${JSON.stringify(frame.playbookId)}`,
+      );
+    }
+    const roleBindings = Object.fromEntries(
+      item.requiredRoleIds.map((roleId) => [
+        roleId,
+        item.roles[roleId].playerId,
+      ]),
+    );
+    if (!isDeepStrictEqual(frame.roleBindings, roleBindings)) {
+      throw new Error(
+        `Captain session snapshot frame ${JSON.stringify(frame.playbookId)} role bindings differ from structuralProjection`,
+      );
+    }
+  }
 }
 
 function validateLeaseOwner(value) {
@@ -994,6 +1568,18 @@ function assertSessionId(value) {
   assertUuid(value, 'Captain session id');
 }
 
+function assertPlayerId(value, path) {
+  if (
+    typeof value !== 'string' ||
+    !PLAYER_ID_PATTERN.test(value) ||
+    value === RESERVED_ID
+  ) {
+    throw new Error(
+      `${path} must be a non-reserved player id matching ${PLAYER_ID_PATTERN.source}`,
+    );
+  }
+}
+
 function assertUuid(value, path) {
   if (typeof value !== 'string' || !SESSION_ID_PATTERN.test(value)) {
     throw new Error(`${path} must be a UUID`);
@@ -1018,6 +1604,53 @@ function rejectUnknownOrMissingKeys(value, expected, path) {
   if (missing !== undefined) {
     throw new Error(`${path} is missing field ${JSON.stringify(missing)}`);
   }
+}
+
+function exactOptionalKeys(value, required, optional, path) {
+  rejectUnknownOrMissingKeys(
+    value,
+    [
+      ...required,
+      ...optional.filter((key) => Object.hasOwn(value, key)),
+    ],
+    path,
+  );
+}
+
+function requireNonblank(value, path) {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${path} must be a nonblank string`);
+  }
+  return value;
+}
+
+function requireCanonicalNonblank(value, path) {
+  const text = requireNonblank(value, path);
+  if (text !== text.trim()) {
+    throw new Error(`${path} must be in canonical trimmed form`);
+  }
+  return text;
+}
+
+function validateCanonicalModuleSpecifier(value, path) {
+  const specifier = requireCanonicalNonblank(value, path);
+  if (
+    isAbsolute(specifier) ||
+    /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[A-Za-z]:[\\/])/.test(specifier)
+  ) {
+    throw new Error(`${path} must be a canonical module specifier`);
+  }
+  if (!specifier.startsWith('file:')) return specifier;
+  let canonical;
+  try {
+    canonical = pathToFileURL(fileURLToPath(specifier)).href;
+  } catch {
+    throw new Error(`${path} must be a canonical file URL`);
+  }
+  if (canonical !== specifier) {
+    throw new Error(`${path} must be a canonical file URL`);
+  }
+  return specifier;
 }
 
 function canonicalTimestamp(value, field) {

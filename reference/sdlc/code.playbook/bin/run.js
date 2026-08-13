@@ -8,10 +8,9 @@
 
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
-import { isAbsolute, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
-import { snapshotJsonValue } from '../../../../src/xstate-runtime.js';
 import { createPlaybookCaptainShell } from '../playbook-captain.js';
 import {
   adapterSdkFailureLines,
@@ -22,14 +21,17 @@ import {
 import {
   checkReadiness,
   loadLaunchPlan,
-  normalizeHostConfig,
-  PLAYBOOK_CAPTAIN_MODULE,
+  projectHostAgent,
   resolveUserConfigPath,
 } from './launch-config.js';
 import { prepareConfiguredRegistries } from './provision.js';
 import {
+  assertCaptainSessionExecutionCompatible,
+  captainSessionSelectedMembers,
   createCaptainSessionStore,
+  projectCaptainSessionStructure,
   SESSION_ID_PATTERN,
+  validateCaptainSessionExecutionProjection,
   validateCaptainSessionRecord,
 } from './session-store.js';
 
@@ -230,7 +232,9 @@ export async function runPlaybookRun(options = {}) {
 
     cwd = priorRecord.cwd;
     restoreSnapshot = priorRecord.snapshot;
-  } else {
+  }
+
+  if (!continuing || !args.retryUncertain) {
     const userConfigPath =
       options.userConfigPath ?? resolveUserConfigPath(env, home);
     let plan;
@@ -243,24 +247,47 @@ export async function runPlaybookRun(options = {}) {
         loadModule,
         prepareRegistryModule,
         onNotice: (line) => configNotices.push(line),
+        ...(continuing
+          ? {
+              selectedMembers: captainSessionSelectedMembers(
+                priorRecord.structuralProjection,
+              ),
+            }
+          : {}),
       });
       throwIfAborted(options.signal);
     } catch (error) {
       for (const line of configNotices) await writeStream(stderr, line);
+      const releaseError = await releaseLease(lease);
       await writeStream(stderr, `playbook run: ${message(error)}\n`);
+      if (releaseError !== undefined) {
+        await writeStream(
+          stderr,
+          `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
+        );
+        return { code: EXIT.turn };
+      }
       return { code: EXIT.argument };
     }
     for (const line of configNotices) await writeStream(stderr, line);
 
     try {
-      sessionId = (options.createLogicalSessionId ?? randomUUID)();
-      if (typeof sessionId !== 'string' || !UUID_PATTERN.test(sessionId)) {
-        throw new Error(
-          `logical session id generator returned a non-UUID value: ${JSON.stringify(sessionId)}`,
+      const current = executionConfigFromPlan(plan);
+      if (continuing) {
+        config = assertCaptainSessionExecutionCompatible(
+          priorRecord.structuralProjection,
+          current,
         );
+      } else {
+        sessionId = (options.createLogicalSessionId ?? randomUUID)();
+        if (typeof sessionId !== 'string' || !UUID_PATTERN.test(sessionId)) {
+          throw new Error(
+            `logical session id generator returned a non-UUID value: ${JSON.stringify(sessionId)}`,
+          );
+        }
+        config = current;
+        cwd = resolve(options.cwd ?? process.cwd());
       }
-      config = executionConfigFromPlan(plan);
-      cwd = resolve(options.cwd ?? process.cwd());
     } catch (error) {
       const releaseError = await releaseLease(lease);
       await writeStream(stderr, `playbook run: ${message(error)}\n`);
@@ -273,15 +300,14 @@ export async function runPlaybookRun(options = {}) {
       }
       return { code: EXIT.argument };
     }
-  }
-
-  if (continuing) {
+  } else {
     try {
       throwIfAborted(options.signal);
-      config = await validateFrozenExecutionConfig(priorRecord.config, {
-        loadModule,
-        prepareRegistryModule,
-      });
+      config = await validateFrozenExecutionConfig(
+        priorRecord.structuralProjection,
+        priorRecord.uncertain.attemptedExecutionProjection,
+        { loadModule, prepareRegistryModule },
+      );
       throwIfAborted(options.signal);
     } catch (error) {
       const releaseError = await releaseLease(lease);
@@ -424,11 +450,13 @@ export async function runPlaybookRun(options = {}) {
           : lease.beginTurn({
               input,
               attemptId,
+              attemptedExecutionProjection: config,
               ...(priorRecord === undefined
                 ? {
                     fresh: {
                       cwd,
-                      config,
+                      structuralProjection:
+                        projectCaptainSessionStructure(config),
                       snapshot: baselineSnapshot,
                     },
                   }
@@ -560,8 +588,17 @@ export async function driveHeadlessCaptainTurn({
       const captain = captainHostBoundary(shell, restoreSnapshot);
       host = await createHostRuntime({
         captain,
-        captainConfig: cloneJson(config.captain),
-        players: cloneJson(config.players),
+        captainConfig: projectHostAgent(
+          config.captain,
+          'Captain execution config.captain',
+        ),
+        players: config.players.map(({ id, ...agent }) => ({
+          id,
+          ...projectHostAgent(
+            agent,
+            `Captain execution config.players.${id}`,
+          ),
+        })),
         cwd,
         ...(signal ? { signal } : {}),
         ...(adapterImports ? { adapterImports } : {}),
@@ -653,7 +690,7 @@ export async function driveHeadlessCaptainTurn({
   }
 }
 
-// Task 7's restore path must enter through the host's one init boundary: a
+// PBCLI-20: restoration enters through the host's one init boundary. The
 // restored shell is fresh and receives restore instead of init, never both.
 function captainHostBoundary(shell, restoreSnapshot) {
   return {
@@ -670,195 +707,43 @@ function captainHostBoundary(shell, restoreSnapshot) {
 // Host-neutral execution-only projection. It is detached from the frozen
 // launch plan and intentionally excludes layout, theme, and notifications.
 export function executionConfigFromPlan(plan) {
-  return cloneJson({
-    schemaVersion: 1,
+  return validateCaptainSessionExecutionProjection({
+    schemaVersion: 2,
     captain: plan.captain,
     players: plan.players.map(({ id, agent }) => ({ id, ...agent })),
-    // Keep the complete normalized catalog. Task 7 can freeze and validate
-    // the same identities instead of silently accepting changed module
-    // defaults while restoring a chat-only session.
-    catalog: plan.catalog,
+    catalog: Object.fromEntries(
+      Object.entries(plan.catalog).map(([id, item]) => [
+        id,
+        {
+          id: item.id,
+          from: item.from,
+          manifestCommand: item.manifestCommand,
+          command: item.command,
+          intent: item.intent,
+          artifactSchema: item.artifactSchema,
+          requiredRoleIds: item.requiredRoleIds,
+          concurrentRoleSets: item.concurrentRoleSets,
+          roles: item.roles,
+          options: item.options,
+        },
+      ]),
+    ),
   });
 }
 
-// PBCLI-22/23: a continuation consumes only the detached execution projection
-// captured at session creation. The current registry code must still expose
-// the recorded manifest identity, while the stored effective command remains
-// authoritative even when launcher configuration originally overrode it.
+// PBCLI-22/23: uncertain retry consumes only its exact attempted execution
+// projection. Pure record validation and structural compatibility precede the
+// complete stored-catalog prepare-before-import transaction.
 export async function validateFrozenExecutionConfig(
-  value,
+  structuralProjection,
+  executionProjection,
   { loadModule, prepareRegistryModule },
 ) {
-  const config = requireRecord(
-    snapshotJsonValue(value, 'Captain execution config'),
-    'Captain execution config',
+  const config = assertCaptainSessionExecutionCompatible(
+    structuralProjection,
+    executionProjection,
   );
-  requireExactKeys(
-    config,
-    ['schemaVersion', 'captain', 'players', 'catalog'],
-    'Captain execution config',
-  );
-  if (config.schemaVersion !== 1) {
-    throw new Error(
-      `Captain execution config schema ${JSON.stringify(config.schemaVersion)} is not supported`,
-    );
-  }
-  requireRecord(config.captain, 'Captain execution config.captain');
-  if (!Array.isArray(config.players)) {
-    throw new Error('Captain execution config.players must be an array');
-  }
-  const catalog = requireRecord(
-    config.catalog,
-    'Captain execution config.catalog',
-  );
-  const catalogItems = Object.entries(catalog);
-  if (catalogItems.length === 0) {
-    throw new Error('Captain execution config.catalog must not be empty');
-  }
-
-  const expectedPlayerIds = [];
-  const seenCommands = new Set();
-  for (const [key, itemValue] of catalogItems) {
-    const item = requireRecord(
-      itemValue,
-      `Captain execution config.catalog.${key}`,
-    );
-    const allowed = [
-      'id',
-      'from',
-      'manifestCommand',
-      'command',
-      'intent',
-      'requiredRoleIds',
-      'playerIds',
-      'options',
-      ...(Object.hasOwn(item, 'commandOverride') ? ['commandOverride'] : []),
-    ];
-    requireExactKeys(
-      item,
-      allowed,
-      `Captain execution config.catalog.${key}`,
-    );
-    if (requireNonblank(item.id, `catalog.${key}.id`) !== key) {
-      throw new Error(
-        `Captain execution config catalog key must equal id ${JSON.stringify(item.id)}`,
-      );
-    }
-    if (item.id === 'captain') {
-      throw new Error('Captain execution config uses the reserved playbook id "captain"');
-    }
-    const from = requireNonblank(item.from, `catalog.${key}.from`);
-    if (
-      isAbsolute(from) ||
-      /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[A-Za-z]:[\\/])/.test(from)
-    ) {
-      throw new Error(
-        `Captain execution config catalog.${key}.from is not a canonical module specifier`,
-      );
-    }
-    requireNonblank(item.manifestCommand, `catalog.${key}.manifestCommand`);
-    const command = requireNonblank(item.command, `catalog.${key}.command`);
-    if (typeof item.intent !== 'string') {
-      throw new Error(`catalog.${key}.intent must be a string`);
-    }
-    if (command === 'captain') {
-      throw new Error(
-        `Captain execution config catalog.${key} uses the reserved command "captain"`,
-      );
-    }
-    if (seenCommands.has(command)) {
-      throw new Error(
-        `Captain execution config has duplicate effective command ${JSON.stringify(command)}`,
-      );
-    }
-    seenCommands.add(command);
-    if (Object.hasOwn(item, 'commandOverride')) {
-      if (
-        requireNonblank(item.commandOverride, `catalog.${key}.commandOverride`) !==
-        command
-      ) {
-        throw new Error(`Captain execution config catalog.${key} command override is not frozen`);
-      }
-    } else if (command !== item.manifestCommand) {
-      throw new Error(
-        `Captain execution config catalog.${key} changed its manifest command without an override`,
-      );
-    }
-    if (
-      !Array.isArray(item.requiredRoleIds) ||
-      item.requiredRoleIds.some(
-        (role) => typeof role !== 'string' || role.trim().length === 0,
-      ) ||
-      new Set(item.requiredRoleIds).size !== item.requiredRoleIds.length
-    ) {
-      throw new Error(`Captain execution config catalog.${key}.requiredRoleIds is invalid`);
-    }
-    const playerIds = requireRecord(
-      item.playerIds,
-      `Captain execution config catalog.${key}.playerIds`,
-    );
-    if (Object.keys(playerIds).length === 0) {
-      throw new Error(`Captain execution config catalog.${key}.playerIds must not be empty`);
-    }
-    for (const required of item.requiredRoleIds) {
-      if (!Object.hasOwn(playerIds, required)) {
-        throw new Error(
-          `Captain execution config catalog.${key} has no mapped player for required role ${JSON.stringify(required)}`,
-        );
-      }
-    }
-    for (const [role, playerId] of Object.entries(playerIds)) {
-      requireNonblank(role, `catalog.${key}.playerIds role`);
-      if (role === 'captain') {
-        throw new Error(`Captain execution config catalog.${key} uses the reserved role "captain"`);
-      }
-      requireNonblank(playerId, `catalog.${key}.playerIds.${role}`);
-      if (playerId !== `${key}-${role}`) {
-        throw new Error(
-          `Captain execution config catalog.${key}.playerIds.${role} is not canonical`,
-        );
-      }
-      expectedPlayerIds.push(playerId);
-    }
-    requireRecord(item.options, `Captain execution config catalog.${key}.options`);
-  }
-  if (new Set(expectedPlayerIds).size !== expectedPlayerIds.length) {
-    throw new Error('Captain execution config maps a host player more than once');
-  }
-  const actualPlayerIds = config.players.map((player, index) =>
-    requireNonblank(
-      requireRecord(player, `Captain execution config.players[${index}]`).id,
-      `Captain execution config.players[${index}].id`,
-    ),
-  );
-  if (!isDeepStrictEqual(actualPlayerIds, expectedPlayerIds)) {
-    throw new Error('Captain execution config players do not match the frozen catalog mapping');
-  }
-
-  // Round-trip the stored agents through the installed cligent validator. No
-  // user config participates, and equality prevents defaults or coercions
-  // from silently changing the frozen lineup.
-  const firstVisible = Object.values(catalogItems[0][1].playerIds);
-  const normalizedHost = await normalizeHostConfig({
-    captain: {
-      ...config.captain,
-      from: PLAYBOOK_CAPTAIN_MODULE,
-      options: {},
-    },
-    players: config.players,
-    layout: { initialVisible: firstVisible },
-  });
-  const {
-    from: _captainFrom,
-    options: _captainOptions,
-    ...normalizedCaptain
-  } = normalizedHost.captain;
-  if (
-    !isDeepStrictEqual(normalizedCaptain, config.captain) ||
-    !isDeepStrictEqual(normalizedHost.players, config.players)
-  ) {
-    throw new Error('Captain execution config agents are not canonical for this cligent host');
-  }
+  const catalogItems = Object.entries(config.catalog);
 
   // Preserve the complete-catalog preparation transaction: prepare every
   // stored canonical module before importing any. A hook may provision the
@@ -896,17 +781,15 @@ export async function validateFrozenExecutionConfig(
       entry.id !== id ||
       entry.command !== item.manifestCommand ||
       entry.intent !== item.intent ||
-      !isDeepStrictEqual(entry.requiredRoleIds, item.requiredRoleIds)
+      entry.artifactSchema !== item.artifactSchema ||
+      !isDeepStrictEqual(entry.requiredRoleIds, item.requiredRoleIds) ||
+      !isDeepStrictEqual(
+        entry.concurrentRoleSets,
+        item.concurrentRoleSets,
+      )
     ) {
       throw new Error(
         `stored playbook ${JSON.stringify(id)} no longer matches its recorded manifest identity`,
-      );
-    }
-    try {
-      entry.validateOptions(cloneJson(item.options));
-    } catch (cause) {
-      throw new Error(
-        `stored playbook ${JSON.stringify(id)} options are no longer compatible: ${message(cause)}`,
       );
     }
   }
@@ -945,50 +828,35 @@ function memoizedModuleLoader(loadModule) {
 }
 
 function isValidRegistryEntry(value) {
-  return (
-    value !== null &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    typeof value.id === 'string' &&
-    value.id.trim().length > 0 &&
-    typeof value.command === 'string' &&
-    value.command.trim().length > 0 &&
-    typeof value.intent === 'string' &&
-    Array.isArray(value.requiredRoleIds) &&
-    value.requiredRoleIds.every(
-      (role) => typeof role === 'string' && role.trim().length > 0,
-    ) &&
-    new Set(value.requiredRoleIds).size === value.requiredRoleIds.length &&
-    typeof value.validateOptions === 'function' &&
-    typeof value.createRuntime === 'function'
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    typeof value.id !== 'string' ||
+    value.id.trim().length === 0 ||
+    typeof value.command !== 'string' ||
+    value.command.trim().length === 0 ||
+    typeof value.intent !== 'string' ||
+    value.artifactSchema !== 2 ||
+    !Array.isArray(value.requiredRoleIds) ||
+    value.requiredRoleIds.some(
+      (role) => typeof role !== 'string' || role.trim().length === 0,
+    ) ||
+    new Set(value.requiredRoleIds).size !== value.requiredRoleIds.length ||
+    !Array.isArray(value.concurrentRoleSets) ||
+    typeof value.validateOptions !== 'function' ||
+    typeof value.createRuntime !== 'function'
+  ) {
+    return false;
+  }
+  const roles = new Set(value.requiredRoleIds);
+  return value.concurrentRoleSets.every(
+    (set) =>
+      Array.isArray(set) &&
+      set.length >= 2 &&
+      set.every((role) => typeof role === 'string' && roles.has(role)) &&
+      new Set(set).size === set.length,
   );
-}
-
-function requireRecord(value, path) {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${path} must be an object`);
-  }
-  return value;
-}
-
-function requireExactKeys(value, expected, path) {
-  const keys = Object.keys(value);
-  const allowed = new Set(expected);
-  const unknown = keys.find((key) => !allowed.has(key));
-  if (unknown !== undefined) {
-    throw new Error(`${path} has unknown field ${JSON.stringify(unknown)}`);
-  }
-  const missing = expected.find((key) => !Object.hasOwn(value, key));
-  if (missing !== undefined) {
-    throw new Error(`${path} is missing field ${JSON.stringify(missing)}`);
-  }
-}
-
-function requireNonblank(value, path) {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`${path} must be a nonblank string`);
-  }
-  return value;
 }
 
 function captainOptionsFromConfig(config) {
@@ -999,11 +867,21 @@ function captainOptionsFromConfig(config) {
         {
           from: item.from,
           command: item.command,
+          roles: cloneJson(item.roles),
           options: cloneJson(item.options),
         },
       ]),
     ),
-    captainAdapter: config.captain.adapter,
+    sessionAgents: {
+      captain: cloneJson(config.captain),
+      players: Object.fromEntries(
+        config.players.map(({ id, ...agent }) => [id, cloneJson(agent)]),
+      ),
+    },
+    ...(typeof config.captain.adapter === 'string' &&
+    config.captain.adapter.length > 0
+      ? { captainAdapter: config.captain.adapter }
+      : {}),
   };
 }
 
@@ -1136,10 +1014,10 @@ export function parseRunArgs(argv) {
     );
   }
   if (
-    (parsed.continue || parsed.sessionId !== undefined) &&
+    (parsed.retryUncertain || parsed.discardUncertain) &&
     parsed.withPaths.length > 0
   ) {
-    throw new Error('--with cannot change a frozen continued Captain session');
+    throw new Error('--with is unavailable during uncertain-turn recovery');
   }
   if (
     parsed.sessionId !== undefined &&
@@ -1320,8 +1198,8 @@ function runHelpText(userConfigPath) {
     'Usage:',
     '  playbook run [--with <path>]... [--no-provision] [--json]',
     '               [--verbose] [--] [input]',
-    '  playbook run (--continue | --session <id>) [--no-provision]',
-    '               [--json] [--verbose] [--] [reply]',
+    '  playbook run (--continue | --session <id>) [--with <path>]...',
+    '               [--no-provision] [--json] [--verbose] [--] [reply]',
     '  playbook run --session <id> --retry-uncertain [--no-provision]',
     '  playbook run --session <id> --discard-uncertain',
     '',
@@ -1335,8 +1213,9 @@ function runHelpText(userConfigPath) {
     '`playbook`. Enable an external registry in that config, then invoke its',
     'effective /command through Captain. The former positional registry,',
     'resume, and run-only binding surfaces have been removed.',
-    'A continued run restores the stored execution config and working',
-    'directory; it never re-reads current config or --with overlays.',
+    'An ordinary continued run restores the stored structure and working',
+    'directory, then reads current config and overlays for model and effort.',
+    'Uncertain retry instead uses its exact recorded input and settings.',
     '',
     'Options:',
     '  --with <path>    overlay a generic config fragment (repeatable)',

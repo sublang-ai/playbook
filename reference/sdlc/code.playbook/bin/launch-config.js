@@ -113,6 +113,18 @@ export function mergeConfigs(base, overlay) {
   ]);
 }
 
+// PBCLI-22/46: ordinary reopen must merge only durable catalog members.
+// A selected member may first appear in an overlay, so each layer is pruned
+// permissively before merge and the final strict projection below owns the
+// missing-member diagnostic. Unselected accessors are never observed.
+export function mergeSelectedConfigs(base, overlay, selectedMembers) {
+  const selected = validateSelectedMembers(selectedMembers);
+  return mergeConfigs(
+    projectSelectedLayer(base, selected, 'config'),
+    projectSelectedLayer(overlay, selected, 'overlay'),
+  );
+}
+
 export function resolveConfigHome(env = process.env, home = homedir()) {
   return env.XDG_CONFIG_HOME || join(home, '.config');
 }
@@ -164,7 +176,11 @@ export async function loadLaunchPlan({
     );
   }
   for (const overlayPath of overlayPaths) {
-    top = mergeConfigs(top, loadOverlayFragment(overlayPath));
+    const overlay = loadOverlayFragment(overlayPath);
+    top =
+      selectedMembers === undefined
+        ? mergeConfigs(top, overlay)
+        : mergeSelectedConfigs(top, overlay, selectedMembers);
   }
   return await normalizeLaunchPlan(top, {
     loadModule,
@@ -245,8 +261,8 @@ export async function normalizeLaunchPlan(
   if (ids.length === 0) {
     throw new Error('playbooks must enable at least one playbook');
   }
-  if (ids.some((id) => id.trim().length === 0)) {
-    throw new Error('playbooks keys must be nonblank ids');
+  if (ids.some((id) => id.trim().length === 0 || id !== id.trim())) {
+    throw new Error('playbooks keys must be canonical trimmed nonblank ids');
   }
 
   let captain = resolveAgent(top.captain, 'captain', ['from', 'options']);
@@ -273,14 +289,24 @@ export async function normalizeLaunchPlan(
       throw legacyPlayersError(`playbooks.${id}.players`, configPath);
     }
     const from = block.from;
-    if (typeof from !== 'string' || from.trim().length === 0) {
-      throw new Error(`playbooks.${id}.from must be a module specifier`);
+    if (
+      typeof from !== 'string' ||
+      from.trim().length === 0 ||
+      from !== from.trim()
+    ) {
+      throw new Error(
+        `playbooks.${id}.from must be a canonical trimmed module specifier`,
+      );
     }
     if (
       block.command !== undefined &&
-      (typeof block.command !== 'string' || block.command.trim().length === 0)
+      (typeof block.command !== 'string' ||
+        block.command.trim().length === 0 ||
+        block.command !== block.command.trim())
     ) {
-      throw new Error(`playbooks.${id}.command must be a nonblank string`);
+      throw new Error(
+        `playbooks.${id}.command must be a canonical trimmed nonblank string`,
+      );
     }
     if (block.command === RESERVED_CAPTAIN_PLAYBOOK_ID) {
       throw new Error(
@@ -402,14 +428,14 @@ export async function normalizeLaunchPlan(
       : normalizedHost;
   const { from: _captainFrom, options: _captainOptions, ...normalizedCaptain } =
     normalizedHost.captain;
-  captain = sessionAgentFromHostAgent(normalizedCaptain);
+  captain = sessionAgentFromHostAgent(normalizedCaptain, 'captain');
   const hostAgents = new Map(
     normalizedHost.players.map(({ id, ...agent }) => [id, agent]),
   );
   const normalizedPlayerAgents = new Map(
     allPlayerIds.map((id) => [
       id,
-      sessionAgentFromHostAgent(hostAgents.get(id)),
+      sessionAgentFromHostAgent(hostAgents.get(id), `players.${id}`),
     ]),
   );
 
@@ -443,6 +469,10 @@ export async function normalizeLaunchPlan(
         );
       }
     }
+    preparedFrom = canonicalizePreparedRegistrySpecifier(
+      preparedFrom,
+      `playbooks.${id}.from`,
+    );
     preparedPlaybooks.push({ ...configured, preparedFrom });
   }
 
@@ -915,11 +945,19 @@ function assertNoRetiredProfiles(top, configPath) {
 
 function invalidRegistryEntryReason(value) {
   if (!isObject(value)) return 'the default export must be an object';
-  if (typeof value.id !== 'string' || value.id.trim().length === 0) {
-    return 'id must be a nonblank string';
+  if (
+    typeof value.id !== 'string' ||
+    value.id.trim().length === 0 ||
+    value.id !== value.id.trim()
+  ) {
+    return 'id must be a canonical trimmed nonblank string';
   }
-  if (typeof value.command !== 'string' || value.command.trim().length === 0) {
-    return 'command must be a nonblank string';
+  if (
+    typeof value.command !== 'string' ||
+    value.command.trim().length === 0 ||
+    value.command !== value.command.trim()
+  ) {
+    return 'command must be a canonical trimmed nonblank string';
   }
   if (typeof value.intent !== 'string') return 'intent must be a string';
   if (value.artifactSchema !== 2) {
@@ -945,23 +983,7 @@ function invalidRegistryEntryReason(value) {
 
 function projectSelectedMembers(top, selectedMembers) {
   if (selectedMembers === undefined) return top;
-  const selected = cloneJson(selectedMembers, 'selectedMembers');
-  const unknownSelectionKeys = Object.keys(selected).filter(
-    (key) => !['playbookIds', 'playerIds'].includes(key),
-  );
-  if (unknownSelectionKeys.length > 0) {
-    throw new Error(
-      `selectedMembers has unknown ${formatKeyList(unknownSelectionKeys)}`,
-    );
-  }
-  const playbookIds = selectedIdList(
-    selected.playbookIds,
-    'selectedMembers.playbookIds',
-  );
-  const playerIds = selectedIdList(
-    selected.playerIds,
-    'selectedMembers.playerIds',
-  );
+  const { playbookIds, playerIds } = validateSelectedMembers(selectedMembers);
   if (!isPlainObject(top)) {
     throw new Error('config must contain only plain JSON objects');
   }
@@ -995,6 +1017,82 @@ function projectSelectedMembers(top, selectedMembers) {
     'players',
   );
   return projected;
+}
+
+function validateSelectedMembers(selectedMembers) {
+  const selected = cloneJson(selectedMembers, 'selectedMembers');
+  const unknownSelectionKeys = Object.keys(selected).filter(
+    (key) => !['playbookIds', 'playerIds'].includes(key),
+  );
+  if (unknownSelectionKeys.length > 0) {
+    throw new Error(
+      `selectedMembers has unknown ${formatKeyList(unknownSelectionKeys)}`,
+    );
+  }
+  return {
+    playbookIds: selectedIdList(
+      selected.playbookIds,
+      'selectedMembers.playbookIds',
+    ),
+    playerIds: selectedIdList(
+      selected.playerIds,
+      'selectedMembers.playerIds',
+    ),
+  };
+}
+
+function projectSelectedLayer(value, selected, path) {
+  if (!isPlainObject(value)) {
+    throw new Error(`${path} must contain only plain JSON objects`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const entries = [];
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = descriptors[key];
+    if (
+      typeof key === 'symbol' ||
+      descriptor?.get !== undefined ||
+      descriptor?.set !== undefined ||
+      descriptor?.enumerable !== true
+    ) {
+      throw new Error(
+        `${path}.${String(key)} must be an enumerable data property`,
+      );
+    }
+    if (key === 'playbooks' || key === 'players') {
+      entries.push([
+        key,
+        projectOptionalSelectedMap(
+          descriptor.value,
+          key === 'playbooks' ? selected.playbookIds : selected.playerIds,
+          `${path}.${key}`,
+        ),
+      ]);
+    } else {
+      entries.push([key, descriptor.value]);
+    }
+  }
+  return Object.fromEntries(entries);
+}
+
+function projectOptionalSelectedMap(value, ids, path) {
+  if (!isPlainObject(value)) {
+    throw new Error(`${path} must contain only plain JSON objects`);
+  }
+  const entries = [];
+  for (const id of ids) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, id);
+    if (descriptor === undefined) continue;
+    if (
+      descriptor.get !== undefined ||
+      descriptor.set !== undefined ||
+      descriptor.enumerable !== true
+    ) {
+      throw new Error(`${path}.${id} must be an enumerable data property`);
+    }
+    entries.push([id, descriptor.value]);
+  }
+  return Object.fromEntries(entries);
 }
 
 function projectSelectedMap(value, ids, path) {
@@ -1075,14 +1173,14 @@ function applyTuningOverrides(agent, binding) {
   return effective;
 }
 
-function sessionAgentFromHostAgent(agent) {
+function sessionAgentFromHostAgent(agent, path) {
   if (!isObject(agent)) {
     throw new Error('installed cligent omitted a retained agent');
   }
   return {
     adapter: agent.adapter,
-    model: tuningSelection(agent.model),
-    effort: tuningSelection(agent.effort),
+    model: tuningSelection(agent.model, `${path}.model`),
+    effort: tuningSelection(agent.effort, `${path}.effort`),
     ...(agent.instruction === undefined
       ? {}
       : { instruction: agent.instruction }),
@@ -1114,7 +1212,13 @@ export function projectHostAgent(agent, path = 'agent') {
   };
 }
 
-function tuningSelection(value) {
+function tuningSelection(value, path) {
+  if (
+    value !== undefined &&
+    (typeof value !== 'string' || value.trim().length === 0)
+  ) {
+    throw new Error(`${path} must be a nonblank string`);
+  }
   return value === undefined
     ? { kind: 'provider-default' }
     : { kind: 'value', value };
@@ -1123,7 +1227,35 @@ function tuningSelection(value) {
 function overrideTuningSelection(value) {
   return value === false
     ? { kind: 'provider-default' }
-    : tuningSelection(value);
+    : tuningSelection(value, 'role tuning override');
+}
+
+function canonicalizePreparedRegistrySpecifier(value, path) {
+  if (value !== value.trim()) {
+    throw new Error(
+      `${path} preparation must return a canonical trimmed module specifier`,
+    );
+  }
+  if (
+    isAbsolute(value) ||
+    /^(?:\.{1,2}(?:[\\/]|$)|[\\/]|[A-Za-z]:[\\/])/.test(value)
+  ) {
+    throw new Error(
+      `${path} preparation must return a canonical module specifier`,
+    );
+  }
+  if (value.startsWith('file:')) {
+    let canonical;
+    try {
+      canonical = pathToFileURL(fileURLToPath(value)).href;
+    } catch {
+      throw new Error(`${path} preparation must return a canonical file URL`);
+    }
+    if (canonical !== value) {
+      throw new Error(`${path} preparation must return a canonical file URL`);
+    }
+  }
+  return value;
 }
 
 function assertPlayerId(value, path) {

@@ -10,10 +10,14 @@ import type {
   CaptainContext,
   CaptainRunResult,
   CaptainSession,
+  CallPlayerOptions,
   PlayerRunResult,
   TmuxPlayRecord,
 } from '@sublang/cligent/tmux-play';
-import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
+import {
+  AgentCallSettingsError,
+  createTmuxPlayRuntime,
+} from '@sublang/cligent/tmux-play';
 import type {
   JsonValue,
   PlaybookCallResult,
@@ -26,6 +30,7 @@ import type {
   PlaybookState,
 } from '../../../src/runtime.js';
 import {
+  assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
   type PlaybookCaptainDeps,
   type PlaybookCaptainRegistryEntry,
@@ -47,7 +52,7 @@ interface StubContext {
   playerCalls: {
     playerId: string;
     prompt: string;
-    options: { resume?: string | false } | undefined;
+    options: CallPlayerOptions | undefined;
   }[];
   captainCalls: { prompt: string; options?: CaptainCallOptions }[];
   visiblePlayers: string[][];
@@ -73,10 +78,16 @@ const ISOLATED_VISIBLE_CAPTAIN_OPTIONS = {
   allowedTools: [],
 } as const;
 
+const DEFAULT_AGENT_SETTINGS = {
+  model: { kind: 'provider-default' },
+  effort: { kind: 'provider-default' },
+} as const;
+
 const ISOLATED_HIDDEN_CAPTAIN_OPTIONS = {
   visibility: 'hidden',
   resume: false,
   allowedTools: [],
+  settings: DEFAULT_AGENT_SETTINGS,
 } as const;
 
 type HandleHook = (
@@ -171,6 +182,23 @@ class FakeRuntime implements PlaybookRuntime {
     this.disposeCount += 1;
     await this.disposeHook?.(this);
   }
+}
+
+async function callPlayerAndCommit(
+  runtime: FakeRuntime,
+  roleId: string,
+  prompt: string,
+  signal: AbortSignal,
+  resume: string | false,
+): Promise<Awaited<ReturnType<PlaybookPorts['callPlayer']>>> {
+  if (!runtime.ports) throw new Error('runtime ports missing');
+  const result = await runtime.ports.callPlayer(roleId, prompt, signal, {
+    resume,
+  });
+  if (result.resumeToken !== undefined || result.status === 'ok') {
+    runtime.session?.playerSessions?.update(roleId, result.resumeToken);
+  }
+  return result;
 }
 
 function playbookState(
@@ -453,7 +481,7 @@ function fakeCodeEntry(
   runtimes: FakeRuntime[];
 } {
   const runtimes: FakeRuntime[] = [];
-  const validateOptions = vi.fn();
+  const validateOptions = vi.fn((value: unknown) => value);
   const createRuntime = vi.fn(() => {
     const runtime = new FakeRuntime(
       handleHook,
@@ -511,6 +539,20 @@ function fakePlaybookEntry(
   registry.entry.command = command;
   registry.entry.intent = `${id} playbook`;
   return registry;
+}
+
+type TestTuning =
+  | { readonly kind: 'value'; readonly value: string }
+  | { readonly kind: 'provider-default' };
+
+interface TestSessionAgent {
+  readonly adapter: string;
+  readonly model: TestTuning;
+  readonly effort:
+    | { readonly kind: 'value'; readonly value: 'low' | 'medium' | 'high' }
+    | { readonly kind: 'provider-default' };
+  readonly instruction?: string;
+  readonly permissions?: { readonly fileWrite?: 'allow' | 'ask' | 'deny' };
 }
 
 /**
@@ -588,19 +630,55 @@ function makeShell(
     createCaptainRuntime?: PlaybookCaptainDeps['createCaptainRuntime'];
     // CAPTAIN-33: the launcher-supplied captain adapter (DR-013 A1).
     captainAdapter?: string;
+    captainAgent?: TestSessionAgent;
+    rolePlayerIds?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+    roleTunings?: Readonly<
+      Record<
+        string,
+        Readonly<Record<string, Pick<TestSessionAgent, 'model' | 'effort'>>>
+      >
+    >;
+    playerAgents?: Readonly<Record<string, TestSessionAgent>>;
+    loadModule?: (specifier: string) => Promise<unknown>;
   } = {},
 ) {
   const list = Array.isArray(entries) ? entries : [entries];
   const modules: Record<string, unknown> = {};
   const playbooks: Record<string, unknown> = {};
+  const defaultPlayerAgents: Record<string, unknown> = {};
   for (const r of list) {
     const from = `test://${r.entry.id}`;
     modules[from] = { default: r.entry };
+    const roles = Object.fromEntries(
+      r.entry.requiredRoleIds.map((role) => {
+        const playerId =
+          opts.rolePlayerIds?.[r.entry.id]?.[role] ??
+          `${list.find((candidate) => candidate.entry.requiredRoleIds.includes(role))!.entry.id}-${role}`;
+        defaultPlayerAgents[playerId] ??= {
+          adapter: role === 'reviewer' ? 'codex' : 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        };
+        return [
+          role,
+          {
+            playerId,
+            model:
+              opts.roleTunings?.[r.entry.id]?.[role]?.model ??
+              { kind: 'provider-default' },
+            effort:
+              opts.roleTunings?.[r.entry.id]?.[role]?.effort ??
+              { kind: 'provider-default' },
+          },
+        ];
+      }),
+    );
     playbooks[r.entry.id] = {
       from,
       ...(opts.commands?.[r.entry.id]
         ? { command: opts.commands[r.entry.id] }
         : {}),
+      roles,
       options: opts.options ?? {},
     };
   }
@@ -613,12 +691,20 @@ function makeShell(
   return createPlaybookCaptainShell(
     {
       playbooks,
-      ...(opts.captainAdapter === undefined
-        ? {}
-        : { captainAdapter: opts.captainAdapter }),
+      sessionAgents: {
+        captain: opts.captainAgent ?? {
+          adapter: opts.captainAdapter ?? 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+        players: opts.playerAgents ?? defaultPlayerAgents,
+      },
+      captainAdapter:
+        opts.captainAgent?.adapter ?? opts.captainAdapter ?? 'claude',
     },
     {
       loadModule: async (specifier: string) => {
+        if (opts.loadModule) return opts.loadModule(specifier);
         if (specifier in modules) return modules[specifier];
         throw new Error(`no module ${specifier}`);
       },
@@ -770,7 +856,7 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     );
 
     expect(registry.createRuntime).toHaveBeenCalledTimes(1);
-    expect(registry.createRuntime).toHaveBeenCalledWith(undefined);
+    expect(registry.createRuntime).toHaveBeenCalledWith({});
     expect(registry.runtimes[0]?.initCount).toBe(1);
     expect(registry.runtimes[0]?.inputs).toEqual([
       {
@@ -896,10 +982,14 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       const options = context.captainCalls[0]?.options;
       expect(options).toEqual(
         enforced
-          ? { visibility: 'hidden', resume: false, allowedTools: [] }
+          ? ISOLATED_HIDDEN_CAPTAIN_OPTIONS
           : // Cligent's Codex adapter rejects any tool list outright, so
             // requesting one would fail the control call before the model.
-            { visibility: 'hidden', resume: false },
+            {
+              visibility: 'hidden',
+              resume: false,
+              settings: DEFAULT_AGENT_SETTINGS,
+            },
       );
       // An empty allowlist means "no tools" and is distinct from omission,
       // which grants the adapter's full native tool surface. `toEqual`
@@ -1409,6 +1499,7 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
       visibility: 'hidden',
       resume: 'conversation-1',
       allowedTools: [],
+      settings: DEFAULT_AGENT_SETTINGS,
     });
     expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
       'first task',
@@ -1776,6 +1867,578 @@ describe('createPlaybookCaptainShell lifecycle and telemetry (CAPTAIN-11/14)', (
 });
 
 describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => {
+  it('reapplies the complete role settings atomically on every player call', async () => {
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const store = runtime.session?.playerSessions;
+      if (!runtime.ports || !store) throw new Error('runtime ports missing');
+      const result = await runtime.ports.callPlayer(
+        'coder',
+        'configured player',
+        runtimeTurn.signal,
+        { resume: store.select('coder') },
+      );
+      store.update('coder', result.resumeToken);
+    });
+    registry.entry.requiredRoleIds = ['coder'];
+    const shell = makeShell(registry, {
+      rolePlayerIds: { code: { coder: 'dev.coder' } },
+      roleTunings: {
+        code: {
+          coder: {
+            model: { kind: 'value', value: 'gpt-5.6-sol' },
+            effort: { kind: 'value', value: 'high' },
+          },
+        },
+      },
+      playerAgents: {
+        'dev.coder': {
+          adapter: 'codex',
+          model: { kind: 'value', value: 'session-default-model' },
+          effort: { kind: 'value', value: 'low' },
+          instruction: 'Keep the implementation narrow.',
+          permissions: { fileWrite: 'ask' },
+        },
+      },
+    });
+    const context = stubContext();
+
+    await shell.init!(stubSession([
+      { id: 'dev.coder', adapter: 'codex' },
+    ]).session);
+    await shell.handleBossTurn(turn('/code implement it'), context.context);
+
+    expect(context.playerCalls).toEqual([
+      {
+        playerId: 'dev.coder',
+        prompt: 'configured player',
+        options: {
+          resume: false,
+          settings: {
+            model: { kind: 'value', value: 'gpt-5.6-sol' },
+            effort: { kind: 'value', value: 'high' },
+            instruction: 'Keep the implementation narrow.',
+            permissions: { fileWrite: 'ask' },
+          },
+        },
+      },
+    ]);
+    expect(context.playerCalls[0]?.options).not.toHaveProperty('model');
+    expect(context.playerCalls[0]?.options).not.toHaveProperty('effort');
+  });
+
+  it('preserves the prior player token when complete settings reject', async () => {
+    const attemptedResumes: Array<string | false> = [];
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const store = runtime.session?.playerSessions;
+      if (!runtime.ports || !store) throw new Error('runtime ports missing');
+      const resume = store.select('coder');
+      attemptedResumes.push(resume);
+      const result = await runtime.ports.callPlayer(
+        'coder',
+        'unsupported retune',
+        runtimeTurn.signal,
+        { resume },
+      );
+      store.update('coder', result.resumeToken);
+    });
+    registry.entry.requiredRoleIds = ['coder'];
+    const shell = makeShell(registry);
+    const context = stubContext();
+    let hostCalls = 0;
+    context.context.callPlayer = async (playerId) => {
+      hostCalls += 1;
+      if (hostCalls === 1) {
+        return {
+          status: 'ok',
+          playerId,
+          turnId: 1,
+          finalText: 'seeded',
+          resumeToken: 'prior-player-token',
+        };
+      }
+      throw new AgentCallSettingsError('provider cannot restore this default');
+    };
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code seed it'), context.context);
+    expect(registry.runtimes[0]?.session?.playerSessions?.select('coder')).toBe(
+      'prior-player-token',
+    );
+    await shell.handleBossTurn(turn('/code retune it', 2), context.context);
+
+    expect(attemptedResumes).toEqual([false, 'prior-player-token']);
+    expect(hostCalls).toBe(2);
+    expect(registry.runtimes[0]?.session?.playerSessions?.select('coder')).toBe(
+      'prior-player-token',
+    );
+  });
+
+  it('catches the Captain up when an exact player preflight error reaches shell fallback', async () => {
+    let playerRejection: unknown;
+    const code = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      try {
+        await runtime.ports!.callPlayer(
+          'coder',
+          'unsupported player tuning',
+          runtimeTurn.signal,
+          { resume: runtime.session!.playerSessions!.select('coder') },
+        );
+      } catch (error) {
+        playerRejection = error;
+        throw error;
+      }
+      return quiescentResult();
+    });
+    delete code.entry.summaryPolicy;
+    let captainTurn = 0;
+    const captain = fakeSessionCaptain(async (runtime, runtimeTurn) => {
+      captainTurn += 1;
+      if (captainTurn === 2) {
+        await captain.ports.controller!.submit(
+          { action: 'start', playbookId: 'code', input: 'trigger rejection' },
+          runtimeTurn.signal,
+        );
+        if (!playerRejection) throw new Error('expected player rejection');
+        throw playerRejection;
+      }
+      await runtime.ports!.callCaptain(
+        'Select exactly one action from the closed set `respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`.',
+        runtimeTurn.signal,
+        { visibility: 'hidden', resume: false },
+      );
+      await captain.ports.controller!.submit(
+        {
+          action: 'respond',
+          text: captainTurn === 1 ? 'Pinned.' : 'Caught up.',
+        },
+        runtimeTurn.signal,
+      );
+      return quiescentResult();
+    });
+    const shell = makeShell(code, {
+      createCaptainRuntime: captain.createCaptainRuntime,
+    });
+    const context = stubContext();
+    context.context.callPlayer = async () => {
+      throw new AgentCallSettingsError('player tuning rejected');
+    };
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('pin Captain'), context.context);
+    await shell.handleBossTurn(turn('player preflight', 2), context.context);
+    await shell.handleBossTurn(turn('recover Captain', 3), context.context);
+
+    expect(context.captainCalls).toHaveLength(2);
+    expect(context.captainCalls[1]?.options?.resume).toBe('conversation-1');
+    expect(context.captainCalls[1]?.prompt).toContain(
+      'This retained conversation missed the host journal records below.',
+    );
+    expect(context.captainCalls[1]?.prompt).toContain('player preflight');
+    expect(context.replies).toEqual([
+      'Pinned.',
+      expect.stringContaining('action ended with a failure'),
+      'Caught up.',
+    ]);
+
+    await shell.dispose?.();
+  });
+
+  it('publishes player continuation only through the exact validated runtime update', async () => {
+    let restoreRejected = false;
+    let mismatchedUpdateRejected = false;
+    let repeatedUpdateRejected = false;
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const store = runtime.session!.playerSessions!;
+      expect(() => store.update('coder', 'unsourced-token')).toThrow(
+        /does not acknowledge a validated host result/,
+      );
+      const result = await runtime.ports!.callPlayer(
+        'coder',
+        'authorized call',
+        runtimeTurn.signal,
+        { resume: store.select('coder') },
+      );
+      try {
+        store.restore({ coder: 'forged-by-runtime' });
+      } catch (error) {
+        restoreRejected = true;
+        expect(error).toMatchObject({
+          message: expect.stringMatching(/only available during shell restoration/),
+        });
+      }
+      try {
+        store.update('reviewer', result.resumeToken);
+      } catch (error) {
+        mismatchedUpdateRejected = true;
+        expect(error).toMatchObject({
+          message: expect.stringMatching(/does not acknowledge/),
+        });
+      }
+      expect(store.select('coder')).toBe(false);
+      store.update('coder', result.resumeToken);
+      try {
+        store.update('coder', result.resumeToken);
+      } catch (error) {
+        repeatedUpdateRejected = true;
+        expect(error).toMatchObject({
+          message: expect.stringMatching(/does not acknowledge/),
+        });
+      }
+    });
+    registry.entry.requiredRoleIds = ['coder', 'reviewer'];
+    const shell = makeShell(registry, {
+      rolePlayerIds: {
+        code: { coder: 'dev.shared', reviewer: 'dev.shared' },
+      },
+      playerAgents: {
+        'dev.shared': {
+          adapter: 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+      },
+    });
+    const context = stubContext();
+    let hostCalls = 0;
+    context.context.callPlayer = async (playerId) => {
+      hostCalls += 1;
+      return {
+        status: 'ok',
+        playerId,
+        turnId: 1,
+        finalText: 'committable',
+        resumeToken: 'authorized-token',
+      };
+    };
+
+    await shell.init!(stubSession([
+      { id: 'dev.shared', adapter: 'claude' },
+    ]).session);
+    await shell.handleBossTurn(turn('/code commit once'), context.context);
+
+    expect({ restoreRejected, mismatchedUpdateRejected, repeatedUpdateRejected }).toEqual({
+      restoreRejected: true,
+      mismatchedUpdateRejected: true,
+      repeatedUpdateRejected: true,
+    });
+    expect(hostCalls).toBe(1);
+    expect(registry.runtimes[0]?.session?.playerSessions?.snapshot()).toEqual({
+      coder: 'authorized-token',
+      reviewer: 'authorized-token',
+    });
+  });
+
+  it('preserves or clears a player token from the validated result semantics', async () => {
+    const observed: Array<string | false> = [];
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const store = runtime.session!.playerSessions!;
+      for (const prompt of ['pin', 'preserve', 'clear']) {
+        const resume = store.select('coder');
+        observed.push(resume);
+        const result = await runtime.ports!.callPlayer(
+          'coder',
+          prompt,
+          runtimeTurn.signal,
+          { resume },
+        );
+        if (result.resumeToken !== undefined || result.status === 'ok') {
+          store.update('coder', result.resumeToken);
+        }
+      }
+      observed.push(store.select('coder'));
+    });
+    const shell = makeShell(registry);
+    const context = stubContext();
+    let call = 0;
+    context.context.callPlayer = async (playerId) => {
+      call += 1;
+      if (call === 1) {
+        return {
+          status: 'ok',
+          playerId,
+          turnId: call,
+          finalText: 'pinned',
+          resumeToken: 'player-token',
+        };
+      }
+      return {
+        status: call === 2 ? 'error' : 'ok',
+        playerId,
+        turnId: call,
+        ...(call === 2 ? { error: 'no provider result' } : { finalText: 'clear' }),
+      };
+    };
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code result semantics'), context.context);
+
+    expect(observed).toEqual([false, 'player-token', 'player-token', false]);
+  });
+
+  it.each([
+    'uncommitted',
+    'aborted',
+    'late',
+    'malformed',
+    'malformed-optional',
+    'unknown-undefined',
+    'accessor',
+  ] as const)(
+    'quarantines a %s player result rather than reusing uncertain continuity',
+    async (failure) => {
+      const hostStarted = deferred<void>();
+      const hostGate = deferred<PlayerRunResult>();
+      let portFailure: unknown;
+      let turnCount = 0;
+      let accessorReads = 0;
+      const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+        turnCount += 1;
+        const store = runtime.session!.playerSessions!;
+        if (turnCount > 1) {
+          await runtime.ports!.callPlayer(
+            'coder',
+            'must stay quarantined',
+            runtimeTurn.signal,
+            { resume: store.select('coder') },
+          );
+          return quiescentResult();
+        }
+        if (failure === 'late') {
+          void runtime.ports!
+            .callPlayer('coder', 'late call', runtimeTurn.signal, {
+              resume: store.select('coder'),
+            })
+            .catch((error: unknown) => {
+              portFailure = error;
+            });
+          return quiescentResult();
+        }
+        const callSignal =
+          failure === 'aborted' ? new AbortController() : undefined;
+        const result = await runtime.ports!.callPlayer(
+          'coder',
+          `${failure} call`,
+          callSignal?.signal ?? runtimeTurn.signal,
+          { resume: store.select('coder') },
+        );
+        if (failure === 'aborted') {
+          callSignal!.abort(new Error('runtime stopped after host result'));
+          expect(() => store.update('coder', result.resumeToken)).toThrow(
+            /late or aborted/,
+          );
+        }
+        // `uncommitted` deliberately returns without the required update.
+        return quiescentResult();
+      });
+      const shell = makeShell(registry);
+      const context = stubContext();
+      let hostCalls = 0;
+      context.context.callPlayer = async (playerId) => {
+        hostCalls += 1;
+        hostStarted.resolve(undefined);
+        if (failure === 'late') return hostGate.promise;
+        if (failure === 'malformed') {
+          return {
+            status: 'ok',
+            playerId: 'wrong-player',
+            turnId: 1,
+            finalText: 'untrusted',
+            resumeToken: 'uncertain-token',
+          };
+        }
+        if (failure === 'malformed-optional') {
+          return {
+            status: 'ok',
+            playerId,
+            turnId: 1,
+            finalText: 7,
+          } as unknown as PlayerRunResult;
+        }
+        if (failure === 'unknown-undefined') {
+          return {
+            status: 'ok',
+            playerId,
+            turnId: 1,
+            finalText: 'untrusted',
+            futureOrPoison: undefined,
+          } as unknown as PlayerRunResult;
+        }
+        if (failure === 'accessor') {
+          return Object.defineProperty(
+            {
+              status: 'ok',
+              playerId,
+              turnId: 1,
+              finalText: 'untrusted',
+            },
+            'resumeToken',
+            {
+              enumerable: true,
+              get: () => {
+                accessorReads += 1;
+                throw new Error('host result accessor executed');
+              },
+            },
+          ) as PlayerRunResult;
+        }
+        return {
+          status: 'ok',
+          playerId,
+          turnId: 1,
+          finalText: 'advanced',
+          resumeToken: 'uncertain-token',
+        };
+      };
+
+      await shell.init!(stubSession().session);
+      const firstTurn = shell.handleBossTurn(
+        turn('/code poison lane'),
+        context.context,
+      );
+      await hostStarted.promise;
+      if (failure === 'late') {
+        await Promise.resolve();
+        hostGate.resolve({
+          status: 'ok',
+          playerId: 'code-coder',
+          turnId: 1,
+          finalText: 'late advanced result',
+          resumeToken: 'uncertain-token',
+        });
+      }
+      await firstTurn.catch(() => undefined);
+      if (failure === 'late') {
+        expect(portFailure).toBeDefined();
+      }
+      expect(shell.exportSnapshot()).toBeUndefined();
+
+      await shell
+        .handleBossTurn(turn('/code retry', 2), context.context)
+        .catch(() => undefined);
+      expect(hostCalls).toBe(1);
+      expect(accessorReads).toBe(0);
+      await shell.dispose?.();
+    },
+  );
+
+  it('rejects an overlapping call through two roles bound to one player', async () => {
+    const firstStarted = deferred<void>();
+    const firstGate = deferred<PlayerRunResult>();
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const store = runtime.session!.playerSessions!;
+      const first = runtime.ports!.callPlayer(
+        'coder',
+        'first',
+        runtimeTurn.signal,
+        { resume: store.select('coder') },
+      );
+      await firstStarted.promise;
+      await expect(
+        runtime.ports!.callPlayer(
+          'reviewer',
+          'overlap',
+          runtimeTurn.signal,
+          { resume: store.select('reviewer') },
+        ),
+      ).rejects.toThrow(/already has a call in flight/);
+      firstGate.resolve({
+        status: 'ok',
+        playerId: 'dev.shared',
+        turnId: 1,
+        resumeToken: 'shared-token',
+        finalText: 'done',
+      });
+      const result = await first;
+      store.update('coder', result.resumeToken);
+    });
+    const shell = makeShell(registry, {
+      rolePlayerIds: {
+        code: { coder: 'dev.shared', reviewer: 'dev.shared' },
+      },
+      playerAgents: {
+        'dev.shared': {
+          adapter: 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+      },
+    });
+    const context = stubContext();
+    context.context.callPlayer = async () => {
+      firstStarted.resolve(undefined);
+      return firstGate.promise;
+    };
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code overlap'), context.context);
+
+    expect(context.playerCalls).toHaveLength(0);
+    expect(registry.runtimes[0]?.session?.playerSessions?.select('coder')).toBe(
+      'shared-token',
+    );
+  });
+
+  it('allows distinct session players to overlap', async () => {
+    const firstStarted = deferred<void>();
+    const firstGate = deferred<PlayerRunResult>();
+    let firstPending = false;
+    let secondObservedOverlap = false;
+    const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const store = runtime.session!.playerSessions!;
+      const first = runtime.ports!.callPlayer(
+        'coder',
+        'first',
+        runtimeTurn.signal,
+        { resume: store.select('coder') },
+      );
+      await firstStarted.promise;
+      const second = await runtime.ports!.callPlayer(
+        'reviewer',
+        'second',
+        runtimeTurn.signal,
+        { resume: store.select('reviewer') },
+      );
+      store.update('reviewer', second.resumeToken);
+      firstGate.resolve({
+        status: 'ok',
+        playerId: 'code-coder',
+        turnId: 1,
+        resumeToken: 'coder-token',
+        finalText: 'done',
+      });
+      const firstResult = await first;
+      store.update('coder', firstResult.resumeToken);
+    });
+    const shell = makeShell(registry);
+    const context = stubContext();
+    context.context.callPlayer = async (playerId) => {
+      if (playerId === 'code-coder') {
+        firstPending = true;
+        firstStarted.resolve(undefined);
+        const result = await firstGate.promise;
+        firstPending = false;
+        return result;
+      }
+      secondObservedOverlap = firstPending;
+      return {
+        status: 'ok',
+        playerId,
+        turnId: 1,
+        resumeToken: 'reviewer-token',
+        finalText: 'done',
+      };
+    };
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code overlap safely'), context.context);
+
+    expect(secondObservedOverlap).toBe(true);
+    expect(registry.runtimes[0]?.session?.playerSessions?.snapshot()).toEqual({
+      coder: 'coder-token',
+      reviewer: 'reviewer-token',
+    });
+  });
+
   it('passes CODE ports through and hides sub-runtime judge calls', async () => {
     const observed: unknown[] = [];
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
@@ -1783,11 +2446,12 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       await runtime.ports.emitStatus('sub-runtime status', { step: 1 });
       await runtime.ports.emitTelemetry(stateTelemetry('ready'));
       observed.push(
-        await runtime.ports.callPlayer(
+        await callPlayerAndCommit(
+          runtime,
           'coder',
           'player prompt',
           runtimeTurn.signal,
-          { resume: false },
+          false,
         ),
       );
       observed.push(
@@ -1822,7 +2486,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       {
         playerId: 'code-coder',
         prompt: 'player prompt',
-        options: { resume: false },
+        options: { resume: false, settings: DEFAULT_AGENT_SETTINGS },
       },
     ]);
     const nonSummaryCaptainCalls = context.captainCalls.filter(
@@ -1847,7 +2511,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
       },
     ]);
     expect(nonSummaryCaptainCalls[2]?.options).toEqual(
-      ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
+      { visibility: 'hidden', resume: false, allowedTools: [] },
     );
     expectHiddenJudgeEnvelope(
       nonSummaryCaptainCalls[2]?.prompt,
@@ -1914,7 +2578,7 @@ describe('createPlaybookCaptainShell CODE port wrapping (CAPTAIN-10/15)', () => 
 
     expect(judgeCalls(context)).toHaveLength(1);
     expect(judgeCalls(context)[0]?.options).toEqual(
-      ISOLATED_HIDDEN_CAPTAIN_OPTIONS,
+      { visibility: 'hidden', resume: false, allowedTools: [] },
     );
     expectHiddenJudgeEnvelope(judgeCalls(context)[0]?.prompt, runtimePrompt);
     expect(judgeReply).toBe('{"guard":"accepted"}');
@@ -2159,11 +2823,12 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       order.push('status');
       await runtime.ports.emitTelemetry(stateTelemetry('ready'));
       order.push('telemetry');
-      await runtime.ports.callPlayer(
+      await callPlayerAndCommit(
+        runtime,
         'coder',
         `player prompt for ${runtimeTurn.text}`,
         runtimeTurn.signal,
-        { resume: false },
+        false,
       );
     });
     const shell = makeShell(registry);
@@ -2231,17 +2896,19 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       await runtime.ports.emitTelemetry(stateTelemetry('planAndImplement'));
       await runtime.ports.emitTelemetry(stateTelemetry('testsGreen'));
       await runtime.ports.emitTelemetry(stateTelemetry('customState'));
-      await runtime.ports.callPlayer(
+      await callPlayerAndCommit(
+        runtime,
         'coder',
         'first player',
         runtimeTurn.signal,
-        { resume: false },
+        false,
       );
-      await runtime.ports.callPlayer(
+      await callPlayerAndCommit(
+        runtime,
         'reviewer',
         'second player',
         runtimeTurn.signal,
-        { resume: false },
+        false,
       );
       await runtime.ports.callJudge('classifier event', runtimeTurn.signal);
       await runtime.ports.callJudge(
@@ -2414,11 +3081,12 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
   it('supplies no saved-counts line when the entry declares no summary policy', async () => {
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
-      await runtime.ports.callPlayer(
+      await callPlayerAndCommit(
+        runtime,
         'coder',
         `player prompt for ${runtimeTurn.text}`,
         runtimeTurn.signal,
-        { resume: false },
+        false,
       );
     });
     delete (registry.entry as { summaryPolicy?: unknown }).summaryPolicy;
@@ -2450,28 +3118,75 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     ]);
   }
 
+  const sessionAgents = {
+    captain: {
+      adapter: 'claude',
+      model: { kind: 'provider-default' },
+      effort: { kind: 'provider-default' },
+    },
+    players: {
+      'code-coder': {
+        adapter: 'codex',
+        model: { kind: 'value', value: 'gpt-5.5' },
+        effort: { kind: 'provider-default' },
+      },
+      'code-reviewer': {
+        adapter: 'claude',
+        model: { kind: 'value', value: 'claude-opus-4-8' },
+        effort: { kind: 'provider-default' },
+      },
+    },
+  } as const;
+
+  const codeRoles = {
+    coder: {
+      playerId: 'code-coder',
+      model: { kind: 'value', value: 'gpt-5.6-sol' },
+      effort: { kind: 'value', value: 'high' },
+    },
+    reviewer: {
+      playerId: 'code-reviewer',
+      model: { kind: 'provider-default' },
+      effort: { kind: 'provider-default' },
+    },
+  } as const;
+
+  function withSessionAgents(options: Record<string, unknown>) {
+    return { sessionAgents, captainAdapter: 'claude', ...options };
+  }
+
   async function initWith(
     options: unknown,
     loadModule: (specifier: string) => Promise<unknown>,
   ): Promise<void> {
-    const shell = createPlaybookCaptainShell(options, { loadModule });
+    const shell = createPlaybookCaptainShell(
+      withSessionAgents(options as Record<string, unknown>),
+      { loadModule },
+    );
     await shell.init!(namespacedSession().session);
   }
 
   it('loads from captain.options.playbooks, binds <id>-<role>, validates the slice, and switches visibility', async () => {
     const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
       if (!runtime.ports) throw new Error('runtime ports missing');
-      await runtime.ports.callPlayer(
+      await callPlayerAndCommit(
+        runtime,
         'coder',
         `player prompt for ${runtimeTurn.text}`,
         runtimeTurn.signal,
-        { resume: false },
+        false,
       );
     });
     const options = {
       playbooks: {
-        code: { from: CODE_FROM, options: { committer: 'reviewer' } },
+        code: {
+          from: CODE_FROM,
+          roles: codeRoles,
+          options: { committer: 'reviewer' },
+        },
       },
+      sessionAgents,
+      captainAdapter: 'claude',
     };
     const shell = createPlaybookCaptainShell(options, {
       loadModule: async (specifier) => {
@@ -2489,7 +3204,7 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
     expect(registry.validateOptions).toHaveBeenCalledWith({
       committer: 'reviewer',
     });
-    expect(registry.createRuntime).toHaveBeenCalledWith(undefined);
+    expect(registry.createRuntime).toHaveBeenCalledWith({ committer: 'reviewer' });
     expect(registry.runtimes[0]?.inputs.map((i) => i.text)).toEqual([
       'do the task',
     ]);
@@ -2544,19 +3259,105 @@ describe('createPlaybookCaptainShell registry loading (CAPTAIN-16/22/23)', () =>
       initWith(
         {
           playbooks: {
-            code: { from: 'mod://code' },
-            code2: { from: 'mod://code2' },
+            code: { from: 'mod://code', roles: codeRoles, options: {} },
+            code2: { from: 'mod://code2', roles: codeRoles, options: {} },
           },
         },
         loader,
       ),
     ).rejects.toThrow(/duplicate effective command/);
+
+    const exactRoleCases: readonly [string, unknown, RegExp][] = [
+      [
+        'missing role',
+        {
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              roles: { coder: codeRoles.coder },
+              options: {},
+            },
+          },
+        },
+        /exactly cover requiredRoleIds/,
+      ],
+      [
+        'extra role',
+        {
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              roles: { ...codeRoles, extra: codeRoles.coder },
+              options: {},
+            },
+          },
+        },
+        /exactly cover requiredRoleIds/,
+      ],
+      [
+        'missing player',
+        {
+          playbooks: {
+            code: {
+              from: 'mod://code',
+              roles: {
+                ...codeRoles,
+                coder: { ...codeRoles.coder, playerId: 'dev.missing' },
+              },
+              options: {},
+            },
+          },
+        },
+        /names absent session player/,
+      ],
+      [
+        'unreferenced player',
+        {
+          playbooks: {
+            code: { from: 'mod://code', roles: codeRoles, options: {} },
+          },
+          sessionAgents: {
+            ...sessionAgents,
+            players: {
+              ...sessionAgents.players,
+              'unused.player': {
+                adapter: 'claude',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
+            },
+          },
+        },
+        /unreferenced player/,
+      ],
+    ];
+    for (const [_label, value, diagnostic] of exactRoleCases) {
+      const config = value as Record<string, unknown>;
+      await expect(initWith(config, loader)).rejects.toThrow(diagnostic);
+    }
+    const withoutAgents = createPlaybookCaptainShell(
+      {
+        playbooks: {
+          code: { from: 'mod://code', roles: codeRoles, options: {} },
+        },
+      },
+      { loadModule: loader },
+    );
+    await expect(withoutAgents.init!(namespacedSession().session)).rejects.toThrow(
+      /sessionAgents/,
+    );
   });
 
   it('reports a setVisiblePlayers rejection without driving the runtime', async () => {
     const registry = fakeCodeEntry();
     const shell = createPlaybookCaptainShell(
-      { playbooks: { code: { from: CODE_FROM } } },
+      {
+        playbooks: {
+          code: { from: CODE_FROM, roles: codeRoles, options: {} },
+        },
+        sessionAgents,
+        captainAdapter: 'claude',
+      },
       {
         loadModule: async () => ({ default: registry.entry }),
       },
@@ -2770,6 +3571,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
         runtimeTurn.signal,
         { resume: false },
       );
+      runtime.session?.playerSessions?.update('coder', first.resumeToken);
       observed.push(first);
       const second = await runtime.ports.callPlayer(
         'coder',
@@ -2777,6 +3579,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
         runtimeTurn.signal,
         { resume: first.resumeToken ?? false },
       );
+      runtime.session?.playerSessions?.update('coder', second.resumeToken);
       observed.push(second);
     });
     const shell = makeShell(registry, { sessionIds: [FIRST_ID] });
@@ -2806,12 +3609,15 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
       {
         playerId: 'code-coder',
         prompt: 'fresh call',
-        options: { resume: false },
+        options: { resume: false, settings: DEFAULT_AGENT_SETTINGS },
       },
       {
         playerId: 'code-coder',
         prompt: 'continued call',
-        options: { resume: 'player-token-1' },
+        options: {
+          resume: 'player-token-1',
+          settings: DEFAULT_AGENT_SETTINGS,
+        },
       },
     ]);
     expect(observed).toEqual([
@@ -2825,7 +3631,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     ).toBe(true);
   });
 
-  it('isolates replacement sessions through a real tmux-play host', async () => {
+  it('retains the session player ledger through replacement roots in a real tmux-play host', async () => {
     const adapterResumes: Array<string | undefined> = [];
     let adapterRun = 0;
 
@@ -2888,21 +3694,25 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
       }
     }
 
-    const tokens = new WeakMap<FakeRuntime, string>();
     const calls = new WeakMap<FakeRuntime, number>();
     const disposedSessionIds: string[] = [];
     const registry = fakeCodeEntry(
       async (runtime, runtimeTurn) => {
         if (!runtime.ports) throw new Error('runtime ports missing');
+        const callCount = (calls.get(runtime) ?? 0) + 1;
+        calls.set(runtime, callCount);
         const result = await runtime.ports.callPlayer(
           'coder',
           runtimeTurn.text,
           runtimeTurn.signal,
-          { resume: tokens.get(runtime) ?? false },
+          {
+            resume:
+              runtime.session?.playerSessions?.select('coder') ?? false,
+          },
         );
-        if (result.resumeToken) tokens.set(runtime, result.resumeToken);
-        const callCount = (calls.get(runtime) ?? 0) + 1;
-        calls.set(runtime, callCount);
+        if (result.resumeToken) {
+          runtime.session?.playerSessions?.update('coder', result.resumeToken);
+        }
         await runtime.ports.emitTelemetry(
           stateTelemetry(callCount === 2 ? 'done' : 'ready'),
         );
@@ -2932,6 +3742,21 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     delete registry.entry.summaryPolicy;
     const shell = makeShell(registry, {
       sessionIds: [FIRST_ID, SECOND_ID],
+      roleTunings: {
+        code: {
+          coder: {
+            model: { kind: 'value', value: 'gpt-5.6-sol' },
+            effort: { kind: 'value', value: 'high' },
+          },
+        },
+      },
+      playerAgents: {
+        'code-coder': {
+          adapter: 'codex',
+          model: { kind: 'value', value: 'gpt-5.6-sol' },
+          effort: { kind: 'value', value: 'high' },
+        },
+      },
     });
     const captain: Captain = {
       init: (session) => shell.init!(session),
@@ -2954,7 +3779,14 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
     const host = await createTmuxPlayRuntime({
       captain,
       captainConfig: { adapter: 'claude' },
-      players: [{ id: 'code-coder', adapter: 'codex' }],
+      players: [
+        {
+          id: 'code-coder',
+          adapter: 'codex',
+          model: 'gpt-5.6-sol',
+          effort: 'high',
+        },
+      ],
       adapterImports,
       observers: [
         {
@@ -2990,7 +3822,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
       undefined,
       undefined,
       'token-2',
-      undefined,
+      'token-3',
     ]);
     expect(
       registry.runtimes.map((runtime) => runtime.session?.sessionId),
@@ -3008,6 +3840,116 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
   const ROOT_ID = '20000000-0000-4000-8000-000000000001';
   const CHILD_ID = '20000000-0000-4000-8000-000000000002';
   const LEAF_ID = '20000000-0000-4000-8000-000000000003';
+
+  it('keeps a shared player locked until the owning runtime commits its validated result', async () => {
+    let overlapError: unknown;
+    let childResume: string | false | undefined;
+    const code = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const store = runtime.session!.playerSessions!;
+      const first = runtime.ports!.callPlayer(
+        'coder',
+        'parent call',
+        runtimeTurn.signal,
+        { resume: store.select('coder') },
+      );
+      const start = await runtime.ports!.callPlaybook(
+        {
+          callId: 'code:docs:token-race',
+          playbookId: 'docs',
+          text: 'probe the shared player',
+        },
+        runtimeTurn.signal,
+      );
+      if (start.state !== 'suspended') throw new Error('child must park');
+      const firstResult = await first;
+      store.update('coder', firstResult.resumeToken);
+      return suspendedResult({
+        callId: 'code:docs:token-race',
+        playbookId: 'docs',
+        childSessionId: start.childSessionId,
+      });
+    });
+    code.entry.requiredRoleIds = ['coder'];
+    const docs = fakePlaybookEntry(
+      'docs',
+      'docs',
+      async (runtime, runtimeTurn) => {
+        const store = runtime.session!.playerSessions!;
+        if (runtimeTurn.text === 'probe the shared player') {
+          try {
+            await runtime.ports!.callPlayer(
+              'coder',
+              'overlapping child call',
+              runtimeTurn.signal,
+              { resume: store.select('coder') },
+            );
+          } catch (error) {
+            overlapError = error;
+          }
+          return quiescentResult('parked');
+        }
+        childResume = store.select('coder');
+        const result = await runtime.ports!.callPlayer(
+          'coder',
+          'later child call',
+          runtimeTurn.signal,
+          { resume: childResume },
+        );
+        store.update('coder', result.resumeToken);
+        return quiescentResult('parked');
+      },
+    );
+    docs.entry.requiredRoleIds = ['coder'];
+    const shell = makeShell([code, docs], {
+      rolePlayerIds: {
+        code: { coder: 'dev.shared' },
+        docs: { coder: 'dev.shared' },
+      },
+      playerAgents: {
+        'dev.shared': {
+          adapter: 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+      },
+      sessionIds: [ROOT_ID, CHILD_ID],
+    });
+    const context = stubContext();
+    let call = 0;
+    context.context.callPlayer = async (
+      playerId,
+      prompt,
+      options,
+    ): Promise<PlayerRunResult> => {
+      context.playerCalls.push({ playerId, prompt, options });
+      call += 1;
+      return {
+        status: 'ok',
+        playerId,
+        turnId: call,
+        finalText: `result ${call}`,
+        resumeToken: call === 1 ? 'first-token' : 'second-token',
+      };
+    };
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code start'), context.context);
+    await shell.handleBossTurn(turn('/docs continue', 2), context.context);
+
+    expect(overlapError).toEqual(
+      expect.objectContaining({
+        message: expect.stringMatching(/already has a call in flight/),
+      }),
+    );
+    expect(childResume).toBe('first-token');
+    expect(context.playerCalls.map(({ options }) => options?.resume)).toEqual([
+      false,
+      'first-token',
+    ]);
+    expect(docs.runtimes[0]?.session?.playerSessions?.select('coder')).toBe(
+      'second-token',
+    );
+  });
 
   it('suspends a caller, routes the next turn to the leaf, and resumes with the child result', async () => {
     const order: string[] = [];
@@ -3294,7 +4236,7 @@ describe('createPlaybookCaptainShell nested playbooks', () => {
       quiescentResult('drafting'),
     );
     // Give the child one role its caller does not map so the visibility
-    // request is observably the child leaf under shared-role inheritance.
+    // request is observably the explicitly bound child leaf.
     docs.entry.requiredRoleIds = ['docs'];
     delete code.entry.summaryPolicy;
     delete docs.entry.summaryPolicy;
@@ -3962,6 +4904,11 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           sessionId: ROOT_ID,
           rootSessionId: ROOT_ID,
           depth: 0,
+          options: {},
+          roleBindings: {
+            coder: 'code-coder',
+            reviewer: 'code-reviewer',
+          },
           runtime: runtimeSnapshot('code', waiting, {
             turn: 1,
             roleResumeTokens: { reviewer: 'shared-token' },
@@ -3982,19 +4929,111 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           depth: 1,
           parentSessionId: ROOT_ID,
           parentCallId: 'code:review:1',
+          options: {},
+          roleBindings: {
+            coder: 'code-coder',
+            reviewer: 'code-reviewer',
+          },
           runtime: runtimeSnapshot('review', playbookState('ready'), {
             turn: 1,
             roleResumeTokens: { reviewer: 'shared-token' },
           }),
         },
       ],
-      rootPlayerResumeTokens: {
-        'code-reviewer': 'shared-token',
-        // A valid configured binding retained from an already returned child.
-        'review-reviewer': 'historical-child-token',
+      playerSessions: {
+        ...chat.playerSessions,
+        'code-reviewer': {
+          ...chat.playerSessions['code-reviewer']!,
+          resumeToken: 'shared-token',
+        },
       },
     };
   };
+
+  it('validates intrinsic snapshot state directly without config or runtime work', async () => {
+    const base = await nestedSnapshotFixture();
+    const input = JSON.parse(JSON.stringify(base));
+    const validated = assertPlaybookCaptainShellSnapshot(input);
+
+    expect(validated).toEqual(base);
+    expect(Object.isFrozen(validated)).toBe(true);
+    expect(Object.isFrozen(validated.captain)).toBe(true);
+    expect(
+      validated.mode === 'engaged.parked' &&
+        Object.isFrozen(validated.frames[0]?.runtime),
+    ).toBe(true);
+    input.frames[0].roleBindings.coder = 'mutated-after-validation';
+    expect(
+      validated.mode === 'engaged.parked' &&
+        validated.frames[0]?.roleBindings.coder,
+    ).toBe('code-coder');
+
+    const clone = (): any => JSON.parse(JSON.stringify(base));
+    const intrinsicMutations: Array<() => unknown> = [
+      () => {
+        const value = clone();
+        value.captain.agent.model = { kind: 'value', value: 'forbidden' };
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.playerSessions['code-coder'].effort = {
+          kind: 'value',
+          value: 'high',
+        };
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.captain.conversation = {
+          kind: 'needsCatchUp',
+          resume: false,
+          afterJournalSeq: 1,
+        };
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.captain.conversation = {
+          kind: 'needsCatchUp',
+          resume: 'retained-token',
+          afterJournalSeq: 0,
+        };
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.frames[1].parentCallId = 'wrong-edge';
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.frames[1].runtime.pendingBossQuestions = [
+          {
+            questionId: 'unknown-role-question',
+            asker: { kind: 'role', roleId: 'architect' },
+            question: 'Who owns this?',
+          },
+        ];
+        value.pendingBossQuestions =
+          value.frames[1].runtime.pendingBossQuestions;
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.frames[1].runtime.roleResumeTokens.reviewer = 'wrong-token';
+        return value;
+      },
+      () => {
+        const value = clone();
+        value.pendingBossQuestions = [{ questionId: 'not-the-leaf' }];
+        return value;
+      },
+    ];
+    for (const mutate of intrinsicMutations) {
+      expect(() => assertPlaybookCaptainShellSnapshot(mutate())).toThrow();
+    }
+  });
 
   it('round-trips chat history and resumes the pinned Captain conversation without restore work', async () => {
     const source = makeShell(fakeCodeEntry());
@@ -4005,7 +5044,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await source.init!(sourceSession.session);
     const unopenedSnapshot = source.exportSnapshot()!;
     expect(unopenedSnapshot).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 3,
       mode: 'chat',
       captain: {
         sessionId: SESSION_CAPTAIN_ID,
@@ -4047,7 +5086,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
 
     const snapshot = source.exportSnapshot();
     expect(snapshot).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 3,
       mode: 'chat',
       captain: {
         conversation: { kind: 'pinned', token: 'conversation-1' },
@@ -4139,14 +5178,415 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await restored.dispose?.();
   });
 
-  it('restores one parked root with its root-owned player continuation', async () => {
+  it('persists an unopened settings rejection and catches up once without an immediate retry', async () => {
+    const source = makeShell(fakeCodeEntry());
+    await source.init!(stubSession(roster).session);
+    const rejected = stubContext();
+    const rejectedCalls: Array<{
+      prompt: string;
+      options: CaptainCallOptions | undefined;
+    }> = [];
+    rejected.context.callCaptain = async (prompt, options) => {
+      rejectedCalls.push({ prompt, options });
+      throw new AgentCallSettingsError('unsupported Captain tuning');
+    };
+
+    await source.handleBossTurn(turn('remember unopened failure'), rejected.context);
+
+    expect(rejectedCalls).toHaveLength(1);
+    expect(rejected.replies).toHaveLength(1);
+    const snapshot = source.exportSnapshot()!;
+    expect(snapshot).toMatchObject({
+      captain: {
+        conversation: {
+          kind: 'needsCatchUp',
+          resume: false,
+          afterJournalSeq: 0,
+        },
+      },
+    });
+
+    const restored = makeShell(fakeCodeEntry());
+    await restored.restore(
+      stubSession(roster).session,
+      JSON.parse(JSON.stringify(snapshot)) as PlaybookCaptainShellSnapshot,
+    );
+    const recovered = stubContext([
+      captainJson({ action: 'respond', text: 'Caught up.' }),
+    ]);
+    await restored.handleBossTurn(turn('continue after rejection', 2), recovered.context);
+
+    expect(recovered.captainCalls).toHaveLength(1);
+    expect(recovered.captainCalls[0]?.options?.resume).toBe(false);
+    expect(recovered.captainCalls[0]?.prompt).toContain(
+      'This retained conversation missed the host journal records below.',
+    );
+    expect(recovered.captainCalls[0]?.prompt).toContain(
+      'remember unopened failure',
+    );
+    expect(restored.exportSnapshot()).toMatchObject({
+      captain: { conversation: { kind: 'pinned' } },
+    });
+
+    await source.dispose?.();
+    await restored.dispose?.();
+  });
+
+  it('retains a pinned token and only catches up the journal suffix after settings rejection', async () => {
+    const source = makeShell(fakeCodeEntry());
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(
+      turn('old settled request'),
+      stubContext([
+        captainJson({ action: 'respond', text: 'Old reply.' }),
+      ]).context,
+    );
+
+    const rejected = stubContext();
+    rejected.context.callCaptain = async () => {
+      throw new AgentCallSettingsError('retune unavailable');
+    };
+    await source.handleBossTurn(turn('new missed request', 2), rejected.context);
+    const snapshot = source.exportSnapshot()!;
+    expect(snapshot).toMatchObject({
+      captain: {
+        conversation: {
+          kind: 'needsCatchUp',
+          resume: 'conversation-1',
+        },
+      },
+    });
+    const oldBoss = snapshot.journal.find(
+      (record) => record.kind === 'boss' && record.turnId === 1,
+    )!;
+    const newBoss = snapshot.journal.find(
+      (record) => record.kind === 'boss' && record.turnId === 2,
+    )!;
+    expect(
+      snapshot.captain.conversation.kind === 'needsCatchUp' &&
+        snapshot.captain.conversation.afterJournalSeq,
+    ).toBeGreaterThanOrEqual(oldBoss.seq);
+    expect(
+      snapshot.captain.conversation.kind === 'needsCatchUp' &&
+        snapshot.captain.conversation.afterJournalSeq,
+    ).toBeLessThan(newBoss.seq);
+
+    const recovered = stubContext([
+      captainJson({ action: 'respond', text: 'Recovered.' }),
+    ]);
+    await source.handleBossTurn(turn('recover now', 3), recovered.context);
+    const prompt = recovered.captainCalls[0]!.prompt;
+    const suffix = prompt.slice(
+      prompt.indexOf('This retained conversation missed the host journal records below.'),
+    );
+    expect(recovered.captainCalls[0]?.options?.resume).toBe('conversation-1');
+    expect(suffix).toContain('new missed request');
+    expect(suffix).not.toContain('old settled request');
+
+    await source.dispose?.();
+  });
+
+  it('advances the catch-up watermark after a successful decision and accumulates repeated rejections', async () => {
+    const code = fakeCodeEntry(async () => quiescentResult('ready'));
+    delete code.entry.summaryPolicy;
+    const shell = makeShell(code, { sessionIds: [ROOT_ID] });
+    await shell.init!(stubSession(roster).session);
+    await shell.handleBossTurn(
+      turn('/code initial action'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Initial action settled.' },
+      ]).context,
+    );
+
+    const closingRejected = stubContext();
+    closingRejected.context.callCaptain = async (prompt) => {
+      if (isDecisionPrompt(prompt)) {
+        return {
+          ...captainJson({ action: 'deliver' }),
+          resumeToken: 'decision-token',
+        };
+      }
+      throw new AgentCallSettingsError('closing tuning unavailable');
+    };
+    await shell.handleBossTurn(turn('first missed closing', 2), closingRejected.context);
+    code.runtimes[0]!.snapshot = runtimeSnapshot(
+      'code',
+      playbookState('ready'),
+      { turn: 2 },
+    );
+    const firstRejected = shell.exportSnapshot()!;
+    const turnTwoBossSeq = firstRejected.journal.find(
+      (record) => record.kind === 'boss' && record.turnId === 2,
+    )!.seq;
+    expect(firstRejected.captain.conversation).toEqual({
+      kind: 'needsCatchUp',
+      resume: 'decision-token',
+      afterJournalSeq: turnTwoBossSeq,
+    });
+
+    const repeated = stubContext();
+    repeated.context.callCaptain = async () => {
+      throw new AgentCallSettingsError('still unsupported');
+    };
+    await shell.handleBossTurn(turn('/code second missed closing', 3), repeated.context);
+    code.runtimes[0]!.snapshot = runtimeSnapshot(
+      'code',
+      playbookState('ready'),
+      { turn: 3 },
+    );
+    const repeatedSnapshot = shell.exportSnapshot()!;
+    expect(repeatedSnapshot.captain.conversation).toEqual(
+      firstRejected.captain.conversation,
+    );
+
+    const recovered = stubContext([
+      { status: 'ok', turnId: 4, finalText: 'All caught up.' },
+    ]);
+    await shell.handleBossTurn(turn('/code recover closing', 4), recovered.context);
+    const catchUpCall = recovered.captainCalls[0]!;
+    const suffix = catchUpCall.prompt.slice(
+      catchUpCall.prompt.indexOf(
+        'This retained conversation missed the host journal records below.',
+      ),
+    );
+    expect(catchUpCall.options?.resume).toBe('decision-token');
+    expect(suffix).toContain('turn 2 action:');
+    expect(suffix).toContain('turn 2 outcome:');
+    expect(suffix).not.toContain('first missed closing');
+    expect(suffix).toContain('second missed closing');
+    expect(suffix).not.toContain('initial action');
+
+    await shell.dispose?.();
+  });
+
+  it('dispatches a roleless playbook without requesting an empty visibility set', async () => {
+    const registry = fakePlaybookEntry('notes', 'notes');
+    registry.entry.requiredRoleIds = [];
+    const shell = makeShell(registry);
+    const context = stubContext();
+
+    await shell.init!(stubSession([]).session);
+    await shell.handleBossTurn(turn('/notes capture this'), context.context);
+
+    expect(registry.runtimes[0]?.inputs.map((input) => input.text)).toEqual([
+      'capture this',
+    ]);
+    expect(context.visiblePlayers).toEqual([]);
+
+    await shell.dispose?.();
+  });
+
+  it('keeps needsSeeding through a settings rejection', async () => {
+    const shell = makeShell(fakeCodeEntry());
+    await shell.init!(stubSession(roster).session);
+    const presentationFailure = stubContext([
+      captainJson({ action: 'respond', text: 'Uncertain delivery.' }),
+    ]);
+    presentationFailure.context.emitReply = async () => {
+      throw new Error('presentation uncertain');
+    };
+    await expect(
+      shell.handleBossTurn(turn('seed uncertain state'), presentationFailure.context),
+    ).rejects.toThrow(/presentation uncertain/);
+    expect(shell.exportSnapshot()).toMatchObject({
+      captain: { conversation: { kind: 'needsSeeding' } },
+    });
+
+    const typed = stubContext();
+    let typedCalls = 0;
+    typed.context.callCaptain = async () => {
+      typedCalls += 1;
+      throw new AgentCallSettingsError('still unsupported');
+    };
+    await shell.handleBossTurn(turn('retry unsupported', 2), typed.context);
+    expect(typedCalls).toBe(1);
+    expect(shell.exportSnapshot()).toMatchObject({
+      captain: { conversation: { kind: 'needsSeeding' } },
+    });
+
+    await shell.dispose?.();
+  });
+
+  it('lets the exact abort reason win over typed settings classification', async () => {
+    const captain = fakeSessionCaptain(async (runtime, runtimeTurn) => {
+      await runtime.ports!.callCaptain(
+        'attempt one durable Captain call',
+        runtimeTurn.signal,
+        { visibility: 'hidden', resume: false },
+      );
+      return quiescentResult();
+    });
+    const shell = makeShell(fakeCodeEntry(), {
+      createCaptainRuntime: captain.createCaptainRuntime,
+    });
+    const aborted = stubContext();
+    const abortReason = new AgentCallSettingsError('typed abort reason');
+    aborted.context.callCaptain = async () => {
+      aborted.controller.abort(abortReason);
+      throw abortReason;
+    };
+
+    await shell.init!(stubSession(roster).session);
+    await expect(
+      shell.handleBossTurn(turn('abort wins'), aborted.context),
+    ).rejects.toBe(abortReason);
+    expect(aborted.replies).toEqual([]);
+
+    await shell.dispose?.();
+  });
+
+  it('replaces retained catch-up continuity when an admitted Captain call aborts after resolving', async () => {
+    const source = makeShell(fakeCodeEntry());
+    await source.init!(stubSession(roster).session);
+    const rejected = stubContext();
+    rejected.context.callCaptain = async () => {
+      throw new AgentCallSettingsError('catch-up required');
+    };
+    await source.handleBossTurn(turn('persist missed turn'), rejected.context);
+    const catchUpSnapshot = source.exportSnapshot()!;
+    expect(catchUpSnapshot).toMatchObject({
+      captain: { conversation: { kind: 'needsCatchUp', resume: false } },
+    });
+
+    const restored = makeShell(fakeCodeEntry());
+    await restored.restore(
+      stubSession(roster).session,
+      JSON.parse(JSON.stringify(catchUpSnapshot)) as PlaybookCaptainShellSnapshot,
+    );
+    const aborted = stubContext();
+    const abortReason = new Error('aborted after provider result');
+    aborted.context.callCaptain = async () => {
+      aborted.controller.abort(abortReason);
+      return {
+        ...captainJson({ action: 'respond', text: 'must not surface' }),
+        resumeToken: 'advanced-token',
+      };
+    };
+    await expect(
+      restored.handleBossTurn(
+        turn('attempt retained catch-up', 2),
+        aborted.context,
+      ),
+    ).rejects.toBe(abortReason);
+    expect(aborted.replies).toEqual([]);
+    expect(restored.exportSnapshot()).toMatchObject({
+      captain: { conversation: { kind: 'needsSeeding' } },
+    });
+
+    const recovered = stubContext([
+      captainJson({ action: 'respond', text: 'Recovered fresh.' }),
+    ]);
+    await restored.handleBossTurn(turn('recover safely', 3), recovered.context);
+    expect(recovered.captainCalls[0]?.options?.resume).toBe(false);
+    expect(recovered.captainCalls[0]?.prompt).toContain('Conversation recap');
+    expect(recovered.captainCalls[0]?.prompt).toContain(
+      'attempt retained catch-up',
+    );
+
+    await source.dispose?.();
+    await restored.dispose?.();
+  });
+
+  it('does not let a caught player settings rejection classify a later runtime failure', async () => {
+    let playerRejected = false;
+    const laterFailure = new Error('distinct runtime failure');
+    const code = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      try {
+        await runtime.ports!.callPlayer(
+          'coder',
+          'unsupported player call',
+          runtimeTurn.signal,
+          { resume: runtime.session!.playerSessions!.select('coder') },
+        );
+      } catch (error) {
+        playerRejected = error instanceof AgentCallSettingsError;
+      }
+      return quiescentResult();
+    });
+    delete code.entry.summaryPolicy;
+    const captain = fakeSessionCaptain(async (_runtime, runtimeTurn) => {
+      await captain.ports.controller!.submit(
+        {
+          action: 'start',
+          playbookId: 'code',
+          input: 'classify exactly',
+        },
+        runtimeTurn.signal,
+      );
+      throw laterFailure;
+    });
+    const shell = makeShell(code, {
+      createCaptainRuntime: captain.createCaptainRuntime,
+    });
+    const context = stubContext();
+    context.context.callPlayer = async () => {
+      throw new AgentCallSettingsError('player tuning rejected');
+    };
+
+    await shell.init!(stubSession(roster).session);
+    await expect(
+      shell.handleBossTurn(turn('classify exactly'), context.context),
+    ).rejects.toBe(laterFailure);
+
+    expect(playerRejected).toBe(true);
+    expect(context.replies).toHaveLength(1);
+
+    await shell.dispose?.();
+  });
+
+  it('reports retained Captain continuity in telemetry during catch-up', async () => {
+    const code = fakeCodeEntry(async () => quiescentResult('ready'));
+    delete code.entry.summaryPolicy;
+    const shell = makeShell(code);
+    const host = stubSession(roster);
+    await shell.init!(host.session);
+    await shell.handleBossTurn(
+      turn('pin continuity'),
+      stubContext([
+        captainJson({ action: 'respond', text: 'Pinned.' }),
+      ]).context,
+    );
+    const rejected = stubContext();
+    rejected.context.callCaptain = async () => {
+      throw new AgentCallSettingsError('temporary tuning mismatch');
+    };
+    await shell.handleBossTurn(turn('retain continuity', 2), rejected.context);
+    const stillRejected = stubContext();
+    stillRejected.context.callCaptain = async () => {
+      throw new AgentCallSettingsError('temporary tuning mismatch');
+    };
+    await shell.handleBossTurn(
+      turn('/code emit retained ledger', 3),
+      stillRejected.context,
+    );
+
+    const shellTelemetry = telemetryWithTopic(
+      host,
+      'playbook.captain.fsm.state',
+    );
+    expect(shellTelemetry.at(-1)).toMatchObject({
+      payload: {
+        ledger: { durableConversation: true },
+      },
+    });
+
+    await shell.dispose?.();
+  });
+
+  it('restores one parked root with its session-player continuation', async () => {
     const pendingQuestion = {
       questionId: 'q-1',
       asker: { kind: 'role' as const, roleId: 'coder' },
       question: 'Which target?',
     };
-    const sourceCode = fakeCodeEntry(async (runtime) => {
-      runtime.session?.playerSessions?.update('coder', 'coder-root-token');
+    const sourceCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      await callPlayerAndCommit(
+        runtime,
+        'coder',
+        'establish root continuation',
+        runtimeTurn.signal,
+        false,
+      );
       await runtime.ports?.emitTelemetry(
         stateTelemetry('ready', {
           pendingBossQuestions: [pendingQuestion],
@@ -4157,12 +5597,17 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     });
     const source = makeShell(sourceCode, { sessionIds: [ROOT_ID] });
     await source.init!(stubSession(roster).session);
-    await source.handleBossTurn(
-      turn('/code implement it'),
-      stubContext([
+    const sourceContext = stubContext([
         { status: 'ok', turnId: 1, finalText: 'Implementation is parked.' },
-      ]).context,
-    );
+      ]);
+    sourceContext.context.callPlayer = async (playerId) => ({
+      status: 'ok',
+      playerId,
+      turnId: 1,
+      finalText: 'seeded',
+      resumeToken: 'coder-root-token',
+    });
+    await source.handleBossTurn(turn('/code implement it'), sourceContext.context);
     const runtimeOwnedSnapshot = runtimeSnapshot(
       'code',
       playbookState('ready'),
@@ -4176,7 +5621,11 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     const snapshot = source.exportSnapshot();
     expect(snapshot).toMatchObject({
       mode: 'engaged.parked',
-      rootPlayerResumeTokens: { 'code-coder': 'coder-root-token' },
+      playerSessions: {
+        'code-coder': expect.objectContaining({
+          resumeToken: 'coder-root-token',
+        }),
+      },
       pendingBossQuestions: [pendingQuestion],
       lastError: { name: 'TargetError', message: 'target missing' },
       frames: [{ playbookId: 'code', sessionId: ROOT_ID, depth: 0 }],
@@ -4224,6 +5673,158 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await target.dispose?.();
   });
 
+  it('restores fixed identity while applying current Captain and role tuning', async () => {
+    const sourceCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      await callPlayerAndCommit(
+        runtime,
+        'coder',
+        'pin player under tuning A',
+        runtimeTurn.signal,
+        false,
+      );
+      return quiescentResult('ready');
+    });
+    const fixedPlayer = {
+      adapter: 'codex',
+      instruction: 'Stable player instruction.',
+      permissions: { fileWrite: 'ask' as const },
+    };
+    const fixedCaptain = {
+      adapter: 'claude',
+      instruction: 'Stable Captain instruction.',
+      permissions: { fileWrite: 'deny' as const },
+    };
+    const source = makeShell(sourceCode, {
+      sessionIds: [ROOT_ID],
+      captainAgent: {
+        ...fixedCaptain,
+        model: { kind: 'value', value: 'captain-a' },
+        effort: { kind: 'value', value: 'low' },
+      },
+      roleTunings: {
+        code: {
+          coder: {
+            model: { kind: 'value', value: 'role-a' },
+            effort: { kind: 'value', value: 'low' },
+          },
+        },
+      },
+      playerAgents: {
+        'code-coder': {
+          ...fixedPlayer,
+          model: { kind: 'value', value: 'player-default-a' },
+          effort: { kind: 'value', value: 'low' },
+        },
+        'code-reviewer': {
+          adapter: 'codex',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+      },
+    });
+    const sourceContext = stubContext([
+      { status: 'ok', turnId: 1, finalText: 'Pinned under A.' },
+    ]);
+    sourceContext.context.callPlayer = async (playerId) => ({
+      status: 'ok',
+      playerId,
+      turnId: 1,
+      finalText: 'player A',
+      resumeToken: 'player-retained-token',
+    });
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(turn('/code pin A'), sourceContext.context);
+    sourceCode.runtimes[0]!.snapshot = runtimeSnapshot(
+      'code',
+      playbookState('ready'),
+      {
+        turn: 1,
+        roleResumeTokens: { coder: 'player-retained-token' },
+      },
+    );
+    const snapshot = source.exportSnapshot()!;
+    expect(JSON.stringify(snapshot)).not.toMatch(/captain-a|role-a|player-default-a/);
+
+    const targetCode = fakeCodeEntry(async (runtime, runtimeTurn) => {
+      const result = await runtime.ports!.callPlayer(
+        'coder',
+        'resume player under tuning B',
+        runtimeTurn.signal,
+        { resume: runtime.session!.playerSessions!.select('coder') },
+      );
+      runtime.session!.playerSessions!.update('coder', result.resumeToken);
+      return quiescentResult('ready');
+    });
+    const target = makeShell(targetCode, {
+      captainAgent: {
+        ...fixedCaptain,
+        model: { kind: 'value', value: 'captain-b' },
+        effort: { kind: 'value', value: 'high' },
+      },
+      roleTunings: {
+        code: {
+          coder: {
+            model: { kind: 'provider-default' },
+            effort: { kind: 'value', value: 'high' },
+          },
+        },
+      },
+      playerAgents: {
+        'code-coder': {
+          ...fixedPlayer,
+          model: { kind: 'value', value: 'player-default-b' },
+          effort: { kind: 'value', value: 'high' },
+        },
+        'code-reviewer': {
+          adapter: 'codex',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+      },
+    });
+    await target.restore(stubSession(roster).session, snapshot);
+    expect(target.exportSnapshot()).toEqual(snapshot);
+    const targetContext = stubContext([
+      { status: 'ok', turnId: 2, finalText: 'Continued under B.' },
+    ]);
+    targetContext.context.callPlayer = async (playerId, _prompt, options) => {
+      targetContext.playerCalls.push({ playerId, prompt: 'captured', options });
+      return {
+        status: 'ok',
+        playerId,
+        turnId: 2,
+        finalText: 'player B',
+        resumeToken: 'player-next-token',
+      };
+    };
+    await target.handleBossTurn(turn('/code tune B', 2), targetContext.context);
+
+    expect(targetContext.playerCalls[0]).toMatchObject({
+      playerId: 'code-coder',
+      options: {
+        resume: 'player-retained-token',
+        settings: {
+          model: { kind: 'provider-default' },
+          effort: { kind: 'value', value: 'high' },
+          instruction: fixedPlayer.instruction,
+          permissions: fixedPlayer.permissions,
+        },
+      },
+    });
+    expect(targetContext.captainCalls.at(-1)?.options).toMatchObject({
+      resume: 'conversation-1',
+      settings: {
+        model: { kind: 'value', value: 'captain-b' },
+        effort: { kind: 'value', value: 'high' },
+        instruction: fixedCaptain.instruction,
+        permissions: fixedCaptain.permissions,
+      },
+    });
+
+    await source.dispose?.();
+    await target.dispose?.();
+  });
+
   it('restores a nested parked edge with shared tokens and resumes its original parent once', async () => {
     const callId = 'code:review:1';
     const waiting = playbookState('waitingForReview', {
@@ -4248,10 +5849,13 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     const sourceReview = fakePlaybookEntry(
       'review',
       'review',
-      async (runtime) => {
-        runtime.session?.playerSessions?.update(
+      async (runtime, runtimeTurn) => {
+        await callPlayerAndCommit(
+          runtime,
           'reviewer',
-          'shared-reviewer-token',
+          'establish child continuation',
+          runtimeTurn.signal,
+          false,
         );
         return quiescentResult('ready');
       },
@@ -4260,12 +5864,17 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       sessionIds: [ROOT_ID, CHILD_ID],
     });
     await source.init!(stubSession(roster).session);
-    await source.handleBossTurn(
-      turn('/code inspect it'),
-      stubContext([
+    const nestedContext = stubContext([
         { status: 'ok', turnId: 1, finalText: 'Review is waiting.' },
-      ]).context,
-    );
+      ]);
+    nestedContext.context.callPlayer = async (playerId) => ({
+      status: 'ok',
+      playerId,
+      turnId: 1,
+      finalText: 'seeded',
+      resumeToken: 'shared-reviewer-token',
+    });
+    await source.handleBossTurn(turn('/code inspect it'), nestedContext.context);
     const projected = { reviewer: 'shared-reviewer-token' };
     sourceCode.runtimes[0]!.snapshot = runtimeSnapshot('code', waiting, {
       turn: 1,
@@ -4287,8 +5896,10 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     const snapshot = source.exportSnapshot();
     expect(snapshot).toMatchObject({
       mode: 'engaged.parked',
-      rootPlayerResumeTokens: {
-        'code-reviewer': 'shared-reviewer-token',
+      playerSessions: {
+        'code-reviewer': expect.objectContaining({
+          resumeToken: 'shared-reviewer-token',
+        }),
       },
       frames: [
         {
@@ -4443,7 +6054,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     };
     await expect(
       target.restore(stubSession(roster).session, mismatchedTokens),
-    ).rejects.toThrow(/player tokens do not match root-owned continuation/);
+    ).rejects.toThrow(/player tokens do not match session continuation/);
     expect(targetCode.createRuntime).not.toHaveBeenCalled();
 
     const gatedSession = stubSession(roster);
@@ -4590,6 +6201,21 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
   it('rejects the complete schema, identity, topology, and token mutation matrix before runtime construction', async () => {
     const base = await nestedSnapshotFixture();
     const clone = (): any => JSON.parse(JSON.stringify(base));
+    const loadModule = vi.fn(async () => {
+      throw new Error('intrinsic validation must precede import');
+    });
+    const preImportShell = makeShell(
+      [fakeCodeEntry(), fakePlaybookEntry('review', 'review')],
+      { loadModule },
+    );
+    await expect(
+      preImportShell.restore(
+        stubSession(roster).session,
+        Object.assign(clone(), { schemaVersion: 9 }),
+      ),
+    ).rejects.toThrow(/schemaVersion/);
+    expect(loadModule).not.toHaveBeenCalled();
+
     const mutations: readonly [string, () => unknown][] = [
       ['schema version', () => Object.assign(clone(), { schemaVersion: 9 })],
       ['unknown field', () => Object.assign(clone(), { ledger: {} })],
@@ -4708,9 +6334,12 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         value.frames[1].runtime.state.tags = [];
         return value;
       }],
-      ['unknown root token binding', () => {
+      ['unknown player-ledger entry', () => {
         const value = clone();
-        value.rootPlayerResumeTokens['missing-player'] = 'token';
+        value.playerSessions['missing-player'] = {
+          adapter: 'claude',
+          resumeToken: 'token',
+        };
         return value;
       }],
       ['live token projection mismatch', () => {
@@ -4786,8 +6415,43 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     const target = createPlaybookCaptainShell(
       {
         playbooks: {
-          code: { from: 'test://code', options: {} },
+          code: {
+            from: 'test://code',
+            roles: {
+              coder: {
+                playerId: 'code-coder',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
+              reviewer: {
+                playerId: 'code-reviewer',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
+            },
+            options: {},
+          },
         },
+        sessionAgents: {
+          captain: {
+            adapter: 'claude',
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+          },
+          players: {
+            'code-coder': {
+              adapter: 'claude',
+              model: { kind: 'provider-default' },
+              effort: { kind: 'provider-default' },
+            },
+            'code-reviewer': {
+              adapter: 'codex',
+              model: { kind: 'provider-default' },
+              effort: { kind: 'provider-default' },
+            },
+          },
+        },
+        captainAdapter: 'claude',
       },
       {
         loadModule: async () => imported.promise,
@@ -4845,9 +6509,59 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     const shell = createPlaybookCaptainShell(
       {
         playbooks: {
-          code: { from: 'test://code', options: {} },
-          review: { from: 'test://review', options: {} },
+          code: {
+            from: 'test://code',
+            roles: {
+              coder: {
+                playerId: 'code-coder',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
+              reviewer: {
+                playerId: 'code-reviewer',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
+            },
+            options: {},
+          },
+          review: {
+            from: 'test://review',
+            roles: {
+              coder: {
+                playerId: 'code-coder',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
+              reviewer: {
+                playerId: 'code-reviewer',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
+            },
+            options: {},
+          },
         },
+        sessionAgents: {
+          captain: {
+            adapter: 'claude',
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+          },
+          players: {
+            'code-coder': {
+              adapter: 'claude',
+              model: { kind: 'provider-default' },
+              effort: { kind: 'provider-default' },
+            },
+            'code-reviewer': {
+              adapter: 'codex',
+              model: { kind: 'provider-default' },
+              effort: { kind: 'provider-default' },
+            },
+          },
+        },
+        captainAdapter: 'claude',
       },
       {
         loadModule: async (specifier) => modules[specifier],
@@ -5179,12 +6893,36 @@ describe('Playbook Captain public module surface (CAPTAIN-18)', () => {
     const mod = await import('@sublang/playbook/playbook-captain');
     const shell = mod.default({
       playbooks: {
-        code: { from: '@sublang/playbook/code/registry', options: {} },
+        code: {
+          from: '@sublang/playbook/code/registry',
+          roles: {
+            coder: {
+              playerId: 'code-coder',
+              model: { kind: 'provider-default' },
+              effort: { kind: 'provider-default' },
+            },
+          },
+          options: {},
+        },
       },
+      sessionAgents: {
+        captain: {
+          adapter: 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+        players: {
+          'code-coder': {
+            adapter: 'claude',
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+          },
+        },
+      },
+      captainAdapter: 'claude',
     });
     const session = stubSession([
       { id: 'code-coder', adapter: 'claude' },
-      { id: 'code-reviewer', adapter: 'codex' },
     ]);
     const context = stubContext();
 

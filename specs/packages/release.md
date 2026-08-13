@@ -162,8 +162,9 @@ available in `@sublang/cligent` 0.13.0, and shall admit the explicit
 [[playbook-captain-16](playbook-captain.md#playbook-captain-16)], and the isolated
 `CallCaptainOptions.resume` and `CallCaptainOptions.allowedTools`
 surface required by [[playbook-captain-31](playbook-captain.md#playbook-captain-31)].
-Before the segmented-player behavior under [[playbook-cli-4](playbook-cli.md#playbook-cli-4)] and complete per-call setting behavior under [[playbook-captain-10](playbook-captain.md#playbook-captain-10)] and [[playbook-captain-31](playbook-captain.md#playbook-captain-31)] ship, the first published cligent version whose roster preserves `[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*` player ids and whose player and Captain call options carry complete per-call model, effort, instruction, and permissions with explicit concrete-value versus provider-default tuning shall become the declared caret range's floor.
-No candidate requiring those surfaces shall invent an unreleased floor or release while the declared range can select a cligent version without them.
+The declared range's floor shall be at least `@sublang/cligent` 0.21.0 and shall preserve `[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*` player ids while player and Captain call options carry atomic complete per-call model, effort, instruction, and permissions with explicit concrete-value versus provider-default tuning ([[playbook-cli-4](playbook-cli.md#playbook-cli-4)], [[playbook-captain-10](playbook-captain.md#playbook-captain-10)], [[playbook-captain-31](playbook-captain.md#playbook-captain-31)]).
+That floor shall also expose the typed complete-settings rejection used to preserve a prior continuation without a fresh fallback.
+The Playbook candidate shall not release until the npm registry serves the pinned cligent version, its registry artifact matches the prepared candidate's exact integrity, and an override-free `pnpm install --frozen-lockfile` proves the installed public contract; a local pack or link alone shall not satisfy this ordering gate.
 
 The repo-local `pnpm-lock.yaml` root importer shall use the same
 specifier and continue to pin a specific resolved cligent version,
@@ -175,7 +176,7 @@ the pre-close Captain lifecycle, and isolated fresh, tool-restricted
 Captain calls, first released together in `@sublang/cligent` 0.15.0;
 merely using a range that could admit a later compatible version shall
 not satisfy this requirement.
-Before a DR-032 candidate releases, the pin shall also expose the segmented-id grammar and complete per-call settings above; the candidate shall remain blocked until such a published cligent version is pinned.
+Before a DR-032 candidate releases, the pin shall be at least 0.21.0 and shall expose the segmented-id grammar, atomic complete per-call settings, and typed settings rejection above.
 
 #### release-22
 
@@ -480,7 +481,7 @@ pre-close `Captain.prepareDispose()` lifecycle and
 `CallPlayerOptions.resume` selection accepted by
 `CaptainContext.callPlayer`, plus `CallCaptainOptions.resume` and
 `CallCaptainOptions.allowedTools` accepted by
-`CaptainContext.callCaptain`.
+`CaptainContext.callCaptain`, atomic `AgentCallSettings` on both call-option types, explicit `TuningSelection`, and the public typed settings-rejection error and predicate required by [[release-14](#release-14)].
 
 The committed lockfile is never exempt, whatever the working copy
 holds. Both sides of every comparison below shall be this package's own

@@ -18,9 +18,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  assertCaptainSessionExecutionCompatible,
+  captainSessionSelectedMembers,
   createCaptainSessionStore,
   defaultCaptainSessionsDir,
+  projectCaptainSessionStructure,
+  validateCaptainSessionExecutionProjection,
   validateCaptainSessionRecord,
+  validateCaptainSessionStructuralProjection,
 } from './bin/session-store.js';
 
 const tempDirs: string[] = [];
@@ -35,6 +40,8 @@ const tokenR = 'a0000000-0000-4000-8000-000000000003';
 const tokenThird = 'a0000000-0000-4000-8000-000000000004';
 const tempId = 'b0000000-0000-4000-8000-000000000001';
 const instant = new Date('2026-08-11T21:00:00.000Z');
+const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
+const frameRuntimeId = '80000000-0000-4000-8000-000000000002';
 
 afterEach(async () => {
   await Promise.all(
@@ -48,11 +55,155 @@ async function fixtureDir() {
   return { root, sessionsDir: join(root, 'sessions') };
 }
 
-function freshBoundary(marker = 'baseline') {
+function executionProjection(
+  options: {
+    captainModel?: string;
+    playerModel?: string;
+    playerId?: string;
+  } = {},
+) {
+  const playerId = options.playerId ?? 'dev.coder';
+  return {
+    schemaVersion: 2,
+    captain: {
+      adapter: 'claude',
+      model:
+        options.captainModel === undefined
+          ? { kind: 'provider-default' }
+          : { kind: 'value', value: options.captainModel },
+      effort: { kind: 'provider-default' },
+      permissions: { mode: 'auto' },
+    },
+    players: [
+      {
+        id: playerId,
+        adapter: 'codex',
+        model:
+          options.playerModel === undefined
+            ? { kind: 'provider-default' }
+            : { kind: 'value', value: options.playerModel },
+        effort: { kind: 'value', value: 'high' },
+        permissions: { fileWrite: 'ask' },
+      },
+    ],
+    catalog: {
+      code: {
+        id: 'code',
+        from: '@sublang/playbook/code/registry',
+        manifestCommand: 'code',
+        command: 'code',
+        intent: 'Implement a requested change.',
+        artifactSchema: 2,
+        requiredRoleIds: ['coder'],
+        concurrentRoleSets: [],
+        roles: {
+          coder: {
+            playerId,
+            model:
+              options.playerModel === undefined
+                ? { kind: 'provider-default' }
+                : { kind: 'value', value: options.playerModel },
+            effort: { kind: 'value', value: 'high' },
+          },
+        },
+        options: {},
+      },
+    },
+  };
+}
+
+function parkedState(stateId = 'routing') {
+  return {
+    value: stateId,
+    activeStateIds: [stateId],
+    tags: ['playbook.parked'],
+    status: 'active',
+    quiescent: true,
+    stateId,
+  };
+}
+
+function runtimeSnapshot(playbookId = 'captain', turn = 0) {
+  const state = parkedState();
+  return {
+    schemaVersion: 3,
+    playbookId,
+    machine: { value: state.value, status: state.status },
+    roleResumeTokens: {},
+    sequences: {
+      trace: 0,
+      turn,
+      judgeCall: 0,
+      playerCall: 0,
+      playbookCall: 0,
+      captainCall: 0,
+    },
+    state,
+    pendingBossQuestions: [],
+  };
+}
+
+function shellSnapshot(
+  execution = executionProjection(),
+  turn = 0,
+  token = `captain-token-${turn}`,
+) {
+  const structural = projectCaptainSessionStructure(execution);
+  const journal = Array.from({ length: turn }, (_, index) => ({
+    seq: index + 1,
+    turnId: index + 1,
+    kind: 'boss',
+    payload: `turn-${index + 1}`,
+  }));
+  return {
+    schemaVersion: 3,
+    captain: {
+      sessionId: captainRuntimeId,
+      runtime: runtimeSnapshot('captain', turn),
+      agent: structural.captain,
+      conversation:
+        turn === 0
+          ? { kind: 'unopened' }
+          : { kind: 'pinned', token },
+    },
+    playerSessions: Object.fromEntries(
+      structural.players.map(({ id, ...agent }: any) => [id, agent]),
+    ),
+    issuedSessionIds: [captainRuntimeId],
+    sequences: { turn, journal: journal.length },
+    journal,
+    ...(turn === 0
+      ? {}
+      : { lastAction: 'respond', lastSettlementStatus: 'ok' }),
+    mode: 'chat',
+  };
+}
+
+function freshBoundary(execution = executionProjection()) {
   return {
     cwd: process.cwd(),
-    config: { schemaVersion: 1, marker: 'config' },
-    snapshot: { schemaVersion: 1, marker },
+    structuralProjection: projectCaptainSessionStructure(execution),
+    snapshot: shellSnapshot(execution),
+  };
+}
+
+function engagedSnapshot(execution = executionProjection()) {
+  const snapshot = shellSnapshot(execution);
+  return {
+    ...snapshot,
+    issuedSessionIds: [captainRuntimeId, frameRuntimeId],
+    mode: 'engaged.parked',
+    frames: [
+      {
+        playbookId: 'code',
+        sessionId: frameRuntimeId,
+        rootSessionId: frameRuntimeId,
+        depth: 0,
+        options: { normalizedByRegistry: true },
+        roleBindings: { coder: 'dev.coder' },
+        runtime: runtimeSnapshot('code'),
+      },
+    ],
   };
 }
 
@@ -76,16 +227,43 @@ function processError(code: string) {
 }
 
 function settledRecord(overrides: Record<string, unknown> = {}) {
+  const execution = executionProjection();
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     kind: 'captain-session',
     state: 'settled',
     sessionId,
     createdAt: '2026-08-11T21:00:00.000Z',
     updatedAt: '2026-08-11T21:00:00.001Z',
     cwd: process.cwd(),
-    config: { schemaVersion: 1 },
-    snapshot: { schemaVersion: 1 },
+    structuralProjection: projectCaptainSessionStructure(execution),
+    lastAppliedExecutionProjection: execution,
+    snapshot: shellSnapshot(execution),
+    ...overrides,
+  };
+}
+
+function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
+  const execution = executionProjection();
+  return {
+    schemaVersion: 3,
+    kind: 'captain-session',
+    state: 'uncertain',
+    sessionId,
+    createdAt: '2026-08-11T21:00:00.000Z',
+    updatedAt: '2026-08-11T21:00:00.000Z',
+    cwd: process.cwd(),
+    structuralProjection: projectCaptainSessionStructure(execution),
+    lastAppliedExecutionProjection: execution,
+    snapshot: shellSnapshot(execution),
+    uncertain: {
+      baseUpdatedAt: null,
+      input: 'fresh input',
+      attemptId: attempt1,
+      attemptNumber: 1,
+      markedAt: '2026-08-11T21:00:00.000Z',
+      attemptedExecutionProjection: execution,
+    },
     ...overrides,
   };
 }
@@ -107,6 +285,260 @@ function leaseOwner(
 }
 
 describe('durable Captain session records (PBCLI-23/24)', () => {
+  it('atomically initializes one validated turn-zero settled record without replacement', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const store = fixedStore(sessionsDir, tokenO);
+    const lease = await store.acquire(sessionId);
+    const execution = executionProjection();
+    const structural = projectCaptainSessionStructure(execution);
+
+    await expect(
+      lease.initializeSettled({
+        cwd: process.cwd(),
+        structuralProjection: structural,
+        executionProjection: execution,
+        snapshot: shellSnapshot(
+          executionProjection({ playerId: 'dev.other' }),
+        ),
+      }),
+    ).rejects.toThrow(/player ledger differs/);
+    await expect(store.read(sessionId)).rejects.toThrow(/does not exist/);
+
+    const settled = await lease.initializeSettled({
+      cwd: process.cwd(),
+      structuralProjection: structural,
+      executionProjection: execution,
+      snapshot: shellSnapshot(execution),
+    });
+    expect(settled).toMatchObject({
+      schemaVersion: 3,
+      state: 'settled',
+      createdAt: '2026-08-11T21:00:00.000Z',
+      updatedAt: '2026-08-11T21:00:00.001Z',
+      structuralProjection: { schemaVersion: 1 },
+      lastAppliedExecutionProjection: { schemaVersion: 2 },
+    });
+    const recordPath = join(sessionsDir, `${sessionId}.json`);
+    const bytes = await readFile(recordPath, 'utf8');
+    await expect(
+      lease.initializeSettled({
+        cwd: process.cwd(),
+        structuralProjection: structural,
+        executionProjection: execution,
+        snapshot: shellSnapshot(execution),
+      }),
+    ).rejects.toThrow(/already exists/);
+    expect(await readFile(recordPath, 'utf8')).toBe(bytes);
+    expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
+      .toBe(false);
+    await lease.release();
+  });
+
+  it('validates closed execution and structural projections before effects', () => {
+    const execution = executionProjection({
+      captainModel: 'captain-current',
+      playerModel: 'coder-current',
+    });
+    const validated = validateCaptainSessionExecutionProjection(execution);
+    const structural = projectCaptainSessionStructure(validated);
+
+    expect(Object.isFrozen(validated)).toBe(true);
+    expect(validateCaptainSessionStructuralProjection(structural)).toEqual(
+      structural,
+    );
+    expect(captainSessionSelectedMembers(structural)).toEqual({
+      playbookIds: ['code'],
+      playerIds: ['dev.coder'],
+    });
+    expect(
+      assertCaptainSessionExecutionCompatible(
+        structural,
+        executionProjection({
+          captainModel: 'next-captain',
+          playerModel: 'next-coder',
+        }),
+      ),
+    ).toMatchObject({ captain: { model: { value: 'next-captain' } } });
+    const retunedEffort = {
+      ...execution,
+      captain: {
+        ...execution.captain,
+        effort: { kind: 'value', value: 'high' },
+      },
+      players: [
+        {
+          ...execution.players[0],
+          effort: { kind: 'provider-default' },
+        },
+      ],
+      catalog: {
+        code: {
+          ...execution.catalog.code,
+          roles: {
+            coder: {
+              ...execution.catalog.code.roles.coder,
+              effort: { kind: 'provider-default' },
+            },
+          },
+        },
+      },
+    };
+    expect(
+      assertCaptainSessionExecutionCompatible(structural, retunedEffort),
+    ).toMatchObject({
+      captain: { effort: { kind: 'value', value: 'high' } },
+      players: [{ effort: { kind: 'provider-default' } }],
+      catalog: {
+        code: {
+          roles: { coder: { effort: { kind: 'provider-default' } } },
+        },
+      },
+    });
+
+    const mutations: Array<[string, any, RegExp]> = [
+      [
+        'unknown field',
+        { ...execution, extra: true },
+        /unknown field "extra"/,
+      ],
+      [
+        'unknown adapter',
+        { ...execution, captain: { ...execution.captain, adapter: 'other' } },
+        /adapter.*not supported/,
+      ],
+      [
+        'adapter-incompatible effort',
+        {
+          ...execution,
+          captain: {
+            ...execution.captain,
+            effort: { kind: 'value', value: 'on' },
+          },
+        },
+        /effort.*claude/i,
+      ],
+      [
+        'path-shaped stored module',
+        {
+          ...execution,
+          catalog: {
+            code: { ...execution.catalog.code, from: '../unsafe.js' },
+          },
+        },
+        /canonical module specifier/,
+      ],
+      [
+        'noncanonical command',
+        {
+          ...execution,
+          catalog: {
+            code: { ...execution.catalog.code, command: ' code' },
+          },
+        },
+        /canonical trimmed form/,
+      ],
+      [
+        'extra roster member',
+        {
+          ...execution,
+          players: [
+            ...execution.players,
+            { ...execution.players[0], id: 'dev.extra' },
+          ],
+        },
+        /players must equal the ordered player ids/,
+      ],
+    ];
+    for (const [name, mutation, expected] of mutations) {
+      expect(
+        () => validateCaptainSessionExecutionProjection(mutation),
+        name,
+      ).toThrow(expected);
+    }
+
+    expect(() =>
+      assertCaptainSessionExecutionCompatible(structural, {
+        ...execution,
+        captain: {
+          ...execution.captain,
+          permissions: { mode: 'bypass' },
+        },
+      }),
+    ).toThrow(/does not reproduce/);
+    expect(() =>
+      validateCaptainSessionRecord({ schemaVersion: 2 }),
+    ).toThrow(/incompatible root-owned player identity/);
+  });
+
+  it('rejects an internally inconsistent fresh uncertain boundary', () => {
+    const retuned = executionProjection({ captainModel: 'different' });
+    expect(() =>
+      validateCaptainSessionRecord(
+        freshUncertainRecord({
+          uncertain: {
+            ...freshUncertainRecord().uncertain,
+            attemptedExecutionProjection: retuned,
+          },
+        }),
+      ),
+    ).toThrow(/baseline and attempted execution projections must match/);
+
+    const execution = executionProjection();
+    expect(() =>
+      validateCaptainSessionRecord(
+        freshUncertainRecord({ snapshot: shellSnapshot(execution, 1) }),
+      ),
+    ).toThrow(/initialized turn-zero shell snapshot/);
+  });
+
+  it('rejects a continued marker whose baseline is not after creation', () => {
+    const execution = executionProjection();
+    expect(() =>
+      validateCaptainSessionRecord({
+        ...freshUncertainRecord(),
+        updatedAt: '2026-08-11T21:00:00.002Z',
+        snapshot: shellSnapshot(execution, 1),
+        uncertain: {
+          ...freshUncertainRecord().uncertain,
+          baseUpdatedAt: '2026-08-11T21:00:00.000Z',
+          markedAt: '2026-08-11T21:00:00.002Z',
+        },
+      }),
+    ).toThrow(/baseUpdatedAt must identify an earlier settled boundary/);
+  });
+
+  it('crosslinks shell identity while leaving option normalization to the registry', () => {
+    const execution = executionProjection();
+    const structural = projectCaptainSessionStructure(execution);
+    expect(
+      validateCaptainSessionRecord(
+        settledRecord({
+          structuralProjection: structural,
+          lastAppliedExecutionProjection: execution,
+          snapshot: engagedSnapshot(execution),
+        }),
+      ).snapshot,
+    ).toMatchObject({
+      mode: 'engaged.parked',
+      frames: [{ options: { normalizedByRegistry: true } }],
+    });
+
+    const snapshot = shellSnapshot(execution);
+    expect(() =>
+      validateCaptainSessionRecord(
+        settledRecord({
+          snapshot: {
+            ...snapshot,
+            captain: {
+              ...snapshot.captain,
+              agent: { adapter: 'codex' },
+            },
+          },
+        }),
+      ),
+    ).toThrow(/Captain envelope differs/);
+  });
+
   it('uses the XDG location and advances fresh, retry, settle, and exact discard boundaries', async () => {
     expect(
       defaultCaptainSessionsDir(
@@ -129,10 +561,11 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     const uncertain = await firstLease.beginTurn({
       input: '  exact input\n',
       attemptId: attempt1,
+      attemptedExecutionProjection: executionProjection(),
       fresh: freshBoundary(),
     });
     expect(uncertain).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       kind: 'captain-session',
       state: 'uncertain',
       sessionId,
@@ -141,12 +574,13 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
         input: '  exact input\n',
         attemptId: attempt1,
         attemptNumber: 1,
+        attemptedExecutionProjection: { schemaVersion: 2 },
       },
     });
     expect(Object.isFrozen(uncertain)).toBe(true);
     const firstSettled = await firstLease.settle({
       attemptId: attempt1,
-      snapshot: { schemaVersion: 1, marker: 'settled' },
+      snapshot: shellSnapshot(executionProjection(), 1),
     });
     expect(firstSettled.state).toBe('settled');
     expect(firstSettled).not.toHaveProperty('uncertain');
@@ -173,10 +607,20 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     const continued = await secondLease.beginTurn({
       input: 'continued',
       attemptId: attempt2,
+      attemptedExecutionProjection: executionProjection({
+        captainModel: 'captain-current',
+        playerModel: 'coder-current',
+      }),
     });
     expect(continued.uncertain).toMatchObject({
       baseUpdatedAt: firstSettled.updatedAt,
       attemptNumber: 1,
+      attemptedExecutionProjection: {
+        captain: { model: { kind: 'value', value: 'captain-current' } },
+        players: [
+          { model: { kind: 'value', value: 'coder-current' } },
+        ],
+      },
     });
     const retried = await secondLease.beginRetry({
       expectedAttemptId: attempt2,
@@ -200,7 +644,8 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       collisionLease.beginTurn({
         input: 'must not overwrite',
         attemptId: attempt2,
-        fresh: freshBoundary('collision'),
+        attemptedExecutionProjection: executionProjection(),
+        fresh: freshBoundary(),
       }),
     ).rejects.toThrow(/fresh Captain session record already exists/);
     expect(await readFile(recordPath, 'utf8')).toBe(settledBytes);
@@ -216,6 +661,7 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     const uncertain = await lease.beginTurn({
       input: 'fresh work',
       attemptId: attempt1,
+      attemptedExecutionProjection: executionProjection(),
       fresh: freshBoundary(),
     });
     expect(validateCaptainSessionRecord(uncertain)).toEqual(uncertain);
@@ -241,6 +687,7 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
           attemptId: attempt1,
           attemptNumber: 1,
           markedAt: '2026-08-11T21:00:00.009Z',
+          attemptedExecutionProjection: executionProjection(),
         },
       }),
     ).toThrow(/markedAt must equal updatedAt/);
@@ -273,6 +720,7 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     await lease.beginTurn({
       input: 'work',
       attemptId: attempt1,
+      attemptedExecutionProjection: executionProjection(),
       fresh: freshBoundary(),
     });
     await expect(
@@ -331,11 +779,13 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
               },
       });
       const lease = await store.acquire(sessionId);
+      const execution = executionProjection();
       await expect(
-        lease.beginTurn({
-          input: 'must not publish',
-          attemptId: attempt1,
-          fresh: freshBoundary(),
+        lease.initializeSettled({
+          cwd: process.cwd(),
+          structuralProjection: projectCaptainSessionStructure(execution),
+          executionProjection: execution,
+          snapshot: shellSnapshot(execution),
         }),
       ).rejects.toThrow(
         boundary === 'link'
@@ -355,11 +805,12 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     await firstLease.beginTurn({
       input: 'first',
       attemptId: attempt1,
+      attemptedExecutionProjection: executionProjection(),
       fresh: freshBoundary(),
     });
     await firstLease.settle({
       attemptId: attempt1,
-      snapshot: { schemaVersion: 1, marker: 'settled' },
+      snapshot: shellSnapshot(executionProjection(), 1, 'settled'),
     });
     await firstLease.release();
     const recordPath = join(sessionsDir, `${sessionId}.json`);
@@ -378,7 +829,11 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     });
     const lease = await failing.acquire(sessionId);
     await expect(
-      lease.beginTurn({ input: 'must not replace', attemptId: attempt2 }),
+      lease.beginTurn({
+        input: 'must not replace',
+        attemptId: attempt2,
+        attemptedExecutionProjection: executionProjection(),
+      }),
     ).rejects.toThrow(/synthetic record rename failure/);
     expect(await readFile(recordPath, 'utf8')).toBe(before);
     expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
@@ -413,6 +868,7 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       lease.beginTurn({
         input: 'published before sync',
         attemptId: attempt1,
+        attemptedExecutionProjection: executionProjection(),
         fresh: freshBoundary(),
       }),
     ).rejects.toThrow(/synthetic record directory sync failure/);
@@ -447,24 +903,32 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     await lease.beginTurn({
       input: 'first turn',
       attemptId: attempt1,
+      attemptedExecutionProjection: executionProjection(),
       fresh: freshBoundary(),
     });
     await lease.settle({
       attemptId: attempt1,
-      snapshot: { schemaVersion: 1, marker: 'first settled' },
+      snapshot: shellSnapshot(executionProjection(), 1, 'first settled'),
     });
-    await lease.beginTurn({ input: 'second turn', attemptId: attempt2 });
+    await lease.beginTurn({
+      input: 'second turn',
+      attemptId: attempt2,
+      attemptedExecutionProjection: executionProjection(),
+    });
     failSessionSync = true;
     await expect(
       lease.settle({
         attemptId: attempt2,
-        snapshot: { schemaVersion: 1, marker: 'replacement settled' },
+        snapshot: shellSnapshot(executionProjection(), 2, 'replacement settled'),
       }),
     ).rejects.toThrow(/synthetic settlement directory sync failure/);
     failSessionSync = false;
     expect(await store.read(sessionId)).toMatchObject({
       state: 'settled',
-      snapshot: { marker: 'replacement settled' },
+      snapshot: {
+        sequences: { turn: 2 },
+        captain: { conversation: { token: 'replacement settled' } },
+      },
     });
     await lease.release();
   });
@@ -479,11 +943,12 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       await lease.beginTurn({
         input: `turn for ${id}`,
         attemptId: attempt,
-        fresh: freshBoundary(id),
+        attemptedExecutionProjection: executionProjection(),
+        fresh: freshBoundary(),
       });
       await lease.settle({
         attemptId: attempt,
-        snapshot: { schemaVersion: 1, marker: id },
+        snapshot: shellSnapshot(executionProjection(), 1, id),
       });
       await lease.release();
     }
@@ -504,7 +969,9 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       '{"schemaVersion":2}\n',
       'utf8',
     );
-    await expect(store.latest()).rejects.toThrow(/missing field|not supported/);
+    await expect(store.latest()).rejects.toThrow(
+      /incompatible root-owned player identity/,
+    );
   });
 
   it('rejects symlink storage and non-private record boundaries', async () => {
@@ -522,11 +989,12 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     await lease.beginTurn({
       input: 'private record',
       attemptId: attempt1,
+      attemptedExecutionProjection: executionProjection(),
       fresh: freshBoundary(),
     });
     await lease.settle({
       attemptId: attempt1,
-      snapshot: { schemaVersion: 1, marker: 'settled' },
+      snapshot: shellSnapshot(executionProjection(), 1, 'settled'),
     });
     await lease.release();
     const recordPath = join(second.sessionsDir, `${sessionId}.json`);

@@ -8,12 +8,14 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
 import { parse as parseYaml } from 'yaml';
 
 const packageRootUrl = new URL('../', import.meta.url);
@@ -179,6 +181,14 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     const recordsLocalLink = lockEntry.version.startsWith('link:');
 
     expect(packageSpecifier).toMatch(/^\^\d+\.\d+\.\d+$/);
+    const declaredFloor = packageSpecifier.slice(1).split('.').map(Number);
+    expect(
+      declaredFloor[0] > 0 ||
+        (declaredFloor[0] === 0 &&
+          (declaredFloor[1] > 21 ||
+            (declaredFloor[1] === 21 && declaredFloor[2] >= 0))),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.21.0 capability floor`,
+    ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
     // override file exists.
@@ -192,6 +202,19 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         ? recordsConcreteVersion || recordsLocalLink
         : recordsConcreteVersion,
     ).toBe(true);
+    if (!recordsLocalLink) {
+      const resolvedFloor = lockEntry.version
+        .split('(')[0]
+        .split('.')
+        .map(Number);
+      expect(
+        resolvedFloor[0] > 0 ||
+          (resolvedFloor[0] === 0 &&
+            (resolvedFloor[1] > 21 ||
+              (resolvedFloor[1] === 21 && resolvedFloor[2] >= 0))),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.21.0 capability floor`,
+      ).toBe(true);
+    }
   });
 
   it('never commits local install state into the lockfile', () => {
@@ -381,7 +404,7 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     }
   });
 
-  it('pins cligent lifecycle and isolated call contracts', () => {
+  it('pins cligent lifecycle, continuation, and complete-setting contracts', () => {
     const script = `
       import { readFileSync } from 'node:fs';
       import { dirname, join } from 'node:path';
@@ -391,7 +414,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       const captainOptionsStart = contract.indexOf('export interface CallCaptainOptions {');
       const playerOptionsStart = contract.indexOf('export interface CallPlayerOptions {');
       const captainContextStart = contract.indexOf('export interface CaptainContext {');
+      const settingsStart = contract.indexOf('export interface AgentCallSettings {');
       if (
+        settingsStart < 0 ||
         captainOptionsStart < 0 ||
         playerOptionsStart <= captainOptionsStart ||
         captainContextStart <= playerOptionsStart
@@ -411,6 +436,21 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       }
       if (!playerOptions.includes('readonly resume?: string | false;')) {
         throw new Error('cligent CallPlayerOptions lacks explicit resume selection');
+      }
+      if (!captainOptions.includes('readonly settings?: AgentCallSettings;')) {
+        throw new Error('cligent CallCaptainOptions lacks atomic complete settings');
+      }
+      if (!playerOptions.includes('readonly settings?: AgentCallSettings;')) {
+        throw new Error('cligent CallPlayerOptions lacks atomic complete settings');
+      }
+      if (!contract.includes('export type TuningSelection<T extends string = string> =')) {
+        throw new Error('cligent lacks explicit tuning selections');
+      }
+      if (!contract.includes('export declare class AgentCallSettingsError extends Error')) {
+        throw new Error('cligent lacks the typed complete-settings rejection');
+      }
+      if (!contract.includes('export declare function isAgentCallSettingsError(')) {
+        throw new Error('cligent lacks the complete-settings rejection predicate');
       }
       if (!contract.includes('callPlayer(playerId: string, prompt: string, options?: CallPlayerOptions): Promise<PlayerRunResult>;')) {
         throw new Error('cligent CaptainContext.callPlayer does not accept CallPlayerOptions');
@@ -812,7 +852,11 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'default',
       'validateCodeOptions',
     ],
-    './playbook-captain': ['createPlaybookCaptainShell', 'default'],
+    './playbook-captain': [
+      'assertPlaybookCaptainShellSnapshot',
+      'createPlaybookCaptainShell',
+      'default',
+    ],
     './review/playbook': ['_internal', 'default'],
     './review/registry': [
       'default',
@@ -1019,6 +1063,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCaptainRegistryEntry',
       'PlaybookCaptainShell',
       'PlaybookCaptainShellSnapshot',
+      'assertPlaybookCaptainShellSnapshot',
       'createPlaybookCaptainShell',
       'default',
     ],
@@ -1234,6 +1279,54 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       );
     },
   );
+
+  it('declares validated Captain shell snapshots recursively readonly', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-snapshot-types-'));
+    try {
+      mkdirSync(join(scratch, 'node_modules', '@sublang'), { recursive: true });
+      symlinkSync(
+        repoRoot,
+        join(scratch, 'node_modules', '@sublang', 'playbook'),
+        'junction',
+      );
+      const fixture = join(scratch, 'consumer.ts');
+      writeFileSync(
+        fixture,
+        `import type { PlaybookCaptainShellSnapshot } from '@sublang/playbook/playbook-captain';
+
+declare const snapshot: PlaybookCaptainShellSnapshot;
+
+// @ts-expect-error validated player tokens are frozen
+snapshot.playerSessions['dev.worker']!.resumeToken = 'next';
+// @ts-expect-error validated permission path arrays are frozen
+snapshot.playerSessions['dev.worker']!.permissions!.writablePaths!.push('tmp');
+// @ts-expect-error validated Captain runtime snapshots are frozen
+snapshot.captain.runtime.schemaVersion = 3;
+if (snapshot.mode === 'engaged.parked') {
+  // @ts-expect-error validated frame runtime snapshots are frozen
+  snapshot.frames[0]!.runtime.state.status = 'done';
+}
+`,
+      );
+      const program = ts.createProgram([fixture], {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        target: ts.ScriptTarget.ES2022,
+        strict: true,
+        noEmit: true,
+        skipLibCheck: true,
+        types: ['node'],
+        typeRoots: [join(repoRoot, 'node_modules', '@types')],
+      });
+      expect(
+        ts.getPreEmitDiagnostics(program).map((diagnostic) =>
+          ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '),
+        ),
+      ).toEqual([]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
 
   it.each(BUNDLED_WORKFLOW_IDS)(
     '%s visibly re-exports PlayerSessionStore from the shared contract',

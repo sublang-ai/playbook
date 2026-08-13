@@ -1161,6 +1161,7 @@ class ScriptedRuntime {
     this.disposeCount += 1;
     await this.script.onDispose?.();
   }
+
 }
 
 function shellEntry(
@@ -1180,7 +1181,7 @@ function shellEntry(
       requiredRoleIds: ['worker'],
       concurrentRoleSets: [],
       ...(summaryPolicy === undefined ? {} : { summaryPolicy }),
-      validateOptions: () => undefined,
+      validateOptions: (options: unknown) => options,
       createRuntime: () => {
         const runtime = new ScriptedRuntime(script);
         runtimes.push(runtime);
@@ -1304,17 +1305,51 @@ function makeShellHarness(
 ) {
   const modules: Record<string, unknown> = {};
   const playbooks: Record<string, unknown> = {};
+  const playerAgents: Record<string, unknown> = {};
   for (const registered of entries) {
     const from = `test://${registered.entry.id}`;
     modules[from] = { default: registered.entry };
+    const roles = Object.fromEntries(
+      registered.entry.requiredRoleIds.map((role) => {
+        const owner = entries.find((candidate) =>
+          candidate.entry.requiredRoleIds.includes(role),
+        )!;
+        const playerId = `${owner.entry.id}-${role}`;
+        playerAgents[playerId] ??= {
+          adapter: 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        };
+        return [
+          role,
+          {
+            playerId,
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+          },
+        ];
+      }),
+    );
     playbooks[registered.entry.id] = {
       from,
+      roles,
       options: (registered as { options?: unknown }).options ?? {},
     };
   }
   let sessionSequence = 0;
   const shell = createPlaybookCaptainShell(
-    { playbooks },
+    {
+      playbooks,
+      sessionAgents: {
+        captain: {
+          adapter: 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+        players: playerAgents,
+      },
+      captainAdapter: 'claude',
+    },
     {
       loadModule: async (specifier: string) => modules[specifier],
       createSessionId: () =>
@@ -1370,11 +1405,12 @@ function makeShellHarness(
         prompt,
         callIndex,
       );
-      return {
+      const result = {
         playerId,
         turnId: callIndex + 1,
         ...(scriptedResult ?? { status: 'ok', finalText: 'player done' }),
       };
+      return result;
     },
     callCaptain: async (prompt: string, options: Record<string, unknown>) => {
       captainCalls.push({ prompt, options });
@@ -2217,9 +2253,9 @@ describe('CAPTAIN-38 validated actions and command table', () => {
       'player-token-1',
       false,
       'player-token-2',
-      false,
+      'player-token-4',
       'player-token-5',
-      false,
+      'player-token-3',
       'player-token-6',
     ]);
     expect(harness.visiblePlayerSets).toContainEqual([
@@ -2648,7 +2684,36 @@ describe('CAPTAIN-38 validated actions and command table', () => {
     };
     let sessionSequence = 0;
     const shell = createPlaybookCaptainShell(
-      { playbooks: { code: { from: 'test://code', options: {} } } },
+      {
+        playbooks: {
+          code: {
+            from: 'test://code',
+            roles: {
+              worker: {
+                playerId: 'code-worker',
+                model: { kind: 'provider-default' },
+                effort: { kind: 'provider-default' },
+              },
+            },
+            options: {},
+          },
+        },
+        sessionAgents: {
+          captain: {
+            adapter: 'claude',
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+          },
+          players: {
+            'code-worker': {
+              adapter: 'claude',
+              model: { kind: 'provider-default' },
+              effort: { kind: 'provider-default' },
+            },
+          },
+        },
+        captainAdapter: 'claude',
+      },
       {
         loadModule: async (specifier: string) => modules[specifier],
         createSessionId: () =>
@@ -4511,11 +4576,15 @@ describe('amended CAPTAIN-21 summary gating', () => {
       {
         onInput: async (text, runtime) => {
           if (text === 'fix the parser') {
-            await runtime.ports!.callPlayer(
+            const result = await runtime.ports!.callPlayer(
               'worker',
               'do the work',
               new AbortController().signal,
               { resume: false },
+            );
+            runtime.session!.playerSessions!.update(
+              'worker',
+              result.resumeToken,
             );
           }
           return { outcome: 'quiescent', state: runtime.state() };
@@ -4742,11 +4811,15 @@ describe('CAPTAIN-39 a faulting host port still settles the Boss turn', () => {
       {
         onInput: async (text, runtime) => {
           if (text === 'hand it to the coder') {
-            await runtime.ports!.callPlayer(
+            const result = await runtime.ports!.callPlayer(
               'worker',
               'continue the task',
               new AbortController().signal,
               { resume: false },
+            );
+            runtime.session!.playerSessions!.update(
+              'worker',
+              result.resumeToken,
             );
           }
           return { outcome: 'quiescent', state: runtime.state() };

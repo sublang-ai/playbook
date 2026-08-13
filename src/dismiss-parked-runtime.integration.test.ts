@@ -171,16 +171,27 @@ function createHarness(
   entries: readonly PlaybookCaptainRegistryEntry[],
 ): Harness {
   const modules: Record<string, unknown> = {};
-  const playbooks: Record<string, { from: string; options: object }> = {};
+  const playbooks: Record<string, { from: string; roles: object; options: object }> = {};
   for (const entry of entries) {
     const from = `test://${entry.id}`;
     modules[from] = { default: entry };
-    playbooks[entry.id] = { from, options: {} };
+    playbooks[entry.id] = { from, roles: {}, options: {} };
   }
   let id = 0;
   let captainIdIssued = false;
   const shell = createPlaybookCaptainShell(
-    { playbooks },
+    {
+      playbooks,
+      sessionAgents: {
+        captain: {
+          adapter: 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+        players: {},
+      },
+      captainAdapter: 'claude',
+    },
     {
       loadModule: async (specifier) => modules[specifier],
       createSessionId: () => {

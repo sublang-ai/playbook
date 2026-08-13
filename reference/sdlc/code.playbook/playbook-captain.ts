@@ -5,12 +5,16 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import PQueue from 'p-queue';
 
-import type {
-  BossTurn,
-  Captain,
-  CaptainContext,
-  CaptainSession,
+import {
+  isAgentCallSettingsError,
+  type AgentCallSettings,
+  type BossTurn,
+  type Captain,
+  type CaptainContext,
+  type CaptainSession,
+  type TuningSelection,
 } from '@sublang/cligent/tmux-play';
+import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type {
   JsonValue,
   NormalizedError,
@@ -22,6 +26,7 @@ import type {
   PlaybookRunResult,
   PlaybookRuntime,
   PlaybookRuntimeSnapshot,
+  PlayerResult,
   PlayerSessionStore,
   PlaybookState,
 } from '@sublang/playbook/runtime';
@@ -30,6 +35,7 @@ import {
   hiddenControlEnvelope,
   registerPlaybookAbortCleanup,
   snapshotJsonValue,
+  validatePlayerResult,
 } from '../../../src/xstate-runtime.js';
 import createDefaultCaptainRuntime, {
   type CaptainControllerPort,
@@ -39,11 +45,34 @@ import createDefaultCaptainRuntime, {
 } from '../captain.playbook/captain.playbook.js';
 import type { PlaybookSummaryPolicy } from './code.registry.js';
 
-interface RegistryPlayer {
-  id: string;
-  adapter?: string;
-  model?: string;
+interface SessionAgent {
+  readonly adapter: string;
+  readonly model: TuningSelection;
+  readonly effort: TuningSelection<Effort>;
+  readonly instruction?: string;
+  readonly permissions?: PermissionPolicy;
 }
+
+interface PlayerLedgerEntry {
+  readonly adapter: string;
+  readonly instruction?: string;
+  readonly permissions?: PermissionPolicy;
+  resumeToken?: string;
+}
+
+type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly (infer Element)[]
+    ? readonly DeepReadonly<Element>[]
+    : T extends object
+      ? { readonly [Key in keyof T]: DeepReadonly<T[Key]> }
+      : T;
+
+type SnapshotAgentEnvelope = DeepReadonly<
+  Omit<SessionAgent, 'model' | 'effort'>
+>;
+
+type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 
 export interface PlaybookCaptainDeps {
   loadModule?: (specifier: string) => Promise<unknown>;
@@ -73,6 +102,11 @@ export interface PlaybookCaptainRegistryEntry {
 type PlaybookCaptainConversationSnapshot =
   | { readonly kind: 'unopened' }
   | { readonly kind: 'pinned'; readonly token: string }
+  | {
+      readonly kind: 'needsCatchUp';
+      readonly resume: string | false;
+      readonly afterJournalSeq: number;
+    }
   | { readonly kind: 'needsSeeding' };
 
 interface PlaybookCaptainJournalRecord {
@@ -89,16 +123,20 @@ interface PlaybookCaptainFrameSnapshot {
   readonly depth: number;
   readonly parentSessionId?: string;
   readonly parentCallId?: string;
-  readonly runtime: PlaybookRuntimeSnapshot;
+  readonly options: JsonValue;
+  readonly roleBindings: Readonly<Record<string, string>>;
+  readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
 }
 
 interface PlaybookCaptainShellSnapshotFields {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 3;
   readonly captain: {
     readonly sessionId: string;
-    readonly runtime: PlaybookRuntimeSnapshot;
+    readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
+    readonly agent: SnapshotAgentEnvelope;
     readonly conversation: PlaybookCaptainConversationSnapshot;
   };
+  readonly playerSessions: Readonly<Record<string, PlayerLedgerSnapshotEntry>>;
   /** Every Captain and engagement UUID issued during this logical session. */
   readonly issuedSessionIds: readonly string[];
   readonly sequences: {
@@ -120,13 +158,12 @@ interface PlaybookCaptainShellSnapshotFields {
  * Complete JSON-safe durable state for one Captain shell between Boss turns.
  * The discriminated mode keeps chat snapshots free of stale engagement data.
  */
-export type PlaybookCaptainShellSnapshot =
+type PlaybookCaptainShellSnapshotValue =
   PlaybookCaptainShellSnapshotFields &
     (
       | {
           readonly mode: 'chat';
           readonly frames?: never;
-          readonly rootPlayerResumeTokens?: never;
           readonly pendingBossQuestions?: never;
           readonly lastError?: never;
         }
@@ -134,12 +171,13 @@ export type PlaybookCaptainShellSnapshot =
           readonly mode: 'engaged.parked';
           /** Root-to-leaf engagement order. */
           readonly frames: readonly PlaybookCaptainFrameSnapshot[];
-          /** Root-owned continuation, keyed by effective host-player id. */
-          readonly rootPlayerResumeTokens: Readonly<Record<string, string>>;
           readonly pendingBossQuestions?: JsonValue;
           readonly lastError?: { readonly name: string; readonly message: string };
         }
     );
+
+export type PlaybookCaptainShellSnapshot =
+  DeepReadonly<PlaybookCaptainShellSnapshotValue>;
 
 /** tmux and headless front ends share this one durable Captain shell API. */
 export interface PlaybookCaptainShell extends Captain {
@@ -150,21 +188,44 @@ export interface PlaybookCaptainShell extends Captain {
   ): Promise<void>;
 }
 
-// Per-enabled-playbook binding the shell resolves at init from
-// `captain.options.playbooks`: each playbook binds its local roles to
-// `<id>-<role>` host players and carries the generated visible set.
+// Per-enabled-playbook binding the shell resolves at init from the exact
+// normalized `captain.options.playbooks.<id>` role map.
 interface Enablement {
   entry: PlaybookCaptainRegistryEntry;
   command: string;
-  optionInput: unknown;
-  boundPlayers: readonly RegistryPlayer[];
-  hostPlayerId: (localRole: string) => string;
+  options: JsonValue;
+  roleBindings: ReadonlyMap<string, EffectivePlayerBinding>;
 }
 
 interface EffectivePlayerBinding {
-  readonly hostPlayerId: string;
-  readonly player: RegistryPlayer;
+  readonly playerId: string;
+  readonly model: TuningSelection;
+  readonly effort: TuningSelection<Effort>;
+  readonly agent: SessionAgent;
 }
+
+interface PlayerTransactionOwner {
+  readonly frame: EngagementFrame;
+  readonly roleId: string;
+  readonly turnId: number;
+  readonly signal: AbortSignal;
+  readonly scope: object;
+}
+
+type PlayerTransaction =
+  | (PlayerTransactionOwner & {
+      readonly phase: 'calling';
+      abandoned: boolean;
+    })
+  | (PlayerTransactionOwner & {
+      readonly phase: 'awaitingCommit';
+      readonly status: PlayerResult['status'];
+      readonly expectedToken: string | undefined;
+    })
+  | (PlayerTransactionOwner & {
+      readonly phase: 'quarantined';
+      readonly reason: string;
+    });
 
 interface EngagementFrame {
   entry: PlaybookCaptainRegistryEntry;
@@ -174,7 +235,6 @@ interface EngagementFrame {
   rootSessionId: string;
   depth: number;
   playerBindings: ReadonlyMap<string, EffectivePlayerBinding>;
-  playerResumeTokens: Map<string, string>;
   parent?: {
     frame: EngagementFrame;
     callId: string;
@@ -183,6 +243,7 @@ interface EngagementFrame {
   abortListener?: () => void;
   invocationSignal?: AbortSignal;
   inFlightHostCalls: Set<Promise<unknown>>;
+  playerCallScope?: object;
   // Set synchronously before this frame's runtime is asked to dispose, so a
   // telemetry payload emitted during disposal is never mistaken for evidence
   // about a live leaf. `disposePromise` cannot serve: it is assigned after
@@ -204,6 +265,26 @@ class VisibilityControlError extends Error {
       { cause },
     );
     this.name = 'VisibilityControlError';
+  }
+}
+
+class AgentSettingsPreflightError extends Error {
+  constructor(readonly rejection: unknown) {
+    super('agent rejected supplied complete call settings', {
+      cause: rejection,
+    });
+    this.name = 'AgentSettingsPreflightError';
+  }
+}
+
+async function classifySettingsCall<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (isAgentCallSettingsError(error)) {
+      throw new AgentSettingsPreflightError(error);
+    }
+    throw error;
   }
 }
 
@@ -248,15 +329,19 @@ interface JournalRecord {
 type DurableCallKind = 'decision' | 'commandReply' | 'closingReply';
 
 /**
- * CAPTAIN-35: the three states the durable conversation can be in. Modeling
- * them explicitly keeps "this is the session's first call" (correctly
- * unseeded) distinct from "a reseed is owed" (must carry the journal digest) —
- * one boolean cannot hold both, and conflating them left the turn after a
- * failed reseed starting a bare conversation with no session memory at all.
+ * CAPTAIN-35: the durable conversation distinguishes first use, healthy
+ * continuity, a settings-preflight catch-up on retained continuity, and a
+ * full reseed after continuity becomes suspect. Modeling those states keeps
+ * each recovery path explicit instead of overloading one presence boolean.
  */
 type DurableConversation =
   | { readonly kind: 'unopened' }
   | { readonly kind: 'pinned'; readonly token: string }
+  | {
+      readonly kind: 'needsCatchUp';
+      readonly resume: string | false;
+      readonly afterJournalSeq: number;
+    }
   | { readonly kind: 'needsSeeding' };
 
 /**
@@ -278,6 +363,8 @@ const SHELL_FSM_TOPIC = 'playbook.captain.fsm.state';
 const INTERNAL_CAPTAIN_ID = 'captain';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
+const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
 
 interface TurnSummaryCounts {
   interruptions: number;
@@ -293,6 +380,8 @@ interface ActiveTurnSummary {
 /** The shell state of one Boss turn (DR-029). */
 interface ActiveTurn {
   readonly id: number;
+  /** Latest journal record represented in a successful Captain call. */
+  captainSyncedJournalSeq: number;
   /** The exact Boss text of the turn; never rewritten (CAPTAIN-31). */
   readonly bossText: string;
   /**
@@ -321,7 +410,9 @@ interface ActiveTurn {
    * with the Boss-appropriate failure reply instead of propagating, so the
    * Boss's next message settles normally.
    */
-  controlFailure?: boolean;
+  readonly controlFailures: Set<unknown>;
+  /** Exact settings-preflight rejections that performed no provider work. */
+  readonly settingsPreflightFailures: Set<unknown>;
   /**
    * Every value that escaped an effect invocation this turn — a runtime
    * driven, an engagement constructed, a stack disposed, an advertised action
@@ -560,7 +651,10 @@ function renderJournalPayload(payload: JsonValue): string {
   return raw ?? 'null';
 }
 
-function renderReseedDigest(records: readonly JournalRecord[]): string {
+function renderJournalDigest(
+  records: readonly JournalRecord[],
+  heading: string,
+): string {
   const lines = records.map(
     (record) =>
       `${record.seq}. turn ${record.turnId} ${record.kind}: ${renderJournalPayload(
@@ -568,10 +662,24 @@ function renderReseedDigest(records: readonly JournalRecord[]): string {
       )}`,
   );
   return [
-    'This conversation was replaced after a host-side continuity failure. The recap below is the deterministic session record kept by the host.',
+    heading,
     'The labeled ControlView and catalog digest blocks outrank conversation memory.',
     ...(lines.length === 0 ? ['(no earlier turns)'] : lines),
   ].join('\n');
+}
+
+function renderReseedDigest(records: readonly JournalRecord[]): string {
+  return renderJournalDigest(
+    records,
+    'This conversation was replaced after a host-side continuity failure. The recap below is the deterministic session record kept by the host.',
+  );
+}
+
+function renderCatchUpDigest(records: readonly JournalRecord[]): string {
+  return renderJournalDigest(
+    records,
+    'This retained conversation missed the host journal records below. Treat this deterministic journal suffix as authoritative.',
+  );
 }
 
 // DR-028 / CAPTAIN-9: validated captain speech carries no control JSON and no
@@ -733,14 +841,6 @@ function forwardedToolOptions(
   return { allowedTools: requested };
 }
 
-function readCaptainAdapter(options: unknown): string | undefined {
-  if (typeof options !== 'object' || options === null) return undefined;
-  const adapter = (options as Record<string, unknown>).captainAdapter;
-  return typeof adapter === 'string' && adapter.length > 0
-    ? adapter
-    : undefined;
-}
-
 const hiddenJudgeEnvelope = hiddenControlEnvelope;
 
 interface OutcomeReport {
@@ -851,11 +951,39 @@ function isValidRegistryEntry(
 ): value is PlaybookCaptainRegistryEntry {
   if (typeof value !== 'object' || value === null) return false;
   const e = value as Record<string, unknown>;
+  if (
+    !Array.isArray(e.requiredRoleIds) ||
+    e.requiredRoleIds.some(
+      (role) =>
+        typeof role !== 'string' ||
+        !ROLE_ID_PATTERN.test(role) ||
+        role === INTERNAL_CAPTAIN_ID,
+    ) ||
+    new Set(e.requiredRoleIds).size !== e.requiredRoleIds.length ||
+    !Array.isArray(e.concurrentRoleSets)
+  ) {
+    return false;
+  }
+  const roles = new Set(e.requiredRoleIds);
+  const concurrency = e.concurrentRoleSets as unknown[];
+  if (
+    concurrency.some(
+      (set) =>
+        !Array.isArray(set) ||
+        set.length < 2 ||
+        set.some((role) => typeof role !== 'string' || !roles.has(role)) ||
+        new Set(set).size !== set.length,
+    ) ||
+    new Set(concurrency.map((set) => JSON.stringify(set))).size !==
+      concurrency.length
+  ) {
+    return false;
+  }
   return (
     typeof e.id === 'string' &&
     typeof e.command === 'string' &&
     typeof e.intent === 'string' &&
-    Array.isArray(e.requiredRoleIds) &&
+    e.artifactSchema === 2 &&
     typeof e.validateOptions === 'function' &&
     typeof e.createRuntime === 'function'
   );
@@ -937,8 +1065,207 @@ function snapshotUuid(value: JsonValue | undefined, path: string): string {
   return id;
 }
 
+function snapshotPermissions(
+  value: JsonValue | undefined,
+  path: string,
+): PermissionPolicy | undefined {
+  if (value === undefined) return undefined;
+  const record = snapshotRecord(value, path);
+  rejectSnapshotKeys(
+    record,
+    ['mode', 'fileWrite', 'shellExecute', 'networkAccess', 'writablePaths'],
+    path,
+  );
+  const normalized: PermissionPolicy = {};
+  if (record.mode !== undefined) {
+    if (record.mode !== 'auto' && record.mode !== 'bypass') {
+      throw new TypeError(`${path}.mode must be "auto" or "bypass"`);
+    }
+    normalized.mode = record.mode;
+  }
+  for (const key of [
+    'fileWrite',
+    'shellExecute',
+    'networkAccess',
+  ] as const) {
+    const level = record[key];
+    if (level === undefined) continue;
+    if (level !== 'allow' && level !== 'ask' && level !== 'deny') {
+      throw new TypeError(`${path}.${key} must be "allow", "ask", or "deny"`);
+    }
+    normalized[key] = level;
+  }
+  if (record.writablePaths !== undefined) {
+    if (
+      !Array.isArray(record.writablePaths) ||
+      record.writablePaths.some(
+        (entry) => typeof entry !== 'string' || entry.length === 0,
+      )
+    ) {
+      throw new TypeError(`${path}.writablePaths must be an array of non-empty strings`);
+    }
+    normalized.writablePaths = [...record.writablePaths];
+  }
+  return normalized;
+}
+
+function livePermissions(
+  value: DeepReadonly<PermissionPolicy> | undefined,
+): PermissionPolicy | undefined {
+  if (value === undefined) return undefined;
+  return {
+    ...(value.mode === undefined ? {} : { mode: value.mode }),
+    ...(value.fileWrite === undefined ? {} : { fileWrite: value.fileWrite }),
+    ...(value.shellExecute === undefined
+      ? {}
+      : { shellExecute: value.shellExecute }),
+    ...(value.networkAccess === undefined
+      ? {}
+      : { networkAccess: value.networkAccess }),
+    ...(value.writablePaths === undefined
+      ? {}
+      : { writablePaths: [...value.writablePaths] }),
+  };
+}
+
+function snapshotFixedAgent(
+  value: JsonValue | undefined,
+  path: string,
+): SnapshotAgentEnvelope {
+  const record = snapshotRecord(value, path);
+  rejectSnapshotKeys(record, ['adapter', 'instruction', 'permissions'], path);
+  const adapter = snapshotString(record.adapter, `${path}.adapter`);
+  const instruction =
+    record.instruction === undefined
+      ? undefined
+      : snapshotString(record.instruction, `${path}.instruction`, true);
+  const permissions = snapshotPermissions(record.permissions, `${path}.permissions`);
+  return {
+    adapter,
+    ...(instruction === undefined ? {} : { instruction }),
+    ...(permissions === undefined ? {} : { permissions }),
+  };
+}
+
+function snapshotPlayerSessions(
+  value: JsonValue | undefined,
+  path: string,
+): Readonly<Record<string, PlayerLedgerSnapshotEntry>> {
+  const sessions = snapshotRecord(value, path);
+  return Object.fromEntries(
+    Object.entries(sessions).map(([playerId, raw]) => {
+      if (!PLAYER_ID_PATTERN.test(playerId) || playerId === INTERNAL_CAPTAIN_ID) {
+        throw new TypeError(`${path} has invalid player id ${JSON.stringify(playerId)}`);
+      }
+      const record = snapshotRecord(raw, `${path}.${playerId}`);
+      rejectSnapshotKeys(
+        record,
+        ['adapter', 'instruction', 'permissions', 'resumeToken'],
+        `${path}.${playerId}`,
+      );
+      const fixed = snapshotFixedAgent(
+        Object.fromEntries(
+          Object.entries(record).filter(([key]) => key !== 'resumeToken'),
+        ) as JsonValue,
+        `${path}.${playerId}`,
+      );
+      const resumeToken =
+        record.resumeToken === undefined
+          ? undefined
+          : snapshotString(record.resumeToken, `${path}.${playerId}.resumeToken`);
+      return [
+        playerId,
+        { ...fixed, ...(resumeToken === undefined ? {} : { resumeToken }) },
+      ];
+    }),
+  );
+}
+
+function snapshotFrameRoleBindings(
+  value: JsonValue | undefined,
+  path: string,
+): Readonly<Record<string, string>> {
+  const bindings = snapshotRecord(value, path);
+  return Object.fromEntries(
+    Object.entries(bindings).map(([roleId, raw]) => {
+      if (!ROLE_ID_PATTERN.test(roleId) || roleId === INTERNAL_CAPTAIN_ID) {
+        throw new TypeError(`${path} has invalid role id ${JSON.stringify(roleId)}`);
+      }
+      const playerId = snapshotString(raw, `${path}.${roleId}`);
+      if (!PLAYER_ID_PATTERN.test(playerId) || playerId === INTERNAL_CAPTAIN_ID) {
+        throw new TypeError(`${path}.${roleId} has invalid player id`);
+      }
+      return [roleId, playerId];
+    }),
+  );
+}
+
+function normalizeHostPlayerResult(
+  value: unknown,
+  expectedPlayerId: string,
+): PlayerResult {
+  const path = 'tmux-play delegated-player result';
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError(`${path} must be an object`);
+  }
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new TypeError(`${path} must be a plain JSON object`);
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const allowedKeys = new Set([
+    'status',
+    'playerId',
+    'turnId',
+    'resumeToken',
+    'finalText',
+    'error',
+  ]);
+  const normalized: Record<string, unknown> = {};
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key === 'symbol') {
+      throw new TypeError(`${path} must not contain symbol-keyed properties`);
+    }
+    const descriptor = descriptors[key];
+    if (!allowedKeys.has(key)) {
+      throw new TypeError(`${path} has unknown field ${JSON.stringify(key)}`);
+    }
+    if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) {
+      throw new TypeError(`${path}.${key} must be an enumerable data property`);
+    }
+    // Cligent deliberately exposes optional result members as own
+    // `undefined` data properties. Omit only those members before taking the
+    // immutable JSON snapshot; every other value still passes the strict
+    // JSON validator below.
+    if (descriptor.value !== undefined) normalized[key] = descriptor.value;
+  }
+  const record = snapshotRecord(snapshotJsonValue(normalized, path), path);
+  rejectSnapshotKeys(
+    record,
+    ['status', 'playerId', 'turnId', 'resumeToken', 'finalText', 'error'],
+    path,
+  );
+  if (record.playerId !== expectedPlayerId) {
+    throw new TypeError(`${path}.playerId does not match the requested player`);
+  }
+  snapshotInteger(record.turnId, `${path}.turnId`, 1);
+  return validatePlayerResult(
+    {
+      status: record.status,
+      ...(record.resumeToken === undefined
+        ? {}
+        : { resumeToken: record.resumeToken }),
+      ...(record.finalText === undefined
+        ? {}
+        : { finalText: record.finalText }),
+      ...(record.error === undefined ? {} : { error: record.error }),
+    },
+    path,
+  );
+}
+
 /** Validate, detach, and freeze one untrusted shell snapshot. */
-function assertPlaybookCaptainShellSnapshot(
+export function assertPlaybookCaptainShellSnapshot(
   value: unknown,
 ): PlaybookCaptainShellSnapshot {
   const detached = snapshotJsonValue(value, 'Captain shell snapshot');
@@ -947,6 +1274,7 @@ function assertPlaybookCaptainShellSnapshot(
   const commonKeys = [
     'schemaVersion',
     'captain',
+    'playerSessions',
     'issuedSessionIds',
     'sequences',
     'journal',
@@ -962,7 +1290,6 @@ function assertPlaybookCaptainShellSnapshot(
       [
         ...commonKeys,
         'frames',
-        'rootPlayerResumeTokens',
         'pendingBossQuestions',
         'lastError',
       ],
@@ -973,9 +1300,9 @@ function assertPlaybookCaptainShellSnapshot(
       'Captain shell snapshot.mode must be "chat" or "engaged.parked"',
     );
   }
-  if (snapshot.schemaVersion !== 1) {
+  if (snapshot.schemaVersion !== 3) {
     throw new TypeError(
-      `Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 1)`,
+      `Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 3)`,
     );
   }
 
@@ -985,7 +1312,7 @@ function assertPlaybookCaptainShellSnapshot(
   );
   rejectSnapshotKeys(
     captain,
-    ['sessionId', 'runtime', 'conversation'],
+    ['sessionId', 'runtime', 'agent', 'conversation'],
     'Captain shell snapshot.captain',
   );
   const captainSessionId = snapshotUuid(
@@ -995,6 +1322,10 @@ function assertPlaybookCaptainShellSnapshot(
   const captainRuntime = assertPlaybookRuntimeSnapshot(
     captain.runtime,
     INTERNAL_CAPTAIN_ID,
+  );
+  const captainAgent = snapshotFixedAgent(
+    captain.agent,
+    'Captain shell snapshot.captain.agent',
   );
   const conversation = snapshotRecord(
     captain.conversation,
@@ -1012,7 +1343,26 @@ function assertPlaybookCaptainShellSnapshot(
       token: snapshotString(
         conversation.token,
         'Captain shell snapshot.captain.conversation.token',
-        true,
+      ),
+    };
+  } else if (conversation.kind === 'needsCatchUp') {
+    rejectSnapshotKeys(
+      conversation,
+      ['kind', 'resume', 'afterJournalSeq'],
+      'Captain shell snapshot.captain.conversation',
+    );
+    normalizedConversation = {
+      kind: 'needsCatchUp',
+      resume:
+        conversation.resume === false
+          ? false
+          : snapshotString(
+              conversation.resume,
+              'Captain shell snapshot.captain.conversation.resume',
+            ),
+      afterJournalSeq: snapshotInteger(
+        conversation.afterJournalSeq,
+        'Captain shell snapshot.captain.conversation.afterJournalSeq',
       ),
     };
   } else if (
@@ -1143,6 +1493,29 @@ function assertPlaybookCaptainShellSnapshot(
       'Captain shell snapshot sequences do not match the complete journal',
     );
   }
+  const emptyHistory = turnSequence === 0 && normalizedJournal.length === 0;
+  if ((normalizedConversation.kind === 'unopened') !== emptyHistory) {
+    throw new TypeError(
+      'Captain shell snapshot history is empty exactly when its conversation is unopened',
+    );
+  }
+  if (
+    normalizedConversation.kind === 'needsCatchUp' &&
+    normalizedConversation.afterJournalSeq >= journalSequence
+  ) {
+    throw new TypeError(
+      'Captain shell snapshot catch-up watermark must precede the current journal sequence',
+    );
+  }
+  if (
+    normalizedConversation.kind === 'needsCatchUp' &&
+    ((normalizedConversation.resume === false) !==
+      (normalizedConversation.afterJournalSeq === 0))
+  ) {
+    throw new TypeError(
+      'Captain shell snapshot catch-up resume is fresh exactly at journal watermark zero',
+    );
+  }
 
   let lastAction: PlaybookCaptainShellSnapshotFields['lastAction'];
   if (snapshot.lastAction !== undefined) {
@@ -1174,13 +1547,19 @@ function assertPlaybookCaptainShellSnapshot(
       typeof lastSettlementStatus
     >;
   }
+  const playerSessions = snapshotPlayerSessions(
+    snapshot.playerSessions,
+    'Captain shell snapshot.playerSessions',
+  );
   const common: PlaybookCaptainShellSnapshotFields = {
-    schemaVersion: 1,
+    schemaVersion: 3,
     captain: {
       sessionId: captainSessionId,
       runtime: captainRuntime,
+      agent: captainAgent,
       conversation: normalizedConversation,
     },
+    playerSessions,
     issuedSessionIds: issued,
     sequences: { turn: turnSequence, journal: journalSequence },
     journal: normalizedJournal,
@@ -1189,6 +1568,23 @@ function assertPlaybookCaptainShellSnapshot(
       ? {}
       : { lastSettlementStatus }),
   };
+  if (
+    captainRuntime.state.status !== 'active' ||
+    !captainRuntime.state.quiescent ||
+    !captainRuntime.state.tags.includes('playbook.parked') ||
+    captainRuntime.suspendedCall !== undefined ||
+    Object.keys(captainRuntime.roleResumeTokens).length > 0 ||
+    captainRuntime.pendingBossQuestions.length > 0
+  ) {
+    throw new TypeError(
+      'Captain shell snapshot Captain runtime must be active, quiescent, playerless, and unsuspended',
+    );
+  }
+  if (captainRuntime.sequences.turn !== turnSequence) {
+    throw new TypeError(
+      'Captain shell snapshot Captain and shell turn sequences must match',
+    );
+  }
   if (mode === 'chat') {
     return snapshotJsonValue(
       { ...common, mode },
@@ -1216,6 +1612,8 @@ function assertPlaybookCaptainShellSnapshot(
         'depth',
         'parentSessionId',
         'parentCallId',
+        'options',
+        'roleBindings',
         'runtime',
       ],
       `Captain shell snapshot.frames[${index}]`,
@@ -1255,6 +1653,11 @@ function assertPlaybookCaptainShellSnapshot(
       playbookId,
       { allowSuspendedCall: true },
     );
+    const options = frame.options as JsonValue;
+    const roleBindings = snapshotFrameRoleBindings(
+      frame.roleBindings,
+      `Captain shell snapshot.frames[${index}].roleBindings`,
+    );
     normalizedFrames.push({
       playbookId,
       sessionId,
@@ -1262,23 +1665,11 @@ function assertPlaybookCaptainShellSnapshot(
       depth,
       ...(parentSessionId === undefined ? {} : { parentSessionId }),
       ...(parentCallId === undefined ? {} : { parentCallId }),
+      options,
+      roleBindings,
       runtime,
     });
   }
-
-  const rootTokens = snapshotRecord(
-    snapshot.rootPlayerResumeTokens,
-    'Captain shell snapshot.rootPlayerResumeTokens',
-  );
-  const normalizedRootTokens = Object.fromEntries(
-    Object.entries(rootTokens).map(([playerId, token]) => [
-      playerId,
-      snapshotString(
-        token,
-        `Captain shell snapshot.rootPlayerResumeTokens.${playerId}`,
-      ),
-    ]),
-  );
   let normalizedLastError:
     | { readonly name: string; readonly message: string }
     | undefined;
@@ -1305,12 +1696,123 @@ function assertPlaybookCaptainShellSnapshot(
       ),
     };
   }
+  const activePlaybooks = new Set<string>();
+  const activeSessionIds = new Set<string>([captainSessionId]);
+  const issuedIds = new Set(issued);
+  const rootSessionId = normalizedFrames[0]!.sessionId;
+  for (const [index, frame] of normalizedFrames.entries()) {
+    if (activePlaybooks.has(frame.playbookId)) {
+      throw new TypeError(
+        'Captain shell snapshot engagement path must not contain a playbook cycle',
+      );
+    }
+    activePlaybooks.add(frame.playbookId);
+    if (activeSessionIds.has(frame.sessionId)) {
+      throw new TypeError(
+        'Captain shell snapshot frame session ids must be unique',
+      );
+    }
+    activeSessionIds.add(frame.sessionId);
+    if (!issuedIds.has(frame.sessionId)) {
+      throw new TypeError(
+        'Captain shell snapshot frame session id was not historically issued',
+      );
+    }
+    if (
+      frame.depth !== index ||
+      frame.rootSessionId !== rootSessionId ||
+      frame.runtime.state.status !== 'active' ||
+      !frame.runtime.state.quiescent
+    ) {
+      throw new TypeError(
+        'Captain shell snapshot frame depth, root, or parked runtime state is inconsistent',
+      );
+    }
+    if (index === 0) {
+      if (
+        frame.sessionId !== frame.rootSessionId ||
+        frame.parentSessionId !== undefined ||
+        frame.parentCallId !== undefined
+      ) {
+        throw new TypeError(
+          'Captain shell snapshot root frame has child-only identity fields',
+        );
+      }
+    } else {
+      const parent = normalizedFrames[index - 1]!;
+      const pending = parent.runtime.suspendedCall;
+      if (
+        frame.parentSessionId !== parent.sessionId ||
+        frame.parentCallId === undefined
+      ) {
+        throw new TypeError(
+          'Captain shell snapshot child frame does not identify its immediate parent',
+        );
+      }
+      if (
+        !pending ||
+        pending.callId !== frame.parentCallId ||
+        pending.playbookId !== frame.playbookId ||
+        pending.childSessionId !== frame.sessionId
+      ) {
+        throw new TypeError(
+          'Captain shell snapshot parent suspended call does not match its child edge',
+        );
+      }
+    }
+    for (const playerId of Object.values(frame.roleBindings)) {
+      if (playerSessions[playerId] === undefined) {
+        throw new TypeError(
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} binds an absent session player`,
+        );
+      }
+    }
+    for (const question of frame.runtime.pendingBossQuestions) {
+      if (
+        question.asker.kind === 'role' &&
+        frame.roleBindings[question.asker.roleId] === undefined
+      ) {
+        throw new TypeError(
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} has a pending question from an unbound role`,
+        );
+      }
+    }
+    const projectedTokens = Object.fromEntries(
+      Object.entries(frame.roleBindings).flatMap(([role, playerId]) => {
+        const token = playerSessions[playerId]?.resumeToken;
+        return token === undefined ? [] : [[role, token] as const];
+      }),
+    );
+    if (!isDeepStrictEqual(projectedTokens, frame.runtime.roleResumeTokens)) {
+      throw new TypeError(
+        `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} player tokens do not match session continuation`,
+      );
+    }
+  }
+  const leafRuntime = normalizedFrames.at(-1)!.runtime;
+  if (
+    leafRuntime.suspendedCall !== undefined ||
+    !leafRuntime.state.tags.includes('playbook.parked')
+  ) {
+    throw new TypeError(
+      'Captain shell snapshot leaf runtime must be parked without a dangling suspended child call',
+    );
+  }
+  if (
+    !isDeepStrictEqual(
+      snapshot.pendingBossQuestions ?? [],
+      leafRuntime.pendingBossQuestions,
+    )
+  ) {
+    throw new TypeError(
+      'Captain shell snapshot pending Boss questions must equal the leaf runtime projection',
+    );
+  }
   return snapshotJsonValue(
     {
       ...common,
       mode,
       frames: normalizedFrames,
-      rootPlayerResumeTokens: normalizedRootTokens,
       ...(snapshot.pendingBossQuestions === undefined
         ? {}
         : { pendingBossQuestions: snapshot.pendingBossQuestions }),
@@ -1322,30 +1824,120 @@ function assertPlaybookCaptainShellSnapshot(
   ) as unknown as PlaybookCaptainShellSnapshot;
 }
 
-function readPlaybooksConfig(
-  options: unknown,
-): Record<string, unknown> | undefined {
-  if (typeof options !== 'object' || options === null) return undefined;
-  const pb = (options as Record<string, unknown>).playbooks;
-  if (typeof pb !== 'object' || pb === null || Array.isArray(pb)) {
-    return undefined;
-  }
-  return pb as Record<string, unknown>;
-}
-
 interface BuiltRegistry {
   entries: readonly PlaybookCaptainRegistryEntry[];
   byCommand: Map<string, PlaybookCaptainRegistryEntry>;
   byId: Map<string, PlaybookCaptainRegistryEntry>;
   enablementById: Map<string, Enablement>;
+  captainAgent: SessionAgent;
+  playerAgents: Map<string, SessionAgent>;
 }
 
-// Resolve the active registry at init from `captain.options.playbooks`
-// (CAPTAIN-16): each enabled playbook is loaded from its explicit `from`
-// module and bound to namespaced `<id>-<role>` host players.
+function snapshotTuningSelection(
+  value: JsonValue | undefined,
+  path: string,
+): TuningSelection {
+  const selection = snapshotRecord(value, path);
+  if (selection.kind === 'provider-default') {
+    rejectSnapshotKeys(selection, ['kind'], path);
+    return { kind: 'provider-default' };
+  }
+  if (selection.kind === 'value') {
+    rejectSnapshotKeys(selection, ['kind', 'value'], path);
+    return {
+      kind: 'value',
+      value: snapshotString(selection.value, `${path}.value`),
+    };
+  }
+  throw new TypeError(`${path}.kind must be "value" or "provider-default"`);
+}
+
+const EFFORT_VALUES: ReadonlySet<string> = new Set([
+  'on',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra',
+  'ultracode',
+  'off',
+]);
+
+function snapshotEffortSelection(
+  value: JsonValue | undefined,
+  path: string,
+): TuningSelection<Effort> {
+  const selection = snapshotTuningSelection(value, path);
+  if (selection.kind === 'value' && !EFFORT_VALUES.has(selection.value)) {
+    throw new TypeError(`${path}.value is not a supported effort selection`);
+  }
+  return selection as TuningSelection<Effort>;
+}
+
+function snapshotSessionAgent(
+  value: JsonValue | undefined,
+  path: string,
+): SessionAgent {
+  const agent = snapshotRecord(value, path);
+  rejectSnapshotKeys(
+    agent,
+    ['adapter', 'model', 'effort', 'instruction', 'permissions'],
+    path,
+  );
+  const fixed = snapshotFixedAgent(
+    Object.fromEntries(
+      Object.entries(agent).filter(
+        ([key]) => key !== 'model' && key !== 'effort',
+      ),
+    ) as JsonValue,
+    path,
+  );
+  return {
+    adapter: fixed.adapter,
+    ...(fixed.instruction === undefined
+      ? {}
+      : { instruction: fixed.instruction }),
+    ...(fixed.permissions === undefined
+      ? {}
+      : { permissions: livePermissions(fixed.permissions) }),
+    model: snapshotTuningSelection(agent.model, `${path}.model`),
+    effort: snapshotEffortSelection(agent.effort, `${path}.effort`),
+  };
+}
+
+function fixedAgent(agent: SessionAgent): Omit<SessionAgent, 'model' | 'effort'> {
+  return {
+    adapter: agent.adapter,
+    ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
+    ...(agent.permissions === undefined ? {} : { permissions: agent.permissions }),
+  };
+}
+
+function callSettings(
+  agent: SessionAgent,
+  tuning: Pick<SessionAgent, 'model' | 'effort'> = agent,
+): AgentCallSettings {
+  return {
+    model: tuning.model,
+    effort: tuning.effort,
+    ...(agent.instruction === undefined ? {} : { instruction: agent.instruction }),
+    ...(agent.permissions === undefined ? {} : { permissions: agent.permissions }),
+  };
+}
+
+function promptIdentity(binding: EffectivePlayerBinding): string {
+  return binding.model.kind === 'value'
+    ? binding.model.value
+    : binding.agent.adapter;
+}
+
+// Resolve the active registry at init from exact normalized role and session
+// agent projections (CAPTAIN-16). No role, ancestor, or generated-name fallback
+// exists at this boundary.
 async function buildEnablements(
   options: unknown,
-  players: readonly RegistryPlayer[],
   loadModule: (specifier: string) => Promise<unknown>,
 ): Promise<BuiltRegistry> {
   const entries: PlaybookCaptainRegistryEntry[] = [];
@@ -1353,9 +1945,62 @@ async function buildEnablements(
   const byId = new Map<string, PlaybookCaptainRegistryEntry>();
   const enablementById = new Map<string, Enablement>();
 
-  const config = readPlaybooksConfig(options);
-  if (config === undefined) {
+  const detached = snapshotJsonValue(options, 'captain.options');
+  const top = snapshotRecord(detached, 'captain.options');
+  rejectSnapshotKeys(
+    top,
+    ['playbooks', 'sessionAgents', 'captainAdapter'],
+    'captain.options',
+  );
+  const configValue = top.playbooks;
+  if (
+    typeof configValue !== 'object' ||
+    configValue === null ||
+    Array.isArray(configValue)
+  ) {
     throw new Error('captain.options.playbooks is required');
+  }
+  const config = configValue as Record<string, JsonValue>;
+
+  const sessionAgents = snapshotRecord(
+    top.sessionAgents,
+    'captain.options.sessionAgents',
+  );
+  rejectSnapshotKeys(
+    sessionAgents,
+    ['captain', 'players'],
+    'captain.options.sessionAgents',
+  );
+  const captainAgent = snapshotSessionAgent(
+    sessionAgents.captain,
+    'captain.options.sessionAgents.captain',
+  );
+  if (
+    top.captainAdapter !== undefined &&
+    top.captainAdapter !== captainAgent.adapter
+  ) {
+    throw new Error(
+      'captain.options.captainAdapter must equal sessionAgents.captain.adapter',
+    );
+  }
+  const playerAgentRecord = snapshotRecord(
+    sessionAgents.players,
+    'captain.options.sessionAgents.players',
+  );
+  const playerAgents = new Map<string, SessionAgent>();
+  for (const [playerId, agent] of Object.entries(playerAgentRecord)) {
+    if (!PLAYER_ID_PATTERN.test(playerId) || playerId === INTERNAL_CAPTAIN_ID) {
+      throw new Error(
+        `captain.options.sessionAgents.players has invalid player id ${JSON.stringify(playerId)}`,
+      );
+    }
+    playerAgents.set(
+      playerId,
+      snapshotSessionAgent(
+        agent,
+        `captain.options.sessionAgents.players.${playerId}`,
+      ),
+    );
   }
 
   const ids = Object.keys(config);
@@ -1374,7 +2019,12 @@ async function buildEnablements(
     if (typeof block !== 'object' || block === null || Array.isArray(block)) {
       throw new Error(`captain.options.playbooks.${id} must be an object`);
     }
-    const record = block as Record<string, unknown>;
+    const record = block as Record<string, JsonValue>;
+    rejectSnapshotKeys(
+      record,
+      ['from', 'command', 'roles', 'options'],
+      `captain.options.playbooks.${id}`,
+    );
     const from = record.from;
     if (typeof from !== 'string' || from.length === 0) {
       throw new Error(
@@ -1421,26 +2071,86 @@ async function buildEnablements(
         `captain.options.playbooks has a duplicate effective command "${command}"`,
       );
     }
-    const boundPlayers = entry.requiredRoleIds.map((role) => {
-      const host = players.find((p) => p.id === `${entry.id}-${role}`);
-      return {
-        id: role,
-        ...(host?.adapter !== undefined ? { adapter: host.adapter } : {}),
-        ...(host?.model !== undefined ? { model: host.model } : {}),
-      };
-    });
+    const roleRecord = snapshotRecord(
+      record.roles,
+      `captain.options.playbooks.${id}.roles`,
+    );
+    const required = new Set(entry.requiredRoleIds);
+    const configuredRoles = Object.keys(roleRecord);
+    const missing = entry.requiredRoleIds.filter(
+      (role) => !Object.hasOwn(roleRecord, role),
+    );
+    const extra = configuredRoles.filter((role) => !required.has(role));
+    if (missing.length > 0 || extra.length > 0) {
+      throw new Error(
+        `captain.options.playbooks.${id}.roles must exactly cover requiredRoleIds`,
+      );
+    }
+    const roleBindings = new Map<string, EffectivePlayerBinding>();
+    for (const role of entry.requiredRoleIds) {
+      const path = `captain.options.playbooks.${id}.roles.${role}`;
+      const rawBinding = snapshotRecord(roleRecord[role], path);
+      rejectSnapshotKeys(rawBinding, ['playerId', 'model', 'effort'], path);
+      const playerId = snapshotString(rawBinding.playerId, `${path}.playerId`);
+      if (!PLAYER_ID_PATTERN.test(playerId) || playerId === INTERNAL_CAPTAIN_ID) {
+        throw new Error(`${path}.playerId is not a canonical player id`);
+      }
+      const agent = playerAgents.get(playerId);
+      if (!agent) {
+        throw new Error(
+          `${path}.playerId names absent session player ${JSON.stringify(playerId)}`,
+        );
+      }
+      roleBindings.set(role, {
+        playerId,
+        model: snapshotTuningSelection(rawBinding.model, `${path}.model`),
+        effort: snapshotEffortSelection(rawBinding.effort, `${path}.effort`),
+        agent,
+      });
+    }
+    for (const concurrentRoles of entry.concurrentRoleSets) {
+      const playerIds = concurrentRoles.map(
+        (role) => roleBindings.get(role)!.playerId,
+      );
+      if (new Set(playerIds).size !== playerIds.length) {
+        throw new Error(
+          `captain.options.playbooks.${id}.roles aliases concurrent roles ${JSON.stringify(concurrentRoles)}`,
+        );
+      }
+    }
+    const validatedOptions = snapshotJsonValue(
+      entry.validateOptions(record.options),
+      `captain.options.playbooks.${id}.options`,
+    );
     entries.push(entry);
     byId.set(entry.id, entry);
     byCommand.set(command, entry);
     enablementById.set(entry.id, {
       entry,
       command,
-      optionInput: record.options,
-      boundPlayers,
-      hostPlayerId: (localRole) => `${entry.id}-${localRole}`,
+      options: validatedOptions,
+      roleBindings,
     });
   }
-  return { entries, byCommand, byId, enablementById };
+  const referenced = new Set(
+    [...enablementById.values()].flatMap((enablement) =>
+      [...enablement.roleBindings.values()].map((binding) => binding.playerId),
+    ),
+  );
+  const unreferenced = [...playerAgents.keys()].find((id) => !referenced.has(id));
+  if (unreferenced !== undefined) {
+    throw new Error(
+      `captain.options.sessionAgents.players has unreferenced player ${JSON.stringify(unreferenced)}`,
+    );
+  }
+  return {
+    entries,
+    byCommand,
+    byId,
+    enablementById,
+    captainAgent,
+    playerAgents,
+  };
 }
 
 export function createPlaybookCaptainShell(
@@ -1453,10 +2163,11 @@ export function createPlaybookCaptainShell(
   const createCaptainRuntime: NonNullable<
     PlaybookCaptainDeps['createCaptainRuntime']
   > = deps.createCaptainRuntime ?? createDefaultCaptainRuntime;
-  // DR-013 A1: the launcher passes the resolved captain adapter through
-  // `captain.options`; a raw `--config` launch leaves it undefined, which
-  // keeps the enforced empty allowlist and its fail-closed behavior.
-  const captainAdapter = readCaptainAdapter(options);
+  let captainAgent: SessionAgent | undefined;
+  let captainAdapter: string | undefined;
+  let playerAgents = new Map<string, SessionAgent>();
+  const playerLedger = new Map<string, PlayerLedgerEntry>();
+  const playerTransactions = new Map<string, PlayerTransaction>();
   let entries: readonly PlaybookCaptainRegistryEntry[] = [];
   let byCommand = new Map<string, PlaybookCaptainRegistryEntry>();
   let byId = new Map<string, PlaybookCaptainRegistryEntry>();
@@ -1472,7 +2183,6 @@ export function createPlaybookCaptainShell(
     | 'disposing'
     | 'closed' = 'fresh';
   let terminallyDisposed = false;
-  let players: readonly RegistryPlayer[] = [];
   let activeContext: CaptainContext | undefined;
   const frames: EngagementFrame[] = [];
   let mode: ShellMode = 'chat';
@@ -1524,15 +2234,19 @@ export function createPlaybookCaptainShell(
   // --- session Captain, durable conversation, and journal (CAPTAIN-16/31/35)
   let captainRuntime: PlaybookRuntime | undefined;
   let captainSessionId: string | undefined;
-  // CAPTAIN-35: the conversation is exactly one of unopened, pinned, or
-  // owed-a-reseed. There is no fourth state in which a non-first call starts a
-  // bare conversation.
+  // CAPTAIN-35: a preflight settings rejection retains proven continuity but
+  // records the exact journal suffix still owed; other continuity failures
+  // require a fresh, full reseed.
   let conversation: DurableConversation = { kind: 'unopened' };
   let shuttingDown = false;
   const journal: JournalRecord[] = [];
   let journalSeq = 0;
   let turnSequence = 0;
   let activeTurn: ActiveTurn | undefined;
+  // `PlayerSessionStore.restore` is authoritative only while the shell is
+  // awaiting the exact owning runtime's restore during a closed-gate shell
+  // restoration. A runtime cannot use the store as a general ledger writer.
+  let restoringPlayerSessionFrame: EngagementFrame | undefined;
   // The durable call the runtime is about to make, taken from the paired
   // `captain.call.started` boundary the engine emits before the port call
   // (CAPTAIN-9): the shell never infers a call's kind from its prose.
@@ -1621,7 +2335,10 @@ export function createPlaybookCaptainShell(
     // (CAPTAIN-5/CAPTAIN-6).
     ...(captainRuntime
       ? {
-          durableConversation: conversation.kind === 'pinned',
+          durableConversation:
+            conversation.kind === 'pinned' ||
+            (conversation.kind === 'needsCatchUp' &&
+              conversation.resume !== false),
           sessionJournal: true,
         }
       : {}),
@@ -1838,42 +2555,146 @@ export function createPlaybookCaptainShell(
   ) => Promise<PlaybookCallStart>;
 
   const createPorts = (frame: EngagementFrame): PlaybookPorts => ({
-    callPlayer: async (playerId, prompt, signal, options) => {
+    callPlayer: async (roleId, prompt, signal, options) => {
       admitHostBoundary();
-      if (!activeContext) {
+      if (!activeContext || !activeTurn || !frame.playerCallScope) {
         throw new Error('callPlayer invoked outside a Boss turn');
       }
       const context = activeContext;
+      const admittedTurn = activeTurn;
+      const scope = frame.playerCallScope;
       signal.throwIfAborted();
-      const hostPlayerId = bindingFor(frame, playerId).hostPlayerId;
-      const result = await trackHostCall(
-        frame,
-        context.callPlayer(hostPlayerId, prompt, {
-          resume: options.resume,
-        }),
-      );
-      // CaptainContext is turn-scoped and cannot accept a narrower XState
-      // invocation signal. Recheck after the host call so a sibling
-      // cancellation is still reported as aborted and cannot rotate a
-      // stopped branch's player token in the linked runtime.
-      signal.throwIfAborted();
-      // CAPTAIN-20: only a player call that actually produced work is an
-      // interruption the Boss was spared. A call that errored or aborted
-      // saved nothing, so it never feeds the saved-counts gate.
-      const summary = activeTurnSummary;
-      if (summary && summaryIncludes(frame) && result.status === 'ok') {
-        summary.counts.interruptions++;
+      const binding = bindingFor(frame, roleId);
+      const ledger = playerLedger.get(binding.playerId);
+      if (!ledger) {
+        throw new Error(
+          `${frameLabel(frame)} resolved absent session player ${JSON.stringify(binding.playerId)}`,
+        );
       }
-      return {
-        status: result.status,
-        ...(result.resumeToken !== undefined
-          ? { resumeToken: result.resumeToken }
-          : {}),
-        ...(result.finalText !== undefined
-          ? { finalText: result.finalText }
-          : {}),
-        ...(result.error !== undefined ? { error: result.error } : {}),
+      const expectedResume = ledger.resumeToken ?? false;
+      if (options.resume !== expectedResume) {
+        throw new Error(
+          `${frameLabel(frame)} player continuation changed before dispatch`,
+        );
+      }
+      if (playerTransactions.has(binding.playerId)) {
+        throw new Error(
+          `session player ${JSON.stringify(binding.playerId)} already has a call in flight`,
+        );
+      }
+      const settings = callSettings(binding.agent, binding);
+      const calling: PlayerTransaction = {
+        phase: 'calling',
+        frame,
+        roleId,
+        turnId: admittedTurn.id,
+        signal,
+        scope,
+        abandoned: false,
       };
+      playerTransactions.set(binding.playerId, calling);
+      let result: PlayerResult;
+      let hostResolved = false;
+      try {
+        let rawResult: unknown;
+        try {
+          rawResult = await trackHostCall(
+            frame,
+            classifySettingsCall(() =>
+              context.callPlayer(binding.playerId, prompt, {
+                resume: options.resume,
+                settings,
+              }),
+            ),
+          );
+          hostResolved = true;
+        } catch (error) {
+          if (error instanceof AgentSettingsPreflightError) {
+            if (
+              playerTransactions.get(binding.playerId) !== calling ||
+              calling.abandoned ||
+              signal.aborted ||
+              activeTurn !== admittedTurn ||
+              frame.playerCallScope !== scope ||
+              !frames.includes(frame)
+            ) {
+              if (playerTransactions.get(binding.playerId) === calling) {
+                playerTransactions.delete(binding.playerId);
+              }
+              signal.throwIfAborted();
+              throw new Error(
+                `${frameLabel(frame)} player settings rejection arrived after its runtime operation ended`,
+              );
+            }
+            throw rememberSettingsPreflight(error.rejection);
+          }
+          throw error;
+        }
+        result = normalizeHostPlayerResult(rawResult, binding.playerId);
+        const transitionRequired =
+          result.resumeToken !== undefined || result.status === 'ok';
+        if (
+          playerTransactions.get(binding.playerId) !== calling ||
+          calling.abandoned ||
+          signal.aborted ||
+          activeTurn !== admittedTurn ||
+          frame.playerCallScope !== scope ||
+          !frames.includes(frame)
+        ) {
+          if (playerTransactions.get(binding.playerId) === calling) {
+            if (transitionRequired) {
+              playerTransactions.set(binding.playerId, {
+                phase: 'quarantined',
+                frame,
+                roleId,
+                turnId: admittedTurn.id,
+                signal,
+                scope,
+                reason:
+                  'a transition-worthy result arrived after its runtime operation ended',
+              });
+            } else {
+              playerTransactions.delete(binding.playerId);
+            }
+          }
+          signal.throwIfAborted();
+          throw new Error(
+            `${frameLabel(frame)} player result arrived after its runtime operation ended`,
+          );
+        }
+        if (transitionRequired) {
+          playerTransactions.set(binding.playerId, {
+            phase: 'awaitingCommit',
+            frame,
+            roleId,
+            turnId: admittedTurn.id,
+            signal,
+            scope,
+            status: result.status,
+            expectedToken: result.resumeToken,
+          });
+        } else {
+          playerTransactions.delete(binding.playerId);
+        }
+      } catch (error) {
+        if (playerTransactions.get(binding.playerId) === calling) {
+          if (hostResolved) {
+            playerTransactions.set(binding.playerId, {
+              phase: 'quarantined',
+              frame,
+              roleId,
+              turnId: admittedTurn.id,
+              signal,
+              scope,
+              reason: 'a late player result could not be validated',
+            });
+          } else {
+            playerTransactions.delete(binding.playerId);
+          }
+        }
+        throw error;
+      }
+      return result;
     },
     callCaptain: async (prompt, signal, options) => {
       admitHostBoundary();
@@ -1974,14 +2795,16 @@ export function createPlaybookCaptainShell(
   });
 
   // CAPTAIN-22: before dispatching to a playbook, request tmux-play
-  // visibility for that playbook's generated host players. A pane
+  // visibility for that playbook's explicitly bound session players. A pane
   // reconciliation failure is display-only in tmux-play and does not
   // reject; the legacy path carries no generated set and skips this.
   const requestVisibility = async (frame: EngagementFrame): Promise<void> => {
     const ids = [...new Set(
-      [...frame.playerBindings.values()].map(({ hostPlayerId }) => hostPlayerId),
+      [...frame.playerBindings.values()].map(({ playerId }) => playerId),
     )];
-    if (!ids || ids.length === 0 || !activeContext) return;
+    // A roleless frame does not ask a non-empty host roster to show `[]`:
+    // tmux-play reserves that value for a genuinely empty configured roster.
+    if (ids.length === 0 || !activeContext) return;
     try {
       await activeContext.setVisiblePlayers(ids);
     } catch (error) {
@@ -2021,32 +2844,8 @@ export function createPlaybookCaptainShell(
 
   const makePlayerBindings = (
     enablement: Enablement,
-    parent?: { frame: EngagementFrame; callId: string },
   ): ReadonlyMap<string, EffectivePlayerBinding> => {
-    const entry = enablement.entry;
-    const playerBindings = new Map<string, EffectivePlayerBinding>();
-    for (const role of entry.requiredRoleIds) {
-      let inherited: EffectivePlayerBinding | undefined;
-      for (
-        let ancestor = parent?.frame;
-        ancestor && inherited === undefined;
-        ancestor = ancestor.parent?.frame
-      ) {
-        inherited = ancestor.playerBindings.get(role);
-      }
-      if (inherited) {
-        playerBindings.set(role, inherited);
-        continue;
-      }
-      const configured = enablement.boundPlayers.find(
-        (player) => player.id === role,
-      ) ?? { id: role };
-      playerBindings.set(role, {
-        hostPlayerId: enablement.hostPlayerId(role),
-        player: configured,
-      });
-    }
-    return playerBindings;
+    return new Map(enablement.roleBindings);
   };
 
   const makeFrame = (
@@ -2055,12 +2854,8 @@ export function createPlaybookCaptainShell(
   ): EngagementFrame => {
     const entry = enablement.entry;
     const sessionId = allocateSessionId();
-    const playerBindings = makePlayerBindings(enablement, parent);
-    const playerResumeTokens =
-      parent?.frame.playerResumeTokens ?? new Map<string, string>();
-    const runtime = entry.createRuntime(
-      entry.validateOptions(enablement.optionInput),
-    );
+    const playerBindings = makePlayerBindings(enablement);
+    const runtime = entry.createRuntime(enablement.options);
     return {
       entry,
       enablement,
@@ -2069,7 +2864,6 @@ export function createPlaybookCaptainShell(
       rootSessionId: parent?.frame.rootSessionId ?? sessionId,
       depth: parent ? parent.frame.depth + 1 : 0,
       playerBindings,
-      playerResumeTokens,
       ...(parent ? { parent } : {}),
       inFlightHostCalls: new Set(),
     };
@@ -2078,14 +2872,11 @@ export function createPlaybookCaptainShell(
   const makeRestoredFrame = (
     enablement: Enablement,
     snapshot: PlaybookCaptainFrameSnapshot,
-    rootPlayerResumeTokens: Map<string, string>,
     parent?: { frame: EngagementFrame; callId: string },
   ): EngagementFrame => {
     const entry = enablement.entry;
-    const playerBindings = makePlayerBindings(enablement, parent);
-    const runtime = entry.createRuntime(
-      entry.validateOptions(enablement.optionInput),
-    );
+    const playerBindings = makePlayerBindings(enablement);
+    const runtime = entry.createRuntime(enablement.options);
     return {
       entry,
       enablement,
@@ -2094,7 +2885,6 @@ export function createPlaybookCaptainShell(
       rootSessionId: snapshot.rootSessionId,
       depth: snapshot.depth,
       playerBindings,
-      playerResumeTokens: rootPlayerResumeTokens,
       ...(parent ? { parent } : {}),
       state: snapshot.runtime.state,
       inFlightHostCalls: new Set(),
@@ -2104,34 +2894,158 @@ export function createPlaybookCaptainShell(
   const playerSessionStore = (frame: EngagementFrame): PlayerSessionStore => ({
     select(playerId) {
       const binding = bindingFor(frame, playerId);
-      return frame.playerResumeTokens.get(binding.hostPlayerId) ?? false;
+      return playerLedger.get(binding.playerId)?.resumeToken ?? false;
     },
     update(playerId, resumeToken) {
       const binding = bindingFor(frame, playerId);
-      if (resumeToken === undefined) {
-        frame.playerResumeTokens.delete(binding.hostPlayerId);
-      } else {
-        frame.playerResumeTokens.set(binding.hostPlayerId, resumeToken);
+      const ledger = playerLedger.get(binding.playerId);
+      if (!ledger) {
+        throw new Error(
+          `${frameLabel(frame)} resolved absent session player ${JSON.stringify(binding.playerId)}`,
+        );
+      }
+      const pending = playerTransactions.get(binding.playerId);
+      if (
+        pending?.phase !== 'awaitingCommit' ||
+        pending.frame !== frame ||
+        pending.roleId !== playerId ||
+        pending.scope !== frame.playerCallScope ||
+        pending.expectedToken !== resumeToken
+      ) {
+        throw new Error(
+          `${frameLabel(frame)} player update does not acknowledge a validated host result`,
+        );
+      }
+      if (pending.signal.aborted || activeTurn?.id !== pending.turnId) {
+        playerTransactions.set(binding.playerId, {
+          phase: 'quarantined',
+          frame: pending.frame,
+          roleId: pending.roleId,
+          turnId: pending.turnId,
+          signal: pending.signal,
+          scope: pending.scope,
+          reason: 'the runtime aborted before committing a validated result',
+        });
+        throw new Error(
+          `${frameLabel(frame)} rejected a late or aborted player continuation update`,
+        );
+      }
+      try {
+        if (resumeToken === undefined) delete ledger.resumeToken;
+        else ledger.resumeToken = resumeToken;
+        // CAPTAIN-20: a result counts only after the runtime validated it and
+        // atomically published its authorized continuation transition.
+        const summary = activeTurnSummary;
+        if (
+          pending.status === 'ok' &&
+          summary &&
+          summaryIncludes(frame)
+        ) {
+          summary.counts.interruptions++;
+        }
+      } finally {
+        playerTransactions.delete(binding.playerId);
       }
     },
     snapshot() {
       const tokens: Record<string, string> = {};
       for (const [playerId, binding] of frame.playerBindings) {
-        const token = frame.playerResumeTokens.get(binding.hostPlayerId);
+        const token = playerLedger.get(binding.playerId)?.resumeToken;
         if (token !== undefined) tokens[playerId] = token;
       }
       return tokens;
     },
     restore(tokens) {
-      for (const binding of frame.playerBindings.values()) {
-        frame.playerResumeTokens.delete(binding.hostPlayerId);
+      if (
+        lifecycle !== 'restoring' ||
+        restoringPlayerSessionFrame !== frame
+      ) {
+        throw new Error(
+          `${frameLabel(frame)} player-session restore is only available during shell restoration`,
+        );
       }
+      const byPlayer = new Map<string, string | undefined>();
       for (const [playerId, token] of Object.entries(tokens)) {
         const binding = bindingFor(frame, playerId);
-        frame.playerResumeTokens.set(binding.hostPlayerId, token);
+        const previous = byPlayer.get(binding.playerId);
+        if (previous !== undefined && previous !== token) {
+          throw new Error(
+            `${frameLabel(frame)} restored conflicting tokens for shared player ${JSON.stringify(binding.playerId)}`,
+          );
+        }
+        byPlayer.set(binding.playerId, token);
+      }
+      for (const binding of frame.playerBindings.values()) {
+        if (!byPlayer.has(binding.playerId)) byPlayer.set(binding.playerId, undefined);
+      }
+      for (const [playerId, token] of byPlayer) {
+        const ledger = playerLedger.get(playerId);
+        if (!ledger) {
+          throw new Error(
+            `${frameLabel(frame)} restored absent session player ${JSON.stringify(playerId)}`,
+          );
+        }
+        if (token === undefined) delete ledger.resumeToken;
+        else ledger.resumeToken = token;
       }
     },
   });
+
+  const closePlayerCallScope = (
+    frame: EngagementFrame,
+    scope: object,
+  ): Error | undefined => {
+    if (frame.playerCallScope === scope) frame.playerCallScope = undefined;
+    const missing: string[] = [];
+    for (const [playerId, transaction] of playerTransactions) {
+      if (transaction.frame !== frame || transaction.scope !== scope) continue;
+      if (transaction.phase === 'calling') {
+        transaction.abandoned = true;
+      } else {
+        playerTransactions.set(playerId, {
+          phase: 'quarantined',
+          frame: transaction.frame,
+          roleId: transaction.roleId,
+          turnId: transaction.turnId,
+          signal: transaction.signal,
+          scope: transaction.scope,
+          reason:
+            transaction.phase === 'awaitingCommit'
+              ? 'the runtime returned without committing a validated result'
+              : transaction.reason,
+        });
+      }
+      if (!transaction.signal.aborted) missing.push(playerId);
+    }
+    return missing.length === 0
+      ? undefined
+      : new Error(
+          `${frameLabel(frame)} runtime returned without committing validated player result for ${missing.map((id) => JSON.stringify(id)).join(', ')}`,
+        );
+  };
+
+  const runFrameOperation = async <T>(
+    frame: EngagementFrame,
+    operation: () => Promise<T>,
+  ): Promise<T> => {
+    if (frame.playerCallScope !== undefined) {
+      throw new Error(`${frameLabel(frame)} runtime operations must not overlap`);
+    }
+    const scope = {};
+    frame.playerCallScope = scope;
+    let outcome:
+      | { readonly ok: true; readonly value: T }
+      | { readonly ok: false; readonly error: unknown };
+    try {
+      outcome = { ok: true, value: await operation() };
+    } catch (error) {
+      outcome = { ok: false, error };
+    }
+    const cleanupError = closePlayerCallScope(frame, scope);
+    if (!outcome.ok) throw outcome.error;
+    if (cleanupError !== undefined) throw cleanupError;
+    return outcome.value;
+  };
 
   const frameSession = (frame: EngagementFrame) => ({
       sessionId: frame.sessionId,
@@ -2144,6 +3058,15 @@ export function createPlaybookCaptainShell(
           }
         : {}),
       depth: frame.depth,
+      roleBindings: Object.fromEntries(
+        [...frame.playerBindings].map(([roleId, binding]) => [
+          roleId,
+          {
+            playerId: binding.playerId,
+            promptIdentity: promptIdentity(binding),
+          },
+        ]),
+      ),
       playerSessions: playerSessionStore(frame),
       ports: createPorts(frame),
     });
@@ -2467,8 +3390,10 @@ export function createPlaybookCaptainShell(
     // exception filed against an effect that never ran.
     await requestVisibility(frame);
     await setMode('engaged.driving', 'submit');
-    const result = await runEffect(() =>
-      frame.runtime.handleBossInput({ text, signal }),
+    const result = await runFrameOperation(frame, () =>
+      runEffect(() =>
+        frame.runtime.handleBossInput({ text, signal }),
+      ),
     );
     frame.state = result.state;
     return result;
@@ -2522,12 +3447,14 @@ export function createPlaybookCaptainShell(
     }
     let result: PlaybookRunResult;
     try {
-      result = await runEffect(() =>
-        parent.runtime.resumePlaybookCall({
-          callId: parentLink.callId,
-          result: effectiveResult,
-          signal: context.signal,
-        }),
+      result = await runFrameOperation(parent, () =>
+        runEffect(() =>
+          parent.runtime.resumePlaybookCall({
+            callId: parentLink.callId,
+            result: effectiveResult,
+            signal: context.signal,
+          }),
+        ),
       );
     } catch (error) {
       if (disposing || invocationSignal?.aborted) return;
@@ -3077,6 +4004,7 @@ export function createPlaybookCaptainShell(
     try {
       await trackTurnCall(settlement.context.emitReply(settlement.text));
     } catch (error) {
+      conversation = { kind: 'needsSeeding' };
       const normalized = normalizeErrorCompact(error) ?? {
         name: 'Error',
         message: String(error),
@@ -3183,8 +4111,11 @@ export function createPlaybookCaptainShell(
    * text, replies, handoffs, playbook ids, facts, labels, and reasons are prose
    * the Captain may need to repeat.
    */
-  const reseedDigest = (): string => {
-    for (const record of journal) {
+  const conversationDigest = (
+    records: readonly JournalRecord[],
+    render: (records: readonly JournalRecord[]) => string,
+  ): string => {
+    for (const record of records) {
       if (
         record.kind === 'action' &&
         typeof record.payload === 'object' &&
@@ -3195,12 +4126,45 @@ export function createPlaybookCaptainShell(
         if (typeof actionId === 'string') recordSuppliedIdentifier(actionId);
       }
     }
-    return renderReseedDigest(journal);
+    return render(records);
   };
 
+  const reseedDigest = (): string =>
+    conversationDigest(journal, renderReseedDigest);
+
+  const catchUpDigest = (afterJournalSeq: number): string =>
+    conversationDigest(
+      journal.filter((record) => record.seq > afterJournalSeq),
+      renderCatchUpDigest,
+    );
+
   const markControlFailure = <E>(error: E): E => {
-    if (activeTurn) activeTurn.controlFailure = true;
+    activeTurn?.controlFailures.add(error);
     return error;
+  };
+
+  const markSettingsRejection = <E>(error: E): E => markControlFailure(error);
+
+  const rememberSettingsPreflight = <E>(error: E): E => {
+    activeTurn?.settingsPreflightFailures.add(error);
+    return markSettingsRejection(error);
+  };
+
+  const markConversationCatchUp = (): void => {
+    if (conversation.kind === 'needsSeeding' || conversation.kind === 'needsCatchUp') {
+      return;
+    }
+    conversation = {
+      kind: 'needsCatchUp',
+      resume: conversation.kind === 'pinned' ? conversation.token : false,
+      afterJournalSeq: activeTurn?.captainSyncedJournalSeq ?? 0,
+    };
+  };
+
+  const markConversationUnsynchronized = (): void => {
+    if (conversation.kind !== 'needsCatchUp') {
+      conversation = { kind: 'needsSeeding' };
+    }
   };
 
   /**
@@ -3257,6 +4221,7 @@ export function createPlaybookCaptainShell(
     context: CaptainContext,
     prompt: string,
     resume: string | false,
+    attempt: { providerBoundaryEntered: boolean },
   ): Promise<{
     status: string;
     finalText?: string;
@@ -3265,11 +4230,15 @@ export function createPlaybookCaptainShell(
   }> => {
     const queued = captainQueue.add(async () => {
       context.signal.throwIfAborted();
-      const result = await context.callCaptain(prompt, {
-        visibility: 'hidden',
-        resume,
-        ...controlCallToolOptions(captainAdapter),
-      });
+      attempt.providerBoundaryEntered = true;
+      const result = await classifySettingsCall(() =>
+        context.callCaptain(prompt, {
+          visibility: 'hidden',
+          resume,
+          ...controlCallToolOptions(captainAdapter),
+          settings: callSettings(captainAgent!),
+        }),
+      );
       context.signal.throwIfAborted();
       return result;
     });
@@ -3290,8 +4259,17 @@ export function createPlaybookCaptainShell(
     context: CaptainContext,
     compose: (options: { reseedDigest?: string }) => string,
   ): Promise<DurableCallOutcome> => {
-    const resume = conversation.kind === 'pinned' ? conversation.token : false;
+    const startingConversation = conversation;
+    const resume =
+      startingConversation.kind === 'pinned'
+        ? startingConversation.token
+        : startingConversation.kind === 'needsCatchUp'
+          ? startingConversation.resume
+          : false;
     const seedFirstCall = conversation.kind === 'needsSeeding';
+    const catchUpFirstCall = conversation.kind === 'needsCatchUp';
+    const representedJournalSeq = journalSeq;
+    const firstAttempt = { providerBoundaryEntered: false };
     let result:
       | { status: string; finalText?: string; resumeToken?: string; error?: string }
       | undefined;
@@ -3300,14 +4278,42 @@ export function createPlaybookCaptainShell(
       result = await rawDurableCall(
         context,
         compose(
-          seedFirstCall ? { reseedDigest: reseedDigest() } : {},
+          seedFirstCall
+            ? { reseedDigest: reseedDigest() }
+            : startingConversation.kind === 'needsCatchUp'
+              ? {
+                  reseedDigest: catchUpDigest(
+                    startingConversation.afterJournalSeq,
+                  ),
+                }
+              : {},
         ),
         resume,
+        firstAttempt,
       );
     } catch (error) {
       if (context.signal.aborted) {
-        conversation = { kind: 'needsSeeding' };
-        throw error;
+        if (firstAttempt.providerBoundaryEntered) {
+          conversation = { kind: 'needsSeeding' };
+        } else {
+          markConversationUnsynchronized();
+        }
+        throw context.signal.reason ?? error;
+      }
+      if (error instanceof AgentSettingsPreflightError) {
+        if (
+          conversation.kind !== 'needsCatchUp' &&
+          conversation.kind !== 'needsSeeding'
+        ) {
+          conversation = {
+            kind: 'needsCatchUp',
+            resume:
+              conversation.kind === 'pinned' ? conversation.token : false,
+            afterJournalSeq:
+              activeTurn?.captainSyncedJournalSeq ?? 0,
+          };
+        }
+        throw rememberSettingsPreflight(error.rejection);
       }
       failure = error;
     }
@@ -3318,11 +4324,14 @@ export function createPlaybookCaptainShell(
       result.resumeToken === undefined;
     if (!unsynchronized) {
       conversation = { kind: 'pinned', token: result!.resumeToken! };
+      if (activeTurn) {
+        activeTurn.captainSyncedJournalSeq = representedJournalSeq;
+      }
       return {
         ...(result!.finalText !== undefined
           ? { finalText: result!.finalText }
           : {}),
-        correctiveSpent: seedFirstCall,
+        correctiveSpent: seedFirstCall || catchUpFirstCall,
       };
     }
     // Only the model-side conversation is replaced: the stack, player
@@ -3334,16 +4343,21 @@ export function createPlaybookCaptainShell(
     let reissued:
       | { status: string; finalText?: string; resumeToken?: string; error?: string }
       | undefined;
+    const reissueAttempt = { providerBoundaryEntered: false };
     try {
       reissued = await rawDurableCall(
         context,
         compose({ reseedDigest: recap }),
         false,
+        reissueAttempt,
       );
     } catch (error) {
       if (context.signal.aborted) {
         conversation = { kind: 'needsSeeding' };
-        throw error;
+        throw context.signal.reason ?? error;
+      }
+      if (error instanceof AgentSettingsPreflightError) {
+        throw rememberSettingsPreflight(error.rejection);
       }
       throw markControlFailure(new CaptainContinuityError(error));
     }
@@ -3356,6 +4370,7 @@ export function createPlaybookCaptainShell(
       );
     }
     conversation = { kind: 'pinned', token: reissued.resumeToken };
+    if (activeTurn) activeTurn.captainSyncedJournalSeq = journalSeq;
     return {
       ...(reissued.finalText !== undefined
         ? { finalText: reissued.finalText }
@@ -3762,7 +4777,7 @@ export function createPlaybookCaptainShell(
         message: String(error),
       };
       if (aborted) {
-        conversation = { kind: 'needsSeeding' };
+        markConversationUnsynchronized();
         if (turn?.outcomePending) {
           turn.settlementFacts.push(
             `The ${selection.action} action was aborted before its outcome could be confirmed; it was not repeated automatically.`,
@@ -4162,7 +5177,11 @@ export function createPlaybookCaptainShell(
     // receipt rather than acting twice.
     const key = `turn-${turn.id}-apply-${actionId}`;
     const outcome = await withCounting(leaf, async () =>
-      runEffect(() => leaf.runtime.apply!({ actionId, key, signal })),
+      runFrameOperation(leaf, () =>
+        runEffect(() =>
+          leaf.runtime.apply!({ actionId, key, signal }),
+        ),
+      ),
     );
     if (outcome.error !== undefined) throw outcome.error;
     const receipt = outcome.result!;
@@ -4326,7 +5345,11 @@ export function createPlaybookCaptainShell(
     // The durable Captain conversation did not receive the shell-authored
     // fallback. Force its next call through the journal so it cannot interpret
     // the Boss's follow-up without the reply the Boss was given this turn.
-    conversation = { kind: 'needsSeeding' };
+    if (activeTurn?.settingsPreflightFailures.has(error)) {
+      markConversationCatchUp();
+    } else {
+      markConversationUnsynchronized();
+    }
     // A rejected presentation may already have emitted bytes. It is therefore
     // final for this turn even though the Promise did not prove it was shown.
     if (activeTurn?.presentationAttempted === true) return;
@@ -4357,163 +5380,92 @@ export function createPlaybookCaptainShell(
     playbookId: INTERNAL_CAPTAIN_ID,
     rootSessionId: id,
     depth: 0,
+    roleBindings: {},
     ports: captainPorts(),
   });
 
-  const tokenRecord = (
-    tokens: ReadonlyMap<string, string>,
-  ): Readonly<Record<string, string>> => Object.fromEntries(tokens);
+  const playerLedgerRecord = (): Readonly<
+    Record<string, PlayerLedgerSnapshotEntry>
+  > =>
+    Object.fromEntries(
+      [...playerLedger].map(([playerId, entry]) => [
+        playerId,
+        {
+          adapter: entry.adapter,
+          ...(entry.instruction === undefined
+            ? {}
+            : { instruction: entry.instruction }),
+          ...(entry.permissions === undefined
+            ? {}
+            : { permissions: entry.permissions }),
+          ...(entry.resumeToken === undefined
+            ? {}
+            : { resumeToken: entry.resumeToken }),
+        },
+      ]),
+    );
 
   const assertSnapshotMatchesEnablements = (
     snapshot: PlaybookCaptainShellSnapshot,
     enabled: ReadonlyMap<string, Enablement>,
   ): void => {
-    const captain = snapshot.captain.runtime;
     if (
-      captain.schemaVersion !== 3 ||
-      captain.state.status !== 'active' ||
-      !captain.state.quiescent ||
-      !captain.state.tags.includes('playbook.parked') ||
-      captain.suspendedCall !== undefined ||
-      Object.keys(captain.roleResumeTokens).length > 0 ||
-      captain.pendingBossQuestions.length > 0
+      captainAgent === undefined ||
+      !isDeepStrictEqual(snapshot.captain.agent, fixedAgent(captainAgent))
     ) {
       throw new TypeError(
-        'Captain shell snapshot Captain runtime must be active, quiescent, playerless, and unsuspended',
+        'Captain shell snapshot Captain agent is incompatible with current config',
       );
     }
-    if (captain.sequences.turn !== snapshot.sequences.turn) {
+    const configuredPlayerIds = [...playerAgents.keys()].sort();
+    const savedPlayerIds = Object.keys(snapshot.playerSessions).sort();
+    if (!isDeepStrictEqual(savedPlayerIds, configuredPlayerIds)) {
       throw new TypeError(
-        'Captain shell snapshot Captain and shell turn sequences must match',
+        'Captain shell snapshot player ledger does not match current referenced players',
       );
     }
-    const emptyHistory =
-      snapshot.sequences.turn === 0 && snapshot.journal.length === 0;
-    if (
-      (snapshot.captain.conversation.kind === 'unopened') !== emptyHistory
-    ) {
-      throw new TypeError(
-        'Captain shell snapshot unopened conversation must exactly match an empty session history',
-      );
-    }
-    if (snapshot.mode === 'chat') return;
-
-    const activePlaybooks = new Set<string>();
-    const activeSessionIds = new Set<string>([snapshot.captain.sessionId]);
-    const issuedIds = new Set(snapshot.issuedSessionIds);
-    const allowedHostPlayerIds = new Set<string>();
-    for (const enablement of enabled.values()) {
-      for (const role of enablement.entry.requiredRoleIds) {
-        allowedHostPlayerIds.add(enablement.hostPlayerId(role));
-      }
-    }
-    for (const playerId of Object.keys(snapshot.rootPlayerResumeTokens)) {
-      if (!allowedHostPlayerIds.has(playerId)) {
+    for (const playerId of configuredPlayerIds) {
+      const saved = snapshot.playerSessions[playerId]!;
+      const configured = playerAgents.get(playerId)!;
+      const savedFixed = {
+        adapter: saved.adapter,
+        ...(saved.instruction === undefined
+          ? {}
+          : { instruction: saved.instruction }),
+        ...(saved.permissions === undefined
+          ? {}
+          : { permissions: saved.permissions }),
+      };
+      if (!isDeepStrictEqual(savedFixed, fixedAgent(configured))) {
         throw new TypeError(
-          `Captain shell snapshot root token names unknown host player ${JSON.stringify(playerId)}`,
+          `Captain shell snapshot player ${JSON.stringify(playerId)} is incompatible with current config`,
         );
       }
     }
-
-    const bindingMaps: Map<string, string>[] = [];
-    const rootSessionId = snapshot.frames[0]!.sessionId;
-    for (const [index, frame] of snapshot.frames.entries()) {
+    if (snapshot.mode === 'chat') return;
+    for (const frame of snapshot.frames) {
       const enablement = enabled.get(frame.playbookId);
       if (!enablement) {
         throw new TypeError(
           `Captain shell snapshot frame names disabled playbook ${JSON.stringify(frame.playbookId)}`,
         );
       }
-      if (activePlaybooks.has(frame.playbookId)) {
-        throw new TypeError(
-          'Captain shell snapshot engagement path must not contain a playbook cycle',
-        );
-      }
-      activePlaybooks.add(frame.playbookId);
-      if (activeSessionIds.has(frame.sessionId)) {
-        throw new TypeError(
-          'Captain shell snapshot frame session ids must be unique',
-        );
-      }
-      activeSessionIds.add(frame.sessionId);
-      if (!issuedIds.has(frame.sessionId)) {
-        throw new TypeError(
-          'Captain shell snapshot frame session id was not historically issued',
-        );
-      }
-      if (
-        frame.depth !== index ||
-        frame.rootSessionId !== rootSessionId ||
-        frame.runtime.state.status !== 'active' ||
-        !frame.runtime.state.quiescent
-      ) {
-        throw new TypeError(
-          'Captain shell snapshot frame depth, root, or parked runtime state is inconsistent',
-        );
-      }
-      if (index === 0) {
-        if (
-          frame.sessionId !== frame.rootSessionId ||
-          frame.parentSessionId !== undefined ||
-          frame.parentCallId !== undefined
-        ) {
-          throw new TypeError(
-            'Captain shell snapshot root frame has child-only identity fields',
-          );
-        }
-      } else {
-        const parent = snapshot.frames[index - 1]!;
-        if (
-          frame.parentSessionId !== parent.sessionId ||
-          frame.parentCallId === undefined
-        ) {
-          throw new TypeError(
-            'Captain shell snapshot child frame does not identify its immediate parent',
-          );
-        }
-        const pending = parent.runtime.suspendedCall;
-        if (
-          !pending ||
-          pending.callId !== frame.parentCallId ||
-          pending.playbookId !== frame.playbookId ||
-          pending.childSessionId !== frame.sessionId
-        ) {
-          throw new TypeError(
-            'Captain shell snapshot parent suspended call does not match its child edge',
-          );
-        }
-      }
-
-      const roleBindings = new Map<string, string>();
-      for (const role of enablement.entry.requiredRoleIds) {
-        let inherited: string | undefined;
-        for (let ancestor = index - 1; ancestor >= 0; ancestor--) {
-          inherited = bindingMaps[ancestor]?.get(role);
-          if (inherited !== undefined) break;
-        }
-        roleBindings.set(role, inherited ?? enablement.hostPlayerId(role));
-      }
-      bindingMaps.push(roleBindings);
-      const projectedTokens = Object.fromEntries(
-        [...roleBindings].flatMap(([role, hostPlayerId]) => {
-          const token = snapshot.rootPlayerResumeTokens[hostPlayerId];
-          return token === undefined ? [] : [[role, token] as const];
-        }),
+      const configuredBindings = Object.fromEntries(
+        [...enablement.roleBindings].map(([role, binding]) => [
+          role,
+          binding.playerId,
+        ]),
       );
-      if (!isDeepStrictEqual(projectedTokens, frame.runtime.roleResumeTokens)) {
+      if (!isDeepStrictEqual(frame.options, enablement.options)) {
         throw new TypeError(
-          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} player tokens do not match root-owned continuation`,
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} options changed`,
         );
       }
-    }
-    const leafRuntime = snapshot.frames.at(-1)!.runtime;
-    if (
-      leafRuntime.suspendedCall !== undefined ||
-      !leafRuntime.state.tags.includes('playbook.parked')
-    ) {
-      throw new TypeError(
-        'Captain shell snapshot leaf runtime must be parked without a dangling suspended child call',
-      );
+      if (!isDeepStrictEqual(frame.roleBindings, configuredBindings)) {
+        throw new TypeError(
+          `Captain shell snapshot frame ${JSON.stringify(frame.playbookId)} role bindings changed`,
+        );
+      }
     }
   };
 
@@ -4534,6 +5486,7 @@ export function createPlaybookCaptainShell(
       runFailureFacts !== undefined ||
       servingCall !== undefined ||
       decisionCall !== undefined ||
+      playerTransactions.size !== 0 ||
       captainQueue.pending !== 0 ||
       captainQueue.size !== 0 ||
       (mode !== 'chat' && mode !== 'engaged.parked')
@@ -4579,7 +5532,12 @@ export function createPlaybookCaptainShell(
   };
 
   const exportShellSnapshot = (): PlaybookCaptainShellSnapshot | undefined => {
-    if (!safeCapturePoint() || !captainRuntime || !captainSessionId) {
+    if (
+      !safeCapturePoint() ||
+      !captainRuntime ||
+      !captainSessionId ||
+      !captainAgent
+    ) {
       return undefined;
     }
     try {
@@ -4617,16 +5575,25 @@ export function createPlaybookCaptainShell(
                 parentCallId: frame.parent.callId,
               }
             : {}),
+          options: frame.enablement.options,
+          roleBindings: Object.fromEntries(
+            [...frame.playerBindings].map(([role, binding]) => [
+              role,
+              binding.playerId,
+            ]),
+          ),
           runtime,
         });
       }
       const common = {
-        schemaVersion: 1 as const,
+        schemaVersion: 3 as const,
         captain: {
           sessionId: captainSessionId,
           runtime: captainSnapshot,
+          agent: fixedAgent(captainAgent),
           conversation,
         },
+        playerSessions: playerLedgerRecord(),
         issuedSessionIds: [...issuedSessionIds],
         sequences: { turn: turnSequence, journal: journalSeq },
         journal,
@@ -4642,9 +5609,6 @@ export function createPlaybookCaptainShell(
               ...common,
               mode: 'engaged.parked',
               frames: frameSnapshots,
-              rootPlayerResumeTokens: tokenRecord(
-                rootFrame()!.playerResumeTokens,
-              ),
               ...(pendingBossQuestions === undefined
                 ? {}
                 : { pendingBossQuestions: pendingBossQuestions as JsonValue }),
@@ -4716,7 +5680,11 @@ export function createPlaybookCaptainShell(
     byCommand = new Map();
     byId = new Map();
     enablementById = new Map();
-    players = [];
+    captainAgent = undefined;
+    captainAdapter = undefined;
+    playerAgents = new Map();
+    playerLedger.clear();
+    playerTransactions.clear();
     session = undefined;
     sessionEmissionsOpen = false;
     closedGateAttempted = false;
@@ -4753,22 +5721,31 @@ export function createPlaybookCaptainShell(
     lifecycle = 'restoring';
     try {
       const snapshot = assertPlaybookCaptainShellSnapshot(untrusted);
-      const built = await buildEnablements(
-        options,
-        initSession.players,
-        loadModule,
-      );
-      for (const enablement of built.enablementById.values()) {
-        enablement.entry.validateOptions(enablement.optionInput);
-      }
+      const built = await buildEnablements(options, loadModule);
+      captainAgent = built.captainAgent;
+      captainAdapter = captainAgent.adapter;
+      playerAgents = built.playerAgents;
       assertSnapshotMatchesEnablements(snapshot, built.enablementById);
 
       installSession(initSession, false);
-      players = initSession.players;
       entries = built.entries;
       byCommand = built.byCommand;
       byId = built.byId;
       enablementById = built.enablementById;
+      for (const [playerId, saved] of Object.entries(snapshot.playerSessions)) {
+        playerLedger.set(playerId, {
+          adapter: saved.adapter,
+          ...(saved.instruction === undefined
+            ? {}
+            : { instruction: saved.instruction }),
+          ...(saved.permissions === undefined
+            ? {}
+            : { permissions: livePermissions(saved.permissions) }),
+          ...(saved.resumeToken === undefined
+            ? {}
+            : { resumeToken: saved.resumeToken }),
+        });
+      }
 
       captainRuntime = createCaptainRuntime({
         enabledPlaybooks: enabledCatalog(),
@@ -4779,15 +5756,11 @@ export function createPlaybookCaptainShell(
       }
 
       if (snapshot.mode === 'engaged.parked') {
-        const rootTokens = new Map(
-          Object.entries(snapshot.rootPlayerResumeTokens),
-        );
         for (const [index, frameSnapshot] of snapshot.frames.entries()) {
           const parentFrame = frames.at(-1);
           const frame = makeRestoredFrame(
             enablementById.get(frameSnapshot.playbookId)!,
             frameSnapshot,
-            rootTokens,
             index === 0
               ? undefined
               : {
@@ -4811,10 +5784,15 @@ export function createPlaybookCaptainShell(
       );
       if (snapshot.mode === 'engaged.parked') {
         for (const [index, frame] of frames.entries()) {
-          await frame.runtime.restore!(
-            frameSession(frame),
-            snapshot.frames[index]!.runtime,
-          );
+          restoringPlayerSessionFrame = frame;
+          try {
+            await frame.runtime.restore!(
+              frameSession(frame),
+              snapshot.frames[index]!.runtime,
+            );
+          } finally {
+            restoringPlayerSessionFrame = undefined;
+          }
         }
       }
       if (closedGateAttempted) {
@@ -4836,13 +5814,10 @@ export function createPlaybookCaptainShell(
           );
         }
         if (
-          !isDeepStrictEqual(
-            tokenRecord(rootFrame()!.playerResumeTokens),
-            snapshot.rootPlayerResumeTokens,
-          )
+          !isDeepStrictEqual(playerLedgerRecord(), snapshot.playerSessions)
         ) {
           throw new Error(
-            'restored root-owned player continuation changed during restore',
+            'restored Captain-session player continuation changed during restore',
           );
         }
       }
@@ -4891,14 +5866,16 @@ export function createPlaybookCaptainShell(
       lifecycle = 'initializing';
       try {
         installSession(initSession, true);
-        players = initSession.players;
-        const built = await buildEnablements(options, players, loadModule);
+        const built = await buildEnablements(options, loadModule);
         entries = built.entries;
         byCommand = built.byCommand;
         byId = built.byId;
         enablementById = built.enablementById;
-        for (const enablement of enablementById.values()) {
-          enablement.entry.validateOptions(enablement.optionInput);
+        captainAgent = built.captainAgent;
+        captainAdapter = captainAgent.adapter;
+        playerAgents = built.playerAgents;
+        for (const [playerId, agent] of playerAgents) {
+          playerLedger.set(playerId, fixedAgent(agent));
         }
         await setMode('chat', 'init');
         // CAPTAIN-16: the session Captain exists from `init`, outside the
@@ -4946,6 +5923,7 @@ export function createPlaybookCaptainShell(
       const parsed = resolveCommandTurn(turn.prompt);
       activeTurn = {
         id: ++turnSequence,
+        captainSyncedJournalSeq: journalSeq,
         bossText: turn.prompt,
         authoritativeText: parsed?.authoritativeText ?? turn.prompt,
         ...(parsed ? { resolution: parsed.resolution } : {}),
@@ -4953,6 +5931,8 @@ export function createPlaybookCaptainShell(
         presentationAttempted: false,
         settlementFacts: [],
         effectThrows: new Set<unknown>(),
+        controlFailures: new Set<unknown>(),
+        settingsPreflightFailures: new Set<unknown>(),
         suppliedIdentifiers: new Set<string>(),
         outcomeRecorded: false,
       };
@@ -4973,12 +5953,15 @@ export function createPlaybookCaptainShell(
               new Error('the session Captain turn failed at its boundary'),
           );
         } else if (result.outcome === 'aborted') {
-          conversation = { kind: 'needsSeeding' };
+          markConversationUnsynchronized();
           if (activeTurn && !activeTurn.outcomeRecorded) {
             activeTurn.settlementFacts.push(
               'The Boss turn was aborted before it settled; no action was repeated automatically.',
             );
             journalOutcome([...activeTurn.settlementFacts]);
+          }
+          if (context.signal.aborted) {
+            throw context.signal.reason;
           }
         } else if (
           result.outcome !== 'suspended' &&
@@ -4998,10 +5981,10 @@ export function createPlaybookCaptainShell(
         }
       } catch (error) {
         if (context.signal.aborted) {
-          conversation = { kind: 'needsSeeding' };
+          markConversationUnsynchronized();
           throw error;
         }
-        const controlFailure = activeTurn?.controlFailure === true;
+        const controlFailure = activeTurn?.controlFailures.has(error) === true;
         await settleTurnFailure(context, error);
         if (activeTurn?.presentationError !== undefined) {
           throw activeTurn.presentationError;
@@ -5011,7 +5994,7 @@ export function createPlaybookCaptainShell(
         if (!controlFailure) throw error;
       } finally {
         if (context.signal.aborted) {
-          conversation = { kind: 'needsSeeding' };
+          markConversationUnsynchronized();
           if (activeTurn && !activeTurn.outcomeRecorded) {
             activeTurn.settlementFacts.push(
               'The Boss turn was aborted before it settled; no action was repeated automatically.',
@@ -5068,6 +6051,9 @@ export function createPlaybookCaptainShell(
         failure ??= error;
       }
     }
+    // Quarantine is session-wide by design. Only terminal teardown may drop
+    // its ownership after every frame host call and the Captain are drained.
+    playerTransactions.clear();
     lifecycle = 'closed';
     if (failure !== undefined) throw failure;
   }

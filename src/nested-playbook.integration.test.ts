@@ -78,7 +78,6 @@ class LinkedParentRuntime implements PlaybookRuntime {
   private sequence = 0;
   private drainPhase = 'none';
   private disposed = false;
-  private playerResume: string | false = false;
   private finishFailureConsumed = false;
 
   constructor(
@@ -365,12 +364,15 @@ class LinkedParentRuntime implements PlaybookRuntime {
       'worker',
       prompt,
       signal,
-      { resume: this.playerResume },
+      {
+        resume:
+          this.requireSession().playerSessions?.select('worker') ?? false,
+      },
     );
     if (result.status !== 'ok') {
       throw new Error(result.error ?? `parent player ${result.status}`);
     }
-    this.playerResume = result.resumeToken ?? false;
+    this.requireSession().playerSessions?.update('worker', result.resumeToken);
   }
 
   private consumeFinishFailure(stage: 'emit' | 'drain'): boolean {
@@ -461,7 +463,9 @@ function registryEntry(
     id,
     command,
     intent: `${id} integration playbook`,
+    artifactSchema: 2,
     requiredRoleIds,
+    concurrentRoleSets: [],
     validateOptions: (options) => options,
     createRuntime,
   };
@@ -485,18 +489,51 @@ function createHarness(
   entries: readonly PlaybookCaptainRegistryEntry[],
 ): Harness {
   const modules: Record<string, unknown> = {};
-  const playbooks: Record<string, { from: string; options: object }> = {};
+  const playbooks: Record<string, unknown> = {};
+  const playerAgents: Record<string, unknown> = {};
   for (const entry of entries) {
     const from = `test://${entry.id}`;
     modules[from] = { default: entry };
-    playbooks[entry.id] = { from, options: {} };
+    const roles = Object.fromEntries(
+      entry.requiredRoleIds.map((role) => {
+        const owner = entries.find((candidate) =>
+          candidate.requiredRoleIds.includes(role),
+        )!;
+        const playerId = `${owner.id}-${role}`;
+        playerAgents[playerId] ??= {
+          adapter: 'codex',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        };
+        return [
+          role,
+          {
+            playerId,
+            model: { kind: 'provider-default' },
+            effort: { kind: 'provider-default' },
+          },
+        ];
+      }),
+    );
+    playbooks[entry.id] = { from, roles, options: {} };
   }
   let id = 0;
   // The session Captain takes its own id at `init` (CAPTAIN-16/26), before any
   // engagement, so engagement ids keep their numbering.
   let captainIdIssued = false;
   const shell = createPlaybookCaptainShell(
-    { playbooks },
+    {
+      playbooks,
+      sessionAgents: {
+        captain: {
+          adapter: 'claude',
+          model: { kind: 'provider-default' },
+          effort: { kind: 'provider-default' },
+        },
+        players: playerAgents,
+      },
+      captainAdapter: 'claude',
+    },
     {
       loadModule: async (specifier) => modules[specifier],
       createSessionId: () => {

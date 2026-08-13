@@ -54,6 +54,9 @@ The logical Captain session shall own one continuation ledger keyed by player id
 Equal player ids intentionally share that sequential conversation; distinct ids never share even when their settings are equal.
 A player id reused under a different adapter is incompatible with its established ledger entry.
 Simultaneous calls resolving to one player shall reject rather than fork or silently serialize one continuation chain.
+The resolved player id shall remain transaction-owned from host-call admission through the owning runtime's synchronous validated-result update.
+Only that exact update may atomically publish or clear the token and release the lane.
+A resolved transition that cannot be validated or committed shall quarantine the lane for the logical session rather than unlock an uncertain prior token, while a rejected provider promise with no result shall preserve the prior token and release after it settles.
 After a validated resolved call, the ledger shall replace the prior token when the result carries a non-empty token, clear it only when an `ok` result omits one, and preserve it when an `aborted` or `error` result omits one; a rejected call with no result shall likewise preserve the prior token.
 There is no time, turn-count, root-engagement-count, or model-change limit while the durable Captain session and provider continuation remain usable.
 
@@ -75,8 +78,11 @@ A missing or changed stored member shall reject before agent work, while additio
 The next Captain or player call shall use the current normalized model and effort selection for its stable id while resuming the stored provider token under the established adapter.
 Normalization shall represent each model and effort selection explicitly as either one concrete value or `provider-default`, so removing a prior selection is not confused with inheriting mutable provider-session state or inventing a provider default.
 The host shall pass both complete selections on every call rather than rely on provider state left by another role; an adapter that cannot explicitly restore its provider default on a resumed conversation shall reject that selection.
-The Captain-to-tmux-play host call surface shall therefore carry each delegated-player and durable session-Captain invocation's complete model, effort, instruction, and permissions alongside resume selection; only model and effort may differ from the stored structural projection on ordinary reopen.
+The Captain-to-tmux-play host call surface shall therefore carry each delegated-player and durable session-Captain invocation's atomic complete-settings block containing model, effort, instruction, and permissions alongside resume selection; omission of that block retains the host's legacy configured defaults, while a present block inherits no omitted member, and only model and effort may differ from the stored structural projection on ordinary reopen.
 Where an adapter cannot enforce the requested settings on that resumed conversation, the call shall fail explicitly and retain the prior token; it shall never retry fresh or silently fork the session.
+For the durable session Captain, that typed preflight rejection shall retain the selected token or never-opened `false` value plus the journal watermark already represented to it; the next supported call shall resume that selection with only the authoritative missed journal suffix.
+An exact player-call preflight rejection that reaches shell fallback shall likewise retain the prior Captain resume target and require only missed-journal catch-up, never a fresh Captain conversation.
+Other continuity failures and uncertain presentation shall continue to require a fresh full-history reseed.
 An uncertain-turn retry shall instead use the exact config and bindings recorded for that attempt so recovery cannot change work after its write-ahead boundary.
 
 ### 5. Persistence and transition

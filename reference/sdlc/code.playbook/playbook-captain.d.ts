@@ -1,7 +1,26 @@
-import type { Captain, CaptainSession } from '@sublang/cligent/tmux-play';
+import { type Captain, type CaptainSession, type TuningSelection } from '@sublang/cligent/tmux-play';
+import type { Effort, PermissionPolicy } from '@sublang/cligent';
 import type { JsonValue, PlaybookRuntime, PlaybookRuntimeSnapshot } from '@sublang/playbook/runtime';
 import { type CaptainControllerPort } from '../captain.playbook/captain.playbook.js';
 import type { PlaybookSummaryPolicy } from './code.registry.js';
+interface SessionAgent {
+    readonly adapter: string;
+    readonly model: TuningSelection;
+    readonly effort: TuningSelection<Effort>;
+    readonly instruction?: string;
+    readonly permissions?: PermissionPolicy;
+}
+interface PlayerLedgerEntry {
+    readonly adapter: string;
+    readonly instruction?: string;
+    readonly permissions?: PermissionPolicy;
+    resumeToken?: string;
+}
+type DeepReadonly<T> = T extends (...args: never[]) => unknown ? T : T extends readonly (infer Element)[] ? readonly DeepReadonly<Element>[] : T extends object ? {
+    readonly [Key in keyof T]: DeepReadonly<T[Key]>;
+} : T;
+type SnapshotAgentEnvelope = DeepReadonly<Omit<SessionAgent, 'model' | 'effort'>>;
+type PlayerLedgerSnapshotEntry = DeepReadonly<PlayerLedgerEntry>;
 export interface PlaybookCaptainDeps {
     loadModule?: (specifier: string) => Promise<unknown>;
     createSessionId?: () => string;
@@ -31,6 +50,10 @@ type PlaybookCaptainConversationSnapshot = {
     readonly kind: 'pinned';
     readonly token: string;
 } | {
+    readonly kind: 'needsCatchUp';
+    readonly resume: string | false;
+    readonly afterJournalSeq: number;
+} | {
     readonly kind: 'needsSeeding';
 };
 interface PlaybookCaptainJournalRecord {
@@ -46,15 +69,19 @@ interface PlaybookCaptainFrameSnapshot {
     readonly depth: number;
     readonly parentSessionId?: string;
     readonly parentCallId?: string;
-    readonly runtime: PlaybookRuntimeSnapshot;
+    readonly options: JsonValue;
+    readonly roleBindings: Readonly<Record<string, string>>;
+    readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
 }
 interface PlaybookCaptainShellSnapshotFields {
-    readonly schemaVersion: 1;
+    readonly schemaVersion: 3;
     readonly captain: {
         readonly sessionId: string;
-        readonly runtime: PlaybookRuntimeSnapshot;
+        readonly runtime: DeepReadonly<PlaybookRuntimeSnapshot>;
+        readonly agent: SnapshotAgentEnvelope;
         readonly conversation: PlaybookCaptainConversationSnapshot;
     };
+    readonly playerSessions: Readonly<Record<string, PlayerLedgerSnapshotEntry>>;
     /** Every Captain and engagement UUID issued during this logical session. */
     readonly issuedSessionIds: readonly string[];
     readonly sequences: {
@@ -69,28 +96,28 @@ interface PlaybookCaptainShellSnapshotFields {
  * Complete JSON-safe durable state for one Captain shell between Boss turns.
  * The discriminated mode keeps chat snapshots free of stale engagement data.
  */
-export type PlaybookCaptainShellSnapshot = PlaybookCaptainShellSnapshotFields & ({
+type PlaybookCaptainShellSnapshotValue = PlaybookCaptainShellSnapshotFields & ({
     readonly mode: 'chat';
     readonly frames?: never;
-    readonly rootPlayerResumeTokens?: never;
     readonly pendingBossQuestions?: never;
     readonly lastError?: never;
 } | {
     readonly mode: 'engaged.parked';
     /** Root-to-leaf engagement order. */
     readonly frames: readonly PlaybookCaptainFrameSnapshot[];
-    /** Root-owned continuation, keyed by effective host-player id. */
-    readonly rootPlayerResumeTokens: Readonly<Record<string, string>>;
     readonly pendingBossQuestions?: JsonValue;
     readonly lastError?: {
         readonly name: string;
         readonly message: string;
     };
 });
+export type PlaybookCaptainShellSnapshot = DeepReadonly<PlaybookCaptainShellSnapshotValue>;
 /** tmux and headless front ends share this one durable Captain shell API. */
 export interface PlaybookCaptainShell extends Captain {
     exportSnapshot(): PlaybookCaptainShellSnapshot | undefined;
     restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>;
 }
+/** Validate, detach, and freeze one untrusted shell snapshot. */
+export declare function assertPlaybookCaptainShellSnapshot(value: unknown): PlaybookCaptainShellSnapshot;
 export declare function createPlaybookCaptainShell(options: unknown, deps?: PlaybookCaptainDeps): PlaybookCaptainShell;
 export default createPlaybookCaptainShell;

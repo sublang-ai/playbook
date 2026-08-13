@@ -468,7 +468,9 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       overlayPaths: [overlayPath],
       prepareRegistryModule: async ({ id, from }) => {
         events.push(`prepare:${id}:${from}`);
-        return `${from}?prepared`;
+        return from.startsWith('file:')
+          ? `${from.replace(/\.js$/, '.prepared.js')}`
+          : `${from}?prepared`;
       },
       loadModule: async (specifier) => {
         events.push(`load:${specifier}`);
@@ -488,7 +490,70 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     const expectedCode = pathToFileURL(
       join(dirname(configPath), '..', 'registries', 'code.js'),
     ).href;
-    expect(plan.catalog.code.from).toBe(`${expectedCode}?prepared`);
+    expect(plan.catalog.code.from).toBe(
+      expectedCode.replace(/\.js$/, '.prepared.js'),
+    );
+  });
+
+  it.each([
+    ['whitespace', ' mod://code', /canonical trimmed module specifier/],
+    ['relative path', '../rewired.js', /canonical module specifier/],
+    ['absolute path', '/tmp/rewired.js', /canonical module specifier/],
+  ])('rejects a noncanonical prepared %s before import', async (_case, prepared, expected) => {
+    const loadModule = vi.fn();
+    await expect(
+      launchConfig.normalizeLaunchPlan(oneRoleConfig(), {
+        prepareRegistryModule: async () => prepared,
+        loadModule,
+      }),
+    ).rejects.toThrow(expected);
+    expect(loadModule).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['playbook id', { ...oneRoleConfig(), playbooks: { ' code': oneRoleConfig().playbooks.code } }],
+    [
+      'configured module',
+      {
+        ...oneRoleConfig(),
+        playbooks: {
+          code: { ...oneRoleConfig().playbooks.code, from: ' mod://code' },
+        },
+      },
+    ],
+    [
+      'command override',
+      {
+        ...oneRoleConfig(),
+        playbooks: {
+          code: { ...oneRoleConfig().playbooks.code, command: ' code' },
+        },
+      },
+    ],
+  ])('rejects a noncanonical %s before preparation', async (_case, config) => {
+    const prepareRegistryModule = vi.fn();
+    const loadModule = vi.fn();
+    await expect(
+      launchConfig.normalizeLaunchPlan(config, {
+        prepareRegistryModule,
+        loadModule,
+      }),
+    ).rejects.toThrow(/canonical trimmed/);
+    expect(prepareRegistryModule).not.toHaveBeenCalled();
+    expect(loadModule).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['manifest id', { id: ' code' }],
+    ['manifest command', { command: ' code' }],
+  ])('rejects a noncanonical %s immediately after import', async (_case, mutation) => {
+    await expect(
+      launchConfig.normalizeLaunchPlan(oneRoleConfig(), {
+        loadModule: async () => ({
+          default: { ...entry('code', ['coder']), ...mutation },
+        }),
+      }),
+    ).rejects.toThrow(/canonical trimmed/);
   });
 
   it('normalizes legacy player effort only in the detached overlay plan', async () => {
@@ -722,6 +787,106 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     await expect(access(`${configPath}.bak`)).rejects.toThrow();
   });
 
+  it('merges selected overlay members without traversing poisoned additions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-selected-overlay-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    const overlayPath = join(root, 'selected.yaml');
+    await writeFile(
+      configPath,
+      [
+        'captain: claude',
+        'players:',
+        '  dev.coder: codex',
+        '  added.bad: { adapter: missing }',
+        'playbooks:',
+        '  code: { from: mod://code, roles: { coder: dev.coder } }',
+        '  added: { from: mod://added, roles: { coder: added.bad } }',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      overlayPath,
+      [
+        'players:',
+        '  dev.coder: { adapter: codex, model: current-model }',
+        '  added.bad: { permissions: { mode: impossible } }',
+        'playbooks:',
+        '  code: { roles: { coder: dev.coder }, option: current }',
+        '  added: { players: { retired: true } }',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const events: string[] = [];
+    const plan = await launchConfig.loadLaunchPlan({
+      userConfigPath: configPath,
+      overlayPaths: [overlayPath],
+      selectedMembers: {
+        playbookIds: ['code'],
+        playerIds: ['dev.coder'],
+      },
+      prepareRegistryModule: async ({ id, from }) => {
+        events.push(`prepare:${id}`);
+        return from;
+      },
+      loadModule: async (specifier: string) => {
+        events.push(`load:${specifier}`);
+        return { default: entry('code', ['coder']) };
+      },
+    });
+
+    expect(events).toEqual(['prepare:code', 'load:mod://code']);
+    expect(plan.players).toMatchObject([
+      {
+        id: 'dev.coder',
+        agent: { model: { kind: 'value', value: 'current-model' } },
+      },
+    ]);
+    expect(plan.catalog.code.options).toEqual({ option: 'current' });
+    expect(plan.catalog).not.toHaveProperty('added');
+  });
+
+  it('admits a selected member first supplied by a later overlay', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'playbook-selected-late-overlay-'));
+    tempDirs.push(root);
+    const configPath = join(root, 'playbook.config.yaml');
+    const overlayPath = join(root, 'selected.yaml');
+    await writeFile(
+      configPath,
+      ['captain: claude', 'players: {}', 'playbooks: {}', ''].join('\n'),
+      'utf8',
+    );
+    await writeFile(
+      overlayPath,
+      [
+        'players: { dev.coder: codex }',
+        'playbooks:',
+        '  code: { from: mod://code, roles: { coder: dev.coder } }',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    const plan = await launchConfig.loadLaunchPlan({
+      userConfigPath: configPath,
+      overlayPaths: [overlayPath],
+      selectedMembers: {
+        playbookIds: ['code'],
+        playerIds: ['dev.coder'],
+      },
+      loadModule: moduleLoader({
+        'mod://code': entry('code', ['coder']),
+      }),
+    });
+
+    expect(Object.keys(plan.catalog)).toEqual(['code']);
+    expect(plan.players.map((player: { id: string }) => player.id)).toEqual([
+      'dev.coder',
+    ]);
+  });
+
   it('rejects a missing selected member before preparation or import', async () => {
     const prepareRegistryModule = vi.fn();
     const loadModule = vi.fn();
@@ -788,9 +953,14 @@ describe('shared launch-config plan (PBCLI-47)', () => {
       { ...oneRoleConfig(), layoutt: {} },
       { ...oneRoleConfig(), layout: 'wide' },
       { ...oneRoleConfig(), captain: { adapter: 'missing' } },
+      { ...oneRoleConfig(), captain: { adapter: 'claude', model: '' } },
       {
         ...oneRoleConfig(),
         players: { 'dev.coder': { adapter: 'codex', extra: true } },
+      },
+      {
+        ...oneRoleConfig(),
+        players: { 'dev.coder': { adapter: 'codex', model: '' } },
       },
       {
         ...oneRoleConfig(),

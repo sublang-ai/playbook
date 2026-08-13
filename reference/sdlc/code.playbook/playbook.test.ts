@@ -514,7 +514,7 @@ describe('playbook launcher — validation (PBCLI-15)', () => {
         { captain: 'claude', players: roster, playbooks: { code: { roles } } },
         ld,
       ),
-    ).rejects.toThrow(/from must be a module specifier/);
+    ).rejects.toThrow(/from must be a canonical trimmed module specifier/);
     await expect(
       composeGenericConfig(
         { captain: 'claude', players: roster, playbooks: { code: { from: 'mod://x', roles } } },
@@ -1542,6 +1542,9 @@ describe('playbook --with overlays (PBCLI-27)', () => {
       stderr: stderr as never,
       spawn: spawn.fn,
       tmuxPlayBin: '/tmp/tmux-play.js',
+      // PBCLI-39: overlay behavior is independent of host SDK availability;
+      // adapter-preflight behavior has its own injected-probe tests above.
+      probeAdapterSdk: async () => true,
     }).then((result: any) => ({
       code: result.code,
       stdout: stdout.text(),
