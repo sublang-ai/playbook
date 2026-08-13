@@ -435,6 +435,8 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'ManagedTmuxPlayAttachOptions.beforeNativeAttach',
         'PreparedManagedTmuxPlayLaunch.attach options',
         'loadTmuxPlayConfig segmented player id',
+        'loadTmuxPlayConfig empty player roster',
+        'createTmuxPlayRuntime empty player roster',
       ]);
       expect(result.ok).toBe(true);
     } finally {

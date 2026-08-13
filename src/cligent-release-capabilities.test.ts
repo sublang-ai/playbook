@@ -56,6 +56,8 @@ interface FixtureShape {
   readonly attachCallback?: string;
   readonly attachSignature?: string;
   readonly segmentedPlayerIds?: boolean;
+  readonly emptyRosterConfig?: boolean;
+  readonly emptyRosterRuntime?: boolean;
 }
 
 // A minimal stand-in for the published package: the same `exports` map entry
@@ -105,6 +107,8 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     attachSignature =
       'attach(options?: ManagedTmuxPlayAttachOptions): Promise<void>;',
     segmentedPlayerIds = true,
+    emptyRosterConfig = true,
+    emptyRosterRuntime = true,
   } = shape;
   const packageRoot = join(root, 'cligent');
   write(
@@ -140,16 +144,58 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
     `import { readFileSync } from 'node:fs';
 export async function loadTmuxPlayConfig({ configPath }) {
   const text = readFileSync(configPath, 'utf8');
+  if (/^\\s*players:\\s*\\[\\s*\\]\\s*$/m.test(text)) {
+    ${emptyRosterConfig ? '' : "throw new Error('empty player roster is unsupported');"}
+    return {
+      path: configPath,
+      config: {
+        captain: {
+          from: '@sublang/cligent/captains/fanout',
+          adapter: 'claude',
+          options: {},
+        },
+        players: [],
+        layout: { initialVisible: [], columnWeights: [1] },
+      },
+    };
+  }
   const id = /- id:\\s*([^\\s]+)/.exec(text)?.[1];
   if (!id) throw new Error('fixture config has no player id');
   ${segmentedPlayerIds ? '' : "if (id.includes('.')) throw new Error('invalid player id');"}
-  return { path: configPath, config: { players: [{ id }] } };
+  return {
+    path: configPath,
+    config: {
+      captain: {
+        from: '@sublang/cligent/captains/fanout',
+        adapter: 'claude',
+        options: {},
+      },
+      players: [{ id }],
+      layout: { initialVisible: [id], columnWeights: [1, 1] },
+    },
+  };
+}
+export async function createTmuxPlayRuntime({ captain, players }) {
+  ${emptyRosterRuntime ? '' : "if (players.length === 0) throw new Error('empty runtime roster is unsupported');"}
+  const session = {
+    signal: new AbortController().signal,
+    players,
+    async emitStatus() {},
+    async emitTelemetry() {},
+    async setVisiblePlayers(ids) {
+      if (players.length !== 0 || ids.length !== 0) {
+        throw new Error('fixture only supports empty visibility');
+      }
+    },
+  };
+  await captain.init?.(session);
+  return { async dispose() {} };
 }
 `,
   );
   write(
     join(tmuxPlay, 'index.d.ts'),
-    "export * from './contract.js';\nexport * from './launcher.js';\nexport declare function loadTmuxPlayConfig(options: { configPath: string }): Promise<{ path: string; config: { players: { id: string }[] } }>;\n",
+    "export * from './contract.js';\nexport * from './launcher.js';\nexport declare function loadTmuxPlayConfig(options: { configPath: string }): Promise<{ path: string; config: { players: { id: string }[] } }>;\nexport declare function createTmuxPlayRuntime(options: unknown): Promise<{ dispose(): Promise<void> }>;\n",
   );
   write(join(tmuxPlay, 'contract.js'), 'export {};\n');
   write(
@@ -323,6 +369,8 @@ describe('the cligent release-capability guard', () => {
       'ManagedTmuxPlayAttachOptions.beforeNativeAttach',
       'PreparedManagedTmuxPlayLaunch.attach options',
       'loadTmuxPlayConfig segmented player id',
+      'loadTmuxPlayConfig empty player roster',
+      'createTmuxPlayRuntime empty player roster',
     ]);
     expect(result.ok).toBe(true);
     expect(result.specifier).toBe('@sublang/cligent/tmux-play');
@@ -635,6 +683,16 @@ describe('the cligent release-capability guard', () => {
       { segmentedPlayerIds: false },
       'loadTmuxPlayConfig segmented player id',
     ],
+    [
+      'empty-roster config normalization',
+      { emptyRosterConfig: false },
+      'loadTmuxPlayConfig empty player roster',
+    ],
+    [
+      'empty-roster runtime initialization',
+      { emptyRosterRuntime: false },
+      'createTmuxPlayRuntime empty player roster',
+    ],
   ] as const)(
     'fails when the fixture loses %s',
     (_name, shape, expectedCapability) => {
@@ -722,6 +780,8 @@ describe('the cligent release-capability guard', () => {
         'CaptainContext.emitReply',
         'CaptainRunResult.resumeToken',
         'loadTmuxPlayConfig segmented player id',
+        'loadTmuxPlayConfig empty player roster',
+        'createTmuxPlayRuntime empty player roster',
       ]),
     );
     expect(naiveDeclarationScanIsGreen(packageRoot)).toBe(true);

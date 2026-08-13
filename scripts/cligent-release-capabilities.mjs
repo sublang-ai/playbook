@@ -471,6 +471,8 @@ export const exact: Exact = true;
 
 export const CLIGENT_RELEASE_RUNTIME_CAPABILITIES = Object.freeze([
   'loadTmuxPlayConfig segmented player id',
+  'loadTmuxPlayConfig empty player roster',
+  'createTmuxPlayRuntime empty player roster',
 ]);
 
 function formatDiagnostic(diagnostic) {
@@ -592,9 +594,10 @@ export function checkCligentReleaseCapabilities({ cligentRoot, workRoot }) {
 }
 
 function checkRuntimeCapabilities(root) {
-  const configPath = join(root, 'segmented-player.yaml');
+  const probes = [];
+  const segmentedConfigPath = join(root, 'segmented-player.yaml');
   writeFileSync(
-    configPath,
+    segmentedConfigPath,
     [
       'captain:',
       "  from: '@sublang/cligent/captains/fanout'",
@@ -606,9 +609,9 @@ function checkRuntimeCapabilities(root) {
       '',
     ].join('\n'),
   );
-  const runner = join(root, 'segmented-player.mjs');
+  const segmentedRunner = join(root, 'segmented-player.mjs');
   writeFileSync(
-    runner,
+    segmentedRunner,
     `import { loadTmuxPlayConfig } from '${CLIGENT_RELEASE_SPECIFIER}';
 
 const loaded = await loadTmuxPlayConfig({ configPath: process.argv[2] });
@@ -618,26 +621,122 @@ if (ids.length !== 1 || ids[0] !== 'dev.coder') {
 }
 `,
   );
-  const result = spawnSync(process.execPath, [runner, configPath], {
-    cwd: root,
-    encoding: 'utf8',
+  probes.push({
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[0],
+    why: 'DR-032 segmented player identities must survive the public config loader without flattening or rejection.',
+    runner: segmentedRunner,
+    args: [segmentedConfigPath],
   });
-  const id = CLIGENT_RELEASE_RUNTIME_CAPABILITIES[0];
-  if (result.error === undefined && result.status === 0) {
-    return { proven: [id], unproven: [] };
+
+  const emptyConfigPath = join(root, 'empty-player-roster.yaml');
+  writeFileSync(
+    emptyConfigPath,
+    [
+      'captain:',
+      "  from: '@sublang/cligent/captains/fanout'",
+      '  adapter: claude',
+      '  options: {}',
+      'players: []',
+      '',
+    ].join('\n'),
+  );
+  const emptyConfigRunner = join(root, 'empty-player-roster-config.mjs');
+  writeFileSync(
+    emptyConfigRunner,
+    `import { loadTmuxPlayConfig } from '${CLIGENT_RELEASE_SPECIFIER}';
+
+const loaded = await loadTmuxPlayConfig({ configPath: process.argv[2] });
+if (loaded.config.players.length !== 0) {
+  throw new Error('empty player roster was not preserved');
+}
+if (loaded.config.layout.initialVisible.length !== 0) {
+  throw new Error('empty roster gained a visible player');
+}
+if (JSON.stringify(loaded.config.layout.columnWeights) !== '[1]') {
+  throw new Error(
+    'empty roster did not resolve to the Boss-only layout: ' +
+      JSON.stringify(loaded.config.layout.columnWeights),
+  );
+}
+`,
+  );
+  probes.push({
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[1],
+    why: 'A DR-032 all-roleless catalog requires the public config loader to preserve an empty roster and resolve the Boss-only layout.',
+    runner: emptyConfigRunner,
+    args: [emptyConfigPath],
+  });
+
+  const emptyRuntimeRunner = join(root, 'empty-player-roster-runtime.mjs');
+  writeFileSync(
+    emptyRuntimeRunner,
+    `import { createTmuxPlayRuntime } from '${CLIGENT_RELEASE_SPECIFIER}';
+
+let initialized = false;
+class ProbeAdapter {
+  agent = 'release-probe';
+  async isAvailable() {
+    return true;
   }
-  return {
-    proven: [],
-    unproven: [
-      {
-        id,
-        why: 'DR-032 segmented player identities must survive the public config loader without flattening or rejection.',
-        diagnostics: [
-          result.error?.message,
-          result.stderr,
-          result.stdout,
-        ].filter((value) => typeof value === 'string' && value.trim() !== ''),
-      },
-    ],
-  };
+  async *run() {
+    throw new Error('empty-roster probe must not call a provider');
+  }
+}
+const importAdapter = async () => ProbeAdapter;
+const runtime = await createTmuxPlayRuntime({
+  captain: {
+    async init(session) {
+      if (session.players.length !== 0) {
+        throw new Error('Captain received a nonempty player manifest');
+      }
+      await session.setVisiblePlayers([]);
+      initialized = true;
+    },
+    async handleBossTurn() {
+      throw new Error('empty-roster probe must not run a Boss turn');
+    },
+  },
+  captainConfig: { adapter: 'claude' },
+  players: [],
+  adapterImports: {
+    claude: importAdapter,
+    codex: importAdapter,
+    gemini: importAdapter,
+    kimi: importAdapter,
+    opencode: importAdapter,
+  },
+});
+if (!initialized) {
+  throw new Error('Captain was not initialized');
+}
+await runtime.dispose();
+`,
+  );
+  probes.push({
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[2],
+    why: 'A DR-032 all-roleless catalog requires the public runtime core to initialize a Captain with an empty player manifest.',
+    runner: emptyRuntimeRunner,
+    args: [],
+  });
+
+  const proven = [];
+  const unproven = [];
+  for (const probe of probes) {
+    const result = spawnSync(process.execPath, [probe.runner, ...probe.args], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    if (result.error === undefined && result.status === 0) {
+      proven.push(probe.id);
+      continue;
+    }
+    unproven.push({
+      id: probe.id,
+      why: probe.why,
+      diagnostics: [result.error?.message, result.stderr, result.stdout].filter(
+        (value) => typeof value === 'string' && value.trim() !== '',
+      ),
+    });
+  }
+  return { proven, unproven };
 }
