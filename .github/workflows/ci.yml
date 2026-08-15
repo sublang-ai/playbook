@@ -97,30 +97,6 @@ jobs:
             exit 1
           fi
 
-  sketch:
-    name: views/sketch (test, build)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: views/sketch
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: views/sketch/package-lock.json
-
-      - name: Install
-        run: npm ci
-
-      - name: Test
-        run: npm test
-
-      - name: Build
-        run: npm run build
-
   licensing:
     name: SPDX headers (LIC-3, LIC-4)
     runs-on: ubuntu-latest

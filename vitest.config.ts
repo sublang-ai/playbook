@@ -39,7 +39,7 @@ export default defineConfig({
   ],
   test: {
     // Confine the suite to the reference playbooks' tests under the slc
-    // artifact directory. Subpackages (e.g., views/sketch) carry
+    // artifact directory. Subpackages carry
     // their own vitest config and dependencies (jsdom, etc.);
     // running them from here would pull deps that aren't in this
     // package's lockfile.

@@ -5,7 +5,8 @@
 
 ## Status
 
-Accepted. Supersedes [DR-002](002-in-page-xstate-visualizer.md).
+Superseded by [DR-033](033-sketch-view-retirement.md); the cutover it planned never landed.
+It had superseded [DR-002](002-in-page-xstate-visualizer.md).
 
 ## Context
 
@@ -230,8 +231,8 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
   Node-side renderer (`renderSketchToString`) and the screenshot capture
   script also retire — Sketch renders in the browser; static SVG snapshots
   are no longer load-bearing for documentation.
-- The **SKETCH spec package** ([user](../packages/sketch.md),
-  [dev](../packages/sketch.md), [test](../packages/sketch.md))
+- The **SKETCH spec package** (retired with the view by
+  [DR-033](033-sketch-view-retirement.md))
   updates correspondingly. The user-visible items (sketch-1..5) survive
   unchanged in spirit, with sketch-4's `disambiguator` mention dropped
   because XState's transition selection is now the source of truth.

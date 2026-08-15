@@ -28,7 +28,7 @@ meta.md       The spec of specs
 | [DR-000](decisions/000-spec-structure-format.md) | 000-spec-structure-format.md | Spec structure, format, and naming conventions |
 | [DR-001](decisions/001-state-machine-tooling.md) | 001-state-machine-tooling.md | XState + Stately Sketch for state machine modeling, visualization, and simulation |
 | [DR-002](decisions/002-in-page-xstate-visualizer.md) | 002-in-page-xstate-visualizer.md | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) — superseded by DR-003 |
-| [DR-003](decisions/003-sketch-controlled-shell.md) | 003-sketch-controlled-shell.md | Stately Sketch as a controlled visual shell driven by `actor.system.inspect` and a postMessage protocol |
+| [DR-003](decisions/003-sketch-controlled-shell.md) | 003-sketch-controlled-shell.md | Superseded by DR-033: Stately Sketch as a controlled shell — the cutover never landed |
 | [DR-004](decisions/004-link-code-fsm-to-playbook-runtime.md) | 004-link-code-fsm-to-playbook-runtime.md | Current CODE linker bindings: one Coder role, deterministic exact-text entry, shared single-region runtime, nested REVIEW after every CODE commit, and generic registry/shell integration |
 | [DR-005](decisions/005-boss-reply-suspension-path.md) | 005-boss-reply-suspension-path.md | Quiescent scalar or branch-local Boss-question suspension, identified `BOSS_REPLY` reentry with explicit Q+A context, abandonment cleanup, and optional backend continuation |
 | [DR-006](decisions/006-code-config-composition.md) | 006-code-config-composition.md | CODE config via `captain.options.code` (namespaced, registry-validated) and `playbook-code` as a composer that overlays CODE invariants onto an optional base tmux-play config and targets the DR-008 shell adapter; base-inheritable host fields are `theme`, `layout`, `notifications`, and the captain-judge fields (§2.4); object-launcher deferred — superseded by DR-009 |
@@ -58,13 +58,13 @@ meta.md       The spec of specs
 | [DR-030](decisions/030-shared-mapped-player-continuity.md) | 030-shared-mapped-player-continuity.md | Same-name nested-role inheritance and root-engagement continuation — superseded by DR-032 |
 | [DR-031](decisions/031-shared-captain-session-front-ends.md) | 031-shared-captain-session-front-ends.md | Interactive and headless front ends host the same compiled Captain session, config, nested stack, presentation contract, and durable continuation |
 | [DR-032](decisions/032-explicit-roles-session-players.md) | 032-explicit-roles-session-players.md | Playbook-local roles bind explicitly to Captain-session players; compatible current model and effort selections may change across durable continuation |
+| [DR-033](decisions/033-sketch-view-retirement.md) | 033-sketch-view-retirement.md | Sketch view retirement: the host app draws running machines; the runtime keeps emitting the trace they ride on |
 
 ## Intents
 
 | ID | File | Intent |
 | --- | --- | --- |
 | [IR-000](intents/000-spdx-headers.md) | 000-spdx-headers.md | Add SPDX headers to applicable files |
-| [IR-003](intents/003-sketch-controlled-shell.md) | 003-sketch-controlled-shell.md | Cutover to Sketch-as-controlled-shell: fork patches, parent-side adapter, retire DR-002 renderer |
 | [IR-004](intents/004-link-code-fsm-to-playbook-runtime.md) | 004-link-code-fsm-to-playbook-runtime.md | Compile CODE FSM into `code.playbook.ts` per `slc/link.md` and DR-004; ship the in-repo tmux-play adapter `code.tmux-play.ts` |
 | [IR-005](intents/005-code-playbook-conformance-tests.md) | 005-code-playbook-conformance-tests.md | Conformance tests pinning `code.fsm.ts` to `code.gears.md` (every CODE-N, every edge, every prompt) — replaces the dropped manual acceptance runbook |
 | [IR-006](intents/006-boss-reply-suspension-path.md) | 006-boss-reply-suspension-path.md | Implemented DR-005 end to end: `awaitBossReply` / `BOSS_REPLY` / `needsBossReply` suspension-resume path across specs, CODE gears/FSM/runtime, status/telemetry, and conformance/prompt/runtime tests |
@@ -117,4 +117,3 @@ meta.md       The spec of specs
 | [playbook-cli.md](packages/playbook-cli.md) | Interactive and headless launch, player config, durable session reopening, provisioning, persistence, and checks |
 | [playbook-runtime.md](packages/playbook-runtime.md) | Role-local linked runtime ports, execution, composition, tracing, persistence, and control |
 | [release.md](packages/release.md) | Versioning, package surfaces, release workflow, smoke, and live acceptance |
-| [sketch.md](packages/sketch.md) | XState visualizer diagram, telemetry, lifecycle, and checks |
