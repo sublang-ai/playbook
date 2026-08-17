@@ -19,7 +19,7 @@ class FixtureAdapter {
       status: 'success',
       result: `fixture:${prompt}`,
       resumeToken: 'fixture-token',
-      usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+      usage: { toolUses: 0 },
       durationMs: 1,
     });
   }

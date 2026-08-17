@@ -24,9 +24,9 @@
 # so they can inspect and work with repository metadata under the sandbox.
 
 # The Captain/Judge agent.
-# Captain routing/adjudication calls run tool-free. Claude enforces that at
-# the provider level; the codex adapter cannot enforce a tool list, so a
-# codex captain degrades to a prompt-level restriction (DR-013 A1).
+# Captain routing/adjudication calls run tool-free. Claude and Gemini enforce
+# that at the provider level; codex, kimi, and opencode cannot enforce a tool
+# list, so those captains degrade to a prompt-level restriction (DR-013 A1).
 captain:
   adapter: claude
   model: claude-opus-4-8

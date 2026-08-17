@@ -156,12 +156,12 @@ before registry import, host creation, or agent work.
 
 Every session-Captain call and adjudication call is hidden and runs
 tool-free, which is what keeps the Captain deciding and reporting
-instead of doing the work itself. Claude enforces
-that at the provider level. The Codex adapter cannot — it rejects any
-tool list — so a `captain:` on `codex` falls back to a prompt-level
-restriction
+instead of doing the work itself. Claude and Gemini enforce that at the
+provider level. The Codex, Kimi, and OpenCode adapters cannot — they
+reject any tool list — so a `captain:` using one of them falls back to a
+prompt-level restriction
 ([DR-013](../specs/decisions/013-routing-only-captain-control.md) A1).
-Codex remains a good choice for *players*, where full tools are wanted.
+Those adapters remain good choices for *players*, where full tools are wanted.
 
 Adapter readiness is intentionally light: `claude` is ready with local
 Claude Code auth or `ANTHROPIC_API_KEY`; `codex` with local Codex CLI

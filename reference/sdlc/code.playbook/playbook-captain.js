@@ -336,22 +336,31 @@ function proseRejection(prose, liveSessionIds = [], liveStateIds = [], suppliedI
     return undefined;
 }
 // DR-013 A1: adapters with no provider-enforced tool-restriction surface.
-// Cligent's Codex adapter rejects any `allowedTools` value — including the
-// empty list that expresses tool-free — because the supported Codex SDK
-// cannot enforce one, so requesting it fails every control call before the
-// model is reached. Omitting the option is the only way such an adapter can
-// run a control call at all; its isolation then rests on the authored
-// hidden-judge envelope below rather than on provider enforcement.
-const ADAPTERS_WITHOUT_TOOL_ENFORCEMENT = new Set([
-    'codex',
-]);
+// Cligent's Codex, Kimi, and OpenCode adapters reject any `allowedTools`
+// value — including the empty list that expresses tool-free — because their
+// supported provider surfaces cannot enforce one, so requesting it fails
+// every control call before the model is reached. Omitting the option is the
+// only way such an adapter can run a control call at all; its isolation then
+// rests on the authored hidden-judge envelope below rather than on provider
+// enforcement.
+const CAPTAIN_TOOL_ISOLATION_BY_ADAPTER = {
+    claude: 'provider-enforced',
+    codex: 'prompt-only',
+    gemini: 'provider-enforced',
+    kimi: 'prompt-only',
+    opencode: 'prompt-only',
+};
+function requiresPromptOnlyToolIsolation(captainAdapter) {
+    return (Object.hasOwn(CAPTAIN_TOOL_ISOLATION_BY_ADAPTER, captainAdapter) &&
+        CAPTAIN_TOOL_ISOLATION_BY_ADAPTER[captainAdapter] === 'prompt-only');
+}
 // The tool half of a control call's options. An empty allowlist means "no
 // tools available" and is distinct from omission, which grants the adapter's
 // full native tool surface — so omit only where the empty list would be
 // refused, and keep requesting enforcement whenever the adapter is unknown.
 function controlCallToolOptions(captainAdapter) {
     if (captainAdapter !== undefined &&
-        ADAPTERS_WITHOUT_TOOL_ENFORCEMENT.has(captainAdapter)) {
+        requiresPromptOnlyToolIsolation(captainAdapter)) {
         return {};
     }
     return { allowedTools: [] };

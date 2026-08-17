@@ -25,6 +25,7 @@ import {
   MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,
   runManagedInteractiveSessionChild,
   runManagedInteractiveSessionChildEntry,
+  validateManagedInteractivePayload,
 } from './bin/interactive-session.js';
 import { captainOptionsFromConfig } from './bin/run.js';
 import {
@@ -487,6 +488,24 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
 });
 
 describe('managed interactive private runner boundary (PBCLI-50)', () => {
+  it('requires explicit work-directory cleanup authority at both descriptor boundaries', async () => {
+    const fixture = await lifecycleFixture();
+    expect(() =>
+      validateManagedInteractivePayload({
+        ...fixture.payload,
+        workDirOwnedByLauncher: 'true',
+      }),
+    ).toThrow(/workDirOwnedByLauncher must be a boolean/);
+
+    const controls = await controlBoundary(fixture.payload.cwd);
+    await expect(
+      createManagedInteractiveSessionCommand(
+        { ...controls.context, workDirOwnedByLauncher: undefined },
+        fixture.payload,
+      ),
+    ).rejects.toThrow(/work-directory ownership is missing/);
+  });
+
   it('writes one private descriptor, validates its Cligent boundary, and unlinks it before imports or host work', async () => {
     const fixture = await lifecycleFixture();
     const controls = await controlBoundary(fixture.payload.cwd);
@@ -510,10 +529,31 @@ describe('managed interactive private runner boundary (PBCLI-50)', () => {
       },
       runManagedSession: async (options: any) => {
         await expect(stat(descriptor)).rejects.toMatchObject({ code: 'ENOENT' });
+        expect(options.workDirOwnedByLauncher).toBe(false);
         await expect(options.lifecycle.initializeRuntime({
           ...fixture.context,
           observers: [],
         })).rejects.toThrow('host sentinel');
+      },
+    });
+  });
+
+  it('passes launcher-owned cleanup authority unchanged to the runner', async () => {
+    const fixture = await lifecycleFixture();
+    const controls = await controlBoundary(fixture.payload.cwd);
+    await createManagedInteractiveSessionCommand(
+      { ...controls.context, workDirOwnedByLauncher: true },
+      fixture.payload,
+    );
+    const descriptor = join(
+      controls.context.workDir,
+      MANAGED_INTERACTIVE_PAYLOAD_FILE,
+    );
+
+    await runManagedInteractiveSessionChild({
+      argv: [descriptor],
+      runManagedSession: async (options: any) => {
+        expect(options.workDirOwnedByLauncher).toBe(true);
       },
     });
   });
@@ -739,6 +779,7 @@ async function lifecycleFixture(
     noProvision: false,
     executionProjection: execution,
     workDir: controls.context.workDir,
+    workDirOwnedByLauncher: false,
     readinessPath: controls.context.readinessPath,
     inputGatePath: controls.context.inputGatePath,
     inputActivePath: controls.context.inputActivePath,
@@ -767,12 +808,12 @@ async function controlBoundary(cwd: string) {
   tempDirs.push(workDir, coordinationDir);
   await chmod(workDir, 0o700);
   await chmod(coordinationDir, 0o700);
-  await writeFile(join(workDir, '.tmux-play-session'), logicalSessionId);
   return {
     context: {
       sessionId: logicalSessionId,
       cwd,
       workDir,
+      workDirOwnedByLauncher: false,
       readinessPath: join(coordinationDir, 'status.json'),
       inputGatePath: join(coordinationDir, 'input-ready'),
       inputActivePath: join(coordinationDir, 'input-active'),

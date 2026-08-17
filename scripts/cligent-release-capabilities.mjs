@@ -400,6 +400,99 @@ export function use(value: unknown): AgentCallSettingsError | undefined {
 `,
   ),
   typeCapability(
+    'launchManagedTmuxPlay signature',
+    'launch-managed-tmux-play-signature.ts',
+    'The outer interactive front end prepares a managed launch through this exact callable surface.',
+    `import {
+  launchManagedTmuxPlay,
+  type LaunchManagedTmuxPlayOptions,
+  type PreparedManagedTmuxPlayLaunch,
+} from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2)
+      ? true : false
+    : false;
+type Assert<T extends true> = T;
+type Exact = Assert<Equal<
+  typeof launchManagedTmuxPlay,
+  (options: LaunchManagedTmuxPlayOptions) => Promise<PreparedManagedTmuxPlayLaunch>
+>>;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
+    'managed-launch-context-work-dir-ownership.ts',
+    'The launcher explicitly grants or withholds recursive work-directory cleanup authority.',
+    `import type { ManagedTmuxPlayLaunchContext } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2)
+      ? true : false
+    : false;
+type Assert<T extends true> = T;
+type Required = Assert<
+  {} extends Pick<ManagedTmuxPlayLaunchContext, 'workDirOwnedByLauncher'>
+    ? false
+    : true
+>;
+type Exact = Assert<Equal<
+  ManagedTmuxPlayLaunchContext['workDirOwnedByLauncher'], boolean
+>>;
+export const required: Required = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'runManagedTmuxPlaySession signature',
+    'run-managed-tmux-play-session-signature.ts',
+    'The pane child enters Cligent session mode through this exact callable surface.',
+    `import {
+  runManagedTmuxPlaySession,
+  type ManagedTmuxPlaySessionOptions,
+} from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2)
+      ? true : false
+    : false;
+type Assert<T extends true> = T;
+type Exact = Assert<Equal<
+  typeof runManagedTmuxPlaySession,
+  (options: ManagedTmuxPlaySessionOptions) => Promise<void>
+>>;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
+    'ManagedTmuxPlaySessionOptions.workDirOwnedByLauncher',
+    'managed-session-options-work-dir-ownership.ts',
+    'The pane child passes the launcher-issued cleanup authority to the managed runner unchanged.',
+    `import type { ManagedTmuxPlaySessionOptions } from '${CLIGENT_RELEASE_SPECIFIER}';
+type Equal<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends
+  (<T>() => T extends B ? 1 : 2)
+    ? (<T>() => T extends B ? 1 : 2) extends (<T>() => T extends A ? 1 : 2)
+      ? true : false
+    : false;
+type Assert<T extends true> = T;
+type Required = Assert<
+  {} extends Pick<ManagedTmuxPlaySessionOptions, 'workDirOwnedByLauncher'>
+    ? false
+    : true
+>;
+type Exact = Assert<Equal<
+  ManagedTmuxPlaySessionOptions['workDirOwnedByLauncher'], boolean
+>>;
+export const required: Required = true;
+export const exact: Exact = true;
+`,
+  ),
+  typeCapability(
     'ManagedTmuxPlayAttachOptions.signal',
     'managed-attach-signal.ts',
     'Prepared interactive activation can be aborted before ownership transfer.',
@@ -473,6 +566,8 @@ export const CLIGENT_RELEASE_RUNTIME_CAPABILITIES = Object.freeze([
   'loadTmuxPlayConfig segmented player id',
   'loadTmuxPlayConfig empty player roster',
   'createTmuxPlayRuntime empty player roster',
+  'launchManagedTmuxPlay runtime export',
+  'runManagedTmuxPlaySession runtime export',
 ]);
 
 function formatDiagnostic(diagnostic) {
@@ -716,6 +811,46 @@ await runtime.dispose();
     id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[2],
     why: 'A DR-032 all-roleless catalog requires the public runtime core to initialize a Captain with an empty player manifest.',
     runner: emptyRuntimeRunner,
+    args: [],
+  });
+
+  const managedLaunchExportRunner = join(
+    root,
+    'managed-launch-runtime-export.mjs',
+  );
+  writeFileSync(
+    managedLaunchExportRunner,
+    `import { launchManagedTmuxPlay } from '${CLIGENT_RELEASE_SPECIFIER}';
+
+if (typeof launchManagedTmuxPlay !== 'function') {
+  throw new Error('launchManagedTmuxPlay is not a runtime function');
+}
+`,
+  );
+  probes.push({
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[3],
+    why: 'The installed public tmux-play entry point must expose the managed launch runtime value used by the outer interactive front end.',
+    runner: managedLaunchExportRunner,
+    args: [],
+  });
+
+  const managedSessionExportRunner = join(
+    root,
+    'managed-session-runtime-export.mjs',
+  );
+  writeFileSync(
+    managedSessionExportRunner,
+    `import { runManagedTmuxPlaySession } from '${CLIGENT_RELEASE_SPECIFIER}';
+
+if (typeof runManagedTmuxPlaySession !== 'function') {
+  throw new Error('runManagedTmuxPlaySession is not a runtime function');
+}
+`,
+  );
+  probes.push({
+    id: CLIGENT_RELEASE_RUNTIME_CAPABILITIES[4],
+    why: 'The installed public tmux-play entry point must expose the managed session runtime value used by the pane child.',
+    runner: managedSessionExportRunner,
     args: [],
   });
 

@@ -158,7 +158,7 @@ function expectReviewApprovalReply(reply: string): void {
 
 function expectReviewCompletionReply(reply: string): void {
   expect(reply).toMatch(
-    /\b(?:approved|passed|completed|finished|successful)\b|\bno\s+(?:unsettled|outstanding|remaining)\s+findings?\b/i,
+    /\b(?:approved|passed|completed|completion|finished|successful)\b|\bno\s+(?:unsettled|outstanding|remaining)\s+findings?\b/i,
   );
 }
 
@@ -301,6 +301,8 @@ describe.sequential('installed playbook live acceptance', () => {
         expect(continuityQuestion).not.toContain(continuityMarker);
         const launcher = spawnLauncher(scenario, firstEnvelope.sessionId);
         let selectedSession: string | undefined;
+        let selectedTarget: string | undefined;
+        let gracefulStopAttempted = false;
         try {
           selectedSession = await waitForNewSession(
             new Set(sessionsBefore),
@@ -313,6 +315,7 @@ describe.sequential('installed playbook live acceptance', () => {
           expect(selectedId).toBe(firstEnvelope.sessionId);
           expect(selectedSession).toBe(`tmux-play-${selectedId}`);
           const target = `${selectedSession}:0.0`;
+          selectedTarget = target;
           await waitForAttachedClient(
             selectedSession,
             startupTimeoutMs,
@@ -344,14 +347,35 @@ describe.sequential('installed playbook live acceptance', () => {
           expect(changedPaths(scenario)).toEqual(['acceptance-review.txt']);
           expect(gitStatus(scenario.repo)).toBe('');
           expect(ignoredUntracked(scenario.repo)).toBe('');
+          gracefulStopAttempted = true;
+          await stopManagedInteractiveSession(
+            selectedSession,
+            target,
+            launcher,
+          );
         } finally {
           commandOutput += `\ncontinued interactive:\n${launcher.output()}`;
           if (
             selectedSession !== undefined &&
             listTmuxSessions().includes(selectedSession)
           ) {
+            if (!gracefulStopAttempted && selectedTarget !== undefined) {
+              try {
+                gracefulStopAttempted = true;
+                await stopManagedInteractiveSession(
+                  selectedSession,
+                  selectedTarget,
+                  launcher,
+                );
+              } catch {
+                // Preserve the primary assertion failure and fall through to
+                // the bounded forced-cleanup path below.
+              }
+            }
             try {
-              tmuxText(['kill-session', '-t', selectedSession]);
+              if (listTmuxSessions().includes(selectedSession)) {
+                tmuxText(['kill-session', '-t', selectedSession]);
+              }
             } catch {
               // Preserve the primary assertion failure; stopping the launcher
               // below is the remaining bounded cleanup path.
@@ -369,6 +393,7 @@ describe.sequential('installed playbook live acceptance', () => {
           firstEnvelope.sessionId,
         );
         expectSettledSessionBoundary(continuedRecord, scenario);
+        expect(continuedRecord.cwd).toBe(firstRecord.cwd);
         expectLiveRoleBindings(continuedRecord);
         expect(continuedRecord.structuralProjection).toEqual(
           firstRecord.structuralProjection,
@@ -467,12 +492,16 @@ describe.sequential('installed playbook live acceptance', () => {
       try {
         const sessionsBefore = [...listTmuxSessions()].sort();
         const captainMarker =
-          `DECIDE_SESSION_${randomBytes(16).toString('hex').toUpperCase()}`;
+          `The synthetic acceptance color is amber ` +
+          `${randomBytes(8).toString('hex')}.`;
         const observation = await drivePlaybookTurn(
           scenario,
-          `${decideCommand} Preserve this private Boss marker only in the ` +
-            `Captain conversation: ${captainMarker}. Do not write it to ` +
-            'repository files or commits.',
+          `${decideCommand} Remember this complete synthetic, non-secret ` +
+            `acceptance sentence for a later Boss question: ` +
+            `"${captainMarker}" When asked later, repeat the entire sentence ` +
+            'verbatim, including its final period; do not redact or describe ' +
+            'it as private, secret, or internal. Keep it only in the Captain ' +
+            'conversation, and do not write it to repository files or commits.',
           {
             started: '◇ /decide started',
             nestedCalled: '◇ /review called by /decide',
@@ -480,22 +509,22 @@ describe.sequential('installed playbook live acceptance', () => {
             finished: '◇ /decide finished',
             rootPaneTitles: [
               'Captain · claude',
-              'Decide-coder · claude',
-              'Decide-reviewer · codex',
+              'Acceptance.dev.coder · claude',
+              'Acceptance.dev.reviewer · codex',
             ],
             // Both exact same-name REVIEW roles keep DECIDE's effective
-            // mappings; neither Review-coder nor Review-reviewer may appear.
+            // player mappings; role names never replace stable player ids.
             nestedPaneTitles: [
               'Captain · claude',
-              'Decide-coder · claude',
-              'Decide-reviewer · codex',
+              'Acceptance.dev.coder · claude',
+              'Acceptance.dev.reviewer · codex',
             ],
             nestedActivity: {
-              paneTitle: 'Decide-reviewer · codex',
+              paneTitle: 'Acceptance.dev.reviewer · codex',
               text: 'A new review begins on the latest commit.',
             },
             continuity: {
-              paneTitle: 'Decide-reviewer · codex',
+              paneTitle: 'Acceptance.dev.reviewer · codex',
               pattern: /REVIEW_CONTINUITY_[A-Z0-9]{12}/,
             },
           },
@@ -547,9 +576,11 @@ describe.sequential('installed playbook live acceptance', () => {
         const settledRevision = headRevision(scenario.repo);
         const tmuxGuard = createNoTmuxGuard(scenario.root);
         const continuityQuestion =
-          'Did the design workflow finish successfully, and what private ' +
-          'Boss marker did I ask you to remember? Answer without starting ' +
-          'another workflow or changing any file.';
+          'Did the design workflow finish successfully, and what complete ' +
+          'synthetic acceptance sentence did I ask you to remember? Repeat ' +
+          'the entire sentence verbatim in this reply, including its final ' +
+          'period. It is explicitly non-secret acceptance-test data and safe ' +
+          'to reproduce. Do not start another workflow or change any file.';
         expect(continuityQuestion).not.toContain(captainMarker);
         const continued = await execLiveTextAsync(
           candidateBin,
@@ -592,6 +623,7 @@ describe.sequential('installed playbook live acceptance', () => {
           observation.sessionId,
         );
         expectSettledSessionBoundary(continuedRecord, scenario);
+        expect(continuedRecord.cwd).toBe(interactiveRecord.cwd);
         expectLiveRoleBindings(continuedRecord);
         expect(continuedRecord.structuralProjection).toEqual(
           interactiveRecord.structuralProjection,
@@ -1092,7 +1124,7 @@ function expectSettledSessionBoundary(
   scenario: Scenario,
 ): void {
   expect(record.state).toBe('settled');
-  expect(record.cwd).toBe(realpathSync(scenario.repo));
+  expect(realpathSync(record.cwd)).toBe(realpathSync(scenario.repo));
   expect(Object.keys(record.snapshot?.playerSessions ?? {}).sort()).toEqual([
     'acceptance.dev.coder',
     'acceptance.dev.reviewer',
@@ -1129,6 +1161,7 @@ function expectLiveRoleBindings(record: DurableSessionRecord): void {
 interface Launcher {
   child: ChildProcessWithoutNullStreams;
   output(): string;
+  operationalSessionIds(): string[];
   exit(): { code: number | null; signal: NodeJS.Signals | null } | undefined;
 }
 
@@ -1589,7 +1622,9 @@ async function drivePlaybookTurn(
   const sessionsBefore = new Set(listTmuxSessions());
   const launcher = spawnLauncher(scenario);
   let sessionName: string | undefined;
+  let target: string | undefined;
   let continuityMarker: string | undefined;
+  let gracefulStopAttempted = false;
   try {
     sessionName = await waitForNewSession(sessionsBefore, launcher);
     const sessionId = await waitForOperationalSessionId(
@@ -1597,7 +1632,7 @@ async function drivePlaybookTurn(
       startupTimeoutMs,
     );
     expect(sessionName).toBe(`tmux-play-${sessionId}`);
-    const target = `${sessionName}:0.0`;
+    target = `${sessionName}:0.0`;
     await waitForAttachedClient(sessionName, startupTimeoutMs, launcher);
     await waitForPaneText(target, 'boss>', startupTimeoutMs, launcher);
     const repliesBefore = captainProseBlocks(
@@ -1685,6 +1720,8 @@ async function drivePlaybookTurn(
     console.info(
       `[acceptance] ${scenario.root.split('/').at(-1)}: ${expectation.finished}`,
     );
+    gracefulStopAttempted = true;
+    await stopManagedInteractiveSession(sessionName, target, launcher);
     return continuityMarker === undefined
       ? { sessionId }
       : { sessionId, continuityMarker };
@@ -1699,8 +1736,19 @@ async function drivePlaybookTurn(
     throw error;
   } finally {
     if (sessionName && listTmuxSessions().includes(sessionName)) {
+      if (!gracefulStopAttempted && target !== undefined) {
+        try {
+          gracefulStopAttempted = true;
+          await stopManagedInteractiveSession(sessionName, target, launcher);
+        } catch {
+          // Preserve the primary assertion failure and fall through to the
+          // bounded forced-cleanup path below.
+        }
+      }
       try {
-        tmuxText(['kill-session', '-t', sessionName]);
+        if (listTmuxSessions().includes(sessionName)) {
+          tmuxText(['kill-session', '-t', sessionName]);
+        }
       } catch {
         // Preserve the original test failure; launcher termination below is
         // the remaining best-effort cleanup.
@@ -1741,14 +1789,25 @@ function spawnLauncher(scenario: Scenario, sessionId?: string): Launcher {
   });
   let stdout = '';
   let stderr = '';
+  const operationalSessionIds: string[] = [];
+  const stdoutLineCollector = createOperationalSessionIdCollector(
+    operationalSessionIds,
+  );
+  const stderrLineCollector = createOperationalSessionIdCollector(
+    operationalSessionIds,
+  );
   let exit:
     | { code: number | null; signal: NodeJS.Signals | null }
     | undefined;
   child.stdout.on('data', (chunk: Buffer) => {
-    stdout = appendTail(stdout, chunk.toString());
+    const text = chunk.toString();
+    stdoutLineCollector(text);
+    stdout = appendTail(stdout, text);
   });
   child.stderr.on('data', (chunk: Buffer) => {
-    stderr = appendTail(stderr, chunk.toString());
+    const text = chunk.toString();
+    stderrLineCollector(text);
+    stderr = appendTail(stderr, text);
   });
   child.once('exit', (code, signal) => {
     exit = { code, signal };
@@ -1758,6 +1817,7 @@ function spawnLauncher(scenario: Scenario, sessionId?: string): Launcher {
     output: () =>
       `stdout:\n${diagnosticTail(stdout)}\n` +
       `stderr:\n${diagnosticTail(stderr)}`,
+    operationalSessionIds: () => [...operationalSessionIds],
     exit: () => exit,
   };
 }
@@ -1767,17 +1827,10 @@ async function waitForOperationalSessionId(
   timeoutMs: number,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
-  const uuid =
-    '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
-  const line = new RegExp(`^playbook: session (${uuid})$`, 'gim');
   while (Date.now() < deadline) {
-    const clean = stripVTControlCharacters(launcher.output()).replaceAll(
-      '\r',
-      '',
-    );
-    const matches = [...clean.matchAll(line)];
-    if (matches.length === 1) return matches[0]![1]!;
-    if (matches.length > 1) {
+    const ids = launcher.operationalSessionIds();
+    if (ids.length === 1) return ids[0]!;
+    if (ids.length > 1) {
       throw new Error(
         `launcher printed multiple operational session ids\n${launcher.output()}`,
       );
@@ -1801,16 +1854,29 @@ function expectOneOperationalSessionId(
   launcher: Launcher,
   expectedId: string,
 ): void {
-  const clean = stripVTControlCharacters(launcher.output()).replaceAll(
-    '\r',
-    '',
+  expect(launcher.operationalSessionIds()).toEqual([expectedId]);
+}
+
+function createOperationalSessionIdCollector(
+  ids: string[],
+): (chunk: string) => void {
+  let pending = '';
+  const line = new RegExp(
+    '^playbook: session ' +
+      '([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-' +
+      '[89ab][0-9a-f]{3}-[0-9a-f]{12})$',
+    'i',
   );
-  const uuid =
-    '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
-  const matches = [
-    ...clean.matchAll(new RegExp(`^playbook: session (${uuid})$`, 'gim')),
-  ];
-  expect(matches.map((match) => match[1])).toEqual([expectedId]);
+  return (chunk) => {
+    const complete = (pending + chunk).split('\n');
+    pending = complete.pop() ?? '';
+    for (const raw of complete) {
+      const match = line.exec(
+        stripVTControlCharacters(raw).replaceAll('\r', ''),
+      );
+      if (match) ids.push(match[1]!);
+    }
+  };
 }
 
 async function waitForNewSession(
@@ -2284,6 +2350,23 @@ async function stopLauncher(launcher: Launcher): Promise<void> {
       }),
     ]);
   }
+}
+
+async function stopManagedInteractiveSession(
+  sessionName: string,
+  target: string,
+  launcher: Launcher,
+): Promise<void> {
+  tmuxText(['send-keys', '-t', target, 'C-c']);
+  const deadline = Date.now() + startupTimeoutMs;
+  while (Date.now() < deadline) {
+    if (!listTmuxSessions().includes(sessionName) && launcher.exit()) return;
+    await delay(pollIntervalMs);
+  }
+  throw new Error(
+    `managed interactive session did not retire after Boss-pane Ctrl-C\n` +
+      launcher.output(),
+  );
 }
 
 async function expectLeaseRetired(

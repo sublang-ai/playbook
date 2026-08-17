@@ -94,7 +94,7 @@ class FakeAdapter implements AgentAdapter {
         status: 'success',
         result,
         resumeToken: `token:${prompt}`,
-        usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+        usage: { toolUses: 0 },
         durationMs: 1,
       },
       `transport:${FakeAdapter.calls.length}`,

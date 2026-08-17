@@ -1575,6 +1575,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
           sessionId: id,
           cwd: options.cwd,
           workDir,
+          workDirOwnedByLauncher: true,
           readinessPath: join(coordinationDir, 'status.json'),
           inputGatePath: join(coordinationDir, 'input-ready'),
           inputActivePath: join(coordinationDir, 'input-active'),
@@ -1599,6 +1600,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(descriptor).toMatchObject({
       kind: 'playbook-managed-interactive-launch',
       noProvision: true,
+      workDirOwnedByLauncher: true,
     });
   });
 

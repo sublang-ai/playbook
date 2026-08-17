@@ -35,6 +35,9 @@ const sessionIds = [
   '92000000-0000-4000-8000-000000000002',
   '92000000-0000-4000-8000-000000000003',
 ] as const;
+// Match Cligent's production managed-activation bound.
+const CROSS_PROCESS_BOUNDARY_TIMEOUT_MS = 30_000;
+const CROSS_FRONT_TEST_TIMEOUT_MS = 45_000;
 const tempDirs: string[] = [];
 const children: ChildProcess[] = [];
 
@@ -150,7 +153,7 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
     expect(settled.snapshot.playerSessions['dev.coder']).toMatchObject({
       resumeToken: 'player-token:headless-b:1',
     });
-  }, 20_000);
+  }, CROSS_FRONT_TEST_TIMEOUT_MS);
 
   it('reopens a headless-fresh session interactively, fences its reply, and holds ownership until child shutdown', async () => {
     const fixture = await crossFrontFixture(sessionIds[1]);
@@ -263,7 +266,7 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
     expect(settled.lastAppliedExecutionProjection).toEqual(fixture.executionB);
     expect(settled.snapshot.captain.sessionId).toBe(headlessCaptainSessionId);
     expect(settled.snapshot.sequences.turn).toBe(2);
-  }, 20_000);
+  }, CROSS_FRONT_TEST_TIMEOUT_MS);
 
   it('keeps the durable turn settled when ordered reply release later fails', async () => {
     const fixture = await crossFrontFixture(sessionIds[2]);
@@ -305,7 +308,7 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
     expect(record).not.toHaveProperty('uncertain');
     const next = await fixture.store.acquire(fixture.sessionId);
     await next.release();
-  }, 20_000);
+  }, CROSS_FRONT_TEST_TIMEOUT_MS);
 });
 
 async function crossFrontFixture(sessionId: string) {
@@ -381,6 +384,7 @@ async function startManagedChild(
     noProvision: false,
     executionProjection: options.executionProjection,
     ...fixture.controls,
+    workDirOwnedByLauncher: false,
   };
   const child = fork(childFixture, [], {
     env: {
@@ -447,7 +451,7 @@ async function startManagedChild(
                 `timed out waiting for ${type}; stderr=${stderr}; messages=${JSON.stringify(messages)}`,
               ),
             );
-          }, 10_000),
+          }, CROSS_PROCESS_BOUNDARY_TIMEOUT_MS),
         };
         waiters.add(waiter);
       });
@@ -462,7 +466,6 @@ async function managedControlBoundary(root: string, sessionId: string) {
   await mkdir(coordinationDir, { mode: 0o700 });
   await chmod(workDir, 0o700);
   await chmod(coordinationDir, 0o700);
-  await writeFile(join(workDir, '.tmux-play-session'), sessionId);
   return {
     workDir,
     readinessPath: join(coordinationDir, 'status.json'),
@@ -597,7 +600,7 @@ class FixtureAdapter {
         status: 'success',
         result,
         resumeToken: `${kind}-token:${FixtureAdapter.namespace}:${sequence}`,
-        usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+        usage: { toolUses: 0 },
         durationMs: 1,
       },
       `transport:${FixtureAdapter.namespace}:${kind}:${sequence}`,
@@ -759,7 +762,8 @@ function writer() {
 }
 
 async function waitForFile(path: string) {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  const deadline = Date.now() + CROSS_PROCESS_BOUNDARY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
     try {
       await readFile(path);
       return;

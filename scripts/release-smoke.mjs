@@ -575,7 +575,7 @@ class DeterministicAdapter {
         status: 'success',
         result,
         resumeToken,
-        usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+        usage: { toolUses: 0 },
         durationMs: 1,
       },
       \`release-smoke-transport-\${processName}-\${sequence}\`,
@@ -655,15 +655,12 @@ const cases = [
   },
   {
     id: 'review',
-    runtime: reviewFactory({
-      coderLlm: 'release-smoke-coder',
-      reviewerLlm: 'release-smoke-reviewer',
-    }),
+    runtime: reviewFactory({}),
     members: [...coreMembers, ...controlMembers],
   },
   {
     id: 'decide',
-    runtime: decideFactory({ coderLlm: 'release-smoke-coder' }),
+    runtime: decideFactory({}),
     members: coreMembers,
   },
 ];
@@ -1534,6 +1531,7 @@ export const _testing = Object.freeze({
   smokeConfig,
   smokeRetuneOverlay,
   assertSmokeCalls,
+  compiledRuntimeImportProbeSource,
 });
 
 if (

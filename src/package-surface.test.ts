@@ -186,9 +186,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
     expect(
       declaredFloor[0] > 0 ||
         (declaredFloor[0] === 0 &&
-          (declaredFloor[1] > 21 ||
-            (declaredFloor[1] === 21 && declaredFloor[2] >= 0))),
-      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.21.0 capability floor`,
+          (declaredFloor[1] > 22 ||
+            (declaredFloor[1] === 22 && declaredFloor[2] >= 0))),
+      `${CLIGENT_DEP} declares ${packageSpecifier}, below the 0.22.0 capability floor`,
     ).toBe(true);
     // A pnpm override rewrites the importer's recorded specifier as well as
     // its resolution, so both checks admit the link only while the local
@@ -211,9 +211,9 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
       expect(
         resolvedFloor[0] > 0 ||
           (resolvedFloor[0] === 0 &&
-            (resolvedFloor[1] > 21 ||
-              (resolvedFloor[1] === 21 && resolvedFloor[2] >= 0))),
-        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.21.0 capability floor`,
+            (resolvedFloor[1] > 22 ||
+              (resolvedFloor[1] === 22 && resolvedFloor[2] >= 0))),
+        `${CLIGENT_DEP} pins ${lockEntry.version.split('(')[0]}, below the 0.22.0 capability floor`,
       ).toBe(true);
     }
   });
@@ -431,12 +431,18 @@ describe('runtime dependency specifiers (RELEASE-19)', () => {
         'AgentCallSettings.permissions',
         'AgentCallSettingsError',
         'isAgentCallSettingsError',
+        'launchManagedTmuxPlay signature',
+        'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
+        'runManagedTmuxPlaySession signature',
+        'ManagedTmuxPlaySessionOptions.workDirOwnedByLauncher',
         'ManagedTmuxPlayAttachOptions.signal',
         'ManagedTmuxPlayAttachOptions.beforeNativeAttach',
         'PreparedManagedTmuxPlayLaunch.attach options',
         'loadTmuxPlayConfig segmented player id',
         'loadTmuxPlayConfig empty player roster',
         'createTmuxPlayRuntime empty player roster',
+        'launchManagedTmuxPlay runtime export',
+        'runManagedTmuxPlaySession runtime export',
       ]);
       expect(result.ok).toBe(true);
     } finally {

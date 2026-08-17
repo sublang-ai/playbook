@@ -58,6 +58,7 @@ const PAYLOAD_KEYS = [
   'noProvision',
   'executionProjection',
   'workDir',
+  'workDirOwnedByLauncher',
   'readinessPath',
   'inputGatePath',
   'inputActivePath',
@@ -88,6 +89,11 @@ export function validateManagedInteractivePayload(value) {
   if (typeof value.noProvision !== 'boolean') {
     throw new Error('managed interactive noProvision must be a boolean');
   }
+  if (typeof value.workDirOwnedByLauncher !== 'boolean') {
+    throw new Error(
+      'managed interactive workDirOwnedByLauncher must be a boolean',
+    );
+  }
   for (const key of [
     'workDir',
     'readinessPath',
@@ -110,6 +116,7 @@ export function validateManagedInteractivePayload(value) {
     sessionsDir: value.sessionsDir,
     noProvision: value.noProvision,
     workDir: value.workDir,
+    workDirOwnedByLauncher: value.workDirOwnedByLauncher,
     readinessPath: value.readinessPath,
     inputGatePath: value.inputGatePath,
     inputActivePath: value.inputActivePath,
@@ -173,11 +180,17 @@ export async function createManagedInteractiveSessionCommand(
   if (context.sessionId !== payload.sessionId || context.cwd !== payload.cwd) {
     throw new Error('managed interactive launch context is mismatched');
   }
+  if (typeof context.workDirOwnedByLauncher !== 'boolean') {
+    throw new Error(
+      'managed interactive launch context work-directory ownership is missing',
+    );
+  }
   const descriptorPath = await writeManagedInteractivePayload(
     context.workDir,
     {
       ...payload,
       workDir: context.workDir,
+      workDirOwnedByLauncher: context.workDirOwnedByLauncher,
       readinessPath: context.readinessPath,
       inputGatePath: context.inputGatePath,
       inputActivePath: context.inputActivePath,
@@ -203,6 +216,7 @@ export async function runManagedInteractiveSessionChild(options = {}) {
   await (options.runManagedSession ?? runManagedTmuxPlaySession)({
     sessionId: payload.sessionId,
     workDir: payload.workDir,
+    workDirOwnedByLauncher: payload.workDirOwnedByLauncher,
     cwd: payload.cwd,
     readinessPath: payload.readinessPath,
     inputGatePath: payload.inputGatePath,
@@ -545,10 +559,9 @@ export async function validateManagedInteractiveControlBoundary(
       );
     }
   }
-  const [workStat, coordinationStat, markerStat] = await Promise.all([
+  const [workStat, coordinationStat] = await Promise.all([
     lstat(args.workDir),
     lstat(coordinationDir),
-    lstat(join(args.workDir, '.tmux-play-session')),
   ]);
   if (!workStat.isDirectory()) {
     throw new Error('managed interactive work directory is not a real directory');
@@ -561,9 +574,6 @@ export async function validateManagedInteractiveControlBoundary(
     (coordinationStat.mode & 0o7777) !== 0o700
   ) {
     throw new Error('managed interactive coordination directory is not private');
-  }
-  if (!markerStat.isFile()) {
-    throw new Error('managed interactive work marker is not a regular file');
   }
   const currentUid =
     typeof process.getuid === 'function' ? process.getuid() : undefined;
@@ -591,13 +601,6 @@ export async function validateManagedInteractiveControlBoundary(
     throw new Error(
       'durable Captain session storage overlaps managed interactive ephemeral cleanup',
     );
-  }
-  const marker = await readFile(
-    join(args.workDir, '.tmux-play-session'),
-    'utf8',
-  );
-  if (marker !== args.sessionId) {
-    throw new Error('managed interactive work marker session id is mismatched');
   }
 }
 

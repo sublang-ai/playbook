@@ -76,6 +76,15 @@ const calls = [
 }));
 
 describe('deterministic packed release lane smoke', () => {
+  it('constructs bundled runtimes with their current declared options', () => {
+    const source = _testing.compiledRuntimeImportProbeSource();
+
+    expect(source).toContain('runtime: reviewFactory({})');
+    expect(source).toContain('runtime: decideFactory({})');
+    expect(source).not.toContain('coderLlm');
+    expect(source).not.toContain('reviewerLlm');
+  });
+
   it('keeps distinct segmented ids equal-configured and retunes both', () => {
     const primary = parseYaml(_testing.smokeConfig('a'));
     const overlay = parseYaml(_testing.smokeRetuneOverlay());

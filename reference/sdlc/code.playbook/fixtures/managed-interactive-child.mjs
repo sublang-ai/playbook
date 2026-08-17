@@ -52,7 +52,7 @@ class FixtureAdapter {
         status: 'success',
         result,
         resumeToken: `${kind}-token:${tokenNamespace}:${sequence}`,
-        usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+        usage: { toolUses: 0 },
         durationMs: 1,
       },
       `transport:${tokenNamespace}:${kind}:${sequence}`,
@@ -113,6 +113,7 @@ try {
   await runManagedTmuxPlaySession({
     sessionId: payload.sessionId,
     workDir: payload.workDir,
+    workDirOwnedByLauncher: payload.workDirOwnedByLauncher,
     cwd: payload.cwd,
     readinessPath: payload.readinessPath,
     inputGatePath: payload.inputGatePath,

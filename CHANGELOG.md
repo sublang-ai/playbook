@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [8.0.0] - 2026-08-17
+
 ### Added
 
 - **Interactive and headless commands now create and reopen the same durable Captain session.** A managed interactive pane child owns the session lease, persists a complete turn-zero boundary before input opens, writes each turn uncertain before effects, and settles before releasing its reply. The public UUID reported by either front end reopens through either `playbook --session <id>` or `playbook run --session <id>`, retaining the Captain conversation, engagement stack, stable-player ledger, stored working directory, and exact settled boundary across presentation changes ([IR-042](specs/intents/042-explicit-roles-session-players.md), [[playbook-cli-49](specs/packages/playbook-cli.md#playbook-cli-49)], [[playbook-cli-50](specs/packages/playbook-cli.md#playbook-cli-50)]).
@@ -20,13 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Ordinary continuation can apply compatible current model and effort selections without losing provider continuity.** Each Captain and player call receives complete settings, including an explicit provider-default reset, while stored catalog membership, role bindings, adapter, instruction, permissions, and working directory remain fixed. A settings rejection retains the prior token instead of falling back fresh, and uncertain retry keeps its byte-exact input and attempted settings regardless of current config ([DR-032](specs/decisions/032-explicit-roles-session-players.md), [[playbook-cli-22](specs/packages/playbook-cli.md#playbook-cli-22)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)]).
 
-- **The required `@sublang/cligent` range rises from `^0.19.0` to `^0.21.0`.** The new floor supplies segmented player ids, complete per-call settings and typed rejection, empty-roster sessions, and managed attachment with abort-safe native-client hand-off; Playbook release remains blocked until the exact reviewed artifact is registry-served and passes an override-free frozen install ([[release-14](specs/packages/release.md#release-14)]).
+- **The required `@sublang/cligent` range rises from `^0.19.0` to `^0.22.0`.** The new floor supplies segmented player ids, complete per-call settings and typed rejection, empty-roster sessions, managed attachment with abort-safe native-client hand-off and explicit work-directory cleanup authority, and reliable attached-client resizing; the final registry artifact is pinned by its exact integrity and verified through an override-free frozen install ([[release-14](specs/packages/release.md#release-14)]).
 
 ### Removed
+
+- **Breaking: the standalone Sketch view is retired.** `views/sketch`, its CI job, and its spec package are removed; runtime `playbook.trace` remains the durable machine telemetry for host-native visualization ([DR-033](specs/decisions/033-sketch-view-retirement.md)).
 
 - **Breaking: per-playbook `players` blocks and implicit same-role inheritance are removed.** Move agent definitions to top-level `players`, choose stable IDs, and bind every required role under `playbooks.<id>.roles`. This shape is deliberately not auto-migrated: choosing equal versus distinct IDs decides conversation sharing versus isolation, which the launcher cannot infer safely ([[playbook-cli-4](specs/packages/playbook-cli.md#playbook-cli-4)], [[playbook-cli-33](specs/packages/playbook-cli.md#playbook-cli-33)]).
 
 - **Breaking: runtime-option builders and host-player helper types are no longer public registry or Captain exports.** `createCodeRuntimeOptions`, `createReviewRuntimeOptions`, `createDecideRuntimeOptions`, their `Create*RuntimeOptions` and `RegistryPlayer` types, `CreatePlaybookRuntimeOptions`, `defaultResolvePlayerId`, and `PlayerBridgeSpec` are removed; `XStatePlayerStateStatus` is replaced by role-oriented `XStateRoleStateStatus` ([[release-20](specs/packages/release.md#release-20)]).
+
+### Fixed
+
+- **Managed interactive launch now preserves Cligent's explicit cleanup authority across the private pane-child boundary.** The descriptor carries the launcher-issued boolean unchanged to the direct runner instead of guessing from a private marker, so Cligent 0.22.0 can remove only the work directory its launcher owns and retain every caller-owned directory ([[playbook-cli-49](specs/packages/playbook-cli.md#playbook-cli-49)], [[playbook-cli-50](specs/packages/playbook-cli.md#playbook-cli-50)]).
+
+- **Kimi and OpenCode captains now use the same documented prompt-level tool-isolation fallback as Codex.** Their published Cligent adapters reject every explicit tool list, including the empty list used for control calls, so Playbook omits that unsupported option while retaining hidden-control prompts; Claude and Gemini continue to receive provider-enforced empty allowlists, and non-empty runtime-requested restrictions still fail closed ([DR-013](specs/decisions/013-routing-only-captain-control.md) A1, [[playbook-captain-31](specs/packages/playbook-captain.md#playbook-captain-31)], [[playbook-captain-33](specs/packages/playbook-captain.md#playbook-captain-33)]).
+
+- **Implicit continuation now isolates released legacy session records instead of letting one block every current session.** `playbook run --continue` warns with each schema-2 record's id and path, skips only those authenticated legacy records, and still selects the latest schema-3 session; explicit legacy selection and malformed or unknown records continue to fail closed ([[playbook-cli-22](specs/packages/playbook-cli.md#playbook-cli-22)], [[playbook-cli-23](specs/packages/playbook-cli.md#playbook-cli-23)], [[playbook-cli-24](specs/packages/playbook-cli.md#playbook-cli-24)]).
 
 ## [7.0.0] - 2026-08-11
 
@@ -423,7 +435,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v7.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v8.0.0...HEAD
+[8.0.0]: https://github.com/sublang-ai/playbook/compare/v7.0.0...v8.0.0
 [7.0.0]: https://github.com/sublang-ai/playbook/compare/v6.0.0...v7.0.0
 [6.0.0]: https://github.com/sublang-ai/playbook/compare/v5.0.0...v6.0.0
 [5.0.0]: https://github.com/sublang-ai/playbook/compare/v4.0.0...v5.0.0

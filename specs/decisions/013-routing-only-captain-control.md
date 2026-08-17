@@ -70,10 +70,10 @@ The Captain prompt shall explicitly limit its decision evidence to the supplied 
 ## Addendum A1 (prompt-level isolation for adapters without tool enforcement)
 
 §Isolated control calls requires every control call to carry an explicit empty tool allowlist and requires an adapter that cannot enforce one to fail closed.
-Cligent's Codex adapter implements exactly that contract: it rejects any `allowedTools` or `disallowedTools` value — including the empty list this design uses to *express* tool-free — because the supported Codex SDK exposes no provider-enforced tool-restriction surface.
+Cligent's Codex, Kimi, and OpenCode adapters implement exactly that contract: each rejects any `allowedTools` or `disallowedTools` value — including the empty list this design uses to *express* tool-free — because its supported provider surface exposes no provider-enforced tool-registry restriction.
 
 The two halves compose into a total failure.
-A host configured with a Codex captain fails on its very first routing call, and therefore on every Boss turn, because the empty allowlist is refused before any model call.
+A host configured with any of those captains fails on its very first routing call, and therefore on every Boss turn, because the empty allowlist is refused before any model call.
 Fail-closed was the right adapter behavior; requesting enforcement from an adapter known to lack it is the host's error.
 
 A host shall therefore treat the empty tool allowlist as a request it only makes where it can be honored:

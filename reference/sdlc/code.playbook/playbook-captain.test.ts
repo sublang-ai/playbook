@@ -939,51 +939,78 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
   });
 
   // CAPTAIN-33 (DR-013 A1): the adapter-conditional tool posture over the
-  // durable session-Captain calls. An empty allowlist means "no tools" and is
-  // distinct from omission, which grants the adapter's full native tool
-  // surface, so it is requested only where the adapter can enforce it.
+  // durable session-Captain, forwarded-empty, and hidden-judge calls. An empty
+  // allowlist means "no tools" and is distinct from omission, which grants the
+  // adapter's full native tool surface, so request it only where the adapter
+  // can enforce it.
   it.each([
-    { label: 'no captainAdapter', captainAdapter: undefined, enforced: true },
-    { label: 'an enforcing adapter', captainAdapter: 'claude', enforced: true },
+    { label: 'Claude', captainAdapter: 'claude', enforced: true },
+    { label: 'Gemini', captainAdapter: 'gemini', enforced: true },
     {
       label: 'an unrecognized adapter',
       captainAdapter: 'future-agent',
       enforced: true,
     },
     {
-      label: 'an adapter that cannot enforce it',
+      label: 'Codex without tool enforcement',
       captainAdapter: 'codex',
+      enforced: false,
+    },
+    {
+      label: 'Kimi without tool enforcement',
+      captainAdapter: 'kimi',
+      enforced: false,
+    },
+    {
+      label: 'OpenCode without tool enforcement',
+      captainAdapter: 'opencode',
       enforced: false,
     },
   ])(
     'resolves the control-call tool posture for $label',
     async ({ captainAdapter, enforced }) => {
-      const registry = fakeCodeEntry();
+      const registry = fakeCodeEntry(async (runtime, runtimeTurn) => {
+        if (!runtime.ports) throw new Error('runtime ports missing');
+        await runtime.ports.callCaptain(
+          'runtime empty allowlist',
+          runtimeTurn.signal,
+          {
+            visibility: 'hidden',
+            resume: false,
+            allowedTools: [],
+          },
+        );
+        await runtime.ports.callJudge(
+          'runtime hidden judge',
+          runtimeTurn.signal,
+        );
+        return quiescentResult();
+      });
       delete registry.entry.summaryPolicy;
       const shell = makeShell(registry, {
-        ...(captainAdapter === undefined ? {} : { captainAdapter }),
+        captainAdapter,
       });
       const session = stubSession();
-      const context = stubContext([
-        // The parse-resolved start's closing reply, then the decision call.
-        { status: 'ok', turnId: 1, finalText: 'Started CODE on the task.' },
-        captainJson({ action: 'dismiss' }),
-        { status: 'ok', turnId: 1, finalText: 'Stopped CODE.' },
-      ]);
+      const context = stubContext();
 
       await shell.init!(session.session);
       await shell.handleBossTurn(turn('/code first task'), context.context);
-      await shell.handleBossTurn(turn('dismiss this', 2), context.context);
 
       expect(context.captainCalls).toHaveLength(3);
       for (const call of context.captainCalls) {
         expect(call.options?.visibility).toBe('hidden');
+        expect(
+          call.options !== undefined &&
+            Object.hasOwn(call.options, 'allowedTools'),
+        ).toBe(enforced);
       }
-      const options = context.captainCalls[0]?.options;
-      expect(options).toEqual(
+      const sessionCall = context.captainCalls.find(({ prompt }) =>
+        isClosingReplyPrompt(prompt),
+      );
+      expect(sessionCall?.options).toEqual(
         enforced
           ? ISOLATED_HIDDEN_CAPTAIN_OPTIONS
-          : // Cligent's Codex adapter rejects any tool list outright, so
+          : // These Cligent adapters reject any tool list outright, so
             // requesting one would fail the control call before the model.
             {
               visibility: 'hidden',
@@ -991,12 +1018,15 @@ describe('createPlaybookCaptainShell internal Captain and lifecycle routing', ()
               settings: DEFAULT_AGENT_SETTINGS,
             },
       );
-      // An empty allowlist means "no tools" and is distinct from omission,
-      // which grants the adapter's full native tool surface. `toEqual`
-      // ignores an explicitly-undefined key, so assert presence directly.
       expect(
-        options !== undefined && Object.hasOwn(options, 'allowedTools'),
-      ).toBe(enforced);
+        context.captainCalls.some(
+          ({ prompt }) => prompt === 'runtime empty allowlist',
+        ),
+      ).toBe(true);
+      const judgeCall = context.captainCalls.find(({ prompt }) =>
+        prompt.includes('runtime hidden judge'),
+      );
+      expectHiddenJudgeEnvelope(judgeCall?.prompt, 'runtime hidden judge');
     },
   );
 
@@ -3651,7 +3681,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
             status: 'success',
             result: `result-${adapterRun}`,
             resumeToken: `token-${adapterRun}`,
-            usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+            usage: { toolUses: 0 },
             durationMs: 1,
           },
           `transport-${adapterRun}`,
@@ -3682,7 +3712,7 @@ describe('createPlaybookCaptainShell session bridge (CAPTAIN-26/27)', () => {
               ? JSON.stringify({ action: 'deliver' })
               : 'The round is under way.',
             resumeToken: `captain-token-${captainRun}`,
-            usage: { inputTokens: 1, outputTokens: 1, toolUses: 0 },
+            usage: { toolUses: 0 },
             durationMs: 1,
           },
           'captain-transport',

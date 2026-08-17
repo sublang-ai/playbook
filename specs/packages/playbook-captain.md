@@ -659,14 +659,13 @@ and shall pass the original Boss text unchanged into the decision
 call's labeled block; no model call shall replace or paraphrase Boss
 text before entry.
 Every such call shall keep the DR-013 A1 tool posture: request
-`allowedTools: []`; where the launcher has supplied the resolved
-captain adapter as `captain.options.captainAdapter` and that adapter
+`allowedTools: []`; where the authoritative session Captain's adapter
 has no provider-enforced tool-restriction surface, omit
 `allowedTools` from those calls instead of sending the empty list,
 degrading that adapter's isolation to the [[playbook-captain-9](#playbook-captain-9)]
 hidden-control envelope per
 [DR-013](../decisions/013-routing-only-captain-control.md) A1;
-where the adapter is absent or unrecognized it shall keep requesting
+where the adapter is unrecognized it shall keep requesting
 the empty allowlist.
 The shell shall reject the call if the configured adapter is asked
 for the empty allowlist and cannot enforce it; the shared queue
@@ -1358,14 +1357,13 @@ status, or summary exposes stack or session ids (verifying [[playbook-captain-28
 
 When the test suite drives the shell's control calls with a recorded
 captain bridge, the test suite shall fail unless a shell built with
-`captain.options.captainAdapter` naming an adapter without a
+an authoritative session Captain adapter without a
 provider-enforced tool-restriction surface omits `allowedTools` from every
 durable session-Captain call and hidden adjudication call while still
 resuming the pinned durable conversation on session-Captain calls,
 requesting fresh isolation on judge calls, and using the
 hidden-control envelope, and unless a shell built
-with an enforcing adapter, with no `captainAdapter`, or with an
-unrecognized one requests `allowedTools: []` on those same calls (verifying [[playbook-captain-31](#playbook-captain-31)]).
+with an enforcing or unrecognized adapter requests `allowedTools: []` on those same calls (verifying [[playbook-captain-31](#playbook-captain-31)]).
 
 #### playbook-captain-36
 

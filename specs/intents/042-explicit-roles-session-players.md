@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress
+Done
 
 ## Intent
 
@@ -13,13 +13,13 @@ Implement explicit playbook-local roles bound to stable Captain-session players,
 
 ## Deliverables
 
-- [ ] Authored and compiled workflows carry canonical local roles and parallel-role constraints without host player identity.
-- [ ] The runtime accepts explicit role bindings, emits distinct role and player trace identity, and persists only schema-version-3 local-role continuation projections.
-- [ ] The Captain shell owns one durable player ledger per logical session and shares a conversation only where role bindings name the same player id.
-- [ ] Shared config declares flat session players and exact per-playbook role bindings, including segmented ids and launch-time concurrent-role validation.
-- [ ] Ordinary reopen retains stored structure while applying compatible current model and effort, and uncertain retry retains its exact attempted settings.
-- [ ] Fresh interactive sessions use the same durable record, lease, and write-ahead boundary as headless sessions and can reopen across either front end.
-- [ ] Required cligent host capabilities, migration guidance, deterministic gates, packed smoke, and selected acceptance checks pass without publishing or tagging a release.
+- [x] Authored and compiled workflows carry canonical local roles and parallel-role constraints without host player identity.
+- [x] The runtime accepts explicit role bindings, emits distinct role and player trace identity, and persists only schema-version-3 local-role continuation projections.
+- [x] The Captain shell owns one durable player ledger per logical session and shares a conversation only where role bindings name the same player id.
+- [x] Shared config declares flat session players and exact per-playbook role bindings, including segmented ids and launch-time concurrent-role validation.
+- [x] Ordinary reopen retains stored structure while applying compatible current model and effort, and uncertain retry retains its exact attempted settings.
+- [x] Fresh interactive sessions use the same durable record, lease, and write-ahead boundary as headless sessions and can reopen across either front end.
+- [x] Required cligent host capabilities, migration guidance, deterministic gates, packed smoke, and selected acceptance checks pass without publishing or tagging a release.
 
 ## Tasks
 

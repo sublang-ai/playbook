@@ -7,6 +7,8 @@
 
 Done
 
+DR-031 later unified interactive and headless execution on this shared Captain shell, and Cligent 0.21.0 established Codex, Kimi, and OpenCode as the current prompt-only tool-isolation set while Claude and Gemini retain provider enforcement.
+
 ## Intent
 
 Implement [DR-013](../decisions/013-routing-only-captain-control.md) Addendum A1: stop requesting an explicit empty tool allowlist from a captain adapter that cannot enforce one, so a Codex captain runs instead of failing every Boss turn, while Claude keeps its provider-enforced tool-free isolation.
@@ -36,10 +38,10 @@ Implement [DR-013](../decisions/013-routing-only-captain-control.md) Addendum A1
 
 ## Verification
 
-- A shell built with `captainAdapter: 'codex'` issues every visible routing and hidden adjudication call with no `allowedTools` property while still requesting `resume: false` and the hidden-control envelope.
-- A shell built with `claude`, an unrecognized adapter, or no `captainAdapter` requests `allowedTools: []` on those calls.
+- A shell built with `captainAdapter: 'codex'`, `'kimi'`, or `'opencode'` issues every visible routing and hidden adjudication call with no `allowedTools` property while still requesting `resume: false` and the hidden-control envelope.
+- A shell built with `claude`, `gemini`, an unrecognized adapter, or no `captainAdapter` requests `allowedTools: []` on those calls.
 - A runtime-requested non-empty allowlist is forwarded unchanged, so a real restriction still fails closed on an adapter that cannot enforce it.
 - Every headless judge prompt, on any adapter, reaches the captain agent inside the hidden-control envelope with the runtime prompt verbatim between its delimiters.
-- `playbook run --captain codex` issues `callJudge` with no `allowedTools`; `claude`, `gemini`, and `opencode` captains issue it with `[]`.
+- `playbook run` issues `callJudge` with no `allowedTools` for Codex, Kimi, and OpenCode captains; Claude and Gemini captains issue it with `[]`.
 - The composed tmux-play config carries `captain.options.captainAdapter`.
 - `pnpm test` and `pnpm build` pass.

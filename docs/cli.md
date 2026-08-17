@@ -8,6 +8,9 @@ interactive tmux-play UI and a headless `playbook run` turn for scripts and
 CI. Both use the same compiled Captain, enabled catalog, players, nested
 stack, and [config](configuration.md); only presentation differs.
 
+The interactive form requires tmux 3.3 or newer and `glow` on `PATH`;
+the headless form requires neither presentation tool.
+
 ## Installing agent SDKs
 
 Each adapter is backed by a vendor runtime that installing

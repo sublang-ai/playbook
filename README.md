@@ -51,7 +51,7 @@ Prerequisites:
 - Authenticated [Claude Code](https://docs.anthropic.com/en/docs/claude-code/overview) or `ANTHROPIC_API_KEY`
 - Authenticated [Codex CLI](https://github.com/openai/codex) or `OPENAI_API_KEY`
 
-Interactive `playbook` additionally needs `tmux` and [`glow`](https://github.com/charmbracelet/glow#installation) on `PATH`; headless `playbook run` does not.
+Interactive `playbook` additionally needs tmux 3.3 or newer and [`glow`](https://github.com/charmbracelet/glow#installation) on `PATH`; headless `playbook run` does not.
 
 CODE works in the current directory and can edit and commit autonomously, so use a clean branch or worktree.
 

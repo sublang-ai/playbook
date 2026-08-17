@@ -12,6 +12,7 @@ import {
   type Captain,
   type CaptainContext,
   type CaptainSession,
+  type PlayerAdapterName,
   type TuningSelection,
 } from '@sublang/cligent/tmux-play';
 import type { Effort, PermissionPolicy } from '@sublang/cligent';
@@ -801,16 +802,32 @@ function proseRejection(
   return undefined;
 }
 
+type CaptainToolIsolation = 'provider-enforced' | 'prompt-only';
+
 // DR-013 A1: adapters with no provider-enforced tool-restriction surface.
-// Cligent's Codex adapter rejects any `allowedTools` value — including the
-// empty list that expresses tool-free — because the supported Codex SDK
-// cannot enforce one, so requesting it fails every control call before the
-// model is reached. Omitting the option is the only way such an adapter can
-// run a control call at all; its isolation then rests on the authored
-// hidden-judge envelope below rather than on provider enforcement.
-const ADAPTERS_WITHOUT_TOOL_ENFORCEMENT: ReadonlySet<string> = new Set([
-  'codex',
-]);
+// Cligent's Codex, Kimi, and OpenCode adapters reject any `allowedTools`
+// value — including the empty list that expresses tool-free — because their
+// supported provider surfaces cannot enforce one, so requesting it fails
+// every control call before the model is reached. Omitting the option is the
+// only way such an adapter can run a control call at all; its isolation then
+// rests on the authored hidden-judge envelope below rather than on provider
+// enforcement.
+const CAPTAIN_TOOL_ISOLATION_BY_ADAPTER = {
+  claude: 'provider-enforced',
+  codex: 'prompt-only',
+  gemini: 'provider-enforced',
+  kimi: 'prompt-only',
+  opencode: 'prompt-only',
+} as const satisfies Readonly<Record<PlayerAdapterName, CaptainToolIsolation>>;
+
+function requiresPromptOnlyToolIsolation(captainAdapter: string): boolean {
+  return (
+    Object.hasOwn(CAPTAIN_TOOL_ISOLATION_BY_ADAPTER, captainAdapter) &&
+    CAPTAIN_TOOL_ISOLATION_BY_ADAPTER[
+      captainAdapter as PlayerAdapterName
+    ] === 'prompt-only'
+  );
+}
 
 // The tool half of a control call's options. An empty allowlist means "no
 // tools available" and is distinct from omission, which grants the adapter's
@@ -821,7 +838,7 @@ function controlCallToolOptions(
 ): { allowedTools?: readonly string[] } {
   if (
     captainAdapter !== undefined &&
-    ADAPTERS_WITHOUT_TOOL_ENFORCEMENT.has(captainAdapter)
+    requiresPromptOnlyToolIsolation(captainAdapter)
   ) {
     return {};
   }

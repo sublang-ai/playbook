@@ -52,6 +52,12 @@ interface FixtureShape {
   readonly captainAllowedTools?: string;
   readonly settingsError?: string;
   readonly settingsPredicate?: string;
+  readonly launchManagedSignature?: string;
+  readonly runManagedSignature?: string;
+  readonly launchManagedRuntime?: boolean;
+  readonly runManagedRuntime?: boolean;
+  readonly launchWorkDirOwnership?: string;
+  readonly sessionWorkDirOwnership?: string;
   readonly attachSignal?: string;
   readonly attachCallback?: string;
   readonly attachSignature?: string;
@@ -102,6 +108,16 @@ function fixtureCligent(root: string, shape: FixtureShape = {}): string {
 }`,
     settingsPredicate =
       'export declare function isAgentCallSettingsError(error: unknown): error is AgentCallSettingsError;',
+    launchManagedSignature =
+      'export declare function launchManagedTmuxPlay(options: LaunchManagedTmuxPlayOptions): Promise<PreparedManagedTmuxPlayLaunch>;',
+    runManagedSignature =
+      'export declare function runManagedTmuxPlaySession(options: ManagedTmuxPlaySessionOptions): Promise<void>;',
+    launchManagedRuntime = true,
+    runManagedRuntime = true,
+    launchWorkDirOwnership =
+      'readonly workDirOwnedByLauncher: boolean;',
+    sessionWorkDirOwnership =
+      'readonly workDirOwnedByLauncher: boolean;',
     attachSignal = 'readonly signal?: AbortSignal;',
     attachCallback = 'readonly beforeNativeAttach?: () => void;',
     attachSignature =
@@ -191,11 +207,25 @@ export async function createTmuxPlayRuntime({ captain, players }) {
   await captain.init?.(session);
   return { async dispose() {} };
 }
+${
+  launchManagedRuntime
+    ? `export async function launchManagedTmuxPlay() {
+  throw new Error('fixture managed launch must not run');
+}`
+    : ''
+}
+${
+  runManagedRuntime
+    ? `export async function runManagedTmuxPlaySession() {
+  throw new Error('fixture managed session must not run');
+}`
+    : ''
+}
 `,
   );
   write(
     join(tmuxPlay, 'index.d.ts'),
-    "export * from './contract.js';\nexport * from './launcher.js';\nexport declare function loadTmuxPlayConfig(options: { configPath: string }): Promise<{ path: string; config: { players: { id: string }[] } }>;\nexport declare function createTmuxPlayRuntime(options: unknown): Promise<{ dispose(): Promise<void> }>;\n",
+    "export * from './contract.js';\nexport * from './launcher.js';\nexport * from './session.js';\nexport declare function loadTmuxPlayConfig(options: { configPath: string }): Promise<{ path: string; config: { players: { id: string }[] } }>;\nexport declare function createTmuxPlayRuntime(options: unknown): Promise<{ dispose(): Promise<void> }>;\n",
   );
   write(join(tmuxPlay, 'contract.js'), 'export {};\n');
   write(
@@ -242,13 +272,32 @@ export interface CaptainRunResult {
   write(join(tmuxPlay, 'launcher.js'), 'export {};\n');
   write(
     join(tmuxPlay, 'launcher.d.ts'),
-    `export interface ManagedTmuxPlayAttachOptions {
+    `export interface ManagedTmuxPlayLaunchContext {
+  ${launchWorkDirOwnership}
+}
+export interface LaunchManagedTmuxPlayOptions {
+  readonly sessionId: string;
+  readonly createSessionCommand: (
+    context: ManagedTmuxPlayLaunchContext,
+  ) => string | Promise<string>;
+}
+export interface ManagedTmuxPlayAttachOptions {
   ${attachSignal}
   ${attachCallback}
 }
 export interface PreparedManagedTmuxPlayLaunch {
   ${attachSignature}
 }
+${launchManagedSignature}
+`,
+  );
+  write(join(tmuxPlay, 'session.js'), 'export {};\n');
+  write(
+    join(tmuxPlay, 'session.d.ts'),
+    `export interface ManagedTmuxPlaySessionOptions {
+  ${sessionWorkDirOwnership}
+}
+${runManagedSignature}
 `,
   );
   // The decoys. Both names live on other declarations in the real package
@@ -285,6 +334,9 @@ export interface PreparedManagedTmuxPlayLaunch {
   signal: unknown;
   beforeNativeAttach: unknown;
   attach: unknown;
+  workDirOwnedByLauncher: unknown;
+  launchManagedTmuxPlay: unknown;
+  runManagedTmuxPlaySession: unknown;
 }
 export declare class AgentCallSettingsErrorDecoy {}
 export declare function isAgentCallSettingsErrorDecoy(): void;
@@ -314,6 +366,9 @@ const NAIVE_REQUIRED_SPELLINGS = [
   'signal',
   'beforeNativeAttach',
   'attach',
+  'workDirOwnedByLauncher',
+  'launchManagedTmuxPlay',
+  'runManagedTmuxPlaySession',
   "kind: 'value'",
   "kind: 'provider-default'",
 ] as const;
@@ -365,12 +420,18 @@ describe('the cligent release-capability guard', () => {
       'AgentCallSettings.permissions',
       'AgentCallSettingsError',
       'isAgentCallSettingsError',
+      'launchManagedTmuxPlay signature',
+      'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
+      'runManagedTmuxPlaySession signature',
+      'ManagedTmuxPlaySessionOptions.workDirOwnedByLauncher',
       'ManagedTmuxPlayAttachOptions.signal',
       'ManagedTmuxPlayAttachOptions.beforeNativeAttach',
       'PreparedManagedTmuxPlayLaunch.attach options',
       'loadTmuxPlayConfig segmented player id',
       'loadTmuxPlayConfig empty player roster',
       'createTmuxPlayRuntime empty player roster',
+      'launchManagedTmuxPlay runtime export',
+      'runManagedTmuxPlaySession runtime export',
     ]);
     expect(result.ok).toBe(true);
     expect(result.specifier).toBe('@sublang/cligent/tmux-play');
@@ -631,6 +692,84 @@ describe('the cligent release-capability guard', () => {
       'settings-error predicate',
       { settingsPredicate: '' },
       'isAgentCallSettingsError',
+    ],
+    [
+      'managed launch declaration',
+      { launchManagedSignature: '' },
+      'launchManagedTmuxPlay signature',
+    ],
+    [
+      'managed launch signature',
+      {
+        launchManagedSignature:
+          'export declare function launchManagedTmuxPlay(): Promise<PreparedManagedTmuxPlayLaunch>;',
+      },
+      'launchManagedTmuxPlay signature',
+    ],
+    [
+      'managed launch work-directory ownership',
+      { launchWorkDirOwnership: '' },
+      'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
+    ],
+    [
+      'required managed launch work-directory ownership',
+      {
+        launchWorkDirOwnership:
+          'readonly workDirOwnedByLauncher?: boolean;',
+      },
+      'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
+    ],
+    [
+      'complete managed launch work-directory ownership',
+      {
+        launchWorkDirOwnership:
+          'readonly workDirOwnedByLauncher: true;',
+      },
+      'ManagedTmuxPlayLaunchContext.workDirOwnedByLauncher',
+    ],
+    [
+      'managed session declaration',
+      { runManagedSignature: '' },
+      'runManagedTmuxPlaySession signature',
+    ],
+    [
+      'managed session signature',
+      {
+        runManagedSignature:
+          'export declare function runManagedTmuxPlaySession(): Promise<void>;',
+      },
+      'runManagedTmuxPlaySession signature',
+    ],
+    [
+      'managed runner work-directory ownership',
+      { sessionWorkDirOwnership: '' },
+      'ManagedTmuxPlaySessionOptions.workDirOwnedByLauncher',
+    ],
+    [
+      'required managed runner work-directory ownership',
+      {
+        sessionWorkDirOwnership:
+          'readonly workDirOwnedByLauncher?: boolean;',
+      },
+      'ManagedTmuxPlaySessionOptions.workDirOwnedByLauncher',
+    ],
+    [
+      'complete managed runner work-directory ownership',
+      {
+        sessionWorkDirOwnership:
+          'readonly workDirOwnedByLauncher: true;',
+      },
+      'ManagedTmuxPlaySessionOptions.workDirOwnedByLauncher',
+    ],
+    [
+      'managed launch runtime export',
+      { launchManagedRuntime: false },
+      'launchManagedTmuxPlay runtime export',
+    ],
+    [
+      'managed session runtime export',
+      { runManagedRuntime: false },
+      'runManagedTmuxPlaySession runtime export',
     ],
     [
       'activation signal',
