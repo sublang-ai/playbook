@@ -435,6 +435,130 @@ export default {
 `;
 }
 
+// A third packed-smoke registry whose one working state fails on demand: its
+// script actor tests for a flag file, so the machine parks in its recoverable
+// failure state while the flag is absent and reaches its terminal state on the
+// replayed entry event once the flag exists. It declares the DR-034 retry
+// source, which is what lets the second process advertise that replay at all —
+// nothing of the first process survives but the record.
+function recoverArtifactSource(flagPath) {
+  return `// Release smoke fixture: a deliberately recoverable failure.
+import { assign, setup } from 'xstate';
+import {
+  RUNTIME_ABI,
+  createXStatePlaybookRuntime,
+} from '@sublang/playbook/xstate-runtime';
+
+const machine = setup({}).createMachine({
+  id: 'releaserecover',
+  initial: 'ready',
+  context: {},
+  states: {
+    ready: {
+      id: 'ready',
+      description: 'Waits for the Boss task.',
+      meta: {
+        playbook: { stateId: 'ready', description: 'Waits for the Boss task.' },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({ task: ({ event }) => event.task }),
+        },
+      },
+    },
+    work: {
+      id: 'work',
+      description: 'RECOVER-1: Captain runs the gated probe command.',
+      meta: {
+        playbook: {
+          stateId: 'work',
+          description: 'RECOVER-1: Captain runs the gated probe command.',
+        },
+      },
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'script',
+        input: () => ({
+          stateId: 'work',
+          sourceItem: 'RECOVER-1',
+          command: ${JSON.stringify(`test -f ${flagPath}`)},
+          result: {
+            probed: 'The command exited zero.',
+            probeFailed: 'The command exited nonzero.',
+          },
+        }),
+        onDone: [
+          {
+            guard: ({ event }) => event.output.guard === 'probed',
+            target: 'done',
+          },
+          { target: 'failed' },
+        ],
+        onError: {
+          target: 'failed',
+          actions: assign({ lastError: ({ event }) => String(event.error) }),
+        },
+      },
+    },
+    failed: {
+      id: 'failed',
+      description: 'Recoverable failure awaiting a fresh Boss task.',
+      meta: {
+        playbook: {
+          stateId: 'failed',
+          description: 'Recoverable failure awaiting a fresh Boss task.',
+        },
+      },
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({ task: ({ event }) => event.task }),
+        },
+      },
+    },
+    done: {
+      id: 'done',
+      description: 'The gated probe command succeeded.',
+      meta: {
+        playbook: {
+          stateId: 'done',
+          description: 'The gated probe command succeeded.',
+        },
+      },
+      type: 'final',
+    },
+  },
+  output: () => ({ token: ${JSON.stringify(smokeToken)} }),
+});
+
+const createRuntime = createXStatePlaybookRuntime(machine, {
+  label: 'RECOVER',
+  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  snapshotOptions: () => ({}),
+  entryEvent: { type: 'START', textField: 'task', contextField: 'task' },
+  roleStates: {},
+});
+
+export default {
+  id: 'recover',
+  command: 'recover',
+  intent: 'deterministic recoverable-failure fixture',
+  artifactSchema: 2,
+  requiredRoleIds: [],
+  concurrentRoleSets: [],
+  validateOptions(value) {
+    return value ?? {};
+  },
+  createRuntime() {
+    return createRuntime({});
+  },
+};
+`;
+}
+
 // A second packed-smoke registry exercises the DR-032 identity boundary with
 // no live model call: two sequential local roles share one segmented player,
 // while a third role has an equal-shaped but distinct segmented player.
@@ -530,6 +654,8 @@ class DeterministicAdapter {
     let lane;
     let role;
     let resumeToken;
+    let advertised = null;
+    let selected = null;
     const laneMatch = /release-lane:(first|second|isolated):/.exec(prompt);
     if (
       prompt.includes('The closing reply is the turn summary') ||
@@ -539,7 +665,18 @@ class DeterministicAdapter {
       result = closingReply;
     } else if (prompt.includes('Select exactly one action from the closed set')) {
       kind = 'selection';
-      result = JSON.stringify({ action: 'respond', text: continuedReply });
+      // The only judgment in the hermetic scenario: when the digest offers a
+      // recovery and the Boss asked for one, take it. Reading the id out of
+      // the prompt is the point — a fabricated id is refused, so this selects
+      // only what the restored leaf actually advertised.
+      const advertisedRetry = /^- (retry:[A-Za-z0-9_]+): /m.exec(prompt);
+      advertised = advertisedRetry === null ? null : advertisedRetry[1];
+      if (advertised !== null && /retry/i.test(prompt)) {
+        selected = advertised;
+        result = JSON.stringify({ action: 'runtime', actionId: selected });
+      } else {
+        result = JSON.stringify({ action: 'respond', text: continuedReply });
+      }
     } else if (laneMatch) {
       kind = 'player';
       role = laneMatch[1];
@@ -566,6 +703,8 @@ class DeterministicAdapter {
         model: options.model ?? null,
         effort: options.effort ?? null,
         resumeToken,
+        advertised,
+        selected,
       }) + '\\n',
     );
     yield createEvent(
@@ -908,6 +1047,11 @@ function stepHermetic(root, state) {
   );
   writeFileSync(join(repo, 'smoke.playbook.mjs'), smokeArtifactSource());
   writeFileSync(join(repo, 'lanes.playbook.mjs'), laneArtifactSource());
+  const recoverFlagPath = join(scenario, 'recover-flag');
+  writeFileSync(
+    join(repo, 'recover.playbook.mjs'),
+    recoverArtifactSource(recoverFlagPath),
+  );
   const configPath = join(repo, 'playbook.config.yaml');
   writeFileSync(configPath, smokeConfig('a'));
   const retunePath = join(scenario, 'retune-b.yaml');
@@ -1194,6 +1338,96 @@ function stepHermetic(root, state) {
       status.stdout,
     );
   }
+  // DR-034: one failure recovered across a process boundary. The first
+  // process leaves the fixture parked in its recoverable failure state; the
+  // second holds nothing but the record, and recovers from it in place.
+  const recoverFirst = run(process.execPath, [driverPath, 'run', '--json'], {
+    cwd: repo,
+    env: processEnv('recover-first'),
+    input: `/recover ${smokeTask}\n`,
+  });
+  // A parked failure emits the start line only: the engagement is retained
+  // for the next Boss turn, so nothing has finished.
+  if (
+    !recoverFirst.stderr.includes('◇ /recover started') ||
+    recoverFirst.stderr.includes('◇ /recover finished')
+  ) {
+    fail(
+      'the parked failure did not retain its engagement',
+      `stderr:\n${tail(recoverFirst.stderr)}`,
+    );
+  }
+  const recoverEnvelope = parseExactHeadlessReply(
+    recoverFirst.stdout,
+    smokeToken,
+  );
+  const recoverPath = join(sessionsDir, `${recoverEnvelope.sessionId}.json`);
+  const parkedRecover = readJson(recoverPath);
+  const parkedFrame = parkedRecover.snapshot?.frames?.[0];
+  if (
+    parkedRecover.state !== 'settled' ||
+    parkedFrame?.playbookId !== 'recover' ||
+    parkedFrame?.runtime?.state?.stateId !== 'failed'
+  ) {
+    fail(
+      'the recover fixture did not park in its recoverable failure state',
+      JSON.stringify({
+        state: parkedRecover.state,
+        frame: parkedFrame?.runtime?.state,
+      }),
+    );
+  }
+
+  writeFileSync(recoverFlagPath, '');
+  const recovered = run(
+    process.execPath,
+    [driverPath, 'run', '--session', recoverEnvelope.sessionId, '--json'],
+    {
+      cwd: continuationCwd,
+      env: processEnv('recover-second'),
+      input: 'Retry the failed step and continue.\n',
+    },
+  );
+  // The retry drove the machine to its terminal state, so this turn is the
+  // one that finishes the engagement.
+  if (!recovered.stderr.includes('◇ /recover finished')) {
+    fail(
+      'the applied retry did not complete the recovered engagement',
+      `stderr:\n${tail(recovered.stderr)}`,
+    );
+  }
+  parseExactHeadlessReply(
+    recovered.stdout,
+    smokeToken,
+    recoverEnvelope.sessionId,
+  );
+  const recoveredRecord = readJson(recoverPath);
+  const recoverCalls = readFileSync(env.PLAYBOOK_SMOKE_AGENT_LOG, 'utf8')
+    .trimEnd()
+    .split('\n')
+    .map((line) => JSON.parse(line))
+    .filter((call) => call.process === 'recover-second');
+  const selection = recoverCalls.find((call) => call.kind === 'selection');
+  // The digest the restored leaf composed had to carry the action, or the
+  // adapter above could not have named it and the shell would have refused it.
+  if (
+    selection === undefined ||
+    selection.advertised !== 'retry:START' ||
+    selection.selected !== 'retry:START' ||
+    recoveredRecord.state !== 'settled' ||
+    recoveredRecord.snapshot?.mode !== 'chat'
+  ) {
+    fail(
+      'a continued session could not recover the parked failure in place',
+      JSON.stringify({
+        advertised: selection?.advertised ?? null,
+        selected: selection?.selected ?? null,
+        mode: recoveredRecord.snapshot?.mode,
+        state: recoveredRecord.state,
+      }),
+    );
+  }
+
   rmSync(driverPath);
   return [
     'one provisioning line; both engine links resolve into the prefix',
@@ -1203,6 +1437,7 @@ function stepHermetic(root, state) {
     'shared roles chained one token; the isolated player kept its own token',
     'ordinary reopen applied current model and effort, including provider-default',
     'continuation replayed no settled effect and invoked no tmux',
+    'a second process advertised and applied the parked failure retry',
   ];
 }
 
@@ -1216,6 +1451,9 @@ function smokeConfig(tuning) {
     'playbooks:',
     '  smoke:',
     '    from: ./smoke.playbook.mjs',
+    '    roles: {}',
+    '  recover:',
+    '    from: ./recover.playbook.mjs',
     '    roles: {}',
     '  lanes:',
     '    from: ./lanes.playbook.mjs',
