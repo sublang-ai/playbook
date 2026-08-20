@@ -375,7 +375,19 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
    * ordinary textual entry event, send it without a judge call, carrying the
    * exact Boss text in `textField`. Absent: every non-empty turn classifies.
    */
-  entryEvent?: { type: string; textField: string };
+  entryEvent?: {
+    type: string;
+    textField: string;
+    /**
+     * DR-034: the FSM context member this machine's entry action copies the
+     * exact Boss text into. Where it is named, the failure-state retry
+     * builds its payload from that member of the live snapshot instead of
+     * from the process-local recorded event, so the action derives the same
+     * before and after `restore`. Absent: the recorded event stays the
+     * source and the action lives only as long as the process.
+     */
+    contextField?: string;
+  };
   /**
    * Exact flat Boss-event contracts whose non-text fields the judge may
    * select. `entryEvent` and scalar `BOSS_REPLY` contracts are supplied by
@@ -3323,32 +3335,57 @@ export function createXStatePlaybookRuntime<TOptions>(
       );
     }
 
+    // DR-034: where the artifact names the FSM context member its entry
+    // action copies the exact Boss text into, that member of the live
+    // snapshot is the retry payload's source. The persisted machine snapshot
+    // carries it, so the candidate derives identically in the process that
+    // exported the snapshot and in one that restored it, and a failure
+    // reached after a Boss reply — whose recorded event the failure state
+    // refuses — is recoverable too. Naming the member is the artifact's
+    // statement that it holds the entry text: a same-named member is never
+    // assumed, since inferring one would turn any matching context member
+    // into a replay payload without its author saying so.
+    // Declared and absent or empty excludes the candidate rather than
+    // falling back to the record, which would make the action depend on the
+    // process again — the very thing this source exists to end.
+    function retryEventFrom(snapshot: unknown): EventObject | undefined {
+      const entryEvent = spec.entryEvent;
+      if (entryEvent?.contextField === undefined) return lastBossEvent;
+      const context = (snapshot as { context?: unknown } | null)?.context;
+      const text = isPlainObject(context)
+        ? context[entryEvent.contextField]
+        : undefined;
+      if (typeof text !== 'string' || text.trim() === '') return undefined;
+      return { type: entryEvent.type, [entryEvent.textField]: text };
+    }
+
     // The failure-state retry entry replays the recorded last classified
-    // event with its recorded payload. A candidate whose event the live
-    // snapshot does not accept — or whose payload the runtime never
-    // recorded — is excluded rather than completed with invented text.
+    // event with its recorded payload, or the entry event the declared
+    // context member above sources. A candidate whose event the live
+    // snapshot does not accept — or whose payload the runtime can source
+    // from neither — is excluded rather than completed with invented text.
     function retryActionFor(
       snapshot: unknown,
       stateId: string | undefined,
     ): DerivedControlAction | undefined {
-      if (stateId !== 'failed' || lastBossEvent === undefined) {
-        return undefined;
-      }
-      if (!snapshotCan(snapshot, lastBossEvent)) return undefined;
+      if (stateId !== 'failed') return undefined;
+      const retryEvent = retryEventFrom(snapshot);
+      if (retryEvent === undefined) return undefined;
+      if (!snapshotCan(snapshot, retryEvent)) return undefined;
       // A recorded explicit-state-jump event names the exact state its
       // replay re-enters: the root BOSS_INTERRUPT shape is a guarded
       // multi-arm list keyed on `targetId`, so the first configured arm
       // may label a different state than the one the recorded event
       // actually resumes.
       const recordedTargetId =
-        lastBossEvent.type === JUMP_EVENT_TYPE
-          ? (lastBossEvent as { targetId?: unknown }).targetId
+        retryEvent.type === JUMP_EVENT_TYPE
+          ? (retryEvent as { targetId?: unknown }).targetId
           : undefined;
       const target =
         typeof recordedTargetId === 'string' &&
         recordedTargetId.trim().length > 0
           ? recordedTargetId
-          : firstTransitionTarget(machine, stateId, lastBossEvent.type);
+          : firstTransitionTarget(machine, stateId, retryEvent.type);
       // PBRT-52: a label is written from a source state description, never
       // from an identifier. Falling back to the target id — or, with no
       // resolvable target, to the FSM event type — makes the label *be* the
@@ -3362,10 +3399,10 @@ export function createXStatePlaybookRuntime<TOptions>(
       if (description === undefined) return undefined;
       return {
         action: {
-          id: `retry:${lastBossEvent.type}`,
+          id: `retry:${retryEvent.type}`,
           label: `Retry: ${description}`,
         },
-        event: lastBossEvent,
+        event: retryEvent,
       };
     }
 

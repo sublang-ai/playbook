@@ -168,6 +168,15 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
     entryEvent?: {
         type: string;
         textField: string;
+        /**
+         * DR-034: the FSM context member this machine's entry action copies the
+         * exact Boss text into. Where it is named, the failure-state retry
+         * builds its payload from that member of the live snapshot instead of
+         * from the process-local recorded event, so the action derives the same
+         * before and after `restore`. Absent: the recorded event stays the
+         * source and the action lives only as long as the process.
+         */
+        contextField?: string;
     };
     /**
      * Exact flat Boss-event contracts whose non-text fields the judge may

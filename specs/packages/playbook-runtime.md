@@ -657,21 +657,39 @@ construction rather than be silently ignored.
 Actions shall derive from the live snapshot only at the safe capture
 point of [[playbook-runtime-45](#playbook-runtime-45)] (actor status `active`, quiescent, no
 pending nested call) and shall be empty anywhere else. While the
-singular state id is the recoverable failure state and the runtime
-holds the recorded last classified event — the event a public Boss
-boundary sent, kept with its recorded payload — whose type the live
-snapshot accepts, the runtime shall advertise the `retry:<EVENT_TYPE>`
-action replaying exactly that event; for each registered resumable
+singular state id is the recoverable failure state and the live
+snapshot accepts the retry event sourced below, the runtime shall
+advertise the `retry:<EVENT_TYPE>` action replaying exactly that event;
+for each registered resumable
 state id whose explicit-state-jump event (`BOSS_INTERRUPT` with that
 `targetId` and optional textual fields omitted) the live snapshot
-accepts, guards included, it shall advertise `jump:<stateId>`. Each
-action shall carry a stable id and a label written from the source
-state descriptions; a retry whose recorded event carries its own
+accepts, guards included, it shall advertise `jump:<stateId>`.
+The retry event shall come from the artifact's entry-event declaration
+where that declaration names the FSM context member the machine's entry
+action copies the exact Boss text into: the runtime shall build the
+deterministic entry event from that member of the live snapshot,
+excluding the candidate when the member is absent, not a string, or
+blank, and shall not fall back to the recorded event
+([DR-034](../decisions/034-durable-failure-retry-continuity.md)).
+Where the declaration names no such member, the retry event shall be
+the recorded last classified event — the event a public Boss boundary
+sent, kept with its recorded payload — and shall be absent when the
+runtime holds none.
+The declared source is what the persisted machine snapshot already
+carries, so a runtime restored from that snapshot shall advertise the
+same retry as the process that exported it, including a failure the
+machine reached after a Boss reply resumed the work; an artifact naming
+no member shall keep the process-local behavior of its recorded event.
+The runtime shall not treat a context member that merely matches the
+entry event's text field as that declaration.
+Each action shall carry a stable id and a label written from the source
+state descriptions; a retry whose event carries its own
 `targetId` (the explicit-state-jump shape) shall be labeled from that
 recorded target's description — the state its replay re-enters — never
 from another configured arm of a guarded transition list; a candidate
 whose event requires a payload the
-runtime cannot source from recorded state shall be excluded — `apply`
+runtime can source from neither its recorded event nor the persisted
+state above shall be excluded — `apply`
 shall never invent free text and shall never enter Boss-input
 classification.
 A label shall never fall back to an identifier, and a candidate whose
@@ -1199,6 +1217,20 @@ synthetic context-conditional target flips from excluded to included
 once the live context gains its required input; and jump events are
 sent with textual fields omitted, never with invented text (an applied
 retry replays the recorded payload with no classification call).
+It shall further fail unless the declared retry source of
+[[playbook-runtime-52](#playbook-runtime-52)] survives a process boundary on a
+synthetic machine whose entry action copies the entry text into the
+declared member: the runtime parked in `failed` advertises the same
+action id and label before export and after restoring that snapshot
+into a fresh instance, the applied action replays the original player
+prompt, and the exported snapshot's members are exactly those of
+[[playbook-runtime-45](#playbook-runtime-45)]; a failure reached after a Boss
+reply resumed the work — which the same machine's undeclared twin
+cannot retry in its own live process — advertises and applies that
+retry in both processes; a declared member the machine never populates
+excludes the candidate rather than falling back to the recorded event;
+and the undeclared twin still advertises its recorded retry live and
+none after restore.
 It shall further fail unless no advertised label is ever an identifier:
 a registered resumable target whose source publishes no description
 shall not be advertised at all — not advertised under its own target id

@@ -1421,11 +1421,18 @@ still describes the state. Two families exist, labeled from source state
 descriptions:
 
 - **Failure-state retry** — while the singular state id is the recoverable
-  failure state and the runtime holds a recorded last classified event (the
-  event a public Boss boundary sent that drove the run into `failed`, kept
-  with its recorded payload), and the live snapshot accepts that event, the
-  runtime shall advertise `retry:<EVENT_TYPE>` replaying exactly that
-  recorded event.
+  failure state and the live snapshot accepts the retry event sourced below,
+  the runtime shall advertise `retry:<EVENT_TYPE>` replaying exactly that
+  event. Where the emitted module's entry-event declaration names the FSM
+  context member the machine's entry action copies the exact Boss text into
+  (DR-034), the retry event is that deterministic entry event built from the
+  live snapshot's member — excluded when the member is absent, not a string,
+  or blank, and never falling back to the record. Where it names no member,
+  the retry event is the recorded last classified event (the event a public
+  Boss boundary sent that drove the run into `failed`, kept with its recorded
+  payload), and there is none while the runtime holds none. The member is
+  declared, never inferred from a context member that happens to match the
+  entry event's text field.
 - **Jump entries** — for each registered resumable state id whose
   explicit-state-jump event (`BOSS_INTERRUPT` with that `targetId`, optional
   textual fields omitted) the live snapshot accepts, guards included, the
@@ -1483,9 +1490,11 @@ runtime's emission-failure channel to surface from the next public boundary
 that drains.
 
 The recorded receipts and the recorded last classified event are
-process-local: the durable runtime snapshot persists neither, and a
-restored runtime advertises a retry again only after its next classified
-event.
+process-local: the durable runtime snapshot persists neither. A restored
+runtime therefore advertises the retry of a declared entry-event source
+immediately — that payload rides the persisted machine snapshot — while a
+module declaring no source advertises a retry again only after its next
+classified event.
 
 ## Abort
 
@@ -1613,7 +1622,10 @@ The thin emitted module:
   actor.
 - Supplies in `spec` only what the factory cannot read from the FSM
   artifact's own data: the deterministic textual entry event where
-  §Boss-event mapping prescribes deterministic entry; compact `bossEvents`
+  §Boss-event mapping prescribes deterministic entry, naming with it the FSM
+  context member that event's own transition action copies the exact Boss
+  text into wherever the machine keeps one, so the failure-state retry of
+  §Control surface survives a restore; compact `bossEvents`
   metadata for each additional Boss-union arm whose exact required/optional
   judge fields, runtime-owned text fields, or closed string values disappear
   under TypeScript erasure; `placeholderFields` only for authored token/field

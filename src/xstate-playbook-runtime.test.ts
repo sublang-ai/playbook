@@ -2870,6 +2870,19 @@ const createConditionalRuntime = createXStatePlaybookRuntime(
   },
 );
 
+// DR-034: the same workflow machine, whose entry action copies the entry
+// text into `task`, with that member declared as the retry payload's
+// source. Everything else matches `createWorkflowRuntime`, so a difference
+// between the two is the declaration's doing.
+const createRecoverableWorkflowRuntime = createXStatePlaybookRuntime(
+  workflowMachine,
+  {
+    ...workflowSpec,
+    label: 'recoverable-workflow',
+    entryEvent: { type: 'START', textField: 'task', contextField: 'task' },
+  },
+);
+
 describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)', () => {
   it('exposes describe and apply together on every factory runtime and detects a pair-less runtime distinctly', () => {
     const factoryRuntimes: PlaybookRuntime[] = [
@@ -3216,6 +3229,183 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(view.lastError).toMatchObject({ message: 'resume crashed' });
     expect(view.actions.map(({ id }) => id)).toEqual(['jump:implement']);
     await runtime.dispose();
+  });
+
+  it('derives the declared failure-state retry from the persisted snapshot, identically before and after restore', async () => {
+    const playerPrompts: string[] = [];
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerCalls += 1;
+        playerPrompts.push(prompt);
+        return playerCalls === 1
+          ? { status: 'error', error: 'agent crashed' }
+          : { status: 'ok', finalText: 'Recovered.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"recovered"}',
+    });
+    const session = makeSession(ports);
+    const source = createRecoverableWorkflowRuntime({});
+    await source.init(session);
+    const failedRun = await source.handleBossInput(turn('build the widget'));
+    expect(failedRun.outcome).toBe('failed');
+
+    const live = source.describe!().actions;
+    expect(live).toEqual([
+      { id: 'retry:START', label: 'Retry: implement state' },
+      { id: 'jump:implement', label: 'Resume from: implement state' },
+    ]);
+
+    // The recovery input rides the machine snapshot the host already
+    // persists, so nothing is added to the snapshot for it.
+    const snapshot = source.exportSnapshot!()!;
+    expect(Object.keys(snapshot).sort()).toEqual([
+      'machine',
+      'pendingBossQuestions',
+      'playbookId',
+      'roleResumeTokens',
+      'schemaVersion',
+      'sequences',
+      'state',
+    ]);
+    await source.dispose();
+
+    // A fresh process holds no recorded event, and the same action derives
+    // anyway — same id, same label — and replays the same player prompt.
+    const restored = createRecoverableWorkflowRuntime({});
+    await restored.restore!(session, snapshot);
+    expect(restored.describe!().actions).toEqual(live);
+
+    const receipt = await restored.apply!({
+      actionId: 'retry:START',
+      key: 'retry-after-restore',
+      signal: sigOf(),
+    });
+    expect(receipt.disposition).toBe('executed');
+    expect(playerPrompts[1]).toBe(playerPrompts[0]);
+    await restored.dispose();
+  });
+
+  it('recovers a failure reached after a Boss reply, which the recorded event cannot', async () => {
+    const makePorts = () => {
+      let playerCalls = 0;
+      return makeRecordingPorts({
+        callPlayer: async () => {
+          playerCalls += 1;
+          return playerCalls === 1
+            ? { status: 'ok', finalText: 'Which database should I use?' }
+            : playerCalls === 2
+              ? { status: 'error', error: 'resume crashed' }
+              : { status: 'ok', finalText: 'Recovered.' };
+        },
+        callJudge: async (prompt) => {
+          if (prompt.includes('Classify the following Boss message')) {
+            return '{"type":"BOSS_REPLY","questionId":"q-1"}';
+          }
+          return playerCalls === 1
+            ? '{"guard":"needsBossReply","question":"Which database?"}'
+            : '{"guard":"implemented","summary":"recovered"}';
+        },
+      });
+    };
+
+    // The recorded event is the reply that resumed the work, which the
+    // failure state refuses — so the recorded source advertises no retry at
+    // all, in its own live process.
+    const { ports: recordedPorts } = makePorts();
+    const recorded = createWorkflowRuntime({});
+    await recorded.init(makeSession(recordedPorts));
+    await recorded.handleBossInput(turn('build storage'));
+    expect((await recorded.handleBossInput(turn('use sqlite'))).outcome).toBe(
+      'failed',
+    );
+    expect(recorded.describe!().actions.map(({ id }) => id)).toEqual([
+      'jump:implement',
+    ]);
+    await recorded.dispose();
+
+    // The declared source names the entry text the machine still holds, so
+    // the same failure is recoverable — and stays so across restore.
+    const { ports } = makePorts();
+    const session = makeSession(ports);
+    const declared = createRecoverableWorkflowRuntime({});
+    await declared.init(session);
+    await declared.handleBossInput(turn('build storage'));
+    expect((await declared.handleBossInput(turn('use sqlite'))).outcome).toBe(
+      'failed',
+    );
+    expect(declared.describe!().actions).toEqual([
+      { id: 'retry:START', label: 'Retry: implement state' },
+      { id: 'jump:implement', label: 'Resume from: implement state' },
+    ]);
+    const snapshot = declared.exportSnapshot!()!;
+    await declared.dispose();
+
+    const restored = createRecoverableWorkflowRuntime({});
+    await restored.restore!(session, snapshot);
+    const receipt = await restored.apply!({
+      actionId: 'retry:START',
+      key: 'reply-path-retry',
+      signal: sigOf(),
+    });
+    expect(receipt.disposition).toBe('executed');
+    expect(
+      receipt.disposition === 'executed' ? receipt.run.outcome : undefined,
+    ).toBe('terminal');
+    await restored.dispose();
+  });
+
+  it('excludes the declared retry when its member holds no text instead of falling back to the record', async () => {
+    const createUnsourcedRuntime = createXStatePlaybookRuntime(workflowMachine, {
+      ...workflowSpec,
+      label: 'unsourced-workflow',
+      // Declared, but naming a member this machine never populates.
+      entryEvent: {
+        type: 'START',
+        textField: 'task',
+        contextField: 'neverAssigned',
+      },
+    });
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'error', error: 'agent crashed' }),
+    });
+    const runtime = createUnsourcedRuntime({});
+    await runtime.init(makeSession(ports));
+    expect((await runtime.handleBossInput(turn('build it'))).outcome).toBe(
+      'failed',
+    );
+    // The recorded event would have produced `retry:START` here; a declared
+    // source that cannot be read excludes the candidate rather than
+    // reaching for a record a restored process would not have.
+    expect(runtime.describe!().actions.map(({ id }) => id)).toEqual([
+      'jump:implement',
+    ]);
+    await runtime.dispose();
+  });
+
+  it('leaves an undeclared runtime with its process-local retry, absent after restore', async () => {
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'error', error: 'agent crashed' }),
+    });
+    const session = makeSession(ports);
+    const source = createWorkflowRuntime({});
+    await source.init(session);
+    expect((await source.handleBossInput(turn('build it'))).outcome).toBe(
+      'failed',
+    );
+    expect(source.describe!().actions.map(({ id }) => id)).toEqual([
+      'retry:START',
+      'jump:implement',
+    ]);
+    const snapshot = source.exportSnapshot!()!;
+    await source.dispose();
+
+    const restored = createWorkflowRuntime({});
+    await restored.restore!(session, snapshot);
+    expect(restored.describe!().actions.map(({ id }) => id)).toEqual([
+      'jump:implement',
+    ]);
+    await restored.dispose();
   });
 
   it('derives context-conditional jumps from the live snapshot and sanitizes the control context', async () => {
