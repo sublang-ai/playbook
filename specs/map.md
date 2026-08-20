@@ -59,6 +59,7 @@ meta.md       The spec of specs
 | [DR-031](decisions/031-shared-captain-session-front-ends.md) | 031-shared-captain-session-front-ends.md | Interactive and headless front ends host the same compiled Captain session, config, nested stack, presentation contract, and durable continuation |
 | [DR-032](decisions/032-explicit-roles-session-players.md) | 032-explicit-roles-session-players.md | Playbook-local roles bind explicitly to Captain-session players; compatible current model and effort selections may change across durable continuation |
 | [DR-033](decisions/033-sketch-view-retirement.md) | 033-sketch-view-retirement.md | Sketch view retirement: the host app draws running machines; the runtime keeps emitting the trace they ride on |
+| [DR-034](decisions/034-durable-failure-retry-continuity.md) | 034-durable-failure-retry-continuity.md | A parked failure state sources its retry from the persisted machine snapshot, so it recovers identically live and after continuation |
 | [DR-035](decisions/035-truthful-terminal-meaning.md) | 035-truthful-terminal-meaning.md | A final state's description is the workflow's published terminal meaning, so distinct terminal outcomes reach distinct final states |
 
 ## Intents
@@ -105,6 +106,7 @@ meta.md       The spec of specs
 | [IR-041](intents/041-shared-captain-session.md) | 041-shared-captain-session.md | Make `playbook` and `playbook run` two presentations of one configurable, nested, durable compiled Captain session |
 | [IR-042](intents/042-explicit-roles-session-players.md) | 042-explicit-roles-session-players.md | Implement explicit local roles, Captain-session players, compatible retuning, and durable continuation through either front end |
 | [IR-043](intents/043-truthful-terminal-meaning.md) | 043-truthful-terminal-meaning.md | Implement DR-035: one final state per authored terminal outcome, splitting CODE's overloaded `done` |
+| [IR-044](intents/044-durable-failure-retry-continuity.md) | 044-durable-failure-retry-continuity.md | Implement DR-034: the failure-state retry derives from the persisted machine snapshot, so a continued session recovers in place |
 
 ## Packages
 
