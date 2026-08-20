@@ -1511,7 +1511,14 @@ The suite shall fail unless a `runtime` selection against a leaf whose
 `describe()` throws at revalidation follows that same result path — no
 `apply` call, no effect, and no exception escaping the Boss turn, a
 control view that cannot be read being no evidence that an effect was
-attempted (verifying [[playbook-captain-2](#playbook-captain-2)], [[playbook-captain-3](#playbook-captain-3)], [[playbook-captain-7](#playbook-captain-7)], [[playbook-captain-8](#playbook-captain-8)]).
+attempted.
+The suite shall fail unless that same recovery survives a process
+boundary: with the real CODE artifact driven to its recoverable failure
+state, a fresh shell restoring only that exported snapshot composes a
+digest advertising the same retry action id and label, applies it once
+for real, and settles with the executed receipt naming it — the
+restored leaf's runtime sourcing that action from the persisted machine
+snapshot rather than from anything the first process held (verifying [[playbook-captain-2](#playbook-captain-2)], [[playbook-captain-3](#playbook-captain-3)], [[playbook-captain-7](#playbook-captain-7)], [[playbook-captain-8](#playbook-captain-8)]).
 
 #### playbook-captain-39
 

@@ -19,7 +19,10 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { createActor } from 'xstate';
 
-import { createPlaybookCaptainShell } from '../code.playbook/playbook-captain.js';
+import {
+  assertPlaybookCaptainShellSnapshot,
+  createPlaybookCaptainShell,
+} from '../code.playbook/playbook-captain.js';
 import createPlaybookRuntime, {
   _internal,
   type CaptainCallOptions,
@@ -1816,6 +1819,83 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
     expect(harness.closingPrompts()).toHaveLength(closingsAfterTurn1);
     expect(harness.surfaced.join('\n')).not.toContain('Saved you');
     expect(harness.statuses.join('\n')).not.toContain('Saved you');
+  });
+
+  // DR-034: the incident again, across a process boundary. The failure is
+  // reached in one shell, its complete snapshot is restored into a fresh
+  // one, and the Boss's retry lands there — the shape every `playbook run
+  // --continue` turn has, and the one that used to advertise nothing at all.
+  it('advertises and applies the failure retry in a continued session', async () => {
+    const players = (_playerId: string, _prompt: string, index: number) =>
+      index === 0
+        ? { status: 'error' as const, error: 'coder exploded' }
+        : {
+            status: 'ok' as const,
+            finalText: 'Task 4 drafted; one question for Boss.',
+          };
+    const adjudicate = () => ({
+      guard: 'needsBossReply',
+      question: CODE_PENDING_QUESTION,
+    });
+
+    const first = realArtifactHarness([realEntry(codeRegistryEntry)], {
+      players,
+      adjudicate,
+      decide: retryOrGroundedReply,
+      closing: () => 'CODE stopped on a coder error.',
+    });
+    await first.init();
+    await first.turn('/code continue IR-044 task 4', 1);
+    expect(first.playerCalls).toHaveLength(1);
+
+    const snapshot = first.shell.exportSnapshot();
+    expect(snapshot?.mode).toBe('engaged.parked');
+    expect(snapshot?.frames?.[0]?.runtime.state.stateId).toBe('failed');
+    // The recovery input travels in the machine snapshot the record already
+    // carries; nothing was added beside it for this.
+    expect(Object.keys(snapshot!.frames![0]!.runtime).sort()).toEqual([
+      'machine',
+      'pendingBossQuestions',
+      'playbookId',
+      'roleResumeTokens',
+      'schemaVersion',
+      'sequences',
+      'state',
+    ]);
+
+    // A second process: a fresh shell, a fresh CODE runtime, no recorded
+    // Boss event anywhere — only the restored snapshot.
+    const continued = realArtifactHarness([realEntry(codeRegistryEntry)], {
+      // Whatever broke the coder in the first process is fixed by the time
+      // the Boss continues the session, which is why they ask for a retry.
+      players: () => ({
+        status: 'ok' as const,
+        finalText: 'Task 4 drafted; one question for Boss.',
+      }),
+      adjudicate,
+      decide: retryOrGroundedReply,
+      closing: () => 'The retry ran; CODE is waiting on your answer.',
+    });
+    await continued.shell.restore(
+      continued.session as never,
+      assertPlaybookCaptainShellSnapshot(structuredClone(snapshot)),
+    );
+    await continued.turn(INCIDENT_BOSS_TURNS[0]!.text, 2);
+
+    // The digest the restored leaf composed advertises the same action, by
+    // the same label, as the process that reached the failure.
+    const decision = continued.decisionPrompts().at(-1) ?? '';
+    expect(decision).toContain(
+      '- retry:START_CODE: Retry: Coder is implementing one direct phase or committing a new intent record.',
+    );
+    // And it was applied for real: the coder ran again in this process, once.
+    expect(continued.playerCalls).toHaveLength(1);
+    const closing = continued.closingPrompts().at(-1) ?? '';
+    expect(closing).toContain('Runtime action receipt: executed');
+    expect(closing).toContain('- Applied "retry:START_CODE" on /code.');
+    expect(continued.surfaced.at(-1)).toBe(
+      'The retry ran; CODE is waiting on your answer.',
+    );
   });
 
   // A29-4: the Boss answers a suspended player question. The full question
