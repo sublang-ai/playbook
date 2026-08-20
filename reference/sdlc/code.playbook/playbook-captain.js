@@ -126,6 +126,34 @@ function stateDigestLine(state, description) {
         digestLine `status ${state.status}`,
     ].join('; ');
 }
+// CAPTAIN-5's mirrored ledger member holds the runtime snapshot's
+// pending-question projection — entries of `{ questionId, asker, question,
+// sourceItem }` — never a raw telemetry payload: the linked runtime's state
+// telemetry carries the singular full-context question, whose extra
+// runtime-internal fields (`resumeStateId`) fail the durable snapshot's
+// leaf-projection equality (CAPTAIN-41) and with it headless settlement.
+function mirroredBossQuestions(value) {
+    if (value === undefined || value === null)
+        return undefined;
+    const entries = Array.isArray(value) ? value : [value];
+    return entries.map((entry) => {
+        if (typeof entry !== 'object' || entry === null)
+            return entry;
+        const record = entry;
+        const projected = {};
+        if (record.questionId !== undefined) {
+            projected.questionId = record.questionId;
+        }
+        if (record.asker !== undefined)
+            projected.asker = record.asker;
+        if (record.question !== undefined)
+            projected.question = record.question;
+        if (record.sourceItem !== undefined) {
+            projected.sourceItem = record.sourceItem;
+        }
+        return projected;
+    });
+}
 function pendingQuestionLines(pending) {
     const list = Array.isArray(pending)
         ? pending
@@ -1491,8 +1519,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
         }
         if (leafFrame() === frame) {
-            pendingBossQuestions =
-                record.pendingBossQuestions ?? record.pendingBossQuestion;
+            pendingBossQuestions = mirroredBossQuestions(record.pendingBossQuestions ?? record.pendingBossQuestion);
             lastError = normalizeErrorCompact(record.lastError);
             if (state.quiescent && state.tags.includes('playbook.parked')) {
                 await setMode('engaged.parked', `sub-runtime:${state.stateId ?? 'structured'}`);
