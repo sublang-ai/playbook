@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress
+Done
 
 ## Intent
 
@@ -13,12 +13,12 @@ Implement DR-034 so a playbook parked in the recoverable failure state offers th
 
 ## Deliverables
 
-- [ ] The shared factory's entry-event contract carries an optional declaration naming the FSM context member that holds the exact Boss entry text.
-- [ ] A declared runtime derives its failure-state retry from that member of the live snapshot, so the action derives identically before and after `restore`, including a failure reached after a Boss reply.
-- [ ] An undeclared runtime keeps the recorded-event source, and no candidate exclusion, label rule, or free-text invariant changes.
-- [ ] The durable runtime snapshot, its schema, its validator, and the shell's restore comparison are untouched.
-- [ ] CODE and REVIEW declare the source and prove recovery through a continued session in the shell and CLI suites.
-- [ ] The hermetic cross-process release gate proves the retry is advertised and applied in a second process.
+- [x] The shared factory's entry-event contract carries an optional declaration naming the FSM context member that holds the exact Boss entry text.
+- [x] A declared runtime derives its failure-state retry from that member of the live snapshot, so the action derives identically before and after `restore`, including a failure reached after a Boss reply.
+- [x] An undeclared runtime keeps the recorded-event source, and no candidate exclusion, label rule, or free-text invariant changes.
+- [x] The durable runtime snapshot, its schema, its validator, and the shell's restore comparison are untouched.
+- [x] CODE and REVIEW declare the source and prove recovery through a continued session in the shell and CLI suites.
+- [x] The hermetic cross-process release gate proves the retry is advertised and applied in a second process.
 
 ## Tasks
 
