@@ -2982,6 +2982,29 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       expect(source).toContain('controlContextFields:');
     });
 
+    // DR-034's companion standing guard. A recoverable failure state whose
+    // artifact names no retry source is recoverable only while its process
+    // lives, and the engine cannot say so for a third-party artifact — so
+    // the repository says it for the artifacts it maintains, and a re-link
+    // that drops the declaration fails here rather than in a continued
+    // session. The source is a member of the deterministic entry event, so
+    // this binds an artifact that declares one; a controller playbook whose
+    // parked entry is a mapped union has no such event and no host that
+    // reads its actions.
+    it.each(artifacts)('%s declares its retry source where it can fail', (
+      path,
+      source,
+    ) => {
+      if (!source.includes('createXStatePlaybookRuntime(')) return;
+      if (!source.includes('entryEvent:')) return;
+      const fsmSource = readFileSync(
+        new URL(path.replace('.playbook.ts', '.fsm.ts'), root),
+        'utf8',
+      );
+      if (!/\n\s{4}failed: \{/.test(fsmSource)) return;
+      expect(source).toContain('contextField:');
+    });
+
     // The `_internal` clause of link.md §Output, matched to what each machine
     // actually does: a playbook that calls players exposes the player
     // composer; a controller that calls none exposes no stub under that name.

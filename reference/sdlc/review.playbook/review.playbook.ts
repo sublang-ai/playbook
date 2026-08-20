@@ -158,7 +158,14 @@ const runtimeSpec = {
   label: 'REVIEW',
   compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
   snapshotOptions: snapshotReviewOptions,
-  entryEvent: { type: 'START_REVIEW', textField: 'callerInput' },
+  entryEvent: {
+    type: 'START_REVIEW',
+    textField: 'callerInput',
+    // `copyStartInput` copies the entry text here, so the failure-state
+    // retry reads it back from the persisted machine snapshot and survives
+    // a continued session (DR-034).
+    contextField: 'callerInput',
+  },
   roleStates: {
     reviewInitial: {
       role: 'reviewer',

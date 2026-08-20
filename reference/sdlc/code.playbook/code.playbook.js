@@ -83,7 +83,14 @@ const runtimeSpec = {
     label: 'CODE',
     compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
     snapshotOptions: snapshotCodeOptions,
-    entryEvent: { type: 'START_CODE', textField: 'callerInput' },
+    entryEvent: {
+        type: 'START_CODE',
+        textField: 'callerInput',
+        // `startCoding` copies the entry text here, so the failure-state retry
+        // reads it back from the persisted machine snapshot and survives a
+        // continued session (DR-034).
+        contextField: 'callerInput',
+    },
     roleStates: {
         runFirstPhase: {
             role: 'coder',

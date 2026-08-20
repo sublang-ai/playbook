@@ -1191,10 +1191,14 @@ question with its stable id, and the last error as
 The suite shall discover every linked playbook artifact in the
 repository rather than listing them, and shall fail unless each
 artifact built on the shared factory declares a `controlContextFields`
-projection and each artifact's `_internal` exposes the prompt composers
+projection, each artifact declaring a deterministic entry event whose
+machine has a recoverable failure state also names that event's
+persisted retry source [[playbook-runtime-52](#playbook-runtime-52)], and each
+artifact's `_internal` exposes the prompt composers
 its own machine uses — the player composer where and only where that
 playbook calls players — so a re-link or a newly linked artifact cannot
-ship without the declaration the privacy contract rests on
+ship without the declarations the privacy and cross-process recovery
+contracts rest on
 ([slc/link.md](../../slc/link.md#output)).
 The projection shall fail unless a factory runtime that declares no
 context members carries no `context` at all while its FSM context is
