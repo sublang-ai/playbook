@@ -546,6 +546,47 @@ describe('DECIDE GEARS to FSM compilation', () => {
     });
   });
 
+  it('publishes a distinct terminal meaning per authored outcome', () => {
+    const rootFinals = Object.entries(states)
+      .filter(([, state]) => state.type === 'final')
+      .map(([id]) => id)
+      .sort();
+    expect(rootFinals).toEqual(['done', 'reportedReviewFailure']);
+
+    const armList = (value: unknown): readonly RawTransition[] =>
+      value === undefined
+        ? []
+        : ((Array.isArray(value) ? value : [value]) as RawTransition[]);
+
+    const entering = new Map<string, string[]>();
+    for (const state of Object.values(states)) {
+      for (const arm of [
+        ...armList(state.invoke?.onDone),
+        ...armList(state.invoke?.onError),
+      ]) {
+        const target = arm.target;
+        if (typeof target !== 'string' || !rootFinals.includes(target)) continue;
+        entering.set(target, [
+          ...(entering.get(target) ?? []),
+          String(arm.actions),
+        ]);
+      }
+    }
+
+    // Every arm entering a terminal state carries that state's own outcome, so
+    // the description a host quotes holds however the run arrived there.
+    expect(entering.get('done')).toEqual(['rememberReviewSuccess']);
+    expect(entering.get('reportedReviewFailure')?.sort()).toEqual([
+      'rememberReviewFailure',
+      'rememberReviewProtocolFailure',
+    ]);
+    expect(states.done?.description).toContain('approved commit');
+    expect(states.reportedReviewFailure?.description).toContain('reports REVIEW');
+    expect(states.reportedReviewFailure?.description).not.toContain(
+      'approved commit',
+    );
+  });
+
   it('has one load-bearing fixture for every ordered transition arm', () => {
     const actual = orderedTransitions(machineConfig, 'root');
     expect([...actual.keys()]).toEqual(Object.keys(transitionFixtures));

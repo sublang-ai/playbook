@@ -176,6 +176,11 @@ describe('linked CODE runtime', () => {
         '> Coder output: Tests passed.\n' +
         '> Commit: abc123',
     });
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('done');
+    expect(view.stateDescription).toBe(
+      'The coding workflow completed after REVIEW found no unsettled findings.',
+    );
     await runtime.dispose();
   });
 
@@ -380,6 +385,13 @@ describe('linked CODE runtime', () => {
       error: { name: 'ReviewError', message: 'Reviewer unavailable.' },
     });
     expect(host.playerCalls).toHaveLength(1);
+    // A host with no access to the run output quotes this published meaning to
+    // report the outcome, so it must not read as an approval.
+    const view = runtime.describe!();
+    expect(view.state.stateId).toBe('reportedReviewFailure');
+    expect(view.stateDescription).toBe(
+      'The coding workflow reported a REVIEW failure and the last code-owned commit.',
+    );
     await runtime.dispose();
   });
 

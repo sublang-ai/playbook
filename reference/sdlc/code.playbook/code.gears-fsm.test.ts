@@ -170,12 +170,12 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       },
       firstInvalidApproval: {
         guard: undefined,
-        target: 'done',
+        target: 'reportedReviewFailure',
         actions: 'completeWithInvalidReviewOutput',
       },
       firstAuthoredFailure: {
         guard: 'authoredReviewFailure',
-        target: 'done',
+        target: 'reportedReviewFailure',
         actions: 'completeWithReviewFailure',
       },
       firstControlFailure: {
@@ -195,12 +195,12 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
       },
       taskInvalidApproval: {
         guard: undefined,
-        target: 'done',
+        target: 'reportedReviewFailure',
         actions: 'completeWithInvalidReviewOutput',
       },
       taskAuthoredFailure: {
         guard: 'authoredReviewFailure',
-        target: 'done',
+        target: 'reportedReviewFailure',
         actions: 'completeWithReviewFailure',
       },
       taskControlFailure: {
@@ -209,6 +209,62 @@ describe('CODE Source, GEARS, and FSM agreement', () => {
         actions: 'rememberActorError',
       },
     });
+  });
+
+  it('publishes a distinct terminal meaning per authored outcome', () => {
+    const states = (codingMachine as unknown as {
+      config: {
+        states: Record<
+          string,
+          { type?: string; description?: string } & RawReviewState
+        >;
+      };
+    }).config.states;
+
+    const finalIds = Object.entries(states)
+      .filter(([, state]) => state.type === 'final')
+      .map(([id]) => id)
+      .sort();
+    expect(finalIds).toEqual(['done', 'reportedReviewFailure']);
+
+    const armList = (value: unknown): readonly RawTransition[] =>
+      value === undefined
+        ? []
+        : ((Array.isArray(value) ? value : [value]) as RawTransition[]);
+
+    const entering = new Map<string, string[]>();
+    for (const state of Object.values(states)) {
+      for (const arm of [
+        ...armList(state.invoke?.onDone),
+        ...armList(state.invoke?.onError),
+      ]) {
+        if (arm.target === undefined || !finalIds.includes(arm.target)) continue;
+        entering.set(arm.target, [
+          ...(entering.get(arm.target) ?? []),
+          String(arm.actions),
+        ]);
+      }
+    }
+
+    // Every arm entering a terminal state carries that state's own outcome, so
+    // the description a host quotes holds however the run arrived there.
+    expect(entering.get('done')).toEqual([
+      'completeSuccessfully',
+      'completeSuccessfully',
+    ]);
+    expect(entering.get('reportedReviewFailure')?.sort()).toEqual([
+      'completeWithInvalidReviewOutput',
+      'completeWithInvalidReviewOutput',
+      'completeWithReviewFailure',
+      'completeWithReviewFailure',
+    ]);
+    expect(states.done?.description).toContain('no unsettled findings');
+    expect(states.reportedReviewFailure?.description).toContain(
+      'reported a REVIEW failure',
+    );
+    expect(states.reportedReviewFailure?.description).not.toContain(
+      'no unsettled findings',
+    );
   });
 
   it('publishes stable descriptions and the correct runtime tags', () => {

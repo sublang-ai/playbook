@@ -202,6 +202,8 @@ const STATE_DESCRIPTIONS = {
   reviewIrTask: 'The REVIEW playbook is checking the latest task commit.',
   awaitBossReply: 'Waiting for Boss to answer Coder.',
   failed: 'The coding workflow failed and is waiting for a new coding intent.',
+  reportedReviewFailure:
+    'The coding workflow reported a REVIEW failure and the last code-owned commit.',
   done: 'The coding workflow completed after REVIEW found no unsettled findings.',
 } as const;
 
@@ -768,14 +770,14 @@ export const codingMachine = machineSetup.createMachine({
             target: 'runIrTask',
           },
           {
-            target: 'done',
+            target: 'reportedReviewFailure',
             actions: 'completeWithInvalidReviewOutput',
           },
         ],
         onError: [
           {
             guard: 'authoredReviewFailure',
-            target: 'done',
+            target: 'reportedReviewFailure',
             actions: 'completeWithReviewFailure',
           },
           { target: 'failed', actions: 'rememberActorError' },
@@ -857,14 +859,14 @@ export const codingMachine = machineSetup.createMachine({
             actions: 'completeSuccessfully',
           },
           {
-            target: 'done',
+            target: 'reportedReviewFailure',
             actions: 'completeWithInvalidReviewOutput',
           },
         ],
         onError: [
           {
             guard: 'authoredReviewFailure',
-            target: 'done',
+            target: 'reportedReviewFailure',
             actions: 'completeWithReviewFailure',
           },
           { target: 'failed', actions: 'rememberActorError' },
@@ -907,6 +909,12 @@ export const codingMachine = machineSetup.createMachine({
       on: {
         START_CODE: { target: 'runFirstPhase', actions: 'startCoding' },
       },
+    },
+    reportedReviewFailure: {
+      id: 'reportedReviewFailure',
+      description: STATE_DESCRIPTIONS.reportedReviewFailure,
+      meta: playbookMeta('reportedReviewFailure'),
+      type: 'final',
     },
     done: {
       id: 'done',

@@ -748,6 +748,20 @@ an unhandled runtime error.
 Every machine shall declare at least one `type: 'final'` state (typically `done`) reachable on completion.
 A never-terminating machine is a defect: the runner has no completion signal.
 
+At least one is a floor, not a ceiling. A final state's `description` is the
+machine's published terminal meaning: a host that cannot read the machine's
+output quotes that description to report what the run did. It shall therefore
+be true of every arm that enters the state and of no other terminal outcome.
+Where Source declares more than one terminal outcome — an approval that
+completes the workflow and a failure the workflow reports to its caller
+instead of parking — each outcome shall get its own `type: 'final'` state
+whose description names it. Routing an approval arm and a failure, abort, or
+invalid-result arm into one final state is a defect of the same kind as a
+wrong result field, because the quoting host cannot detect the difference.
+This constrains only published meaning: the declared machine `output` still
+derives its status and fields from typed context, so a caller that does read
+the output is unaffected.
+
 Where Source declares a JSON-safe terminal result, the setup types shall
 declare that output and the root machine shall derive it from typed context
 through XState's machine `output` function. A final-state transition alone does

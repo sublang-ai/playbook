@@ -200,7 +200,7 @@ export declare const decideMachine: import("xstate").StateMachine<DecideContext,
 } | {
     type: "validReviewSuccess";
     params: unknown;
-}, never, "done" | "failed" | "awaitBossReply" | "ready" | "commitCoderProposal" | "reviewCommit" | "reportedReviewFailure" | {
+}, never, "done" | "failed" | "awaitBossReply" | "ready" | "reportedReviewFailure" | "commitCoderProposal" | "reviewCommit" | {
     independentProposals: {
         coder: "complete" | "working" | "waiting";
         reviewer: "complete" | "working" | "waiting";

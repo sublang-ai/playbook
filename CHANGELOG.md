@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A CODE run that REVIEW did not approve is no longer announced as a clean success.** CODE compiled exact approval, an authored REVIEW abort or failure, and a terminal REVIEW result that does not prove approval onto one `done` state described as completion after REVIEW found no unsettled findings. A host can quote only the runtime-published state description, so dismissing a parked nested review reported "completed after REVIEW found no unsettled findings" while the run output carried `review-failed`. Those authored failures now settle in their own terminal state naming the failure, and `done` is entered only by an exact approval ([DR-035](specs/decisions/035-truthful-terminal-meaning.md), [IR-043](specs/intents/043-truthful-terminal-meaning.md), [[playbook-27](specs/packages/playbook.md#playbook-27)]).
+
 ## [8.0.0] - 2026-08-17
 
 ### Added

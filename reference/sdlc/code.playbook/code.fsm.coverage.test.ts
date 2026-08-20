@@ -129,7 +129,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     },
     {
       guard: '<fallback>',
-      target: 'done',
+      target: 'reportedReviewFailure',
       context: { ...CONTEXT, phase: 'direct' },
       event: done({ approvedCommit: 'previous', noUnsettledFindings: true }),
     },
@@ -137,7 +137,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
   'reviewFirstCommit.invoke.onError': [
     {
       guard: 'authoredReviewFailure',
-      target: 'done',
+      target: 'reportedReviewFailure',
       context: CONTEXT,
       event: { type: 'xstate.error.actor.review', error: authoredFailure },
     },
@@ -205,7 +205,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
     },
     {
       guard: '<fallback>',
-      target: 'done',
+      target: 'reportedReviewFailure',
       context: { ...CONTEXT, phase: 'ir-task-final' },
       event: done({ approvedCommit: 'latest', noUnsettledFindings: false }),
     },
@@ -213,7 +213,7 @@ const transitionFixtures: Record<string, readonly TransitionFixture[]> = {
   'reviewIrTask.invoke.onError': [
     {
       guard: 'authoredReviewFailure',
-      target: 'done',
+      target: 'reportedReviewFailure',
       context: CONTEXT,
       event: { type: 'xstate.error.actor.review', error: authoredFailure },
     },
@@ -396,6 +396,7 @@ describe('CODE FSM transition coverage', () => {
       workflow.actor,
       (value) => value.status === 'done',
     );
+    expect(snapshot.value).toBe('done');
     expect(snapshot.output).toEqual({
       status: 'complete',
       lastCodeCommit: 'abc123',
@@ -501,6 +502,7 @@ describe('CODE FSM transition coverage', () => {
       workflow.actor,
       (value) => value.status === 'done',
     );
+    expect(snapshot.value).toBe('reportedReviewFailure');
     expect(snapshot.output).toEqual({
       status: 'review-failed',
       lastCodeCommit: 'abc123',
@@ -537,6 +539,7 @@ describe('CODE FSM transition coverage', () => {
       workflow.actor,
       (value) => value.status === 'done',
     );
+    expect(snapshot.value).toBe('reportedReviewFailure');
     expect(snapshot.output).toEqual({
       status: 'review-failed',
       lastCodeCommit: 'abc123',
