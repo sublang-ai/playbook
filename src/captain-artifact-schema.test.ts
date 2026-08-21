@@ -27,12 +27,10 @@ it('loads the roleless Captain as an artifact-schema-2 module', () => {
   expect(source).not.toContain('  RUNTIME_ABI,');
   // slc/link.md §Output / playbook-cli-35: the Captain is the one module
   // the front ends import statically, so its factory call defers to the
-  // first runtime request — an eager module-scope call would turn a future
-  // compat mismatch into an uncaught ESM-load error that takes even
-  // `--help` down, instead of the caught setup diagnostic. A re-link that
-  // restores the eager call fails here rather than at the next ABI bump.
-  expect(source).toContain('??= createXStatePlaybookRuntime(');
-  expect(source).not.toMatch(/ =\s*\n?\s*createXStatePlaybookRuntime\(/);
+  // first runtime request. That property is proven behaviorally — not by
+  // source syntax — in headless-captain-skew.test.ts, where a rejecting
+  // factory leaves import and `run --help` alive while the first runtime
+  // request dies as the prefixed setup diagnostic.
   expect(source).toContain('roleStates: {}');
   expect(source).not.toContain('playerStates:');
 });

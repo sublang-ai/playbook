@@ -877,6 +877,7 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     });
     expect(captainSkew.result.code).toBe(1);
     expect(captainSkew.stdout).toBe('');
+    expect(captainSkew.stderr).toContain('playbook run:');
     expect(captainSkew.stderr).toContain('999');
 
     const turn = await headlessHarness(['run', 'hello'], {

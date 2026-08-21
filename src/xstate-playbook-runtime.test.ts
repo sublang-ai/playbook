@@ -794,6 +794,134 @@ describe('player + script workflow over the shared factory', () => {
     await runtime.dispose();
   });
 
+  it('classifies only nonempty text at an authored checkpoint and keeps empty input trace-only', async () => {
+    // PBRT-25: a parked mid-workflow checkpoint — no pending question, not
+    // one of the three deterministic entries — like the acceptance
+    // checklist fixture's `outline`.
+    const checkpointMachine = createMachine({
+      id: 'checkpointed',
+      initial: 'ready',
+      context: { task: undefined as string | undefined },
+      states: {
+        ready: {
+          meta: meta('ready'),
+          tags: ['playbook.parked'],
+          on: {
+            START: {
+              target: 'work',
+              actions: assign({
+                task: ({ event }) => (event as { task: string }).task,
+              }),
+            },
+          },
+        },
+        work: {
+          id: 'work',
+          meta: roleMeta('work', 'coder'),
+          tags: ['playbook.busy'],
+          invoke: {
+            src: 'player',
+            input: ({ context }) => ({
+              stateId: 'work',
+              role: 'coder',
+              sourceItem: 'CHK-1',
+              prompt: 'Work on: <task>',
+              task: context.task,
+              result: { drafted: 'The draft is open for the next Boss turn.' },
+            }),
+            onDone: { target: 'checkpoint' },
+            onError: { target: 'checkpoint' },
+          },
+        },
+        checkpoint: {
+          meta: meta('checkpoint'),
+          tags: ['playbook.parked'],
+          on: {
+            START: {
+              target: 'work',
+              actions: assign({
+                task: ({ event }) => (event as { task: string }).task,
+              }),
+            },
+          },
+        },
+      },
+    });
+    const createCheckpointRuntime = createXStatePlaybookRuntime(
+      checkpointMachine,
+      {
+        label: 'checkpointed',
+        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+        machineInput: () => ({}),
+        entryEvent: { type: 'START', textField: 'task' },
+        roleStates: { work: { role: 'coder', label: 'work state' } },
+      },
+    );
+
+    const playerPrompts: string[] = [];
+    let classifierCalls = 0;
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerPrompts.push(prompt);
+        return { status: 'ok', finalText: 'Drafted.' };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          classifierCalls += 1;
+          return '{"type":"START"}';
+        }
+        return '{"guard":"drafted"}';
+      },
+    });
+    const runtime = createCheckpointRuntime({});
+    await runtime.init(makeSession(ports));
+    const parked = await runtime.handleBossInput(turn('begin the draft'));
+    expect(parked.state.stateId).toBe('checkpoint');
+    expect(classifierCalls).toBe(0);
+
+    // PBRT-7 holds at the checkpoint as in every state: empty input is
+    // trace-only no-action — no event, judge call, player call, status
+    // emission, or FSM transition.
+    const statusesBefore = statuses.length;
+    const tracesBefore = telemetry.filter(
+      ({ topic }) => topic === 'playbook.trace',
+    ).length;
+    const fsmBefore = telemetry.filter(
+      ({ topic }) => topic === 'playbook.fsm.state',
+    ).length;
+    for (const text of ['', '   ']) {
+      expect((await runtime.handleBossInput(turn(text))).outcome).toBe(
+        'no-action',
+      );
+    }
+    expect(classifierCalls).toBe(0);
+    expect(playerPrompts).toHaveLength(1);
+    expect(statuses.length).toBe(statusesBefore);
+    const newTraces = telemetry
+      .filter(({ topic }) => topic === 'playbook.trace')
+      .slice(tracesBefore)
+      .map(({ payload }) => (payload as { type: string }).type);
+    expect(newTraces).toEqual([
+      'boss.input.received',
+      'boss.input.settled',
+      'boss.input.received',
+      'boss.input.settled',
+    ]);
+    expect(
+      telemetry.filter(({ topic }) => topic === 'playbook.fsm.state').length,
+    ).toBe(fsmBefore);
+
+    // Nonempty text at the checkpoint classifies under the artifact's own
+    // contracts rather than entering deterministically.
+    const resumed = await runtime.handleBossInput(turn('refine the intro'));
+    expect(classifierCalls).toBe(1);
+    expect(resumed.state.stateId).toBe('checkpoint');
+    expect(playerPrompts).toHaveLength(2);
+    expect(playerPrompts[1]).toContain('refine the intro');
+    await runtime.dispose();
+  });
+
   it('restarts from failed deterministically and reports an unrecoverable wait reply as one status', async () => {
     let playerCalls = 0;
     let classifierCalls = 0;
