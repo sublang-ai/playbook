@@ -41,7 +41,6 @@ import {
   normalizeErrorCompact,
   parseJudgeJson,
   snapshotJsonValue,
-  RUNTIME_ABI,
   type PlaybookActorOutput,
   type PlaybookCaptainInput,
   type ScheduledStatus,
@@ -798,7 +797,11 @@ export const _internal = {
 // describe/apply control surface — lives in @sublang/playbook/xstate-runtime.
 const runtimeSpec: XStatePlaybookRuntimeSpec<ValidatedCaptainOptions> = {
   label: 'CAPTAIN',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  // DR-022 / slc/link.md: the declaration carries the value current at link
+  // time — a literal, never the loading engine's RUNTIME_ABI self-report,
+  // which would follow whatever engine loads the module and make the
+  // factory's skew check compare that engine with itself.
+  compat: { artifactSchema: 2, runtimeAbi: 1 },
   snapshotOptions: snapshotCaptainOptions,
   machineInput: (options) => ({ enabledPlaybooks: options.enabledPlaybooks }),
   classifyBossText: (text, ports, signal, snapshotOrState, boundary, options) =>

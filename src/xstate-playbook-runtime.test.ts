@@ -3387,6 +3387,54 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     await restored.dispose();
   });
 
+  it('classifies at a failure after an answered question with no pending context in the prompt', async () => {
+    const classifierPrompts: string[] = [];
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, prompt) => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'ok', finalText: 'Which database should I use?' }
+          : playerCalls === 2
+            ? { status: 'error', error: 'resume crashed' }
+            : { status: 'ok', finalText: `restarted with: ${prompt.length}` };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          classifierPrompts.push(prompt);
+          return playerCalls === 1
+            ? '{"type":"BOSS_REPLY","questionId":"q-1"}'
+            : '{"type":"START"}';
+        }
+        return playerCalls === 1
+          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          : '{"guard":"implemented","summary":"restarted"}';
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('build storage'));
+    expect((await runtime.handleBossInput(turn('use sqlite'))).outcome).toBe(
+      'failed',
+    );
+    // The reply turn classified at the wait with the question presented.
+    expect(classifierPrompts).toHaveLength(1);
+    expect(classifierPrompts[0]).toContain('Pending Boss question:');
+
+    // At the failure the retained question is answered history: the
+    // classifier prompt presents nothing as pending and offers no reply
+    // contract, so the judge is not steered toward a reply it cannot
+    // select — and the restart event still classifies and replays.
+    const restarted = await runtime.handleBossInput(turn('start over on pg'));
+    expect(classifierPrompts).toHaveLength(2);
+    expect(classifierPrompts[1]).toContain('Current state: failed');
+    expect(classifierPrompts[1]).not.toContain('Pending Boss question:');
+    expect(classifierPrompts[1]).not.toContain('BOSS_REPLY');
+    expect(restarted.outcome).toBe('terminal');
+    expect(playerCalls).toBe(3);
+    await runtime.dispose();
+  });
+
   it('excludes the declared retry when its member holds no text instead of falling back to the record', async () => {
     const createUnsourcedRuntime = createXStatePlaybookRuntime(workflowMachine, {
       ...workflowSpec,

@@ -20,9 +20,11 @@ it('loads the roleless Captain as an artifact-schema-2 module', () => {
   );
   expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([2]);
   expect(typeof createCaptainPlaybookRuntime).toBe('function');
-  expect(source).toContain(
-    'compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI }',
-  );
+  // DR-022 / slc/link.md: the compat declaration is the link-time literal.
+  // Importing the loading engine's RUNTIME_ABI would make the factory's
+  // skew check compare that engine with itself.
+  expect(source).toContain('compat: { artifactSchema: 2, runtimeAbi: 1 }');
+  expect(source).not.toContain('  RUNTIME_ABI,');
   expect(source).toContain('roleStates: {}');
   expect(source).not.toContain('playerStates:');
 });

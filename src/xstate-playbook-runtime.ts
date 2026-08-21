@@ -1708,7 +1708,15 @@ function makeDefaultClassifyBossText(
     const state = classifierState(snapshotOrState);
     const stateId = typeof state.value === 'string' ? state.value : undefined;
     const currentState = stateId ?? JSON.stringify(state.value ?? null);
-    const pending = pendingBossQuestionFromContext(state.context);
+    // The classifier shares the reply-wait pendingness of every other
+    // surface: outside the wait, a context question a later state retains
+    // is answered history, so the prompt must not present it as pending —
+    // a judge told a question awaits at the failure state is steered toward
+    // a reply it cannot select or toward no action at all.
+    const pending =
+      stateId === BOSS_REPLY_WAIT_STATE_ID
+        ? pendingBossQuestionFromContext(state.context)
+        : undefined;
     const configuredTypes = configuredEventTypesForState(machine, stateId);
     const applicable = [...contracts.values()].filter(
       (contract) =>

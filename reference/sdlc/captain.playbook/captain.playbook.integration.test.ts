@@ -963,14 +963,15 @@ describe('captain.playbook session mechanics', () => {
   it('declares the DR-022 compat values the loading engine accepts', async () => {
     // Construction succeeded in every test above, which is the check: the
     // factory validates spec.compat against the engine self-report before
-    // any machine interpretation (PBRT-50).
+    // any machine interpretation (PBRT-50). The declared value is the
+    // link-time literal, never the loading engine's RUNTIME_ABI self-report,
+    // which would make that check compare the engine with itself.
     const source = readFileSync(
       fileURLToPath(new URL('./captain.playbook.ts', import.meta.url)),
       'utf8',
     );
-    expect(source).toContain(
-      "compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI }",
-    );
+    expect(source).toContain('compat: { artifactSchema: 2, runtimeAbi: 1 }');
+    expect(source).not.toContain('  RUNTIME_ABI,');
     expect(source).toContain('roleStates: {}');
     expect(source).not.toContain('playerStates:');
   });

@@ -184,6 +184,7 @@ or `resumePlaybookCall` is called before `init`, the runtime shall throw.
 When a runtime receives empty or whitespace-only Boss text, it shall record and settle the input trace but shall produce no event, judge call, player call, status emission, or FSM transition.
 When no Boss question is pending, the current CODE, REVIEW, and DECIDE runtimes shall use their deterministic initial event under [[playbook-runtime-1](#playbook-runtime-1)].
 While one or more Boss questions are pending, the runtime shall call `callJudge` with the current structured state, every pending question and stable id, and the artifact-declared reply, interrupt, and no-action contracts.
+A question is pending here on the reply-wait terms of [[playbook-runtime-45](#playbook-runtime-45)]: outside an authored reply-wait state the classifier prompt shall carry no question context and offer no reply contract, however long the machine's context retains the answered question.
 The runtime shall accept an omitted `questionId` only when exactly one question is pending, attach the Boss text verbatim to the selected event, and clear pending context abandoned by an interrupt.
 The runtime shall parse the judge reply with the tolerance of [[playbook-runtime-10](#playbook-runtime-10)] and shall emit one status with no FSM event when the reply is malformed or invalid for the live state.
 
@@ -577,7 +578,7 @@ stack? }`, the `roleResumeTokens` local-role resume-token projection, the trace/
 player-call/playbook-call sequence counters, the direct-Captain-call
 counter when the runtime supports direct Captain calls, the current normalized
 state descriptor, and the pending Boss questions as `{ questionId, asker, question, sourceItem? }` entries whose `asker` is exactly `{ kind: 'captain' }` or `{ kind: 'role', roleId }`.
-A question shall count as pending only while the machine's singular state is the canonical Boss-reply wait state: a context question a later state retains — the recoverable failure a resumed player reached included — shall export as no pending question, agreeing with the same-gated state telemetry so a host ledger mirroring that telemetry and this snapshot cannot disagree about the same fact.
+A question shall count as pending only while the machine awaits its reply in an authored reply-wait state, under one pendingness shared with the state telemetry a host ledger mirrors, so the ledger and this snapshot cannot disagree about the same fact: for a runtime the shared factory constructs that wait is the singular canonical `awaitBossReply` state, and a context question a later state retains — the recoverable failure a resumed player reached included — shall export as no pending question, while a bespoke runtime counts the questions awaiting replies in its own authored wait states, DECIDE's parallel branch waits included.
 Where exactly one nested playbook call is suspended, that snapshot shall also carry its bridge-owned `callId`, `stateId`, `playbookId`, exact `text`, and `childSessionId`, enriched with the matching call-to-turn owner when present; export shall return `undefined` if the pending bridge identity, complete descriptor, or recorded call-to-turn ownership is absent or inconsistent.
 Where no nested playbook call is suspended, the schema-version-3 snapshot shall omit `suspendedCall`; at any other unsafe capture point `exportSnapshot` shall return `undefined`.
 A direct-Captain-capable runtime shall persist the `captainCall` member of `sequences` in every exported schema-version-3 snapshot.
@@ -1002,6 +1003,7 @@ The classifier prompt shall carry the exact pending question ids, questions,
 and discriminated Captain-or-role askers; an initial or post-child answer shall resume the matching
 task with the same original intent, plan, completed results, and exactly ordered
 Q+A continuation blocks (verifying [[playbook-runtime-2](#playbook-runtime-2)], [[playbook-runtime-7](#playbook-runtime-7)]).
+When a turn is classified at the recoverable failure state a resumed player reached after an answered Boss question, the suite shall fail unless the classifier prompt carries no pending-question context and offers no reply contract while the artifact's restart event still classifies and replays (verifying [[playbook-runtime-7](#playbook-runtime-7)]).
 
 ### Options validation
 

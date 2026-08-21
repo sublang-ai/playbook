@@ -33,7 +33,7 @@
 //                controller-port submission, and status formatting.
 // Compat:        spec.compat = { artifactSchema: 2, runtimeAbi: 1 }
 //                (DR-022; checked at construction by the loading engine).
-import { createXStatePlaybookRuntime, defaultComposeCaptainPrompt, normalizeError, normalizeErrorCompact, parseJudgeJson, snapshotJsonValue, RUNTIME_ABI, } from '../../../src/xstate-runtime.js';
+import { createXStatePlaybookRuntime, defaultComposeCaptainPrompt, normalizeError, normalizeErrorCompact, parseJudgeJson, snapshotJsonValue, } from '../../../src/xstate-runtime.js';
 import { captainMachine, } from './captain.fsm.js';
 function assertNonEmptyString(value, label) {
     if (typeof value !== 'string' || value.trim().length === 0) {
@@ -516,7 +516,11 @@ export const _internal = {
 // describe/apply control surface — lives in @sublang/playbook/xstate-runtime.
 const runtimeSpec = {
     label: 'CAPTAIN',
-    compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+    // DR-022 / slc/link.md: the declaration carries the value current at link
+    // time — a literal, never the loading engine's RUNTIME_ABI self-report,
+    // which would follow whatever engine loads the module and make the
+    // factory's skew check compare that engine with itself.
+    compat: { artifactSchema: 2, runtimeAbi: 1 },
     snapshotOptions: snapshotCaptainOptions,
     machineInput: (options) => ({ enabledPlaybooks: options.enabledPlaybooks }),
     classifyBossText: (text, ports, signal, snapshotOrState, boundary, options) => classifyControllerTurn(text, ports, signal, snapshotOrState, boundary, options),

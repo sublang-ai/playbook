@@ -11,7 +11,6 @@
 // Compat:        artifact schema 2 / runtime ABI 1
 
 import {
-  RUNTIME_ABI,
   createXStatePlaybookRuntime,
   snapshotJsonValue,
   type PlaybookPlayerInput,
@@ -156,7 +155,11 @@ export const _internal = {
 
 const runtimeSpec = {
   label: 'REVIEW',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  // DR-022 / slc/link.md: the declaration carries the value current at link
+  // time — a literal, never the loading engine's RUNTIME_ABI self-report,
+  // which would follow whatever engine loads the module and make the
+  // factory's skew check compare that engine with itself.
+  compat: { artifactSchema: 2, runtimeAbi: 1 },
   snapshotOptions: snapshotReviewOptions,
   entryEvent: {
     type: 'START_REVIEW',

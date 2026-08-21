@@ -9,7 +9,7 @@
 // Adjudication:  LLM judge per state; coderOutput and reviewerOutput are
 //                carried verbatim
 // Compat:        artifact schema 2 / runtime ABI 1
-import { RUNTIME_ABI, createXStatePlaybookRuntime, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
+import { createXStatePlaybookRuntime, snapshotJsonValue, } from '@sublang/playbook/xstate-runtime';
 import { reviewMachine, } from './review.fsm.js';
 const PLACEHOLDER = /<(#|[A-Za-z_$][A-Za-z0-9_$-]*)>/g;
 const CONTINUATION_PREAMBLE = 'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
@@ -71,7 +71,11 @@ export const _internal = {
 };
 const runtimeSpec = {
     label: 'REVIEW',
-    compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+    // DR-022 / slc/link.md: the declaration carries the value current at link
+    // time — a literal, never the loading engine's RUNTIME_ABI self-report,
+    // which would follow whatever engine loads the module and make the
+    // factory's skew check compare that engine with itself.
+    compat: { artifactSchema: 2, runtimeAbi: 1 },
     snapshotOptions: snapshotReviewOptions,
     entryEvent: {
         type: 'START_REVIEW',
