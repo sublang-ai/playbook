@@ -4167,8 +4167,9 @@ export function createXStatePlaybookRuntime<TOptions>(
             // recoverable failure state, and the reconstructed terminal all
             // accept exactly one ordinary textual entry event, so delivered
             // text enters deterministically — no judge call to spend and no
-            // classifier whim to settle a restart as no action. Only a
-            // reply wait has a genuine choice to classify.
+            // classifier whim to settle a restart as no action. Every other
+            // parked state — a reply wait or an authored mid-workflow
+            // checkpoint — classifies under its own Boss-event contracts.
             if (
               spec.entryEvent !== undefined &&
               (stateId === 'ready' || stateId === 'failed' || terminal)

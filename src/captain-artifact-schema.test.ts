@@ -25,6 +25,14 @@ it('loads the roleless Captain as an artifact-schema-2 module', () => {
   // skew check compare that engine with itself.
   expect(source).toContain('compat: { artifactSchema: 2, runtimeAbi: 1 }');
   expect(source).not.toContain('  RUNTIME_ABI,');
+  // slc/link.md §Output / playbook-cli-35: the Captain is the one module
+  // the front ends import statically, so its factory call defers to the
+  // first runtime request — an eager module-scope call would turn a future
+  // compat mismatch into an uncaught ESM-load error that takes even
+  // `--help` down, instead of the caught setup diagnostic. A re-link that
+  // restores the eager call fails here rather than at the next ABI bump.
+  expect(source).toContain('??= createXStatePlaybookRuntime(');
+  expect(source).not.toMatch(/ =\s*\n?\s*createXStatePlaybookRuntime\(/);
   expect(source).toContain('roleStates: {}');
   expect(source).not.toContain('playerStates:');
 });

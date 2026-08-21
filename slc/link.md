@@ -1713,7 +1713,14 @@ The thin emitted module:
   before this contract carry no `compat` member and shall reject before interpretation.
 - Requires the containing public registry manifest to advertise the same `artifactSchema: 2`; the Captain host shall reject a missing or disagreeing registry value before constructing this runtime, and a bespoke runtime profile shall advertise the same schema without claiming this shared factory's `runtimeAbi`.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
-  `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`.
+  `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`. A registry module loads
+  dynamically inside the host's caught boundary, so its eager module-scope
+  factory call fails fast there. The compiled session Captain module is the
+  exception: the shell and both CLI front ends import it statically, so it
+  shall defer its factory call to the first runtime request — an eager call
+  would turn a future `spec.compat` rejection into an uncaught module-load
+  error that takes even `--help` down, instead of the caught
+  host-construction boundary's setup diagnostic.
 - Exposes, under an `_internal` export, the pure helpers verification
   needs — at least the prompt composers its own machine uses, which may
   re-export the shared defaults when the spec does not override composition —

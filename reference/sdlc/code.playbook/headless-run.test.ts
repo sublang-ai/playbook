@@ -24,7 +24,9 @@ import {
   type RuntimeTarget,
 } from '@sublang/cligent';
 import { createTmuxPlayRuntime } from '@sublang/cligent/tmux-play';
+import { createXStatePlaybookRuntime } from '@sublang/playbook/xstate-runtime';
 import { afterEach, describe, expect, it } from 'vitest';
+import { captainMachine } from '../captain.playbook/captain.fsm.js';
 import type {
   PlaybookCallResult,
   PlaybookRuntime,
@@ -856,6 +858,26 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     expect(setup.result.code).toBe(1);
     expect(setup.stdout).toBe('');
     expect(setup.stderr).toContain('synthetic host init failed');
+
+    // PBCLI-35: the compiled session Captain's own compat rejection is a
+    // host-construction failure like any other — the real DR-022 gate
+    // throws during factory construction against the real Captain machine,
+    // and the front end owes the Boss the setup diagnostic, not an
+    // uncaught load error. The lazy module (pinned in the artifact-schema
+    // suite) is what keeps this construction inside the caught boundary.
+    const captainSkew = await headlessHarness(['run', 'hello'], {
+      createCaptainRuntime: () =>
+        createXStatePlaybookRuntime(captainMachine, {
+          label: 'CAPTAIN',
+          compat: { artifactSchema: 2, runtimeAbi: 999 },
+          snapshotOptions: () => ({}),
+          machineInput: () => ({ enabledPlaybooks: [] }),
+          roleStates: {},
+        })({}),
+    });
+    expect(captainSkew.result.code).toBe(1);
+    expect(captainSkew.stdout).toBe('');
+    expect(captainSkew.stderr).toContain('999');
 
     const turn = await headlessHarness(['run', 'hello'], {
       createHostRuntime: async (options: any) => {
