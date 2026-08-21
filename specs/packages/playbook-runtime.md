@@ -577,6 +577,7 @@ stack? }`, the `roleResumeTokens` local-role resume-token projection, the trace/
 player-call/playbook-call sequence counters, the direct-Captain-call
 counter when the runtime supports direct Captain calls, the current normalized
 state descriptor, and the pending Boss questions as `{ questionId, asker, question, sourceItem? }` entries whose `asker` is exactly `{ kind: 'captain' }` or `{ kind: 'role', roleId }`.
+A question shall count as pending only while the machine's singular state is the canonical Boss-reply wait state: a context question a later state retains — the recoverable failure a resumed player reached included — shall export as no pending question, agreeing with the same-gated state telemetry so a host ledger mirroring that telemetry and this snapshot cannot disagree about the same fact.
 Where exactly one nested playbook call is suspended, that snapshot shall also carry its bridge-owned `callId`, `stateId`, `playbookId`, exact `text`, and `childSessionId`, enriched with the matching call-to-turn owner when present; export shall return `undefined` if the pending bridge identity, complete descriptor, or recorded call-to-turn ownership is absent or inconsistent.
 Where no nested playbook call is suspended, the schema-version-3 snapshot shall omit `suspendedCall`; at any other unsafe capture point `exportSnapshot` shall return `undefined`.
 A direct-Captain-capable runtime shall persist the `captainCall` member of `sequences` in every exported schema-version-3 snapshot.
@@ -626,7 +627,10 @@ public boundary is active, and once disposal begins. It shall return a
 detached view carrying the current normalized state descriptor, the
 state description defined below, the
 runtime-authored context projection defined below, the pending Boss
-questions with their stable ids, the last recorded error in normalized
+questions with their stable ids — pending on the same Boss-reply-wait
+terms as the exported snapshot ([[playbook-runtime-45](#playbook-runtime-45)]), so a failure
+reached after an answered question describes none — the last recorded
+error in normalized
 `{ name, message, stack? }` form, and the currently valid actions.
 The view's `stateDescription` shall be the runtime's own Boss-facing
 statement of what its current state means, written from the same source
@@ -1158,6 +1162,9 @@ active turn and after disposal; unless `restore` rejects a
 schema-version mismatch, a playbook-id mismatch, and an already
 initialized instance; and unless the DECIDE linked runtime round-trips
 a parked branch question through the same export/restore surface (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
+It shall fail unless a failure reached after a Boss reply resumed the
+work exports and describes no pending question, while the Boss-reply
+wait itself exports and describes it (verifying [[playbook-runtime-45](#playbook-runtime-45)] and [[playbook-runtime-52](#playbook-runtime-52)]).
 The suite shall also fail unless the compiled default Captain exposes both snapshot methods and the real Playbook Captain shell embeds its exported runtime snapshot in, and restores it from, one complete shell snapshot without calling `init` on the restored runtime (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 
 #### playbook-runtime-59

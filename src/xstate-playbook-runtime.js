@@ -237,6 +237,23 @@ function isAbortFailure(error, signal) {
     return (signal.aborted &&
         (error === signal.reason || normalizeError(error).name === 'AbortError'));
 }
+/**
+ * gears2fsm's canonical Boss-reply wait state. On the runtime's Boss-facing
+ * surfaces — state telemetry, status lines, the exported snapshot, and the
+ * control view — a context question counts as *pending* only while the
+ * machine sits in this state awaiting the reply. Later states retain the
+ * answered question in context (the resumed player prompt is composed from
+ * it), so an unconditional projection would resurrect it: a failure the
+ * resumed player reached would export a question nobody is waiting on,
+ * disagreeing with the gated telemetry a mirroring host's ledger follows
+ * and failing the shell's snapshot-equality settlement check.
+ */
+const BOSS_REPLY_WAIT_STATE_ID = 'awaitBossReply';
+function pendingBossQuestionForState(state, context) {
+    if (state.stateId !== BOSS_REPLY_WAIT_STATE_ID)
+        return undefined;
+    return pendingBossQuestionFromContext(context);
+}
 /** Read the FSM context's single pending Boss question, when well-formed. */
 export function pendingBossQuestionFromContext(context) {
     const pending = context.pendingBossQuestion;
@@ -670,7 +687,7 @@ export function resumableStateIdsFromMachine(machine) {
     if (!isPlainObject(config) || !isPlainObject(config.states)) {
         return new Set();
     }
-    const awaitState = config.states.awaitBossReply;
+    const awaitState = config.states[BOSS_REPLY_WAIT_STATE_ID];
     if (!isPlainObject(awaitState) || !isPlainObject(awaitState.on)) {
         return new Set();
     }
@@ -861,7 +878,7 @@ function makeDefaultStatusesForState(roleStates) {
         if (stateId === undefined || SUPPRESSED_ENTRY_STATES.has(stateId)) {
             return statuses;
         }
-        if (stateId === 'awaitBossReply') {
+        if (stateId === BOSS_REPLY_WAIT_STATE_ID) {
             const pending = pendingBossQuestionFromContext(context);
             if (pending === undefined) {
                 return [...statuses, { message: 'Awaiting Boss reply.' }];
@@ -2082,11 +2099,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 previousState: previousState ?? null,
                 state,
             };
-            if (state.stateId === 'awaitBossReply') {
-                const pendingBossQuestion = pendingBossQuestionFromContext(context);
-                if (pendingBossQuestion !== undefined) {
-                    payload.pendingBossQuestion = pendingBossQuestion;
-                }
+            const pendingBossQuestion = pendingBossQuestionForState(state, context);
+            if (pendingBossQuestion !== undefined) {
+                payload.pendingBossQuestion = pendingBossQuestion;
             }
             if (state.stateId === 'failed') {
                 const lastError = normalizeErrorFull(context.lastError);
@@ -2589,7 +2604,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const machineSnapshot = detachPersistedMachineSnapshot(actor.getPersistedSnapshot());
                 const context = actor.getSnapshot()
                     .context;
-                const pending = pendingBossQuestionFromContext(context ?? {});
+                const pending = pendingBossQuestionForState(state, context ?? {});
                 return {
                     schemaVersion: 3,
                     playbookId: session.playbookId,
@@ -2737,7 +2752,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const state = currentState();
                 const context = (snapshot.context ??
                     {});
-                const pending = pendingBossQuestionFromContext(context);
+                const pending = pendingBossQuestionForState(state, context);
                 const lastError = normalizeErrorFull(context.lastError);
                 const projectedContext = projectControlContext(context);
                 const stateDescription = stateDescriptionFor(state);

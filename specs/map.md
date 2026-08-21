@@ -26,7 +26,7 @@ meta.md       The spec of specs
 | ID | File | Summary |
 | --- | --- | --- |
 | [DR-000](decisions/000-spec-structure-format.md) | 000-spec-structure-format.md | Spec structure, format, and naming conventions |
-| [DR-001](decisions/001-state-machine-tooling.md) | 001-state-machine-tooling.md | XState + Stately Sketch for state machine modeling, visualization, and simulation |
+| [DR-001](decisions/001-state-machine-tooling.md) | 001-state-machine-tooling.md | XState + Stately Sketch for state machine modeling, visualization, and simulation; DR-033 narrows the scope — drawing running machines belongs to the host application |
 | [DR-002](decisions/002-in-page-xstate-visualizer.md) | 002-in-page-xstate-visualizer.md | XState visualizer architecture (Diagram / Telemetry / Binding; `SketchTelemetry` protocol) — superseded by DR-003 |
 | [DR-003](decisions/003-sketch-controlled-shell.md) | 003-sketch-controlled-shell.md | Superseded by DR-033: Stately Sketch as a controlled shell — the cutover never landed |
 | [DR-004](decisions/004-link-code-fsm-to-playbook-runtime.md) | 004-link-code-fsm-to-playbook-runtime.md | Current CODE linker bindings: one Coder role, deterministic exact-text entry, shared single-region runtime, nested REVIEW after every CODE commit, and generic registry/shell integration |

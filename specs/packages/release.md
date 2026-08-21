@@ -179,7 +179,7 @@ the pre-close Captain lifecycle, and isolated fresh, tool-restricted
 Captain calls, first released together in `@sublang/cligent` 0.15.0;
 merely using a range that could admit a later compatible version shall
 not satisfy this requirement.
-Before a DR-032 candidate releases, the pin shall be at least 0.22.0 and shall expose the segmented-id grammar, empty-roster host shape, atomic complete per-call settings, typed settings rejection, and reliable attached-client resizing above.
+Since the DR-032 release, the pin shall be at least 0.22.0 and shall expose the segmented-id grammar, empty-roster host shape, atomic complete per-call settings, typed settings rejection, and reliable attached-client resizing above.
 
 #### release-22
 
@@ -280,7 +280,6 @@ to change, and they may be added, changed, or removed in any release.
 Narrowing an existing public declaration so input that previously
 typechecked no longer does — including adding a required property to an
 options type — is likewise a breaking change under [[release-1](#release-1)].
-The current unreleased replacement of DISCUSS and its public subpaths with REVIEW and DECIDE is a breaking public-surface change and shall be released in the same next major version under [[release-1](#release-1)].
 
 ### Pre-release Checklist
 

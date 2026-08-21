@@ -3339,12 +3339,20 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     const recorded = createWorkflowRuntime({});
     await recorded.init(makeSession(recordedPorts));
     await recorded.handleBossInput(turn('build storage'));
+    // At the wait the question is pending on every surface.
+    expect(recorded.describe!().pendingQuestions).toHaveLength(1);
+    expect(recorded.exportSnapshot!()!.pendingBossQuestions).toHaveLength(1);
     expect((await recorded.handleBossInput(turn('use sqlite'))).outcome).toBe(
       'failed',
     );
     expect(recorded.describe!().actions.map(({ id }) => id)).toEqual([
       'jump:implement',
     ]);
+    // The answered question the failure state retains in context is not
+    // pending: the view and the snapshot agree with the gated state
+    // telemetry, so a mirroring shell can settle this parked record.
+    expect(recorded.describe!().pendingQuestions).toEqual([]);
+    expect(recorded.exportSnapshot!()!.pendingBossQuestions).toEqual([]);
     await recorded.dispose();
 
     // The declared source names the entry text the machine still holds, so
@@ -3362,6 +3370,7 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       { id: 'jump:implement', label: 'Resume from: implement state' },
     ]);
     const snapshot = declared.exportSnapshot!()!;
+    expect(snapshot.pendingBossQuestions).toEqual([]);
     await declared.dispose();
 
     const restored = createRecoverableWorkflowRuntime({});

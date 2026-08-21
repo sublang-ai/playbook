@@ -46,11 +46,13 @@ function writer() {
 }
 
 /**
- * The coder fails in the first process and works in the second — the shape
- * of every real recovery, where the Boss fixed something between the two.
+ * The coder's per-call fate is scripted by the test — an `error` entry is
+ * the failing call, and everything past the script's end succeeds. That
+ * lets one adapter drive both recovery shapes: a coder that fails on entry,
+ * and one that fails only after a Boss answer resumed it.
  */
 class ScriptedAdapter implements AgentAdapter {
-  static coderFails = true;
+  static playerScript: Array<'ok' | 'error'> = [];
   static playerCalls = 0;
   readonly agent = 'claude-code';
 
@@ -59,42 +61,51 @@ class ScriptedAdapter implements AgentAdapter {
     _options?: AgentOptions,
   ): AsyncGenerator<AgentEvent, void, void> {
     // Every Captain call is hidden control work, so the composer markers —
-    // which this test's own scripted Captain sends — decide first; what is
-    // left under the marker is CODE's adjudication judge call.
+    // which this test's own scripted Captain sends — and the runtime's own
+    // classifier marker decide first; what is left under the hidden-control
+    // marker is CODE's adjudication judge call.
     const closing =
       prompt.includes('compose closing reply') ||
       prompt.includes('An action just settled for the current Boss turn');
     const conversational = prompt.includes('compose conversational reply');
+    const classify = prompt.includes('Classify the following Boss message');
     const adjudication =
       prompt.includes('This is hidden control work.') &&
       !closing &&
-      !conversational;
-    const player = !closing && !conversational && !adjudication;
-    if (player) ScriptedAdapter.playerCalls += 1;
-    if (player && ScriptedAdapter.coderFails) {
-      yield createEvent(
-        'done',
-        this.agent,
-        {
-          status: 'error',
-          error: 'coder exploded',
-          usage: { toolUses: 0 },
-          durationMs: 1,
-        },
-        'transport:error',
-      );
-      return;
+      !conversational &&
+      !classify;
+    const player = !closing && !conversational && !classify && !adjudication;
+    if (player) {
+      const fate =
+        ScriptedAdapter.playerScript[ScriptedAdapter.playerCalls] ?? 'ok';
+      ScriptedAdapter.playerCalls += 1;
+      if (fate === 'error') {
+        yield createEvent(
+          'done',
+          this.agent,
+          {
+            status: 'error',
+            error: 'coder exploded',
+            usage: { toolUses: 0 },
+            durationMs: 1,
+          },
+          'transport:error',
+        );
+        return;
+      }
     }
-    const result = adjudication
-      ? JSON.stringify({
-          guard: 'needsBossReply',
-          question: 'May I proceed with the risky rename?',
-        })
-      : closing
-        ? 'The retry ran; CODE is waiting on your answer.'
-        : conversational
-          ? 'Captain acknowledged the message.'
-          : 'Rename drafted; one question for Boss.';
+    const result = classify
+      ? JSON.stringify({ type: 'BOSS_REPLY' })
+      : adjudication
+        ? JSON.stringify({
+            guard: 'needsBossReply',
+            question: 'May I proceed with the risky rename?',
+          })
+        : closing
+          ? 'The retry ran; CODE is waiting on your answer.'
+          : conversational
+            ? 'Captain acknowledged the message.'
+            : 'Rename drafted; one question for Boss.';
     yield createEvent(
       'done',
       this.agent,
@@ -152,10 +163,11 @@ function runtimeSnapshot(turns: number): PlaybookRuntimeSnapshot {
 }
 
 /**
- * A Captain that starts CODE on a slash turn and, on any later turn, selects
- * the retry the leaf advertises. Selecting it by its exact id is the point:
- * the shell refuses an action the restored leaf does not advertise, so this
- * turn settles only because the recovery survived the process boundary.
+ * A Captain that starts CODE on a slash turn, delivers an ordinary answer to
+ * the leaf, and selects the advertised retry when the Boss asks for one.
+ * Selecting the retry by its exact id is the point: the shell refuses an
+ * action the restored leaf does not advertise, so a retry turn settles only
+ * because the recovery survived the process boundary.
  */
 function scriptedCaptainRuntime(receipts: unknown[]) {
   return ({ controller }: any): PlaybookRuntime => {
@@ -178,7 +190,9 @@ function scriptedCaptainRuntime(receipts: unknown[]) {
         const decision =
           parsed?.kind === 'action'
             ? parsed.decision
-            : { action: 'runtime', actionId: 'retry:START_CODE' };
+            : text.startsWith('Retry')
+              ? { action: 'runtime', actionId: 'retry:START_CODE' }
+              : { action: 'deliver' };
         receipts.push(await controller.submit(decision, signal));
         // The shell reads this trace to serve the next Captain call as the
         // turn's closing reply rather than another decision.
@@ -206,7 +220,7 @@ function scriptedCaptainRuntime(receipts: unknown[]) {
 
 describe('headless failure retry across a continued session (DR-034)', () => {
   it('advertises and applies the retry the first process could not keep', async () => {
-    ScriptedAdapter.coderFails = true;
+    ScriptedAdapter.playerScript = ['error'];
     ScriptedAdapter.playerCalls = 0;
     const dir = await mkdtemp(join(tmpdir(), 'playbook-retry-'));
     tempDirs.push(dir);
@@ -271,7 +285,6 @@ describe('headless failure retry across a continued session (DR-034)', () => {
     // Process two: nothing carries over but the record. The restored leaf
     // still advertises `retry:START_CODE`, so the selection is accepted and
     // executed rather than refused as unadvertised.
-    ScriptedAdapter.coderFails = false;
     const secondOut = writer();
     const secondErr = writer();
     const second = await runPlaybookCli({
@@ -302,5 +315,120 @@ describe('headless failure retry across a continued session (DR-034)', () => {
     expect(recovered.snapshot.frames[0].runtime.state.stateId).toBe(
       'awaitBossReply',
     );
+  });
+
+  it('settles and recovers a failure reached after an answered Boss question', async () => {
+    // The coder asks first, then fails on the resumed call, then recovers:
+    // ok (asks) → error (after the answer) → ok (asks again).
+    ScriptedAdapter.playerScript = ['ok', 'error'];
+    ScriptedAdapter.playerCalls = 0;
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-replyfail-'));
+    tempDirs.push(dir);
+    const configPath = join(dir, 'playbook.config.yaml');
+    await writeFile(
+      configPath,
+      [
+        'captain: { adapter: claude, model: captain-model }',
+        'players:',
+        '  dev.coder: { adapter: claude, model: coder-model }',
+        'playbooks:',
+        '  code:',
+        '    from: mod://code',
+        '    roles: { coder: dev.coder }',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    const sessionsDir = join(dir, 'sessions');
+    const sessionId = '90000000-0000-4000-8000-000000000002';
+    const receipts: unknown[] = [];
+    const options = () => ({
+      userConfigPath: configPath,
+      env: { ANTHROPIC_API_KEY: 'a' },
+      loadModule: async (specifier: string) => {
+        if (specifier === 'mod://code') {
+          return { default: codePlaybookRegistryEntry };
+        }
+        throw new Error(`no module ${specifier}`);
+      },
+      adapterImports,
+      createCaptainRuntime: scriptedCaptainRuntime(receipts),
+      createLogicalSessionId: () => sessionId,
+      createCaptainSessionId: (() => {
+        let value = 0;
+        return () =>
+          `20000000-0000-4000-8000-${String(++value).padStart(12, '0')}`;
+      })(),
+      probeAdapterSdk: async () => true,
+      sessionsDir,
+      spawn: () => {
+        throw new Error('headless run must not spawn tmux-play');
+      },
+    });
+    const record = async () =>
+      JSON.parse(await readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'));
+
+    // Process one: the coder asks a question and CODE parks on it.
+    const first = await runPlaybookCli({
+      argv: ['run', '/code rename the widget module'],
+      ...options(),
+      stdout: writer(),
+      stderr: writer(),
+    });
+    expect(first.code).toBe(0);
+    const asked = await record();
+    expect(asked.state).toBe('settled');
+    expect(asked.snapshot.frames[0].runtime.state.stateId).toBe(
+      'awaitBossReply',
+    );
+    expect(asked.snapshot.frames[0].runtime.pendingBossQuestions).toHaveLength(
+      1,
+    );
+
+    // Process two: the Boss answers, the resumed coder errors, and the
+    // parked failure must still settle durably. The FSM retains the
+    // answered question in context for the resumed prompt, but nothing may
+    // export it as pending: a stale entry here makes the shell's mirrored
+    // ledger disagree with the leaf snapshot and voids the whole record.
+    const secondErr = writer();
+    const second = await runPlaybookCli({
+      argv: ['run', '--continue', 'Proceed with the risky rename.'],
+      ...options(),
+      stdout: writer(),
+      stderr: secondErr,
+    });
+    expect(secondErr.text()).not.toContain('exportable session snapshot');
+    expect(second.code).toBe(0);
+    expect(ScriptedAdapter.playerCalls).toBe(2);
+    const failed = await record();
+    expect(failed.state).toBe('settled');
+    expect(failed.snapshot.frames[0].runtime.state.stateId).toBe('failed');
+    expect(failed.snapshot.frames[0].runtime.pendingBossQuestions).toEqual([]);
+    expect(failed.snapshot.pendingBossQuestions).toBeUndefined();
+
+    // Process three: the same retry as the entry-path case recovers the
+    // reply-path failure in place, and the coder's next question parks the
+    // run on a genuinely pending question again.
+    const third = await runPlaybookCli({
+      argv: ['run', '--continue', 'Retry the failed step.'],
+      ...options(),
+      stdout: writer(),
+      stderr: writer(),
+    });
+    expect(third.code).toBe(0);
+    expect(receipts.at(-1)).toMatchObject({
+      status: 'ok',
+      receipt: { disposition: 'executed' },
+      facts: ['Applied "retry:START_CODE" on /code.'],
+    });
+    expect(ScriptedAdapter.playerCalls).toBe(3);
+    const recovered = await record();
+    expect(recovered.state).toBe('settled');
+    expect(recovered.snapshot.frames[0].runtime.state.stateId).toBe(
+      'awaitBossReply',
+    );
+    expect(
+      recovered.snapshot.frames[0].runtime.pendingBossQuestions,
+    ).toHaveLength(1);
   });
 });
