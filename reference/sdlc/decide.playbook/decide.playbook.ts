@@ -635,6 +635,33 @@ const STATUS_STATE_IDS: ReadonlySet<string> = new Set([
   'failed',
 ]);
 
+// PBRT-45: a question is pending only while its authored reply-wait state
+// is active. The context retains an answered question through the resumed
+// player call so the Q+A continuation prompt can quote it, and each branch
+// keeps its own entry through the parallel region — so an unfiltered
+// projection would report the answered question as still awaiting during
+// the resume, and both branch questions after only one remains pending.
+const RESUME_WAIT_STATE_IDS: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(
+    Object.entries(WAIT_STATE_RESUME_IDS).map(([waitStateId, resumeStateId]) => [
+      resumeStateId,
+      waitStateId,
+    ]),
+  ),
+  commitCoderProposal: 'awaitBossReply',
+};
+
+function pendingQuestionsForState(
+  state: PlaybookState,
+  context: Record<string, unknown>,
+): PendingBossQuestion[] {
+  return pendingQuestionsFromContext(context).filter((pending) =>
+    state.activeStateIds.includes(
+      RESUME_WAIT_STATE_IDS[pending.resumeStateId] ?? '',
+    ),
+  );
+}
+
 function questionForWaitState(
   stateId: string,
   pendingQuestions: readonly PendingBossQuestion[],
@@ -688,7 +715,7 @@ function telemetryPayload(
   event: unknown,
   context: Record<string, unknown>,
 ): JsonValue {
-  const pendingBossQuestions = pendingQuestionsFromContext(context);
+  const pendingBossQuestions = pendingQuestionsForState(state, context);
   const prior = previousState ?? state;
   const payload = {
     from: prior.value,
@@ -1610,7 +1637,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     const state = normalizePlaybookSnapshot(snapshot, {
       pendingCall: nestedBridge.getPendingCall(),
     });
-    const pendingQuestions = pendingQuestionsFromContext(context);
+    const pendingQuestions = pendingQuestionsForState(state, context);
     if (
       pendingQuestions.length === 0 &&
       (snapshot.status === 'done' ||
@@ -1866,7 +1893,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           playbookCall: playbookCallSequence,
         },
         state,
-        pendingBossQuestions: pendingQuestionsFromContext(context).map(
+        pendingBossQuestions: pendingQuestionsForState(state, context).map(
           (pending) => ({
             questionId: pending.questionId,
             asker: pending.asker,
@@ -2237,6 +2264,7 @@ export const _internal = {
   parseAdjudication,
   combineSignals,
   pendingQuestionsFromContext,
+  pendingQuestionsForState,
   normalizeErrorCompact,
   normalizeErrorFull,
   STATE_DESCRIPTIONS,

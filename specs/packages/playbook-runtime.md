@@ -966,6 +966,7 @@ When the integration suite drives a fresh nonempty Boss turn through CODE, REVIE
 
 
 When a runtime is driven outside a Boss-reply wait with nonempty ordinary or slash-prefixed text and with empty or whitespace-only text, the test suite shall fail unless every nonempty input enters through the artifact's deterministic event with no classifier call and every empty input produces only the received and settled trace pair (verifying [[playbook-runtime-1](#playbook-runtime-1)] and [[playbook-runtime-7](#playbook-runtime-7)]).
+The suite shall further fail unless text delivered at the recoverable failure state a resumed player reached after an answered Boss question enters through the deterministic entry event with no classifier call — the retained question steering nothing — and replays the player under the delivered text (verifying [[playbook-runtime-1](#playbook-runtime-1)] and [[playbook-runtime-7](#playbook-runtime-7)]).
 
 #### playbook-runtime-26
 
@@ -1003,7 +1004,6 @@ The classifier prompt shall carry the exact pending question ids, questions,
 and discriminated Captain-or-role askers; an initial or post-child answer shall resume the matching
 task with the same original intent, plan, completed results, and exactly ordered
 Q+A continuation blocks (verifying [[playbook-runtime-2](#playbook-runtime-2)], [[playbook-runtime-7](#playbook-runtime-7)]).
-When a turn is classified at the recoverable failure state a resumed player reached after an answered Boss question, the suite shall fail unless the classifier prompt carries no pending-question context and offers no reply contract while the artifact's restart event still classifies and replays (verifying [[playbook-runtime-7](#playbook-runtime-7)]).
 
 ### Options validation
 
@@ -1167,6 +1167,11 @@ a parked branch question through the same export/restore surface (verifying [[pl
 It shall fail unless a failure reached after a Boss reply resumed the
 work exports and describes no pending question, while the Boss-reply
 wait itself exports and describes it (verifying [[playbook-runtime-45](#playbook-runtime-45)] and [[playbook-runtime-52](#playbook-runtime-52)]).
+It shall fail unless DECIDE's telemetry and snapshot count a question
+by its own active authored wait across all three reply paths — an
+answered branch or commit question disappearing from every transition
+of the resumed turn while an unanswered sibling branch question
+remains reported (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 The suite shall also fail unless the compiled default Captain exposes both snapshot methods and the real Playbook Captain shell embeds its exported runtime snapshot in, and restores it from, one complete shell snapshot without calling `init` on the restored runtime (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 
 #### playbook-runtime-59

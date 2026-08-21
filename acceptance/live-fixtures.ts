@@ -19,7 +19,6 @@ import { readFileSync } from 'node:fs';
 import { assign, fromPromise, setup } from 'xstate';
 import {
   createXStatePlaybookRuntime,
-  RUNTIME_ABI,
 } from '@sublang/playbook/xstate-runtime';
 
 const machine = setup({
@@ -137,7 +136,8 @@ const machine = setup({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'HERMETIC',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  // Link-time literal per slc/link.md, so the fixture models linker output.
+  compat: { artifactSchema: 2, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
   roleStates: {
@@ -175,7 +175,6 @@ export function checklistFixtureSource(flagPath: string): string {
 import { assign, setup } from 'xstate';
 import {
   createXStatePlaybookRuntime,
-  RUNTIME_ABI,
 } from '@sublang/playbook/xstate-runtime';
 
 const flagPath = ${JSON.stringify(flagPath)};
@@ -314,7 +313,8 @@ const machine = setup({}).createMachine({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'CHECKLIST',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  // Link-time literal per slc/link.md, so the fixture models linker output.
+  compat: { artifactSchema: 2, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
   roleStates: {},
@@ -353,7 +353,6 @@ export function notesFixtureSource(): string {
 import { assign, setup } from 'xstate';
 import {
   createXStatePlaybookRuntime,
-  RUNTIME_ABI,
 } from '@sublang/playbook/xstate-runtime';
 
 const machine = setup({}).createMachine({
@@ -452,7 +451,8 @@ const machine = setup({}).createMachine({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'NOTES',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  // Link-time literal per slc/link.md, so the fixture models linker output.
+  compat: { artifactSchema: 2, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'topic' },
   roleStates: {},

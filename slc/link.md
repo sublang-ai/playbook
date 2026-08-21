@@ -658,10 +658,14 @@ nonconformant.
 The FSM's `events` union enumerates every Boss-originated event.
 The runtime receives Boss input as a free-form string
 (`handleBossInput.text`).
-Where the current ready or reconstructed terminal machine accepts exactly one
+Where the current ready, recoverable-failure (`failed`), or reconstructed
+terminal machine accepts exactly one
 ordinary textual entry event and no Boss question is pending, the runtime
 shall send that event deterministically and attach the exact original text to
-its declared textual payload field without invoking `callJudge`.
+its declared textual payload field without invoking `callJudge`: each of the
+three is an entry awaiting a fresh intent, so delivered text has exactly one
+meaning there and a judge call could only spend budget or settle the restart
+as no action.
 The default Captain — the controller playbook of
 [gears2fsm "Setup"](gears2fsm.md#setup) — is deterministic at every parked
 entry: the runtime maps each Boss turn from the exact text and the host's

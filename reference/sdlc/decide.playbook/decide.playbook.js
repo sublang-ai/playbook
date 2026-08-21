@@ -440,6 +440,22 @@ const STATUS_STATE_IDS = new Set([
     ...WAIT_STATE_IDS,
     'failed',
 ]);
+// PBRT-45: a question is pending only while its authored reply-wait state
+// is active. The context retains an answered question through the resumed
+// player call so the Q+A continuation prompt can quote it, and each branch
+// keeps its own entry through the parallel region — so an unfiltered
+// projection would report the answered question as still awaiting during
+// the resume, and both branch questions after only one remains pending.
+const RESUME_WAIT_STATE_IDS = {
+    ...Object.fromEntries(Object.entries(WAIT_STATE_RESUME_IDS).map(([waitStateId, resumeStateId]) => [
+        resumeStateId,
+        waitStateId,
+    ])),
+    commitCoderProposal: 'awaitBossReply',
+};
+function pendingQuestionsForState(state, context) {
+    return pendingQuestionsFromContext(context).filter((pending) => state.activeStateIds.includes(RESUME_WAIT_STATE_IDS[pending.resumeStateId] ?? ''));
+}
 function questionForWaitState(stateId, pendingQuestions) {
     const resumeStateId = WAIT_STATE_RESUME_IDS[stateId];
     if (resumeStateId !== undefined) {
@@ -478,7 +494,7 @@ function normalizedTransitionEvent(event) {
     return snapshotJsonValue(descriptor, 'FSM event');
 }
 function telemetryPayload(previousState, state, event, context) {
-    const pendingBossQuestions = pendingQuestionsFromContext(context);
+    const pendingBossQuestions = pendingQuestionsForState(state, context);
     const prior = previousState ?? state;
     const payload = {
         from: prior.value,
@@ -1167,7 +1183,7 @@ export const createPlaybookRuntime = (options) => {
         const state = normalizePlaybookSnapshot(snapshot, {
             pendingCall: nestedBridge.getPendingCall(),
         });
-        const pendingQuestions = pendingQuestionsFromContext(context);
+        const pendingQuestions = pendingQuestionsForState(state, context);
         if (pendingQuestions.length === 0 &&
             (snapshot.status === 'done' ||
                 state.activeStateIds.includes('ready') ||
@@ -1401,7 +1417,7 @@ export const createPlaybookRuntime = (options) => {
                     playbookCall: playbookCallSequence,
                 },
                 state,
-                pendingBossQuestions: pendingQuestionsFromContext(context).map((pending) => ({
+                pendingBossQuestions: pendingQuestionsForState(state, context).map((pending) => ({
                     questionId: pending.questionId,
                     asker: pending.asker,
                     question: pending.question,
@@ -1746,6 +1762,7 @@ export const _internal = {
     parseAdjudication,
     combineSignals,
     pendingQuestionsFromContext,
+    pendingQuestionsForState,
     normalizeErrorCompact,
     normalizeErrorFull,
     STATE_DESCRIPTIONS,

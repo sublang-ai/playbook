@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { PlayerSessionStore } from '../../../src/runtime.js';
 import createPlaybookRuntime, {
+  _internal,
   type PlayerCallOptions,
   type PlaybookCallRequest,
   type PlaybookCallResult,
@@ -632,6 +633,133 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         '◆ awaiting Boss reply · askReviewerProposal · reviewer · DECIDE-2',
       ]),
     );
+
+    await runtime.dispose();
+  });
+
+  // PBRT-45: a question pends only while its authored reply-wait state is
+  // active — the map spans all three of DECIDE's reply paths, and the
+  // context's retained entries never leak past their waits.
+  it('counts a question as pending only in its own active authored wait', () => {
+    const question = (resumeStateId: string, roleId: string) => ({
+      questionId: resumeStateId,
+      resumeStateId,
+      sourceItem: 'DECIDE-1',
+      asker: { kind: 'role', roleId },
+      question: `${resumeStateId}?`,
+    });
+    const context = {
+      pendingBossQuestions: {
+        askCoderProposal: question('askCoderProposal', 'coder'),
+        askReviewerProposal: question('askReviewerProposal', 'reviewer'),
+        commitCoderProposal: question('commitCoderProposal', 'coder'),
+      },
+    };
+    const state = (...activeStateIds: string[]) =>
+      ({
+        value: 'proposals',
+        activeStateIds,
+        tags: [],
+        status: 'active',
+        quiescent: true,
+      }) as never;
+    const pendingIds = (...activeStateIds: string[]) =>
+      _internal
+        .pendingQuestionsForState(state(...activeStateIds), context)
+        .map(({ questionId }: { questionId: string }) => questionId);
+
+    expect(pendingIds('waitCoderProposalReply')).toEqual(['askCoderProposal']);
+    expect(pendingIds('waitReviewerProposalReply')).toEqual([
+      'askReviewerProposal',
+    ]);
+    expect(pendingIds('awaitBossReply')).toEqual(['commitCoderProposal']);
+    expect(
+      pendingIds('waitCoderProposalReply', 'waitReviewerProposalReply'),
+    ).toEqual(['askCoderProposal', 'askReviewerProposal']);
+    // A resumed player state and the failure state pend nothing, however
+    // long the context retains the answered entries.
+    expect(pendingIds('askCoderProposal')).toEqual([]);
+    expect(pendingIds('failed')).toEqual([]);
+  });
+
+  it('drops an answered branch question from telemetry while its sibling still waits', async () => {
+    const telemetry: TelemetryRecord[] = [];
+    let coderCalls = 0;
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(
+      session(
+        completePorts({
+          callPlayer: async (roleId) => {
+            if (roleId === 'coder') coderCalls += 1;
+            return {
+              status: 'ok',
+              resumeToken: `${roleId}-thread`,
+              finalText: `Need ${roleId} clarification`,
+            };
+          },
+          callJudge: async (prompt) => {
+            if (prompt.includes('Classify the Boss message')) {
+              return JSON.stringify({
+                type: 'BOSS_REPLY',
+                questionId: 'askCoderProposal',
+              });
+            }
+            const roleId = prompt.includes('Need coder clarification')
+              ? 'coder'
+              : 'reviewer';
+            return JSON.stringify({
+              guard: 'needsBossReply',
+              question: `${roleId} question ${coderCalls}?`,
+            });
+          },
+          emitTelemetry: async (record) => {
+            telemetry.push(record);
+          },
+        }),
+      ),
+    );
+
+    await runtime.handleBossInput({ text: 'Compare designs.', signal: signal() });
+    const parkedPayloads = telemetry.filter(
+      ({ topic }) => topic === 'playbook.fsm.state',
+    ).length;
+
+    // Boss answers the coder's question; the reviewer's stays open. Every
+    // transition of the resumed turn — the branch re-entering its player
+    // state included — reports only the question still awaiting its reply,
+    // never the answered one riding the context for the resumed prompt.
+    await runtime.handleBossInput({
+      text: 'Use approach A.',
+      signal: signal(),
+    });
+    const resumedPayloads = telemetry
+      .filter(({ topic }) => topic === 'playbook.fsm.state')
+      .slice(parkedPayloads)
+      .map(({ payload }) => payload as Record<string, unknown>);
+    expect(resumedPayloads.length).toBeGreaterThan(1);
+    const resumeTransition = resumedPayloads[0] as {
+      pendingBossQuestions?: Array<{ questionId: string }>;
+    };
+    expect(
+      resumeTransition.pendingBossQuestions?.map(
+        ({ questionId }) => questionId,
+      ),
+    ).toEqual(['askReviewerProposal']);
+
+    // The resumed coder asked again, so the turn parks with two genuinely
+    // pending questions — the snapshot and the final transition agree.
+    const parkedAgain = resumedPayloads.at(-1) as {
+      pendingBossQuestions?: Array<{ questionId: string }>;
+    };
+    expect(
+      parkedAgain.pendingBossQuestions?.map(({ questionId }) => questionId),
+    ).toEqual(expect.arrayContaining(['askCoderProposal', 'askReviewerProposal']));
+    expect(coderCalls).toBe(2);
+    expect(
+      runtime.exportSnapshot?.()?.pendingBossQuestions?.map(
+        ({ questionId }) => questionId,
+      ),
+    ).toEqual(['askCoderProposal', 'askReviewerProposal']);
 
     await runtime.dispose();
   });

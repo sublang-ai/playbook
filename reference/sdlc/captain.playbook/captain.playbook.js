@@ -547,8 +547,15 @@ const runtimeSpec = {
     ],
     statusesForState,
 };
-const createCaptainPlaybookRuntime = createXStatePlaybookRuntime(captainMachine, runtimeSpec);
+// DR-022's compat check fails fast at factory construction. The Captain is
+// statically imported by the shell and both CLI front ends, so constructing
+// here at module evaluation would turn a future compat mismatch into an
+// uncaught ESM-load error that takes even `--help` down; constructing on
+// the first runtime request keeps the failure inside the caught
+// host-construction boundary that owes the Boss a setup diagnostic.
+let createCaptainPlaybookRuntime;
 export function createPlaybookRuntime(options) {
+    createCaptainPlaybookRuntime ??= createXStatePlaybookRuntime(captainMachine, runtimeSpec);
     return createCaptainPlaybookRuntime(options);
 }
 const factory = createPlaybookRuntime;

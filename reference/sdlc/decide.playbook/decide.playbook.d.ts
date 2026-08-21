@@ -27,6 +27,7 @@ declare function normalizeErrorFull(err: unknown): {
     stack?: string;
 } | undefined;
 declare function pendingQuestionsFromContext(context: Record<string, unknown>): PendingBossQuestion[];
+declare function pendingQuestionsForState(state: PlaybookState, context: Record<string, unknown>): PendingBossQuestion[];
 export declare const createPlaybookRuntime: PlaybookRuntimeFactory<PlaybookRuntimeOptions>;
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
@@ -38,6 +39,7 @@ export declare const _internal: {
     parseAdjudication: typeof parseAdjudication;
     combineSignals: typeof combineSignals;
     pendingQuestionsFromContext: typeof pendingQuestionsFromContext;
+    pendingQuestionsForState: typeof pendingQuestionsForState;
     normalizeErrorCompact: typeof normalizeErrorCompact;
     normalizeErrorFull: typeof normalizeErrorFull;
     STATE_DESCRIPTIONS: Readonly<Record<string, string>>;

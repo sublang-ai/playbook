@@ -314,7 +314,6 @@ function smokeArtifactSource() {
   return `// Release smoke fixture: a thin artifact with one script state.
 import { assign, setup } from 'xstate';
 import {
-  RUNTIME_ABI,
   createXStatePlaybookRuntime,
 } from '@sublang/playbook/xstate-runtime';
 
@@ -412,7 +411,8 @@ const machine = setup({}).createMachine({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'SMOKE',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  // Link-time literal per slc/link.md, so the fixture models linker output.
+  compat: { artifactSchema: 2, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task' },
   roleStates: {},
@@ -445,7 +445,6 @@ function recoverArtifactSource(flagPath) {
   return `// Release smoke fixture: a deliberately recoverable failure.
 import { assign, setup } from 'xstate';
 import {
-  RUNTIME_ABI,
   createXStatePlaybookRuntime,
 } from '@sublang/playbook/xstate-runtime';
 
@@ -536,7 +535,8 @@ const machine = setup({}).createMachine({
 
 const createRuntime = createXStatePlaybookRuntime(machine, {
   label: 'RECOVER',
-  compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+  // Link-time literal per slc/link.md, so the fixture models linker output.
+  compat: { artifactSchema: 2, runtimeAbi: 1 },
   snapshotOptions: () => ({}),
   entryEvent: { type: 'START', textField: 'task', contextField: 'task' },
   roleStates: {},

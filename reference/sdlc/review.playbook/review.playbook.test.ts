@@ -450,10 +450,11 @@ describe('linked REVIEW runtime', () => {
           resumeToken: 'reviewer-restarted',
         },
       ],
-      judgeReplies: [
-        '{"type":"START_REVIEW"}',
-        '{"guard":"noFindings"}',
-      ],
+      // PBRT-1: the failure state is a deterministic entry, so the restart
+      // makes no classifier call — the only judge reply the turn consumes
+      // is the restarted reviewer's adjudication. A classifier call here
+      // would shift this queue and fail loudly on the missing guard.
+      judgeReplies: ['{"guard":"noFindings"}'],
     });
     const runtime = createPlaybookRuntime({});
     await runtime.init(session(ports));

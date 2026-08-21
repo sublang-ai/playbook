@@ -4163,9 +4163,15 @@ export function createXStatePlaybookRuntime<TOptions>(
             const snapshot = actor.getSnapshot();
             const terminal = snapshot.status === 'done';
             const stateId = normalizePlaybookSnapshot(snapshot).stateId;
+            // PBRT-1 / slc/link.md §Boss-event mapping: the idle entry, the
+            // recoverable failure state, and the reconstructed terminal all
+            // accept exactly one ordinary textual entry event, so delivered
+            // text enters deterministically — no judge call to spend and no
+            // classifier whim to settle a restart as no action. Only a
+            // reply wait has a genuine choice to classify.
             if (
               spec.entryEvent !== undefined &&
-              (stateId === 'ready' || terminal)
+              (stateId === 'ready' || stateId === 'failed' || terminal)
             ) {
               event = {
                 type: spec.entryEvent.type,

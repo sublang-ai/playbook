@@ -794,24 +794,30 @@ describe('player + script workflow over the shared factory', () => {
     await runtime.dispose();
   });
 
-  it('restarts from failed through the classifier and reports an unrecoverable reply as one status', async () => {
+  it('restarts from failed deterministically and reports an unrecoverable wait reply as one status', async () => {
     let playerCalls = 0;
+    let classifierCalls = 0;
     const classifierReplies: string[] = [
       'not json at all',
-      '{"type":"START"}',
+      '{"type":"BOSS_REPLY","questionId":"q-1"}',
     ];
     const { ports, statuses } = makeRecordingPorts({
       callPlayer: async () => {
         playerCalls += 1;
         return playerCalls === 1
           ? { status: 'error', error: 'agent crashed' }
-          : { status: 'ok', finalText: 'Recovered.' };
+          : playerCalls === 2
+            ? { status: 'ok', finalText: 'Which database should I use?' }
+            : { status: 'ok', finalText: 'Recovered.' };
       },
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
+          classifierCalls += 1;
           return classifierReplies.shift() ?? '{"type":"NO_ACTION"}';
         }
-        return '{"guard":"implemented","summary":"recovered"}';
+        return playerCalls === 2
+          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          : '{"guard":"implemented","summary":"recovered"}';
       },
     });
     const runtime = createWorkflowRuntime({});
@@ -820,14 +826,24 @@ describe('player + script workflow over the shared factory', () => {
     const failedRun = await runtime.handleBossInput(turn('try the work'));
     expect(failedRun.outcome).toBe('failed');
 
+    // PBRT-1: the recoverable failure state is a deterministic entry — the
+    // restart spends no judge call the classifier could settle as no action.
+    const restarted = await runtime.handleBossInput(turn('try again'));
+    expect(classifierCalls).toBe(0);
+    expect(restarted.state.stateId).toBe('awaitBossReply');
+
+    // The reply wait is where classification lives, and an unrecoverable
+    // reply there surfaces as one status with the machine unmoved.
     const noAction = await runtime.handleBossInput(turn('hmm'));
     expect(noAction.outcome).toBe('no-action');
+    expect(classifierCalls).toBe(1);
     expect(statuses.map(({ message }) => message)).toContain(
       'Classifier reply was not recoverable JSON',
     );
 
-    const restarted = await runtime.handleBossInput(turn('try again'));
-    expect(restarted.outcome).toBe('terminal');
+    const resumed = await runtime.handleBossInput(turn('use sqlite'));
+    expect(classifierCalls).toBe(2);
+    expect(resumed.outcome).toBe('terminal');
     await runtime.dispose();
   });
 
@@ -835,15 +851,20 @@ describe('player + script workflow over the shared factory', () => {
     const controller = new AbortController();
     const abortReason = new Error('stop after classification');
     let playerCalls = 0;
+    let armed = false;
     const { ports } = makeRecordingPorts({
       callPlayer: async () => {
         playerCalls += 1;
-        return { status: 'error', error: 'agent unavailable' };
+        return { status: 'ok', finalText: 'Which database should I use?' };
       },
-      callJudge: async () => '{"type":"START"}',
+      callJudge: async (prompt) =>
+        prompt.includes('Classify the following Boss message')
+          ? '{"type":"BOSS_REPLY","questionId":"q-1"}'
+          : '{"guard":"needsBossReply","question":"Which database?"}',
       emitTelemetry: async (event) => {
         const trace = event.payload as { type?: string };
         if (
+          armed &&
           event.topic === 'playbook.trace' &&
           trace.type === 'judge.call.finished'
         ) {
@@ -853,15 +874,16 @@ describe('player + script workflow over the shared factory', () => {
     });
     const runtime = createWorkflowRuntime({});
     await runtime.init(makeSession(ports));
-    const failed = await runtime.handleBossInput(turn('first try'));
-    expect(failed.state.stateId).toBe('failed');
+    const parked = await runtime.handleBossInput(turn('first try'));
+    expect(parked.state.stateId).toBe('awaitBossReply');
+    armed = true;
 
     const aborted = await runtime.handleBossInput({
-      text: 'try again',
+      text: 'use sqlite',
       signal: controller.signal,
     });
     expect(aborted.outcome).toBe('aborted');
-    expect(aborted.state.stateId).toBe('failed');
+    expect(aborted.state.stateId).toBe('awaitBossReply');
     expect(playerCalls).toBe(1);
     await runtime.dispose();
   });
@@ -874,37 +896,42 @@ describe('player + script workflow over the shared factory', () => {
     const controller = new AbortController();
     let judgeCalls = 0;
     let playerCalls = 0;
+    let armed = false;
     const traces: PlaybookTraceEvent[] = [];
     const { ports } = makeRecordingPorts({
       callPlayer: async () => {
         playerCalls += 1;
-        return { status: 'error', error: 'agent unavailable' };
+        return { status: 'ok', finalText: 'Which database should I use?' };
       },
       callJudge: async () => {
         judgeCalls += 1;
-        return '{"type":"START"}';
+        return '{"guard":"needsBossReply","question":"Which database?"}';
       },
       emitTelemetry: async (event) => {
         if (event.topic !== 'playbook.trace') return;
         const trace = event.payload as PlaybookTraceEvent;
-        traces.push(trace);
-        if (trace.type === 'judge.call.started') {
+        if (armed) traces.push(trace);
+        if (armed && trace.type === 'judge.call.started') {
           controller.abort(new Error('stop inside the started emission'));
         }
       },
     });
     const runtime = createWorkflowRuntime({});
     await runtime.init(makeSession(ports));
-    const failed = await runtime.handleBossInput(turn('first try'));
-    expect(failed.state.stateId).toBe('failed');
+    const parked = await runtime.handleBossInput(turn('first try'));
+    expect(parked.state.stateId).toBe('awaitBossReply');
+    expect(judgeCalls).toBe(1);
+    armed = true;
 
     const aborted = await runtime.handleBossInput({
-      text: 'try again',
+      text: 'use sqlite',
       signal: controller.signal,
     });
     expect(aborted.outcome).toBe('aborted');
-    expect(aborted.state.stateId).toBe('failed');
-    expect(judgeCalls).toBe(0);
+    expect(aborted.state.stateId).toBe('awaitBossReply');
+    // The setup adjudication was the only host judge call; the aborted
+    // classifier never reached the host.
+    expect(judgeCalls).toBe(1);
     expect(playerCalls).toBe(1);
     const pair = traces.filter(({ type }) => type.startsWith('judge.call.'));
     expect(pair.map(({ type }) => type)).toEqual([
@@ -3387,26 +3414,24 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     await restored.dispose();
   });
 
-  it('classifies at a failure after an answered question with no pending context in the prompt', async () => {
+  it('restarts deterministically at a failure after an answered question', async () => {
     const classifierPrompts: string[] = [];
-    let playerCalls = 0;
+    const playerPrompts: string[] = [];
     const { ports } = makeRecordingPorts({
       callPlayer: async (_playerId, prompt) => {
-        playerCalls += 1;
-        return playerCalls === 1
+        playerPrompts.push(prompt);
+        return playerPrompts.length === 1
           ? { status: 'ok', finalText: 'Which database should I use?' }
-          : playerCalls === 2
+          : playerPrompts.length === 2
             ? { status: 'error', error: 'resume crashed' }
-            : { status: 'ok', finalText: `restarted with: ${prompt.length}` };
+            : { status: 'ok', finalText: 'Restarted.' };
       },
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
           classifierPrompts.push(prompt);
-          return playerCalls === 1
-            ? '{"type":"BOSS_REPLY","questionId":"q-1"}'
-            : '{"type":"START"}';
+          return '{"type":"BOSS_REPLY","questionId":"q-1"}';
         }
-        return playerCalls === 1
+        return playerPrompts.length === 1
           ? '{"guard":"needsBossReply","question":"Which database?"}'
           : '{"guard":"implemented","summary":"restarted"}';
       },
@@ -3421,17 +3446,14 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     expect(classifierPrompts).toHaveLength(1);
     expect(classifierPrompts[0]).toContain('Pending Boss question:');
 
-    // At the failure the retained question is answered history: the
-    // classifier prompt presents nothing as pending and offers no reply
-    // contract, so the judge is not steered toward a reply it cannot
-    // select — and the restart event still classifies and replays.
+    // At the failure the retained question is answered history and PBRT-1
+    // names the state a deterministic entry: delivered text restarts with
+    // no judge call for the retained question to steer.
     const restarted = await runtime.handleBossInput(turn('start over on pg'));
-    expect(classifierPrompts).toHaveLength(2);
-    expect(classifierPrompts[1]).toContain('Current state: failed');
-    expect(classifierPrompts[1]).not.toContain('Pending Boss question:');
-    expect(classifierPrompts[1]).not.toContain('BOSS_REPLY');
+    expect(classifierPrompts).toHaveLength(1);
     expect(restarted.outcome).toBe('terminal');
-    expect(playerCalls).toBe(3);
+    expect(playerPrompts).toHaveLength(3);
+    expect(playerPrompts[2]).toContain('start over on pg');
     await runtime.dispose();
   });
 
