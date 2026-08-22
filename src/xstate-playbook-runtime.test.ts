@@ -589,6 +589,95 @@ describe('player + script workflow over the shared factory', () => {
     }
   }, 15000);
 
+  it('kills a TERM-immune descendant when the shell exits cooperatively on the group SIGTERM', async () => {
+    // slc/link.md §Script execution: settlement requires no group member
+    // surviving. A wrapper that dies on the group SIGTERM must not cancel
+    // the SIGKILL escalation and strand a TERM-ignoring descendant — the
+    // close path SIGKILLs the group before settling.
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-script-coop-'));
+    try {
+      const controller = new AbortController();
+      const command =
+        `echo $$ > ${dir}/wrapper.pid; ` +
+        `sh -c 'echo $$ > ${dir}/desc.pid; trap "" TERM; exec sleep 30' & wait`;
+      const { ports, statuses } = makeRecordingPorts({
+        callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+        callJudge: async () => '{"guard":"implemented","summary":"ok"}',
+      });
+      const runtime = createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        label: 'script-coop-workflow',
+        machineInput: () => ({ command }),
+      })({});
+      await runtime.init(makeSession(ports));
+      const turnPromise = runtime.handleBossInput({
+        text: 'run the cooperative script',
+        signal: controller.signal,
+      });
+      const readPid = async (name: string): Promise<number> => {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          try {
+            const text = await readFile(join(dir, name), 'utf8');
+            const pid = Number.parseInt(text.trim(), 10);
+            if (Number.isInteger(pid) && pid > 0) return pid;
+          } catch {
+            // Not written yet.
+          }
+          await new Promise((tick) => setTimeout(tick, 25));
+        }
+        throw new Error(`${name} was never written`);
+      };
+      const wrapperPid = await readPid('wrapper.pid');
+      const descPid = await readPid('desc.pid');
+      controller.abort(new Error('boss cancelled the script'));
+      const settled = await turnPromise;
+      expect(settled.outcome).toBe('aborted');
+      // Both group members are dead at settlement — kill(pid, 0) throws —
+      // even though only the descendant needed the close-time group SIGKILL.
+      for (const pid of [wrapperPid, descPid]) {
+        expect(() => process.kill(pid, 0)).toThrow();
+      }
+      expect(
+        statuses.some(({ message }) =>
+          message.startsWith('Executed script for'),
+        ),
+      ).toBe(false);
+      await runtime.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 15000);
+
+  it('rejects an abort observed after the shell exit before status, telemetry, and guard', async () => {
+    // slc/link.md §Script execution: an abort landing once the script has
+    // completed must still reject with the signal's reason — never resolve
+    // the guard behind an aborted settlement, which would leave a secretly
+    // terminal machine that a later turn restarts from idle.
+    const controller = new AbortController();
+    const abortReason = new Error('stop after the script exited');
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () => '{"guard":"implemented","summary":"ok"}',
+      emitStatus: async (message) => {
+        if (message.startsWith('Executed script for')) {
+          controller.abort(abortReason);
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const settled = await runtime.handleBossInput({
+      text: 'build the widget',
+      signal: controller.signal,
+    });
+    expect(settled.outcome).toBe('aborted');
+    expect(settled.state.stateId).not.toBe('done');
+    expect(telemetry.some(({ topic }) => topic === 'playbook.script')).toBe(
+      false,
+    );
+    await runtime.dispose();
+  });
+
   it('runs deterministic entry, default composition, adjudication, and script execution to terminal', async () => {
     const judgePrompts: string[] = [];
     const playerPrompts: string[] = [];
@@ -1198,6 +1287,126 @@ describe('player + script workflow over the shared factory', () => {
     });
     expect(aborted.outcome).toBe('aborted');
     await runtime.dispose();
+  });
+
+  it('settles as an abort when the trace sink rejects with the exact abort reason', async () => {
+    // slc/link.md §Abort: a sink whose rejection IS the signal's reason
+    // evidences the cancellation itself; the drain must not convert a clean
+    // abort into a control-plane rejection carrying the Boss's own reason.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the turn');
+    let armed = true;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, _prompt, portSignal) => {
+        controller.abort(abortReason);
+        throw portSignal.reason;
+      },
+      emitTelemetry: async () => {
+        if (armed && controller.signal.aborted) throw abortReason;
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const aborted = await runtime.handleBossInput({
+      text: 'first try',
+      signal: controller.signal,
+    });
+    expect(aborted.outcome).toBe('aborted');
+    armed = false;
+    await runtime.dispose();
+  });
+
+  it('rejects with a distinct sink failure that lands while the turn is aborted', async () => {
+    // The reverse case pins the precedence: a sink failure that is not the
+    // signal's reason is a real control-plane fault the Boss must see even
+    // though the turn was cancelled (slc/link.md §Abort).
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the turn');
+    const sinkFailure = new Error('trace sink offline');
+    let armed = true;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, _prompt, portSignal) => {
+        controller.abort(abortReason);
+        throw portSignal.reason;
+      },
+      emitTelemetry: async () => {
+        if (armed && controller.signal.aborted) throw sinkFailure;
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await expect(
+      runtime.handleBossInput({ text: 'first try', signal: controller.signal }),
+    ).rejects.toBe(sinkFailure);
+    armed = false;
+    await runtime.dispose();
+  });
+
+  it('rejects a synchronous FSM action failure instead of leaking an unobserved actor error', async () => {
+    // PBRT-13: an action that throws before the quiescence wait subscribes
+    // errors the actor while it already counts as quiescent, so no observer
+    // ever attached. The boundary must reject with the distinct failure —
+    // coincident abort or not — and the error must never escape as an
+    // uncaughtException after the method returns.
+    for (const abortFirst of [false, true]) {
+      const escaped: unknown[] = [];
+      const onUncaught = (error: unknown): void => {
+        escaped.push(error);
+      };
+      process.on('uncaughtException', onUncaught);
+      try {
+        const controller = new AbortController();
+        const abortReason = new Error('boss cancelled the turn');
+        const actionFailure = new Error('distinct action failure');
+        const machine = createMachine({
+          id: 'actionThrow',
+          context: () => ({ task: undefined as string | undefined }),
+          initial: 'ready',
+          states: {
+            ready: {
+              meta: meta('ready'),
+              tags: ['playbook.parked'],
+              on: {
+                START: {
+                  target: 'work',
+                  actions: [
+                    assign({
+                      task: ({ event }) => (event as { task: string }).task,
+                    }),
+                    () => {
+                      if (abortFirst) controller.abort(abortReason);
+                      throw actionFailure;
+                    },
+                  ],
+                },
+              },
+            },
+            work: {
+              meta: meta('work'),
+              tags: ['playbook.parked'],
+            },
+          },
+        });
+        const runtime = createXStatePlaybookRuntime(machine, {
+          label: 'action-throw',
+          compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+          snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+          entryEvent: { type: 'START', textField: 'task' },
+          roleStates: {},
+        })({});
+        await runtime.init(makeSession(makeRecordingPorts().ports));
+        await expect(
+          runtime.handleBossInput({ text: 'go', signal: controller.signal }),
+        ).rejects.toBe(actionFailure);
+        // The escape reproduced tens of milliseconds after return; give the
+        // reporter room to surface before asserting silence.
+        await new Promise((tick) => setTimeout(tick, 100));
+        expect(escaped).toEqual([]);
+        await runtime.dispose().catch(() => undefined);
+      } finally {
+        process.off('uncaughtException', onUncaught);
+      }
+    }
   });
 
   it('does not send a classified event when abort fires during its finish trace', async () => {
@@ -2160,6 +2369,47 @@ describe('empty ok player result corrective re-ask (DR-028 / PBRT-51)', () => {
     expect(corrective[1].payload).toMatchObject({ status: 'aborted' });
     await runtime.dispose();
   });
+
+  it('finishes the player pair when the started sink records then rejects', async () => {
+    // slc/link.md §Playbook trace: a recorded-then-rejected started sink
+    // leaves no unpaired start — one best-effort error finish preserves the
+    // call id and prompt, no host call begins, and the method rejects with
+    // the original sink error, the same canonical handling the judge,
+    // Captain, and apply boundaries already implement.
+    let playerCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const sinkFailure = new Error('started sink offline');
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'ok', finalText: 'done' };
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (trace.type === 'player.call.started') throw sinkFailure;
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await expect(
+      runtime.handleBossInput(turn('build the widget')),
+    ).rejects.toBe(sinkFailure);
+    expect(playerCalls).toBe(0);
+    const pair = traces.filter(({ callId }) => callId === 'player-1');
+    expect(pair.map(({ type }) => type)).toEqual([
+      'player.call.started',
+      'player.call.finished',
+    ]);
+    expect(pair[1].payload).toMatchObject({
+      status: 'error',
+      error: { message: 'started sink offline' },
+      prompt: 'Implement this task: build the widget',
+      roleId: 'coder',
+    });
+    await runtime.dispose();
+  });
 });
 
 describe('host-owned player continuation (DR-030)', () => {
@@ -2588,6 +2838,50 @@ describe('nested playbook actor over the shared factory', () => {
           event.type === 'playbook.call.finished',
       );
     expect(callTraces).toHaveLength(2);
+    await runtime.dispose();
+  });
+
+  it('keeps the aborted resume settlement when the drain rejects with the exact resume reason', async () => {
+    // slc/link.md §Abort: resumePlaybookCall surfaces only failures that
+    // are not causally identical to its signal's reason; when every
+    // candidate is that exact reason, the settled aborted result stands.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the resume');
+    let armed = true;
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'suspended',
+        childSessionId: 'child-session-1',
+      }),
+      emitTelemetry: async (event) => {
+        if (
+          armed &&
+          controller.signal.aborted &&
+          event.topic === 'playbook.fsm.state'
+        ) {
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const suspended = await runtime.handleBossInput(turn('do it'));
+    expect(suspended.outcome).toBe('suspended');
+    const pendingCall =
+      'pendingCall' in suspended ? suspended.pendingCall : undefined;
+    controller.abort(abortReason);
+    const resumed = await runtime.resumePlaybookCall({
+      callId: pendingCall!.callId,
+      result: {
+        status: 'ok',
+        playbookId: 'child',
+        childSessionId: 'child-session-1',
+        output: { note: 'late child' },
+      },
+      signal: controller.signal,
+    });
+    expect(resumed.outcome).toBe('aborted');
+    armed = false;
     await runtime.dispose();
   });
 
@@ -4749,6 +5043,31 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       'split-control state pause declares meta.playbook.stateId awaitBossReply; the shared runtime requires the playbook state id to equal the state key',
     );
   });
+
+  it('rejects a flat machine whose state declares no meta.playbook.stateId', () => {
+    // PBRT-52: every snapshot identity derives from `meta.playbook.stateId`,
+    // so a state without one is identity-dead — its first entry would fail
+    // the exactly-one-state-id inspection. The factory rejects it up front
+    // beside the split-identity shape.
+    const missingIdentityMachine = createMachine({
+      id: 'missing',
+      initial: 'ready',
+      states: {
+        ready: { tags: ['playbook.parked'] },
+      },
+    });
+    expect(() =>
+      createXStatePlaybookRuntime(missingIdentityMachine, {
+        label: 'missing-control',
+        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+        entryEvent: { type: 'START', textField: 'task' },
+        roleStates: {},
+      }),
+    ).toThrow(
+      'missing-control state ready declares no string meta.playbook.stateId; the shared runtime derives every playbook state identity from it',
+    );
+  });
 });
 
 // Round-7 finding 4, producer half. PBRT-52 already required every action
@@ -4787,8 +5106,12 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
           },
         },
         described: { id: 'described', meta: meta('described') },
-        // A resumable target whose source declares no description at all.
-        undescribed: { id: 'undescribed' },
+        // A resumable target whose source declares no description at all —
+        // identity is still mandatory (PBRT-52's flat-domain guard).
+        undescribed: {
+          id: 'undescribed',
+          meta: { playbook: { stateId: 'undescribed' } },
+        },
       },
     });
     const createJump = createXStatePlaybookRuntime(jumpMachine, {
@@ -4824,9 +5147,10 @@ describe('action labels never fall back to an identifier (PBRT-52)', () => {
           tags: ['playbook.parked'],
           on: { START: 'plain' },
         },
-        // The state the retry re-enters publishes nothing, so the only names
-        // available for it are its own id and the replayed event type.
-        plain: {},
+        // The state the retry re-enters publishes no description, so the
+        // only names available for it are its own id and the replayed event
+        // type — identity itself stays mandatory (PBRT-52).
+        plain: { meta: { playbook: { stateId: 'plain' } } },
       },
     });
     const createRetry = createXStatePlaybookRuntime(retryMachine, {

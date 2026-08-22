@@ -947,9 +947,12 @@ The provided actor shall:
   without spawning when the combined signal is already aborted; shall run the
   shell detached as its own process-group leader; and on abort shall deliver
   `SIGTERM` to the entire group, escalate to `SIGKILL` after a bounded grace,
-  and settle only after the shell process itself has exited, rejecting with
-  the signal's reason. A descendant that leaves the process group is beyond
-  the runtime's kill scope.
+  and settle only after the shell process itself has exited and no group
+  member survives, rejecting with the signal's reason. An abort observed
+  only after the shell's exit shall still reject with the signal's reason
+  before the script status line, its telemetry, and guard resolution. A
+  descendant that leaves the process group is beyond the runtime's kill
+  scope.
 - Emit, after the child settles and before the invocation resolves, one status
   line `Executed script for <stateId> (exit <status>).` and one telemetry
   event under topic `playbook.script` with payload
@@ -1581,12 +1584,13 @@ The `playbook.trace` copies are the host-agnostic runtime-boundary record requir
 ## Output
 
 The link compiler emits one TypeScript module per playbook.
-For an FSM that declares no `type: 'parallel'` state, it shall emit the thin
-shared-factory module defined below.
+For an FSM that declares no `type: 'parallel'` state — necessarily flat
+under [gears2fsm.md](gears2fsm.md)'s one-state-per-item mapping — it shall
+emit the thin shared-factory module defined below.
 For an FSM that declares a parallel state, it shall emit bespoke linked
 machinery satisfying this document's runtime contract and shall not invoke
-`createXStatePlaybookRuntime`, whose supported domain is single-region FSMs
-under [DR-019](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/019-shared-linked-runtime-factory.md).
+`createXStatePlaybookRuntime`, whose supported domain is flat single-region
+FSMs under [DR-019](../specs/decisions/019-shared-linked-runtime-factory.md).
 The FSM-interpreter machinery — actor wiring, boundary tracing, Boss-event
 mapping, adjudication, script execution, nested-playbook bridging, session
 lifecycle, abort handling, and the optional parked-session snapshot

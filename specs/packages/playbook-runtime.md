@@ -55,7 +55,7 @@ Host-observable agent, layout, notification, permission, and presentation settin
 
 Each linked workflow runtime shall import its FSM and the shared runtime contract types from `@sublang/playbook/runtime`, hold no host-specific type, and interact with its host only through `PlaybookPorts`.
 Each public workflow module shall default-export a `createPlaybookRuntime(options)` factory and shall re-export rather than redefine the shared runtime types.
-A single-region artifact shall use `createXStatePlaybookRuntime` from `@sublang/playbook/xstate-runtime`, while a parallel artifact may emit bespoke linked machinery that implements the same public contract per [DR-019](../decisions/019-shared-linked-runtime-factory.md).
+A flat single-region artifact shall use `createXStatePlaybookRuntime` from `@sublang/playbook/xstate-runtime`, while a parallel artifact may emit bespoke linked machinery that implements the same public contract per [DR-019](../decisions/019-shared-linked-runtime-factory.md).
 An artifact-specific host capability shall enter through that artifact's typed options and shall not widen `PlaybookPorts` or `handleBossInput`.
 
 #### playbook-runtime-34
@@ -253,14 +253,14 @@ equivalent delegated-player result ([[playbook-runtime-9](#playbook-runtime-9)])
 ([[playbook-runtime-41](#playbook-runtime-41)]).
 A non-abort thrown `callCaptain` port, a malformed host result, and a rejecting
 trace sink remain control-plane errors ([[playbook-runtime-41](#playbook-runtime-41)]) and shall trigger
-no corrective re-ask; a transport
-failure causally identical to the active signal remains ordinary abort
+no corrective re-ask; a transport or trace-sink
+failure causally identical to the active signal's reason remains ordinary abort
 settlement ([[playbook-runtime-13](#playbook-runtime-13)]).
 
 Where the required `captain.call.finished` emission itself rejects, the
 runtime shall issue no corrective re-ask and shall keep the host-result
 failure as the invoked actor's error so
-the failure state records it, while the emission failure remains the
+the failure state records it, while the non-abort emission failure remains the
 control-plane error the turn's drain surfaces ([[playbook-runtime-41](#playbook-runtime-41)]).
 
 ### Adjudication
@@ -342,6 +342,8 @@ The runtime shall forward the XState playbook invocation's lifetime
 signal to `callPlaybook`; after a later child return it shall forward
 `resumePlaybookCall.signal` to any newly resumed player, Captain, or judge work.
 The runtime shall classify a rejection as cancellation only by exact identity with the applicable combined signal's reason; an `AbortError`-named failure that is not that exact reason, and any distinct failure observed while the signal is aborted, remains a non-abort control error under [[playbook-runtime-41](#playbook-runtime-41)]'s precedence.
+The runtime shall classify a root-actor error and a latched emission failure by that same exact identity: one causally identical to the boundary signal's reason settles as the abort it evidences; any other shall reject the boundary and shall never escape it as an unobserved actor error.
+When a script actor's invocation aborts, the runtime shall terminate the detached shell's entire process group — SIGTERM, then SIGKILL after a bounded grace — and shall settle only after the shell has exited with no group member surviving, rejecting with the exact signal reason; an abort observed after the shell's exit shall still reject before the script-executed status, its telemetry, and guard resolution; a descendant that has left the process group is beyond the kill scope.
 The public boundary shall not resolve while its invocation is still running:
 it shall await the natural error transition, quiescence, all paired finish
 traces, and all ordered emissions so no work from the turn mutates state after
@@ -411,6 +413,11 @@ trace schema version `3` defined by [slc/link.md](../../slc/link.md#playbook-tra
 The trace sequence shall be contiguous and one-based for that session;
 Boss turns and player/Captain/judge calls shall receive one-based ids, and a
 call's started and finished events shall share its call id.
+When a `*.call.started` sink records the event and then rejects, no host
+call shall begin and the runtime shall make one best-effort paired error
+finish preserving the start's call id and prompt metadata before
+rejecting with the original sink error, latched as the control-plane
+error ([slc/link.md](../../slc/link.md#playbook-trace)).
 The runtime shall trace session start/disposal, exact Boss input and
 settlement, exact player, Captain, and judge prompts and results, normalized
 errors, every FSM transition, and every status emission.
@@ -625,7 +632,8 @@ Per [DR-019](../decisions/019-shared-linked-runtime-factory.md), the
 shared factory supports only flat single-region FSMs: it shall reject at
 construction any machine that declares a `type: 'parallel'` state, any
 machine whose non-root state declares child states, and any root state
-whose `meta.playbook.stateId` differs from its state key, so every
+whose `meta.playbook.stateId` is not a string equal to its state key —
+a missing identity included — so every
 snapshot exposes exactly one playbook state id under the one identity
 the factory's state lookups index by.
 `describe()` shall be side-effect free — no trace, status, telemetry,
@@ -811,7 +819,9 @@ When the abort lands while a classifier judge call's own
 suite shall fail unless no host judge call starts, the pair finishes
 `aborted`, the FSM stays unmoved, and the turn settles as an abort (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
 When the aborted turn's player port rejects with a fresh error that is not the exact signal reason — `AbortError`-named or not — the suite shall fail unless the public method rejects with that error and the call pair finishes `error`; when the rejection is the exact signal reason, the suite shall fail unless the turn settles as an abort (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
-When a turn aborts while a script actor's command runs — a command that traps `SIGTERM` and backgrounds a descendant included — the suite shall fail unless the turn settles as an abort only after the detached shell has exited, both the shell and its descendant are dead at settlement, and no script-executed status was emitted (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
+When an aborted turn's trace sink rejects with the exact signal reason, the suite shall fail unless the turn settles as an abort; when the sink rejects with a distinct failure, the suite shall fail unless the public method rejects with that failure (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
+When an FSM action throws a distinct error synchronously — abort coincident or not — the suite shall fail unless the public method rejects with that error and no unhandled actor error escapes after the method returns (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
+When a turn aborts while a script actor's command runs, the suite shall fail unless the turn settles as an abort only after the detached shell has exited, every process-group member is dead at settlement, and no script-executed status was emitted — both when the shell itself traps `SIGTERM` so only the escalated group `SIGKILL` ends it, and when the shell exits cooperatively on the group `SIGTERM` while a backgrounded descendant ignores it; when the abort lands only after the shell's exit, the suite shall fail unless the turn still rejects with the exact signal reason, the machine does not reach its terminal state, and no script telemetry is emitted (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
 
 #### playbook-runtime-19
 
@@ -1079,7 +1089,7 @@ assignable to the shared types and would therefore pass while an artifact still 
 #### playbook-runtime-39
 
 
-Where the integration suite drives CODE, REVIEW, DECIDE, and a direct-Captain runtime through complete sessions, it shall fail unless every emitted trace event has schema version `3`, session identity is immutable, causality is validated, trace sequences are contiguous and boundary-complete, initialization and disposal faults preserve their first causal error, and every started call has exactly one finish (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
+Where the integration suite drives CODE, REVIEW, DECIDE, and a direct-Captain runtime through complete sessions, it shall fail unless every emitted trace event has schema version `3`, session identity is immutable, causality is validated, trace sequences are contiguous and boundary-complete, initialization and disposal faults preserve their first causal error, and every started call has exactly one finish — a started-boundary sink that records and then rejects included: the pair finishes `error` with no host call begun and the public method rejects with the original sink error (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
 The suite shall fail unless every shell-hosted player-call pair retains both its semantic `roleId` and resolved `playerId`, while a standalone call retains its role without inventing a host player id; restoring under compatible changed model tuning shall also make the next composed prompt use the current `promptIdentity` rather than a value persisted in machine context (verifying [[playbook-runtime-15](#playbook-runtime-15)] and [[playbook-runtime-37](#playbook-runtime-37)]).
 The suite shall fail unless a standalone runtime without bindings starts each local role fresh, resumes and rotates that role's validated token in `roleResumeTokens`, clears an omitted token only on `ok`, preserves the prior token when `aborted` or `error` omits one, keeps different roles independent, preserves continuity across parked turns, and discards it on disposal; with bindings but no external store, two sequential roles mapped to one player id shall select and rotate one shared private token while the snapshot projects that token back to both local-role keys (verifying [[playbook-runtime-38](#playbook-runtime-38)] and [[playbook-runtime-45](#playbook-runtime-45)]).
 Host results shall fail unless they are validated, detached, and frozen before any final text, error, or resume token is consumed, and a late result after abort shall not mutate continuity or trace success (verifying [[playbook-runtime-37](#playbook-runtime-37)] and [[playbook-runtime-38](#playbook-runtime-38)]).

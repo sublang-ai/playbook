@@ -610,7 +610,15 @@ describe('public XState runtime surface (RELEASE-15)', () => {
       // constructs implements the optional control-surface pair together.
       const { createMachine } = await import('xstate');
       const probeRuntime = createXStatePlaybookRuntime(
-        createMachine({ id: 'probe', initial: 'ready', states: { ready: {} } }),
+        createMachine({
+          id: 'probe',
+          initial: 'ready',
+          states: {
+            ready: {
+              meta: { playbook: { stateId: 'ready', description: 'ready state' } },
+            },
+          },
+        }),
         {
           label: 'probe',
           compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
@@ -780,6 +788,12 @@ describe('packed tarball contents (RELEASE-18)', () => {
                   : posix.join(posix.dirname(doc), filePart),
               );
         const where = `${doc}:${line} (${target})`;
+        // release-20: a packed SLC definition's citation into `specs/` is a
+        // repository citation under the specs tree's own citation law
+        // (meta-16 requires the relative form), exempt from the closure.
+        if (doc.startsWith('slc/') && dest.startsWith('specs/')) {
+          continue;
+        }
         if (dest.startsWith('..')) {
           failures.push(`${where} escapes the package`);
           continue;

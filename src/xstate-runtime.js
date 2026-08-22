@@ -1086,8 +1086,12 @@ export function createNestedPlaybookBridge(options) {
                 // A finish event is the durable return boundary. If it cannot be
                 // emitted and drained, the child result must not remain retryable:
                 // clear the identity and fail the promise actor so its parent takes
-                // onError instead of observing a phantom suspended child.
-                reportControlPlaneError(error);
+                // onError instead of observing a phantom suspended child. A finish
+                // rejection that is the exact abort reason evidences cancellation,
+                // not a control-plane failure (slc/link.md §Abort).
+                if (!isAbortReason(error, active.signal)) {
+                    reportControlPlaneError(error);
+                }
                 clear(active);
                 active.deferred.reject(error);
                 throw error;

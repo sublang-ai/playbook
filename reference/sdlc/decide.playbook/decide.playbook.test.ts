@@ -1197,3 +1197,116 @@ describe('DECIDE terminal settlement from REVIEW', () => {
     await runtime.dispose();
   });
 });
+
+describe('DECIDE abort classification', () => {
+  // slc/link.md §Abort: cancellation is causal identity (Object.is) with the
+  // applicable signal reason, never bare `signal.aborted`. A distinct player
+  // failure observed while the turn signal is aborted remains a non-abort
+  // control error that takes precedence over the coincident abort.
+  it('reports a distinct post-abort player rejection as an error, not an abort', async () => {
+    const abortReason = new Error('Boss cancelled the turn.');
+    const distinctFailure = new Error('player transport failed after abort');
+    const telemetry: TelemetryRecord[] = [];
+    const playerCalls: string[] = [];
+    let rejectCoder!: (error: unknown) => void;
+    const ports = completePorts({
+      callPlayer: (roleId, _prompt, invocationSignal) => {
+        playerCalls.push(roleId);
+        if (roleId === 'coder') {
+          return new Promise<never>((_resolve, reject) => {
+            rejectCoder = reject;
+          });
+        }
+        return new Promise<{ status: 'aborted' }>((resolve) => {
+          invocationSignal.addEventListener(
+            'abort',
+            () => resolve({ status: 'aborted' }),
+            { once: true },
+          );
+        });
+      },
+      emitTelemetry: async (record) => {
+        telemetry.push(record);
+      },
+    });
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(session(ports));
+    const controller = new AbortController();
+    const running = runtime.handleBossInput({
+      text: 'Choose the durable design.',
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(playerCalls).toHaveLength(2);
+    });
+
+    controller.abort(abortReason);
+    rejectCoder(distinctFailure);
+
+    await expect(running).rejects.toBe(distinctFailure);
+    const finishes = playbookTraces(telemetry).filter(
+      ({ type }) => type === 'player.call.finished',
+    );
+    const coderFinish = finishes.find(
+      ({ payload }) => (payload as Record<string, unknown>).roleId === 'coder',
+    );
+    expect(coderFinish?.payload).toMatchObject({
+      status: 'error',
+      error: { message: distinctFailure.message },
+    });
+    // The sibling that rejected with the exact reason stays an abort.
+    const reviewerFinish = finishes.find(
+      ({ payload }) =>
+        (payload as Record<string, unknown>).roleId === 'reviewer',
+    );
+    expect(reviewerFinish?.payload).toMatchObject({ status: 'aborted' });
+
+    await runtime.dispose();
+  });
+
+  // slc/link.md §Abort: a rejection that IS the exact signal reason settles
+  // as an ordinary abort — a cancellation-aware trace sink rejecting with
+  // the abort reason itself must not recast the aborted turn as a failure
+  // or reject the public boundary with that reason.
+  it('settles aborted when a trace sink rejects with exactly the abort reason', async () => {
+    const abortReason = new Error('Boss cancelled the turn.');
+    const controller = new AbortController();
+    let sinkRejects = false;
+    const playerCalls: string[] = [];
+    const ports = completePorts({
+      callPlayer: (roleId, _prompt, invocationSignal) => {
+        playerCalls.push(roleId);
+        return new Promise<{ status: 'aborted' }>((resolve) => {
+          invocationSignal.addEventListener(
+            'abort',
+            () => resolve({ status: 'aborted' }),
+            { once: true },
+          );
+        });
+      },
+      emitTelemetry: async () => {
+        if (sinkRejects) throw abortReason;
+      },
+    });
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(session(ports));
+    const running = runtime.handleBossInput({
+      text: 'Choose the durable design.',
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => {
+      expect(playerCalls).toHaveLength(2);
+    });
+
+    controller.abort(abortReason);
+    sinkRejects = true;
+
+    await expect(running).resolves.toMatchObject({
+      outcome: 'aborted',
+      error: { message: abortReason.message },
+    });
+
+    sinkRejects = false;
+    await runtime.dispose();
+  });
+});

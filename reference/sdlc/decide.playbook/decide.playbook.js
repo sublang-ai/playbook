@@ -842,7 +842,10 @@ export const createPlaybookRuntime = (options) => {
                 latchControlPlaneError(error, signal);
                 await emitTrace('judge.call.finished', {
                     ...identity,
-                    status: signal.aborted ? 'aborted' : 'error',
+                    // Only the exact abort reason is cancellation; a distinct
+                    // failure under an aborted signal stays an error
+                    // (slc/link.md §Abort).
+                    status: isAbortFailure(error, signal) ? 'aborted' : 'error',
                     error: normalizeErrorFull(error) ?? {
                         name: 'Error',
                         message: String(error),
@@ -886,7 +889,10 @@ export const createPlaybookRuntime = (options) => {
         };
         const emitFailure = (error) => emitTrace('player.call.finished', {
             ...identity,
-            status: signal.aborted ? 'aborted' : 'error',
+            // Only the exact abort reason is cancellation; a distinct
+            // failure under an aborted signal stays an error
+            // (slc/link.md §Abort).
+            status: isAbortFailure(error, signal) ? 'aborted' : 'error',
             error: normalizeErrorFull(error) ?? {
                 name: 'Error',
                 message: String(error),
@@ -1148,6 +1154,13 @@ export const createPlaybookRuntime = (options) => {
                 }),
             inspect,
         });
+        // A synchronous FSM action throw errors the actor without any pending
+        // boundary await to observe it; unobserved, XState would surface it via
+        // reportUnhandledError as an uncaughtException. Observe it here: latch
+        // it as a control error while a turn signal is active (unless it is
+        // the abort reason itself), otherwise collect it with the emission
+        // failures (slc/link.md §Abort).
+        actor.subscribe({ error: latchInspectionError });
     };
     // PBRT-6: the single seam that stops this runtime's actor. Stopping a
     // still-running actor fires one more `@xstate.snapshot` for the *unchanged*
@@ -1207,19 +1220,31 @@ export const createPlaybookRuntime = (options) => {
         const pendingCall = nestedBridge.getPendingCall();
         const state = normalizePlaybookSnapshot(snapshot, { pendingCall });
         const context = snapshot.context;
+        const abortedResult = (abortSignal) => ({
+            outcome: 'aborted',
+            state,
+            ...(abortSignal.reason === undefined
+                ? {}
+                : {
+                    error: normalizeErrorFull(abortSignal.reason) ?? {
+                        name: 'AbortError',
+                        message: String(abortSignal.reason),
+                    },
+                }),
+        });
+        if (snapshot.status === 'error') {
+            // An errored actor outranks a coincident abort unless the actor's
+            // error is the abort reason itself (slc/link.md §Abort).
+            const actorError = snapshot.error;
+            if (actorError !== undefined &&
+                signal !== undefined &&
+                isAbortFailure(actorError, signal)) {
+                return abortedResult(signal);
+            }
+            throw (actorError ?? new Error('decide runtime actor entered error status'));
+        }
         if (signal?.aborted) {
-            return {
-                outcome: 'aborted',
-                state,
-                ...(signal.reason === undefined
-                    ? {}
-                    : {
-                        error: normalizeErrorFull(signal.reason) ?? {
-                            name: 'AbortError',
-                            message: String(signal.reason),
-                        },
-                    }),
-            };
+            return abortedResult(signal);
         }
         if (snapshot.status === 'done') {
             const output = snapshot.output;
@@ -1230,10 +1255,6 @@ export const createPlaybookRuntime = (options) => {
                 state,
                 ...(output === undefined ? {} : { output }),
             };
-        }
-        if (snapshot.status === 'error') {
-            throw (snapshot.error ??
-                new Error('decide runtime actor entered error status'));
         }
         if (state.activeStateIds.includes('failed')) {
             const error = normalizeErrorFull(context.lastError);
@@ -1557,16 +1578,19 @@ export const createPlaybookRuntime = (options) => {
             }
             catch (error) {
                 const primaryError = controlPlaneError;
+                // Only a rejection that is the exact abort reason settles as the
+                // cancellation; a distinct failure observed while the signal is
+                // aborted remains a control error (slc/link.md §Abort).
                 if (primaryError !== undefined) {
                     collectFailure(failures, primaryError);
                 }
-                else if (!turn.signal.aborted) {
+                else if (!isAbortFailure(error, turn.signal)) {
                     collectFailure(failures, error);
                 }
                 const state = currentState();
                 const effectiveError = primaryError ?? error;
                 result =
-                    turn.signal.aborted && primaryError === undefined
+                    isAbortFailure(error, turn.signal) && primaryError === undefined
                         ? resultForSnapshot(turn.signal)
                         : {
                             outcome: 'failed',
@@ -1587,12 +1611,14 @@ export const createPlaybookRuntime = (options) => {
             catch (error) {
                 const primaryError = controlPlaneError;
                 const effectiveError = primaryError ?? error;
-                collectFailure(failures, effectiveError);
+                // A drain rejection that is the exact abort reason evidences the
+                // cancellation, not a control-plane failure (slc/link.md §Abort).
+                const drainAborted = isAbortFailure(effectiveError, turn.signal);
+                if (!drainAborted)
+                    collectFailure(failures, effectiveError);
                 const state = currentState();
                 result = {
-                    outcome: turn.signal.aborted && primaryError === undefined
-                        ? 'aborted'
-                        : 'failed',
+                    outcome: drainAborted ? 'aborted' : 'failed',
                     state,
                     error: normalizeErrorFull(effectiveError) ?? {
                         name: 'Error',
@@ -1606,13 +1632,22 @@ export const createPlaybookRuntime = (options) => {
                 await emitTrace('boss.input.settled', settlement, { turnId });
             }
             catch (error) {
-                collectFailure(failures, error);
+                // A settlement-trace rejection that is the exact abort reason also
+                // evidences the cancellation (slc/link.md §Abort).
+                if (!isAbortFailure(error, turn.signal)) {
+                    collectFailure(failures, error);
+                }
             }
             try {
                 await flush();
             }
             catch (error) {
-                collectFailure(failures, error);
+                // A late flush rejection that is the exact abort reason likewise
+                // evidences the cancellation; the settled result already labels
+                // the turn aborted then (slc/link.md §Abort).
+                if (!isAbortFailure(error, turn.signal)) {
+                    collectFailure(failures, error);
+                }
             }
             finally {
                 const primaryError = controlPlaneError;

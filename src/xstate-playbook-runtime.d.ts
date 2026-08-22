@@ -322,9 +322,10 @@ export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): 
  * (literal and dynamic) — and implements the full runtime lifecycle including
  * the optional parked-session snapshot capability (DR-014).
  *
- * Scope: machines that declare no parallel state (each snapshot exposes
- * exactly one playbook state id). Parallel-region FSMs keep their own linked
- * runtimes.
+ * Scope: flat single-region machines — no parallel state, no compound
+ * child states, and every root state's `meta.playbook.stateId` equal to its
+ * state key — so each snapshot exposes exactly one playbook state id.
+ * Parallel-region FSMs keep their own linked runtimes.
  */
 export declare function createXStatePlaybookRuntime<TOptions>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpec<TOptions>): PlaybookRuntimeFactory<TOptions>;
 export {};

@@ -1916,9 +1916,12 @@ function machineDeclaresNestedState(machine: AnyStateMachine): boolean {
 // PBRT-52: the factory's lookups index states by their root key, and the
 // published playbook identity is `meta.playbook.stateId` — the two must
 // coincide or a machine can advertise a pending question or retry under an
-// identity no lookup resolves. gears2fsm keeps them equal by construction;
-// a hand-authored artifact that splits them fails here instead of at a
-// silently dead gate.
+// identity no lookup resolves. A state with no string stateId is just as
+// dead: every snapshot identity derives from that member, so the first
+// entry would fail the exactly-one-state-id inspection at runtime.
+// gears2fsm keeps identity and key equal by construction; a hand-authored
+// artifact that splits or omits them fails here instead of at a silently
+// dead gate.
 function assertFlatStateIdentity(
   machine: AnyStateMachine,
   label: string,
@@ -1933,7 +1936,13 @@ function assertFlatStateIdentity(
         ? meta.playbook
         : undefined;
     const stateId = playbook?.stateId;
-    if (typeof stateId === 'string' && stateId !== key) {
+    if (typeof stateId !== 'string') {
+      throw new Error(
+        `${label} state ${key} declares no string meta.playbook.stateId; ` +
+          'the shared runtime derives every playbook state identity from it',
+      );
+    }
+    if (stateId !== key) {
       throw new Error(
         `${label} state ${key} declares meta.playbook.stateId ${stateId}; ` +
           'the shared runtime requires the playbook state id to equal the state key',
@@ -1949,9 +1958,10 @@ function assertFlatStateIdentity(
  * (literal and dynamic) — and implements the full runtime lifecycle including
  * the optional parked-session snapshot capability (DR-014).
  *
- * Scope: machines that declare no parallel state (each snapshot exposes
- * exactly one playbook state id). Parallel-region FSMs keep their own linked
- * runtimes.
+ * Scope: flat single-region machines — no parallel state, no compound
+ * child states, and every root state's `meta.playbook.stateId` equal to its
+ * state key — so each snapshot exposes exactly one playbook state id.
+ * Parallel-region FSMs keep their own linked runtimes.
  */
 export function createXStatePlaybookRuntime<TOptions>(
   machine: AnyStateMachine,
@@ -2571,8 +2581,9 @@ export function createXStatePlaybookRuntime<TOptions>(
         activePlayerKeys.add(playerKey);
 
         try {
-          await emitTrace(
+          await emitCallStarted(
             'player.call.started',
+            'player.call.finished',
             { ...identity, prompt },
             position,
           );
@@ -3051,6 +3062,11 @@ export function createXStatePlaybookRuntime<TOptions>(
               active.removeEventListener('abort', onAbort);
               if (killTimer !== undefined) clearTimeout(killTimer);
               if (active.aborted) {
+                // The shell may exit cooperatively on the group SIGTERM
+                // while a TERM-immune same-group descendant survives; the
+                // group stays addressable while any member lives, so kill
+                // it before settling (slc/link.md §Script execution).
+                signalGroup('SIGKILL');
                 reject(active.reason ?? new Error('script aborted'));
                 return;
               }
@@ -3058,9 +3074,15 @@ export function createXStatePlaybookRuntime<TOptions>(
             });
           });
 
+          // An abort observed after the shell's exit must still reject with
+          // the signal's reason before any success emission or guard
+          // resolution (slc/link.md §Abort).
+          active.throwIfAborted();
+
           await ports.emitStatus(
             `Executed script for ${input.stateId} (exit ${exitStatus}).`,
           );
+          active.throwIfAborted();
           await ports.emitTelemetry({
             topic: 'playbook.script',
             payload: {
@@ -3069,6 +3091,7 @@ export function createXStatePlaybookRuntime<TOptions>(
               exitStatus,
             },
           });
+          active.throwIfAborted();
 
           if (exitStatus === 0) {
             return { guard: okGuard, exitStatus: 0 };
@@ -3285,6 +3308,20 @@ export function createXStatePlaybookRuntime<TOptions>(
           }
         },
       });
+      // A synchronously-errored actor is already quiescent, so the turn's
+      // quiescence wait never subscribes and XState would report the error
+      // as unhandled after the boundary returns. Observe it here and latch
+      // it unless it is the abort reason itself (slc/link.md §Abort).
+      builtActor.subscribe({
+        error: (error) => {
+          if (
+            activeSignal === undefined ||
+            !isAbortFailure(error, activeSignal)
+          ) {
+            controlPlaneError ??= error;
+          }
+        },
+      });
       return builtActor;
     }
 
@@ -3333,14 +3370,19 @@ export function createXStatePlaybookRuntime<TOptions>(
 
     function settledOutcome(signal: AbortSignal): BossSettlementOutcome {
       if (nestedBridge.getPendingCall()) return 'suspended';
-      if (signal.aborted) return 'aborted';
       const state = currentState();
       if (state.status === 'error') {
+        // An errored actor outranks a coincident abort unless the actor's
+        // error is the abort reason itself (slc/link.md §Abort).
         const actorError = (
           actor?.getSnapshot() as { error?: unknown } | undefined
         )?.error;
+        if (actorError !== undefined && isAbortFailure(actorError, signal)) {
+          return 'aborted';
+        }
         throw actorError ?? new Error(`${label} actor entered error status`);
       }
+      if (signal.aborted) return 'aborted';
       if (state.status === 'done') return 'terminal';
       if (state.stateId === 'failed') return 'failed';
       return 'quiescent';
@@ -4332,13 +4374,19 @@ export function createXStatePlaybookRuntime<TOptions>(
           drainError = error;
         }
         const latchedControlError = controlPlaneError;
+        // A drain rejection that is the exact abort reason evidences the
+        // cancellation, not a control-plane failure (slc/link.md §Abort).
+        const drainAbort =
+          drainError !== undefined && isAbortFailure(drainError, signal);
+        const effectiveDrainError = drainAbort ? undefined : drainError;
         const primaryError =
-          latchedControlError ?? drainError ?? operationError;
+          latchedControlError ?? effectiveDrainError ?? operationError;
         const abortError =
           latchedControlError === undefined &&
-          drainError === undefined &&
-          operationError !== undefined &&
-          isAbortFailure(operationError, signal);
+          effectiveDrainError === undefined &&
+          ((operationError !== undefined &&
+            isAbortFailure(operationError, signal)) ||
+            (drainAbort && operationError === undefined));
         const settlementResult =
           primaryError === undefined
             ? (result ?? runResultFor('no-action'))
@@ -4359,10 +4407,16 @@ export function createXStatePlaybookRuntime<TOptions>(
         } catch (error) {
           settlementEmissionError ??= error;
         }
+        if (
+          settlementEmissionError !== undefined &&
+          isAbortFailure(settlementEmissionError, signal)
+        ) {
+          settlementEmissionError = undefined;
+        }
         const failure =
           controlPlaneError ??
           latchedControlError ??
-          drainError ??
+          effectiveDrainError ??
           (abortError
             ? (settlementEmissionError ?? operationError)
             : (operationError ?? settlementEmissionError));
@@ -4423,7 +4477,19 @@ export function createXStatePlaybookRuntime<TOptions>(
         } catch (error) {
           drainError = error;
         }
-        const failure = controlPlaneError ?? drainError ?? operationError;
+        // A drain or resume rejection that is the exact abort reason
+        // evidences cancellation; the settled result already labels the
+        // turn `aborted` then (slc/link.md §Abort).
+        const failure =
+          controlPlaneError ??
+          (drainError !== undefined &&
+          isAbortFailure(drainError, input.signal)
+            ? undefined
+            : drainError) ??
+          (operationError !== undefined &&
+          isAbortFailure(operationError, input.signal)
+            ? undefined
+            : operationError);
         activeSignal = undefined;
         activeTurnId = undefined;
         controlPlaneError = undefined;

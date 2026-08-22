@@ -254,7 +254,9 @@ The package shall also ship the authored CODE, REVIEW, and DECIDE sources `refer
 The package shall also ship the `docs/` guides the README delegates to, so
 an installed copy resolves its own links to the version it shipped with
 rather than to whatever the repository currently documents.
-Every Markdown file the tarball ships shall be link-closed over the packed file list: each relative link target and each link-reference-definition destination in a packed `.md` shall resolve to a packed file or a directory containing packed files, and a fragment on a packed Markdown target shall name an anchor that file renders; a shipped document citing repository-only content shall cite it by absolute repository URL.
+Every Markdown file the tarball ships shall be link-closed over the packed file list: each relative link target and each link-reference-definition destination in a packed `.md` shall resolve to a packed file or a directory containing packed files, and a fragment on a packed Markdown target shall name an anchor that file renders.
+A shipped guide citing repository-only content shall cite it by absolute repository URL referencing the repository's main line — a deliberate living pointer, since the version-locality guarantee above governs packed content, while a reader needing the shipped-version text of a repository-only document reads the repository at the shipped release tag.
+A packed SLC definition's relative citation into `specs/` is exempt from the closure as a repository citation under the specs tree's own citation law, which requires the relative form.
 The internal Captain shall have no `exports['./captain/registry']` subpath
 because it is not an enabled registry entry.
 Removing or renaming the `playbook` bin or a
@@ -592,6 +594,7 @@ The test suite shall fail unless each of
 
 The test suite shall fail unless `npm pack --dry-run` lists the `@sublang/playbook/runtime` and `@sublang/playbook/xstate-runtime` `.js` and `.d.ts` artifacts — including the `xstate-playbook-runtime` factory siblings backing the engine subpath — and all four `slc/*.md` files among the packed contents, plus the authored Captain, CODE, REVIEW, and DECIDE sources, every `docs/*.md` guide the README links to, each workflow's GEARS, FSM, and linked-runtime `.ts`, `.js`, and `.d.ts` artifacts, and the CODE, REVIEW, and DECIDE registry `.ts`, `.js`, and `.d.ts` artifacts under `reference/sdlc/<id>.playbook/`.
 Generated verification support shall remain canonical repository content but need not be packed (verifying [[release-15](#release-15)], [[release-16](#release-16)], and [[release-20](#release-20)]).
+The suite shall further fail unless every packed Markdown file is link-closed over the packed file list: each relative target and reference-definition destination resolves to a packed file or a directory containing packed files, a fragment on a packed Markdown target names an anchor that file renders, and a packed SLC definition's relative citation into `specs/` passes as the exempt repository citation (verifying [[release-20](#release-20)]).
 
 #### release-21
 
