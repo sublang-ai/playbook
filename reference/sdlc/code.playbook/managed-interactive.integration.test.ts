@@ -5,6 +5,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import {
   chmod,
+  link,
   mkdir,
   mkdtemp,
   readFile,
@@ -77,10 +78,7 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
 
     first.send({ type: 'release-readiness' });
     await waitForFile(fixture.controls.readinessPath);
-    await writeFile(fixture.controls.inputGatePath, 'ready\n', {
-      flag: 'wx',
-      mode: 0o600,
-    });
+    await publishInputGate(fixture.controls.inputGatePath);
     await waitForFile(fixture.controls.inputActivePath);
     first.send({ type: 'submit', text: '/code interactive-first' });
     const effect = await first.waitFor(
@@ -219,10 +217,7 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
 
     selected.send({ type: 'release-readiness' });
     await waitForFile(fixture.controls.readinessPath);
-    await writeFile(fixture.controls.inputGatePath, 'ready\n', {
-      flag: 'wx',
-      mode: 0o600,
-    });
+    await publishInputGate(fixture.controls.inputGatePath);
     await waitForFile(fixture.controls.inputActivePath);
     selected.send({ type: 'submit', text: '/code interactive-second' });
     const effect = await selected.waitFor(
@@ -281,10 +276,7 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
     await child.waitFor('initialized');
     child.send({ type: 'release-readiness' });
     await waitForFile(fixture.controls.readinessPath);
-    await writeFile(fixture.controls.inputGatePath, 'ready\n', {
-      flag: 'wx',
-      mode: 0o600,
-    });
+    await publishInputGate(fixture.controls.inputGatePath);
     await waitForFile(fixture.controls.inputActivePath);
     child.send({ type: 'submit', text: '/code settle-before-presentation' });
 
@@ -759,6 +751,26 @@ function writer() {
     },
     text: () => chunks.join(''),
   };
+}
+
+// Publish the input gate atomically, mirroring Cligent's own
+// publishManagedControlMarker: land the bytes in a temp file, then link the
+// complete inode into place. A bare writeFile makes the pathname visible at
+// open('wx') before the bytes land, and the consumer's 10ms poll reads the
+// empty file as an invalid gate — the recurring input-active timeout. link
+// (unlike rename) also keeps the create-once EEXIST boundary.
+async function publishInputGate(path: string): Promise<void> {
+  const temporaryPath = `${path}.${process.pid}.tmp`;
+  await writeFile(temporaryPath, 'ready\n', {
+    encoding: 'utf8',
+    flag: 'wx',
+    mode: 0o600,
+  });
+  try {
+    await link(temporaryPath, path);
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
 }
 
 async function waitForFile(path: string) {

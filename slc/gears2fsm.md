@@ -258,6 +258,8 @@ Each state shall declare:
   and no `role`.
 
 The source item ID shall live in `invoke.input.sourceItem`, not in a comment — this keeps the GEARS-to-state mapping machine-readable.
+
+Outside a parallel group's regions, a state's key shall equal its stable id, so key, `id`, and `meta.playbook.stateId` coincide for every state a factory-backed linked runtime interprets.
 A delegated state's `invoke.input.role` shall match the canonical lowercase id of its source item's named role.
 A direct Captain state shall not invent a `Captain` role binding.
 

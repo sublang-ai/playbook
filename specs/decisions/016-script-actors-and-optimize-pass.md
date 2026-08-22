@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+Amended by [DR-019](019-shared-linked-runtime-factory.md): the `script` actor implementation moved from each emitted module into the shared linked-runtime factory — the linker emits no script executor inside a factory-backed module, and `node:child_process` is imported by the shared engine rather than per artifact.
 
 ## Context
 

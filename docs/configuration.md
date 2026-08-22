@@ -30,7 +30,7 @@ names, nesting, and ancestry never infer a binding.
 Each `captain` or `players.<player-id>` value is either an adapter shorthand
 (`claude`, `codex`) or a block carrying that agent's own `adapter`, `model`,
 `effort`, `instruction`, and `permissions`. Settings are inline per stable
-agent ([DR-021](../specs/decisions/021-inline-agent-settings.md)). Dots in a
+agent ([DR-021](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/021-inline-agent-settings.md)). Dots in a
 player ID are literal characters, not YAML hierarchy. Other adapter IDs pass
 through to `tmux-play` with a warning because `playbook` cannot preflight their
 auth.
@@ -91,7 +91,7 @@ playbooks:
 The current bundled workflows accept no workflow-specific options.
 Each role's per-call prompt names its current `model`, else its player's
 `adapter`
-([[playbook-runtime-4](../specs/packages/playbook-runtime.md#playbook-runtime-4)]),
+([[playbook-runtime-4](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-runtime.md#playbook-runtime-4)]),
 so commit trailers credit the concrete model rather than the adapter
 family.
 
@@ -160,7 +160,7 @@ instead of doing the work itself. Claude and Gemini enforce that at the
 provider level. The Codex, Kimi, and OpenCode adapters cannot — they
 reject any tool list — so a `captain:` using one of them falls back to a
 prompt-level restriction
-([DR-013](../specs/decisions/013-routing-only-captain-control.md) A1).
+([DR-013](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/013-routing-only-captain-control.md) A1).
 Those adapters remain good choices for *players*, where full tools are wanted.
 
 Adapter readiness is intentionally light: `claude` is ready with local
@@ -203,7 +203,7 @@ playbooks:
 ```
 
 The global file is never modified, and `--with` is not forwarded to
-`tmux-play` ([[playbook-cli-25](../specs/packages/playbook-cli.md#playbook-cli-25)]).
+`tmux-play` ([[playbook-cli-25](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-25)]).
 Overlays apply when creating a fresh session and as current-config input for a
 compatible ordinary reopen. A selected session keeps its stored catalog,
 player roster, role bindings, adapter, instruction, permissions, and working
@@ -249,6 +249,11 @@ playbooks:
 ```sh
 playbook run "/my-workflow perform the task"
 ```
+
+Importing a `.ts` registry uses Node's native type stripping, available
+unflagged on Node 22.18+ and 23.6+; on the older Node versions this
+package supports (>= 20.6), compile the registry and point `from` at the
+emitted `.js` module instead.
 
 A relative path-shaped `from` is resolved relative to the primary config
 file, not the invocation directory; an absolute path is clearest for an SLC
@@ -318,9 +323,9 @@ or `--session`.
 
 The JSON response is now exactly `{ "sessionId": "…", "reply": "…" }`.
 Released direct-run session records are not complete Captain sessions and
-cannot be continued by the new host ([[playbook-cli-19](../specs/packages/playbook-cli.md#playbook-cli-19)],
-[[playbook-cli-22](../specs/packages/playbook-cli.md#playbook-cli-22)],
-[[playbook-cli-28](../specs/packages/playbook-cli.md#playbook-cli-28)]).
+cannot be continued by the new host ([[playbook-cli-19](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-19)],
+[[playbook-cli-22](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-22)],
+[[playbook-cli-28](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-28)]).
 
 ## Migrating from `profiles`
 
@@ -334,7 +339,7 @@ do by hand.
 
 For a one-off, pass a raw `tmux-play` config explicitly. This bypasses
 the seed, composition, and readiness gate, forwarding arguments to
-`tmux-play` verbatim ([[playbook-cli-1](../specs/packages/playbook-cli.md#playbook-cli-1)]):
+`tmux-play` verbatim ([[playbook-cli-1](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-1)]):
 
 ```sh
 playbook --config ./tmux-play.config.yaml

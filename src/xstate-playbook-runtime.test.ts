@@ -528,6 +528,67 @@ describe('generic strategy defaults', () => {
 });
 
 describe('player + script workflow over the shared factory', () => {
+  it('terminates the aborted script process group and settles only after the shell exits', async () => {
+    // slc/link.md §Script execution: on abort the whole detached group dies
+    // — TERM-immune wrapper and backgrounded descendant alike, via SIGKILL
+    // escalation — and the turn settles only once the shell has exited, so
+    // quiescence is never reported over a still-running script.
+    const { mkdtemp, readFile, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-script-abort-'));
+    try {
+      const controller = new AbortController();
+      const command =
+        `echo $$ > ${dir}/wrapper.pid; trap '' TERM; ` +
+        `sleep 30 & echo $! > ${dir}/child.pid; wait`;
+      const { ports, statuses } = makeRecordingPorts({
+        callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+        callJudge: async () => '{"guard":"implemented","summary":"ok"}',
+      });
+      const runtime = createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        label: 'script-abort-workflow',
+        machineInput: () => ({ command }),
+      })({});
+      await runtime.init(makeSession(ports));
+      const turn = runtime.handleBossInput({
+        text: 'run the trap script',
+        signal: controller.signal,
+      });
+      const readPid = async (name: string): Promise<number> => {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          try {
+            const text = await readFile(join(dir, name), 'utf8');
+            const pid = Number.parseInt(text.trim(), 10);
+            if (Number.isInteger(pid) && pid > 0) return pid;
+          } catch {
+            // Not written yet.
+          }
+          await new Promise((tick) => setTimeout(tick, 25));
+        }
+        throw new Error(`${name} was never written`);
+      };
+      const wrapperPid = await readPid('wrapper.pid');
+      const childPid = await readPid('child.pid');
+      controller.abort(new Error('boss cancelled the script'));
+      const settled = await turn;
+      expect(settled.outcome).toBe('aborted');
+      // Both group members are dead at settlement — kill(pid, 0) throws.
+      for (const pid of [wrapperPid, childPid]) {
+        expect(() => process.kill(pid, 0)).toThrow();
+      }
+      expect(
+        statuses.some(({ message }) =>
+          message.startsWith('Executed script for'),
+        ),
+      ).toBe(false);
+      await runtime.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it('runs deterministic entry, default composition, adjudication, and script execution to terminal', async () => {
     const judgePrompts: string[] = [];
     const playerPrompts: string[] = [];
@@ -1081,6 +1142,61 @@ describe('player + script workflow over the shared factory', () => {
     const resumed = await runtime.handleBossInput(turn('use sqlite'));
     expect(classifierCalls).toBe(2);
     expect(resumed.outcome).toBe('terminal');
+    await runtime.dispose();
+  });
+
+  it('surfaces a distinct player failure racing a turn abort instead of misreporting a clean abort', async () => {
+    // slc/link.md §Abort: only the exact signal reason is cancellation. A
+    // fresh failure — AbortError-named or plain — that lands while the turn
+    // signal happens to be aborted is a real fault the Boss must see.
+    for (const fresh of [
+      new DOMException('port gave up', 'AbortError'),
+      new Error('port gave up'),
+    ]) {
+      const controller = new AbortController();
+      const abortReason = new Error('boss cancelled the turn');
+      const traces: Array<{ type: string; payload: unknown }> = [];
+      const { ports } = makeRecordingPorts({
+        callPlayer: async () => {
+          controller.abort(abortReason);
+          throw fresh;
+        },
+        emitTelemetry: async (event) => {
+          if (event.topic !== 'playbook.trace') return;
+          traces.push(event.payload as { type: string; payload: unknown });
+        },
+      });
+      const runtime = createWorkflowRuntime({});
+      await runtime.init(makeSession(ports));
+      await expect(
+        runtime.handleBossInput({ text: 'first try', signal: controller.signal }),
+      ).rejects.toBe(fresh);
+      const finish = traces.find(
+        ({ type }) => type === 'player.call.finished',
+      ) as { payload: { status: string } } | undefined;
+      expect(finish?.payload.status).toBe('error');
+      await runtime.dispose();
+    }
+  });
+
+  it('settles as an abort when the player rejects with the exact combined-signal reason', async () => {
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the turn');
+    const { ports } = makeRecordingPorts({
+      callPlayer: async (_playerId, _prompt, portSignal) => {
+        controller.abort(abortReason);
+        // Causal identity: the port honors cancellation by rethrowing the
+        // combined signal's own reason.
+        throw portSignal.reason;
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const aborted = await runtime.handleBossInput({
+      text: 'first try',
+      signal: controller.signal,
+    });
+    expect(aborted.outcome).toBe('aborted');
     await runtime.dispose();
   });
 
@@ -4579,6 +4695,58 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       }),
     ).toThrow(
       'decide-control uses a parallel state; the shared runtime supports only single-region FSMs',
+    );
+  });
+
+  it('rejects a non-parallel compound machine at factory construction', () => {
+    // PBRT-52: a compound child used to be accepted and then silently
+    // misbehave on every state-keyed gate; the factory now enforces its own
+    // flat domain up front, like the parallel rejection beside it.
+    const compoundMachine = createMachine({
+      id: 'compounded',
+      initial: 'outer',
+      states: {
+        outer: {
+          meta: meta('outer'),
+          initial: 'inner',
+          states: { inner: { meta: meta('inner') } },
+        },
+      },
+    });
+    expect(() =>
+      createXStatePlaybookRuntime(compoundMachine, {
+        label: 'compound-control',
+        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+        entryEvent: { type: 'START', textField: 'task' },
+        roleStates: {},
+      }),
+    ).toThrow(
+      'compound-control declares a compound state; the shared runtime supports only flat single-region FSMs',
+    );
+  });
+
+  it('rejects a flat machine whose meta.playbook.stateId differs from its state key', () => {
+    const splitIdentityMachine = createMachine({
+      id: 'split',
+      initial: 'pause',
+      states: {
+        pause: {
+          meta: meta('awaitBossReply'),
+          tags: ['playbook.parked'],
+        },
+      },
+    });
+    expect(() =>
+      createXStatePlaybookRuntime(splitIdentityMachine, {
+        label: 'split-control',
+        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+        entryEvent: { type: 'START', textField: 'task' },
+        roleStates: {},
+      }),
+    ).toThrow(
+      'split-control state pause declares meta.playbook.stateId awaitBossReply; the shared runtime requires the playbook state id to equal the state key',
     );
   });
 });

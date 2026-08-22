@@ -943,8 +943,13 @@ The provided actor shall:
   mechanical; the runtime shall not route script output through the judge.
 - Reject only when the command cannot be spawned at all, routing through the
   state's ordinary `onError` path.
-- Honor the active turn's abort signal by terminating the child process and
-  rejecting per §Abort.
+- Honor the active turn's abort signal per §Abort: the actor shall reject
+  without spawning when the combined signal is already aborted; shall run the
+  shell detached as its own process-group leader; and on abort shall deliver
+  `SIGTERM` to the entire group, escalate to `SIGKILL` after a bounded grace,
+  and settle only after the shell process itself has exited, rejecting with
+  the signal's reason. A descendant that leaves the process group is beyond
+  the runtime's kill scope.
 - Emit, after the child settles and before the invocation resolves, one status
   line `Executed script for <stateId> (exit <status>).` and one telemetry
   event under topic `playbook.script` with payload
@@ -1581,7 +1586,7 @@ shared-factory module defined below.
 For an FSM that declares a parallel state, it shall emit bespoke linked
 machinery satisfying this document's runtime contract and shall not invoke
 `createXStatePlaybookRuntime`, whose supported domain is single-region FSMs
-under [DR-019](../specs/decisions/019-shared-linked-runtime-factory.md).
+under [DR-019](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/019-shared-linked-runtime-factory.md).
 The FSM-interpreter machinery — actor wiring, boundary tracing, Boss-event
 mapping, adjudication, script execution, nested-playbook bridging, session
 lifecycle, abort handling, and the optional parked-session snapshot
@@ -1824,7 +1829,7 @@ New behavior in any of these areas requires a separate slc spec.
 
 ## References
 
-[1]: [text2gears](text2gears.md) "First phase: text → GEARS spec items."
-[2]: [gears2fsm](gears2fsm.md) "Second phase: GEARS items → FSM artifact."
+[1]: text2gears.md "First phase: text → GEARS spec items."
+[2]: gears2fsm.md "Second phase: GEARS items → FSM artifact."
 [3]: https://stately.ai/docs/actors "XState actors — `createActor`, snapshots, abort signal handling."
 [4]: https://github.com/sindresorhus/p-queue#readme "p-queue concurrency and AbortSignal support."

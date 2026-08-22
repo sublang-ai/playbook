@@ -254,6 +254,7 @@ The package shall also ship the authored CODE, REVIEW, and DECIDE sources `refer
 The package shall also ship the `docs/` guides the README delegates to, so
 an installed copy resolves its own links to the version it shipped with
 rather than to whatever the repository currently documents.
+Every Markdown file the tarball ships shall be link-closed over the packed file list: each relative link target and each link-reference-definition destination in a packed `.md` shall resolve to a packed file or a directory containing packed files, and a fragment on a packed Markdown target shall name an anchor that file renders; a shipped document citing repository-only content shall cite it by absolute repository URL.
 The internal Captain shall have no `exports['./captain/registry']` subpath
 because it is not an enabled registry entry.
 Removing or renaming the `playbook` bin or a

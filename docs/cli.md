@@ -18,7 +18,7 @@ Each adapter is backed by a vendor runtime that installing
 agent stack you did not ask for. Which versions each adapter supports
 is [cligent](https://github.com/sublang-ai/cligent)'s knowledge and
 ships with it
-([DR-027](../specs/decisions/027-runtime-compatibility-from-cligent.md));
+([DR-027](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/027-runtime-compatibility-from-cligent.md));
 the commands below install the latest, which cligent accepts from its
 supported floor up. Install the SDKs your config names, each as its
 own top-level install root:
@@ -45,7 +45,7 @@ finds a bare specifier by walking *up* from there — which reaches the
 install prefix's own `node_modules`, but never into a sibling package's
 subtree. An SDK that landed inside some other package is invisible to
 the adapter even though it is on disk
-([DR-026](../specs/decisions/026-optional-adapter-sdks.md)).
+([DR-026](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/026-optional-adapter-sdks.md)).
 
 Both surfaces check this before doing any work: a declared adapter
 whose runtime is not loadable — or is installed below the version
@@ -54,7 +54,7 @@ runtime is reported as not installed; a stale one with its installed
 and required versions, never as absent. Either way the remedy printed
 is cligent's pinned install, `npm install -g <package>@<version>`, so
 following it cannot install a version the gate refuses again
-([[playbook-cli-40](../specs/packages/playbook-cli.md#playbook-cli-40)]).
+([[playbook-cli-40](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-40)]).
 
 ## Interactive
 
@@ -98,8 +98,8 @@ later signals use native client detach or termination semantics and do not
 retire the pane child's session. Only `--config` and composed
 `--theme-diagnostics` use the stock subprocess boundary: those forms mirror
 its exit status or signal and exit `127` when it cannot be spawned
-([[playbook-cli-1](../specs/packages/playbook-cli.md#playbook-cli-1)],
-[[playbook-cli-2](../specs/packages/playbook-cli.md#playbook-cli-2)]).
+([[playbook-cli-1](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-1)],
+[[playbook-cli-2](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-2)]).
 
 ### Running a Boss turn
 
@@ -118,8 +118,8 @@ currently offers. It never does the specialized work itself, and a
 conversational turn — including a progress or status question — leaves
 the engagement, its parked state, and any pending player question
 untouched
-([[playbook-captain-1](../specs/packages/playbook-captain.md#playbook-captain-1)],
-[[playbook-captain-2](../specs/packages/playbook-captain.md#playbook-captain-2)]).
+([[playbook-captain-1](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-captain.md#playbook-captain-1)],
+[[playbook-captain-2](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-captain.md#playbook-captain-2)]).
 
 The current CODE, REVIEW, and DECIDE workflows take their deterministic
 initial event from the selecting Boss turn. CODE and DECIDE then call REVIEW
@@ -131,16 +131,16 @@ identical. When a player surfaces a
 clarifying question the FSM parks, the pane shows the question, and a
 judge classifies your next turn as its reply or a fresh directive that
 abandons it
-([[playbook-runtime-2](../specs/packages/playbook-runtime.md#playbook-runtime-2)]).
+([[playbook-runtime-2](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-runtime.md#playbook-runtime-2)]).
 
 The Captain pane shows start/stop/finished status with `◇` lines and
 streams progress with captain-speech classification and questions
-([[playbook-runtime-3](../specs/packages/playbook-runtime.md#playbook-runtime-3)]), while player
+([[playbook-runtime-3](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-runtime.md#playbook-runtime-3)]), while player
 prompts ride their own panes. A turn that actually did something ends
 with one Captain reply summarizing what changed, composed only from that
 turn's reported outcome; a turn that changed nothing ends with an
 ordinary reply and no saved-counts line
-([[playbook-captain-19](../specs/packages/playbook-captain.md#playbook-captain-19)]).
+([[playbook-captain-19](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-captain.md#playbook-captain-19)]).
 
 ## Headless
 
@@ -182,7 +182,7 @@ Captain reply. Argument, config, catalog, readiness, or pre-turn setup errors
 exit `1`; a started-turn, persistence, lease-release, or presentation failure
 exits `2` with stdout empty. SIGINT, SIGTERM, and SIGHUP preserve the
 uncertain boundary, withhold stdout, and are re-raised after lease retirement
-([[playbook-cli-18](../specs/packages/playbook-cli.md#playbook-cli-18)]).
+([[playbook-cli-18](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-18)]).
 
 The former positional `<from>`, `resume`, `--player`, `--captain`,
 `--option`, `--cwd`, `--last`, run-only `--config`, and top-level `run:`
@@ -221,8 +221,8 @@ the primary config file. Before either front end imports a configured
 filesystem registry, the shared launcher checks whether that module can
 resolve `xstate` and `@sublang/playbook/xstate-runtime`. When needed, it
 creates engine symlinks beside the module and prints one provisioning line
-([[playbook-cli-36](../specs/packages/playbook-cli.md#playbook-cli-36)],
-[DR-024](../specs/decisions/024-runtime-engine-provisioning.md)).
+([[playbook-cli-36](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-36)],
+[DR-024](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/024-runtime-engine-provisioning.md)).
 
 A directory where both imports already resolve is untouched, and
 `--no-provision` disables new links for either fresh front end. If the
@@ -261,8 +261,8 @@ current `model` and `effort` selections apply to the next call, including an
 explicit boolean `false` provider-default reset. The retained provider token
 is never silently replaced by a fresh conversation if that selection is not
 supported
-([[playbook-cli-22](../specs/packages/playbook-cli.md#playbook-cli-22)],
-[DR-032](../specs/decisions/032-explicit-roles-session-players.md)).
+([[playbook-cli-22](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-cli.md#playbook-cli-22)],
+[DR-032](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/032-explicit-roles-session-players.md)).
 
 ### Recovering an uncertain turn
 

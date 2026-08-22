@@ -106,6 +106,17 @@ describe('XREF-3: link targets resolve', () => {
     expect(failures).toEqual([expect.objectContaining({ line: 4, target: './gone.md' })]);
   });
 
+  // The XREF-6 definition-shape clause: unquoted prose after the destination
+  // voids the CommonMark definition, so the line renders as the plain-text
+  // footnote it was written as — the shape of the SLC phase specs' notes.
+  it('reads no link from a definition whose destination is trailed by prose', () => {
+    expect(
+      reasons({ 'a.md': '[1]: GEARS definition shipped by the installed package\n' }),
+    ).toEqual([]);
+    const { failures } = check({ 'a.md': 'one\n\n[1]: ./target.md "title"\n' });
+    expect(failures).toEqual([expect.objectContaining({ line: 3, target: './target.md' })]);
+  });
+
   it('resolves a percent-encoded target, and survives a malformed escape', () => {
     expect(reasons({ 'a.md': '[x](./a%20b.md)', 'a b.md': 'ok\n' })).toEqual([]);
     expect(reasons({ 'a.md': '[x](./100%-done.md)' })[0]).toMatch(/no such file/);

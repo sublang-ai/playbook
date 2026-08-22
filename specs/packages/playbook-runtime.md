@@ -183,7 +183,7 @@ or `resumePlaybookCall` is called before `init`, the runtime shall throw.
 
 When a runtime receives empty or whitespace-only Boss text, it shall record and settle the input trace but shall produce no event, judge call, player call, status emission, or FSM transition.
 When no Boss question is pending, the current CODE, REVIEW, and DECIDE runtimes shall use their deterministic initial event under [[playbook-runtime-1](#playbook-runtime-1)].
-When no Boss question is pending and the machine is parked outside [[playbook-runtime-1](#playbook-runtime-1)]'s deterministic entries — an authored mid-workflow checkpoint — the runtime shall classify nonempty ordinary and slash-prefixed text alike against that state's configured Boss-event contracts: through the artifact's own declared deterministic classifier where it supplies one, as the compiled Captain's parked mapping does, and otherwise through `callJudge` with the exact, unmodified Boss message in a clearly labelled block of the classifier prompt.
+When no Boss question is pending and the machine is parked outside [[playbook-runtime-1](#playbook-runtime-1)]'s deterministic entries — an authored mid-workflow checkpoint — the runtime shall classify nonempty ordinary and slash-prefixed text alike against that state's configured Boss-event contracts: through the artifact's own declared deterministic classifier where it supplies one, as the compiled Captain's parked mapping does ([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]), and otherwise through `callJudge` with the exact, unmodified Boss message in a clearly labelled block of the classifier prompt.
 While one or more Boss questions are pending, the runtime shall call `callJudge` with the current structured state, every pending question and stable id, and the artifact-declared reply, interrupt, and no-action contracts.
 A question is pending here on the reply-wait terms of [[playbook-runtime-45](#playbook-runtime-45)]: outside an authored reply-wait state the classifier prompt shall carry no question context and offer no reply contract, however long the machine's context retains the answered question.
 The runtime shall accept an omitted `questionId` only when exactly one question is pending, attach the Boss text verbatim to the selected event, and clear pending context abandoned by an interrupt.
@@ -341,6 +341,7 @@ finishes `aborted` with no host call made.
 The runtime shall forward the XState playbook invocation's lifetime
 signal to `callPlaybook`; after a later child return it shall forward
 `resumePlaybookCall.signal` to any newly resumed player, Captain, or judge work.
+The runtime shall classify a rejection as cancellation only by exact identity with the applicable combined signal's reason; an `AbortError`-named failure that is not that exact reason, and any distinct failure observed while the signal is aborted, remains a non-abort control error under [[playbook-runtime-41](#playbook-runtime-41)]'s precedence.
 The public boundary shall not resolve while its invocation is still running:
 it shall await the natural error transition, quiescence, all paired finish
 traces, and all ordered emissions so no work from the turn mutates state after
@@ -621,8 +622,12 @@ and no artifact or snapshot schema ([[playbook-runtime-50](#playbook-runtime-50)
 without the pair advertises no actions and plain text delivery is the
 only verb against it.
 Per [DR-019](../decisions/019-shared-linked-runtime-factory.md), the
-shared factory supports only single-region FSMs and shall reject at
-construction any machine that declares a `type: 'parallel'` state.
+shared factory supports only flat single-region FSMs: it shall reject at
+construction any machine that declares a `type: 'parallel'` state, any
+machine whose non-root state declares child states, and any root state
+whose `meta.playbook.stateId` differs from its state key, so every
+snapshot exposes exactly one playbook state id under the one identity
+the factory's state lookups index by.
 `describe()` shall be side-effect free — no trace, status, telemetry,
 or machine movement — and shall throw before `init`, while another
 public boundary is active, and once disposal begins. It shall return a
@@ -805,6 +810,8 @@ When the abort lands while a classifier judge call's own
 `judge.call.started` emission drains (fired from the trace sink), the
 suite shall fail unless no host judge call starts, the pair finishes
 `aborted`, the FSM stays unmoved, and the turn settles as an abort (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
+When the aborted turn's player port rejects with a fresh error that is not the exact signal reason — `AbortError`-named or not — the suite shall fail unless the public method rejects with that error and the call pair finishes `error`; when the rejection is the exact signal reason, the suite shall fail unless the turn settles as an abort (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
+When a turn aborts while a script actor's command runs — a command that traps `SIGTERM` and backgrounds a descendant included — the suite shall fail unless the turn settles as an abort only after the detached shell has exited, both the shell and its descendant are dead at settlement, and no script-executed status was emitted (verifying [[playbook-runtime-13](#playbook-runtime-13)]).
 
 #### playbook-runtime-19
 
@@ -1195,7 +1202,9 @@ factory-built runtime exposes `describe` and `apply` together, and
 unless both members throw before `init`, during an active boundary,
 and after disposal.
 The suite shall also fail unless factory construction rejects the real
-DECIDE FSM because it declares parallel states.
+DECIDE FSM because it declares parallel states, a synthetic non-parallel
+machine that declares a compound state, and a synthetic flat machine
+whose `meta.playbook.stateId` differs from its state key.
 The suite shall fail unless `describe()` is side-effect free (no
 trace, status, or telemetry; back-to-back views deep-equal; the
 machine snapshot unmoved) and its view carries the normalized state,

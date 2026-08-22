@@ -1683,7 +1683,7 @@ describe('nested XState playbook call bridge', () => {
     await bridge.dispose();
   });
 
-  it('keeps an abort-like late opening rejection as an authored abort', async () => {
+  it('keeps the exact abort-reason late opening rejection as an authored abort', async () => {
     const events: string[] = [];
     let observedSignal: AbortSignal | undefined;
     let rejectOpening!: (error: unknown) => void;
@@ -1703,12 +1703,47 @@ describe('nested XState playbook call bridge', () => {
 
     const aborting = bridge.abortPending(new Error('opening cancelled'));
     await vi.waitFor(() => expect(observedSignal?.aborted).toBe(true));
-    rejectOpening(new DOMException('opening cancelled', 'AbortError'));
+    // Causal identity: rejecting with the signal's own reason object is the
+    // one late rejection that stays an authored abort (slc/link.md §Abort).
+    rejectOpening(observedSignal!.reason);
 
     await expect(aborting).resolves.toBeUndefined();
     await expect(completion).rejects.toBeInstanceOf(NestedPlaybookCallError);
     expect(events.slice(-2)).toEqual(['finished:call-1:aborted', 'drain']);
     await bridge.dispose();
+  });
+
+  it('promotes a fresh AbortError-named late opening rejection to a control error', async () => {
+    // The name is not the cause: an `AbortError` the abort did not itself
+    // produce is a distinct failure, and swallowing it as cancellation would
+    // hide a real control-plane fault behind the coincident abort.
+    const events: string[] = [];
+    const controlErrors: unknown[] = [];
+    let observedSignal: AbortSignal | undefined;
+    let rejectOpening!: (error: unknown) => void;
+    const opening = new Promise<PlaybookCallStart>((_resolve, reject) => {
+      rejectOpening = reject;
+    });
+    const options = bridgeOptions(events, async (_request, signal) => {
+      observedSignal = signal;
+      return opening;
+    });
+    options.onControlPlaneError = (error) => controlErrors.push(error);
+    const bridge = createNestedPlaybookBridge(options);
+    const actor = createActor(bridge.actorLogic, { input: INPUT });
+    const completion = toPromise(actor);
+    actor.start();
+    await vi.waitFor(() => expect(observedSignal).toBeDefined());
+
+    const aborting = bridge.abortPending(new Error('opening cancelled'));
+    await vi.waitFor(() => expect(observedSignal?.aborted).toBe(true));
+    rejectOpening(new DOMException('opening cancelled', 'AbortError'));
+
+    await expect(aborting).rejects.toThrow('opening cancelled');
+    await expect(completion).rejects.toThrow('opening cancelled');
+    expect(controlErrors).toHaveLength(1);
+    expect(events.slice(-2)).toEqual(['finished:call-1:error', 'drain']);
+    await expect(bridge.dispose()).resolves.toBeUndefined();
   });
 
   it('promotes a non-abort late opening rejection to a control error', async () => {

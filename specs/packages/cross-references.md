@@ -18,6 +18,7 @@ When checking repository Markdown, the checker shall scan every `.md` file under
 #### cross-references-6
 
 When interpreting a scanned document, the checker shall ignore link syntax inside fenced code blocks and inline code spans, raw HTML `<a href>` links, and targets carrying a URI scheme or beginning `//`, while treating a target beginning `/` as relative to the repository root.
+A definition-shaped line whose destination is followed by content other than a valid link title is not a link reference definition and shall not be read as a link.
 
 #### cross-references-7
 
@@ -54,6 +55,8 @@ span is not resolved, while a link whose text is a code span still is; a
 target carrying a URI scheme or beginning `//` is not resolved; a link
 carrying a title in any of the three quoting styles is resolved, and one
 written as a reference definition is resolved at its own line; a
+definition-shaped line whose destination is followed by content other than
+a valid link title is not read as a link; a
 percent-encoded target is decoded before resolution and a malformed escape
 is reported rather than raised; a target beginning `/` resolves from the
 project root; and no file under a skipped directory is scanned (verifying [[cross-references-1](#cross-references-1)], [[cross-references-5](#cross-references-5)], [[cross-references-6](#cross-references-6)]).

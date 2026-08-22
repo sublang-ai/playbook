@@ -12,11 +12,12 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, sep } from 'node:path';
+import { isAbsolute, join, posix, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import ts from 'typescript';
 import { parse as parseYaml } from 'yaml';
+import { anchorsOf, linksOf } from '../scripts/check-links.mjs';
 import { checkCligentReleaseCapabilities } from '../scripts/cligent-release-capabilities.mjs';
 
 const packageRootUrl = new URL('../', import.meta.url);
@@ -717,6 +718,90 @@ describe('packed tarball contents (RELEASE-18)', () => {
     for (const name of SLC_SPECS) {
       expect(packed, `tarball missing slc/${name}`).toContain(`slc/${name}`);
     }
+  });
+
+  // RELEASE-20: every Markdown file the tarball ships must be link-closed
+  // over the packed file list — each relative link target and reference
+  // definition in a packed .md resolves to a packed file (or a directory
+  // containing packed files), and a fragment on a packed Markdown target
+  // names an anchor that file renders. The first-hop README check above
+  // cannot see a dead link inside docs/ or slc/; this recursive scan can,
+  // so repository-only content must be cited by absolute repository URL.
+  it('resolves every relative link in packed markdown against the packed list', () => {
+    const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
+    let out: string;
+    try {
+      out = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: { ...process.env, npm_config_cache: npmCache },
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } finally {
+      rmSync(npmCache, { recursive: true, force: true });
+    }
+    const packed = new Set<string>(
+      JSON.parse(out)[0].files.map((f: { path: string }) => f.path),
+    );
+    const decode = (part: string): string => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    };
+    const anchorCache = new Map<string, Set<string>>();
+    const anchorsFor = (doc: string): Set<string> => {
+      let anchors = anchorCache.get(doc);
+      if (anchors === undefined) {
+        anchors = anchorsOf(readFileSync(join(repoRoot, doc), 'utf8'));
+        anchorCache.set(doc, anchors);
+      }
+      return anchors;
+    };
+    const failures: string[] = [];
+    let scanned = 0;
+    for (const doc of [...packed].filter((path) => path.endsWith('.md'))) {
+      // release-28 step 7 pins packed bytes to repository bytes, so the
+      // repository copy is the packed content.
+      for (const { line, target } of linksOf(
+        readFileSync(join(repoRoot, doc), 'utf8'),
+      )) {
+        scanned += 1;
+        const hash = target.indexOf('#');
+        const filePart = decode(hash === -1 ? target : target.slice(0, hash));
+        const fragment = hash === -1 ? '' : decode(target.slice(hash + 1));
+        const dest =
+          filePart === ''
+            ? doc
+            : posix.normalize(
+                filePart.startsWith('/')
+                  ? filePart.slice(1)
+                  : posix.join(posix.dirname(doc), filePart),
+              );
+        const where = `${doc}:${line} (${target})`;
+        if (dest.startsWith('..')) {
+          failures.push(`${where} escapes the package`);
+          continue;
+        }
+        const isPackedDir = [...packed].some((path) =>
+          path.startsWith(`${dest}/`),
+        );
+        if (!packed.has(dest) && !isPackedDir) {
+          failures.push(`${where} targets nothing packed: ${dest}`);
+          continue;
+        }
+        if (fragment === '' || !dest.endsWith('.md') || !packed.has(dest)) {
+          continue;
+        }
+        if (!anchorsFor(dest).has(fragment)) {
+          failures.push(`${where} names no anchor #${fragment} in ${dest}`);
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+    // Guard against a vacuous pass: the packed docs really carry links.
+    expect(scanned).toBeGreaterThan(50);
   });
 });
 

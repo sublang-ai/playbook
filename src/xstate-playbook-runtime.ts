@@ -587,11 +587,12 @@ export function normalizeErrorFull(
   return normalizeError(err);
 }
 
+// slc/link.md §Abort: cancellation is causal identity with the applicable
+// signal's reason — never an `AbortError` name, never bare signal state. A
+// distinct failure observed while the signal is aborted stays a non-abort
+// control error and takes precedence (mirrors DECIDE's bespoke reference).
 function isAbortFailure(error: unknown, signal: AbortSignal): boolean {
-  return (
-    signal.aborted &&
-    (error === signal.reason || normalizeError(error).name === 'AbortError')
-  );
+  return signal.aborted && Object.is(error, signal.reason);
 }
 
 /**
@@ -1311,6 +1312,11 @@ function deepFreeze<T>(value: T): T {
 
 const SUPPRESSED_ENTRY_STATES: ReadonlySet<string> = new Set(['ready', 'done']);
 
+// Bounded escalation for aborted script process groups: SIGTERM first, then
+// SIGKILL after this grace, so settlement (gated on the shell's own exit)
+// stays bounded even for TERM-immune commands.
+const SCRIPT_ABORT_KILL_GRACE_MS = 2000;
+
 function makeDefaultNormalizeTransitionEvent(
   transitionEventFields: readonly string[],
 ): (event: unknown) => JsonValue {
@@ -1889,6 +1895,53 @@ function machineDeclaresParallelState(machine: AnyStateMachine): boolean {
   return visit((machine as unknown as { config?: unknown }).config);
 }
 
+// PBRT-52: the factory's domain is FLAT single-region machines — every
+// state a direct child of the root, so each snapshot exposes exactly one
+// playbook state id and every state-keyed lookup (deterministic entries,
+// retry, reply-wait pendingness, configured events, descriptions) indexes
+// one unambiguous identity. A compound child would be accepted and then
+// silently misbehave on all of those gates, so it is rejected up front
+// exactly like a parallel region.
+function machineDeclaresNestedState(machine: AnyStateMachine): boolean {
+  const config = (machine as unknown as { config?: unknown }).config;
+  if (!isPlainObject(config) || !isPlainObject(config.states)) return false;
+  return Object.values(config.states).some(
+    (stateDef) =>
+      isPlainObject(stateDef) &&
+      isPlainObject(stateDef.states) &&
+      Object.keys(stateDef.states).length > 0,
+  );
+}
+
+// PBRT-52: the factory's lookups index states by their root key, and the
+// published playbook identity is `meta.playbook.stateId` — the two must
+// coincide or a machine can advertise a pending question or retry under an
+// identity no lookup resolves. gears2fsm keeps them equal by construction;
+// a hand-authored artifact that splits them fails here instead of at a
+// silently dead gate.
+function assertFlatStateIdentity(
+  machine: AnyStateMachine,
+  label: string,
+): void {
+  const config = (machine as unknown as { config?: unknown }).config;
+  if (!isPlainObject(config) || !isPlainObject(config.states)) return;
+  for (const [key, stateDef] of Object.entries(config.states)) {
+    if (!isPlainObject(stateDef)) continue;
+    const meta = isPlainObject(stateDef.meta) ? stateDef.meta : undefined;
+    const playbook =
+      meta !== undefined && isPlainObject(meta.playbook)
+        ? meta.playbook
+        : undefined;
+    const stateId = playbook?.stateId;
+    if (typeof stateId === 'string' && stateId !== key) {
+      throw new Error(
+        `${label} state ${key} declares meta.playbook.stateId ${stateId}; ` +
+          'the shared runtime requires the playbook state id to equal the state key',
+      );
+    }
+  }
+}
+
 /**
  * Build a `PlaybookRuntimeFactory` that interprets the given FSM artifact
  * under the slc/link.md contract. The factory provides every actor kind the
@@ -1924,6 +1977,12 @@ export function createXStatePlaybookRuntime<TOptions>(
       `${label} uses a parallel state; the shared runtime supports only single-region FSMs`,
     );
   }
+  if (machineDeclaresNestedState(machine)) {
+    throw new Error(
+      `${label} declares a compound state; the shared runtime supports only flat single-region FSMs`,
+    );
+  }
+  assertFlatStateIdentity(machine, label);
   const declaredActors = collectInvokeSources(machine);
   const resumableStateIds =
     spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
@@ -2475,7 +2534,7 @@ export function createXStatePlaybookRuntime<TOptions>(
           signal.throwIfAborted();
           resume = selectPlayerResume(roleId, playerId);
         } catch (error) {
-          if (!signal.aborted) controlPlaneError ??= error;
+          if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
           throw error;
         }
         const callId = `player-${++playerCallSequence}`;
@@ -2535,13 +2594,13 @@ export function createXStatePlaybookRuntime<TOptions>(
             // a late result mutate continuity or publish a successful finish.
             signal.throwIfAborted();
           } catch (error) {
-            if (!signal.aborted) controlPlaneError ??= error;
+            if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
             try {
               await emitTrace(
                 'player.call.finished',
                 {
                   ...identity,
-                  status: signal.aborted ? 'aborted' : 'error',
+                  status: isAbortFailure(error, signal) ? 'aborted' : 'error',
                   error: normalizeError(error),
                 },
                 position,
@@ -2558,7 +2617,7 @@ export function createXStatePlaybookRuntime<TOptions>(
           try {
             result = validatePlayerResult(rawResult);
           } catch (error) {
-            if (!signal.aborted) controlPlaneError ??= error;
+            if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
             try {
               await emitTrace(
                 'player.call.finished',
@@ -2574,7 +2633,7 @@ export function createXStatePlaybookRuntime<TOptions>(
           try {
             updatePlayerResume(roleId, playerId, result);
           } catch (error) {
-            if (!signal.aborted) controlPlaneError ??= error;
+            if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
             try {
               await emitTrace(
                 'player.call.finished',
@@ -2648,7 +2707,7 @@ export function createXStatePlaybookRuntime<TOptions>(
               'judge.call.finished',
               {
                 ...identity,
-                status: signal.aborted ? 'aborted' : 'error',
+                status: isAbortFailure(error, signal) ? 'aborted' : 'error',
                 error: normalizeError(error),
               },
               position,
@@ -2734,7 +2793,7 @@ export function createXStatePlaybookRuntime<TOptions>(
               'captain.call.finished',
               {
                 ...identity,
-                status: signal.aborted ? 'aborted' : 'error',
+                status: isAbortFailure(error, signal) ? 'aborted' : 'error',
                 error: normalizeError(error),
               },
               position,
@@ -2825,7 +2884,9 @@ export function createXStatePlaybookRuntime<TOptions>(
         () => activeSignal,
         boundary,
         (error) => {
-          if (!activeSignal?.aborted) controlPlaneError ??= error;
+          if (activeSignal === undefined || !isAbortFailure(error, activeSignal)) {
+            controlPlaneError ??= error;
+          }
         },
       );
     }
@@ -2911,7 +2972,7 @@ export function createXStatePlaybookRuntime<TOptions>(
             // failure state (PBRT-47); everything else here — a drained
             // emission failure, prompt composition, the port itself,
             // adjudication — is control plane.
-            if (!active.aborted && !isFsmResultFailure(error)) {
+            if (!isAbortFailure(error, active) && !isFsmResultFailure(error)) {
               controlPlaneError ??= error;
             }
             throw error;
@@ -2938,33 +2999,61 @@ export function createXStatePlaybookRuntime<TOptions>(
           const failedGuard = guards[1] ?? guards[0];
           const cwd = boundScriptCwd ?? process.cwd();
           const ports = runtimePorts ?? requireHostPorts();
+          // slc/link.md §Script execution: an already-aborted turn spawns
+          // nothing, and the thrown signal reason keeps the rejection
+          // causally classified as the abort it is.
+          active.throwIfAborted();
 
           const exitStatus = await new Promise<number>((resolve, reject) => {
             let child: ReturnType<typeof spawn>;
             try {
+              // detached: the shell leads its own POSIX process group, so an
+              // abort can terminate the command's whole tree — a lone
+              // SIGTERM to the wrapper never reaches backgrounded members.
               child = spawn('sh', ['-c', input.command], {
                 cwd,
                 stdio: 'ignore',
+                detached: true,
               });
             } catch (error) {
               reject(error);
               return;
             }
-            const onAbort = (): void => {
-              child.kill('SIGTERM');
-              reject(active.reason ?? new Error('script aborted'));
+            let killTimer: ReturnType<typeof setTimeout> | undefined;
+            const signalGroup = (sig: NodeJS.Signals): void => {
+              if (child.pid !== undefined) {
+                try {
+                  process.kill(-child.pid, sig);
+                } catch {
+                  // The group is already gone.
+                }
+              }
             };
-            if (active.aborted) {
-              onAbort();
-              return;
-            }
+            // On abort, terminate the group and escalate — but settle only
+            // from 'close', after the shell itself has exited, so the turn
+            // never reports quiescence while the script still runs
+            // (slc/link.md §Abort). SIGKILL is untrappable, so 'close' is
+            // bounded by the grace.
+            const onAbort = (): void => {
+              signalGroup('SIGTERM');
+              killTimer = setTimeout(
+                () => signalGroup('SIGKILL'),
+                SCRIPT_ABORT_KILL_GRACE_MS,
+              );
+            };
             active.addEventListener('abort', onAbort, { once: true });
             child.on('error', (error) => {
               active.removeEventListener('abort', onAbort);
+              if (killTimer !== undefined) clearTimeout(killTimer);
               reject(error);
             });
             child.on('close', (code) => {
               active.removeEventListener('abort', onAbort);
+              if (killTimer !== undefined) clearTimeout(killTimer);
+              if (active.aborted) {
+                reject(active.reason ?? new Error('script aborted'));
+                return;
+              }
               resolve(typeof code === 'number' ? code : 1);
             });
           });
@@ -3034,7 +3123,9 @@ export function createXStatePlaybookRuntime<TOptions>(
         activeSignal = signal;
       },
       onControlPlaneError: (error) => {
-        if (!activeSignal?.aborted) controlPlaneError ??= error;
+        // The shared bridge classifies before reporting: everything arriving
+        // here is a non-abort control error, abort or no abort.
+        controlPlaneError ??= error;
       },
       onBackgroundError: (error) => {
         emissionFailure ??= error;

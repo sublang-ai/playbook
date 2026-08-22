@@ -9,7 +9,7 @@ app) is another. This guide shows how to wire a playbook runtime into
 your own host.
 
 > **Release note:** this guide targets the current semver-stable six-port
-> contract; see the [CHANGELOG](../CHANGELOG.md) for migration details.
+> contract; see the [CHANGELOG](https://github.com/sublang-ai/playbook/blob/main/CHANGELOG.md) for migration details.
 
 ## The runtime contract
 
@@ -30,6 +30,11 @@ validation, normalized snapshots, quiescence waiting, and the
 nested-playbook bridge.
 
 ## Constructing a runtime against your own ports
+
+`p-queue` is your host's own dependency here — declare it in your
+application's `dependencies` (the same library `@sublang/playbook` itself
+depends on) rather than relying on it resolving through the package's
+tree, which pnpm's strict linking will not allow.
 
 ```ts
 import createPlaybookRuntime from '@sublang/playbook/review/playbook';
@@ -190,7 +195,7 @@ Boss-visible status text. Because trace observers do receive opaque resume
 tokens, persisted traces should be protected as sensitive data.
 
 See
-[`code.playbook.test.ts`](../reference/sdlc/code.playbook/code.playbook.test.ts)
+[`code.playbook.test.ts`](https://github.com/sublang-ai/playbook/blob/main/reference/sdlc/code.playbook/code.playbook.test.ts)
 for the full range of port shapes (classifier, judge, abort, interrupt,
 status/telemetry) the runtime is contract-tested against.
 

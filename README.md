@@ -81,7 +81,7 @@ playbook run --session 4f2c0000-0000-4000-8000-000000009ab1 "continue"
 
 `playbook run` prints the one Boss-visible Captain reply to stdout and operational status to stderr; CODE and DECIDE can complete their nested REVIEW calls there too.
 
-See [Using the CLI](docs/cli.md) for flags and durable continuation, [Configuring agents](docs/configuration.md) for the shared lineup, [Embedding](docs/embedding.md) for custom hosts, and the [changelog](CHANGELOG.md) for releases.
+See [Using the CLI](docs/cli.md) for flags and durable continuation, [Configuring agents](docs/configuration.md) for the shared lineup, [Embedding](docs/embedding.md) for custom hosts, and the [changelog](https://github.com/sublang-ai/playbook/blob/main/CHANGELOG.md) for releases.
 
 ## Create your own playbook
 
@@ -129,8 +129,8 @@ pnpm playbook   # drive a Boss turn against the source tree
 ```
 
 Playbook is itself spec-driven: the compiler phases are specs in [`slc/`](slc), and the reference playbooks are regenerated from their prose sources.
-Edit a source, regenerate its GEARS, FSM, and runtime artifacts, sync the tests and downstream specs until `pnpm test` passes, and commit with co-author trailers per [`specs/packages/git.md`](specs/packages/git.md).
-The gears↔FSM contract ([the playbook package](specs/packages/playbook.md)) and runtime contract ([the playbook-runtime package](specs/packages/playbook-runtime.md)) are pinned in [`specs/packages/`](specs/packages) and verified by the test suite.
+Edit a source, regenerate its GEARS, FSM, and runtime artifacts, sync the tests and downstream specs until `pnpm test` passes, and commit with co-author trailers per [`specs/packages/git.md`](https://github.com/sublang-ai/playbook/blob/main/specs/packages/git.md).
+The gears↔FSM contract ([the playbook package](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook.md)) and runtime contract ([the playbook-runtime package](https://github.com/sublang-ai/playbook/blob/main/specs/packages/playbook-runtime.md)) are pinned in [`specs/packages/`](https://github.com/sublang-ai/playbook/tree/main/specs/packages) and verified by the test suite.
 
 ## License
 

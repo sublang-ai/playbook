@@ -40,8 +40,14 @@ const CODE_SPAN = /(`+)(?:(?!\1)[\s\S])*?\1/g;
 /** `](target)` with an optional <…> wrapper and any CommonMark title form. */
 const INLINE_LINK =
   /\]\(\s*(?:<([^>]*)>|([^\s)]+))(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*\)/g;
-/** A link reference definition: `[label]: target` at the start of a line. */
-const LINK_DEFINITION = /^ {0,3}\[[^\]]+\]:\s*(?:<([^>]*)>|(\S+))/gm;
+/**
+ * A link reference definition: `[label]: target` at the start of a line,
+ * where the destination is followed only by an optional CommonMark title.
+ * A destination trailed by anything else (unquoted prose) voids the
+ * definition under CommonMark, so such a line is not read as a link.
+ */
+const LINK_DEFINITION =
+  /^ {0,3}\[[^\]]+\]:\s*(?:<([^>]*)>|(\S+))[ \t]*(?:"[^"]*"|'[^']*'|\([^)]*\))?[ \t]*$/gm;
 
 /** Markdown link and raw-HTML syntax renders away; everything else stays. */
 function renderProse(text) {

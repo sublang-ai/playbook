@@ -68,11 +68,11 @@ function withAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
+// slc/link.md §Abort: cancellation is causal identity with the applicable
+// signal's reason; an `AbortError`-named rejection that is not that exact
+// reason is a control-plane failure to surface, never an abort to swallow.
 function isAbortReason(error: unknown, signal: AbortSignal): boolean {
-  return (
-    signal.aborted &&
-    (error === signal.reason || normalizeError(error).name === 'AbortError')
-  );
+  return signal.aborted && Object.is(error, signal.reason);
 }
 
 const NEVER_ABORTED_SIGNAL = new AbortController().signal;
@@ -2019,19 +2019,21 @@ export function createNestedPlaybookBridge<
           }
           rawStart = await withAbort(starting, active.signal);
         } catch (error) {
-          const controlError = active.signal.aborted ? undefined : error;
+          const controlError = isAbortReason(error, active.signal)
+            ? undefined
+            : error;
           if (controlError !== undefined) reportControlPlaneError(controlError);
           const result = resultFromThrown(
             normalizedInput.playbookId,
             undefined,
             error,
-            active.signal.aborted,
+            controlError === undefined && active.signal.aborted,
           );
           return await finishImmediate(
             active,
             result,
             controlError,
-            active.signal.aborted
+            controlError === undefined && active.signal.aborted
               ? () =>
                   resultFromThrown(
                     normalizedInput.playbookId,
