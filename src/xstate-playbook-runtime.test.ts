@@ -678,6 +678,55 @@ describe('player + script workflow over the shared factory', () => {
     await runtime.dispose();
   });
 
+  it('kills a descendant that outlived the shell when the abort lands after exit', async () => {
+    // DR-036 decision 6 / slc/link.md §Script execution: abort ownership
+    // spans the whole invocation. A backgrounded TERM-immune descendant is
+    // legitimate on normal completion — but an abort landing during the
+    // post-exit emission tail must still kill the surviving group before
+    // the actor settles.
+    const dir = await mkdtemp(join(tmpdir(), 'playbook-script-postexit-'));
+    try {
+      const controller = new AbortController();
+      const abortReason = new Error('boss cancelled after the shell exit');
+      const command =
+        `sh -c 'trap "" TERM; exec sleep 30' & ` +
+        `echo $! > ${dir}/desc.pid`;
+      const { ports, telemetry } = makeRecordingPorts({
+        callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+        callJudge: async () => '{"guard":"implemented","summary":"ok"}',
+        emitStatus: async (message) => {
+          if (message.startsWith('Executed script for')) {
+            controller.abort(abortReason);
+          }
+        },
+      });
+      const runtime = createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        label: 'script-postexit-workflow',
+        machineInput: () => ({ command }),
+      })({});
+      await runtime.init(makeSession(ports));
+      const settled = await runtime.handleBossInput({
+        text: 'run the daemonish script',
+        signal: controller.signal,
+      });
+      expect(settled.outcome).toBe('aborted');
+      const descPid = Number.parseInt(
+        await readFile(join(dir, 'desc.pid'), 'utf8'),
+        10,
+      );
+      expect(Number.isInteger(descPid) && descPid > 0).toBe(true);
+      // The surviving group member is dead at settlement.
+      expect(() => process.kill(descPid, 0)).toThrow();
+      expect(
+        telemetry.some(({ topic }) => topic === 'playbook.script'),
+      ).toBe(false);
+      await runtime.dispose();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 15000);
+
   it('runs deterministic entry, default composition, adjudication, and script execution to terminal', async () => {
     const judgePrompts: string[] = [];
     const playerPrompts: string[] = [];
@@ -1409,6 +1458,148 @@ describe('player + script workflow over the shared factory', () => {
     }
   });
 
+  it('finishes the player pair aborted when the start sink cancels with the exact reason', async () => {
+    // DR-036 decision 4: a started-trace sink that cancels the turn and
+    // rethrows the exact reason IS the cancellation — no host call, an
+    // `aborted` pair, nothing latched, and the turn settles as an abort
+    // instead of rejecting with the Boss's own reason.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the turn');
+    let playerCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return { status: 'ok', finalText: 'done' };
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (trace.type === 'player.call.started') {
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const settled = await runtime.handleBossInput({
+      text: 'build the widget',
+      signal: controller.signal,
+    });
+    expect(settled.outcome).toBe('aborted');
+    expect(playerCalls).toBe(0);
+    const pair = traces.filter(({ callId }) => callId === 'player-1');
+    expect(pair.map(({ type }) => type)).toEqual([
+      'player.call.started',
+      'player.call.finished',
+    ]);
+    expect(pair[1].payload).toMatchObject({ status: 'aborted' });
+    await runtime.dispose();
+  });
+
+  it('finishes the judge pair aborted when the start sink cancels with the exact reason', async () => {
+    // Same DR-036 rule at the judge boundary, which shares the start
+    // helper: the adjudication judge call never reaches the host.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the turn');
+    let judgeCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () => {
+        judgeCalls += 1;
+        return '{"guard":"implemented","summary":"ok"}';
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (trace.type === 'judge.call.started') {
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const settled = await runtime.handleBossInput({
+      text: 'build the widget',
+      signal: controller.signal,
+    });
+    expect(settled.outcome).toBe('aborted');
+    expect(judgeCalls).toBe(0);
+    const finish = traces.find(
+      ({ type }) => type === 'judge.call.finished',
+    );
+    expect(finish?.payload).toMatchObject({ status: 'aborted' });
+    await runtime.dispose();
+  });
+
+  it('settles terminal when the machine completes despite a coincident abort', async () => {
+    // DR-036 decision 3: a machine that reached its terminal state settled
+    // the work; reporting `aborted` would hide a terminal machine that the
+    // next turn disposes and silently restarts.
+    const controller = new AbortController();
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () => '{"guard":"implemented","summary":"shipped"}',
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.fsm.state') return;
+        const payload = event.payload as { state?: { stateId?: string } };
+        if (payload.state?.stateId === 'done') {
+          controller.abort(new Error('boss cancelled at the finish line'));
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const settled = await runtime.handleBossInput({
+      text: 'build the widget',
+      signal: controller.signal,
+    });
+    expect(settled.outcome).toBe('terminal');
+    expect(settled.state.stateId).toBe('done');
+    expect('output' in settled ? settled.output : undefined).toEqual({
+      summary: 'shipped',
+    });
+    await runtime.dispose();
+  });
+
+  it('returns the computed outcome when a late abort cancels the settled emission', async () => {
+    // DR-036 decision 3: an abort observed after the outcome is computed
+    // does not rewrite it — the return and the already-emitted settlement
+    // trace state one fact, and the exact-reason sink rejection is
+    // forgiven.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled during settlement');
+    let settledSeen = false;
+    const { ports } = makeRecordingPorts({
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        if (trace.type === 'boss.input.settled' && !settledSeen) {
+          settledSeen = true;
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    // Empty input computes `no-action` before the settled emission fires
+    // the abort; the computed outcome stands.
+    const settled = await runtime.handleBossInput({
+      text: '',
+      signal: controller.signal,
+    });
+    expect(settled.outcome).toBe('no-action');
+    const next = await runtime.handleBossInput(turn(''));
+    expect(next.outcome).toBe('no-action');
+    await runtime.dispose();
+  });
+
   it('does not send a classified event when abort fires during its finish trace', async () => {
     const controller = new AbortController();
     const abortReason = new Error('stop after classification');
@@ -1629,6 +1820,44 @@ const createCaptainRuntime = createXStatePlaybookRuntime(captainMachine, {
 });
 
 describe('direct-Captain actor over the shared factory', () => {
+  it('finishes the captain pair aborted when the start sink cancels with the exact reason', async () => {
+    // DR-036 decision 4 at the direct-Captain boundary, which shares the
+    // start helper: no host Captain call, an `aborted` pair, a settled
+    // abort.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the turn');
+    let captainCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callCaptain: async () => {
+        captainCalls += 1;
+        return { status: 'ok', finalText: 'Ship it.' };
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (trace.type === 'captain.call.started') {
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createCaptainRuntime({});
+    await runtime.init(makeSession(ports));
+    const settled = await runtime.handleBossInput({
+      text: 'plan the release',
+      signal: controller.signal,
+    });
+    expect(settled.outcome).toBe('aborted');
+    expect(captainCalls).toBe(0);
+    const finish = traces.find(
+      ({ type }) => type === 'captain.call.finished',
+    );
+    expect(finish?.payload).toMatchObject({ status: 'aborted' });
+    await runtime.dispose();
+  });
+
   it('makes one visible callCaptain, adjudicates hidden, and injects the visible response', async () => {
     const captainCalls: {
       prompt: string;
@@ -2841,26 +3070,22 @@ describe('nested playbook actor over the shared factory', () => {
     await runtime.dispose();
   });
 
-  it('keeps the aborted resume settlement when the drain rejects with the exact resume reason', async () => {
-    // slc/link.md §Abort: resumePlaybookCall surfaces only failures that
-    // are not causally identical to its signal's reason; when every
-    // candidate is that exact reason, the settled aborted result stands.
+  it('refuses a pre-aborted resume, preserving the pending call for a later delivery', async () => {
+    // DR-036 decision 5 / slc/link.md §Nested playbook bridge: a resume
+    // whose signal is already aborted delivers nothing — no finish, no
+    // deferred settlement, the pending call intact — and a later resume
+    // with a fresh signal still delivers to terminal.
     const controller = new AbortController();
     const abortReason = new Error('boss cancelled the resume');
-    let armed = true;
+    const traces: PlaybookTraceEvent[] = [];
     const { ports } = makeRecordingPorts({
       callPlaybook: async () => ({
         state: 'suspended',
         childSessionId: 'child-session-1',
       }),
       emitTelemetry: async (event) => {
-        if (
-          armed &&
-          controller.signal.aborted &&
-          event.topic === 'playbook.fsm.state'
-        ) {
-          throw abortReason;
-        }
+        if (event.topic !== 'playbook.trace') return;
+        traces.push(event.payload as PlaybookTraceEvent);
       },
     });
     const runtime = createNestedRuntime({});
@@ -2869,7 +3094,65 @@ describe('nested playbook actor over the shared factory', () => {
     expect(suspended.outcome).toBe('suspended');
     const pendingCall =
       'pendingCall' in suspended ? suspended.pendingCall : undefined;
+    const childResult = {
+      status: 'ok' as const,
+      playbookId: 'child',
+      childSessionId: 'child-session-1',
+      output: { note: 'late child' },
+    };
     controller.abort(abortReason);
+    const refused = await runtime.resumePlaybookCall({
+      callId: pendingCall!.callId,
+      result: childResult,
+      signal: controller.signal,
+    });
+    expect(refused.outcome).toBe('aborted');
+    // Nothing was delivered: no finish trace, and the machine still
+    // advertises the same suspended call.
+    expect(
+      traces.some(({ type }) => type === 'playbook.call.finished'),
+    ).toBe(false);
+    // The machine still sits in its suspended call state; the later
+    // successful delivery below proves the pending identity survived.
+    expect(refused.state.stateId).toBe('call');
+    const delivered = await runtime.resumePlaybookCall({
+      callId: pendingCall!.callId,
+      result: childResult,
+      signal: new AbortController().signal,
+    });
+    expect(delivered.outcome).toBe('terminal');
+    expect('output' in delivered ? delivered.output : undefined).toEqual({
+      childOutput: { note: 'late child' },
+    });
+    await runtime.dispose();
+  });
+
+  it('settles aborted when the resume finish sink cancels with the exact resume reason', async () => {
+    // DR-036 decision 4: a finish-sink rejection identical to the resume
+    // boundary's own reason is the cancellation, classified against the
+    // resume signal — not the stale invocation signal — so the boundary
+    // settles instead of rejecting with a control-plane error.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the resume');
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'suspended',
+        childSessionId: 'child-session-1',
+      }),
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        if (trace.type === 'playbook.call.finished') {
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const suspended = await runtime.handleBossInput(turn('do it'));
+    const pendingCall =
+      'pendingCall' in suspended ? suspended.pendingCall : undefined;
     const resumed = await runtime.resumePlaybookCall({
       callId: pendingCall!.callId,
       result: {
@@ -2881,7 +3164,125 @@ describe('nested playbook actor over the shared factory', () => {
       signal: controller.signal,
     });
     expect(resumed.outcome).toBe('aborted');
-    armed = false;
+    await runtime.dispose();
+  });
+
+  it('settles terminal when the resumed machine completes despite a coincident abort', async () => {
+    // DR-036 decision 3: terminal completion outranks the abort — the
+    // delivered child result drove the machine to done, and hiding that
+    // behind `aborted` would let the next turn silently restart it.
+    const controller = new AbortController();
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'suspended',
+        childSessionId: 'child-session-1',
+      }),
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        if (trace.type === 'playbook.call.finished') {
+          controller.abort(new Error('boss cancelled during delivery'));
+        }
+      },
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const suspended = await runtime.handleBossInput(turn('do it'));
+    const pendingCall =
+      'pendingCall' in suspended ? suspended.pendingCall : undefined;
+    const resumed = await runtime.resumePlaybookCall({
+      callId: pendingCall!.callId,
+      result: {
+        status: 'ok',
+        playbookId: 'child',
+        childSessionId: 'child-session-1',
+        output: { note: 'child finished' },
+      },
+      signal: controller.signal,
+    });
+    expect(resumed.outcome).toBe('terminal');
+    expect('output' in resumed ? resumed.output : undefined).toEqual({
+      childOutput: { note: 'child finished' },
+    });
+    await runtime.dispose();
+  });
+
+  it('finishes the nested pair aborted when the start sink cancels with the exact reason', async () => {
+    // DR-036 decision 4 at the nested boundary: a playbook.call.started
+    // sink that cancels the turn and rethrows the exact reason is the
+    // cancellation — no host child starts, the pair finishes `aborted`,
+    // and the turn settles as an abort.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the turn');
+    let hostCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => {
+        hostCalls += 1;
+        return { state: 'suspended', childSessionId: 'child-session-1' };
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        traces.push(trace);
+        if (trace.type === 'playbook.call.started') {
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const settled = await runtime.handleBossInput({
+      text: 'do it',
+      signal: controller.signal,
+    });
+    expect(settled.outcome).toBe('aborted');
+    expect(hostCalls).toBe(0);
+    const finish = traces.find(
+      ({ type }) => type === 'playbook.call.finished',
+    );
+    expect(
+      (finish?.payload as { result?: { status?: string } } | undefined)
+        ?.result?.status,
+    ).toBe('aborted');
+    await runtime.dispose();
+  });
+
+  it('settles aborted when the immediate finish sink cancels with the exact reason', async () => {
+    // DR-036 decision 4: the child completed and its recorded `ok` finish
+    // stands; the finish-delivery rejection identical to the reason is the
+    // cancellation, so the turn settles aborted with no control rejection.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the turn');
+    let finishSeen = false;
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'settled',
+        result: {
+          status: 'ok',
+          playbookId: 'child',
+          childSessionId: 'child-session-1',
+          output: { note: 'settled at once' },
+        },
+      }),
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        if (trace.type === 'playbook.call.finished' && !finishSeen) {
+          finishSeen = true;
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const settled = await runtime.handleBossInput({
+      text: 'do it',
+      signal: controller.signal,
+    });
+    expect(settled.outcome).toBe('aborted');
     await runtime.dispose();
   });
 
@@ -4196,6 +4597,107 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     await runtime.dispose();
   });
 
+  it('finishes the apply pair aborted when the start sink cancels with the exact reason', async () => {
+    // DR-036 decision 4 at the apply boundary: the pre-acceptance call may
+    // still throw, but the pair finishes `aborted` with the canonical
+    // rejected-before-any-effect payload, nothing latches, no receipt is
+    // recorded, and the key stays free.
+    const controller = new AbortController();
+    const abortReason = new Error('boss cancelled the apply');
+    const telemetryEvents: RecordedTelemetry[] = [];
+    let armed = true;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () => '{"guard":"implemented","summary":"jumped"}',
+      emitTelemetry: async (event) => {
+        telemetryEvents.push({ topic: event.topic, payload: event.payload });
+        const trace = event.payload as { type?: string };
+        if (
+          armed &&
+          event.topic === 'playbook.trace' &&
+          trace.type === 'apply.started'
+        ) {
+          armed = false;
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await expect(
+      runtime.apply!({
+        actionId: 'jump:implement',
+        key: 'cancelled-start',
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(abortReason);
+    const pairs = applyTraces(telemetryEvents);
+    const finish = pairs.find((event) => event.type === 'apply.finished');
+    expect(finish?.payload).toMatchObject({
+      status: 'aborted',
+      disposition: 'rejected',
+    });
+    // The key never reached acceptance and executes later with a fresh
+    // signal.
+    const receipt = await runtime.apply!({
+      actionId: 'jump:implement',
+      key: 'cancelled-start',
+      signal: sigOf(),
+    });
+    expect(receipt.disposition).toBe('executed');
+    await runtime.dispose();
+  });
+
+  it('drops a post-publication delivery rejection identical to the apply abort reason', async () => {
+    // DR-036 decisions 2 and 4: the published executed receipt stands, and
+    // a delivery rejection that is the apply signal's own abort reason is
+    // the cancellation's evidence — never carried to poison a later
+    // unrelated boundary. A distinct delivery failure still surfaces from
+    // the next boundary's drain (PBRT-52).
+    for (const identical of [true, false]) {
+      const controller = new AbortController();
+      const abortReason = new Error('boss cancelled after publication');
+      const deliveryFailure = identical
+        ? abortReason
+        : new Error('delivery sink offline');
+      let finishSeen = false;
+      const { ports } = makeRecordingPorts({
+        callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+        callJudge: async () => '{"guard":"implemented","summary":"jumped"}',
+        emitTelemetry: async (event) => {
+          const trace = event.payload as { type?: string };
+          if (
+            event.topic === 'playbook.trace' &&
+            trace.type === 'apply.finished' &&
+            !finishSeen
+          ) {
+            finishSeen = true;
+            controller.abort(abortReason);
+            throw deliveryFailure;
+          }
+        },
+      });
+      const runtime = createWorkflowRuntime({});
+      await runtime.init(makeSession(ports));
+      const receipt = await runtime.apply!({
+        actionId: 'jump:implement',
+        key: 'published',
+        signal: controller.signal,
+      });
+      expect(receipt.disposition).toBe('executed');
+      if (identical) {
+        const next = await runtime.handleBossInput(turn(''));
+        expect(next.outcome).toBe('no-action');
+      } else {
+        await expect(runtime.handleBossInput(turn(''))).rejects.toBe(
+          deliveryFailure,
+        );
+      }
+      await runtime.dispose();
+    }
+  });
+
   it('records no receipt for keys that never reach acceptance and executes them later', async () => {
     const playerPrompts: string[] = [];
     let failStartSink = false;
@@ -5067,6 +5569,112 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     ).toThrow(
       'missing-control state ready declares no string meta.playbook.stateId; the shared runtime derives every playbook state identity from it',
     );
+  });
+
+  it.each([
+    ['no states property', createMachine({ id: 'zero' })],
+    ['an empty states object', createMachine({ id: 'zero', states: {} })],
+  ])('rejects a machine with %s at factory construction', (_label, machine) => {
+    // PBRT-52: a zero-state machine has no playbook identity to expose —
+    // its first snapshot would fail the exactly-one-state-id inspection at
+    // init with a misnamed diagnostic; it fails construction instead.
+    expect(() =>
+      createXStatePlaybookRuntime(machine, {
+        label: 'zero-control',
+        compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+        roleStates: {},
+      }),
+    ).toThrow(
+      'zero-control declares no root states; the shared runtime requires at least one flat playbook state',
+    );
+  });
+
+  it('keeps a descriptionless state fully usable, omitting only its description', async () => {
+    // PBRT-52 / slc/link.md: description is optional — a state declaring
+    // none normalizes, activates, and settles like any other, merely
+    // carrying no `stateDescription`; it must not fail activation or wedge
+    // the runtime.
+    const machine = createMachine({
+      id: 'bare',
+      context: () => ({ task: undefined as string | undefined }),
+      initial: 'ready',
+      states: {
+        ready: {
+          meta: { playbook: { stateId: 'ready' } },
+          tags: ['playbook.parked'],
+          on: { START: 'work' },
+        },
+        work: {
+          meta: { playbook: { stateId: 'work' } },
+          tags: ['playbook.parked'],
+        },
+      },
+    });
+    const runtime = createXStatePlaybookRuntime(machine, {
+      label: 'bare-control',
+      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+      entryEvent: { type: 'START', textField: 'task' },
+      roleStates: {},
+    })({});
+    const { ports } = makeRecordingPorts();
+    await runtime.init(makeSession(ports));
+    const idle = await runtime.handleBossInput(turn(''));
+    expect(idle.outcome).toBe('no-action');
+    expect(idle.state.stateId).toBe('ready');
+    const view = runtime.describe!();
+    expect(view.stateDescription).toBeUndefined();
+    const entered = await runtime.handleBossInput(turn('go'));
+    expect(entered.state.stateId).toBe('work');
+    // The runtime stays usable — no boundary wedge, and disposal works.
+    const again = await runtime.handleBossInput(turn(''));
+    expect(again.outcome).toBe('no-action');
+    await runtime.dispose();
+  });
+
+  it('rejects init with the original error when the initial entry action throws', async () => {
+    // DR-036 decision 7 / slc/link.md §Session lifecycle: a startup actor
+    // error is part of `init` — the boundary rejects with the original
+    // error after the failed-start cleanup (one best-effort
+    // session.disposed after the attempted session.started) and a fresh
+    // init attempt is permitted.
+    const boom = new Error('entry exploded');
+    let arm = true;
+    const machine = createMachine({
+      id: 'boomInit',
+      initial: 'ready',
+      states: {
+        ready: {
+          meta: meta('ready'),
+          tags: ['playbook.parked'],
+          entry: () => {
+            if (arm) throw boom;
+          },
+        },
+      },
+    });
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        traces.push(event.payload as PlaybookTraceEvent);
+      },
+    });
+    const runtime = createXStatePlaybookRuntime(machine, {
+      label: 'boom-init',
+      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+      roleStates: {},
+    })({});
+    await expect(runtime.init(makeSession(ports))).rejects.toBe(boom);
+    expect(traces.map(({ type }) => type)).toContain('session.disposed');
+    // The failed binding is cleared; a fresh init succeeds.
+    arm = false;
+    await runtime.init(makeSession(ports));
+    const idle = await runtime.handleBossInput(turn(''));
+    expect(idle.outcome).toBe('no-action');
+    await runtime.dispose();
   });
 });
 

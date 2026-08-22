@@ -61,6 +61,7 @@ meta.md       The spec of specs
 | [DR-033](decisions/033-sketch-view-retirement.md) | 033-sketch-view-retirement.md | Sketch view retirement: the host app draws running machines; the runtime keeps emitting the trace they ride on |
 | [DR-034](decisions/034-durable-failure-retry-continuity.md) | 034-durable-failure-retry-continuity.md | A parked failure state sources its retry from the persisted machine snapshot, so it recovers identically live and after continuation |
 | [DR-035](decisions/035-truthful-terminal-meaning.md) | 035-truthful-terminal-meaning.md | A final state's description is the workflow's published terminal meaning, so distinct terminal outcomes reach distinct final states |
+| [DR-036](decisions/036-coherent-abort-settlement.md) | 036-coherent-abort-settlement.md | One abort-settlement model: exact-identity cancellation classified at each latch, machine-state settlement precedence with terminal ahead of a coincident abort, delivery refused on a pre-aborted boundary, and invocation-owned resources held to settlement |
 
 ## Intents
 
@@ -107,6 +108,7 @@ meta.md       The spec of specs
 | [IR-042](intents/042-explicit-roles-session-players.md) | 042-explicit-roles-session-players.md | Implement explicit local roles, Captain-session players, compatible retuning, and durable continuation through either front end |
 | [IR-043](intents/043-truthful-terminal-meaning.md) | 043-truthful-terminal-meaning.md | Implement DR-035: one final state per authored terminal outcome, splitting CODE's overloaded `done` |
 | [IR-044](intents/044-durable-failure-retry-continuity.md) | 044-durable-failure-retry-continuity.md | Implement DR-034: the failure-state retry derives from the persisted machine snapshot, so a continued session recovers in place |
+| [IR-045](intents/045-coherent-abort-settlement.md) | 045-coherent-abort-settlement.md | Implement DR-036: latch-site exact-identity classification, machine-state settlement precedence, refused pre-aborted delivery, and invocation-spanning resource ownership across the engine and DECIDE |
 
 ## Packages
 

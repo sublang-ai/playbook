@@ -130,7 +130,9 @@ interface ReviewBoundary {
   telemetry: TelemetryRecord[];
 }
 
-async function runToReview(): Promise<ReviewBoundary> {
+async function runToReview(
+  onTelemetry?: (record: TelemetryRecord) => void | Promise<void>,
+): Promise<ReviewBoundary> {
   const playerCounts = new Map<string, number>();
   const telemetry: TelemetryRecord[] = [];
   let request: PlaybookCallRequest | undefined;
@@ -156,6 +158,7 @@ async function runToReview(): Promise<ReviewBoundary> {
     },
     emitTelemetry: async (record) => {
       telemetry.push(record);
+      await onTelemetry?.(record);
     },
   });
   const runtime = createPlaybookRuntime({});
@@ -1307,6 +1310,108 @@ describe('DECIDE abort classification', () => {
     });
 
     sinkRejects = false;
+    await runtime.dispose();
+  });
+
+  // DR-036 §4: a started-trace sink rejection causally identical to the
+  // boundary reason is the abort's own evidence — the turn settles aborted
+  // and the pair's best-effort finish records status 'aborted', never a
+  // lying 'error'.
+  it('finishes the started pair aborted when its sink aborts with the rethrown reason', async () => {
+    const abortReason = new Error('Boss cancelled the turn.');
+    const controller = new AbortController();
+    const telemetry: TelemetryRecord[] = [];
+    let abortedStartCallId: string | undefined;
+    const ports = completePorts({
+      callPlayer: (_roleId, _prompt, invocationSignal) =>
+        new Promise<{ status: 'aborted' }>((resolve) => {
+          invocationSignal.addEventListener(
+            'abort',
+            () => resolve({ status: 'aborted' }),
+            { once: true },
+          );
+        }),
+      emitTelemetry: async (record) => {
+        telemetry.push(record);
+        if (record.topic !== 'playbook.trace') return;
+        const trace = record.payload as PlaybookTraceEvent;
+        if (
+          trace.type === 'player.call.started' &&
+          abortedStartCallId === undefined
+        ) {
+          abortedStartCallId = trace.callId;
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(session(ports));
+    await expect(
+      runtime.handleBossInput({
+        text: 'Choose the durable design.',
+        signal: controller.signal,
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'aborted',
+      error: { message: abortReason.message },
+    });
+    expect(abortedStartCallId).toBeDefined();
+    const pairFinish = playbookTraces(telemetry).find(
+      (trace) =>
+        trace.type === 'player.call.finished' &&
+        trace.callId === abortedStartCallId,
+    );
+    expect(pairFinish?.payload).toMatchObject({
+      status: 'aborted',
+      error: { message: abortReason.message },
+    });
+    await runtime.dispose();
+  });
+
+  // DR-036 §3: terminal completion outranks a coincident abort. A sink that
+  // aborts the resume with its own rethrown reason while handling the final
+  // done transition must neither hide the completed machine behind an
+  // aborted settlement nor reject the boundary with the abort's evidence.
+  it('settles terminal when the done-transition sink aborts with the rethrown reason', async () => {
+    const abortReason = new Error('Boss cancelled during settlement.');
+    const controller = new AbortController();
+    let doneSinkTriggered = false;
+    const { runtime, request } = await runToReview((record) => {
+      if (doneSinkTriggered || record.topic !== 'playbook.trace') return;
+      const trace = record.payload as PlaybookTraceEvent;
+      const payload = trace.payload as { state?: { status?: string } };
+      if (
+        trace.type === 'fsm.transition' &&
+        payload.state?.status === 'done'
+      ) {
+        doneSinkTriggered = true;
+        controller.abort(abortReason);
+        throw abortReason;
+      }
+    });
+    await expect(
+      runtime.resumePlaybookCall({
+        callId: request.callId,
+        result: {
+          status: 'ok',
+          playbookId: 'review',
+          childSessionId: 'review-child',
+          output: {
+            approvedCommit: 'latest',
+            noUnsettledFindings: true,
+          },
+        },
+        signal: controller.signal,
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'terminal',
+      output: {
+        approvedCommit: 'latest',
+        noUnsettledFindings: true,
+      },
+    });
+    expect(doneSinkTriggered).toBe(true);
     await runtime.dispose();
   });
 });

@@ -790,8 +790,23 @@ describe('packed tarball contents (RELEASE-18)', () => {
         const where = `${doc}:${line} (${target})`;
         // release-20: a packed SLC definition's citation into `specs/` is a
         // repository citation under the specs tree's own citation law
-        // (meta-16 requires the relative form), exempt from the closure.
+        // (meta-16 requires the relative form), exempt from the closure —
+        // but not from verification (meta-33): the exempted target must be
+        // a repository file, and its fragment a real anchor of that file.
         if (doc.startsWith('slc/') && dest.startsWith('specs/')) {
+          if (!existsSync(join(repoRoot, dest))) {
+            failures.push(
+              `${where} exempted slc→specs citation target missing from the repository: ${dest}`,
+            );
+          } else if (
+            fragment !== '' &&
+            dest.endsWith('.md') &&
+            !anchorsFor(dest).has(fragment)
+          ) {
+            failures.push(
+              `${where} exempted slc→specs citation anchor missing: #${fragment} in ${dest}`,
+            );
+          }
           continue;
         }
         if (dest.startsWith('..')) {
@@ -816,6 +831,108 @@ describe('packed tarball contents (RELEASE-18)', () => {
     expect(failures).toEqual([]);
     // Guard against a vacuous pass: the packed docs really carry links.
     expect(scanned).toBeGreaterThan(50);
+  });
+
+  // RELEASE-20: repository-only content is cited from packed docs by
+  // absolute repository URL on the repository's main line — a deliberate
+  // living pointer. `linksOf` collects relative links only, so those URLs
+  // escape both the closure above and scripts/check-links.mjs (meta-33);
+  // this scan verifies each one against the repository tree: the branch
+  // segment is exactly `main`, the path is a repository file, and a
+  // fragment on a Markdown target names an anchor that file renders.
+  it('resolves every living-pointer URL in packed markdown against the repository', () => {
+    const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
+    let out: string;
+    try {
+      out = execFileSync('npm', ['pack', '--dry-run', '--json'], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        env: { ...process.env, npm_config_cache: npmCache },
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } finally {
+      rmSync(npmCache, { recursive: true, force: true });
+    }
+    const packedDocs = (
+      JSON.parse(out)[0].files as { path: string }[]
+    )
+      .map((f) => f.path)
+      .filter((path) => path.endsWith('.md'));
+    // check-links.mjs keeps its fence/code-span blanking private, so the
+    // same masking is replicated minimally here: fenced blocks are blanked
+    // line by line and inline code spans are overwritten with spaces (line
+    // breaks preserved), so a URL quoted as code mints no check and match
+    // offsets still map to the right line.
+    const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+    const CODE_SPAN = /(`+)(?:(?!\1)[\s\S])*?\1/g;
+    const blankFences = (text: string): string => {
+      let fence: string | null = null;
+      return text
+        .split('\n')
+        .map((line) => {
+          const match = FENCE.exec(line);
+          if (match !== null) {
+            const marker = match[1][0];
+            if (fence === null) fence = marker;
+            else if (fence === marker) fence = null;
+            return '';
+          }
+          return fence === null ? line : '';
+        })
+        .join('\n');
+    };
+    const blankCodeSpans = (text: string): string =>
+      text.replace(CODE_SPAN, (span) => span.replace(/[^\n]/g, ' '));
+    const LIVING_POINTER =
+      /https:\/\/github\.com\/sublang-ai\/playbook\/blob\/([^/]+)\/([^#)\s]+)(#[^)\s]*)?/g;
+    const decode = (part: string): string => {
+      try {
+        return decodeURIComponent(part);
+      } catch {
+        return part;
+      }
+    };
+    const failures: string[] = [];
+    let scanned = 0;
+    for (const doc of packedDocs) {
+      // release-28 step 7 pins packed bytes to repository bytes, so the
+      // repository copy is the packed content.
+      const body = blankCodeSpans(
+        blankFences(readFileSync(join(repoRoot, doc), 'utf8')),
+      );
+      for (const match of body.matchAll(LIVING_POINTER)) {
+        scanned += 1;
+        const [url, branch, pathPart, fragmentPart] = match;
+        const line = body.slice(0, match.index).split('\n').length;
+        const where = `${doc}:${line} (${url})`;
+        if (branch !== 'main') {
+          failures.push(
+            `${where} pins branch ${branch}, not the main living pointer`,
+          );
+          continue;
+        }
+        const dest = posix.normalize(decode(pathPart));
+        if (dest.startsWith('..') || posix.isAbsolute(dest)) {
+          failures.push(`${where} escapes the repository: ${dest}`);
+          continue;
+        }
+        if (!existsSync(join(repoRoot, dest))) {
+          failures.push(`${where} targets no repository file: ${dest}`);
+          continue;
+        }
+        const fragment =
+          fragmentPart === undefined ? '' : decode(fragmentPart.slice(1));
+        if (fragment === '' || !dest.endsWith('.md')) {
+          continue;
+        }
+        if (!anchorsOf(readFileSync(join(repoRoot, dest), 'utf8')).has(fragment)) {
+          failures.push(`${where} names no anchor #${fragment} in ${dest}`);
+        }
+      }
+    }
+    expect(failures).toEqual([]);
+    // Guard against a vacuous pass: packed docs really carry living pointers.
+    expect(scanned).toBeGreaterThan(10);
   });
 });
 

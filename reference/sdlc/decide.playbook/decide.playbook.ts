@@ -1109,7 +1109,10 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           finishedType,
           {
             ...identity,
-            status: 'error',
+            // A started-trace sink rejection causally identical to the
+            // boundary reason is the abort's own evidence: the pair
+            // finishes 'aborted', not 'error' (DR-036 §4).
+            status: isAbortFailure(error, signal) ? 'aborted' : 'error',
             error: normalizeErrorFull(error) ?? {
               name: 'Error',
               message: String(error),
@@ -1711,9 +1714,9 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         actorError ?? new Error('decide runtime actor entered error status')
       );
     }
-    if (signal?.aborted) {
-      return abortedResult(signal);
-    }
+    // Terminal completion outranks a coincident abort (DR-036 §3): reporting
+    // 'aborted' over a completed machine would hide a terminal state that the
+    // next turn silently restarts, duplicating the workflow's side effects.
     if (snapshot.status === 'done') {
       const output = (snapshot as { output?: unknown }).output;
       if (output !== undefined) assertJsonSafe(output, 'terminal output');
@@ -1722,6 +1725,9 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         state,
         ...(output === undefined ? {} : { output }),
       };
+    }
+    if (signal?.aborted) {
+      return abortedResult(signal);
     }
     if (state.activeStateIds.includes('failed')) {
       const error = normalizeErrorFull(context.lastError);
@@ -2210,13 +2216,33 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       } catch (error) {
         drainError = error;
       }
-      const failure = controlPlaneError ?? drainError ?? operationError;
+      // A failure candidate causally identical to the resume boundary's own
+      // signal reason is the abort's evidence, not a distinct failure —
+      // forgive it so an all-abort-identical set settles the aborted result
+      // instead of rejecting; a distinct failure keeps full control-error
+      // precedence (DR-036 §4).
+      const forgiveAbort = (candidate: unknown): unknown =>
+        candidate !== undefined && isAbortFailure(candidate, signal)
+          ? undefined
+          : candidate;
+      const failure =
+        forgiveAbort(controlPlaneError) ??
+        forgiveAbort(drainError) ??
+        forgiveAbort(operationError);
       currentSignal = undefined;
       currentTurnId = undefined;
       controlPlaneError = undefined;
       if (failure !== undefined) throw failure;
       if (runResult === undefined) {
-        throw new Error('decide runtime: playbook resume produced no result');
+        if (signal.aborted) {
+          // Every candidate was the abort's own evidence: settle on the
+          // machine's state under the aborted boundary signal (DR-036 §4).
+          runResult = resultForSnapshot(signal);
+        } else {
+          throw new Error(
+            'decide runtime: playbook resume produced no result',
+          );
+        }
       }
       return runResult;
     },

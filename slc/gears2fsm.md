@@ -244,8 +244,9 @@ Each state shall declare:
 - a stable `id` (for `#id` targeting and Boss interrupts);
 - an intuitive state key (the property name under `states: { ... }`);
 - a one-line `description` (for inspector tools and documentation);
-- JSON-safe `meta: { playbook: { stateId, description, role? } }` repeating
-  its stable id and description so linked runtimes can discover active public
+- JSON-safe `meta: { playbook: { stateId, description, role? } }` naming the
+  state's public playbook identity per the identity rule below and repeating
+  its description so linked runtimes can discover active public
   identities through `snapshot.getMeta()` without private XState nodes. A
   delegated-role state shall also carry the canonical lowercase source role id in
   `meta.playbook.role`; every other state shall omit `role`;

@@ -1236,9 +1236,17 @@ function machineDeclaresNestedState(machine) {
 // dead gate.
 function assertFlatStateIdentity(machine, label) {
     const config = machine.config;
-    if (!isPlainObject(config) || !isPlainObject(config.states))
-        return;
-    for (const [key, stateDef] of Object.entries(config.states)) {
+    const states = isPlainObject(config) && isPlainObject(config.states)
+        ? config.states
+        : undefined;
+    // A machine with no root states has no playbook identity to expose; its
+    // first snapshot would fail the exactly-one-state-id inspection, so it
+    // fails construction with the defect named instead.
+    if (states === undefined || Object.keys(states).length === 0) {
+        throw new Error(`${label} declares no root states; the shared runtime requires at ` +
+            'least one flat playbook state');
+    }
+    for (const [key, stateDef] of Object.entries(states)) {
         if (!isPlainObject(stateDef))
             continue;
         const meta = isPlainObject(stateDef.meta) ? stateDef.meta : undefined;
@@ -1540,11 +1548,19 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 privateResumeTokens.set(key, token);
         }
         function enqueueEmission(fn) {
+            // The emission belongs to the boundary enqueueing it: a rejection
+            // causally identical to that boundary's abort reason is the
+            // cancellation's own evidence — never latched, so it cannot poison a
+            // later unrelated boundary (DR-036).
+            const enqueueSignal = activeSignal;
             const queued = emissionQueue.add(fn).then(() => undefined);
             activeEmissionCalls.add(queued);
             void queued.then(() => activeEmissionCalls.delete(queued), (error) => {
                 activeEmissionCalls.delete(queued);
-                emissionFailure ??= error;
+                if (enqueueSignal === undefined ||
+                    !isAbortFailure(error, enqueueSignal)) {
+                    emissionFailure ??= error;
+                }
             });
             return queued;
         }
@@ -1665,6 +1681,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
             };
         }
         async function emitCallStarted(startedType, finishedType, identity, position, 
+        // The applicable combined signal: a start-sink rejection causally
+        // identical to its reason is the cancellation itself, not a control
+        // error — the pair finishes `aborted` and nothing latches
+        // (slc/link.md §Abort).
+        signal, 
         // Base payload of the best-effort finish emitted when the start sink
         // rejects; it defaults to the payload the start carried, which the
         // player, judge, and captain pairs take as-is. The apply pair cannot:
@@ -1676,11 +1697,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 await emitTrace(startedType, identity, position);
             }
             catch (error) {
-                controlPlaneError ??= error;
+                if (!isAbortFailure(error, signal))
+                    controlPlaneError ??= error;
                 try {
                     await emitTrace(finishedType, {
                         ...finishIdentity,
-                        status: 'error',
+                        status: isAbortFailure(error, signal) ? 'aborted' : 'error',
                         error: normalizeError(error),
                     }, position);
                 }
@@ -1722,13 +1744,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const playerKey = continuationKey(roleId, playerId);
                 if (activePlayerKeys.has(playerKey)) {
                     const error = new Error(`simultaneous calls to player key ${playerKey} are not allowed`);
-                    await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt }, position);
+                    await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt }, position, signal);
                     await emitTrace('player.call.finished', { ...identity, status: 'error', error: normalizeError(error) }, position);
                     throw error;
                 }
                 activePlayerKeys.add(playerKey);
                 try {
-                    await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt }, position);
+                    await emitCallStarted('player.call.started', 'player.call.finished', { ...identity, prompt }, position, signal);
                     let rawResult;
                     try {
                         // An abort may land while the awaited started emission drains
@@ -1820,7 +1842,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         ...(turnId !== undefined ? { turnId } : {}),
                         callId,
                     };
-                    await emitCallStarted('judge.call.started', 'judge.call.finished', { ...identity, prompt }, position);
+                    await emitCallStarted('judge.call.started', 'judge.call.finished', { ...identity, prompt }, position, signal);
                     let reply;
                     try {
                         // An abort may land while the awaited started emission drains
@@ -1884,7 +1906,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         ...(turnId !== undefined ? { turnId } : {}),
                         callId,
                     };
-                    await emitCallStarted('captain.call.started', 'captain.call.finished', { ...identity, prompt }, position);
+                    await emitCallStarted('captain.call.started', 'captain.call.finished', { ...identity, prompt }, position, signal);
                     let rawResult;
                     try {
                         // An abort may land while the awaited started emission drains
@@ -2069,84 +2091,124 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // nothing, and the thrown signal reason keeps the rejection
                 // causally classified as the abort it is.
                 active.throwIfAborted();
-                const exitStatus = await new Promise((resolve, reject) => {
-                    let child;
-                    try {
-                        // detached: the shell leads its own POSIX process group, so an
-                        // abort can terminate the command's whole tree — a lone
-                        // SIGTERM to the wrapper never reaches backgrounded members.
-                        child = spawn('sh', ['-c', input.command], {
-                            cwd,
-                            stdio: 'ignore',
-                            detached: true,
-                        });
-                    }
-                    catch (error) {
-                        reject(error);
-                        return;
-                    }
-                    let killTimer;
-                    const signalGroup = (sig) => {
-                        if (child.pid !== undefined) {
-                            try {
-                                process.kill(-child.pid, sig);
-                            }
-                            catch {
-                                // The group is already gone.
-                            }
+                // Abort ownership — the listener that terminates the group and
+                // the escalation timer — spans the whole invocation body, not
+                // just the spawn-to-close window: an abort landing during the
+                // post-exit emission tail must still kill surviving group
+                // members before the actor settles (slc/link.md §Script
+                // execution). One finally releases both.
+                let child;
+                let killTimer;
+                const signalGroup = (sig) => {
+                    if (child?.pid !== undefined) {
+                        try {
+                            process.kill(-child.pid, sig);
                         }
-                    };
-                    // On abort, terminate the group and escalate — but settle only
-                    // from 'close', after the shell itself has exited, so the turn
-                    // never reports quiescence while the script still runs
-                    // (slc/link.md §Abort). SIGKILL is untrappable, so 'close' is
-                    // bounded by the grace.
-                    const onAbort = () => {
-                        signalGroup('SIGTERM');
-                        killTimer = setTimeout(() => signalGroup('SIGKILL'), SCRIPT_ABORT_KILL_GRACE_MS);
-                    };
-                    active.addEventListener('abort', onAbort, { once: true });
-                    child.on('error', (error) => {
-                        active.removeEventListener('abort', onAbort);
-                        if (killTimer !== undefined)
-                            clearTimeout(killTimer);
-                        reject(error);
-                    });
-                    child.on('close', (code) => {
-                        active.removeEventListener('abort', onAbort);
-                        if (killTimer !== undefined)
-                            clearTimeout(killTimer);
-                        if (active.aborted) {
-                            // The shell may exit cooperatively on the group SIGTERM
-                            // while a TERM-immune same-group descendant survives; the
-                            // group stays addressable while any member lives, so kill
-                            // it before settling (slc/link.md §Script execution).
-                            signalGroup('SIGKILL');
-                            reject(active.reason ?? new Error('script aborted'));
+                        catch {
+                            // The group is already gone.
+                        }
+                    }
+                };
+                // After a SIGKILL is posted, settlement waits for the group to
+                // stop being signalable — bounded by the same grace so an
+                // unreapable member outside the runtime's control cannot stall
+                // the turn forever. Observed teardown is milliseconds.
+                const awaitGroupGone = async () => {
+                    const pid = child?.pid;
+                    if (pid === undefined)
+                        return;
+                    const deadline = Date.now() + SCRIPT_ABORT_KILL_GRACE_MS;
+                    for (;;) {
+                        try {
+                            process.kill(-pid, 0);
+                        }
+                        catch {
                             return;
                         }
-                        resolve(typeof code === 'number' ? code : 1);
+                        if (Date.now() >= deadline)
+                            return;
+                        await new Promise((tick) => setTimeout(tick, 5));
+                    }
+                };
+                const onAbort = () => {
+                    signalGroup('SIGTERM');
+                    killTimer = setTimeout(() => signalGroup('SIGKILL'), SCRIPT_ABORT_KILL_GRACE_MS);
+                };
+                // An abort observed once the shell has already exited rejects
+                // with the signal's reason before guard resolution and before
+                // starting any further script emission — after killing whatever
+                // group members outlived the shell. The shell's own exit ended
+                // the TERM grace's purpose, so escalation is immediate here.
+                const settleIfAborted = async () => {
+                    if (!active.aborted)
+                        return;
+                    signalGroup('SIGKILL');
+                    await awaitGroupGone();
+                    active.throwIfAborted();
+                };
+                try {
+                    const exitStatus = await new Promise((resolve, reject) => {
+                        try {
+                            // detached: the shell leads its own POSIX process group,
+                            // so an abort can terminate the command's whole group — a
+                            // lone SIGTERM to the wrapper never reaches backgrounded
+                            // members.
+                            child = spawn('sh', ['-c', input.command], {
+                                cwd,
+                                stdio: 'ignore',
+                                detached: true,
+                            });
+                        }
+                        catch (error) {
+                            reject(error);
+                            return;
+                        }
+                        // On abort, terminate the group and escalate — but settle
+                        // only from 'close', after the shell itself has exited, so
+                        // the turn never reports quiescence while the script still
+                        // runs (slc/link.md §Abort). SIGKILL is untrappable, so
+                        // 'close' is bounded by the grace.
+                        active.addEventListener('abort', onAbort, { once: true });
+                        child.on('error', (error) => {
+                            reject(error);
+                        });
+                        child.on('close', (code) => {
+                            if (active.aborted) {
+                                // The shell may exit cooperatively on the group SIGTERM
+                                // while a TERM-immune same-group descendant survives;
+                                // the group stays addressable while any member lives,
+                                // so kill it and await its disappearance before
+                                // settling (slc/link.md §Script execution).
+                                signalGroup('SIGKILL');
+                                const settle = () => reject(active.reason ?? new Error('script aborted'));
+                                awaitGroupGone().then(settle, settle);
+                                return;
+                            }
+                            resolve(typeof code === 'number' ? code : 1);
+                        });
                     });
-                });
-                // An abort observed after the shell's exit must still reject with
-                // the signal's reason before any success emission or guard
-                // resolution (slc/link.md §Abort).
-                active.throwIfAborted();
-                await ports.emitStatus(`Executed script for ${input.stateId} (exit ${exitStatus}).`);
-                active.throwIfAborted();
-                await ports.emitTelemetry({
-                    topic: 'playbook.script',
-                    payload: {
-                        stateId: input.stateId,
-                        sourceItem: input.sourceItem,
-                        exitStatus,
-                    },
-                });
-                active.throwIfAborted();
-                if (exitStatus === 0) {
-                    return { guard: okGuard, exitStatus: 0 };
+                    await settleIfAborted();
+                    await ports.emitStatus(`Executed script for ${input.stateId} (exit ${exitStatus}).`);
+                    await settleIfAborted();
+                    await ports.emitTelemetry({
+                        topic: 'playbook.script',
+                        payload: {
+                            stateId: input.stateId,
+                            sourceItem: input.sourceItem,
+                            exitStatus,
+                        },
+                    });
+                    await settleIfAborted();
+                    if (exitStatus === 0) {
+                        return { guard: okGuard, exitStatus: 0 };
+                    }
+                    return { guard: failedGuard, exitStatus };
                 }
-                return { guard: failedGuard, exitStatus };
+                finally {
+                    active.removeEventListener('abort', onAbort);
+                    if (killTimer !== undefined)
+                        clearTimeout(killTimer);
+                }
             });
         }
         const nestedBridge = createNestedPlaybookBridge({
@@ -2186,9 +2248,14 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 activeSignal = signal;
             },
             onControlPlaneError: (error) => {
-                // The shared bridge classifies before reporting: everything arriving
-                // here is a non-abort control error, abort or no abort.
-                controlPlaneError ??= error;
+                // The shared bridge classifies before reporting against its own
+                // invocation-and-resume signals; classify once more here against
+                // the boundary signal so a report that is the active boundary's
+                // exact abort reason can never masquerade as a control error
+                // (slc/link.md §Abort).
+                if (activeSignal === undefined || !isAbortFailure(error, activeSignal)) {
+                    controlPlaneError ??= error;
+                }
             },
             onBackgroundError: (error) => {
                 emissionFailure ??= error;
@@ -2247,11 +2314,16 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
             }).catch(() => undefined);
         }
-        function latchInspectionError(error) {
-            if (activeSignal !== undefined)
-                controlPlaneError ??= error;
-            else
+        // One classifying latch for every runtime-observed error — inspection
+        // failures and root-actor errors alike. Outside a boundary the error
+        // rides the emission channel, which the next boundary's (or init's)
+        // drain throws; inside a boundary it is a control-plane error unless it
+        // is the boundary signal's own abort reason (slc/link.md §Abort).
+        function latchRuntimeError(error) {
+            if (activeSignal === undefined)
                 emissionFailure ??= error;
+            else if (!isAbortFailure(error, activeSignal))
+                controlPlaneError ??= error;
         }
         // PBRT-6: the single seam that stops this runtime's actor. Stopping a
         // still-running actor fires one more `@xstate.snapshot` for the
@@ -2312,22 +2384,18 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         priorState = state;
                     }
                     catch (error) {
-                        latchInspectionError(error);
+                        latchRuntimeError(error);
                     }
                 },
             });
             // A synchronously-errored actor is already quiescent, so the turn's
             // quiescence wait never subscribes and XState would report the error
-            // as unhandled after the boundary returns. Observe it here and latch
-            // it unless it is the abort reason itself (slc/link.md §Abort).
-            builtActor.subscribe({
-                error: (error) => {
-                    if (activeSignal === undefined ||
-                        !isAbortFailure(error, activeSignal)) {
-                        controlPlaneError ??= error;
-                    }
-                },
-            });
+            // as unhandled after the boundary returns. Observe it through the
+            // classifying latch: mid-boundary it is the control-plane error
+            // unless it is the abort reason itself; at startup it rides the
+            // emission channel so `init`'s own drain rejects with it and the
+            // failed-start cleanup runs (slc/link.md §Session lifecycle).
+            builtActor.subscribe({ error: latchRuntimeError });
             return builtActor;
         }
         function runResultFor(outcome, error) {
@@ -2379,10 +2447,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 throw actorError ?? new Error(`${label} actor entered error status`);
             }
-            if (signal.aborted)
-                return 'aborted';
+            // Terminal completion outranks a coincident abort: the work finished,
+            // and reporting `aborted` would hide a terminal machine behind a
+            // settlement a later turn silently restarts (slc/link.md §Abort).
             if (state.status === 'done')
                 return 'terminal';
+            if (signal.aborted)
+                return 'aborted';
             if (state.stateId === 'failed')
                 return 'failed';
             return 'quiescent';
@@ -2808,8 +2879,19 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     suppressInspectionEmissions = true;
                     actor = buildActor(runtimePorts, boundSnapshot.machine);
                     actor.start();
-                    if (controlPlaneError !== undefined)
-                        throw controlPlaneError;
+                    // A start-time actor error rides the startup emission channel
+                    // (latchRuntimeError); consume both latches here so the original
+                    // error outranks the derived status check below.
+                    {
+                        const startupError = controlPlaneError ?? emissionFailure;
+                        if (startupError !== undefined) {
+                            controlPlaneError = undefined;
+                            if (Object.is(emissionFailure, startupError)) {
+                                emissionFailure = undefined;
+                            }
+                            throw startupError;
+                        }
+                    }
                     const restoredState = normalizePlaybookSnapshot(actor.getSnapshot(), suspendedCall === undefined
                         ? {}
                         : {
@@ -2988,8 +3070,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // final for their key. Past publication such a failure is therefore
                 // re-latched onto the emission channel, surfacing from the next
                 // public boundary's drain, and `apply` still does not throw past
-                // acceptance (PBRT-52).
+                // acceptance (PBRT-52). A delivery rejection causally identical to
+                // this call's own abort reason evidences the cancellation and is
+                // dropped — never carried to a later unrelated boundary
+                // (slc/link.md §Abort).
                 const latchDeliveryFailure = (error) => {
+                    if (isAbortFailure(error, signal))
+                        return;
                     emissionFailure ??= error;
                 };
                 try {
@@ -3010,7 +3097,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             key,
                             ...receiptTracePayload({ disposition: 'rejected', reason }),
                         });
-                        await emitCallStarted('apply.started', 'apply.finished', identity, position, preAcceptanceFinish('apply.started trace sink rejected'));
+                        await emitCallStarted('apply.started', 'apply.finished', identity, position, signal, preAcceptanceFinish('apply.started trace sink rejected'));
                         // An abort may land while the awaited started emission drains
                         // (e.g. fired from the trace sink itself); the action must
                         // never execute after abort. Settle the already-started pair
@@ -3168,132 +3255,141 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 controlPlaneError = undefined;
                 let result;
                 let operationError;
+                // The boundary sentinel releases on every exit: a settlement defect
+                // past the drain — a snapshot normalization throw inside
+                // `runResultFor` included — must never wedge every later public
+                // boundary and `dispose` itself behind "another runtime turn is
+                // active". Mirrors the apply boundary's finally.
                 try {
-                    await emitTrace('boss.input.received', { text }, { turnId });
-                    // 1. Map the Boss text to an FSM event: deterministic exact entry
-                    //    where applicable (slc/link.md §Boss-event mapping), judge
-                    //    classification otherwise.
-                    let event;
-                    const trimmed = text.trim();
-                    if (trimmed !== '') {
-                        const snapshot = actor.getSnapshot();
-                        const terminal = snapshot.status === 'done';
-                        const stateId = normalizePlaybookSnapshot(snapshot).stateId;
-                        // PBRT-1 / slc/link.md §Boss-event mapping: the idle entry, the
-                        // recoverable failure state, and the reconstructed terminal all
-                        // accept exactly one ordinary textual entry event, so delivered
-                        // text enters deterministically — no judge call to spend and no
-                        // classifier whim to settle a restart as no action. Every other
-                        // parked state — a reply wait or an authored mid-workflow
-                        // checkpoint — classifies under its own Boss-event contracts.
-                        if (spec.entryEvent !== undefined &&
-                            (stateId === 'ready' || stateId === 'failed' || terminal)) {
-                            event = {
-                                type: spec.entryEvent.type,
-                                [spec.entryEvent.textField]: text,
-                            };
+                    try {
+                        await emitTrace('boss.input.received', { text }, { turnId });
+                        // 1. Map the Boss text to an FSM event: deterministic exact entry
+                        //    where applicable (slc/link.md §Boss-event mapping), judge
+                        //    classification otherwise.
+                        let event;
+                        const trimmed = text.trim();
+                        if (trimmed !== '') {
+                            const snapshot = actor.getSnapshot();
+                            const terminal = snapshot.status === 'done';
+                            const stateId = normalizePlaybookSnapshot(snapshot).stateId;
+                            // PBRT-1 / slc/link.md §Boss-event mapping: the idle entry, the
+                            // recoverable failure state, and the reconstructed terminal all
+                            // accept exactly one ordinary textual entry event, so delivered
+                            // text enters deterministically — no judge call to spend and no
+                            // classifier whim to settle a restart as no action. Every other
+                            // parked state — a reply wait or an authored mid-workflow
+                            // checkpoint — classifies under its own Boss-event contracts.
+                            if (spec.entryEvent !== undefined &&
+                                (stateId === 'ready' || stateId === 'failed' || terminal)) {
+                                event = {
+                                    type: spec.entryEvent.type,
+                                    [spec.entryEvent.textField]: text,
+                                };
+                            }
+                            else {
+                                event = await classifyBossText(text, runtimePorts, signal, snapshot, boundary, boundOptions);
+                            }
+                            signal.throwIfAborted();
+                        }
+                        // Empty input, no-action classifier output, or invalid classifier
+                        // output — nothing to send.
+                        if (event === undefined) {
+                            result = runResultFor('no-action');
                         }
                         else {
-                            event = await classifyBossText(text, runtimePorts, signal, snapshot, boundary, boundOptions);
+                            // 2. Optional Captain-pane classification line: the bare FSM
+                            //    event type, emitted before the FSM advances.
+                            const statusLine = classificationStatus(event);
+                            if (statusLine !== undefined) {
+                                await runtimePorts.emitStatus(statusLine);
+                            }
+                            signal.throwIfAborted();
+                            // 3. A final actor cannot accept new events; reconstruct only
+                            //    after classification produced a real event.
+                            if (actor.getSnapshot().status === 'done') {
+                                stopActor();
+                                actor = buildActor(runtimePorts);
+                                // The replacement actor's snapshots are real state entries.
+                                suppressInspectionEmissions = false;
+                                actor.start();
+                            }
+                            // DR-029: keep the classified event with its recorded payload
+                            // as the retry-replay source. Recording is sanitizing, not
+                            // load-bearing: an override classifier's non-JSON-safe event is
+                            // simply not recorded, and the turn proceeds unchanged.
+                            try {
+                                lastBossEvent = snapshotJsonValue(event, 'recorded Boss event');
+                            }
+                            catch {
+                                lastBossEvent = undefined;
+                            }
+                            actor.send(event);
+                            await waitForPlaybookQuiescence(actor, {
+                                pendingCalls: nestedBridge,
+                            });
+                            if (controlPlaneError !== undefined)
+                                throw controlPlaneError;
+                            result = runResultFor(settledOutcome(signal));
                         }
-                        signal.throwIfAborted();
                     }
-                    // Empty input, no-action classifier output, or invalid classifier
-                    // output — nothing to send.
-                    if (event === undefined) {
-                        result = runResultFor('no-action');
+                    catch (error) {
+                        operationError = error;
                     }
-                    else {
-                        // 2. Optional Captain-pane classification line: the bare FSM
-                        //    event type, emitted before the FSM advances.
-                        const statusLine = classificationStatus(event);
-                        if (statusLine !== undefined) {
-                            await runtimePorts.emitStatus(statusLine);
-                        }
-                        signal.throwIfAborted();
-                        // 3. A final actor cannot accept new events; reconstruct only
-                        //    after classification produced a real event.
-                        if (actor.getSnapshot().status === 'done') {
-                            stopActor();
-                            actor = buildActor(runtimePorts);
-                            // The replacement actor's snapshots are real state entries.
-                            suppressInspectionEmissions = false;
-                            actor.start();
-                        }
-                        // DR-029: keep the classified event with its recorded payload
-                        // as the retry-replay source. Recording is sanitizing, not
-                        // load-bearing: an override classifier's non-JSON-safe event is
-                        // simply not recorded, and the turn proceeds unchanged.
-                        try {
-                            lastBossEvent = snapshotJsonValue(event, 'recorded Boss event');
-                        }
-                        catch {
-                            lastBossEvent = undefined;
-                        }
-                        actor.send(event);
-                        await waitForPlaybookQuiescence(actor, {
-                            pendingCalls: nestedBridge,
-                        });
-                        if (controlPlaneError !== undefined)
-                            throw controlPlaneError;
-                        result = runResultFor(settledOutcome(signal));
+                    let drainError;
+                    try {
+                        await drainEmissions();
                     }
+                    catch (error) {
+                        drainError = error;
+                    }
+                    const latchedControlError = controlPlaneError;
+                    // A drain rejection that is the exact abort reason evidences the
+                    // cancellation, not a control-plane failure (slc/link.md §Abort).
+                    const drainAbort = drainError !== undefined && isAbortFailure(drainError, signal);
+                    const effectiveDrainError = drainAbort ? undefined : drainError;
+                    const primaryError = latchedControlError ?? effectiveDrainError ?? operationError;
+                    const abortError = latchedControlError === undefined &&
+                        effectiveDrainError === undefined &&
+                        ((operationError !== undefined &&
+                            isAbortFailure(operationError, signal)) ||
+                            (drainAbort && operationError === undefined));
+                    const settlementResult = primaryError === undefined
+                        ? (result ?? runResultFor('no-action'))
+                        : runResultFor(abortError ? 'aborted' : 'failed', primaryError);
+                    let settlementEmissionError;
+                    try {
+                        await emitTrace('boss.input.settled', settlementTracePayload(settlementResult), { turnId });
+                    }
+                    catch (error) {
+                        settlementEmissionError = error;
+                    }
+                    try {
+                        await drainEmissions();
+                    }
+                    catch (error) {
+                        settlementEmissionError ??= error;
+                    }
+                    if (settlementEmissionError !== undefined &&
+                        isAbortFailure(settlementEmissionError, signal)) {
+                        settlementEmissionError = undefined;
+                    }
+                    const failure = controlPlaneError ??
+                        latchedControlError ??
+                        effectiveDrainError ??
+                        (abortError
+                            ? (settlementEmissionError ?? operationError)
+                            : (operationError ?? settlementEmissionError));
+                    if (failure !== undefined &&
+                        !(abortError && settlementEmissionError === undefined)) {
+                        throw failure;
+                    }
+                    return settlementResult;
                 }
-                catch (error) {
-                    operationError = error;
+                finally {
+                    activeSignal = undefined;
+                    activeTurnId = undefined;
+                    controlPlaneError = undefined;
                 }
-                let drainError;
-                try {
-                    await drainEmissions();
-                }
-                catch (error) {
-                    drainError = error;
-                }
-                const latchedControlError = controlPlaneError;
-                // A drain rejection that is the exact abort reason evidences the
-                // cancellation, not a control-plane failure (slc/link.md §Abort).
-                const drainAbort = drainError !== undefined && isAbortFailure(drainError, signal);
-                const effectiveDrainError = drainAbort ? undefined : drainError;
-                const primaryError = latchedControlError ?? effectiveDrainError ?? operationError;
-                const abortError = latchedControlError === undefined &&
-                    effectiveDrainError === undefined &&
-                    ((operationError !== undefined &&
-                        isAbortFailure(operationError, signal)) ||
-                        (drainAbort && operationError === undefined));
-                const settlementResult = primaryError === undefined
-                    ? (result ?? runResultFor('no-action'))
-                    : runResultFor(abortError ? 'aborted' : 'failed', primaryError);
-                let settlementEmissionError;
-                try {
-                    await emitTrace('boss.input.settled', settlementTracePayload(settlementResult), { turnId });
-                }
-                catch (error) {
-                    settlementEmissionError = error;
-                }
-                try {
-                    await drainEmissions();
-                }
-                catch (error) {
-                    settlementEmissionError ??= error;
-                }
-                if (settlementEmissionError !== undefined &&
-                    isAbortFailure(settlementEmissionError, signal)) {
-                    settlementEmissionError = undefined;
-                }
-                const failure = controlPlaneError ??
-                    latchedControlError ??
-                    effectiveDrainError ??
-                    (abortError
-                        ? (settlementEmissionError ?? operationError)
-                        : (operationError ?? settlementEmissionError));
-                activeSignal = undefined;
-                activeTurnId = undefined;
-                controlPlaneError = undefined;
-                if (failure !== undefined &&
-                    !(abortError && settlementEmissionError === undefined)) {
-                    throw failure;
-                }
-                return settlementResult;
             },
             async resumePlaybookCall(input) {
                 if (!actor || !savedPorts) {
@@ -3308,51 +3404,70 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 activeTurnId = playbookCallTurnIds.get(input.callId);
                 activeSignal = input.signal;
                 controlPlaneError = undefined;
-                let result;
-                let operationError;
+                // The boundary sentinel releases on every exit, mirroring
+                // `handleBossInput` and the apply boundary.
                 try {
-                    await nestedBridge.resume(input);
+                    let result;
+                    let operationError;
+                    try {
+                        await nestedBridge.resume(input);
+                    }
+                    catch (error) {
+                        operationError = error;
+                    }
+                    try {
+                        await waitForPlaybookQuiescence(actor, {
+                            pendingCalls: nestedBridge,
+                        });
+                        result = runResultFor(settledOutcome(input.signal));
+                    }
+                    catch (error) {
+                        operationError ??= error;
+                    }
+                    // A resume refused because its signal was already aborted
+                    // delivers nothing: the pending call survives for a later
+                    // resume, and the boundary settles `aborted` rather than
+                    // advertising `suspended` (slc/link.md §Nested playbook bridge).
+                    if (operationError !== undefined &&
+                        isAbortFailure(operationError, input.signal) &&
+                        nestedBridge.getPendingCall()?.callId === input.callId) {
+                        result = {
+                            outcome: 'aborted',
+                            state: currentState(),
+                            error: normalizeError(input.signal.reason),
+                        };
+                    }
+                    let drainError;
+                    try {
+                        await drainEmissions();
+                    }
+                    catch (error) {
+                        drainError = error;
+                    }
+                    // A drain or resume rejection that is the exact abort reason
+                    // evidences cancellation; the settled result already labels the
+                    // turn `aborted` then (slc/link.md §Abort).
+                    const failure = controlPlaneError ??
+                        (drainError !== undefined &&
+                            isAbortFailure(drainError, input.signal)
+                            ? undefined
+                            : drainError) ??
+                        (operationError !== undefined &&
+                            isAbortFailure(operationError, input.signal)
+                            ? undefined
+                            : operationError);
+                    if (failure !== undefined)
+                        throw failure;
+                    if (result === undefined) {
+                        throw new Error('playbook resume produced no runtime result');
+                    }
+                    return result;
                 }
-                catch (error) {
-                    operationError = error;
+                finally {
+                    activeSignal = undefined;
+                    activeTurnId = undefined;
+                    controlPlaneError = undefined;
                 }
-                try {
-                    await waitForPlaybookQuiescence(actor, {
-                        pendingCalls: nestedBridge,
-                    });
-                    result = runResultFor(settledOutcome(input.signal));
-                }
-                catch (error) {
-                    operationError ??= error;
-                }
-                let drainError;
-                try {
-                    await drainEmissions();
-                }
-                catch (error) {
-                    drainError = error;
-                }
-                // A drain or resume rejection that is the exact abort reason
-                // evidences cancellation; the settled result already labels the
-                // turn `aborted` then (slc/link.md §Abort).
-                const failure = controlPlaneError ??
-                    (drainError !== undefined &&
-                        isAbortFailure(drainError, input.signal)
-                        ? undefined
-                        : drainError) ??
-                    (operationError !== undefined &&
-                        isAbortFailure(operationError, input.signal)
-                        ? undefined
-                        : operationError);
-                activeSignal = undefined;
-                activeTurnId = undefined;
-                controlPlaneError = undefined;
-                if (failure !== undefined)
-                    throw failure;
-                if (result === undefined) {
-                    throw new Error('playbook resume produced no runtime result');
-                }
-                return result;
             },
             dispose() {
                 if (disposalPromise !== undefined)

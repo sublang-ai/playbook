@@ -494,6 +494,11 @@ If a started-boundary sink records the event and then rejects, the runtime
 shall make one best-effort normalized error-finish attempt with the same call
 id and then reject the original start error. It shall not retry either event or
 let a failure of that finish attempt replace the start error.
+A start-sink rejection causally identical to the applicable signal reason is
+the cancellation itself, not a control error: no host call begins, the
+best-effort paired finish carries `status: 'aborted'`, nothing is latched, and
+the boundary settles as §Abort prescribes
+([DR-036](../specs/decisions/036-coherent-abort-settlement.md)).
 When a call boundary carries `callId`, that id shall be unique within the
 runtime session. A stable FSM `stateId` is identity metadata in the payload,
 not a call id and shall not be reused as one across repeated invocations.
@@ -941,16 +946,28 @@ The provided actor shall:
   `{ guard: <first declared guard>, exitStatus: 0 }`; any nonzero status
   resolves the second declared guard with that status. Guard selection is
   mechanical; the runtime shall not route script output through the judge.
-- Reject only when the command cannot be spawned at all, routing through the
-  state's ordinary `onError` path.
+- Reject when the command cannot be spawned at all, routing through the
+  state's ordinary `onError` path. Beyond spawn failure, the invocation
+  rejects only per the abort bullet below or when one of its own script
+  emissions rejects; a completed command's exit status itself never rejects.
 - Honor the active turn's abort signal per §Abort: the actor shall reject
   without spawning when the combined signal is already aborted; shall run the
-  shell detached as its own process-group leader; and on abort shall deliver
+  shell detached as its own process-group leader; and on abort — whenever it
+  lands before the invocation settles, including only after the shell's own
+  exit — shall deliver
   `SIGTERM` to the entire group, escalate to `SIGKILL` after a bounded grace,
-  and settle only after the shell process itself has exited and no group
-  member survives, rejecting with the signal's reason. An abort observed
-  only after the shell's exit shall still reject with the signal's reason
-  before the script status line, its telemetry, and guard resolution. A
+  and settle only after the shell process itself has exited and the group has
+  stopped being signalable, rejecting with the signal's reason. The same
+  bounded grace caps the post-`SIGKILL` wait for kernel teardown, so an
+  unreaped member outside the runtime's control cannot stall settlement, and
+  the kill is always posted before the actor settles. Abort ownership — the
+  listener and its escalation — spans the whole invocation, not the
+  spawn-to-exit window
+  ([DR-036](../specs/decisions/036-coherent-abort-settlement.md)). An abort
+  observed only after the shell's exit shall additionally reject before guard
+  resolution and before starting any script emission not already in flight; an
+  emission already started when the abort lands completes through the
+  ordinary serialized channel and the rejection follows it. A
   descendant that leaves the process group is beyond the runtime's kill
   scope.
 - Emit, after the child settles and before the invocation resolves, one status
@@ -1152,6 +1169,12 @@ The `PlaybookRuntime` shall:
   transition-trace or telemetry sink failure is part of `init`: initialization
   shall reject, stop the actor, and perform the failed-start cleanup below
   rather than swallowing it as a later background error.
+  A root-actor error observed during startup — an initial entry action or a
+  synchronously failing initial invocation — is equally part of `init` and
+  `restore`: the boundary shall reject with that original error after the
+  failed-start cleanup, and shall never resolve leaving the errored actor as
+  later background state
+  ([DR-036](../specs/decisions/036-coherent-abort-settlement.md)).
   Where the FSM input declares `selfPlaybookId`, seed it from the immutable
   `session.playbookId`; do not expose a caller option or reuse a working leaf's
   `stateId` as the self-call identity.
@@ -1205,7 +1228,14 @@ The `PlaybookRuntime` shall:
   transition/status/telemetry queue before returning, just as
   `handleBossInput` does. A resume shall not allocate a new Boss-input
   `turnId`; retain the original call-start turn id for its matching finish and
-  for the parent continuation caused by that return. Every success and
+  for the parent continuation caused by that return.
+  A resume whose signal is already aborted after identity and result
+  validation shall deliver nothing: bind no resume signal, settle no deferred,
+  emit no call finish, and preserve the pending call — the boundary settles
+  `{ outcome: 'aborted' }` with the signal's reason while the suspended state
+  and pending identity survive, so a later resume with the same call id and a
+  fresh signal still delivers
+  ([DR-036](../specs/decisions/036-coherent-abort-settlement.md)). Every success and
   exceptional path shall drain ordered emissions, select the first latched
   non-abort control error before considering abort, and clear its boundary
   latches in `finally`, so a failed resume cannot leak an emission error into a
@@ -1258,9 +1288,14 @@ transition first.
 
 If a `*.call.started` trace records and then its sink rejects, no host call may
 begin. The runtime shall still enqueue exactly one synthetic paired
-`*.call.finished` trace with `status: 'error'`, preserving the original call
+`*.call.finished` trace — with `status: 'error'`, or `status: 'aborted'` when
+the sink rejection is causally identical to the applicable signal reason, in
+which case nothing is latched and the turn follows abort settlement
+([DR-036](../specs/decisions/036-coherent-abort-settlement.md)) — preserving
+the original call
 id, turn id, actor visibility, state/source identity, and prompt or request
-metadata from the start boundary. It shall then follow the same latched
+metadata from the start boundary. A distinct rejection shall then follow the
+same latched
 control-error, FSM settlement, and ordered-drain path as any other call-start
 failure; the synthetic finish must not replace the original sink error.
 
@@ -1499,7 +1534,10 @@ trace and the return agree, and a receipt states what happened to the effect
 rather than what happened to its telemetry. The published receipt stands, is
 returned and replayed verbatim, and the delivery failure travels on the
 runtime's emission-failure channel to surface from the next public boundary
-that drains.
+that drains — unless the delivery failure is causally identical to the apply
+signal's own abort reason, in which case it evidences the cancellation and is
+dropped, not latched
+([DR-036](../specs/decisions/036-coherent-abort-settlement.md)).
 
 The recorded receipts and the recorded last classified event are
 process-local: the durable runtime snapshot persists neither. A restored
@@ -1520,7 +1558,24 @@ the shared `combineAbortSignals`). Classify a rejection as cancellation by its
 causal identity with the applicable signal reason, not by an `AbortError` name
 or by observing only that the signal is also aborted. Signals may carry an
 ordinary `Error`, while a distinct transport or sink failure that occurs after
-abort remains a non-abort control error and takes precedence. On abort, the
+abort remains a non-abort control error and takes precedence. Classification
+lives at each latch or report site, against the boundary signal applicable
+there — the invocation-lifetime combined signal, and during a resume that
+boundary's own signal — so a failure causally identical to the applicable
+reason is the cancellation's own evidence: it is dropped where observed, never
+latched, and never carried to a later boundary
+([DR-036](../specs/decisions/036-coherent-abort-settlement.md)).
+A public boundary settles on the machine's state at its quiescence point,
+in this precedence: a suspended pending call, then a distinct actor error,
+then terminal completion, then a coincident abort, then the recoverable
+failure state — a completed machine settles `terminal` even when the signal
+also aborted, because an `aborted` settlement over a terminal machine hides
+work the next turn would silently restart.
+An abort observed after the outcome is computed does not rewrite it, and a
+settlement-channel rejection causally identical to the abort reason is
+forgiven, so the returned result and the settlement trace state one fact.
+A boundary entered with an already-aborted signal delivers nothing.
+On abort, the
 runtime shall not merely race the imperative
 wait and return while an invocation remains live: it shall let the selected
 rejection path settle and drive the actor to a quiescent state before returning

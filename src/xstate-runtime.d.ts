@@ -22,7 +22,7 @@ export declare function hiddenControlEnvelope(prompt: string): string;
 export declare function normalizeError(error: unknown): NormalizedError;
 export interface PlaybookStateMetadata {
     stateId: string;
-    description: string;
+    description?: string;
 }
 /** Read stable state identity without consulting XState's private `_nodes`. */
 export declare function activePlaybookStateMetadata(snapshot: unknown): readonly PlaybookStateMetadata[];
