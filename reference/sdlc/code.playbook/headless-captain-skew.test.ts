@@ -133,6 +133,15 @@ it('keeps the committed compiled-JavaScript Captain lazy in plain Node', async (
   const artifactDir = join(sandbox, 'reference', 'sdlc', 'captain.playbook');
   await mkdir(artifactDir, { recursive: true });
   await mkdir(join(sandbox, 'src'), { recursive: true });
+  // The published package declares `"type": "module"`, and the sandbox must
+  // say so too: `--input-type=module` covers only the `-e` script, and on
+  // supported Nodes older than 20.19 — the engines floor is 20.6 — a bare
+  // `.js` beside no package.json parses as CommonJS instead of being
+  // syntax-detected, failing the probe before laziness is ever tested.
+  await writeFile(
+    join(sandbox, 'package.json'),
+    `${JSON.stringify({ type: 'module' })}\n`,
+  );
   for (const file of ['captain.playbook.js', 'captain.fsm.js']) {
     await copyFile(
       join(repoRoot, 'reference', 'sdlc', 'captain.playbook', file),

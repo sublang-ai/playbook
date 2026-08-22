@@ -901,6 +901,15 @@ describe('player + script workflow over the shared factory', () => {
                 bossReply: () => undefined,
               }),
             },
+            // A late-answer arm, so BOSS_REPLY is configured here and its
+            // absence from the classifier prompt is the reply-wait
+            // pendingness gate's doing — not the configured-event filter's.
+            BOSS_REPLY: {
+              target: 'work',
+              actions: assign({
+                bossReply: ({ event }) => (event as { answer: string }).answer,
+              }),
+            },
           },
         },
       },
@@ -942,8 +951,9 @@ describe('player + script workflow over the shared factory', () => {
           : '{"guard":"drafted"}';
       },
     });
+    const session = makeSession(ports);
     const runtime = createCheckpointRuntime({});
-    await runtime.init(makeSession(ports));
+    await runtime.init(session);
     const asked = await runtime.handleBossInput(turn('begin the draft'));
     expect(asked.state.stateId).toBe('awaitBossReply');
     expect(classifierPrompts).toHaveLength(0);
@@ -989,12 +999,25 @@ describe('player + script workflow over the shared factory', () => {
       telemetry.filter(({ topic }) => topic === 'playbook.fsm.state').length,
     ).toBe(fsmBefore);
 
+    // The retained-context checkpoint is exported once, and each input is
+    // driven from its own restored runtime, so the slash-prefixed and the
+    // ordinary case both start from the identical retained answered
+    // question — the first input's restart cannot clear the context out
+    // from under the second.
+    const snapshot = runtime.exportSnapshot!()!;
+    expect(snapshot.state.stateId).toBe('checkpoint');
+    expect(snapshot.pendingBossQuestions).toEqual([]);
+    await runtime.dispose();
+
     // Nonempty slash-prefixed and ordinary text alike classify under the
     // checkpoint's own contracts — no special slash parsing — and the
     // prompt neither presents the retained answered question as pending
-    // nor offers a reply contract.
+    // nor offers the checkpoint's configured BOSS_REPLY contract, which
+    // only the pendingness gate can exclude.
     for (const text of ['/publish the draft', 'refine the intro']) {
-      const resumed = await runtime.handleBossInput(turn(text));
+      const restored = createCheckpointRuntime({});
+      await restored.restore!(session, snapshot);
+      const resumed = await restored.handleBossInput(turn(text));
       const prompt = classifierPrompts.at(-1)!;
       expect(prompt).toContain('Current state: checkpoint');
       expect(prompt).toContain(text);
@@ -1002,10 +1025,10 @@ describe('player + script workflow over the shared factory', () => {
       expect(prompt).not.toContain('BOSS_REPLY');
       expect(resumed.state.stateId).toBe('checkpoint');
       expect(playerPrompts.at(-1)).toContain(text);
+      await restored.dispose();
     }
     expect(classifierPrompts).toHaveLength(3);
     expect(playerPrompts).toHaveLength(4);
-    await runtime.dispose();
   });
 
   it('restarts from failed deterministically and reports an unrecoverable wait reply as one status', async () => {
