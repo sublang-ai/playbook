@@ -794,14 +794,29 @@ describe('player + script workflow over the shared factory', () => {
     await runtime.dispose();
   });
 
-  it('classifies only nonempty text at an authored checkpoint and keeps empty input trace-only', async () => {
+  it('classifies checkpoint text without pending context and keeps empty input trace-only', async () => {
     // PBRT-25: a parked mid-workflow checkpoint — no pending question, not
-    // one of the three deterministic entries — like the acceptance
-    // checklist fixture's `outline`.
+    // one of the three deterministic entries — like the acceptance notes
+    // fixture's `outline`. The machine deliberately retains the answered
+    // question through the resumed call and into the checkpoint, the way
+    // CODE and REVIEW retain theirs, so the classifier gate has something
+    // to exclude.
     const checkpointMachine = createMachine({
       id: 'checkpointed',
       initial: 'ready',
-      context: { task: undefined as string | undefined },
+      context: {
+        task: undefined as string | undefined,
+        pendingBossQuestion: undefined as
+          | {
+              questionId: string;
+              resumeStateId: string;
+              sourceItem: string;
+              asker: { kind: 'role'; roleId: string };
+              question: string;
+            }
+          | undefined,
+        bossReply: undefined as string | undefined,
+      },
       states: {
         ready: {
           meta: meta('ready'),
@@ -827,10 +842,51 @@ describe('player + script workflow over the shared factory', () => {
               sourceItem: 'CHK-1',
               prompt: 'Work on: <task>',
               task: context.task,
-              result: { drafted: 'The draft is open for the next Boss turn.' },
+              ...(context.pendingBossQuestion !== undefined &&
+              context.bossReply !== undefined
+                ? {
+                    pendingBossQuestion: context.pendingBossQuestion,
+                    bossReply: context.bossReply,
+                  }
+                : {}),
+              result: {
+                drafted: 'The draft is open for the next Boss turn.',
+                needsBossReply:
+                  'The player asked Boss a question. Output shall include `question: <verbatim question>`.',
+              },
             }),
-            onDone: { target: 'checkpoint' },
+            onDone: [
+              {
+                guard: ({ event }) =>
+                  (event.output as { guard: string }).guard ===
+                  'needsBossReply',
+                target: 'awaitBossReply',
+                actions: assign({
+                  pendingBossQuestion: ({ event }) => ({
+                    questionId: 'chk-q',
+                    resumeStateId: 'work',
+                    sourceItem: 'CHK-1',
+                    asker: { kind: 'role', roleId: 'coder' } as const,
+                    question: (event.output as { question: string }).question,
+                  }),
+                }),
+              },
+              // Deliberately retains pendingBossQuestion into the checkpoint.
+              { target: 'checkpoint' },
+            ],
             onError: { target: 'checkpoint' },
+          },
+        },
+        awaitBossReply: {
+          meta: meta('awaitBossReply'),
+          tags: ['playbook.parked'],
+          on: {
+            BOSS_REPLY: {
+              target: 'work',
+              actions: assign({
+                bossReply: ({ event }) => (event as { answer: string }).answer,
+              }),
+            },
           },
         },
         checkpoint: {
@@ -841,6 +897,8 @@ describe('player + script workflow over the shared factory', () => {
               target: 'work',
               actions: assign({
                 task: ({ event }) => (event as { task: string }).task,
+                pendingBossQuestion: () => undefined,
+                bossReply: () => undefined,
               }),
             },
           },
@@ -860,29 +918,48 @@ describe('player + script workflow over the shared factory', () => {
     );
 
     const playerPrompts: string[] = [];
-    let classifierCalls = 0;
+    const classifierPrompts: string[] = [];
     const { ports, statuses, telemetry } = makeRecordingPorts({
       callPlayer: async (_playerId, prompt) => {
         playerPrompts.push(prompt);
-        return { status: 'ok', finalText: 'Drafted.' };
+        return {
+          status: 'ok',
+          finalText:
+            playerPrompts.length === 1
+              ? 'Where should the intro go?'
+              : 'Drafted.',
+        };
       },
       callJudge: async (prompt) => {
         if (prompt.includes('Classify the following Boss message')) {
-          classifierCalls += 1;
-          return '{"type":"START"}';
+          classifierPrompts.push(prompt);
+          return classifierPrompts.length === 1
+            ? '{"type":"BOSS_REPLY","questionId":"chk-q"}'
+            : '{"type":"START"}';
         }
-        return '{"guard":"drafted"}';
+        return playerPrompts.length === 1
+          ? '{"guard":"needsBossReply","question":"Where should the intro go?"}'
+          : '{"guard":"drafted"}';
       },
     });
     const runtime = createCheckpointRuntime({});
     await runtime.init(makeSession(ports));
-    const parked = await runtime.handleBossInput(turn('begin the draft'));
+    const asked = await runtime.handleBossInput(turn('begin the draft'));
+    expect(asked.state.stateId).toBe('awaitBossReply');
+    expect(classifierPrompts).toHaveLength(0);
+
+    // The reply classifies at the wait with the question presented, and the
+    // resumed work settles at the checkpoint with the answered question
+    // still riding the context.
+    const parked = await runtime.handleBossInput(turn('put it first'));
     expect(parked.state.stateId).toBe('checkpoint');
-    expect(classifierCalls).toBe(0);
+    expect(classifierPrompts).toHaveLength(1);
+    expect(classifierPrompts[0]).toContain('Pending Boss question:');
+    expect(playerPrompts).toHaveLength(2);
 
     // PBRT-7 holds at the checkpoint as in every state: empty input is
     // trace-only no-action — no event, judge call, player call, status
-    // emission, or FSM transition.
+    // emission, or FSM transition — retained context notwithstanding.
     const statusesBefore = statuses.length;
     const tracesBefore = telemetry.filter(
       ({ topic }) => topic === 'playbook.trace',
@@ -895,8 +972,8 @@ describe('player + script workflow over the shared factory', () => {
         'no-action',
       );
     }
-    expect(classifierCalls).toBe(0);
-    expect(playerPrompts).toHaveLength(1);
+    expect(classifierPrompts).toHaveLength(1);
+    expect(playerPrompts).toHaveLength(2);
     expect(statuses.length).toBe(statusesBefore);
     const newTraces = telemetry
       .filter(({ topic }) => topic === 'playbook.trace')
@@ -912,13 +989,22 @@ describe('player + script workflow over the shared factory', () => {
       telemetry.filter(({ topic }) => topic === 'playbook.fsm.state').length,
     ).toBe(fsmBefore);
 
-    // Nonempty text at the checkpoint classifies under the artifact's own
-    // contracts rather than entering deterministically.
-    const resumed = await runtime.handleBossInput(turn('refine the intro'));
-    expect(classifierCalls).toBe(1);
-    expect(resumed.state.stateId).toBe('checkpoint');
-    expect(playerPrompts).toHaveLength(2);
-    expect(playerPrompts[1]).toContain('refine the intro');
+    // Nonempty slash-prefixed and ordinary text alike classify under the
+    // checkpoint's own contracts — no special slash parsing — and the
+    // prompt neither presents the retained answered question as pending
+    // nor offers a reply contract.
+    for (const text of ['/publish the draft', 'refine the intro']) {
+      const resumed = await runtime.handleBossInput(turn(text));
+      const prompt = classifierPrompts.at(-1)!;
+      expect(prompt).toContain('Current state: checkpoint');
+      expect(prompt).toContain(text);
+      expect(prompt).not.toContain('Pending Boss question:');
+      expect(prompt).not.toContain('BOSS_REPLY');
+      expect(resumed.state.stateId).toBe('checkpoint');
+      expect(playerPrompts.at(-1)).toContain(text);
+    }
+    expect(classifierPrompts).toHaveLength(3);
+    expect(playerPrompts).toHaveLength(4);
     await runtime.dispose();
   });
 

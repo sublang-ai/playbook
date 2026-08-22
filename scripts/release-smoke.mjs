@@ -1654,6 +1654,7 @@ function stepCompiledFidelity(state) {
     'code.playbook/code.playbook.contract.test.ts',
     'code.playbook/code.playbook.test.ts',
     'code.playbook/headless-run.test.ts',
+    'code.playbook/headless-captain-skew.test.ts',
     'code.playbook/session-store.test.ts',
     'code.playbook/headless-crash.test.ts',
     'review.playbook/review.gears-fsm.test.ts',

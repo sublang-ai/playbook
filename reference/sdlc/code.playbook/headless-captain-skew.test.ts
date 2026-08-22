@@ -10,9 +10,11 @@
 // re-link that restores an eager module-scope factory call fails here at
 // the import assertions.
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import {
   createEvent,
@@ -115,6 +117,72 @@ it('imports the compiled Captain and serves help under a rejecting factory', asy
   });
   expect(help.code).toBe(0);
   expect(stdout.text()).toContain('playbook run [--with <path>]');
+});
+
+it('keeps the committed compiled-JavaScript Captain lazy in plain Node', async () => {
+  // The vitest resolver redirects `.js` imports to their `.ts` sources, so
+  // the two tests around this one prove the source module. This leg proves
+  // the committed compiled bytes themselves: a plain `node` subprocess —
+  // no test resolution — imports the published module graph beside a stub
+  // engine whose factory rejects, and the import must survive while the
+  // first runtime request raises the rejection. An eagerly compiled module
+  // dies at import here.
+  const repoRoot = fileURLToPath(new URL('../../../', import.meta.url));
+  const sandbox = await mkdtemp(join(tmpdir(), 'playbook-compiled-skew-'));
+  tempDirs.push(sandbox);
+  const artifactDir = join(sandbox, 'reference', 'sdlc', 'captain.playbook');
+  await mkdir(artifactDir, { recursive: true });
+  await mkdir(join(sandbox, 'src'), { recursive: true });
+  for (const file of ['captain.playbook.js', 'captain.fsm.js']) {
+    await copyFile(
+      join(repoRoot, 'reference', 'sdlc', 'captain.playbook', file),
+      join(artifactDir, file),
+    );
+  }
+  // The compiled module imports exactly these engine names. The stub
+  // rejects the Captain's construction and no-ops the helpers, which the
+  // module may only call after construction anyway.
+  await writeFile(
+    join(sandbox, 'src', 'xstate-runtime.js'),
+    [
+      'export function createXStatePlaybookRuntime(machine, spec) {',
+      "  throw new TypeError('CAPTAIN spec.compat.runtimeAbi 999 does not match engine RUNTIME_ABI 1');",
+      '}',
+      'export const defaultComposeCaptainPrompt = () => "";',
+      'export const normalizeError = (error) => ({ name: "Error", message: String(error) });',
+      'export const normalizeErrorCompact = normalizeError;',
+      'export const parseJudgeJson = (raw) => JSON.parse(raw);',
+      'export const snapshotJsonValue = (value) => value;',
+      '',
+    ].join('\n'),
+  );
+  await symlink(join(repoRoot, 'node_modules'), join(sandbox, 'node_modules'));
+
+  const probe = spawnSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      [
+        `const mod = await import(${JSON.stringify(
+          join(artifactDir, 'captain.playbook.js'),
+        )});`,
+        "console.log('imported:' + typeof mod.default);",
+        'try {',
+        '  mod.createPlaybookRuntime({});',
+        "  console.log('constructed');",
+        '} catch (error) {',
+        "  console.log('rejected:' + error.message);",
+        '}',
+      ].join('\n'),
+    ],
+    { encoding: 'utf8' },
+  );
+  expect(probe.stderr).toBe('');
+  expect(probe.status).toBe(0);
+  expect(probe.stdout).toContain('imported:function');
+  expect(probe.stdout).toContain('rejected:CAPTAIN spec.compat.runtimeAbi 999');
+  expect(probe.stdout).not.toContain('constructed');
 });
 
 it('settles the Captain construction rejection as the prefixed setup diagnostic', async () => {
