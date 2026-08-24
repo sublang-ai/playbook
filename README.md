@@ -135,3 +135,7 @@ The gears↔FSM contract ([the playbook package](https://github.com/sublang-ai/p
 ## License
 
 [Apache-2.0](LICENSE)
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting.
