@@ -837,9 +837,9 @@ describe('packed tarball contents (RELEASE-18)', () => {
   // absolute repository URL on the repository's main line — a deliberate
   // living pointer. `linksOf` collects relative links only, so those URLs
   // escape both the closure above and scripts/check-links.mjs (meta-33);
-  // this scan verifies each one against the repository tree: the branch
-  // segment is exactly `main`, the path is a repository file, and a
-  // fragment on a Markdown target names an anchor that file renders.
+  // this scan verifies each one against the repository tree: `blob` and
+  // `tree` links both name exactly `main`, their path exists, and a fragment
+  // on a Markdown target names an anchor that file renders.
   it('resolves every living-pointer URL in packed markdown against the repository', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
     let out: string;
@@ -884,7 +884,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
     const blankCodeSpans = (text: string): string =>
       text.replace(CODE_SPAN, (span) => span.replace(/[^\n]/g, ' '));
     const LIVING_POINTER =
-      /https:\/\/github\.com\/sublang-ai\/playbook\/blob\/([^/]+)\/([^#)\s]+)(#[^)\s]*)?/g;
+      /https:\/\/github\.com\/sublang-ai\/playbook\/(blob|tree)\/([^/]+)\/([^#)\s]+)(#[^)\s]*)?/g;
     const decode = (part: string): string => {
       try {
         return decodeURIComponent(part);
@@ -893,6 +893,7 @@ describe('packed tarball contents (RELEASE-18)', () => {
       }
     };
     const failures: string[] = [];
+    const forms = new Set<string>();
     let scanned = 0;
     for (const doc of packedDocs) {
       // release-28 step 7 pins packed bytes to repository bytes, so the
@@ -902,7 +903,8 @@ describe('packed tarball contents (RELEASE-18)', () => {
       );
       for (const match of body.matchAll(LIVING_POINTER)) {
         scanned += 1;
-        const [url, branch, pathPart, fragmentPart] = match;
+        const [url, form, branch, pathPart, fragmentPart] = match;
+        forms.add(form);
         const line = body.slice(0, match.index).split('\n').length;
         const where = `${doc}:${line} (${url})`;
         if (branch !== 'main') {
@@ -933,6 +935,9 @@ describe('packed tarball contents (RELEASE-18)', () => {
     expect(failures).toEqual([]);
     // Guard against a vacuous pass: packed docs really carry living pointers.
     expect(scanned).toBeGreaterThan(10);
+    // Both URL forms occur in the packed docs; pin both parser branches so a
+    // blob-only matcher cannot silently wave through a broken tree pointer.
+    expect([...forms].sort()).toEqual(['blob', 'tree']);
   });
 });
 

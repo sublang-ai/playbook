@@ -19,8 +19,10 @@ Implement DR-036 so every public boundary of the linked runtime and of DECIDE's 
 - [x] The apply boundary drops a post-publication delivery rejection identical to its own abort reason.
 - [x] The script actor's abort ownership spans the invocation, and abort settlement awaits the group's confirmed teardown.
 - [x] A startup actor error rides the emission channel into the failed-start cleanup, and the boundary sentinel releases on every settlement exit.
-- [x] The flat-domain guard rejects zero-state machines, and a descriptionless state is fully usable per the published contract.
-- [x] Packed-documentation verification proves the living-pointer and citation-exemption policies against the repository tree.
+
+## Tasks
+
+1. Record DR-036 and implement its settlement model across the shared runtime, nested bridge, script actor, and DECIDE, with probe-derived verification, in one commit.
 
 ## Verification
 
