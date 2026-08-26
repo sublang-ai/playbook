@@ -240,6 +240,14 @@ export function normalizeErrorFull(err) {
 function isAbortFailure(error, signal) {
     return signal.aborted && Object.is(error, signal.reason);
 }
+function abortReasonClassifier(...sources) {
+    const captured = sources.filter((source) => source !== undefined);
+    return Object.freeze({
+        isAbortReason: (error) => captured.some((source) => source instanceof AbortSignal
+            ? isAbortFailure(error, source)
+            : source.isAbortReason(error)),
+    });
+}
 /**
  * gears2fsm's canonical Boss-reply wait state. On the runtime's Boss-facing
  * surfaces — state telemetry, status lines, the exported snapshot, and the
@@ -486,7 +494,9 @@ export function createPlayerBridge(spec, ports, getActiveSignal, boundary, onCon
             prompt = spec.composePlayerPrompt(input);
         }
         catch (error) {
-            onControlPlaneError?.(error);
+            if (!isAbortFailure(error, activeSignal)) {
+                onControlPlaneError?.(error);
+            }
             throw error;
         }
         const callPlayer = (resume) => boundary
@@ -526,7 +536,9 @@ export function createPlayerBridge(spec, ports, getActiveSignal, boundary, onCon
             return output;
         }
         catch (error) {
-            onControlPlaneError?.(error);
+            if (!isAbortFailure(error, activeSignal)) {
+                onControlPlaneError?.(error);
+            }
             throw error;
         }
     });
@@ -796,6 +808,24 @@ const SUPPRESSED_ENTRY_STATES = new Set(['ready', 'done']);
 // SIGKILL after this grace, so settlement (gated on the shell's own exit)
 // stays bounded even for TERM-immune commands.
 const SCRIPT_ABORT_KILL_GRACE_MS = 2000;
+class ScriptProcessGroupTeardownError extends Error {
+    constructor(pid, message, cause) {
+        super(`script process group ${pid} teardown could not be confirmed: ${message}`, cause === undefined ? undefined : { cause });
+        this.name = 'ScriptProcessGroupTeardownError';
+    }
+}
+function isNoSuchProcess(error) {
+    return (typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'ESRCH');
+}
+function isProcessPermissionDenied(error) {
+    return (typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'EPERM');
+}
 function makeDefaultNormalizeTransitionEvent(transitionEventFields) {
     return (event) => {
         if (event === null || typeof event !== 'object') {
@@ -1372,6 +1402,20 @@ export function createXStatePlaybookRuntime(machine, spec) {
         // ports.callPlayer / callCaptain / callJudge see the right cancellation
         // source. undefined between turns; set by the public boundaries.
         let activeSignal;
+        // Immutable cancellation provenance for the active public boundary. A
+        // nested resume widens it to include both invocation and resume signals;
+        // mutable `activeSignal` alone cannot classify a late invocation reason.
+        let activeAborts;
+        // The bridge binds the provenance of a child result immediately before
+        // its promise actor settles. The next root snapshot/error consumes this
+        // one-shot so background settlement emissions retain their owner.
+        let actorSettlementAborts;
+        let actorSettlementErrorAborts;
+        // Exact cancellation observed by an emission owned by the active
+        // boundary. Ordinary runs settle from their signal/state; apply also
+        // needs this phase-local evidence to fold a pre-publication failure into
+        // its accepted receipt.
+        let activeAbortEmission;
         let activeTurnId;
         let controlPlaneError;
         // Previous root-machine state for the inspect-driven telemetry /
@@ -1547,24 +1591,31 @@ export function createXStatePlaybookRuntime(machine, spec) {
             for (const [key, token] of byKey)
                 privateResumeTokens.set(key, token);
         }
-        function enqueueEmission(fn) {
+        function enqueueEmission(fn, aborts = activeAborts) {
             // The emission belongs to the boundary enqueueing it: a rejection
             // causally identical to that boundary's abort reason is the
             // cancellation's own evidence — never latched, so it cannot poison a
             // later unrelated boundary (DR-036).
-            const enqueueSignal = activeSignal;
+            const enqueueAborts = aborts;
             const queued = emissionQueue.add(fn).then(() => undefined);
             activeEmissionCalls.add(queued);
             void queued.then(() => activeEmissionCalls.delete(queued), (error) => {
                 activeEmissionCalls.delete(queued);
-                if (enqueueSignal === undefined ||
-                    !isAbortFailure(error, enqueueSignal)) {
-                    emissionFailure ??= error;
+                if (enqueueAborts?.isAbortReason(error)) {
+                    // Record evidence only when it also belongs to the public
+                    // boundary that is still active. A background A cancellation
+                    // racing an unrelated B boundary is forgiven under A and must
+                    // not change B's settlement.
+                    if (activeAborts?.isAbortReason(error)) {
+                        activeAbortEmission ??= error;
+                    }
+                    return;
                 }
+                emissionFailure ??= { error };
             });
             return queued;
         }
-        async function drainEmissions() {
+        async function drainEmissions(_aborts = activeAborts) {
             while (true) {
                 const active = [...activeEmissionCalls];
                 if (active.length > 0)
@@ -1577,8 +1628,14 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
             }
             if (emissionFailure !== undefined) {
-                const error = emissionFailure;
+                const { error } = emissionFailure;
                 emissionFailure = undefined;
+                // The failure was classified as distinct by its enqueue owner. If a
+                // later public boundary drains it, retain that classification in the
+                // boundary latch before throwing; its signal must not reinterpret
+                // the same object as cancellation (DR-036 decision 2).
+                if (activeSignal !== undefined)
+                    controlPlaneError ??= error;
                 throw error;
             }
         }
@@ -1617,13 +1674,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 payload: safePayload,
             };
         }
-        function emitTrace(type, payload, position = {}) {
+        function emitTrace(type, payload, position = {}, aborts) {
             const currentSession = requireSession();
             const event = createTraceEvent(type, payload, position);
             return enqueueEmission(() => currentSession.ports.emitTelemetry({
                 topic: 'playbook.trace',
                 payload: event,
-            }));
+            }), aborts);
         }
         function stateIdentity(stateId) {
             return stateId === undefined ? {} : { stateId };
@@ -2105,7 +2162,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             process.kill(-child.pid, sig);
                         }
                         catch {
-                            // The group is already gone.
+                            // Confirmation belongs to the bounded liveness probe below:
+                            // a failed signal can mean ESRCH, EPERM, or another fault.
                         }
                     }
                 };
@@ -2113,22 +2171,45 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 // stop being signalable — bounded by the same grace so an
                 // unreapable member outside the runtime's control cannot stall
                 // the turn forever. Observed teardown is milliseconds.
-                const awaitGroupGone = async () => {
+                let groupGonePromise;
+                const awaitGroupGone = () => {
                     const pid = child?.pid;
                     if (pid === undefined)
-                        return;
-                    const deadline = Date.now() + SCRIPT_ABORT_KILL_GRACE_MS;
-                    for (;;) {
-                        try {
-                            process.kill(-pid, 0);
+                        return Promise.resolve();
+                    groupGonePromise ??= (async () => {
+                        const teardownFailure = (message, cause) => {
+                            const failure = new ScriptProcessGroupTeardownError(pid, message, cause);
+                            // A teardown failure is not an authored script result.
+                            // Surface it at the active public boundary even though
+                            // XState also routes the rejected actor through onError.
+                            controlPlaneError ??= failure;
+                            return failure;
+                        };
+                        const deadline = Date.now() + SCRIPT_ABORT_KILL_GRACE_MS;
+                        let lastProbeError;
+                        for (;;) {
+                            try {
+                                process.kill(-pid, 0);
+                            }
+                            catch (error) {
+                                if (isNoSuchProcess(error))
+                                    return;
+                                // EPERM confirms that at least one process in the group
+                                // still exists but is not signalable by this process. Keep
+                                // waiting for ESRCH within the bound; every other probe
+                                // error makes confirmation itself unreliable immediately.
+                                if (!isProcessPermissionDenied(error)) {
+                                    throw teardownFailure('the liveness probe failed', error);
+                                }
+                                lastProbeError = error;
+                            }
+                            if (Date.now() >= deadline) {
+                                throw teardownFailure(`the group remained signalable after ${SCRIPT_ABORT_KILL_GRACE_MS}ms`, lastProbeError);
+                            }
+                            await new Promise((tick) => setTimeout(tick, 5));
                         }
-                        catch {
-                            return;
-                        }
-                        if (Date.now() >= deadline)
-                            return;
-                        await new Promise((tick) => setTimeout(tick, 5));
-                    }
+                    })();
+                    return groupGonePromise;
                 };
                 const onAbort = () => {
                     signalGroup('SIGTERM');
@@ -2146,6 +2227,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     await awaitGroupGone();
                     active.throwIfAborted();
                 };
+                let invocationFailed = false;
                 try {
                     const exitStatus = await new Promise((resolve, reject) => {
                         try {
@@ -2180,8 +2262,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                                 // so kill it and await its disappearance before
                                 // settling (slc/link.md §Script execution).
                                 signalGroup('SIGKILL');
-                                const settle = () => reject(active.reason ?? new Error('script aborted'));
-                                awaitGroupGone().then(settle, settle);
+                                void awaitGroupGone().then(() => reject(active.reason), reject);
                                 return;
                             }
                             resolve(typeof code === 'number' ? code : 1);
@@ -2204,10 +2285,28 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     }
                     return { guard: failedGuard, exitStatus };
                 }
+                catch (error) {
+                    // Preserve the invocation's authoritative exact cancellation or
+                    // distinct sink failure after teardown succeeds. The finally
+                    // block may replace it only with a distinct teardown failure
+                    // when the process group cannot be confirmed gone.
+                    invocationFailed = true;
+                    throw error;
+                }
                 finally {
-                    active.removeEventListener('abort', onAbort);
-                    if (killTimer !== undefined)
-                        clearTimeout(killTimer);
+                    try {
+                        if (active.aborted) {
+                            signalGroup('SIGKILL');
+                            await awaitGroupGone();
+                            if (!invocationFailed)
+                                active.throwIfAborted();
+                        }
+                    }
+                    finally {
+                        active.removeEventListener('abort', onAbort);
+                        if (killTimer !== undefined)
+                            clearTimeout(killTimer);
+                    }
                 }
             });
         }
@@ -2215,7 +2314,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             nextCallId: () => `playbook-${++playbookCallSequence}`,
             getBoundarySignal: () => activeSignal,
             callPlaybook: (request, signal) => requireHostPorts().callPlaybook(request, signal),
-            emitStarted: async (event) => {
+            emitStarted: async (event, aborts) => {
                 playbookCallTurnIds.set(event.callId, activeTurnId);
                 await emitTrace('playbook.call.started', {
                     stateId: event.stateId,
@@ -2224,9 +2323,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }, {
                     ...(activeTurnId !== undefined ? { turnId: activeTurnId } : {}),
                     callId: event.callId,
-                });
+                }, aborts);
             },
-            emitFinished: async (event) => {
+            emitFinished: async (event, aborts) => {
                 const turnId = playbookCallTurnIds.get(event.callId);
                 try {
                     await emitTrace('playbook.call.finished', {
@@ -2237,28 +2336,34 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     }, {
                         ...(turnId !== undefined ? { turnId } : {}),
                         callId: event.callId,
-                    });
+                    }, aborts);
                 }
                 finally {
                     playbookCallTurnIds.delete(event.callId);
                 }
             },
             drain: drainEmissions,
-            bindResumeSignal: (signal) => {
+            bindResumeSignal: (signal, aborts) => {
                 activeSignal = signal;
+                activeAborts = aborts ?? abortReasonClassifier(signal);
             },
-            onControlPlaneError: (error) => {
+            bindActorSettlement: (aborts) => {
+                actorSettlementAborts = aborts;
+            },
+            onControlPlaneError: (error, aborts) => {
                 // The shared bridge classifies before reporting against its own
                 // invocation-and-resume signals; classify once more here against
                 // the boundary signal so a report that is the active boundary's
                 // exact abort reason can never masquerade as a control error
                 // (slc/link.md §Abort).
-                if (activeSignal === undefined || !isAbortFailure(error, activeSignal)) {
+                if (!aborts?.isAbortReason(error) &&
+                    !activeAborts?.isAbortReason(error)) {
                     controlPlaneError ??= error;
                 }
             },
-            onBackgroundError: (error) => {
-                emissionFailure ??= error;
+            onBackgroundError: (error, aborts) => {
+                if (!aborts?.isAbortReason(error))
+                    emissionFailure ??= { error };
             },
         });
         function tracePositionForActiveTurn() {
@@ -2283,7 +2388,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
             return snapshotJsonValue(payload, 'FSM telemetry payload');
         }
-        function enqueueTransitionEmission(payload, state, statuses, position) {
+        function enqueueTransitionEmission(payload, state, statuses, position, aborts) {
             const currentSession = requireSession();
             const transitionTrace = createTraceEvent('fsm.transition', payload, position);
             const statusEmissions = statuses.map(({ message, data }) => ({
@@ -2312,18 +2417,38 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     });
                     await currentSession.ports.emitStatus(status.message, status.data);
                 }
-            }).catch(() => undefined);
+            }, aborts).catch(() => undefined);
         }
         // One classifying latch for every runtime-observed error — inspection
         // failures and root-actor errors alike. Outside a boundary the error
         // rides the emission channel, which the next boundary's (or init's)
         // drain throws; inside a boundary it is a control-plane error unless it
         // is the boundary signal's own abort reason (slc/link.md §Abort).
-        function latchRuntimeError(error) {
+        function latchRuntimeError(error, aborts = activeAborts) {
+            if (aborts?.isAbortReason(error))
+                return;
             if (activeSignal === undefined)
-                emissionFailure ??= error;
-            else if (!isAbortFailure(error, activeSignal))
+                emissionFailure ??= { error };
+            else
                 controlPlaneError ??= error;
+        }
+        function consumeActorSettlementAborts(forSnapshot = false) {
+            const aborts = actorSettlementAborts ?? actorSettlementErrorAborts;
+            actorSettlementAborts = undefined;
+            actorSettlementErrorAborts = undefined;
+            if (forSnapshot && aborts !== undefined) {
+                // XState can report an errored root through both its inspection
+                // snapshot and subscriber. Keep the same provenance through that
+                // synchronous notification only; an ordinary transition must not
+                // lend it to a later unrelated actor error.
+                actorSettlementErrorAborts = aborts;
+                queueMicrotask(() => {
+                    if (actorSettlementErrorAborts === aborts) {
+                        actorSettlementErrorAborts = undefined;
+                    }
+                });
+            }
+            return aborts;
         }
         // PBRT-6: the single seam that stops this runtime's actor. Stopping a
         // still-running actor fires one more `@xstate.snapshot` for the
@@ -2369,6 +2494,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         return;
                     if (suppressInspectionEmissions)
                         return;
+                    const settlementAborts = consumeActorSettlementAborts(true);
                     try {
                         const snap = inspectionEvent.snapshot;
                         const state = normalizePlaybookSnapshot(snap);
@@ -2380,11 +2506,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
                             {});
                         const payload = structuredStateTelemetryPayload(previousState, state, inspectionEvent.event, context);
                         const statuses = statusesForState(state, context, inspectionEvent.event);
-                        enqueueTransitionEmission(payload, state, statuses, tracePositionForActiveTurn());
+                        enqueueTransitionEmission(payload, state, statuses, tracePositionForActiveTurn(), settlementAborts);
                         priorState = state;
                     }
                     catch (error) {
-                        latchRuntimeError(error);
+                        latchRuntimeError(error, settlementAborts);
                     }
                 },
             });
@@ -2395,7 +2521,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
             // unless it is the abort reason itself; at startup it rides the
             // emission channel so `init`'s own drain rejects with it and the
             // failed-start cleanup runs (slc/link.md §Session lifecycle).
-            builtActor.subscribe({ error: latchRuntimeError });
+            builtActor.subscribe({
+                error: (error) => latchRuntimeError(error, consumeActorSettlementAborts()),
+            });
             return builtActor;
         }
         function runResultFor(outcome, error) {
@@ -2526,6 +2654,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
             savedPorts = undefined;
             runtimePorts = undefined;
             activeSignal = undefined;
+            activeAborts = undefined;
+            actorSettlementAborts = undefined;
+            actorSettlementErrorAborts = undefined;
+            activeAbortEmission = undefined;
             activeTurnId = undefined;
             controlPlaneError = undefined;
             emissionFailure = undefined;
@@ -2883,10 +3015,14 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     // (latchRuntimeError); consume both latches here so the original
                     // error outranks the derived status check below.
                     {
-                        const startupError = controlPlaneError ?? emissionFailure;
-                        if (startupError !== undefined) {
+                        const startupFailure = emissionFailure;
+                        if (controlPlaneError !== undefined ||
+                            startupFailure !== undefined) {
+                            const startupError = controlPlaneError !== undefined
+                                ? controlPlaneError
+                                : startupFailure.error;
                             controlPlaneError = undefined;
-                            if (Object.is(emissionFailure, startupError)) {
+                            if (emissionFailure === startupFailure) {
                                 emissionFailure = undefined;
                             }
                             throw startupError;
@@ -3025,6 +3161,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const position = { turnId, callId };
                 activeTurnId = turnId;
                 activeSignal = signal;
+                activeAborts = abortReasonClassifier(signal);
+                activeAbortEmission = undefined;
                 controlPlaneError = undefined;
                 // Every receipt variant is normalized and frozen where it is built,
                 // inside the guarded region, so the recording step below cannot
@@ -3077,7 +3215,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const latchDeliveryFailure = (error) => {
                     if (isAbortFailure(error, signal))
                         return;
-                    emissionFailure ??= error;
+                    emissionFailure ??= { error };
                 };
                 try {
                     try {
@@ -3176,6 +3314,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     catch (error) {
                         settlementError = error;
                     }
+                    // Exact cancellation is not a control-plane latch, but after apply
+                    // acceptance and before publication it is still settlement evidence
+                    // and therefore folds into the owed failed receipt (DR-036 §4).
+                    settlementError ??= activeAbortEmission;
                     // Fold before the finish emission, the last point at which the
                     // traced disposition and the returned one can still be made the
                     // same value.
@@ -3217,6 +3359,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     // wedge every later public boundary behind "another runtime turn
                     // is active".
                     activeSignal = undefined;
+                    activeAborts = undefined;
+                    activeAbortEmission = undefined;
                     activeTurnId = undefined;
                     controlPlaneError = undefined;
                 }
@@ -3252,6 +3396,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 const turnId = ++turnSequence;
                 activeTurnId = turnId;
                 activeSignal = signal;
+                activeAborts = abortReasonClassifier(signal);
+                activeAbortEmission = undefined;
                 controlPlaneError = undefined;
                 let result;
                 let operationError;
@@ -3263,6 +3409,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 try {
                     try {
                         await emitTrace('boss.input.received', { text }, { turnId });
+                        // Record the attempted input, then refuse a boundary that entered
+                        // aborted before deterministic mapping or the classifier can
+                        // perform host-visible work (DR-036 §5).
+                        signal.throwIfAborted();
                         // 1. Map the Boss text to an FSM event: deterministic exact entry
                         //    where applicable (slc/link.md §Boss-event mapping), judge
                         //    classification otherwise.
@@ -3387,6 +3537,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 finally {
                     activeSignal = undefined;
+                    activeAborts = undefined;
+                    activeAbortEmission = undefined;
                     activeTurnId = undefined;
                     controlPlaneError = undefined;
                 }
@@ -3403,6 +3555,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 activeTurnId = playbookCallTurnIds.get(input.callId);
                 activeSignal = input.signal;
+                activeAborts = abortReasonClassifier(input.signal);
+                activeAbortEmission = undefined;
                 controlPlaneError = undefined;
                 // The boundary sentinel releases on every exit, mirroring
                 // `handleBossInput` and the apply boundary.
@@ -3444,20 +3598,30 @@ export function createXStatePlaybookRuntime(machine, spec) {
                     catch (error) {
                         drainError = error;
                     }
-                    // A drain or resume rejection that is the exact abort reason
-                    // evidences cancellation; the settled result already labels the
-                    // turn `aborted` then (slc/link.md §Abort).
-                    const failure = controlPlaneError ??
-                        (drainError !== undefined &&
-                            isAbortFailure(drainError, input.signal)
-                            ? undefined
-                            : drainError) ??
-                        (operationError !== undefined &&
-                            isAbortFailure(operationError, input.signal)
-                            ? undefined
-                            : operationError);
+                    const aborts = activeAborts ?? abortReasonClassifier(input.signal);
+                    // A control-plane latch has already classified its failure as
+                    // distinct under the owning operation. Never reinterpret it
+                    // against this later resume signal (DR-036 decision 2).
+                    const controlFailure = controlPlaneError;
+                    const drainAbort = controlFailure === undefined &&
+                        drainError !== undefined &&
+                        aborts.isAbortReason(drainError);
+                    const operationAbort = controlFailure === undefined &&
+                        operationError !== undefined &&
+                        aborts.isAbortReason(operationError);
+                    const abortEvidence = activeAbortEmission ??
+                        (drainAbort ? drainError : undefined) ??
+                        (operationAbort ? operationError : undefined);
+                    const failure = controlFailure ??
+                        (drainAbort ? undefined : drainError) ??
+                        (operationAbort ? undefined : operationError);
                     if (failure !== undefined)
                         throw failure;
+                    if (abortEvidence !== undefined &&
+                        result?.outcome !== 'terminal' &&
+                        result?.outcome !== 'suspended') {
+                        result = runResultFor('aborted', abortEvidence);
+                    }
                     if (result === undefined) {
                         throw new Error('playbook resume produced no runtime result');
                     }
@@ -3465,6 +3629,8 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 }
                 finally {
                     activeSignal = undefined;
+                    activeAborts = undefined;
+                    activeAbortEmission = undefined;
                     activeTurnId = undefined;
                     controlPlaneError = undefined;
                 }
@@ -3536,6 +3702,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
                         appliedReceipts.clear();
                         actor = undefined;
                         activeSignal = undefined;
+                        activeAborts = undefined;
+                        actorSettlementAborts = undefined;
+                        actorSettlementErrorAborts = undefined;
+                        activeAbortEmission = undefined;
                         activeTurnId = undefined;
                         controlPlaneError = undefined;
                         emissionFailure = undefined;

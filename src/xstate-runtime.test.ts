@@ -615,6 +615,7 @@ describe('abort signal composition', () => {
       'must be an AbortSignal',
     );
   });
+
 });
 
 describe('nested XState playbook call bridge', () => {
@@ -825,6 +826,34 @@ describe('nested XState playbook call bridge', () => {
     // restore attempt may claim the authoritative child.
     expect(() => bridge.prepareRestore(RESTORED_CALL)).not.toThrow();
     await bridge.abortPending();
+    await bridge.dispose();
+  });
+
+  it('preserves null as an uncommitted restore abort reason', async () => {
+    const events: string[] = [];
+    const boundary = new AbortController();
+    const options = bridgeOptions(events, async () => ({
+      state: 'suspended',
+      childSessionId: 'must-not-open',
+    }));
+    options.getBoundarySignal = () => boundary.signal;
+    const bridge = createNestedPlaybookBridge(options);
+    bridge.prepareRestore(RESTORED_CALL);
+    const actor = createActor(bridge.actorLogic, { input: INPUT });
+    const completion = toPromise(actor).catch((error: unknown) => error);
+    actor.start();
+
+    boundary.abort(null);
+    expect(await completion).toBeNull();
+    let confirmationFailure: unknown = Symbol('no failure');
+    try {
+      bridge.confirmRestore();
+    } catch (error) {
+      confirmationFailure = error;
+    }
+    expect(confirmationFailure).toBeNull();
+    expect(events).toEqual([]);
+    expect(bridge.getPendingCall()).toBeUndefined();
     await bridge.dispose();
   });
 
@@ -1356,6 +1385,200 @@ describe('nested XState playbook call bridge', () => {
     ]);
   });
 
+  it('preserves null as an exact pre-aborted resume reason', async () => {
+    const events: string[] = [];
+    const bridge = createNestedPlaybookBridge(
+      bridgeOptions(events, async () => ({
+        state: 'suspended',
+        childSessionId: 'child-1',
+      })),
+    );
+    const actor = createActor(bridge.actorLogic, { input: INPUT });
+    const completion = toPromise(actor);
+    actor.start();
+    await pendingCall(bridge);
+
+    const cancelled = new AbortController();
+    cancelled.abort(null);
+    let resumeFailure: unknown = Symbol('no failure');
+    try {
+      await bridge.resume({
+        callId: 'call-1',
+        result: {
+          status: 'ok',
+          playbookId: 'review',
+          childSessionId: 'child-1',
+        },
+        signal: cancelled.signal,
+      });
+    } catch (error) {
+      resumeFailure = error;
+    }
+    expect(resumeFailure).toBeNull();
+    expect(bridge.getPendingCall()?.callId).toBe('call-1');
+
+    await bridge.resume({
+      callId: 'call-1',
+      result: {
+        status: 'ok',
+        playbookId: 'review',
+        childSessionId: 'child-1',
+        output: 'resumed',
+      },
+      signal: new AbortController().signal,
+    });
+    await expect(completion).resolves.toBe('resumed');
+    await bridge.dispose();
+  });
+
+  it('preserves null when aborting a suspended invocation', async () => {
+    const events: string[] = [];
+    let finished: PlaybookCallResult | undefined;
+    const options = bridgeOptions(events, async () => ({
+      state: 'suspended',
+      childSessionId: 'child-1',
+    }));
+    options.emitFinished = async (event) => {
+      finished = event.result;
+      events.push(`finished:${event.callId}:${event.result.status}`);
+    };
+    const bridge = createNestedPlaybookBridge(options);
+    const actor = createActor(bridge.actorLogic, { input: INPUT });
+    const completion = toPromise(actor);
+    actor.start();
+    await pendingCall(bridge);
+
+    await bridge.abortPending(null);
+    await expect(completion).rejects.toBeInstanceOf(NestedPlaybookCallError);
+    expect(finished).toMatchObject({
+      status: 'aborted',
+      error: { name: 'Error', message: 'null' },
+    });
+    expect(events.slice(-2)).toEqual(['finished:call-1:aborted', 'drain']);
+    await bridge.dispose();
+  });
+
+  it('retains invocation abort provenance while a fresh resume settles', async () => {
+    const events: string[] = [];
+    const invocation = new AbortController();
+    const resume = new AbortController();
+    const invocationReason = new Error('invocation cancelled');
+    const controlErrors: unknown[] = [];
+    const backgroundErrors: unknown[] = [];
+    let finishAborts:
+      | Parameters<NonNullable<NestedPlaybookBridgeOptions['emitFinished']>>[1]
+      | undefined;
+    const options = bridgeOptions(events, async () => ({
+      state: 'suspended',
+      childSessionId: 'child-1',
+    }));
+    options.getBoundarySignal = () => invocation.signal;
+    options.emitFinished = async (event, aborts) => {
+      events.push(`finished:${event.callId}:${event.result.status}`);
+      finishAborts = aborts;
+      invocation.abort(invocationReason);
+      throw invocationReason;
+    };
+    options.onControlPlaneError = (error) => controlErrors.push(error);
+    options.onBackgroundError = (error) => backgroundErrors.push(error);
+    const bridge = createNestedPlaybookBridge(options);
+    const actor = createActor(bridge.actorLogic, { input: INPUT });
+    const completion = toPromise(actor);
+    actor.start();
+    await pendingCall(bridge);
+
+    await expect(
+      bridge.resume({
+        callId: 'call-1',
+        result: {
+          status: 'ok',
+          playbookId: 'review',
+          childSessionId: 'child-1',
+        },
+        signal: resume.signal,
+      }),
+    ).rejects.toBe(invocationReason);
+    await expect(completion).rejects.toBe(invocationReason);
+
+    expect(
+      events.filter((event) => event.startsWith('finished:')),
+    ).toEqual(['finished:call-1:ok']);
+    expect(Object.isFrozen(finishAborts)).toBe(true);
+    expect(finishAborts?.isAbortReason(invocationReason)).toBe(true);
+    expect(finishAborts?.isAbortReason(new Error('invocation cancelled'))).toBe(
+      false,
+    );
+    expect(controlErrors).toEqual([]);
+    expect(backgroundErrors).toEqual([]);
+    await expect(bridge.dispose()).resolves.toBeUndefined();
+  });
+
+  it('does not carry a background abort rejection into the next call', async () => {
+    const events: string[] = [];
+    let boundary = new AbortController();
+    const firstReason = new Error('first invocation cancelled');
+    const backgroundErrors: unknown[] = [];
+    let actorSettlementAborts:
+      | Parameters<
+          NonNullable<NestedPlaybookBridgeOptions['bindActorSettlement']>
+        >[0]
+      | undefined;
+    const options = bridgeOptions(events, async (request) => ({
+      state: 'suspended',
+      childSessionId:
+        request.callId === 'call-1' ? 'child-1' : 'child-2',
+    }));
+    options.getBoundarySignal = () => boundary.signal;
+    options.bindActorSettlement = (aborts) => {
+      actorSettlementAborts = aborts;
+    };
+    options.emitFinished = async (event, aborts) => {
+      events.push(`finished:${event.callId}:${event.result.status}`);
+      if (event.callId === 'call-1') {
+        expect(aborts?.isAbortReason(firstReason)).toBe(true);
+        throw firstReason;
+      }
+    };
+    options.onBackgroundError = (error) => backgroundErrors.push(error);
+    const bridge = createNestedPlaybookBridge(options);
+    const first = createActor(bridge.actorLogic, { input: INPUT });
+    const firstCompletion = toPromise(first);
+    first.start();
+    await pendingCall(bridge);
+
+    boundary.abort(firstReason);
+    await expect(firstCompletion).rejects.toBe(firstReason);
+    await vi.waitFor(() => expect(bridge.getPendingCall()).toBeUndefined());
+    // The outer runtime consumes this one-shot provenance on the root
+    // transition driven by the rejected child promise actor.
+    expect(actorSettlementAborts?.isAbortReason(firstReason)).toBe(true);
+    actorSettlementAborts = undefined;
+
+    boundary = new AbortController();
+    const second = createActor(bridge.actorLogic, { input: INPUT });
+    const secondCompletion = toPromise(second);
+    second.start();
+    await pendingCall(bridge);
+    await bridge.resume({
+      callId: 'call-2',
+      result: {
+        status: 'ok',
+        playbookId: 'review',
+        childSessionId: 'child-2',
+        output: { clean: true },
+      },
+      signal: boundary.signal,
+    });
+    await expect(secondCompletion).resolves.toEqual({ clean: true });
+    expect(actorSettlementAborts?.isAbortReason(firstReason)).toBe(false);
+    expect(backgroundErrors).toEqual([]);
+    expect(events.filter((event) => event.startsWith('finished:'))).toEqual([
+      'finished:call-1:aborted',
+      'finished:call-2:ok',
+    ]);
+    await expect(bridge.dispose()).resolves.toBeUndefined();
+  });
+
   it('treats a resume that races invocation abort as aborted', async () => {
     const events: string[] = [];
     let bridge!: ReturnType<typeof createNestedPlaybookBridge>;
@@ -1580,6 +1803,76 @@ describe('nested XState playbook call bridge', () => {
     expect(events.slice(-2)).toEqual(['finished:call-1:error', 'drain']);
     expect(bridge.getPendingCall()).toBeUndefined();
   });
+
+  it.each([
+    ['all exact reasons', 'all-exact'],
+    ['one exact and one distinct reason', 'mixed'],
+    ['two distinct reasons', 'all-distinct'],
+  ] as const)(
+    'filters abort cleanup failures before aggregation: %s',
+    async (_label, mode) => {
+      const events: string[] = [];
+      const boundary = new AbortController();
+      const abortReason = new Error('Boss boundary cancelled');
+      const distinctA = new Error('first cleanup failed independently');
+      const distinctB = new Error('second cleanup failed independently');
+      const controlErrors: unknown[] = [];
+      const options = bridgeOptions(events, async (_request, signal) => {
+        signal.addEventListener(
+          'abort',
+          () => {
+            registerPlaybookAbortCleanup(
+              signal,
+              Promise.reject(
+                mode === 'all-distinct' ? distinctA : signal.reason,
+              ),
+            );
+            registerPlaybookAbortCleanup(
+              signal,
+              Promise.reject(
+                mode === 'all-exact' ? signal.reason : distinctB,
+              ),
+            );
+          },
+          { once: true },
+        );
+        return { state: 'suspended', childSessionId: 'child-1' };
+      });
+      options.getBoundarySignal = () => boundary.signal;
+      options.onControlPlaneError = (error) => controlErrors.push(error);
+      const bridge = createNestedPlaybookBridge(options);
+      const actor = createActor(bridge.actorLogic, { input: INPUT });
+      const completion = toPromise(actor);
+      actor.start();
+      await pendingCall(bridge);
+
+      boundary.abort(abortReason);
+      if (mode === 'mixed') {
+        await expect(completion).rejects.toBe(distinctB);
+        expect(controlErrors).toEqual([distinctB]);
+        expect(events.slice(-2)).toEqual(['finished:call-1:error', 'drain']);
+      } else if (mode === 'all-distinct') {
+        const failure = await completion.catch((error: unknown) => error);
+        expect(failure).toBeInstanceOf(AggregateError);
+        expect((failure as AggregateError).errors).toEqual([
+          distinctA,
+          distinctB,
+        ]);
+        expect(controlErrors).toEqual([failure]);
+        expect(events.slice(-2)).toEqual(['finished:call-1:error', 'drain']);
+      } else {
+        await expect(completion).rejects.toBeInstanceOf(
+          NestedPlaybookCallError,
+        );
+        expect(controlErrors).toEqual([]);
+        expect(events.slice(-2)).toEqual([
+          'finished:call-1:aborted',
+          'drain',
+        ]);
+      }
+      await expect(bridge.dispose()).resolves.toBeUndefined();
+    },
+  );
 
   it('aborts and drains disposal while the child is still opening', async () => {
     const events: string[] = [];

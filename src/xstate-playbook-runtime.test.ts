@@ -12,8 +12,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { assign, createMachine } from 'xstate';
+import { describe, expect, it, vi } from 'vitest';
+import { assign, createActor, createMachine } from 'xstate';
 
 import type {
   PlaybookPorts,
@@ -26,6 +26,7 @@ import type {
 } from './runtime.js';
 import {
   createXStatePlaybookRuntime,
+  createPlayerBridge,
   defaultComposeCaptainPrompt,
   defaultComposePlayerPrompt,
   defaultExtractRequiredFields,
@@ -528,6 +529,61 @@ describe('generic strategy defaults', () => {
 });
 
 describe('player + script workflow over the shared factory', () => {
+  it('does not report an actor-stop cancellation as a player control failure', async () => {
+    // The delegated-player bridge combines the XState invocation signal
+    // with the public-boundary signal. An actor stop can therefore cancel a
+    // pending adjudication without aborting the public signal; classification
+    // belongs against that local combined signal before the error callback.
+    let judgeStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      judgeStarted = resolve;
+    });
+    let judgeSignal: AbortSignal | undefined;
+    const controlFailures: unknown[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async (_prompt, signal) => {
+        judgeSignal = signal;
+        judgeStarted();
+        return await new Promise<string>((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => reject(signal.reason),
+            { once: true },
+          );
+        });
+      },
+    });
+    const bridge = createPlayerBridge(
+      {
+        resolveRoleId: (input) => input.role,
+        composePlayerPrompt: (input) => input.prompt,
+        adjudication: {},
+        resumableStateIds: new Set(),
+      },
+      ports,
+      undefined,
+      undefined,
+      (error) => controlFailures.push(error),
+    );
+    const actor = createActor(bridge, {
+      input: {
+        stateId: 'implement',
+        role: 'coder',
+        sourceItem: 'WF-1',
+        prompt: 'Implement the task.',
+        result: { implemented: 'The task is complete.' },
+      },
+    });
+    actor.start();
+    await started;
+    actor.stop();
+    await new Promise((tick) => setTimeout(tick, 0));
+
+    expect(judgeSignal?.aborted).toBe(true);
+    expect(controlFailures).toEqual([]);
+  });
+
   it('terminates the aborted script process group and settles only after the shell exits', async () => {
     // slc/link.md §Script execution: on abort the whole detached group dies
     // — TERM-immune wrapper and backgrounded descendant alike, via SIGKILL
@@ -571,7 +627,9 @@ describe('player + script workflow over the shared factory', () => {
       };
       const wrapperPid = await readPid('wrapper.pid');
       const childPid = await readPid('child.pid');
-      controller.abort(new Error('boss cancelled the script'));
+      // `AbortSignal.reason` is identity-bearing and may legitimately be
+      // null; teardown must not replace it with a synthetic error.
+      controller.abort(null);
       const settled = await turn;
       expect(settled.outcome).toBe('aborted');
       // Both group members are dead at settlement — kill(pid, 0) throws.
@@ -726,6 +784,208 @@ describe('player + script workflow over the shared factory', () => {
       await rm(dir, { recursive: true, force: true });
     }
   }, 15000);
+
+  it.each([
+    ['status', 'exact'],
+    ['status', 'distinct'],
+    ['telemetry', 'exact'],
+    ['telemetry', 'distinct'],
+  ] as const)(
+    'owns post-exit script teardown through a rejecting %s sink (%s failure)',
+    async (channel, failureKind) => {
+      // DR-036 decision 6: a rejecting emission cannot jump past the script
+      // actor's abort cleanup. Exact cancellation still settles as aborted;
+      // a distinct sink failure stays distinct; both return only after the
+      // TERM-immune same-group descendant is gone.
+      const dir = await mkdtemp(join(tmpdir(), 'playbook-script-sink-'));
+      let runtime: PlaybookRuntime | undefined;
+      let descPid: number | undefined;
+      try {
+        const controller = new AbortController();
+        const abortReason = new Error('boss cancelled in the script sink');
+        const sinkFailure =
+          failureKind === 'exact'
+            ? abortReason
+            : new Error(`${channel} sink failed distinctly`);
+        const command =
+          `sh -c 'trap "" TERM; exec sleep 30' & ` +
+          `echo $! > ${dir}/desc.pid`;
+        const rejectEmission = (): never => {
+          controller.abort(abortReason);
+          throw sinkFailure;
+        };
+        const { ports } = makeRecordingPorts({
+          callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+          callJudge: async () =>
+            '{"guard":"implemented","summary":"ok"}',
+          emitStatus: async (message) => {
+            if (
+              channel === 'status' &&
+              message.startsWith('Executed script for')
+            ) {
+              rejectEmission();
+            }
+          },
+          emitTelemetry: async (event) => {
+            if (channel === 'telemetry' && event.topic === 'playbook.script') {
+              rejectEmission();
+            }
+          },
+        });
+        runtime = createXStatePlaybookRuntime(workflowMachine, {
+          ...workflowSpec,
+          label: `script-${channel}-${failureKind}-workflow`,
+          machineInput: () => ({ command }),
+        })({});
+        await runtime.init(makeSession(ports));
+        const turnPromise = runtime.handleBossInput({
+          text: 'run the daemonish script',
+          signal: controller.signal,
+        });
+        if (failureKind === 'exact') {
+          expect((await turnPromise).outcome).toBe('aborted');
+        } else {
+          await expect(turnPromise).rejects.toBe(sinkFailure);
+        }
+
+        descPid = Number.parseInt(
+          await readFile(join(dir, 'desc.pid'), 'utf8'),
+          10,
+        );
+        expect(Number.isInteger(descPid) && descPid > 0).toBe(true);
+        expect(() => process.kill(descPid!, 0)).toThrow();
+      } finally {
+        await runtime?.dispose().catch(() => undefined);
+        if (descPid === undefined) {
+          try {
+            descPid = Number.parseInt(
+              await readFile(join(dir, 'desc.pid'), 'utf8'),
+              10,
+            );
+          } catch {
+            // The command may have failed before writing its child pid.
+          }
+        }
+        if (descPid !== undefined) {
+          try {
+            process.kill(descPid, 'SIGKILL');
+          } catch {
+            // Already gone, as the assertion requires.
+          }
+        }
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    15000,
+  );
+
+  it.each(['timeout', 'persistent-eperm', 'probe-error'] as const)(
+    'surfaces a distinct teardown failure when group disappearance cannot be confirmed (%s)',
+    async (mode) => {
+      // Confirmed teardown means ESRCH, not merely "the probe threw", and a
+      // bounded wait that expires is a failure rather than silent evidence
+      // that the group disappeared. Mock only the post-exit liveness probe;
+      // real signals still go to the already-exited short-lived shell.
+      const controller = new AbortController();
+      const abortReason = new Error('abort before script settlement');
+      const originalKill = process.kill.bind(process);
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(
+        ((pid: number, signal?: NodeJS.Signals | number): true => {
+          if (pid < 0 && signal === 0) {
+            if (mode === 'timeout') return true;
+            if (mode === 'persistent-eperm') {
+              throw Object.assign(new Error('group probe denied'), {
+                code: 'EPERM',
+              });
+            }
+            throw Object.assign(new Error('group probe denied'), {
+              code: 'EINVAL',
+            });
+          }
+          return originalKill(pid, signal);
+        }) as typeof process.kill,
+      );
+      const { ports } = makeRecordingPorts({
+        callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+        callJudge: async () =>
+          '{"guard":"implemented","summary":"ok"}',
+        emitStatus: async (message) => {
+          if (message.startsWith('Executed script for')) {
+            controller.abort(abortReason);
+            throw abortReason;
+          }
+        },
+      });
+      const runtime = createWorkflowRuntime({ command: 'true' });
+      try {
+        await runtime.init(makeSession(ports));
+        let failure: unknown;
+        try {
+          await runtime.handleBossInput({
+            text: 'run the short script',
+            signal: controller.signal,
+          });
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure).toMatchObject({
+          name: 'ScriptProcessGroupTeardownError',
+        });
+        expect((failure as Error).message).toContain(
+          mode === 'probe-error'
+            ? 'liveness probe failed'
+            : 'remained signalable after 2000ms',
+        );
+        expect(failure).not.toBe(abortReason);
+      } finally {
+        killSpy.mockRestore();
+        await runtime.dispose().catch(() => undefined);
+      }
+    },
+    10000,
+  );
+
+  it('treats EPERM from a group probe as still present until ESRCH confirms teardown', async () => {
+    const controller = new AbortController();
+    const abortReason = new Error('abort before script settlement');
+    const originalKill = process.kill.bind(process);
+    let probes = 0;
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation(
+      ((pid: number, signal?: NodeJS.Signals | number): true => {
+        if (pid < 0 && signal === 0) {
+          probes += 1;
+          throw Object.assign(new Error(probes === 1 ? 'denied' : 'gone'), {
+            code: probes === 1 ? 'EPERM' : 'ESRCH',
+          });
+        }
+        return originalKill(pid, signal);
+      }) as typeof process.kill,
+    );
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => ({ status: 'ok', finalText: 'done' }),
+      callJudge: async () =>
+        '{"guard":"implemented","summary":"ok"}',
+      emitStatus: async (message) => {
+        if (message.startsWith('Executed script for')) {
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({ command: 'true' });
+    try {
+      await runtime.init(makeSession(ports));
+      const settled = await runtime.handleBossInput({
+        text: 'run the short script',
+        signal: controller.signal,
+      });
+      expect(settled.outcome).toBe('aborted');
+      expect(probes).toBe(2);
+    } finally {
+      killSpy.mockRestore();
+      await runtime.dispose().catch(() => undefined);
+    }
+  });
 
   it('runs deterministic entry, default composition, adjudication, and script execution to terminal', async () => {
     const judgePrompts: string[] = [];
@@ -3134,6 +3394,7 @@ describe('nested playbook actor over the shared factory', () => {
     // settles instead of rejecting with a control-plane error.
     const controller = new AbortController();
     const abortReason = new Error('boss cancelled the resume');
+    const finishes: PlaybookTraceEvent[] = [];
     const { ports } = makeRecordingPorts({
       callPlaybook: async () => ({
         state: 'suspended',
@@ -3143,8 +3404,11 @@ describe('nested playbook actor over the shared factory', () => {
         if (event.topic !== 'playbook.trace') return;
         const trace = event.payload as PlaybookTraceEvent;
         if (trace.type === 'playbook.call.finished') {
-          controller.abort(abortReason);
-          throw abortReason;
+          finishes.push(trace);
+          if (finishes.length === 1) {
+            controller.abort(abortReason);
+            throw abortReason;
+          }
         }
       },
     });
@@ -3164,6 +3428,163 @@ describe('nested playbook actor over the shared factory', () => {
       signal: controller.signal,
     });
     expect(resumed.outcome).toBe('aborted');
+    expect(finishes).toHaveLength(1);
+    expect(finishes[0]).toMatchObject({
+      payload: { result: { status: 'ok' } },
+    });
+    await runtime.dispose();
+  });
+
+  it('retains the original invocation reason while a fresh resume settles', async () => {
+    const invocation = new AbortController();
+    const resume = new AbortController();
+    const invocationReason = new Error('original invocation cancelled');
+    const finishes: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'suspended',
+        childSessionId: 'child-session-1',
+      }),
+      emitTelemetry: async (event) => {
+        if (event.topic !== 'playbook.trace') return;
+        const trace = event.payload as PlaybookTraceEvent;
+        if (trace.type === 'playbook.call.finished') {
+          finishes.push(trace);
+          if (finishes.length === 1) {
+            invocation.abort(invocationReason);
+            throw invocationReason;
+          }
+        }
+      },
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const suspended = await runtime.handleBossInput({
+      text: 'do it',
+      signal: invocation.signal,
+    });
+    const pendingCall =
+      'pendingCall' in suspended ? suspended.pendingCall : undefined;
+
+    // The mutable public boundary now owns B, but the finish rejection is
+    // still cancellation evidence from the child invocation's A signal.
+    // It settles as an abort instead of poisoning B as a control failure.
+    const resumed = await runtime.resumePlaybookCall({
+      callId: pendingCall!.callId,
+      result: {
+        status: 'ok',
+        playbookId: 'child',
+        childSessionId: 'child-session-1',
+        output: { note: 'late child' },
+      },
+      signal: resume.signal,
+    });
+    expect(resumed.outcome).toBe('aborted');
+    expect(finishes).toHaveLength(1);
+    expect(finishes[0]).toMatchObject({
+      payload: { result: { status: 'ok' } },
+    });
+    await runtime.dispose();
+  });
+
+  it('does not forgive a stored distinct failure under a later resume abort', async () => {
+    const deliveryFailure = new Error('pending observer failed');
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => ({
+        state: 'suspended',
+        childSessionId: 'child-session-1',
+      }),
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const suspended = await runtime.handleBossInput(turn('do it'));
+    const pendingCall =
+      'pendingCall' in suspended ? suspended.pendingCall : undefined;
+    const bridge = (
+      runtime as unknown as {
+        _getNestedBridge(): {
+          subscribePendingCall(
+            listener: (pending: unknown) => void,
+          ): () => void;
+        };
+      }
+    )._getNestedBridge();
+    const unsubscribe = bridge.subscribePendingCall(() => {
+      throw deliveryFailure;
+    });
+    unsubscribe();
+
+    const later = new AbortController();
+    later.abort(deliveryFailure);
+    await expect(
+      runtime.resumePlaybookCall({
+        callId: pendingCall!.callId,
+        result: {
+          status: 'ok',
+          playbookId: 'child',
+          childSessionId: 'child-session-1',
+        },
+        signal: later.signal,
+      }),
+    ).rejects.toBe(deliveryFailure);
+    await runtime.dispose();
+  });
+
+  it('forgives background transition delivery under its original invocation', async () => {
+    const invocation = new AbortController();
+    const invocationReason = new Error('suspended invocation cancelled');
+    let childStarts = 0;
+    let backgroundTransitionSeen = false;
+    const { ports } = makeRecordingPorts({
+      callPlaybook: async () => {
+        childStarts += 1;
+        return childStarts === 1
+          ? {
+              state: 'suspended',
+              childSessionId: 'child-session-1',
+            }
+          : {
+              state: 'settled',
+              result: {
+                status: 'ok',
+                playbookId: 'child',
+                childSessionId: 'child-session-2',
+                output: { clean: true },
+              },
+            };
+      },
+      emitTelemetry: async (event) => {
+        if (
+          event.topic === 'playbook.trace' &&
+          (event.payload as PlaybookTraceEvent).type === 'fsm.transition' &&
+          invocation.signal.aborted &&
+          !backgroundTransitionSeen
+        ) {
+          backgroundTransitionSeen = true;
+          throw invocationReason;
+        }
+      },
+    });
+    const runtime = createNestedRuntime({});
+    await runtime.init(makeSession(ports));
+    const suspended = await runtime.handleBossInput({
+      text: 'do it',
+      signal: invocation.signal,
+    });
+    expect(suspended.outcome).toBe('suspended');
+
+    // No public boundary is active when A aborts. Its child rejection drives
+    // a root transition and a queued telemetry emission; that emission still
+    // belongs to A and must not become a stale failure for the next turn.
+    invocation.abort(invocationReason);
+    await vi.waitFor(() => expect(backgroundTransitionSeen).toBe(true));
+
+    const next = await runtime.handleBossInput(turn('try again'));
+    expect(next.outcome).toBe('terminal');
+    expect('output' in next ? next.output : undefined).toEqual({
+      childOutput: { clean: true },
+    });
+    expect(childStarts).toBe(2);
     await runtime.dispose();
   });
 
@@ -3255,7 +3676,7 @@ describe('nested playbook actor over the shared factory', () => {
     // cancellation, so the turn settles aborted with no control rejection.
     const controller = new AbortController();
     const abortReason = new Error('boss cancelled the turn');
-    let finishSeen = false;
+    const finishes: PlaybookTraceEvent[] = [];
     const { ports } = makeRecordingPorts({
       callPlaybook: async () => ({
         state: 'settled',
@@ -3269,10 +3690,12 @@ describe('nested playbook actor over the shared factory', () => {
       emitTelemetry: async (event) => {
         if (event.topic !== 'playbook.trace') return;
         const trace = event.payload as PlaybookTraceEvent;
-        if (trace.type === 'playbook.call.finished' && !finishSeen) {
-          finishSeen = true;
-          controller.abort(abortReason);
-          throw abortReason;
+        if (trace.type === 'playbook.call.finished') {
+          finishes.push(trace);
+          if (finishes.length === 1) {
+            controller.abort(abortReason);
+            throw abortReason;
+          }
         }
       },
     });
@@ -3283,6 +3706,10 @@ describe('nested playbook actor over the shared factory', () => {
       signal: controller.signal,
     });
     expect(settled.outcome).toBe('aborted');
+    expect(finishes).toHaveLength(1);
+    expect(finishes[0]).toMatchObject({
+      payload: { result: { status: 'ok' } },
+    });
     await runtime.dispose();
   });
 
@@ -3657,6 +4084,60 @@ describe('boundary hygiene', () => {
     );
     expect(result.outcome).toBe('no-action');
     expect(called).toBe(0);
+    await runtime.dispose();
+  });
+
+  it('refuses pre-aborted nonempty input before classification or host work', async () => {
+    // DR-036 decision 5: the input attempt is still observable as a paired
+    // public boundary, but an already-aborted signal delivers no text to the
+    // classifier or FSM and starts no host work.
+    let playerCalls = 0;
+    let judgeCalls = 0;
+    let classifierCalls = 0;
+    const traces: PlaybookTraceEvent[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return {
+          status: 'ok',
+          finalText: 'Which database should I use?',
+        };
+      },
+      callJudge: async (prompt) => {
+        judgeCalls += 1;
+        if (prompt.includes('Classify the following Boss message')) {
+          classifierCalls += 1;
+          return '{"type":"BOSS_REPLY","questionId":"q-1"}';
+        }
+        return '{"guard":"needsBossReply","question":"Which database?"}';
+      },
+      emitTelemetry: async (event) => {
+        if (event.topic === 'playbook.trace') {
+          traces.push(event.payload as PlaybookTraceEvent);
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    const suspended = await runtime.handleBossInput(turn('build storage'));
+    expect(suspended.state.stateId).toBe('awaitBossReply');
+    const callsBefore = { playerCalls, judgeCalls };
+    const traceCountBefore = traces.length;
+    const controller = new AbortController();
+    controller.abort(new Error('already cancelled'));
+
+    const refused = await runtime.handleBossInput({
+      text: 'use sqlite',
+      signal: controller.signal,
+    });
+
+    expect(refused.outcome).toBe('aborted');
+    expect(refused.state.stateId).toBe('awaitBossReply');
+    expect({ playerCalls, judgeCalls }).toEqual(callsBefore);
+    expect(classifierCalls).toBe(0);
+    expect(
+      traces.slice(traceCountBefore).map(({ type }) => type),
+    ).toEqual(['boss.input.received', 'boss.input.settled']);
     await runtime.dispose();
   });
 
@@ -4690,9 +5171,14 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         const next = await runtime.handleBossInput(turn(''));
         expect(next.outcome).toBe('no-action');
       } else {
-        await expect(runtime.handleBossInput(turn(''))).rejects.toBe(
-          deliveryFailure,
-        );
+        // A later boundary may coincidentally use the same object as its
+        // abort reason. The already-classified delivery failure still owns
+        // its original apply boundary and must not be reinterpreted under B.
+        const next = new AbortController();
+        next.abort(deliveryFailure);
+        await expect(
+          runtime.handleBossInput({ text: '', signal: next.signal }),
+        ).rejects.toBe(deliveryFailure);
       }
       await runtime.dispose();
     }
@@ -5007,6 +5493,73 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
     });
     expect(replayed).toEqual(settled);
     expect(playerCalls).toBe(2);
+    await runtime.dispose();
+  });
+
+  it('folds exact pre-publication cancellation into one failed apply receipt', async () => {
+    const controller = new AbortController();
+    const abortReason = new Error('apply cancelled before publication');
+    let playerCalls = 0;
+    let abortTerminalTelemetry = false;
+    const telemetryEvents: RecordedTelemetry[] = [];
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'error', error: 'agent crashed' }
+          : { status: 'ok', finalText: 'Recovered.' };
+      },
+      callJudge: async () => '{"guard":"implemented","summary":"recovered"}',
+      emitTelemetry: async (event) => {
+        telemetryEvents.push({ topic: event.topic, payload: event.payload });
+        if (
+          abortTerminalTelemetry &&
+          event.topic === 'playbook.fsm.state' &&
+          (event.payload as { to?: unknown }).to === 'done'
+        ) {
+          abortTerminalTelemetry = false;
+          controller.abort(abortReason);
+          throw abortReason;
+        }
+      },
+    });
+    const runtime = createWorkflowRuntime({});
+    await runtime.init(makeSession(ports));
+    await runtime.handleBossInput(turn('build the widget'));
+
+    abortTerminalTelemetry = true;
+    const settled = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'cancelled-before-publication',
+      signal: controller.signal,
+    });
+    expect(settled).toMatchObject({
+      disposition: 'failed',
+      error: { message: 'apply cancelled before publication' },
+    });
+    expect(playerCalls).toBe(2);
+    const finishes = applyTraces(telemetryEvents).filter(
+      ({ type }) => type === 'apply.finished',
+    );
+    expect(finishes).toHaveLength(1);
+    expect(finishes[0].payload).toMatchObject({ disposition: 'failed' });
+
+    // Publication, return, and replay expose the same final receipt; the
+    // exact cancellation is consumed by this apply and cannot poison a later
+    // boundary.
+    const replayed = await runtime.apply!({
+      actionId: 'retry:START',
+      key: 'cancelled-before-publication',
+      signal: sigOf(),
+    });
+    expect(replayed).toEqual(settled);
+    expect(
+      applyTraces(telemetryEvents).filter(
+        ({ type }) => type === 'apply.finished',
+      ),
+    ).toHaveLength(1);
+    const next = await runtime.handleBossInput(turn(''));
+    expect(next.outcome).toBe('no-action');
     await runtime.dispose();
   });
 

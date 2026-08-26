@@ -496,8 +496,12 @@ id and then reject the original start error. It shall not retry either event or
 let a failure of that finish attempt replace the start error.
 A start-sink rejection causally identical to the applicable signal reason is
 the cancellation itself, not a control error: no host call begins, the
-best-effort paired finish carries `status: 'aborted'`, nothing is latched, and
-the boundary settles as §Abort prescribes
+best-effort paired finish carries the boundary's canonical aborted evidence —
+`status: 'aborted'` for a host call, or the rejected-before-effect disposition
+and reason for apply — and nothing is latched. An ordinary run boundary settles
+as §Abort prescribes. At the apply boundary the same event remains
+pre-acceptance: `apply` rejects with that exact reason, records no receipt, and
+leaves the key reusable
 ([DR-036](../specs/decisions/036-coherent-abort-settlement.md)).
 When a call boundary carries `callId`, that id shall be unique within the
 runtime session. A stable FSM `stateId` is identity metadata in the payload,
@@ -957,10 +961,14 @@ The provided actor shall:
   exit — shall deliver
   `SIGTERM` to the entire group, escalate to `SIGKILL` after a bounded grace,
   and settle only after the shell process itself has exited and the group has
-  stopped being signalable, rejecting with the signal's reason. The same
+  stopped being signalable, confirmed by an `ESRCH` liveness probe, rejecting
+  with the signal's reason. The same
   bounded grace caps the post-`SIGKILL` wait for kernel teardown, so an
-  unreaped member outside the runtime's control cannot stall settlement, and
-  the kill is always posted before the actor settles. Abort ownership — the
+  unreaped member outside the runtime's control cannot stall settlement. If
+  the group remains signalable through that bound, or confirmation fails
+  without `ESRCH`, the boundary rejects with a distinct teardown control error
+  rather than reporting a clean abort over unconfirmed cleanup. The kill is
+  always posted before the actor settles. Abort ownership — the
   listener and its escalation — spans the whole invocation, not the
   spawn-to-exit window
   ([DR-036](../specs/decisions/036-coherent-abort-settlement.md)). An abort
@@ -994,14 +1002,18 @@ XState `.provide(...)` receives the exact declared actor input rather than a
 structurally similar local type.
 Construct one bridge per runtime and wire every integration hook: allocate ids
 with `nextCallId`; return the currently active public-boundary signal from
-`getBoundarySignal`; bind `resumePlaybookCall.signal` before settling the
-deferred actor through `bindResumeSignal`; enqueue the exact start/finish trace
-through `emitStarted` / `emitFinished`; drain the global emission queue through
-`drain`; latch the original control error through `onControlPlaneError`; and
-retain any cleanup/observer failure through `onBackgroundError` for the next
-public boundary or disposal rejection. The runtime shall not leave these
-optional API hooks unwired merely because their TypeScript properties are
-optional for simpler bridge consumers.
+`getBoundarySignal`; capture an immutable cancellation classifier for the
+invocation's signal identities; compose `resumePlaybookCall.signal` into that
+classifier through `bindResumeSignal`; pass the applicable classifier through
+`emitStarted`, `emitFinished`, and `drain`; bind it to the root transition
+caused by child settlement through `bindActorSettlement`; and pass it through
+`onControlPlaneError` and `onBackgroundError`. Each receiving latch shall drop
+only a failure the supplied classifier identifies as exact cancellation and
+shall retain every distinct cleanup or observer failure for the owning public
+boundary, the next drain, or disposal rejection as applicable. A stored
+distinct failure shall never be reclassified against a later boundary. The
+runtime shall not leave these optional API hooks unwired merely because their
+TypeScript properties are optional for simpler bridge consumers.
 On invocation the bridge allocates a runtime-local call id, traces the start,
 and calls `PlaybookPorts.callPlaybook` with the composed target/text and the
 bridge signal combined from the XState invocation lifetime, the active public
@@ -1086,12 +1098,15 @@ registry; linker-time metadata is not authorization to call a target.
 
 Disposal shall settle an outstanding call as aborted and drain its finish
 trace before `session.disposed`.
-If registered child abort cleanup rejects, the bridge shall emit the paired
-finish with an error result and reject `abortPending` or disposal with that
-original cleanup error; it shall not swallow the failure merely because the
-promise actor also observes a `NestedPlaybookCallError`. Parent disposal shall
-still drain, emit its one `session.disposed` boundary, and clear the bound
-session before rejecting with that preserved cleanup error.
+If registered child abort cleanup rejects with a failure distinct from every
+applicable abort reason, the bridge shall emit the paired finish with an error
+result and reject `abortPending` or disposal with that original cleanup error,
+or with an aggregate containing every distinct failure when more than one
+remains;
+an exact abort-reason rejection is cancellation evidence and shall not be
+retained as a control failure. Parent disposal shall still drain, emit its one
+`session.disposed` boundary, and clear the bound session before rejecting with
+any preserved distinct cleanup error.
 Child output and errors must be JSON-safe; a non-JSON-safe result is a
 control-plane error.
 
@@ -1562,9 +1577,13 @@ abort remains a non-abort control error and takes precedence. Classification
 lives at each latch or report site, against the boundary signal applicable
 there — the invocation-lifetime combined signal, and during a resume that
 boundary's own signal — so a failure causally identical to the applicable
-reason is the cancellation's own evidence: it is dropped where observed, never
-latched, and never carried to a later boundary
+reason is the cancellation's own evidence: it is handled there under the phase
+rules below, never mislabeled as a distinct failure and never carried to an
+unrelated later boundary
 ([DR-036](../specs/decisions/036-coherent-abort-settlement.md)).
+A failure already latched as distinct retains that ownership; a later drain
+shall not reinterpret it against another boundary whose abort signal happens
+to use the same object as its reason.
 A public boundary settles on the machine's state at its quiescence point,
 in this precedence: a suspended pending call, then a distinct actor error,
 then terminal completion, then a coincident abort, then the recoverable
@@ -1575,6 +1594,39 @@ An abort observed after the outcome is computed does not rewrite it, and a
 settlement-channel rejection causally identical to the abort reason is
 forgiven, so the returned result and the settlement trace state one fact.
 A boundary entered with an already-aborted signal delivers nothing.
+That entry refusal precedes the ordinary settlement order: a pre-aborted
+resume reports `aborted` while preserving its suspended pending call rather
+than reporting `suspended` for work it did not deliver.
+Cancellation-coupled channel rejections obey this phase matrix:
+
+- **Before a host call or effect starts (and before apply acceptance):** an
+  identical start-channel rejection starts no host call or effect and latches
+  no control error. A recorded start receives one best-effort `aborted` finish.
+  An ordinary run boundary then settles by the precedence above; a
+  pre-acceptance `apply` instead rejects with that exact reason, records no
+  receipt, and leaves its key reusable.
+- **After a host call or effect starts but before its finish or outcome is
+  recorded:** an identical host, cleanup, observer, or in-flight-emission
+  rejection is cancellation evidence. Invocation-owned cleanup completes, a
+  started trace pair receives one `aborted` finish, and the ordinary boundary
+  settles by the precedence above. A distinct rejection remains a control
+  failure, produces the applicable error finish, and takes distinct-error
+  precedence.
+- **After a call finish is recorded but before the enclosing non-apply outcome
+  is computed:** an identical finish-sink or drain rejection leaves the
+  recorded finish unchanged, emits no corrective second finish, latches
+  nothing, and lets the enclosing boundary settle by the precedence above.
+- **After apply acceptance but before receipt publication:** every settlement
+  failure, the exact apply abort reason included, is folded into the current
+  `failed` receipt. Acceptance forbids throwing; the replacement receipt is
+  published, returned, and replayed, and the failure is not carried as a later
+  delivery error.
+- **After a non-apply outcome is computed or an apply receipt is published:**
+  an identical rejection is dropped without rewriting the outcome or receipt
+  and without poisoning a later boundary. A distinct non-apply settlement
+  rejection retains current-boundary control-error precedence; a distinct
+  post-publication apply rejection retains the published receipt and travels
+  on the delivery-failure channel to the next boundary that drains.
 On abort, the
 runtime shall not merely race the imperative
 wait and return while an invocation remains live: it shall let the selected

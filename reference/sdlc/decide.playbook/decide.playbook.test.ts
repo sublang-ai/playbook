@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PlayerSessionStore } from '../../../src/runtime.js';
+import type { PlayerResult, PlayerSessionStore } from '../../../src/runtime.js';
 import createPlaybookRuntime, {
   _internal,
   type PlayerCallOptions,
@@ -132,6 +132,7 @@ interface ReviewBoundary {
 
 async function runToReview(
   onTelemetry?: (record: TelemetryRecord) => void | Promise<void>,
+  turnSignal: AbortSignal = signal(),
 ): Promise<ReviewBoundary> {
   const playerCounts = new Map<string, number>();
   const telemetry: TelemetryRecord[] = [];
@@ -165,7 +166,7 @@ async function runToReview(
   await runtime.init(session(ports));
   const result = await runtime.handleBossInput({
     text: 'Choose the durable design.',
-    signal: signal(),
+    signal: turnSignal,
   });
   expect(result).toMatchObject({ outcome: 'suspended' });
   if (!request) throw new Error('DECIDE did not call REVIEW');
@@ -603,7 +604,6 @@ describe('DECIDE parallel proposals and nested REVIEW handoff', () => {
         }),
       ),
     );
-
     await expect(
       runtime.handleBossInput({ text: 'Compare designs.', signal: signal() }),
     ).resolves.toMatchObject({ outcome: 'quiescent' });
@@ -1206,6 +1206,299 @@ describe('DECIDE abort classification', () => {
   // applicable signal reason, never bare `signal.aborted`. A distinct player
   // failure observed while the turn signal is aborted remains a non-abort
   // control error that takes precedence over the coincident abort.
+  it('refuses pre-aborted Boss text before classification or host work', async () => {
+    const abortReason = new Error('Boss cancelled before delivery.');
+    const controller = new AbortController();
+    controller.abort(abortReason);
+    const calls = { captain: 0, judge: 0, player: 0, playbook: 0 };
+    const telemetry: TelemetryRecord[] = [];
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(
+      session(
+        completePorts({
+          callCaptain: async () => {
+            calls.captain += 1;
+            throw new Error('unexpected Captain call');
+          },
+          callJudge: async () => {
+            calls.judge += 1;
+            throw new Error('unexpected judge call');
+          },
+          callPlayer: async () => {
+            calls.player += 1;
+            throw new Error('unexpected player call');
+          },
+          callPlaybook: async () => {
+            calls.playbook += 1;
+            throw new Error('unexpected nested playbook call');
+          },
+          emitTelemetry: async (record) => telemetry.push(record),
+        }),
+      ),
+    );
+    const traceCountBefore = playbookTraces(telemetry).length;
+
+    await expect(
+      runtime.handleBossInput({
+        text: 'Choose the durable design.',
+        signal: controller.signal,
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'aborted',
+      state: { stateId: 'ready' },
+      error: { message: abortReason.message },
+    });
+    expect(calls).toEqual({ captain: 0, judge: 0, player: 0, playbook: 0 });
+    expect(
+      playbookTraces(telemetry)
+        .slice(traceCountBefore)
+        .map(({ type }) => type),
+    ).toEqual(['boss.input.received', 'boss.input.settled']);
+
+    await runtime.dispose();
+  });
+
+  it('holds the public-boundary sentinel through settlement delivery', async () => {
+    const settlementEntered = deferred<void>();
+    const releaseSettlement = deferred<void>();
+    let blockSettlement = true;
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(
+      session(
+        completePorts({
+          emitTelemetry: async (record) => {
+            if (record.topic !== 'playbook.trace') return;
+            const trace = record.payload as PlaybookTraceEvent;
+            if (trace.type !== 'boss.input.settled' || !blockSettlement) return;
+            settlementEntered.resolve();
+            await releaseSettlement.promise;
+          },
+        }),
+      ),
+    );
+
+    const first = runtime.handleBossInput({ text: '   ', signal: signal() });
+    await settlementEntered.promise;
+    await expect(
+      runtime.handleBossInput({ text: '', signal: signal() }),
+    ).rejects.toThrow(/another runtime turn is active/);
+
+    blockSettlement = false;
+    releaseSettlement.resolve();
+    await expect(first).resolves.toMatchObject({ outcome: 'no-action' });
+    await expect(
+      runtime.handleBossInput({ text: '', signal: signal() }),
+    ).resolves.toMatchObject({ outcome: 'no-action' });
+
+    await runtime.dispose();
+  });
+
+  it('keeps invocation cancellation applicable while a fresh resume settles', async () => {
+    const invocation = new AbortController();
+    const resume = new AbortController();
+    const invocationReason = new Error('original invocation cancelled');
+    let rejectFinish = false;
+    const finishes: PlaybookTraceEvent[] = [];
+    const { runtime, request } = await runToReview(
+      (record) => {
+        if (!rejectFinish || record.topic !== 'playbook.trace') return;
+        const trace = record.payload as PlaybookTraceEvent;
+        if (trace.type !== 'playbook.call.finished') return;
+        finishes.push(trace);
+        if (finishes.length === 1) {
+          invocation.abort(invocationReason);
+          throw invocationReason;
+        }
+      },
+      invocation.signal,
+    );
+    rejectFinish = true;
+
+    await expect(
+      runtime.resumePlaybookCall({
+        callId: request.callId,
+        result: {
+          status: 'ok',
+          playbookId: 'review',
+          childSessionId: 'review-child',
+          output: {
+            approvedCommit: 'latest',
+            noUnsettledFindings: true,
+          },
+        },
+        signal: resume.signal,
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'aborted',
+      error: { message: invocationReason.message },
+    });
+    expect(finishes).toHaveLength(1);
+    expect(finishes[0]).toMatchObject({
+      payload: { result: { status: 'ok' } },
+    });
+
+    rejectFinish = false;
+    await runtime.dispose();
+  });
+
+  it('does not forgive a stored distinct failure under a later resume abort', async () => {
+    const deliveryFailure = new Error('pending observer failed');
+    const { runtime, request } = await runToReview();
+    const bridge = (
+      runtime as unknown as {
+        _getNestedBridge(): {
+          subscribePendingCall(
+            listener: (pending: unknown) => void,
+          ): () => void;
+        };
+      }
+    )._getNestedBridge();
+    const unsubscribe = bridge.subscribePendingCall(() => {
+      throw deliveryFailure;
+    });
+    unsubscribe();
+
+    const later = new AbortController();
+    later.abort(deliveryFailure);
+    await expect(
+      runtime.resumePlaybookCall({
+        callId: request.callId,
+        result: {
+          status: 'ok',
+          playbookId: 'review',
+          childSessionId: 'review-child',
+          output: {
+            approvedCommit: 'latest',
+            noUnsettledFindings: true,
+          },
+        },
+        signal: later.signal,
+      }),
+    ).rejects.toBe(deliveryFailure);
+    await runtime.dispose();
+  });
+
+  it('does not forgive a stored distinct failure under a later abort', async () => {
+    const invocation = new AbortController();
+    const invocationReason = new Error('suspended invocation cancelled');
+    const deliveryFailure = new Error('background delivery failed');
+    const transitionRejected = deferred<void>();
+    let rejectTransition = false;
+    const { runtime } = await runToReview(
+      (record) => {
+        if (!rejectTransition || record.topic !== 'playbook.trace') return;
+        const trace = record.payload as PlaybookTraceEvent;
+        if (trace.type !== 'fsm.transition') return;
+        rejectTransition = false;
+        transitionRejected.resolve();
+        throw deliveryFailure;
+      },
+      invocation.signal,
+    );
+
+    rejectTransition = true;
+    invocation.abort(invocationReason);
+    await transitionRejected.promise;
+    await new Promise((tick) => setTimeout(tick, 0));
+
+    const later = new AbortController();
+    later.abort(deliveryFailure);
+    await expect(
+      runtime.handleBossInput({ text: '', signal: later.signal }),
+    ).rejects.toBe(deliveryFailure);
+    await runtime.dispose();
+  });
+
+  it('does not carry a background invocation cancellation into the next turn', async () => {
+    const invocation = new AbortController();
+    const invocationReason = new Error('suspended invocation cancelled');
+    const transitionRejected = deferred<void>();
+    let rejectTransition = false;
+    const { runtime } = await runToReview(
+      (record) => {
+        if (!rejectTransition || record.topic !== 'playbook.trace') return;
+        const trace = record.payload as PlaybookTraceEvent;
+        if (trace.type !== 'fsm.transition') return;
+        rejectTransition = false;
+        transitionRejected.resolve();
+        throw invocationReason;
+      },
+      invocation.signal,
+    );
+
+    rejectTransition = true;
+    invocation.abort(invocationReason);
+    await transitionRejected.promise;
+    // Let the serialized background emission observe its rejection before
+    // the unrelated boundary drains the lane.
+    await new Promise((tick) => setTimeout(tick, 0));
+
+    await expect(
+      runtime.handleBossInput({ text: '', signal: signal() }),
+    ).resolves.toMatchObject({ outcome: 'no-action' });
+    await runtime.dispose();
+  });
+
+  it('forgives a parallel sibling finish rejection owned only by its invocation signal', async () => {
+    const coderResult = deferred<PlayerResult>();
+    let reviewerSignal: AbortSignal | undefined;
+    let reviewerFinishRejected = false;
+    const playerCalls: string[] = [];
+    const runtime = createPlaybookRuntime({});
+    await runtime.init(
+      session(
+        completePorts({
+          callPlayer: async (roleId, _prompt, invocationSignal) => {
+            playerCalls.push(roleId);
+            if (roleId === 'coder') return coderResult.promise;
+            reviewerSignal = invocationSignal;
+            return await new Promise<PlayerResult>((_resolve, reject) => {
+              invocationSignal.addEventListener(
+                'abort',
+                () => reject(invocationSignal.reason),
+                { once: true },
+              );
+            });
+          },
+          emitTelemetry: async (record) => {
+            if (record.topic !== 'playbook.trace') return;
+            const trace = record.payload as PlaybookTraceEvent;
+            const payload = trace.payload as {
+              roleId?: string;
+              status?: string;
+            };
+            if (
+              trace.type === 'player.call.finished' &&
+              payload.roleId === 'reviewer' &&
+              payload.status === 'aborted'
+            ) {
+              reviewerFinishRejected = true;
+              throw reviewerSignal!.reason;
+            }
+          },
+        }),
+      ),
+    );
+
+    const running = runtime.handleBossInput({
+      text: 'Choose the durable design.',
+      signal: signal(),
+    });
+    await vi.waitFor(() => expect(playerCalls).toHaveLength(2));
+    coderResult.resolve({
+      status: 'error',
+      error: 'coder proposal failed',
+    });
+
+    await expect(running).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(reviewerSignal?.aborted).toBe(true);
+    expect(reviewerFinishRejected).toBe(true);
+    await runtime.dispose();
+  });
+
   it('reports a distinct post-abort player rejection as an error, not an abort', async () => {
     const abortReason = new Error('Boss cancelled the turn.');
     const distinctFailure = new Error('player transport failed after abort');

@@ -584,6 +584,27 @@ function isAbortFailure(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted && Object.is(error, signal.reason);
 }
 
+interface AbortReasonClassifier {
+  isAbortReason(error: unknown): boolean;
+}
+
+function abortReasonClassifier(
+  ...sources: readonly (AbortSignal | AbortReasonClassifier | undefined)[]
+): AbortReasonClassifier {
+  const captured = sources.filter(
+    (source): source is AbortSignal | AbortReasonClassifier =>
+      source !== undefined,
+  );
+  return Object.freeze({
+    isAbortReason: (error: unknown): boolean =>
+      captured.some((source) =>
+        source instanceof AbortSignal
+          ? isAbortFailure(error, source)
+          : source.isAbortReason(error),
+      ),
+  });
+}
+
 function pendingQuestionsFromContext(
   context: Record<string, unknown>,
 ): PendingBossQuestion[] {
@@ -743,6 +764,9 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   let sessionIdentity: SessionIdentity | undefined;
   let actor: ReturnType<typeof createActor> | undefined;
   let currentSignal: AbortSignal | undefined;
+  let currentAborts: AbortReasonClassifier | undefined;
+  const actorSettlementAborts: AbortReasonClassifier[] = [];
+  let actorSettlementErrorAborts: AbortReasonClassifier | undefined;
   let currentTurnId: number | undefined;
   let previousState: PlaybookState | undefined;
   let suppressInspectionEmissions = false;
@@ -781,26 +805,35 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   ): void => {
     if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
   };
-  const latchInspectionError = (error: unknown): void => {
-    if (currentSignal !== undefined) {
-      latchControlPlaneError(error, currentSignal);
-    } else {
-      collectFailure(emissionFailures, error);
-    }
+  const latchInspectionError = (
+    error: unknown,
+    aborts: AbortReasonClassifier | undefined = currentAborts,
+  ): void => {
+    if (aborts?.isAbortReason(error)) return;
+    if (currentSignal !== undefined) controlPlaneError ??= error;
+    else collectFailure(emissionFailures, error);
   };
-  const enqueue = (fn: () => Promise<void>): Promise<void> => {
+  const enqueue = (
+    fn: () => Promise<void>,
+    aborts: AbortReasonClassifier | undefined = currentAborts,
+  ): Promise<void> => {
+    const enqueueAborts = aborts;
     const queued = emissionQueue.add(fn);
     activeEmissionCalls.add(queued);
     void queued.then(
       () => activeEmissionCalls.delete(queued),
       (error: unknown) => {
         activeEmissionCalls.delete(queued);
-        collectFailure(emissionFailures, error);
+        if (!enqueueAborts?.isAbortReason(error)) {
+          collectFailure(emissionFailures, error);
+        }
       },
     );
     return queued;
   };
-  const flush = async (): Promise<void> => {
+  const flush = async (
+    _aborts: AbortReasonClassifier | undefined = currentAborts,
+  ): Promise<void> => {
     while (true) {
       const active = [...activeEmissionCalls];
       if (active.length > 0) await Promise.allSettled(active);
@@ -816,8 +849,15 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     if (emissionFailures.length === 0) return;
     const failures = emissionFailures;
     emissionFailures = [];
-    if (failures.length === 1) throw failures[0];
-    throw new AggregateError(failures, 'decide runtime emissions failed');
+    const failure =
+      failures.length === 1
+        ? failures[0]
+        : new AggregateError(failures, 'decide runtime emissions failed');
+    // Enqueue ownership already classified every stored failure as distinct.
+    // Preserve that classification if an unrelated public boundary drains
+    // it with a signal whose reason happens to be the same object.
+    if (currentSignal !== undefined) controlPlaneError ??= failure;
+    throw failure;
   };
   const drainBoundaryCallsAndEmissions = async (): Promise<void> => {
     while (true) {
@@ -1039,6 +1079,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     payload: unknown,
     meta: { turnId?: number; callId?: string } = {},
     describedEmission?: (runtimePorts: PlaybookPorts) => Promise<void>,
+    aborts?: AbortReasonClassifier,
   ): Promise<void> => {
     const runtimePorts = requirePorts();
     const identity = requireSessionIdentity();
@@ -1062,16 +1103,20 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       ...(meta.callId !== undefined ? { callId: meta.callId } : {}),
       payload: jsonPayload,
     });
-    return enqueue(async () => {
-      await runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace });
-      await describedEmission?.(runtimePorts);
-    });
+    return enqueue(
+      async () => {
+        await runtimePorts.emitTelemetry({ topic: TRACE_TOPIC, payload: trace });
+        await describedEmission?.(runtimePorts);
+      },
+      aborts,
+    );
   };
   const emitTrace = (
     type: PlaybookTraceType,
     payload: unknown,
     meta: { turnId?: number; callId?: string } = {},
-  ): Promise<void> => enqueueTracedEmission(type, payload, meta);
+    aborts?: AbortReasonClassifier,
+  ): Promise<void> => enqueueTracedEmission(type, payload, meta, undefined, aborts);
   const emitBoundaryStatus = async (
     message: string,
     state: PlaybookState,
@@ -1100,8 +1145,9 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     meta: { turnId?: number; callId?: string },
     signal: AbortSignal,
   ): Promise<void> => {
+    const aborts = abortReasonClassifier(signal);
     try {
-      await emitTrace(startedType, identity, meta);
+      await emitTrace(startedType, identity, meta, aborts);
     } catch (error) {
       latchControlPlaneError(error, signal);
       try {
@@ -1119,6 +1165,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
             },
           },
           meta,
+          aborts,
         );
       } catch {
         // Preserve the start failure after one best-effort finish attempt.
@@ -1133,6 +1180,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     purpose: 'boss-input-classification' | 'player-output-adjudication',
     callStateId: string | undefined,
   ): Promise<string> => {
+    const aborts = abortReasonClassifier(signal);
     const identity = {
       purpose,
       ...(callStateId !== undefined ? { stateId: callStateId } : {}),
@@ -1178,6 +1226,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
             },
           },
           { turnId: currentTurnId, callId },
+          aborts,
         );
         throw error;
       }
@@ -1186,6 +1235,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         'judge.call.finished',
         { ...identity, status: 'ok', reply: finalText },
         { turnId: currentTurnId, callId },
+        aborts,
       );
       return finalText;
     });
@@ -1211,6 +1261,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     playerId?: string;
     result: PlayerResult;
   }> => {
+    const aborts = abortReasonClassifier(signal);
     if (!ROLE_ID_SET.has(input.role)) {
       throw new TypeError(
         `DECIDE player input role must name a declared local role`,
@@ -1251,6 +1302,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           },
         },
         { turnId: currentTurnId, callId },
+        aborts,
       );
     if (inFlightPlayerKeys.has(playerKey)) {
       const error = new Error(
@@ -1346,6 +1398,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
             : {}),
         },
         { turnId: currentTurnId, callId },
+        aborts,
       );
       return {
         roleId,
@@ -1371,64 +1424,70 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
   const player = fromPromise<PlayerOutput, PlayerInput>(
     async ({ input, signal }) => {
       const combined = combineSignals(signal, currentSignal);
-      // XState starts invoked actors while publishing the entering snapshot.
-      // Yield through the runtime emission queue before crossing the player
-      // boundary so state trace/status always precede its call-start trace.
+      const settlementAborts = abortReasonClassifier(combined);
       try {
-        await flush();
-      } catch (error) {
-        latchControlPlaneError(error, combined);
-        throw error;
-      }
-      combined.throwIfAborted();
-
-      let { roleId, playerId, result } = await callPlayer(input, combined);
-      if (result.status === 'ok' && isEmptyFinalText(result.finalText)) {
-        // DR-028: an `ok` result whose finalText is missing, empty, or
-        // whitespace-only earns exactly one corrective re-ask — the same
-        // composed call repeated, traced by runPlayerCall as its own
-        // player-call pair, with the resume selection re-read from the
-        // token map the first result left (PBRT-38). An abort that lands
-        // between the two calls ends the turn without the re-ask (aborts
-        // are never retried), and a rejecting finish emission rejects
-        // `callPlayer` itself, so it never reaches this branch (PBRT-47).
+        // XState starts invoked actors while publishing the entering snapshot.
+        // Yield through the runtime emission queue before crossing the player
+        // boundary so state trace/status always precede its call-start trace.
         combined.throwIfAborted();
-        ({ roleId, playerId, result } = await callPlayer(input, combined));
-      }
-      if (result.status !== 'ok') {
-        throw new Error(
-          `${roleLabel(roleId)}${
-            playerId === undefined ? '' : ` (${playerId})`
-          } returned status "${result.status}"${
-            result.error ? `: ${result.error}` : ''
-          }`,
-        );
-      }
-      const finalText = result.finalText ?? '';
-      if (isEmptyFinalText(finalText)) {
-        throw new Error(
-          `${roleLabel(roleId)}${
-            playerId === undefined ? '' : ` (${playerId})`
-          } returned status "ok" with no finalText`,
-        );
-      }
-      combined.throwIfAborted();
+        try {
+          await flush(settlementAborts);
+        } catch (error) {
+          latchControlPlaneError(error, combined);
+          throw error;
+        }
+        combined.throwIfAborted();
 
-      try {
-        const prompt = buildAdjudicatorPrompt(input, finalText);
-        return parseAdjudication(
-          await callJudge(
-            prompt,
-            combined,
-            'player-output-adjudication',
-            input.stateId,
-          ),
-          input,
-          finalText,
-        );
-      } catch (error) {
-        latchControlPlaneError(error, combined);
-        throw error;
+        let { roleId, playerId, result } = await callPlayer(input, combined);
+        if (result.status === 'ok' && isEmptyFinalText(result.finalText)) {
+          // DR-028: an `ok` result whose finalText is missing, empty, or
+          // whitespace-only earns exactly one corrective re-ask — the same
+          // composed call repeated, traced by runPlayerCall as its own
+          // player-call pair, with the resume selection re-read from the
+          // token map the first result left (PBRT-38). An abort that lands
+          // between the two calls ends the turn without the re-ask (aborts
+          // are never retried), and a rejecting finish emission rejects
+          // `callPlayer` itself, so it never reaches this branch (PBRT-47).
+          combined.throwIfAborted();
+          ({ roleId, playerId, result } = await callPlayer(input, combined));
+        }
+        if (result.status !== 'ok') {
+          throw new Error(
+            `${roleLabel(roleId)}${
+              playerId === undefined ? '' : ` (${playerId})`
+            } returned status "${result.status}"${
+              result.error ? `: ${result.error}` : ''
+            }`,
+          );
+        }
+        const finalText = result.finalText ?? '';
+        if (isEmptyFinalText(finalText)) {
+          throw new Error(
+            `${roleLabel(roleId)}${
+              playerId === undefined ? '' : ` (${playerId})`
+            } returned status "ok" with no finalText`,
+          );
+        }
+        combined.throwIfAborted();
+
+        try {
+          const prompt = buildAdjudicatorPrompt(input, finalText);
+          return parseAdjudication(
+            await callJudge(
+              prompt,
+              combined,
+              'player-output-adjudication',
+              input.stateId,
+            ),
+            input,
+            finalText,
+          );
+        } catch (error) {
+          latchControlPlaneError(error, combined);
+          throw error;
+        }
+      } finally {
+        actorSettlementAborts.push(settlementAborts);
       }
     },
   );
@@ -1440,7 +1499,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       trackBoundaryCall(
         Promise.resolve(requirePorts().callPlaybook(request, signal)),
       ),
-    emitStarted: async (event) => {
+    emitStarted: async (event, aborts) => {
       playbookCallTurnIds.set(event.callId, currentTurnId);
       await emitTrace(
         'playbook.call.started',
@@ -1453,9 +1512,10 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           ...(currentTurnId === undefined ? {} : { turnId: currentTurnId }),
           callId: event.callId,
         },
+        aborts,
       );
     },
-    emitFinished: async (event) => {
+    emitFinished: async (event, aborts) => {
       const turnId = playbookCallTurnIds.get(event.callId);
       try {
         await emitTrace(
@@ -1470,23 +1530,32 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
             ...(turnId === undefined ? {} : { turnId }),
             callId: event.callId,
           },
+          aborts,
         );
       } finally {
         playbookCallTurnIds.delete(event.callId);
       }
     },
     drain: flush,
-    bindResumeSignal: (signal) => {
+    bindResumeSignal: (signal, aborts) => {
       currentSignal = signal;
+      currentAborts = aborts ?? abortReasonClassifier(signal);
     },
-    onControlPlaneError: (error) => {
-      const signal = currentSignal;
-      if (!signal || !isAbortFailure(error, signal)) {
+    bindActorSettlement: (aborts) => {
+      actorSettlementAborts.push(aborts);
+    },
+    onControlPlaneError: (error, aborts) => {
+      if (
+        !aborts?.isAbortReason(error) &&
+        !currentAborts?.isAbortReason(error)
+      ) {
         controlPlaneError ??= error;
       }
     },
-    onBackgroundError: (error) => {
-      collectFailure(emissionFailures, error);
+    onBackgroundError: (error, aborts) => {
+      if (!aborts?.isAbortReason(error)) {
+        collectFailure(emissionFailures, error);
+      }
     },
   });
 
@@ -1494,10 +1563,27 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     actors: { player, playbook: nestedBridge.actorLogic },
   });
 
+  const consumeActorSettlementAborts = (
+    forSnapshot = false,
+  ): AbortReasonClassifier | undefined => {
+    const aborts = actorSettlementAborts.shift() ?? actorSettlementErrorAborts;
+    actorSettlementErrorAborts = undefined;
+    if (forSnapshot && aborts !== undefined) {
+      actorSettlementErrorAborts = aborts;
+      queueMicrotask(() => {
+        if (actorSettlementErrorAborts === aborts) {
+          actorSettlementErrorAborts = undefined;
+        }
+      });
+    }
+    return aborts;
+  };
+
   const inspect = (event: InspectionEvent): void => {
     if (event.type !== '@xstate.snapshot') return;
     if (actor === undefined || event.actorRef !== actor) return;
     if (suppressInspectionEmissions) return;
+    const settlementAborts = consumeActorSettlementAborts(true);
     try {
       const snapshot = event.snapshot as SnapshotFrom<typeof decideMachine>;
       const state = normalizePlaybookSnapshot(snapshot);
@@ -1518,6 +1604,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
             topic: TELEMETRY_TOPIC,
             payload: describedFsmPayload,
           }),
+        settlementAborts,
       ).catch(() => undefined);
 
       const priorIds = new Set(previousState?.activeStateIds ?? []);
@@ -1543,6 +1630,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           tracePayload,
           { turnId: currentTurnId },
           (emissionPorts) => emissionPorts.emitStatus(message, data),
+          settlementAborts,
         ).catch(() => undefined);
       };
 
@@ -1588,7 +1676,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         );
       }
     } catch (error) {
-      latchInspectionError(error);
+      latchInspectionError(error, settlementAborts);
     }
   };
 
@@ -1613,7 +1701,10 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     // it as a control error while a turn signal is active (unless it is
     // the abort reason itself), otherwise collect it with the emission
     // failures (slc/link.md §Abort).
-    actor.subscribe({ error: latchInspectionError });
+    actor.subscribe({
+      error: (error) =>
+        latchInspectionError(error, consumeActorSettlementAborts()),
+    });
   };
 
   // PBRT-6: the single seam that stops this runtime's actor. Stopping a
@@ -1797,6 +1888,9 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     judgeQueue.clear();
     actor = undefined;
     currentSignal = undefined;
+    currentAborts = undefined;
+    actorSettlementAborts.length = 0;
+    actorSettlementErrorAborts = undefined;
     currentTurnId = undefined;
     ports = undefined;
     sessionIdentity = undefined;
@@ -2049,12 +2143,17 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       const turnId = ++turnSequence;
       currentTurnId = turnId;
       currentSignal = turn.signal;
+      currentAborts = abortReasonClassifier(turn.signal);
       controlPlaneError = undefined;
       let result: PlaybookRunResult = resultForSnapshot(turn.signal);
       let settlement: unknown = result;
       const failures: unknown[] = [];
       try {
         await emitTrace('boss.input.received', { text: turn.text }, { turnId });
+        // A boundary entered aborted records the attempted input, then refuses
+        // delivery before deterministic mapping or the classifier can perform
+        // any host-visible work (DR-036 §5).
+        turn.signal.throwIfAborted();
         if (turn.text.trim().length === 0) {
           const state = currentState();
           result = { outcome: 'no-action', state };
@@ -2134,7 +2233,6 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         };
         settlement = { ...result, ...stateIdentity(state) };
       }
-      currentSignal = undefined;
       try {
         await emitTrace('boss.input.settled', settlement, { turnId });
       } catch (error) {
@@ -2155,6 +2253,8 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         }
       } finally {
         const primaryError = controlPlaneError;
+        currentSignal = undefined;
+        currentAborts = undefined;
         currentTurnId = undefined;
         controlPlaneError = undefined;
         if (primaryError !== undefined) throw primaryError;
@@ -2190,6 +2290,7 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       }
       currentTurnId = playbookCallTurnIds.get(callId);
       currentSignal = signal;
+      currentAborts = abortReasonClassifier(signal);
       controlPlaneError = undefined;
       let runResult: PlaybookRunResult | undefined;
       let operationError: unknown;
@@ -2216,23 +2317,46 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
       } catch (error) {
         drainError = error;
       }
-      // A failure candidate causally identical to the resume boundary's own
-      // signal reason is the abort's evidence, not a distinct failure —
-      // forgive it so an all-abort-identical set settles the aborted result
-      // instead of rejecting; a distinct failure keeps full control-error
-      // precedence (DR-036 §4).
-      const forgiveAbort = (candidate: unknown): unknown =>
-        candidate !== undefined && isAbortFailure(candidate, signal)
-          ? undefined
-          : candidate;
+      const aborts = currentAborts ?? abortReasonClassifier(signal);
+      // The control latch has already classified its failure as distinct
+      // under the operation that owned it. Only still-unclassified drain and
+      // operation candidates may be cancellation evidence for this resume.
+      const controlFailure = controlPlaneError;
+      const drainAbort =
+        controlFailure === undefined &&
+        drainError !== undefined &&
+        aborts.isAbortReason(drainError);
+      const operationAbort =
+        controlFailure === undefined &&
+        operationError !== undefined &&
+        aborts.isAbortReason(operationError);
+      const abortEvidence =
+        (drainAbort ? drainError : undefined) ??
+        (operationAbort ? operationError : undefined);
       const failure =
-        forgiveAbort(controlPlaneError) ??
-        forgiveAbort(drainError) ??
-        forgiveAbort(operationError);
+        controlFailure ??
+        (drainAbort ? undefined : drainError) ??
+        (operationAbort ? undefined : operationError);
       currentSignal = undefined;
+      currentAborts = undefined;
       currentTurnId = undefined;
       controlPlaneError = undefined;
       if (failure !== undefined) throw failure;
+      if (
+        abortEvidence !== undefined &&
+        runResult?.outcome !== 'terminal' &&
+        runResult?.outcome !== 'suspended'
+      ) {
+        const state = currentState();
+        runResult = {
+          outcome: 'aborted',
+          state,
+          error: normalizeErrorFull(abortEvidence) ?? {
+            name: 'AbortError',
+            message: String(abortEvidence),
+          },
+        };
+      }
       if (runResult === undefined) {
         if (signal.aborted) {
           // Every candidate was the abort's own evidence: settle on the
@@ -2298,6 +2422,9 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
           judgeQueue.clear();
           actor = undefined;
           currentSignal = undefined;
+          currentAborts = undefined;
+          actorSettlementAborts.length = 0;
+          actorSettlementErrorAborts = undefined;
           currentTurnId = undefined;
           ports = undefined;
           sessionIdentity = undefined;
@@ -2311,6 +2438,12 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
         }
       })();
       return disposalPromise;
+    },
+
+    // @internal — test-only parity with the shared factory's bridge escape
+    // hatch. This is hidden by the PlaybookRuntime return type.
+    _getNestedBridge() {
+      return nestedBridge;
     },
   };
 };

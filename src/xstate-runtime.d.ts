@@ -2,6 +2,14 @@ import { type AnyActorRef, type PromiseActorLogic, type SnapshotFrom } from 'xst
 import type { CaptainResult, JsonValue, NormalizedError, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookPendingCall, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookSuspendedCall, PlayerResult } from './runtime.js';
 export * from './xstate-playbook-runtime.js';
 /**
+ * Immutable cancellation provenance for one runtime operation. The captured
+ * signal identities do not change when a mutable runtime advances to another
+ * public boundary, while each signal's eventual reason remains observable.
+ */
+interface AbortReasonClassifier {
+    isAbortReason(error: unknown): boolean;
+}
+/**
  * Compose invocation-lifetime and imperative-boundary cancellation without
  * installing a second forwarding listener in each generated runtime.
  */
@@ -59,12 +67,14 @@ export interface NestedPlaybookBridgeOptions {
     /** Active public runtime boundary whose abort also owns a new child call. */
     getBoundarySignal?(): AbortSignal | undefined;
     callPlaybook(request: PlaybookCallRequest, signal: AbortSignal): Promise<PlaybookCallStart>;
-    emitStarted(event: PlaybookCallStarted): Promise<void>;
-    emitFinished(event: PlaybookCallFinished): Promise<void>;
-    drain(): Promise<void>;
-    bindResumeSignal?(signal: AbortSignal): void;
-    onControlPlaneError?(error: unknown): void;
-    onBackgroundError?(error: unknown): void;
+    emitStarted(event: PlaybookCallStarted, aborts?: AbortReasonClassifier): Promise<void>;
+    emitFinished(event: PlaybookCallFinished, aborts?: AbortReasonClassifier): Promise<void>;
+    drain(aborts?: AbortReasonClassifier): Promise<void>;
+    bindResumeSignal?(signal: AbortSignal, aborts?: AbortReasonClassifier): void;
+    /** Bind provenance to the root transition caused by this child result. */
+    bindActorSettlement?(aborts: AbortReasonClassifier): void;
+    onControlPlaneError?(error: unknown, aborts?: AbortReasonClassifier): void;
+    onBackgroundError?(error: unknown, aborts?: AbortReasonClassifier): void;
 }
 export declare class NestedPlaybookCallError extends Error {
     readonly result: PlaybookCallResult;

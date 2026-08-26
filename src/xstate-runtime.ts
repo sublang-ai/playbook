@@ -75,6 +75,40 @@ function isAbortReason(error: unknown, signal: AbortSignal): boolean {
   return signal.aborted && Object.is(error, signal.reason);
 }
 
+/**
+ * Immutable cancellation provenance for one runtime operation. The captured
+ * signal identities do not change when a mutable runtime advances to another
+ * public boundary, while each signal's eventual reason remains observable.
+ */
+interface AbortReasonClassifier {
+  isAbortReason(error: unknown): boolean;
+}
+
+function createAbortReasonClassifier(
+  ...sources: readonly (
+    | AbortSignal
+    | AbortReasonClassifier
+    | undefined
+  )[]
+): AbortReasonClassifier {
+  const captured = Object.freeze(
+    sources.filter(
+      (
+        source,
+      ): source is AbortSignal | AbortReasonClassifier =>
+        source !== undefined,
+    ),
+  );
+  return Object.freeze({
+    isAbortReason: (error: unknown): boolean =>
+      captured.some((source) =>
+        source instanceof AbortSignal
+          ? isAbortReason(error, source)
+          : source.isAbortReason(error),
+      ),
+  });
+}
+
 const NEVER_ABORTED_SIGNAL = new AbortController().signal;
 
 /**
@@ -119,7 +153,10 @@ export function registerPlaybookAbortCleanup(
   void cleanup.catch(() => undefined);
 }
 
-async function drainPlaybookAbortCleanups(signal: AbortSignal): Promise<void> {
+async function drainPlaybookAbortCleanups(
+  signal: AbortSignal,
+  aborts: AbortReasonClassifier,
+): Promise<void> {
   const failures: unknown[] = [];
   while (true) {
     const pending = abortCleanups.get(signal);
@@ -128,7 +165,12 @@ async function drainPlaybookAbortCleanups(signal: AbortSignal): Promise<void> {
     pending.clear();
     const outcomes = await Promise.allSettled(batch);
     for (const outcome of outcomes) {
-      if (outcome.status === 'rejected') failures.push(outcome.reason);
+      if (
+        outcome.status === 'rejected' &&
+        !aborts.isAbortReason(outcome.reason)
+      ) {
+        failures.push(outcome.reason);
+      }
     }
   }
   abortCleanups.delete(signal);
@@ -1123,12 +1165,29 @@ export interface NestedPlaybookBridgeOptions {
     request: PlaybookCallRequest,
     signal: AbortSignal,
   ): Promise<PlaybookCallStart>;
-  emitStarted(event: PlaybookCallStarted): Promise<void>;
-  emitFinished(event: PlaybookCallFinished): Promise<void>;
-  drain(): Promise<void>;
-  bindResumeSignal?(signal: AbortSignal): void;
-  onControlPlaneError?(error: unknown): void;
-  onBackgroundError?(error: unknown): void;
+  emitStarted(
+    event: PlaybookCallStarted,
+    aborts?: AbortReasonClassifier,
+  ): Promise<void>;
+  emitFinished(
+    event: PlaybookCallFinished,
+    aborts?: AbortReasonClassifier,
+  ): Promise<void>;
+  drain(aborts?: AbortReasonClassifier): Promise<void>;
+  bindResumeSignal?(
+    signal: AbortSignal,
+    aborts?: AbortReasonClassifier,
+  ): void;
+  /** Bind provenance to the root transition caused by this child result. */
+  bindActorSettlement?(aborts: AbortReasonClassifier): void;
+  onControlPlaneError?(
+    error: unknown,
+    aborts?: AbortReasonClassifier,
+  ): void;
+  onBackgroundError?(
+    error: unknown,
+    aborts?: AbortReasonClassifier,
+  ): void;
 }
 
 export class NestedPlaybookCallError extends Error {
@@ -1152,16 +1211,13 @@ interface ActiveCall {
   readonly finished: Deferred<void>;
   readonly controller: AbortController;
   readonly signal: AbortSignal;
+  readonly aborts: AbortReasonClassifier;
   phase: 'starting' | 'restoring' | 'suspended' | 'settling';
   childSessionId?: string;
   abortListener?: () => void;
   settlement?: Promise<void>;
   runError?: unknown;
   restoreRolledBack?: boolean;
-  // The resume boundary's own signal while its delivery settles: abort
-  // classification consults it alongside the invocation-lifetime signal
-  // (slc/link.md §Abort). Cleared with the call.
-  resumeSignal?: AbortSignal;
 }
 
 interface NestedPlaybookRestoreMode {
@@ -1530,21 +1586,29 @@ export function createNestedPlaybookBridge<
     (pendingCall: PlaybookPendingCall) => void
   >();
 
-  const reportBackgroundError = (error: unknown): void => {
+  const reportBackgroundError = (
+    error: unknown,
+    aborts?: AbortReasonClassifier,
+  ): void => {
+    if (aborts?.isAbortReason(error)) return;
     try {
-      options.onBackgroundError?.(error);
+      options.onBackgroundError?.(error, aborts);
     } catch {
       // Background observers are a terminal sink and cannot own cleanup.
     }
   };
 
-  const reportControlPlaneError = (error: unknown): void => {
+  const reportControlPlaneError = (
+    error: unknown,
+    aborts?: AbortReasonClassifier,
+  ): void => {
+    if (aborts?.isAbortReason(error)) return;
     try {
-      options.onControlPlaneError?.(error);
+      options.onControlPlaneError?.(error, aborts);
     } catch (callbackError) {
       // Observability callbacks must never prevent terminal cleanup of the
       // invocation they are observing.
-      reportBackgroundError(callbackError);
+      reportBackgroundError(callbackError, aborts);
     }
   };
 
@@ -1596,39 +1660,34 @@ export function createNestedPlaybookBridge<
 
   const clear = (active: ActiveCall): void => {
     detachAbortListener(active);
-    active.resumeSignal = undefined;
     if (current === active) current = undefined;
   };
-
-  // The applicable signals for a call's abort classification: its
-  // invocation-lifetime combined signal and — while a resume is being
-  // settled — the resume boundary's own signal (slc/link.md §Abort).
-  const isCallAbortReason = (error: unknown, active: ActiveCall): boolean =>
-    isAbortReason(error, active.signal) ||
-    (active.resumeSignal !== undefined &&
-      isAbortReason(error, active.resumeSignal));
 
   // A failure causally identical to an applicable abort reason is the
   // cancellation's own evidence, never a control-plane error.
   const reportNonAbortControlError = (
     error: unknown,
-    active: ActiveCall,
+    aborts: AbortReasonClassifier,
   ): void => {
-    if (!isCallAbortReason(error, active)) reportControlPlaneError(error);
+    reportControlPlaneError(error, aborts);
   };
 
   const emitFinish = async (
     active: ActiveCall,
     result: PlaybookCallResult,
+    aborts: AbortReasonClassifier,
   ): Promise<void> => {
-    await options.emitFinished({
-      callId: active.callId,
-      stateId: active.input.stateId,
-      playbookId: active.input.playbookId,
-      text: active.input.text,
-      result,
-    });
-    await options.drain();
+    await options.emitFinished(
+      {
+        callId: active.callId,
+        stateId: active.input.stateId,
+        playbookId: active.input.playbookId,
+        text: active.input.text,
+        result,
+      },
+      aborts,
+    );
+    await options.drain(aborts);
   };
 
   const finishImmediate = async (
@@ -1637,17 +1696,18 @@ export function createNestedPlaybookBridge<
     controlError?: unknown,
     resultAfterAbortCleanup?: () => PlaybookCallResult,
   ): Promise<JsonValue | undefined> => {
+    const aborts = active.aborts;
     let effectiveResult = result;
     let cleanupControlError: unknown;
     if (result.status === 'aborted' || active.signal.aborted) {
       try {
-        await drainPlaybookAbortCleanups(active.signal);
+        await drainPlaybookAbortCleanups(active.signal, aborts);
       } catch (error) {
         // A cleanup rejection identical to an applicable abort reason is
         // the cancellation's own evidence — no latch, no result override.
-        if (!isCallAbortReason(error, active)) {
+        if (!aborts.isAbortReason(error)) {
           cleanupControlError = error;
-          reportControlPlaneError(error);
+          reportControlPlaneError(error, aborts);
           effectiveResult = resultFromThrown(
             active.input.playbookId,
             active.childSessionId,
@@ -1662,15 +1722,16 @@ export function createNestedPlaybookBridge<
     }
     let finishControlError: unknown;
     try {
-      await emitFinish(active, effectiveResult);
+      await emitFinish(active, effectiveResult, aborts);
     } catch (error) {
-      reportNonAbortControlError(error, active);
+      reportNonAbortControlError(error, aborts);
       finishControlError = error;
     } finally {
       // An immediate call can never be resumed. Even when its finish
       // emission fails, do not leave a permanently unresumable call in the
       // bridge and prevent disposal or a later invocation.
       clear(active);
+      options.bindActorSettlement?.(aborts);
     }
     if (controlError !== undefined) throw controlError;
     if (cleanupControlError !== undefined) throw cleanupControlError;
@@ -1682,6 +1743,7 @@ export function createNestedPlaybookBridge<
     active: ActiveCall,
     result: PlaybookCallResult,
     controlError?: unknown,
+    aborts: AbortReasonClassifier = active.aborts,
   ): Promise<void> => {
     if (active.phase === 'settling' && active.settlement) {
       await active.settlement;
@@ -1699,19 +1761,18 @@ export function createNestedPlaybookBridge<
           effectiveResult = resultFromThrown(
             active.input.playbookId,
             active.childSessionId,
-            active.signal.reason ??
-              new Error('Nested playbook invocation aborted'),
+            active.signal.reason,
             true,
           );
         }
         try {
-          await drainPlaybookAbortCleanups(active.signal);
+          await drainPlaybookAbortCleanups(active.signal, aborts);
         } catch (cleanupError) {
           // A cleanup rejection identical to an applicable abort reason is
           // the cancellation's own evidence — no latch, no result override.
-          if (!isCallAbortReason(cleanupError, active)) {
+          if (!aborts.isAbortReason(cleanupError)) {
             cleanupControlError = cleanupError;
-            reportControlPlaneError(cleanupError);
+            reportControlPlaneError(cleanupError, aborts);
             effectiveResult = resultFromThrown(
               active.input.playbookId,
               active.childSessionId,
@@ -1722,7 +1783,7 @@ export function createNestedPlaybookBridge<
         }
       }
       try {
-        await emitFinish(active, effectiveResult);
+        await emitFinish(active, effectiveResult, aborts);
       } catch (error) {
         // A finish event is the durable return boundary. If it cannot be
         // emitted and drained, the child result must not remain retryable:
@@ -1731,14 +1792,14 @@ export function createNestedPlaybookBridge<
         // rejection that is an applicable abort reason — the invocation's
         // or the settling resume's — evidences cancellation, not a
         // control-plane failure (slc/link.md §Abort).
-        if (!isCallAbortReason(error, active)) {
-          reportControlPlaneError(error);
-        }
+        reportControlPlaneError(error, aborts);
         clear(active);
+        options.bindActorSettlement?.(aborts);
         active.deferred.reject(error);
         throw error;
       }
       clear(active);
+      options.bindActorSettlement?.(aborts);
       if (controlError !== undefined) {
         active.deferred.reject(controlError);
       } else if (cleanupControlError !== undefined) {
@@ -1772,6 +1833,7 @@ export function createNestedPlaybookBridge<
     active.restoreRolledBack = true;
     clear(active);
     usedCallIds.delete(active.callId);
+    options.bindActorSettlement?.(active.aborts);
     active.deferred.reject(error);
     return active;
   };
@@ -1785,11 +1847,11 @@ export function createNestedPlaybookBridge<
       const result = resultFromThrown(
         active.input.playbookId,
         active.childSessionId,
-        active.signal.reason ?? new Error('Nested playbook invocation aborted'),
+        active.signal.reason,
         true,
       );
       void settlePending(active, result).catch((error: unknown) => {
-        reportBackgroundError(error);
+        reportBackgroundError(error, active.aborts);
       });
     };
     active.abortListener = abortListener;
@@ -1802,7 +1864,7 @@ export function createNestedPlaybookBridge<
       try {
         listener(pendingCall);
       } catch (error) {
-        reportBackgroundError(error);
+        reportBackgroundError(error, active.aborts);
       }
     }
     if (active.signal.aborted) abortListener();
@@ -1886,10 +1948,17 @@ export function createNestedPlaybookBridge<
         }
         const controller = new AbortController();
         let callSignal: AbortSignal;
+        let callAborts: AbortReasonClassifier;
         try {
+          const boundarySignal = options.getBoundarySignal?.();
           callSignal = combineAbortSignals(
             invocationSignal,
-            options.getBoundarySignal?.(),
+            boundarySignal,
+            controller.signal,
+          );
+          callAborts = createAbortReasonClassifier(
+            invocationSignal,
+            boundarySignal,
             controller.signal,
           );
         } catch (error) {
@@ -1906,6 +1975,7 @@ export function createNestedPlaybookBridge<
           finished: deferred<void>(),
           controller,
           signal: callSignal,
+          aborts: callAborts,
           phase: 'restoring',
           childSessionId: seed.childSessionId,
         };
@@ -1924,8 +1994,7 @@ export function createNestedPlaybookBridge<
           }
           rollbackRestoredCall(
             mode,
-            active.signal.reason ??
-              new Error('Restored nested playbook invocation aborted'),
+            active.signal.reason,
           );
         };
         active.abortListener = restoreAbortListener;
@@ -1967,10 +2036,17 @@ export function createNestedPlaybookBridge<
       usedCallIds.add(callId);
       const controller = new AbortController();
       let callSignal: AbortSignal;
+      let callAborts: AbortReasonClassifier;
       try {
+        const boundarySignal = options.getBoundarySignal?.();
         callSignal = combineAbortSignals(
           invocationSignal,
-          options.getBoundarySignal?.(),
+          boundarySignal,
+          controller.signal,
+        );
+        callAborts = createAbortReasonClassifier(
+          invocationSignal,
+          boundarySignal,
           controller.signal,
         );
       } catch (error) {
@@ -1983,6 +2059,7 @@ export function createNestedPlaybookBridge<
         finished: deferred<void>(),
         controller,
         signal: callSignal,
+        aborts: callAborts,
         phase: 'starting',
       };
       current = active;
@@ -1992,23 +2069,26 @@ export function createNestedPlaybookBridge<
         // for their entering state. Yield through the runtime's global queue so
         // that transition/status telemetry is enqueued before call.started.
         try {
-          await options.drain();
+          await options.drain(active.aborts);
         } catch (error) {
-          reportNonAbortControlError(error, active);
+          reportNonAbortControlError(error, active.aborts);
           clear(active);
           throw error;
         }
         try {
-          await options.emitStarted({ callId, ...normalizedInput });
+          await options.emitStarted(
+            { callId, ...normalizedInput },
+            active.aborts,
+          );
         } catch (error) {
           // A start-sink rejection identical to the applicable abort
           // reason is the cancellation itself: the pair finishes
           // `aborted` and nothing is reported (slc/link.md §Abort).
-          const controlError = isCallAbortReason(error, active)
+          const controlError = active.aborts.isAbortReason(error)
             ? undefined
             : error;
           if (controlError !== undefined) {
-            reportControlPlaneError(controlError);
+            reportControlPlaneError(controlError, active.aborts);
           }
           return await finishImmediate(
             active,
@@ -2022,13 +2102,13 @@ export function createNestedPlaybookBridge<
           );
         }
         try {
-          await options.drain();
+          await options.drain(active.aborts);
         } catch (error) {
-          const controlError = isCallAbortReason(error, active)
+          const controlError = active.aborts.isAbortReason(error)
             ? undefined
             : error;
           if (controlError !== undefined) {
-            reportControlPlaneError(controlError);
+            reportControlPlaneError(controlError, active.aborts);
           }
           return await finishImmediate(
             active,
@@ -2067,7 +2147,7 @@ export function createNestedPlaybookBridge<
           const openingCleanup = starting.then(
             () => undefined,
             (error: unknown) => {
-              if (isAbortReason(error, active.signal)) return;
+              if (active.aborts.isAbortReason(error)) return;
               throw error;
             },
           );
@@ -2084,10 +2164,12 @@ export function createNestedPlaybookBridge<
           }
           rawStart = await withAbort(starting, active.signal);
         } catch (error) {
-          const controlError = isAbortReason(error, active.signal)
+          const controlError = active.aborts.isAbortReason(error)
             ? undefined
             : error;
-          if (controlError !== undefined) reportControlPlaneError(controlError);
+          if (controlError !== undefined) {
+            reportControlPlaneError(controlError, active.aborts);
+          }
           const result = resultFromThrown(
             normalizedInput.playbookId,
             undefined,
@@ -2275,9 +2357,7 @@ export function createNestedPlaybookBridge<
       }
       const active = mode.active;
       if (active.signal.aborted) {
-        const error =
-          active.signal.reason ??
-          new Error('Restored nested playbook invocation aborted');
+        const error = active.signal.reason;
         rollbackRestoredCall(mode, error);
         restoreMode = undefined;
         throw error;
@@ -2302,7 +2382,7 @@ export function createNestedPlaybookBridge<
         try {
           listener(pendingCall);
         } catch (error) {
-          reportBackgroundError(error);
+          reportBackgroundError(error, current?.aborts);
         }
       }
       return () => pendingListeners.delete(listener);
@@ -2350,15 +2430,14 @@ export function createNestedPlaybookBridge<
       // (slc/link.md §Nested playbook bridge). Identity and validation
       // control errors above still win — they are the caller's defects.
       if (signal.aborted) {
-        throw signal.reason ?? new Error('playbook resume aborted');
+        throw signal.reason;
       }
-      active.resumeSignal = signal;
-      options.bindResumeSignal?.(signal);
-      try {
-        await settlePending(active, validatedResult);
-      } finally {
-        active.resumeSignal = undefined;
-      }
+      const resumeAborts = createAbortReasonClassifier(
+        active.aborts,
+        signal,
+      );
+      options.bindResumeSignal?.(signal, resumeAborts);
+      await settlePending(active, validatedResult, undefined, resumeAborts);
     },
     abortPending,
     async dispose() {

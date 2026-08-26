@@ -8,6 +8,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -794,9 +795,13 @@ describe('packed tarball contents (RELEASE-18)', () => {
         // but not from verification (meta-33): the exempted target must be
         // a repository file, and its fragment a real anchor of that file.
         if (doc.startsWith('slc/') && dest.startsWith('specs/')) {
-          if (!existsSync(join(repoRoot, dest))) {
+          const repositoryTarget = join(repoRoot, dest);
+          if (
+            !existsSync(repositoryTarget) ||
+            !statSync(repositoryTarget).isFile()
+          ) {
             failures.push(
-              `${where} exempted slc→specs citation target missing from the repository: ${dest}`,
+              `${where} exempted slc→specs citation target is not a repository file: ${dest}`,
             );
           } else if (
             fragment !== '' &&
@@ -838,8 +843,11 @@ describe('packed tarball contents (RELEASE-18)', () => {
   // living pointer. `linksOf` collects relative links only, so those URLs
   // escape both the closure above and scripts/check-links.mjs (meta-33);
   // this scan verifies each one against the repository tree: `blob` and
-  // `tree` links both name exactly `main`, their path exists, and a fragment
-  // on a Markdown target names an anchor that file renders.
+  // `tree` links both name this repository and exactly `main`, their path has
+  // the right file/directory kind, and a fragment on a Markdown target names
+  // an anchor that file renders. Other repositories remain ordinary external
+  // citations; a foreign owner/repository naming a local path is a malformed
+  // living pointer rather than an escape from this check.
   it('resolves every living-pointer URL in packed markdown against the repository', () => {
     const npmCache = mkdtempSync(join(tmpdir(), 'playbook-npm-cache-'));
     let out: string;
@@ -883,8 +891,8 @@ describe('packed tarball contents (RELEASE-18)', () => {
     };
     const blankCodeSpans = (text: string): string =>
       text.replace(CODE_SPAN, (span) => span.replace(/[^\n]/g, ' '));
-    const LIVING_POINTER =
-      /https:\/\/github\.com\/sublang-ai\/playbook\/(blob|tree)\/([^/]+)\/([^#)\s]+)(#[^)\s]*)?/g;
+    const GITHUB_CONTENT_POINTER =
+      /https:\/\/github\.com\/([^/)\s]+)\/([^/)\s]+)\/(blob|tree)\/([^/]+)\/([^#)\s]+)(#[^)\s]*)?/g;
     const decode = (part: string): string => {
       try {
         return decodeURIComponent(part);
@@ -901,25 +909,48 @@ describe('packed tarball contents (RELEASE-18)', () => {
       const body = blankCodeSpans(
         blankFences(readFileSync(join(repoRoot, doc), 'utf8')),
       );
-      for (const match of body.matchAll(LIVING_POINTER)) {
-        scanned += 1;
-        const [url, form, branch, pathPart, fragmentPart] = match;
-        forms.add(form);
+      for (const match of body.matchAll(GITHUB_CONTENT_POINTER)) {
+        const [url, owner, repository, form, branch, pathPart, fragmentPart] =
+          match;
         const line = body.slice(0, match.index).split('\n').length;
         const where = `${doc}:${line} (${url})`;
+        const dest = posix.normalize(decode(pathPart));
+        const safePath = !dest.startsWith('..') && !posix.isAbsolute(dest);
+        const repositoryTarget = join(repoRoot, dest);
+        const targetExists = safePath && existsSync(repositoryTarget);
+        const isThisRepository =
+          owner === 'sublang-ai' && repository === 'playbook';
+        if (!isThisRepository) {
+          if (targetExists) {
+            failures.push(
+              `${where} points at local path ${dest} through ${owner}/${repository}, not sublang-ai/playbook`,
+            );
+          }
+          continue;
+        }
+        scanned += 1;
+        forms.add(form);
         if (branch !== 'main') {
           failures.push(
             `${where} pins branch ${branch}, not the main living pointer`,
           );
           continue;
         }
-        const dest = posix.normalize(decode(pathPart));
-        if (dest.startsWith('..') || posix.isAbsolute(dest)) {
+        if (!safePath) {
           failures.push(`${where} escapes the repository: ${dest}`);
           continue;
         }
-        if (!existsSync(join(repoRoot, dest))) {
-          failures.push(`${where} targets no repository file: ${dest}`);
+        if (!targetExists) {
+          failures.push(`${where} targets no repository path: ${dest}`);
+          continue;
+        }
+        const target = statSync(repositoryTarget);
+        if (form === 'blob' && !target.isFile()) {
+          failures.push(`${where} blob target is not a file: ${dest}`);
+          continue;
+        }
+        if (form === 'tree' && !target.isDirectory()) {
+          failures.push(`${where} tree target is not a directory: ${dest}`);
           continue;
         }
         const fragment =
