@@ -63,6 +63,7 @@ meta.md       The spec of specs
 | [DR-035](decisions/035-truthful-terminal-meaning.md) | 035-truthful-terminal-meaning.md | A final state's description is the workflow's published terminal meaning, so distinct terminal outcomes reach distinct final states |
 | [DR-036](decisions/036-coherent-abort-settlement.md) | 036-coherent-abort-settlement.md | One abort-settlement model: exact-identity cancellation classified at each latch, machine-state settlement precedence with terminal ahead of a coincident abort, delivery refused on a pre-aborted boundary, and invocation-owned resources held to settlement |
 | [DR-037](decisions/037-terminal-result-meaning.md) | 037-terminal-result-meaning.md | A terminal run result carries the reached final state's authored Boss-facing meaning independently of optional runtime control capabilities |
+| [DR-038](decisions/038-universal-run-resumption.md) | 038-universal-run-resumption.md | Proposed: resumption as a capability-gated machine property — retained pre-terminal generations with their nested stacks, cross-session adoption under an exact structural envelope, ledger-authoritative players, and a Captain resume selection |
 
 ## Intents
 
@@ -110,6 +111,7 @@ meta.md       The spec of specs
 | [IR-043](intents/043-truthful-terminal-meaning.md) | 043-truthful-terminal-meaning.md | Implement DR-035: one final state per authored terminal outcome, splitting CODE's overloaded `done` |
 | [IR-044](intents/044-durable-failure-retry-continuity.md) | 044-durable-failure-retry-continuity.md | Implement DR-034: the failure-state retry derives from the persisted machine snapshot, so a continued session recovers in place |
 | [IR-045](intents/045-coherent-abort-settlement.md) | 045-coherent-abort-settlement.md | Implement DR-036: latch-site exact-identity classification, machine-state settlement precedence, refused pre-aborted delivery, and invocation-spanning resource ownership across the engine and DECIDE |
+| [IR-046](intents/046-universal-run-resumption.md) | 046-universal-run-resumption.md | Implement DR-038: retained pre-terminal generations, the optional adoption capability, cross-session transfer, ledger-bound players, and the Captain resume selection across both front ends |
 
 ## Packages
 
