@@ -5,7 +5,7 @@
 
 ## Status
 
-Planned
+In progress
 
 ## Intent
 
@@ -24,7 +24,7 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
 
 ## Tasks
 
-1. **Declare unfinished final states in linked artifacts.**
+1. **Declare unfinished final states in linked artifacts.** _[done]_
    Emit the unfinished final-state id set as link-time metadata beside the resumable-state registry, declare it for the maintained artifacts, and land the `slc/link.md` output note and conformance tests.
 2. **Retain the pre-terminal generation atomically.**
    Extend the captain session record with the per-root-playbook retained generation — root and nested snapshots with call bridges — written at every settlement that leaves unfinished work, replaced in place, cleared on clean completion, and kept across disposal; land the store items in `playbook-cli.md` and the session-store tests.

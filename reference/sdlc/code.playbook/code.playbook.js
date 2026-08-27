@@ -17,6 +17,9 @@ const CONTINUATION_PREAMBLE = 'You previously paused this task to ask Boss a que
 const VERBATIM_PAYLOAD_FIELDS = new Set([
     'coderOutput',
 ]);
+const UNFINISHED_FINAL_STATE_IDS = new Set([
+    'reportedReviewFailure',
+]);
 function snapshotCodeOptions(value) {
     const captured = snapshotJsonValue(value, 'CODE runtime options');
     if (captured === null ||
@@ -78,6 +81,7 @@ function composePlayerPrompt(input, promptIdentity) {
 export const _internal = {
     composePlayerPrompt,
     VERBATIM_PAYLOAD_FIELDS,
+    UNFINISHED_FINAL_STATE_IDS,
 };
 const runtimeSpec = {
     label: 'CODE',
@@ -108,6 +112,7 @@ const runtimeSpec = {
     composePlayerPrompt: (input, promptIdentity) => composePlayerPrompt(input, promptIdentity),
     verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
     controlContextFields: ['phase'],
+    unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,
     transitionEventFields: ['callerInput', 'answer', 'questionId'],
 };
 const createPlaybookRuntime = createXStatePlaybookRuntime(codingMachine, runtimeSpec);

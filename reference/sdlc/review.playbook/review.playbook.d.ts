@@ -8,6 +8,7 @@ declare function composePlayerPrompt(input: PlayerInput, promptIdentity: XStateP
 export declare const _internal: {
     composePlayerPrompt: typeof composePlayerPrompt;
     VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string>;
+    UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string>;
 };
 declare const createPlaybookRuntime: PlaybookRuntimeFactory<ReviewPlaybookOptions>;
 export default createPlaybookRuntime;

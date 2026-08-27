@@ -5,7 +5,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
 
-import createCaptainPlaybookRuntime from '../reference/sdlc/captain.playbook/captain.playbook.js';
+import createCaptainPlaybookRuntime, {
+  _internal,
+} from '../reference/sdlc/captain.playbook/captain.playbook.js';
 import { SUPPORTED_ARTIFACT_SCHEMAS } from './xstate-runtime.js';
 
 it('loads the roleless Captain as an artifact-schema-2 module', () => {
@@ -32,5 +34,9 @@ it('loads the roleless Captain as an artifact-schema-2 module', () => {
   // factory leaves import and `run --help` alive while the first runtime
   // request dies as the prefixed setup diagnostic.
   expect(source).toContain('roleStates: {}');
+  expect([..._internal.UNFINISHED_FINAL_STATE_IDS]).toEqual([]);
+  expect(source).toContain(
+    'unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS',
+  );
   expect(source).not.toContain('playerStates:');
 });

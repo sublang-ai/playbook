@@ -538,6 +538,18 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     );
   });
 
+  it('requires link-time unfinished-final metadata in emitted artifacts', () => {
+    const output = sectionOf(linkSpec, 'Output');
+    const enumeration = /Supplies in `spec` only what the factory cannot read[\s\S]*?\.\n/.exec(
+      output,
+    )?.[0];
+    expect(enumeration).toBeDefined();
+    expect(enumeration).toContain('unfinishedFinalStateIds');
+    expect(output).toMatch(/mechanical link-time metadata/);
+    expect(output).toMatch(/explicitly empty when no terminal outcome does/);
+    expect(output).toMatch(/declaration alone grants no retention or adoption/);
+  });
+
   // PBRT-34/35: every authored contract type is exported.
   it('exports every shared contract type', () => {
     for (const name of [

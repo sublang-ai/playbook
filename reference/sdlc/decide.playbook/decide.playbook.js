@@ -67,6 +67,9 @@ const ROLE_ID_SET = new Set(ROLE_IDS);
 const roleLabel = (roleId) => roleId === 'coder' ? 'Coder' : 'Reviewer';
 const BOSS_INTERRUPT_TARGETS = ['independentProposals'];
 const BOSS_INTERRUPT_TARGET_IDS = new Set(BOSS_INTERRUPT_TARGETS);
+const UNFINISHED_FINAL_STATE_IDS = new Set([
+    'reportedReviewFailure',
+]);
 const TELEMETRY_TOPIC = 'playbook.fsm.state';
 const TRACE_TOPIC = 'playbook.trace';
 const CONTINUATION_PREAMBLE = 'You previously paused this task to ask Boss a question; Boss has now replied. Continue the same task using the reply below.';
@@ -1935,6 +1938,7 @@ export const _internal = {
     ROLE_STATE_IDS,
     VERBATIM_PAYLOAD_FIELDS,
     BOSS_INTERRUPT_TARGETS,
+    UNFINISHED_FINAL_STATE_IDS,
     CONTINUATION_PREAMBLE,
     TELEMETRY_TOPIC,
 };

@@ -17,6 +17,7 @@ const VERBATIM_PAYLOAD_FIELDS = new Set([
     'reviewerOutput',
     'coderOutput',
 ]);
+const UNFINISHED_FINAL_STATE_IDS = new Set();
 function snapshotReviewOptions(value) {
     const captured = snapshotJsonValue(value, 'REVIEW runtime options');
     if (captured === null ||
@@ -68,6 +69,7 @@ function composePlayerPrompt(input, promptIdentity) {
 export const _internal = {
     composePlayerPrompt,
     VERBATIM_PAYLOAD_FIELDS,
+    UNFINISHED_FINAL_STATE_IDS,
 };
 const runtimeSpec = {
     label: 'REVIEW',
@@ -106,6 +108,7 @@ const runtimeSpec = {
     composePlayerPrompt: (input, promptIdentity) => composePlayerPrompt(input, promptIdentity),
     verbatimPayloadFields: VERBATIM_PAYLOAD_FIELDS,
     controlContextFields: [],
+    unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,
     transitionEventFields: [
         'callerInput',
         'bossIntent',

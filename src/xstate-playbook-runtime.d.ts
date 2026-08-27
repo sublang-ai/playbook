@@ -226,6 +226,8 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
      * surfaced first-class by the view and shall not be named here.
      */
     controlContextFields?: readonly string[];
+    /** Root final states whose terminal outcome leaves unfinished work. Default: none. */
+    unfinishedFinalStateIds?: ReadonlySet<string>;
     /** States that may suspend for a Boss reply. Default: targets of the FSM's `awaitBossReply` BOSS_REPLY transitions. */
     resumableStateIds?: ReadonlySet<string>;
     /** Human status lines for a root transition. Default: guard, declared-player, question, and failure lines. */

@@ -4584,6 +4584,17 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
       expect(source).toContain('controlContextFields:');
     });
 
+    it.each(artifacts)('%s declares its unfinished final states', (
+      _path,
+      source,
+    ) => {
+      expect(source).toContain('UNFINISHED_FINAL_STATE_IDS');
+      if (!source.includes('createXStatePlaybookRuntime(')) return;
+      expect(source).toContain(
+        'unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS',
+      );
+    });
+
     // DR-034's companion standing guard. A recoverable failure state whose
     // artifact names no retry source is recoverable only while its process
     // lives, and the engine cannot say so for a third-party artifact — so

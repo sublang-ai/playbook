@@ -773,6 +773,8 @@ function statusesForState(
   }
 }
 
+const UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string> = new Set();
+
 // Internal export surface for verification and tests. Not part of the
 // stable public API; the leading underscore signals "subject to change."
 export const _internal = {
@@ -789,6 +791,7 @@ export const _internal = {
   validateParsedActingDecision,
   statusesForState,
   normalizeError,
+  UNFINISHED_FINAL_STATE_IDS,
 };
 
 // The Captain-specific spec handed to the shared runtime factory
@@ -834,6 +837,7 @@ const runtimeSpec: XStatePlaybookRuntimeSpec<ValidatedCaptainOptions> = {
     'receiptError',
     'leafStateSummary',
   ],
+  unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,
   statusesForState,
 };
 

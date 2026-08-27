@@ -494,6 +494,7 @@ function statusesForState(state, context) {
             return [];
     }
 }
+const UNFINISHED_FINAL_STATE_IDS = new Set();
 // Internal export surface for verification and tests. Not part of the
 // stable public API; the leading underscore signals "subject to change."
 export const _internal = {
@@ -509,6 +510,7 @@ export const _internal = {
     validateParsedActingDecision,
     statusesForState,
     normalizeError,
+    UNFINISHED_FINAL_STATE_IDS,
 };
 // The Captain-specific spec handed to the shared runtime factory
 // (slc/link.md §Output, DR-019). Generic machinery — actor wiring, boundary
@@ -545,6 +547,7 @@ const runtimeSpec = {
         'receiptError',
         'leafStateSummary',
     ],
+    unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS,
     statusesForState,
 };
 // DR-022's compat check fails fast at factory construction. The Captain is

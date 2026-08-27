@@ -185,6 +185,9 @@ const BOSS_INTERRUPT_TARGETS = ['independentProposals'] as const;
 const BOSS_INTERRUPT_TARGET_IDS: ReadonlySet<string> = new Set(
   BOSS_INTERRUPT_TARGETS,
 );
+const UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string> = new Set([
+  'reportedReviewFailure',
+]);
 
 const TELEMETRY_TOPIC = 'playbook.fsm.state';
 const TRACE_TOPIC = 'playbook.trace';
@@ -2508,6 +2511,7 @@ export const _internal = {
   ROLE_STATE_IDS,
   VERBATIM_PAYLOAD_FIELDS,
   BOSS_INTERRUPT_TARGETS,
+  UNFINISHED_FINAL_STATE_IDS,
   CONTINUATION_PREAMBLE,
   TELEMETRY_TOPIC,
 };

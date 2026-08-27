@@ -92,6 +92,7 @@ export declare const _internal: {
     validateParsedActingDecision: typeof validateParsedActingDecision;
     statusesForState: typeof statusesForState;
     normalizeError: typeof normalizeError;
+    UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string>;
 };
 export declare function createPlaybookRuntime(options: PlaybookRuntimeOptions): PlaybookRuntime;
 declare const factory: PlaybookRuntimeFactory<PlaybookRuntimeOptions>;

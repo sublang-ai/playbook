@@ -80,6 +80,8 @@ const linkedWorkflows = [
     ),
     linkedFields: codeInternal.VERBATIM_PAYLOAD_FIELDS,
     expectedFields: ['coderOutput'],
+    unfinishedFinalStateIds: codeInternal.UNFINISHED_FINAL_STATE_IDS,
+    expectedUnfinishedFinalStateIds: ['reportedReviewFailure'],
   },
   {
     id: 'REVIEW',
@@ -90,6 +92,8 @@ const linkedWorkflows = [
     ),
     linkedFields: reviewInternal.VERBATIM_PAYLOAD_FIELDS,
     expectedFields: ['reviewerOutput', 'coderOutput'],
+    unfinishedFinalStateIds: reviewInternal.UNFINISHED_FINAL_STATE_IDS,
+    expectedUnfinishedFinalStateIds: [],
   },
   {
     id: 'DECIDE',
@@ -100,6 +104,8 @@ const linkedWorkflows = [
     ),
     linkedFields: decideInternal.VERBATIM_PAYLOAD_FIELDS,
     expectedFields: ['coderProposal', 'reviewerProposal', 'coderOutput'],
+    unfinishedFinalStateIds: decideInternal.UNFINISHED_FINAL_STATE_IDS,
+    expectedUnfinishedFinalStateIds: ['reportedReviewFailure'],
   },
 ] as const;
 
@@ -114,6 +120,15 @@ describe('SLC Source -> GEARS prompt contract', () => {
       expect([...verbatimFieldsFromGears(gears)]).toEqual(expectedFields);
       expect([...linkedFields]).toEqual(expectedFields);
       expect(checkLinkedVerbatimContract(gears, linkedFields)).toEqual([]);
+    },
+  );
+
+  it.each(linkedWorkflows)(
+    '$id declares its exact unfinished root final states',
+    ({ unfinishedFinalStateIds, expectedUnfinishedFinalStateIds }) => {
+      expect([...unfinishedFinalStateIds]).toEqual(
+        expectedUnfinishedFinalStateIds,
+      );
     },
   );
 

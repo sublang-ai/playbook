@@ -59,6 +59,7 @@ export declare const _internal: {
     ROLE_STATE_IDS: ReadonlySet<string>;
     VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string>;
     BOSS_INTERRUPT_TARGETS: readonly ["independentProposals"];
+    UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string>;
     CONTINUATION_PREAMBLE: string;
     TELEMETRY_TOPIC: string;
 };

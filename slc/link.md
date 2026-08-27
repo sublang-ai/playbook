@@ -1694,6 +1694,10 @@ The `playbook.trace` copies are the host-agnostic runtime-boundary record requir
 ## Output
 
 The link compiler emits one TypeScript module per playbook.
+Every linked artifact shall emit an `unfinishedFinalStateIds` set beside its resumable-state registry as mechanical link-time metadata.
+The set shall contain exactly the stable ids of root `type: 'final'` states whose terminal outcomes leave the procedure unfinished, and shall be explicitly empty when no terminal outcome does.
+The linker shall not infer the set from a state description, opaque output, or procedure prose.
+For a factory-backed artifact the set is a `spec` member; a bespoke artifact shall retain equivalent linked metadata, and the declaration alone grants no retention or adoption capability.
 For an FSM that declares no `type: 'parallel'` state — necessarily flat
 under [gears2fsm.md](gears2fsm.md)'s one-state-per-item mapping — it shall
 emit the thin shared-factory module defined below.
@@ -1760,7 +1764,8 @@ The thin emitted module:
   source-derived `meta.playbook.role` (an empty map when there is no such
   state); the
   `verbatimPayloadFields` set derived from annotated result fields above; the
-  `controlContextFields` projection of §Control surface; and any
+  explicitly empty or populated `unfinishedFinalStateIds` set declared above;
+  the `controlContextFields` projection of §Control surface; and any
   per-playbook strategy override (classifier, prompt composers,
   required-field extraction, status formatting) an earlier section of this
   definition requires for that playbook.
