@@ -117,7 +117,7 @@ interface PlaybookCaptainJournalRecord {
   readonly payload: JsonValue;
 }
 
-interface PlaybookCaptainFrameSnapshot {
+export interface PlaybookCaptainFrameSnapshot {
   readonly playbookId: string;
   readonly sessionId: string;
   readonly rootSessionId: string;
@@ -180,9 +180,27 @@ type PlaybookCaptainShellSnapshotValue =
 export type PlaybookCaptainShellSnapshot =
   DeepReadonly<PlaybookCaptainShellSnapshotValue>;
 
+export interface PlaybookCaptainRetainedGeneration {
+  readonly frames: readonly PlaybookCaptainFrameSnapshot[];
+}
+
+export type PlaybookCaptainRetentionUpdate =
+  | {
+      readonly kind: 'retain';
+      readonly rootPlaybookId: string;
+      readonly generation: PlaybookCaptainRetainedGeneration;
+    }
+  | { readonly kind: 'clear'; readonly rootPlaybookId: string };
+
+export interface PlaybookCaptainSettlement {
+  readonly snapshot: PlaybookCaptainShellSnapshot;
+  readonly retentionUpdates: readonly PlaybookCaptainRetentionUpdate[];
+}
+
 /** tmux and headless front ends share this one durable Captain shell API. */
 export interface PlaybookCaptainShell extends Captain {
   exportSnapshot(): PlaybookCaptainShellSnapshot | undefined;
+  exportSettlement(): PlaybookCaptainSettlement | undefined;
   restore(
     session: CaptainSession,
     snapshot: PlaybookCaptainShellSnapshot,
@@ -2308,6 +2326,26 @@ export function createPlaybookCaptainShell(
     | undefined;
   let lastAction: ControllerAction | undefined;
   let lastSettlementStatus: SettlementEvidence['status'] | undefined;
+  // DR-038 §2: a turn can dispose its root before the durable caller asks
+  // for settlement. Keep only that turn's latest safe pre-terminal generation
+  // and its per-root retain/clear decisions until `exportSettlement()` pairs
+  // them with the complete shell snapshot.
+  type RetainedGenerationCandidate =
+    | {
+        readonly status: 'captured';
+        readonly generation: PlaybookCaptainRetainedGeneration;
+      }
+    | { readonly status: 'incapable' }
+    | { readonly status: 'unsafe' };
+  const retainedGenerationCandidates = new Map<
+    string,
+    RetainedGenerationCandidate
+  >();
+  const pendingRetentionUpdates = new Map<
+    string,
+    PlaybookCaptainRetentionUpdate
+  >();
+  let retentionSettlementReady = false;
   // DR-029: a run that lands in the runtime's own failure state
   // is an outcome the report must name. `processFrameResult` records it here
   // and the settling selection folds it into its facts, so the grounding the
@@ -2318,6 +2356,17 @@ export function createPlaybookCaptainShell(
   const leafFrame = (): EngagementFrame | undefined => frames.at(-1);
   const frameLabel = (frame: EngagementFrame): string =>
     `/${frame.enablement.command}`;
+
+  const runtimeRetainsGenerations = (runtime: PlaybookRuntime): boolean => {
+    const metadata = runtime.retainedGenerationMetadata;
+    return (
+      metadata !== undefined &&
+      Array.isArray(metadata.unfinishedFinalStateIds) &&
+      metadata.unfinishedFinalStateIds.every(
+        (stateId) => typeof stateId === 'string',
+      )
+    );
+  };
 
   const bindingFor = (
     frame: EngagementFrame,
@@ -3545,6 +3594,7 @@ export function createPlaybookCaptainShell(
         // output remains runtime-to-runtime data and never becomes Captain
         // evidence (CAPPLAY-10).
         activeTurn?.settlementFacts.push(rootCompletionFact(frame, result));
+        recordTerminalRetention(frame, result);
         await runEffect(() => disposeStack('final'));
       }
       return;
@@ -4729,6 +4779,9 @@ export function createPlaybookCaptainShell(
     const root = rootFrame();
     if (!root) return false;
     const label = frameLabel(root);
+    // Dismissal leaves the procedure unfinished. Persist the latest safe
+    // generation captured for this turn before disposal erases the frames.
+    retainOrClearDisposedRoot(root);
     try {
       await runEffect(() => disposeStack('dismiss'));
       facts.push(`Dismissed the ${label} engagement.`);
@@ -5585,40 +5638,44 @@ export function createPlaybookCaptainShell(
     });
   };
 
-  const exportShellSnapshot = (): PlaybookCaptainShellSnapshot | undefined => {
-    if (
-      !safeCapturePoint() ||
-      !captainRuntime ||
-      !captainSessionId ||
-      !captainAgent
-    ) {
-      return undefined;
-    }
+  const captureFrameSnapshots = (
+    requireRecordedState: boolean,
+  ): readonly PlaybookCaptainFrameSnapshot[] | undefined => {
+    const captured: PlaybookCaptainFrameSnapshot[] = [];
     try {
-      if (
-        typeof captainRuntime.exportSnapshot !== 'function' ||
-        typeof captainRuntime.restore !== 'function'
-      ) {
-        return undefined;
-      }
-      const captainSnapshot = captainRuntime.exportSnapshot();
-      if (captainSnapshot === undefined) return undefined;
-      const frameSnapshots: PlaybookCaptainFrameSnapshot[] = [];
-      for (const frame of frames) {
+      for (const [index, frame] of frames.entries()) {
         if (
           typeof frame.runtime.exportSnapshot !== 'function' ||
           typeof frame.runtime.restore !== 'function'
         ) {
           return undefined;
         }
-        const runtime = frame.runtime.exportSnapshot();
+        const exported = frame.runtime.exportSnapshot();
+        if (exported === undefined) return undefined;
+        const runtime = assertPlaybookRuntimeSnapshot(
+          exported,
+          frame.entry.id,
+          { allowSuspendedCall: true },
+        );
         if (
-          runtime === undefined ||
-          !isDeepStrictEqual(frame.state, runtime.state)
+          runtime.state.status !== 'active' ||
+          !runtime.state.quiescent ||
+          (requireRecordedState && frame.state === undefined) ||
+          (frame.state !== undefined &&
+            !isDeepStrictEqual(frame.state, runtime.state))
         ) {
           return undefined;
         }
-        frameSnapshots.push({
+        const isLeaf = index === frames.length - 1;
+        if (
+          (isLeaf &&
+            (runtime.suspendedCall !== undefined ||
+              !runtime.state.tags.includes('playbook.parked'))) ||
+          (!isLeaf && runtime.suspendedCall === undefined)
+        ) {
+          return undefined;
+        }
+        captured.push({
           playbookId: frame.entry.id,
           sessionId: frame.sessionId,
           rootSessionId: frame.rootSessionId,
@@ -5639,6 +5696,146 @@ export function createPlaybookCaptainShell(
           runtime,
         });
       }
+      for (let index = 1; index < captured.length; index += 1) {
+        const parent = captured[index - 1]!;
+        const child = captured[index]!;
+        if (
+          child.parentSessionId !== parent.sessionId ||
+          child.parentCallId === undefined ||
+          parent.runtime.suspendedCall?.callId !== child.parentCallId ||
+          parent.runtime.suspendedCall.playbookId !== child.playbookId ||
+          parent.runtime.suspendedCall.childSessionId !== child.sessionId
+        ) {
+          return undefined;
+        }
+      }
+      return captured;
+    } catch {
+      return undefined;
+    }
+  };
+
+  const captureRetainedGeneration =
+    (): PlaybookCaptainRetainedGeneration | undefined => {
+      const root = rootFrame();
+      if (
+        !root ||
+        frames.some((frame) => !runtimeRetainsGenerations(frame.runtime))
+      ) {
+        return undefined;
+      }
+      const frameSnapshots = captureFrameSnapshots(true);
+      if (frameSnapshots === undefined || frameSnapshots.length === 0) {
+        return undefined;
+      }
+      return snapshotJsonValue(
+        { frames: frameSnapshots },
+        'Captain retained generation',
+      ) as unknown as PlaybookCaptainRetainedGeneration;
+    };
+
+  const rememberRetainedGeneration = (): void => {
+    const root = rootFrame();
+    if (!root) return;
+    if (frames.some((frame) => !runtimeRetainsGenerations(frame.runtime))) {
+      retainedGenerationCandidates.set(root.entry.id, {
+        status: 'incapable',
+      });
+      return;
+    }
+    const generation = captureRetainedGeneration();
+    retainedGenerationCandidates.set(
+      root.entry.id,
+      generation === undefined
+        ? { status: 'unsafe' }
+        : { status: 'captured', generation },
+    );
+  };
+
+  const retainOrClearDisposedRoot = (root: EngagementFrame): void => {
+    const rootPlaybookId = root.entry.id;
+    if (!runtimeRetainsGenerations(root.runtime)) {
+      pendingRetentionUpdates.set(rootPlaybookId, {
+        kind: 'clear',
+        rootPlaybookId,
+      });
+      return;
+    }
+    const candidate = retainedGenerationCandidates.get(rootPlaybookId);
+    if (candidate?.status === 'incapable') {
+      pendingRetentionUpdates.set(rootPlaybookId, {
+        kind: 'clear',
+        rootPlaybookId,
+      });
+      return;
+    }
+    if (candidate?.status !== 'captured') {
+      throw new Error(
+        `${frameLabel(root)} could not capture its pre-terminal retained generation`,
+      );
+    }
+    pendingRetentionUpdates.set(rootPlaybookId, {
+      kind: 'retain',
+      rootPlaybookId,
+      generation: candidate.generation,
+    });
+  };
+
+  const recordTerminalRetention = (
+    root: EngagementFrame,
+    result: Extract<PlaybookRunResult, { outcome: 'terminal' }>,
+  ): void => {
+    const rootPlaybookId = root.entry.id;
+    if (!runtimeRetainsGenerations(root.runtime)) {
+      pendingRetentionUpdates.set(rootPlaybookId, {
+        kind: 'clear',
+        rootPlaybookId,
+      });
+      return;
+    }
+    const terminalStateId = result.state.stateId;
+    if (
+      typeof terminalStateId !== 'string' ||
+      terminalStateId.trim().length === 0
+    ) {
+      throw new Error(
+        `${frameLabel(root)} terminal result has no stable state id for retention`,
+      );
+    }
+    const unfinished =
+      root.runtime.retainedGenerationMetadata!.unfinishedFinalStateIds.includes(
+        terminalStateId,
+      );
+    if (unfinished) {
+      retainOrClearDisposedRoot(root);
+    } else {
+      pendingRetentionUpdates.set(rootPlaybookId, {
+        kind: 'clear',
+        rootPlaybookId,
+      });
+    }
+  };
+
+  const exportShellSnapshot = (): PlaybookCaptainShellSnapshot | undefined => {
+    if (
+      !safeCapturePoint() ||
+      !captainRuntime ||
+      !captainSessionId ||
+      !captainAgent
+    ) {
+      return undefined;
+    }
+    try {
+      if (
+        typeof captainRuntime.exportSnapshot !== 'function' ||
+        typeof captainRuntime.restore !== 'function'
+      ) {
+        return undefined;
+      }
+      const captainSnapshot = captainRuntime.exportSnapshot();
+      if (captainSnapshot === undefined) return undefined;
+      const frameSnapshots = captureFrameSnapshots(true);
+      if (frameSnapshots === undefined) return undefined;
       const common = {
         schemaVersion: 3 as const,
         captain: {
@@ -5674,6 +5871,41 @@ export function createPlaybookCaptainShell(
     } catch {
       return undefined;
     }
+  };
+
+  const exportSettlement = (): PlaybookCaptainSettlement | undefined => {
+    if (!retentionSettlementReady) return undefined;
+    const snapshot = exportShellSnapshot();
+    if (snapshot === undefined) return undefined;
+    const updates = new Map(pendingRetentionUpdates);
+    const root = rootFrame();
+    if (root !== undefined) {
+      const rootPlaybookId = root.entry.id;
+      if (frames.every((frame) => runtimeRetainsGenerations(frame.runtime))) {
+        const generation =
+          snapshot.mode === 'engaged.parked'
+            ? ({ frames: snapshot.frames } as PlaybookCaptainRetainedGeneration)
+            : undefined;
+        if (generation !== undefined) {
+          updates.set(rootPlaybookId, {
+            kind: 'retain',
+            rootPlaybookId,
+            generation,
+          });
+        }
+      } else {
+        updates.set(rootPlaybookId, { kind: 'clear', rootPlaybookId });
+      }
+    }
+    return snapshotJsonValue(
+      {
+        snapshot,
+        retentionUpdates: [...updates.values()].sort((left, right) =>
+          left.rootPlaybookId.localeCompare(right.rootPlaybookId),
+        ),
+      },
+      'Captain settlement',
+    ) as unknown as PlaybookCaptainSettlement;
   };
 
   const verifyRestoredRuntime = (
@@ -5950,6 +6182,8 @@ export function createPlaybookCaptainShell(
 
     exportSnapshot: exportShellSnapshot,
 
+    exportSettlement,
+
     restore: restoreShellSnapshot,
 
     async handleBossTurn(
@@ -5970,7 +6204,13 @@ export function createPlaybookCaptainShell(
       }
       // Empty or whitespace-only input allocates no call, session, or
       // telemetry (CAPTAIN-7).
+      retentionSettlementReady = false;
       if (turn.prompt.trim().length === 0) return;
+      retainedGenerationCandidates.clear();
+      pendingRetentionUpdates.clear();
+      // A terminal or dismissal can remove the whole stack during this turn;
+      // take the latest already-settled generation before controller work.
+      rememberRetainedGeneration();
       const turnHostCalls = new Set<Promise<unknown>>();
       activeTurnHostCalls = turnHostCalls;
       activeContext = context;
@@ -6064,6 +6304,7 @@ export function createPlaybookCaptainShell(
           activeTurnHostCalls = undefined;
         }
         activeContext = undefined;
+        retentionSettlementReady = true;
       }
     },
 

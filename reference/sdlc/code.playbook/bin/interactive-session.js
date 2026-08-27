@@ -503,13 +503,17 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
           `managed interactive Captain turn produced ${replies.length} usable Boss-visible replies; expected exactly one`,
         );
       }
-      const snapshot = shell?.exportSnapshot();
-      if (snapshot === undefined) {
+      const settlement = shell?.exportSettlement();
+      if (settlement === undefined) {
         throw new Error(
-          'managed interactive Captain turn settled without an exportable session snapshot',
+          'managed interactive Captain turn settled without an exportable session settlement',
         );
       }
-      await lease.settle({ attemptId: activeTurn.attemptId, snapshot });
+      await lease.settle({
+        attemptId: activeTurn.attemptId,
+        snapshot: settlement.snapshot,
+        retentionUpdates: settlement.retentionUpdates,
+      });
       activeTurn = undefined;
     },
 

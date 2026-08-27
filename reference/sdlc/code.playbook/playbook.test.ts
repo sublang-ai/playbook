@@ -1878,7 +1878,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     const execution = executionConfigFromPlan(baseline);
     const structuralProjection = projectCaptainSessionStructure(execution);
     const settled = validateCaptainSessionRecord({
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: 'captain-session',
       state: 'settled',
       sessionId: id,
@@ -1888,6 +1888,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       structuralProjection,
       lastAppliedExecutionProjection: execution,
       snapshot: selectedTurnZeroSnapshot(execution),
+      retainedGenerations: {},
     });
     const uncertain = validateCaptainSessionRecord({
       ...settled,

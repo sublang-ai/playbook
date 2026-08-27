@@ -364,6 +364,7 @@ function nestedParkedEntries(
       let turnCount = 0;
       let suspendedCall: any;
       return {
+        retainedGenerationMetadata: { unfinishedFinalStateIds: [] },
         async init(next) {
           lifecycle.codeInits += 1;
           session = next;
@@ -455,6 +456,7 @@ function nestedParkedEntries(
       let turnCount = 0;
       let restored = false;
       return {
+        retainedGenerationMetadata: { unfinishedFinalStateIds: [] },
         async init() {
           lifecycle.reviewInits += 1;
         },
@@ -1150,8 +1152,9 @@ describe('durable Captain continuation (PBCLI-24)', () => {
   const firstId = '90000000-0000-4000-8000-000000000011';
   const secondId = '90000000-0000-4000-8000-000000000012';
   const thirdId = '90000000-0000-4000-8000-000000000013';
+  const fourthId = '90000000-0000-4000-8000-000000000014';
 
-  it('persists a closed v3 record before stdout without semantic disposal', async () => {
+  it('persists a closed v4 record before stdout without semantic disposal', async () => {
     const order: string[] = [];
     let disposals = 0;
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-order-state-'));
@@ -1210,7 +1213,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       'stdout:Captain acknowledged the message.\n',
     ]);
     expect(record).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: 'captain-session',
       state: 'settled',
       sessionId: firstId,
@@ -1230,6 +1233,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         },
       },
       snapshot: { schemaVersion: 3, mode: 'chat' },
+      retainedGenerations: {},
     });
     expect((await stat(out.sessionsDir)).mode & 0o777).toBe(0o700);
     expect((await stat(path)).mode & 0o777).toBe(0o600);
@@ -1516,6 +1520,21 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         },
       ],
     });
+    expect(parked.retainedGenerations.code).toMatchObject({
+      frames: [
+        {
+          playbookId: 'code',
+          runtime: {
+            suspendedCall: { callId: 'code:review:durable' },
+          },
+        },
+        {
+          playbookId: 'review',
+          parentCallId: 'code:review:durable',
+          options: { normalizedByRegistry: true },
+        },
+      ],
+    });
     expect(parked.structuralProjection.catalog.review.options).toEqual({});
     expect(lifecycle.childCalls).toBe(1);
 
@@ -1550,6 +1569,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
     );
     expect(settled.snapshot.mode).toBe('chat');
+    expect(settled.retainedGenerations).toEqual({});
   });
 
   it('selects the newest valid session by updatedAt for --continue', async () => {
@@ -1568,6 +1588,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     expect([first.result.code, second.result.code]).toEqual([0, 0]);
     const legacyPath = join(sessionsDir, `${thirdId}.json`);
+    const releasedSchema3Path = join(sessionsDir, `${fourthId}.json`);
     const settledRecord = JSON.parse(
       await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
     );
@@ -1586,6 +1607,29 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       })}\n`,
       { mode: 0o600 },
     );
+    const {
+      retainedGenerations: _retainedGenerations,
+      ...releasedSchema3
+    } = settledRecord;
+    await writeFile(
+      releasedSchema3Path,
+      `${JSON.stringify({
+        ...releasedSchema3,
+        schemaVersion: 3,
+        sessionId: fourthId,
+      })}\n`,
+      { mode: 0o600 },
+    );
+
+    const explicitLegacy = await headlessHarness(
+      ['run', '--session', fourthId, 'must not run'],
+      { sessionsDir },
+    );
+    expect(explicitLegacy.result.code).toBe(1);
+    expect(explicitLegacy.inputs).toEqual([]);
+    expect(explicitLegacy.stderr).toContain(
+      'schema 3 has no retained-generation state',
+    );
 
     const continued = await headlessHarness(
       ['run', '--continue', 'latest reply'],
@@ -1599,6 +1643,15 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(continued.inputs).toEqual(['latest reply']);
     expect(continued.stderr).toContain(
       `skipping legacy Captain session "${thirdId}" at "${legacyPath}"`,
+    );
+    expect(continued.stderr).toContain(
+      'schema 2 has incompatible player identity',
+    );
+    expect(continued.stderr).toContain(
+      `skipping legacy Captain session "${fourthId}" at "${releasedSchema3Path}"`,
+    );
+    expect(continued.stderr).toContain(
+      'schema 3 has no retained-generation state',
     );
     expect(continued.stderr).toContain(
       'move it outside the sessions directory or remove it',
@@ -1792,6 +1845,85 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(JSON.parse(await readFile(recordPath, 'utf8')).state).toBe(
       'uncertain',
     );
+  });
+
+  it('leaves a same-turn unfinished terminal uncertain without retaining its initialized state', async () => {
+    const fixtures = nestedEntries([]);
+    const unfinished = {
+      id: 'code',
+      command: 'code',
+      intent: 'finish unsuccessfully on the first turn',
+      artifactSchema: 2 as const,
+      requiredRoleIds: ['coder'],
+      concurrentRoleSets: [] as const,
+      validateOptions: (value: unknown) => value,
+      createRuntime(): PlaybookRuntime {
+        let session: PlaybookSession | undefined;
+        let state = activeState('ready');
+        let turns = 0;
+        return {
+          retainedGenerationMetadata: {
+            unfinishedFinalStateIds: ['reportedReviewFailure'],
+          },
+          async init(next) {
+            session = next;
+          },
+          async restore(next, snapshot) {
+            session = next;
+            state = snapshot.state;
+            turns = snapshot.sequences.turn;
+          },
+          exportSnapshot() {
+            if (session === undefined) return undefined;
+            return {
+              ...runtimeSnapshot('code', turns),
+              machine: { value: state.value, status: state.status },
+              state,
+            };
+          },
+          async handleBossInput() {
+            turns += 1;
+            state = terminalState('reportedReviewFailure');
+            return {
+              outcome: 'terminal',
+              state,
+              output: { status: 'review-failed' },
+            };
+          },
+          async resumePlaybookCall() {
+            return { outcome: 'no-action', state };
+          },
+          async dispose() {},
+        };
+      },
+    };
+    const input = '/code fail review immediately';
+    const out = await headlessHarness(['run', input], {
+      loadModule: async (specifier: string) => ({
+        default: specifier === 'mod://code' ? unfinished : fixtures.review,
+      }),
+    });
+
+    expect(out.result.code).toBe(2);
+    expect(out.stdout).toBe('');
+    expect(out.stderr).toContain(
+      'Captain turn settled without an exportable session settlement',
+    );
+    expect(
+      JSON.parse(
+        await readFile(
+          join(
+            out.sessionsDir,
+            '90000000-0000-4000-8000-000000000001.json',
+          ),
+          'utf8',
+        ),
+      ),
+    ).toMatchObject({
+      state: 'uncertain',
+      uncertain: { input },
+      retainedGenerations: {},
+    });
   });
 
   it('withholds output but preserves a complete settlement after post-rename sync failure', async () => {

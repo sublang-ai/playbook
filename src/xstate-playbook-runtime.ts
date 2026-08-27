@@ -2105,6 +2105,14 @@ export function createXStatePlaybookRuntime<TOptions>(
     machine,
     label,
   );
+  const retainedGenerationMetadata =
+    spec.unfinishedFinalStateIds === undefined
+      ? undefined
+      : Object.freeze({
+          unfinishedFinalStateIds: Object.freeze([
+            ...spec.unfinishedFinalStateIds,
+          ]),
+        });
   const declaredActors = collectInvokeSources(machine);
   const resumableStateIds =
     spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
@@ -3995,6 +4003,9 @@ export function createXStatePlaybookRuntime<TOptions>(
     }
 
     const runtime = {
+      ...(retainedGenerationMetadata === undefined
+        ? {}
+        : { retainedGenerationMetadata }),
       async init(nextSession: PlaybookSession): Promise<void> {
         if (initialized || disposed || disposalPromise !== undefined) {
           throw new Error('createPlaybookRuntime.init: already initialized');

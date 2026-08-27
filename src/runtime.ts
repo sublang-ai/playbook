@@ -269,6 +269,15 @@ export type PlaybookControlReceipt =
   | { disposition: 'executed'; run: PlaybookRunResult }
   | { disposition: 'failed'; error: NormalizedError };
 
+// DR-038 §2: link-authored metadata the Captain uses to decide whether a
+// quiescent generation is eligible for retention and whether a root terminal
+// outcome preserves its pre-terminal generation. Presence identifies a
+// shared-factory runtime that participates in universal generation handling;
+// an explicitly empty final-state list is meaningful.
+export interface PlaybookRetainedGenerationMetadata {
+  readonly unfinishedFinalStateIds: readonly string[];
+}
+
 export interface PlaybookRuntime {
   init(session: PlaybookSession): Promise<void>;
   // DR-014 §1 optional durable-session capability: a runtime implements
@@ -281,6 +290,7 @@ export interface PlaybookRuntime {
     session: PlaybookSession,
     snapshot: PlaybookRuntimeSnapshot,
   ): Promise<void>;
+  readonly retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata;
   // DR-029 optional control-surface capability: a runtime implements
   // both members or neither. `describe` is side-effect free and valid at
   // parked quiescence outside an active boundary; `apply` revalidates the

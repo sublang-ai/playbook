@@ -1314,6 +1314,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     let decisionCall;
     let lastAction;
     let lastSettlementStatus;
+    const retainedGenerationCandidates = new Map();
+    const pendingRetentionUpdates = new Map();
+    let retentionSettlementReady = false;
     // DR-029: a run that lands in the runtime's own failure state
     // is an outcome the report must name. `processFrameResult` records it here
     // and the settling selection folds it into its facts, so the grounding the
@@ -1322,6 +1325,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const rootFrame = () => frames[0];
     const leafFrame = () => frames.at(-1);
     const frameLabel = (frame) => `/${frame.enablement.command}`;
+    const runtimeRetainsGenerations = (runtime) => {
+        const metadata = runtime.retainedGenerationMetadata;
+        return (metadata !== undefined &&
+            Array.isArray(metadata.unfinishedFinalStateIds) &&
+            metadata.unfinishedFinalStateIds.every((stateId) => typeof stateId === 'string'));
+    };
     const bindingFor = (frame, localRole) => {
         const binding = frame.playerBindings.get(localRole);
         if (!binding) {
@@ -2336,6 +2345,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 // output remains runtime-to-runtime data and never becomes Captain
                 // evidence (CAPPLAY-10).
                 activeTurn?.settlementFacts.push(rootCompletionFact(frame, result));
+                recordTerminalRetention(frame, result);
                 await runEffect(() => disposeStack('final'));
             }
             return;
@@ -3305,6 +3315,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (!root)
             return false;
         const label = frameLabel(root);
+        // Dismissal leaves the procedure unfinished. Persist the latest safe
+        // generation captured for this turn before disposal erases the frames.
+        retainOrClearDisposedRoot(root);
         try {
             await runEffect(() => disposeStack('dismiss'));
             facts.push(`Dismissed the ${label} engagement.`);
@@ -4013,33 +4026,33 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                             frame.abortListener !== undefined)));
         });
     };
-    const exportShellSnapshot = () => {
-        if (!safeCapturePoint() ||
-            !captainRuntime ||
-            !captainSessionId ||
-            !captainAgent) {
-            return undefined;
-        }
+    const captureFrameSnapshots = (requireRecordedState) => {
+        const captured = [];
         try {
-            if (typeof captainRuntime.exportSnapshot !== 'function' ||
-                typeof captainRuntime.restore !== 'function') {
-                return undefined;
-            }
-            const captainSnapshot = captainRuntime.exportSnapshot();
-            if (captainSnapshot === undefined)
-                return undefined;
-            const frameSnapshots = [];
-            for (const frame of frames) {
+            for (const [index, frame] of frames.entries()) {
                 if (typeof frame.runtime.exportSnapshot !== 'function' ||
                     typeof frame.runtime.restore !== 'function') {
                     return undefined;
                 }
-                const runtime = frame.runtime.exportSnapshot();
-                if (runtime === undefined ||
-                    !isDeepStrictEqual(frame.state, runtime.state)) {
+                const exported = frame.runtime.exportSnapshot();
+                if (exported === undefined)
+                    return undefined;
+                const runtime = assertPlaybookRuntimeSnapshot(exported, frame.entry.id, { allowSuspendedCall: true });
+                if (runtime.state.status !== 'active' ||
+                    !runtime.state.quiescent ||
+                    (requireRecordedState && frame.state === undefined) ||
+                    (frame.state !== undefined &&
+                        !isDeepStrictEqual(frame.state, runtime.state))) {
                     return undefined;
                 }
-                frameSnapshots.push({
+                const isLeaf = index === frames.length - 1;
+                if ((isLeaf &&
+                    (runtime.suspendedCall !== undefined ||
+                        !runtime.state.tags.includes('playbook.parked'))) ||
+                    (!isLeaf && runtime.suspendedCall === undefined)) {
+                    return undefined;
+                }
+                captured.push({
                     playbookId: frame.entry.id,
                     sessionId: frame.sessionId,
                     rootSessionId: frame.rootSessionId,
@@ -4058,6 +4071,119 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     runtime,
                 });
             }
+            for (let index = 1; index < captured.length; index += 1) {
+                const parent = captured[index - 1];
+                const child = captured[index];
+                if (child.parentSessionId !== parent.sessionId ||
+                    child.parentCallId === undefined ||
+                    parent.runtime.suspendedCall?.callId !== child.parentCallId ||
+                    parent.runtime.suspendedCall.playbookId !== child.playbookId ||
+                    parent.runtime.suspendedCall.childSessionId !== child.sessionId) {
+                    return undefined;
+                }
+            }
+            return captured;
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const captureRetainedGeneration = () => {
+        const root = rootFrame();
+        if (!root ||
+            frames.some((frame) => !runtimeRetainsGenerations(frame.runtime))) {
+            return undefined;
+        }
+        const frameSnapshots = captureFrameSnapshots(true);
+        if (frameSnapshots === undefined || frameSnapshots.length === 0) {
+            return undefined;
+        }
+        return snapshotJsonValue({ frames: frameSnapshots }, 'Captain retained generation');
+    };
+    const rememberRetainedGeneration = () => {
+        const root = rootFrame();
+        if (!root)
+            return;
+        if (frames.some((frame) => !runtimeRetainsGenerations(frame.runtime))) {
+            retainedGenerationCandidates.set(root.entry.id, {
+                status: 'incapable',
+            });
+            return;
+        }
+        const generation = captureRetainedGeneration();
+        retainedGenerationCandidates.set(root.entry.id, generation === undefined
+            ? { status: 'unsafe' }
+            : { status: 'captured', generation });
+    };
+    const retainOrClearDisposedRoot = (root) => {
+        const rootPlaybookId = root.entry.id;
+        if (!runtimeRetainsGenerations(root.runtime)) {
+            pendingRetentionUpdates.set(rootPlaybookId, {
+                kind: 'clear',
+                rootPlaybookId,
+            });
+            return;
+        }
+        const candidate = retainedGenerationCandidates.get(rootPlaybookId);
+        if (candidate?.status === 'incapable') {
+            pendingRetentionUpdates.set(rootPlaybookId, {
+                kind: 'clear',
+                rootPlaybookId,
+            });
+            return;
+        }
+        if (candidate?.status !== 'captured') {
+            throw new Error(`${frameLabel(root)} could not capture its pre-terminal retained generation`);
+        }
+        pendingRetentionUpdates.set(rootPlaybookId, {
+            kind: 'retain',
+            rootPlaybookId,
+            generation: candidate.generation,
+        });
+    };
+    const recordTerminalRetention = (root, result) => {
+        const rootPlaybookId = root.entry.id;
+        if (!runtimeRetainsGenerations(root.runtime)) {
+            pendingRetentionUpdates.set(rootPlaybookId, {
+                kind: 'clear',
+                rootPlaybookId,
+            });
+            return;
+        }
+        const terminalStateId = result.state.stateId;
+        if (typeof terminalStateId !== 'string' ||
+            terminalStateId.trim().length === 0) {
+            throw new Error(`${frameLabel(root)} terminal result has no stable state id for retention`);
+        }
+        const unfinished = root.runtime.retainedGenerationMetadata.unfinishedFinalStateIds.includes(terminalStateId);
+        if (unfinished) {
+            retainOrClearDisposedRoot(root);
+        }
+        else {
+            pendingRetentionUpdates.set(rootPlaybookId, {
+                kind: 'clear',
+                rootPlaybookId,
+            });
+        }
+    };
+    const exportShellSnapshot = () => {
+        if (!safeCapturePoint() ||
+            !captainRuntime ||
+            !captainSessionId ||
+            !captainAgent) {
+            return undefined;
+        }
+        try {
+            if (typeof captainRuntime.exportSnapshot !== 'function' ||
+                typeof captainRuntime.restore !== 'function') {
+                return undefined;
+            }
+            const captainSnapshot = captainRuntime.exportSnapshot();
+            if (captainSnapshot === undefined)
+                return undefined;
+            const frameSnapshots = captureFrameSnapshots(true);
+            if (frameSnapshots === undefined)
+                return undefined;
             const common = {
                 schemaVersion: 3,
                 captain: {
@@ -4093,6 +4219,37 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         catch {
             return undefined;
         }
+    };
+    const exportSettlement = () => {
+        if (!retentionSettlementReady)
+            return undefined;
+        const snapshot = exportShellSnapshot();
+        if (snapshot === undefined)
+            return undefined;
+        const updates = new Map(pendingRetentionUpdates);
+        const root = rootFrame();
+        if (root !== undefined) {
+            const rootPlaybookId = root.entry.id;
+            if (frames.every((frame) => runtimeRetainsGenerations(frame.runtime))) {
+                const generation = snapshot.mode === 'engaged.parked'
+                    ? { frames: snapshot.frames }
+                    : undefined;
+                if (generation !== undefined) {
+                    updates.set(rootPlaybookId, {
+                        kind: 'retain',
+                        rootPlaybookId,
+                        generation,
+                    });
+                }
+            }
+            else {
+                updates.set(rootPlaybookId, { kind: 'clear', rootPlaybookId });
+            }
+        }
+        return snapshotJsonValue({
+            snapshot,
+            retentionUpdates: [...updates.values()].sort((left, right) => left.rootPlaybookId.localeCompare(right.rootPlaybookId)),
+        }, 'Captain settlement');
     };
     const verifyRestoredRuntime = (runtime, expected, playbookId, allowSuspendedCall) => {
         const actual = runtime.exportSnapshot?.();
@@ -4322,6 +4479,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
         },
         exportSnapshot: exportShellSnapshot,
+        exportSettlement,
         restore: restoreShellSnapshot,
         async handleBossTurn(turn, context) {
             if (lifecycle !== 'ready' || terminallyDisposed) {
@@ -4336,8 +4494,14 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
             // Empty or whitespace-only input allocates no call, session, or
             // telemetry (CAPTAIN-7).
+            retentionSettlementReady = false;
             if (turn.prompt.trim().length === 0)
                 return;
+            retainedGenerationCandidates.clear();
+            pendingRetentionUpdates.clear();
+            // A terminal or dismissal can remove the whole stack during this turn;
+            // take the latest already-settled generation before controller work.
+            rememberRetainedGeneration();
             const turnHostCalls = new Set();
             activeTurnHostCalls = turnHostCalls;
             activeContext = context;
@@ -4422,6 +4586,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     activeTurnHostCalls = undefined;
                 }
                 activeContext = undefined;
+                retentionSettlementReady = true;
             }
         },
         async prepareDispose() {

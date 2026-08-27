@@ -27,6 +27,7 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
 2. **Retention captures the last unfinished pre-terminal generation, atomically with its nested stack.**
    At each settlement — abort settlement included per [DR-036](036-coherent-abort-settlement.md) — the Captain session record retains, per enabled root playbook id, the latest quiescent generation that carries unfinished work: the root frame's snapshot together with every nested descendant frame's snapshot and the call bridges between them, as one indivisible generation.
    Final-state snapshots are never retained; a root that completes terminally retains the generation captured before completion when its final state is artifact-declared unfinished, and clears retention otherwise.
+   When no post-input quiescent generation exists, the Captain leaves the turn unsettled rather than retain the initialized state or clear unfinished retention.
    The linked artifact declares its unfinished final-state ids as link-time metadata beside the resumable-state registry — mechanical metadata, not procedure text.
    A later settlement of the same root playbook replaces the generation in place; clean completion clears it.
 

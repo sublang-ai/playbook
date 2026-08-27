@@ -194,10 +194,14 @@ export type PlaybookControlReceipt = {
     disposition: 'failed';
     error: NormalizedError;
 };
+export interface PlaybookRetainedGenerationMetadata {
+    readonly unfinishedFinalStateIds: readonly string[];
+}
 export interface PlaybookRuntime {
     init(session: PlaybookSession): Promise<void>;
     exportSnapshot?(): PlaybookRuntimeSnapshot | undefined;
     restore?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>;
+    readonly retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata;
     describe?(): PlaybookControlView;
     apply?(input: {
         actionId: string;

@@ -1353,6 +1353,13 @@ export function createXStatePlaybookRuntime(machine, spec) {
     }
     assertFlatStateIdentity(machine, label);
     assertUnfinishedFinalStateIds(spec.unfinishedFinalStateIds, machine, label);
+    const retainedGenerationMetadata = spec.unfinishedFinalStateIds === undefined
+        ? undefined
+        : Object.freeze({
+            unfinishedFinalStateIds: Object.freeze([
+                ...spec.unfinishedFinalStateIds,
+            ]),
+        });
     const declaredActors = collectInvokeSources(machine);
     const resumableStateIds = spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
     // DR-029: source state descriptions label the control actions the
@@ -2885,6 +2892,9 @@ export function createXStatePlaybookRuntime(machine, spec) {
             };
         }
         const runtime = {
+            ...(retainedGenerationMetadata === undefined
+                ? {}
+                : { retainedGenerationMetadata }),
             async init(nextSession) {
                 if (initialized || disposed || disposalPromise !== undefined) {
                     throw new Error('createPlaybookRuntime.init: already initialized');

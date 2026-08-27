@@ -271,6 +271,7 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
       tmuxConfig: fixture.tmuxA,
       namespace: 'post-fence-failure',
       failReplyObserver: true,
+      retainParked: true,
     });
 
     await child.waitFor('initialized');
@@ -293,10 +294,35 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
     const record = await fixture.store.read(fixture.sessionId);
     expect(record).toEqual(visible.durableRecord);
     expect(record).toMatchObject({
+      schemaVersion: 4,
       state: 'settled',
       sessionId: fixture.sessionId,
-      snapshot: { sequences: { turn: 1 } },
+      snapshot: {
+        mode: 'engaged.parked',
+        sequences: { turn: 1 },
+      },
+      retainedGenerations: {
+        code: {
+          frames: [
+            {
+              playbookId: 'code',
+              depth: 0,
+              runtime: {
+                playbookId: 'code',
+                state: {
+                  stateId: 'playbook.parked',
+                  status: 'active',
+                  quiescent: true,
+                },
+              },
+            },
+          ],
+        },
+      },
     });
+    expect(record.retainedGenerations.code.frames).toEqual(
+      record.snapshot.frames,
+    );
     expect(record).not.toHaveProperty('uncertain');
     const next = await fixture.store.acquire(fixture.sessionId);
     await next.release();
@@ -360,6 +386,7 @@ async function startManagedChild(
     tmuxConfig: unknown;
     namespace: string;
     failReplyObserver?: boolean;
+    retainParked?: boolean;
   },
 ) {
   await writeFile(
@@ -385,6 +412,7 @@ async function startManagedChild(
       ...(options.failReplyObserver
         ? { PLAYBOOK_FAIL_REPLY_OBSERVER: '1' }
         : {}),
+      ...(options.retainParked ? { PLAYBOOK_RETAIN_PARKED: '1' } : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
@@ -473,6 +501,7 @@ async function assertSettledTurnZero(
 ) {
   const record = await fixture.store.read(fixture.sessionId);
   expect(record).toMatchObject({
+    schemaVersion: 4,
     state: 'settled',
     sessionId: fixture.sessionId,
     cwd: fixture.cwd,
@@ -481,6 +510,7 @@ async function assertSettledTurnZero(
       sequences: { turn: 0, journal: 0 },
       playerSessions: { 'dev.coder': { adapter: 'claude' } },
     },
+    retainedGenerations: {},
   });
   expect(record.snapshot.playerSessions['dev.coder']).not.toHaveProperty(
     'resumeToken',

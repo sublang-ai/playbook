@@ -39,6 +39,7 @@ The emitted module shall default-export a factory of the following shape:
 
 ```typescript
 interface PlaybookRuntime {
+  readonly retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata;
   init(session: PlaybookSession): Promise<void>;
   handleBossInput(turn: {
     text: string;
@@ -50,6 +51,10 @@ interface PlaybookRuntime {
     signal: AbortSignal;
   }): Promise<PlaybookRunResult>;
   dispose(): Promise<void>;
+}
+
+interface PlaybookRetainedGenerationMetadata {
+  readonly unfinishedFinalStateIds: readonly string[];
 }
 
 interface PlaybookSession {
@@ -1396,6 +1401,20 @@ ownership without a child-host call or duplicate start/finish boundary.
 A restore failure shall leave the runtime unbound so `dispose` remains
 callable and terminal.
 
+## Retained-generation classification (optional)
+
+A linked runtime may expose the optional read-only
+`retainedGenerationMetadata` marker of `@sublang/playbook/runtime` together
+with the parked-session snapshot pair so a Captain can retain its safe
+pre-terminal generations. Its `unfinishedFinalStateIds` array shall preserve
+the artifact's link-time declaration exactly, including an explicitly empty
+set, and shall be immutable and detached from that declaration. Absence means
+the runtime contributes no retained generation; presence supplies only
+terminal classification metadata and no snapshot-adoption operation.
+Every runtime the shared `createXStatePlaybookRuntime` factory constructs from
+a supplied `unfinishedFinalStateIds` spec member shall expose the marker; a
+bespoke runtime opts in only by implementing the public member itself.
+
 ## Control surface (optional)
 
 A linked runtime may implement the optional control-surface capability of
@@ -1698,7 +1717,7 @@ Every linked artifact shall emit an `unfinishedFinalStateIds` set beside its res
 The set shall contain exactly the stable ids of root `type: 'final'` states whose terminal outcomes leave the procedure unfinished, and shall be explicitly empty when no terminal outcome does.
 The linker shall not infer the set from a state description, opaque output, or procedure prose.
 The linker shall reject a declared id that does not name a root final state, and the shared factory shall independently reject it at construction before runtime effects.
-For a factory-backed artifact the set is a `spec` member; a bespoke artifact shall retain equivalent linked metadata, and the declaration alone grants no retention or adoption capability.
+For a factory-backed artifact the set is a `spec` member; a bespoke artifact shall retain equivalent linked metadata, and the artifact declaration is not itself the public runtime retention marker or an adoption capability.
 For an FSM that declares no `type: 'parallel'` state — necessarily flat
 under [gears2fsm.md](gears2fsm.md)'s one-state-per-item mapping — it shall
 emit the thin shared-factory module defined below.

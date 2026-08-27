@@ -68,7 +68,7 @@ runtime contract types `PlayerResult`, `PlayerCallOptions`,
 `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
 `PlaybookStateValue`, `PlaybookState`, `PlaybookPendingCall`,
 `PlaybookRunResult`, `PlaybookPendingBossQuestion`, `PlaybookControlAction`, `PlaybookControlView`,
-`PlaybookControlReceipt`, `PlaybookPorts`, `PlaybookSession`,
+`PlaybookControlReceipt`, `PlaybookRetainedGenerationMetadata`, `PlaybookPorts`, `PlaybookSession`,
 `PlaybookTraceType`, `PlaybookTraceEvent`,
 `PlaybookRuntime`, and `PlaybookRuntimeFactory<Options = unknown>`, as
 the TypeScript projection of
@@ -96,6 +96,7 @@ runtime's own classification maps to an FSM entry event
 ([[playbook-runtime-7](#playbook-runtime-7)], [[captain-playbook-9](captain-playbook.md#captain-playbook-9)]).
 That keeps the shared contract module free of host and playbook types while
 leaving the injection path typed end to end at the artifact.
+`PlaybookRuntime` shall declare the optional read-only retention-capability marker `retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata`, whose value contains exactly the read-only string array `unfinishedFinalStateIds`; absence means the runtime contributes no retained generation, while presence supplies only terminal classification metadata and no snapshot-adoption operation.
 `PlaybookRuntime` shall declare the optional control-surface pair —
 `describe?(): PlaybookControlView` and
 `apply?(input: { actionId: string; key: string; signal: AbortSignal }):
@@ -669,6 +670,7 @@ a missing identity included — so every
 snapshot exposes exactly one playbook state id under the one identity
 the factory's state lookups index by.
 The shared factory shall also reject at construction any supplied `unfinishedFinalStateIds` member containing an id that does not name a root `type: 'final'` state, without inferring which final outcomes leave the procedure unfinished ([slc/link.md](../../slc/link.md#output)).
+When that member is supplied, every runtime the shared factory constructs shall expose `retainedGenerationMetadata` ([[playbook-runtime-34](#playbook-runtime-34)]) as an immutable copy whose `unfinishedFinalStateIds` preserve the declaration exactly, including an explicitly empty set; when the member is omitted, the marker shall be absent, so the link declaration by itself grants no runtime capability.
 A state whose source declares no description remains fully usable: the
 runtime shall normalize, enter, and settle it like any described state,
 merely carrying no `stateDescription` downstream.
@@ -1270,7 +1272,7 @@ machine that declares a compound state, a synthetic flat machine
 whose `meta.playbook.stateId` differs from its state key, a synthetic
 flat machine with a root state declaring no string
 `meta.playbook.stateId`, and a machine declaring no root states.
-The suite shall also fail unless factory construction accepts `unfinishedFinalStateIds` naming a root final state and rejects the declaration when it names an existing non-final root state or an unknown state (verifying [[playbook-runtime-52](#playbook-runtime-52)]).
+The suite shall also fail unless factory construction accepts `unfinishedFinalStateIds` naming a root final state, exposes it on each constructed runtime as an exact frozen retention descriptor, leaves that descriptor absent when the declaration is absent, and rejects the declaration when it names an existing non-final root state or an unknown state (verifying [[playbook-runtime-52](#playbook-runtime-52)]).
 The suite shall fail unless a state whose source declares no
 description can become active — an `init` whose initial state declares
 none and a turn entering such a state both succeed — with the turn

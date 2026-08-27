@@ -39,6 +39,7 @@ import {
 
 const logicalSessionId = '90000000-0000-4000-8000-000000000041';
 const internalSessionId = '80000000-0000-4000-8000-000000000041';
+const retainedFrameSessionId = '80000000-0000-4000-8000-000000000042';
 const attemptId = '90000000-0000-4000-8000-000000000042';
 const tempDirs: string[] = [];
 
@@ -79,12 +80,24 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
       createAttemptId: () => attemptId,
       createSessionHost: async () => ({
         host: fakeHost(events),
-        shell: { exportSnapshot: () => snapshot },
+        shell: {
+          exportSnapshot: () => snapshot,
+          exportSettlement: () => ({
+            snapshot,
+            retentionUpdates: [
+              {
+                kind: 'retain',
+                rootPlaybookId: 'code',
+                generation: retainedGeneration(),
+              },
+            ],
+          }),
+        },
         snapshot,
       }),
     });
 
-    await lifecycle.initializeRuntime(fixture.context);
+    const runtime = await lifecycle.initializeRuntime(fixture.context);
     expect((await fixture.store.read(logicalSessionId)).state).toBe('settled');
     await expect(fixture.store.acquire(logicalSessionId)).rejects.toThrow(
       /lease is active/,
@@ -110,12 +123,21 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
     expect(await fixture.store.read(logicalSessionId)).toMatchObject({
       state: 'settled',
       snapshot: { sequences: { turn: 1 } },
+      retainedGenerations: {
+        code: { frames: [{ sessionId: retainedFrameSessionId }] },
+      },
     });
 
+    await runtime.dispose();
     await lifecycle.shutdown();
+    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+      retainedGenerations: {
+        code: { frames: [{ sessionId: retainedFrameSessionId }] },
+      },
+    });
     const next = await fixture.store.acquire(logicalSessionId);
     await next.release();
-    expect(events).toEqual([]);
+    expect(events).toEqual(['disposed']);
   });
 
   it('authoritatively restores a selected settled session and leaves an aborted turn uncertain', async () => {
@@ -453,7 +475,10 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
       createAttemptId: () => attemptId,
       createSessionHost: async () => ({
         host: fakeHost([]),
-        shell: { exportSnapshot: () => snapshot },
+        shell: {
+          exportSnapshot: () => snapshot,
+          exportSettlement: () => ({ snapshot, retentionUpdates: [] }),
+        },
         snapshot,
       }),
     });
@@ -985,6 +1010,45 @@ function shellSnapshot(
       ? {}
       : { lastAction: 'respond', lastSettlementStatus: 'ok' }),
     mode: 'chat',
+  };
+}
+
+function retainedGeneration() {
+  const state = {
+    value: 'editing',
+    activeStateIds: ['editing'],
+    tags: ['playbook.parked'],
+    status: 'active',
+    quiescent: true,
+    stateId: 'editing',
+  } as const;
+  return {
+    frames: [
+      {
+        playbookId: 'code',
+        sessionId: retainedFrameSessionId,
+        rootSessionId: retainedFrameSessionId,
+        depth: 0,
+        options: {},
+        roleBindings: { coder: 'dev.coder' },
+        runtime: {
+          schemaVersion: 3,
+          playbookId: 'code',
+          machine: { value: state.value, status: state.status },
+          roleResumeTokens: {},
+          sequences: {
+            trace: 0,
+            turn: 1,
+            judgeCall: 0,
+            playerCall: 0,
+            playbookCall: 0,
+            captainCall: 0,
+          },
+          state,
+          pendingBossQuestions: [],
+        },
+      },
+    ],
   };
 }
 

@@ -11,6 +11,7 @@ import { createCaptainSessionStore } from '../bin/session-store.js';
 const payload = JSON.parse(requiredEnv('PLAYBOOK_MANAGED_PAYLOAD'));
 const tokenNamespace = requiredEnv('PLAYBOOK_TOKEN_NAMESPACE');
 const failReplyObserver = process.env.PLAYBOOK_FAIL_REPLY_OBSERVER === '1';
+const retainParked = process.env.PLAYBOOK_RETAIN_PARKED === '1';
 const store = createCaptainSessionStore({ sessionsDir: payload.sessionsDir });
 const input = new PassThrough();
 const output = new Writable({
@@ -176,11 +177,44 @@ function fixtureRegistryEntry() {
     },
     createRuntime() {
       let session;
+      let turns = 0;
       return {
+        ...(retainParked
+          ? {
+              retainedGenerationMetadata: Object.freeze({
+                unfinishedFinalStateIds: Object.freeze([]),
+              }),
+            }
+          : {}),
         async init(next) {
           session = next;
         },
+        async restore(next, snapshot) {
+          session = next;
+          turns = snapshot.sequences.turn;
+        },
+        exportSnapshot() {
+          if (!retainParked) return undefined;
+          const state = activeState();
+          return {
+            schemaVersion: 3,
+            playbookId: 'code',
+            machine: { value: state.value, status: state.status },
+            roleResumeTokens: session.playerSessions.snapshot(),
+            sequences: {
+              trace: 0,
+              turn: turns,
+              judgeCall: 0,
+              playerCall: turns,
+              playbookCall: 0,
+              captainCall: 0,
+            },
+            state,
+            pendingBossQuestions: [],
+          };
+        },
         async handleBossInput({ text, signal }) {
+          turns += 1;
           const result = await session.ports.callPlayer(
             'coder',
             `cross-front-player:${text}`,
@@ -188,6 +222,9 @@ function fixtureRegistryEntry() {
             { resume: session.playerSessions.select('coder') },
           );
           session.playerSessions.update('coder', result.resumeToken);
+          if (retainParked) {
+            return { outcome: 'quiescent', state: activeState() };
+          }
           return {
             outcome: 'terminal',
             state: terminalState(),

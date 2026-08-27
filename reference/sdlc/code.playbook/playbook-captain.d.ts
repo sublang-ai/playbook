@@ -62,7 +62,7 @@ interface PlaybookCaptainJournalRecord {
     readonly kind: 'boss' | 'reply' | 'handoff' | 'action' | 'outcome';
     readonly payload: JsonValue;
 }
-interface PlaybookCaptainFrameSnapshot {
+export interface PlaybookCaptainFrameSnapshot {
     readonly playbookId: string;
     readonly sessionId: string;
     readonly rootSessionId: string;
@@ -112,9 +112,25 @@ type PlaybookCaptainShellSnapshotValue = PlaybookCaptainShellSnapshotFields & ({
     };
 });
 export type PlaybookCaptainShellSnapshot = DeepReadonly<PlaybookCaptainShellSnapshotValue>;
+export interface PlaybookCaptainRetainedGeneration {
+    readonly frames: readonly PlaybookCaptainFrameSnapshot[];
+}
+export type PlaybookCaptainRetentionUpdate = {
+    readonly kind: 'retain';
+    readonly rootPlaybookId: string;
+    readonly generation: PlaybookCaptainRetainedGeneration;
+} | {
+    readonly kind: 'clear';
+    readonly rootPlaybookId: string;
+};
+export interface PlaybookCaptainSettlement {
+    readonly snapshot: PlaybookCaptainShellSnapshot;
+    readonly retentionUpdates: readonly PlaybookCaptainRetentionUpdate[];
+}
 /** tmux and headless front ends share this one durable Captain shell API. */
 export interface PlaybookCaptainShell extends Captain {
     exportSnapshot(): PlaybookCaptainShellSnapshot | undefined;
+    exportSettlement(): PlaybookCaptainSettlement | undefined;
     restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>;
 }
 /** Validate, detach, and freeze one untrusted shell snapshot. */

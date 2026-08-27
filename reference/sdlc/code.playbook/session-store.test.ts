@@ -42,6 +42,8 @@ const tempId = 'b0000000-0000-4000-8000-000000000001';
 const instant = new Date('2026-08-11T21:00:00.000Z');
 const captainRuntimeId = '80000000-0000-4000-8000-000000000001';
 const frameRuntimeId = '80000000-0000-4000-8000-000000000002';
+const childFrameRuntimeId = '80000000-0000-4000-8000-000000000003';
+const reviewRootRuntimeId = '80000000-0000-4000-8000-000000000004';
 
 afterEach(async () => {
   await Promise.all(
@@ -117,6 +119,17 @@ function parkedState(stateId = 'routing') {
     value: stateId,
     activeStateIds: [stateId],
     tags: ['playbook.parked'],
+    status: 'active',
+    quiescent: true,
+    stateId,
+  };
+}
+
+function suspendedState(stateId = 'waitingForReview') {
+  return {
+    value: stateId,
+    activeStateIds: [stateId],
+    tags: ['playbook.suspended'],
     status: 'active',
     quiescent: true,
     stateId,
@@ -207,6 +220,102 @@ function engagedSnapshot(execution = executionProjection()) {
   };
 }
 
+function retentionExecutionProjection(
+  options: Parameters<typeof executionProjection>[0] = {},
+) {
+  const execution = executionProjection(options);
+  return {
+    ...execution,
+    catalog: {
+      ...execution.catalog,
+      review: {
+        id: 'review',
+        from: '@sublang/playbook/review/registry',
+        manifestCommand: 'review',
+        command: 'review',
+        intent: 'Review completed work.',
+        artifactSchema: 2,
+        requiredRoleIds: ['coder'],
+        concurrentRoleSets: [],
+        roles: {
+          coder: { ...execution.catalog.code.roles.coder },
+        },
+        options: {},
+      },
+    },
+  };
+}
+
+function retainedCodeGeneration(childStateId = 'reviewing') {
+  const rootState = suspendedState();
+  const childState = parkedState(childStateId);
+  return {
+    frames: [
+      {
+        playbookId: 'code',
+        sessionId: frameRuntimeId,
+        rootSessionId: frameRuntimeId,
+        depth: 0,
+        options: {},
+        roleBindings: { coder: 'dev.coder' },
+        runtime: {
+          ...runtimeSnapshot('code', 1),
+          machine: { value: rootState.value, status: rootState.status },
+          sequences: {
+            ...runtimeSnapshot('code', 1).sequences,
+            playbookCall: 1,
+          },
+          state: rootState,
+          suspendedCall: {
+            callId: 'code:review:1',
+            stateId: 'waitingForReview',
+            playbookId: 'review',
+            text: 'Review the implementation.',
+            childSessionId: childFrameRuntimeId,
+            turnId: 1,
+          },
+        },
+      },
+      {
+        playbookId: 'review',
+        sessionId: childFrameRuntimeId,
+        rootSessionId: frameRuntimeId,
+        depth: 1,
+        parentSessionId: frameRuntimeId,
+        parentCallId: 'code:review:1',
+        options: {},
+        roleBindings: { coder: 'dev.coder' },
+        runtime: {
+          ...runtimeSnapshot('review', 1),
+          machine: { value: childState.value, status: childState.status },
+          state: childState,
+        },
+      },
+    ],
+  };
+}
+
+function retainedReviewGeneration(stateId = 'reviewing') {
+  const state = parkedState(stateId);
+  return {
+    frames: [
+      {
+        playbookId: 'review',
+        sessionId: reviewRootRuntimeId,
+        rootSessionId: reviewRootRuntimeId,
+        depth: 0,
+        options: {},
+        roleBindings: { coder: 'dev.coder' },
+        runtime: {
+          ...runtimeSnapshot('review', 1),
+          machine: { value: state.value, status: state.status },
+          state,
+        },
+      },
+    ],
+  };
+}
+
 function fixedStore(
   sessionsDir: string,
   ownerToken: string,
@@ -229,7 +338,7 @@ function processError(code: string) {
 function settledRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: 'captain-session',
     state: 'settled',
     sessionId,
@@ -239,6 +348,7 @@ function settledRecord(overrides: Record<string, unknown> = {}) {
     structuralProjection: projectCaptainSessionStructure(execution),
     lastAppliedExecutionProjection: execution,
     snapshot: shellSnapshot(execution),
+    retainedGenerations: {},
     ...overrides,
   };
 }
@@ -258,10 +368,16 @@ function releasedSchema2Record(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function releasedSchema3Record(overrides: Record<string, unknown> = {}) {
+  const { retainedGenerations: _retainedGenerations, ...record } =
+    settledRecord();
+  return { ...record, schemaVersion: 3, ...overrides };
+}
+
 function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     kind: 'captain-session',
     state: 'uncertain',
     sessionId,
@@ -271,6 +387,7 @@ function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
     structuralProjection: projectCaptainSessionStructure(execution),
     lastAppliedExecutionProjection: execution,
     snapshot: shellSnapshot(execution),
+    retainedGenerations: {},
     uncertain: {
       baseUpdatedAt: null,
       input: 'fresh input',
@@ -299,7 +416,7 @@ function leaseOwner(
   };
 }
 
-describe('durable Captain session records (PBCLI-23/24)', () => {
+describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
   it('atomically initializes one validated turn-zero settled record without replacement', async () => {
     const { sessionsDir } = await fixtureDir();
     const store = fixedStore(sessionsDir, tokenO);
@@ -326,12 +443,13 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       snapshot: shellSnapshot(execution),
     });
     expect(settled).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       state: 'settled',
       createdAt: '2026-08-11T21:00:00.000Z',
       updatedAt: '2026-08-11T21:00:00.001Z',
       structuralProjection: { schemaVersion: 1 },
       lastAppliedExecutionProjection: { schemaVersion: 2 },
+      retainedGenerations: {},
     });
     const recordPath = join(sessionsDir, `${sessionId}.json`);
     const bytes = await readFile(recordPath, 'utf8');
@@ -568,6 +686,7 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     const { sessionsDir } = await fixtureDir();
     const firstStore = fixedStore(sessionsDir, tokenO);
     const firstLease = await firstStore.acquire(sessionId);
+    const initialExecution = retentionExecutionProjection();
     const canonicalLease = join(sessionsDir, `.${sessionId}.lock`);
     expect((await stat(canonicalLease)).mode & 0o777).toBe(0o700);
     expect(await readdir(canonicalLease)).toEqual(['owner.json']);
@@ -576,14 +695,15 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     const uncertain = await firstLease.beginTurn({
       input: '  exact input\n',
       attemptId: attempt1,
-      attemptedExecutionProjection: executionProjection(),
-      fresh: freshBoundary(),
+      attemptedExecutionProjection: initialExecution,
+      fresh: freshBoundary(initialExecution),
     });
     expect(uncertain).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       kind: 'captain-session',
       state: 'uncertain',
       sessionId,
+      retainedGenerations: {},
       uncertain: {
         baseUpdatedAt: null,
         input: '  exact input\n',
@@ -595,10 +715,20 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     expect(Object.isFrozen(uncertain)).toBe(true);
     const firstSettled = await firstLease.settle({
       attemptId: attempt1,
-      snapshot: shellSnapshot(executionProjection(), 1),
+      snapshot: shellSnapshot(initialExecution, 1),
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: retainedCodeGeneration(),
+        },
+      ],
     });
     expect(firstSettled.state).toBe('settled');
     expect(firstSettled).not.toHaveProperty('uncertain');
+    expect(firstSettled.retainedGenerations).toEqual({
+      code: retainedCodeGeneration(),
+    });
     await firstLease.release();
 
     const recordPath = join(sessionsDir, `${sessionId}.json`);
@@ -619,14 +749,20 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
 
     const secondStore = fixedStore(sessionsDir, tokenN);
     const secondLease = await secondStore.acquire(sessionId);
+    expect((await secondStore.read(sessionId)).retainedGenerations).toEqual(
+      firstSettled.retainedGenerations,
+    );
     const continued = await secondLease.beginTurn({
       input: 'continued',
       attemptId: attempt2,
-      attemptedExecutionProjection: executionProjection({
+      attemptedExecutionProjection: retentionExecutionProjection({
         captainModel: 'captain-current',
         playerModel: 'coder-current',
       }),
     });
+    expect(continued.retainedGenerations).toEqual(
+      firstSettled.retainedGenerations,
+    );
     expect(continued.uncertain).toMatchObject({
       baseUpdatedAt: firstSettled.updatedAt,
       attemptNumber: 1,
@@ -647,6 +783,9 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       attemptNumber: 2,
       baseUpdatedAt: firstSettled.updatedAt,
     });
+    expect(retried.retainedGenerations).toEqual(
+      firstSettled.retainedGenerations,
+    );
     await secondLease.discard({ attemptId: attempt3 });
     expect(await readFile(recordPath, 'utf8')).toBe(settledBytes);
     await secondLease.release();
@@ -659,14 +798,192 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       collisionLease.beginTurn({
         input: 'must not overwrite',
         attemptId: attempt2,
-        attemptedExecutionProjection: executionProjection(),
-        fresh: freshBoundary(),
+        attemptedExecutionProjection: initialExecution,
+        fresh: freshBoundary(initialExecution),
       }),
     ).rejects.toThrow(/fresh Captain session record already exists/);
     expect(await readFile(recordPath, 'utf8')).toBe(settledBytes);
     expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
       .toBe(false);
     await collisionLease.release();
+  });
+
+  it('replaces and clears one retained generation without disturbing another root', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const store = fixedStore(sessionsDir, tokenO);
+    const lease = await store.acquire(sessionId);
+    const execution = retentionExecutionProjection();
+    await lease.beginTurn({
+      input: 'retain two roots',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+      fresh: freshBoundary(execution),
+    });
+    const first = await lease.settle({
+      attemptId: attempt1,
+      snapshot: shellSnapshot(execution, 1),
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: retainedCodeGeneration(),
+        },
+        {
+          kind: 'retain',
+          rootPlaybookId: 'review',
+          generation: retainedReviewGeneration(),
+        },
+      ],
+    });
+    expect(Object.isFrozen(first.retainedGenerations.code)).toBe(true);
+    expect(Object.keys(first.retainedGenerations)).toEqual(['code', 'review']);
+
+    await lease.beginTurn({
+      input: 'replace code',
+      attemptId: attempt2,
+      attemptedExecutionProjection: execution,
+    });
+    const replaced = await lease.settle({
+      attemptId: attempt2,
+      snapshot: shellSnapshot(execution, 2),
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: retainedCodeGeneration('reviewFailed'),
+        },
+      ],
+    });
+    expect(replaced.retainedGenerations).toEqual({
+      code: retainedCodeGeneration('reviewFailed'),
+      review: retainedReviewGeneration(),
+    });
+
+    await lease.beginTurn({
+      input: 'complete code cleanly',
+      attemptId: attempt3,
+      attemptedExecutionProjection: execution,
+    });
+    const cleared = await lease.settle({
+      attemptId: attempt3,
+      snapshot: shellSnapshot(execution, 3),
+      retentionUpdates: [
+        { kind: 'clear', rootPlaybookId: 'code' },
+      ],
+    });
+    expect(cleared.retainedGenerations).toEqual({
+      review: retainedReviewGeneration(),
+    });
+    await lease.release();
+  });
+
+  it('rejects malformed or dangling retained generations before persistence', async () => {
+    const execution = retentionExecutionProjection();
+    const base = settledRecord({
+      structuralProjection: projectCaptainSessionStructure(execution),
+      lastAppliedExecutionProjection: execution,
+      snapshot: shellSnapshot(execution, 1),
+      retainedGenerations: { code: retainedCodeGeneration() },
+    });
+    const mutations: Array<[string, (value: any) => void]> = [
+      ['unknown root', (value) => {
+        value.retainedGenerations.unknown = value.retainedGenerations.code;
+        delete value.retainedGenerations.code;
+      }],
+      ['empty stack', (value) => {
+        value.retainedGenerations.code.frames = [];
+      }],
+      ['root mismatch', (value) => {
+        value.retainedGenerations.code.frames[0].playbookId = 'review';
+      }],
+      ['final snapshot', (value) => {
+        value.retainedGenerations.code.frames[1].runtime.state.status = 'done';
+        value.retainedGenerations.code.frames[1].runtime.machine.status = 'done';
+      }],
+      ['nonquiescent snapshot', (value) => {
+        value.retainedGenerations.code.frames[1].runtime.state.quiescent = false;
+      }],
+      ['dangling bridge', (value) => {
+        value.retainedGenerations.code.frames[1].parentCallId = 'wrong-call';
+      }],
+      ['missing role binding', (value) => {
+        delete value.retainedGenerations.code.frames[1].roleBindings.coder;
+      }],
+      ['duplicate session', (value) => {
+        value.retainedGenerations.review = retainedReviewGeneration();
+        const frame = value.retainedGenerations.review.frames[0];
+        frame.sessionId = frameRuntimeId;
+        frame.rootSessionId = frameRuntimeId;
+      }],
+      ['cyclic object', (value) => {
+        value.retainedGenerations.code.frames[0].options =
+          value.retainedGenerations.code;
+      }],
+      ['playbook cycle', (value) => {
+        value.retainedGenerations.code.frames[0].runtime.suspendedCall.playbookId =
+          'code';
+        value.retainedGenerations.code.frames[1].playbookId = 'code';
+        value.retainedGenerations.code.frames[1].runtime.playbookId = 'code';
+      }],
+    ];
+    for (const [label, mutate] of mutations) {
+      const candidate = structuredClone(base);
+      mutate(candidate);
+      expect(
+        () => validateCaptainSessionRecord(candidate),
+        label,
+      ).toThrow();
+    }
+
+    const { sessionsDir } = await fixtureDir();
+    const store = fixedStore(sessionsDir, tokenO);
+    const lease = await store.acquire(sessionId);
+    await lease.beginTurn({
+      input: 'invalid retention update',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+      fresh: freshBoundary(execution),
+    });
+    await expect(
+      lease.settle({
+        attemptId: attempt1,
+        snapshot: shellSnapshot(execution, 1),
+        retentionUpdates: [
+          { kind: 'clear', rootPlaybookId: 'unknown' },
+        ],
+      }),
+    ).rejects.toThrow(/unknown stored playbook/);
+    const uncertainBytes = await readFile(
+      join(sessionsDir, `${sessionId}.json`),
+      'utf8',
+    );
+    const malformed = retainedCodeGeneration();
+    (malformed.frames[1]!.runtime.state as any).status = 'done';
+    for (const retentionUpdates of [
+      [
+        { kind: 'clear' as const, rootPlaybookId: 'code' },
+        { kind: 'clear' as const, rootPlaybookId: 'code' },
+      ],
+      [
+        {
+          kind: 'retain' as const,
+          rootPlaybookId: 'code',
+          generation: malformed,
+        },
+      ],
+    ]) {
+      await expect(
+        lease.settle({
+          attemptId: attempt1,
+          snapshot: shellSnapshot(execution, 1),
+          retentionUpdates,
+        }),
+      ).rejects.toThrow();
+      expect(await readFile(join(sessionsDir, `${sessionId}.json`), 'utf8'))
+        .toBe(uncertainBytes);
+    }
+    expect((await store.read(sessionId)).state).toBe('uncertain');
+    await lease.release();
   });
 
   it('deletes a never-settled fresh marker and validates the exact union', async () => {
@@ -817,25 +1134,33 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
   it('keeps prior bytes and cleans its temp when a replacement rename fails', async () => {
     const { sessionsDir } = await fixtureDir();
     const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    const execution = retentionExecutionProjection();
     await firstLease.beginTurn({
       input: 'first',
       attemptId: attempt1,
-      attemptedExecutionProjection: executionProjection(),
-      fresh: freshBoundary(),
+      attemptedExecutionProjection: execution,
+      fresh: freshBoundary(execution),
     });
     await firstLease.settle({
       attemptId: attempt1,
-      snapshot: shellSnapshot(executionProjection(), 1, 'settled'),
+      snapshot: shellSnapshot(execution, 1, 'settled'),
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: retainedCodeGeneration(),
+        },
+      ],
     });
     await firstLease.release();
     const recordPath = join(sessionsDir, `${sessionId}.json`);
-    const before = await readFile(recordPath, 'utf8');
+    let failRename = false;
 
     const failing = fixedStore(sessionsDir, tokenN, {
       createTempId: () => tempId,
       fsOps: {
         async rename(from: string, to: string) {
-          if (from.endsWith('.tmp') && to === recordPath) {
+          if (failRename && from.endsWith('.tmp') && to === recordPath) {
             throw new Error('synthetic record rename failure');
           }
           return rename(from, to);
@@ -843,14 +1168,39 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       },
     });
     const lease = await failing.acquire(sessionId);
+    await lease.beginTurn({
+      input: 'must not replace',
+      attemptId: attempt2,
+      attemptedExecutionProjection: execution,
+    });
+    const before = await readFile(recordPath, 'utf8');
+    failRename = true;
     await expect(
-      lease.beginTurn({
-        input: 'must not replace',
+      lease.settle({
         attemptId: attempt2,
-        attemptedExecutionProjection: executionProjection(),
+        snapshot: shellSnapshot(execution, 2, 'replacement'),
+        retentionUpdates: [
+          {
+            kind: 'retain',
+            rootPlaybookId: 'code',
+            generation: retainedCodeGeneration('replacement'),
+          },
+        ],
       }),
     ).rejects.toThrow(/synthetic record rename failure/);
     expect(await readFile(recordPath, 'utf8')).toBe(before);
+    expect(JSON.parse(before)).toMatchObject({
+      state: 'uncertain',
+      snapshot: { sequences: { turn: 1 } },
+      retainedGenerations: {
+        code: {
+          frames: [
+            {},
+            { runtime: { state: { stateId: 'reviewing' } } },
+          ],
+        },
+      },
+    });
     expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
       .toBe(false);
     await lease.release();
@@ -915,26 +1265,41 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       },
     });
     const lease = await store.acquire(sessionId);
+    const execution = retentionExecutionProjection();
     await lease.beginTurn({
       input: 'first turn',
       attemptId: attempt1,
-      attemptedExecutionProjection: executionProjection(),
-      fresh: freshBoundary(),
+      attemptedExecutionProjection: execution,
+      fresh: freshBoundary(execution),
     });
     await lease.settle({
       attemptId: attempt1,
-      snapshot: shellSnapshot(executionProjection(), 1, 'first settled'),
+      snapshot: shellSnapshot(execution, 1, 'first settled'),
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: retainedCodeGeneration(),
+        },
+      ],
     });
     await lease.beginTurn({
       input: 'second turn',
       attemptId: attempt2,
-      attemptedExecutionProjection: executionProjection(),
+      attemptedExecutionProjection: execution,
     });
     failSessionSync = true;
     await expect(
       lease.settle({
         attemptId: attempt2,
-        snapshot: shellSnapshot(executionProjection(), 2, 'replacement settled'),
+        snapshot: shellSnapshot(execution, 2, 'replacement settled'),
+        retentionUpdates: [
+          {
+            kind: 'retain',
+            rootPlaybookId: 'code',
+            generation: retainedCodeGeneration('reviewFailed'),
+          },
+        ],
       }),
     ).rejects.toThrow(/synthetic settlement directory sync failure/);
     failSessionSync = false;
@@ -944,11 +1309,19 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
         sequences: { turn: 2 },
         captain: { conversation: { token: 'replacement settled' } },
       },
+      retainedGenerations: {
+        code: {
+          frames: [
+            {},
+            { runtime: { state: { stateId: 'reviewFailed' } } },
+          ],
+        },
+      },
     });
     await lease.release();
   });
 
-  it('selects tied records, skips released schema 2, and fails closed on corruption', async () => {
+  it('selects tied records, skips released schemas, and fails closed on corruption', async () => {
     const { sessionsDir } = await fixtureDir();
     for (const [id, token, attempt] of [
       [sessionId, tokenO, attempt1],
@@ -1005,6 +1378,40 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
       new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 2`),
     );
 
+    const releasedSchema3 = releasedSchema3Record({
+      sessionId: secondSessionId,
+      createdAt: wrongEmbeddedId.createdAt,
+      updatedAt: wrongEmbeddedId.updatedAt,
+      cwd: wrongEmbeddedId.cwd,
+      structuralProjection: wrongEmbeddedId.structuralProjection,
+      lastAppliedExecutionProjection:
+        wrongEmbeddedId.lastAppliedExecutionProjection,
+      snapshot: wrongEmbeddedId.snapshot,
+    });
+    await writeFile(
+      secondPath,
+      `${JSON.stringify(releasedSchema3)}\n`,
+      'utf8',
+    );
+    legacyRecords.length = 0;
+    expect(
+      (
+        await store.latest({
+          onLegacyRecord: (record: unknown) => legacyRecords.push(record),
+        })
+      ).sessionId,
+    ).toBe(sessionId);
+    expect(legacyRecords).toEqual([
+      {
+        sessionId: secondSessionId,
+        path: secondPath,
+        schemaVersion: 3,
+      },
+    ]);
+    await expect(store.read(secondSessionId)).rejects.toThrow(
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 3`),
+    );
+
     await writeFile(secondPath, '{"schemaVersion":2}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(
       new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*state`),
@@ -1016,6 +1423,11 @@ describe('durable Captain session records (PBCLI-23/24)', () => {
     );
 
     await writeFile(secondPath, '{"schemaVersion":3}\n', 'utf8');
+    await expect(store.latest()).rejects.toThrow(
+      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*state`),
+    );
+
+    await writeFile(secondPath, '{"schemaVersion":4}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(
       new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*state`),
     );

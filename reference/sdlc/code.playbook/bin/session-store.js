@@ -23,10 +23,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { assertSupportedEffort } from '@sublang/cligent';
 import { KNOWN_PLAYER_ADAPTERS } from '@sublang/cligent/tmux-play';
-import { snapshotJsonValue } from '../../../../src/xstate-runtime.js';
+import {
+  assertPlaybookRuntimeSnapshot,
+  snapshotJsonValue,
+} from '../../../../src/xstate-runtime.js';
 import { assertPlaybookCaptainShellSnapshot } from '../playbook-captain.js';
 
-export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
+export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 4;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
 export const SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -49,6 +52,7 @@ const COMMON_RECORD_KEYS = [
   'structuralProjection',
   'lastAppliedExecutionProjection',
   'snapshot',
+  'retainedGenerations',
 ];
 const UNCERTAIN_KEYS = [
   'baseUpdatedAt',
@@ -76,6 +80,9 @@ const RELEASED_SCHEMA_2_UNCERTAIN_KEYS = [
   'attemptNumber',
   'markedAt',
 ];
+const RELEASED_SCHEMA_3_COMMON_RECORD_KEYS = COMMON_RECORD_KEYS.filter(
+  (key) => key !== 'retainedGenerations',
+);
 const LEASE_SCHEMA_VERSION = 1;
 const LEASE_KIND = 'captain-session-lease';
 const LEASE_OWNER_FILE = 'owner.json';
@@ -194,7 +201,10 @@ export function createCaptainSessionStore(options = {}) {
         `Captain session ${JSON.stringify(sessionId)} at ` +
         `${JSON.stringify(path)}`;
       if (cause instanceof CaptainSessionRecordSchemaError) {
-        if (cause.schemaVersion === 2 && value.sessionId !== sessionId) {
+        if (
+          (cause.schemaVersion === 2 || cause.schemaVersion === 3) &&
+          value.sessionId !== sessionId
+        ) {
           throw new Error(
             `Captain session file ${JSON.stringify(path)} contains record ` +
               JSON.stringify(value.sessionId),
@@ -252,13 +262,13 @@ export function createCaptainSessionStore(options = {}) {
       } catch (error) {
         if (
           error instanceof CaptainSessionRecordSchemaError &&
-          error.schemaVersion === 2
+          (error.schemaVersion === 2 || error.schemaVersion === 3)
         ) {
           await onLegacyRecord?.(
             Object.freeze({
               sessionId,
               path: recordPathFor(sessionId),
-              schemaVersion: 2,
+              schemaVersion: error.schemaVersion,
             }),
           );
           continue;
@@ -765,6 +775,7 @@ function createLease({
         structuralProjection: initial.structuralProjection,
         lastAppliedExecutionProjection: applied,
         snapshot: initial.snapshot,
+        retainedGenerations: {},
       });
       await assertOwnerUnchecked();
       await writeRecord(record, { noReplace: true });
@@ -805,6 +816,7 @@ function createLease({
           structuralProjection: initial.structuralProjection,
           lastAppliedExecutionProjection: attempted,
           snapshot: initial.snapshot,
+          retainedGenerations: {},
           uncertain: {
             baseUpdatedAt: null,
             input,
@@ -836,6 +848,7 @@ function createLease({
           lastAppliedExecutionProjection:
             prior.lastAppliedExecutionProjection,
           snapshot: prior.snapshot,
+          retainedGenerations: prior.retainedGenerations,
           uncertain: {
             baseUpdatedAt: prior.updatedAt,
             input,
@@ -880,6 +893,7 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
+        retainedGenerations: prior.retainedGenerations,
         uncertain: {
           baseUpdatedAt: prior.uncertain.baseUpdatedAt,
           input: prior.uncertain.input,
@@ -896,9 +910,10 @@ function createLease({
       return record;
     });
 
-  const settle = ({ attemptId, snapshot } = {}) =>
+  const settle = ({ attemptId, snapshot, retentionUpdates = [] } = {}) =>
     runExclusive(async () => {
       assertUuid(attemptId, 'Captain session attempt id');
+      const updates = validateRetainedGenerationUpdates(retentionUpdates);
       await assertOwnerUnchecked();
       const prior = await requireUncertainRecord(
         await readRecord(sessionId, { missing: 'undefined' }),
@@ -917,6 +932,11 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.uncertain.attemptedExecutionProjection,
         snapshot,
+        retainedGenerations: applyRetainedGenerationUpdates(
+          prior.retainedGenerations,
+          updates,
+          prior.structuralProjection,
+        ),
       });
       await assertOwnerUnchecked();
       await writeRecord(record, { noReplace: false });
@@ -952,6 +972,7 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
+        retainedGenerations: prior.retainedGenerations,
       });
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
@@ -1080,7 +1101,14 @@ export function validateCaptainSessionRecord(value) {
       assertReleasedSchema2CaptainSessionRecord(record);
       throw new CaptainSessionRecordSchemaError(
         record.schemaVersion,
-        'Captain session record schema 2 has incompatible root-owned player identity; schema 3 is required',
+        'Captain session record schema 2 has incompatible root-owned player identity; schema 4 is required',
+      );
+    }
+    if (record.schemaVersion === 3) {
+      assertReleasedSchema3CaptainSessionRecord(record);
+      throw new CaptainSessionRecordSchemaError(
+        record.schemaVersion,
+        'Captain session record schema 3 has no retained-generation state; schema 4 is required',
       );
     }
     throw new CaptainSessionRecordSchemaError(
@@ -1129,6 +1157,7 @@ export function validateCaptainSessionRecord(value) {
   void lastApplied;
   const snapshot = assertPlaybookCaptainShellSnapshot(record.snapshot);
   assertSnapshotMatchesStructure(snapshot, structural);
+  validateRetainedGenerations(record.retainedGenerations, structural);
   if (
     snapshot.captain.sessionId === record.sessionId ||
     snapshot.issuedSessionIds.includes(record.sessionId)
@@ -1201,6 +1230,24 @@ export function validateCaptainSessionRecord(value) {
   }
 
   return record;
+}
+
+function assertReleasedSchema3CaptainSessionRecord(record) {
+  if (record.state !== 'settled' && record.state !== 'uncertain') {
+    throw new Error('Captain session record state is not supported');
+  }
+  rejectUnknownOrMissingKeys(
+    record,
+    record.state === 'uncertain'
+      ? [...RELEASED_SCHEMA_3_COMMON_RECORD_KEYS, 'uncertain']
+      : RELEASED_SCHEMA_3_COMMON_RECORD_KEYS,
+    'Captain session record',
+  );
+  validateCaptainSessionRecord({
+    ...record,
+    schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+    retainedGenerations: {},
+  });
 }
 
 function assertReleasedSchema2CaptainSessionRecord(record) {
@@ -1675,6 +1722,273 @@ function assertSnapshotMatchesStructure(snapshot, structural) {
         `Captain session snapshot frame ${JSON.stringify(frame.playbookId)} role bindings differ from structuralProjection`,
       );
     }
+  }
+}
+
+function validateRetainedGenerationUpdates(value) {
+  const updates = snapshotJsonValue(
+    value,
+    'Captain session retained-generation updates',
+  );
+  if (!Array.isArray(updates)) {
+    throw new Error(
+      'Captain session retained-generation updates must be an array',
+    );
+  }
+  const roots = new Set();
+  for (const [index, value] of updates.entries()) {
+    const path = `Captain session retained-generation updates[${index}]`;
+    const update = requireRecord(value, path);
+    if (update.kind === 'retain') {
+      rejectUnknownOrMissingKeys(
+        update,
+        ['kind', 'rootPlaybookId', 'generation'],
+        path,
+      );
+      requireRecord(update.generation, `${path}.generation`);
+    } else if (update.kind === 'clear') {
+      rejectUnknownOrMissingKeys(
+        update,
+        ['kind', 'rootPlaybookId'],
+        path,
+      );
+    } else {
+      throw new Error(`${path}.kind must be "retain" or "clear"`);
+    }
+    const rootPlaybookId = requireCanonicalNonblank(
+      update.rootPlaybookId,
+      `${path}.rootPlaybookId`,
+    );
+    if (roots.has(rootPlaybookId)) {
+      throw new Error(
+        'Captain session retained-generation updates contain a duplicate root playbook id',
+      );
+    }
+    roots.add(rootPlaybookId);
+  }
+  return updates;
+}
+
+function applyRetainedGenerationUpdates(
+  retainedGenerations,
+  updates,
+  structural,
+) {
+  const next = new Map(Object.entries(retainedGenerations));
+  for (const update of updates) {
+    if (!Object.hasOwn(structural.catalog, update.rootPlaybookId)) {
+      throw new Error(
+        `Captain session retained-generation update names unknown stored playbook ${JSON.stringify(update.rootPlaybookId)}`,
+      );
+    }
+    if (update.kind === 'clear') {
+      next.delete(update.rootPlaybookId);
+    } else {
+      next.set(update.rootPlaybookId, update.generation);
+    }
+  }
+  return Object.fromEntries(next);
+}
+
+function validateRetainedGenerations(value, structural) {
+  const retained = requireRecord(
+    value,
+    'Captain session record retainedGenerations',
+  );
+  const sessionIds = new Set();
+  for (const [rootPlaybookId, value] of Object.entries(retained)) {
+    const path =
+      `Captain session record retainedGenerations` +
+      `[${JSON.stringify(rootPlaybookId)}]`;
+    if (!Object.hasOwn(structural.catalog, rootPlaybookId)) {
+      throw new Error(
+        `Captain session retained generation names unknown stored playbook ${JSON.stringify(rootPlaybookId)}`,
+      );
+    }
+    const generation = requireRecord(value, path);
+    rejectUnknownOrMissingKeys(generation, ['frames'], path);
+    if (!Array.isArray(generation.frames) || generation.frames.length === 0) {
+      throw new Error(`${path}.frames must be a non-empty array`);
+    }
+    const frames = generation.frames.map((value, index) =>
+      validateRetainedGenerationFrame(
+        value,
+        index,
+        rootPlaybookId,
+        structural,
+        sessionIds,
+        `${path}.frames[${index}]`,
+      ),
+    );
+    validateRetainedGenerationPath(frames, rootPlaybookId, path);
+  }
+  return retained;
+}
+
+function validateRetainedGenerationFrame(
+  value,
+  index,
+  rootPlaybookId,
+  structural,
+  sessionIds,
+  path,
+) {
+  const frame = requireRecord(value, path);
+  exactOptionalKeys(
+    frame,
+    [
+      'playbookId',
+      'sessionId',
+      'rootSessionId',
+      'depth',
+      'options',
+      'roleBindings',
+      'runtime',
+    ],
+    ['parentSessionId', 'parentCallId'],
+    path,
+  );
+  const playbookId = requireCanonicalNonblank(
+    frame.playbookId,
+    `${path}.playbookId`,
+  );
+  const catalogItem = structural.catalog[playbookId];
+  if (catalogItem === undefined) {
+    throw new Error(
+      `${path}.playbookId names unknown stored playbook ${JSON.stringify(playbookId)}`,
+    );
+  }
+  assertUuid(frame.sessionId, `${path}.sessionId`);
+  assertUuid(frame.rootSessionId, `${path}.rootSessionId`);
+  if (sessionIds.has(frame.sessionId)) {
+    throw new Error(
+      'Captain session retained generation frame session ids must be unique',
+    );
+  }
+  sessionIds.add(frame.sessionId);
+  if (!Number.isSafeInteger(frame.depth) || frame.depth !== index) {
+    throw new Error(`${path}.depth must equal its root-to-leaf index`);
+  }
+  if (frame.parentSessionId !== undefined) {
+    assertUuid(frame.parentSessionId, `${path}.parentSessionId`);
+  }
+  if (frame.parentCallId !== undefined) {
+    requireNonblank(frame.parentCallId, `${path}.parentCallId`);
+  }
+  const roleBindings = requireRecord(
+    frame.roleBindings,
+    `${path}.roleBindings`,
+  );
+  rejectUnknownOrMissingKeys(
+    roleBindings,
+    catalogItem.requiredRoleIds,
+    `${path}.roleBindings`,
+  );
+  for (const roleId of catalogItem.requiredRoleIds) {
+    assertPlayerId(roleBindings[roleId], `${path}.roleBindings.${roleId}`);
+  }
+  let runtime;
+  try {
+    runtime = assertPlaybookRuntimeSnapshot(frame.runtime, playbookId, {
+      allowSuspendedCall: true,
+    });
+  } catch (cause) {
+    throw new Error(`${path}.runtime is invalid: ${errorMessage(cause)}`, {
+      cause,
+    });
+  }
+  if (
+    runtime.state.status !== 'active' ||
+    !runtime.state.quiescent ||
+    runtime.state.stateId === undefined
+  ) {
+    throw new Error(
+      `${path}.runtime must capture one active quiescent pre-terminal state`,
+    );
+  }
+  for (const roleId of Object.keys(runtime.roleResumeTokens)) {
+    if (!Object.hasOwn(roleBindings, roleId)) {
+      throw new Error(
+        `${path}.runtime role token names an unbound role ${JSON.stringify(roleId)}`,
+      );
+    }
+  }
+  for (const question of runtime.pendingBossQuestions) {
+    if (
+      question.asker.kind === 'role' &&
+      !Object.hasOwn(roleBindings, question.asker.roleId)
+    ) {
+      throw new Error(
+        `${path}.runtime pending question names an unbound role ${JSON.stringify(question.asker.roleId)}`,
+      );
+    }
+  }
+  if (index === 0 && playbookId !== rootPlaybookId) {
+    throw new Error(
+      `${path}.playbookId must equal retained root ${JSON.stringify(rootPlaybookId)}`,
+    );
+  }
+  return {
+    ...frame,
+    playbookId,
+    runtime,
+  };
+}
+
+function validateRetainedGenerationPath(frames, rootPlaybookId, path) {
+  const rootSessionId = frames[0].sessionId;
+  const playbookIds = new Set();
+  for (const [index, frame] of frames.entries()) {
+    if (playbookIds.has(frame.playbookId)) {
+      throw new Error(`${path}.frames must not contain a playbook cycle`);
+    }
+    playbookIds.add(frame.playbookId);
+    if (frame.rootSessionId !== rootSessionId) {
+      throw new Error(
+        `${path}.frames[${index}].rootSessionId must equal the root session id`,
+      );
+    }
+    if (index === 0) {
+      if (
+        frame.sessionId !== frame.rootSessionId ||
+        frame.parentSessionId !== undefined ||
+        frame.parentCallId !== undefined
+      ) {
+        throw new Error(
+          `${path}.frames[0] has child-only or inconsistent root identity`,
+        );
+      }
+      continue;
+    }
+    const parent = frames[index - 1];
+    const suspendedCall = parent.runtime.suspendedCall;
+    if (
+      frame.parentSessionId !== parent.sessionId ||
+      frame.parentCallId === undefined
+    ) {
+      throw new Error(
+        `${path}.frames[${index}] does not identify its immediate parent`,
+      );
+    }
+    if (
+      suspendedCall === undefined ||
+      suspendedCall.callId !== frame.parentCallId ||
+      suspendedCall.playbookId !== frame.playbookId ||
+      suspendedCall.childSessionId !== frame.sessionId
+    ) {
+      throw new Error(
+        `${path}.frames[${index - 1}] suspended call does not match its child edge`,
+      );
+    }
+  }
+  const leaf = frames.at(-1).runtime;
+  if (
+    leaf.suspendedCall !== undefined ||
+    !leaf.state.tags.includes('playbook.parked')
+  ) {
+    throw new Error(
+      `Captain session retained generation ${JSON.stringify(rootPlaybookId)} leaf must be parked without a suspended child call`,
+    );
   }
 }
 

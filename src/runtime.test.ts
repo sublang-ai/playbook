@@ -318,6 +318,19 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       interfaceProperties(linkSpec, 'PlaybookRoleBinding'),
     );
     expect(
+      interfaceProperties(runtimeDts, 'PlaybookRetainedGenerationMetadata'),
+    ).toEqual(['unfinishedFinalStateIds:readonlystring[]']);
+    expect(
+      interfaceProperties(runtimeDts, 'PlaybookRetainedGenerationMetadata'),
+    ).toEqual(
+      interfaceProperties(linkSpec, 'PlaybookRetainedGenerationMetadata'),
+    );
+    for (const source of [runtimeDts, linkSpec]) {
+      expect(interfaceBody(source, 'PlaybookRuntime')).toMatch(
+        /readonly retainedGenerationMetadata\?:\s*PlaybookRetainedGenerationMetadata;/,
+      );
+    }
+    expect(
       interfaceProperties(runtimeSource, 'PlaybookPendingBossQuestion'),
     ).toEqual([
       "asker:{kind:'captain'}|{kind:'role'",
@@ -551,7 +564,17 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       /reject a declared id that does not name a root final state/,
     );
     expect(output).toMatch(/reject it at construction before runtime effects/);
-    expect(output).toMatch(/declaration alone grants no retention or adoption/);
+    expect(output).toMatch(
+      /artifact declaration is not itself the public runtime retention marker or an adoption capability/,
+    );
+    const classification = sectionOf(
+      linkSpec,
+      'Retained-generation classification (optional)',
+    );
+    expect(classification).toContain('retainedGenerationMetadata');
+    expect(classification).toMatch(/explicitly empty/);
+    expect(classification).toMatch(/no snapshot-adoption operation/);
+    expect(classification).toContain('createXStatePlaybookRuntime');
   });
 
   // PBRT-34/35: every authored contract type is exported.
@@ -574,6 +597,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'PlaybookSession',
       'PlaybookTraceEvent',
       'PlaybookRuntimeSnapshot',
+      'PlaybookRetainedGenerationMetadata',
       'PlaybookRuntime',
     ]) {
       expect(runtimeDts).toMatch(new RegExp(`export interface ${name}\\b`));

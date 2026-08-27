@@ -125,10 +125,14 @@ export async function runPlaybookRun(options = {}) {
         const selected = validateCaptainSessionRecord(
           await awaitWithAbort(
             store.latest({
-              onLegacyRecord: ({ sessionId: legacyId, path }) =>
+              onLegacyRecord: ({
+                sessionId: legacyId,
+                path,
+                schemaVersion,
+              }) =>
                 writeStream(
                   stderr,
-                  `playbook run: skipping legacy Captain session ${JSON.stringify(legacyId)} at ${JSON.stringify(path)} because schema 2 has incompatible player identity; move it outside the sessions directory or remove it to silence this warning\n`,
+                  `playbook run: skipping legacy Captain session ${JSON.stringify(legacyId)} at ${JSON.stringify(path)} because ${legacyCaptainSessionReason(schemaVersion)}; move it outside the sessions directory or remove it to silence this warning\n`,
                 ),
             }),
             options.signal,
@@ -506,6 +510,7 @@ export async function runPlaybookRun(options = {}) {
     durableRecord = await lease.settle({
       attemptId: settled.uncertainRecord.uncertain.attemptId,
       snapshot: settled.snapshot,
+      retentionUpdates: settled.retentionUpdates,
     });
   } catch (error) {
     let cleanupError;
@@ -660,10 +665,11 @@ export async function driveHeadlessCaptainTurn({
     if (shell === undefined) {
       throw new Error('Captain shell host initialized without a shell');
     }
-    const snapshot = shell.exportSnapshot();
-    if (snapshot === undefined) {
-      throw new Error('Captain turn settled without an exportable session snapshot');
+    const settlement = shell.exportSettlement();
+    if (settlement === undefined) {
+      throw new Error('Captain turn settled without an exportable session settlement');
     }
+    const { snapshot, retentionUpdates } = settlement;
     if (
       snapshot.captain?.sessionId === sessionId ||
       snapshot.issuedSessionIds?.includes(sessionId)
@@ -676,6 +682,7 @@ export async function driveHeadlessCaptainTurn({
       sessionId,
       reply: replies[0],
       snapshot,
+      retentionUpdates,
       config: cloneJson(config),
       cwd,
       uncertainRecord,
@@ -1253,6 +1260,16 @@ async function reportUncertainSession(stderr, sessionId) {
       '',
     ].join('\n'),
   );
+}
+
+function legacyCaptainSessionReason(schemaVersion) {
+  if (schemaVersion === 2) {
+    return 'schema 2 has incompatible player identity';
+  }
+  if (schemaVersion === 3) {
+    return 'schema 3 has no retained-generation state';
+  }
+  return `schema ${JSON.stringify(schemaVersion)} is unsupported`;
 }
 
 function replayInvocation(argv, args, input) {

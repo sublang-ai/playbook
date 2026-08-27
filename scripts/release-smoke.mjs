@@ -1142,7 +1142,7 @@ function stepHermetic(root, state) {
     (player) => player.id,
   );
   if (
-    firstRecord.schemaVersion !== 3 ||
+    firstRecord.schemaVersion !== 4 ||
     firstRecord.kind !== 'captain-session' ||
     firstRecord.state !== 'settled' ||
     firstRecord.cwd !== frozenCwd ||
@@ -1154,12 +1154,13 @@ function stepHermetic(root, state) {
       'release.shared' ||
     firstRecord.structuralProjection?.catalog?.lanes?.roles?.isolated?.playerId !==
       'release.isolated' ||
+    JSON.stringify(firstRecord.retainedGenerations) !== '{}' ||
     firstRecord.snapshot?.captain?.conversation?.kind !== 'pinned' ||
     firstRecord.snapshot?.captain?.conversation?.token !==
       'release-smoke:closing:first:1'
   ) {
     fail(
-      'the first headless turn did not persist its schema-3 identity boundary',
+      'the first headless turn did not persist its schema-4 identity boundary',
       JSON.stringify({
         schemaVersion: firstRecord.schemaVersion,
         kind: firstRecord.kind,
@@ -1256,7 +1257,7 @@ function stepHermetic(root, state) {
   const finalPlayerIds = Object.keys(finalPlayers).sort();
   const finalRoleIds = Object.keys(finalRoles ?? {}).sort();
   if (
-    finalRecord.schemaVersion !== 3 ||
+    finalRecord.schemaVersion !== 4 ||
     finalRecord.kind !== 'captain-session' ||
     finalRecord.sessionId !== firstEnvelope.sessionId ||
     finalRecord.state !== 'settled' ||
@@ -1269,6 +1270,7 @@ function stepHermetic(root, state) {
       JSON.stringify(['release.isolated', 'release.shared']) ||
     JSON.stringify(finalRoleIds) !==
       JSON.stringify(['first', 'isolated', 'second']) ||
+    JSON.stringify(finalRecord.retainedGenerations) !== '{}' ||
     finalRecord.snapshot?.playerSessions?.['release.shared']?.resumeToken !==
       'release-lane:shared:4' ||
     finalRecord.snapshot?.playerSessions?.['release.isolated']?.resumeToken !==
@@ -1433,7 +1435,7 @@ function stepHermetic(root, state) {
     'one provisioning line; both engine links resolve into the prefix',
     `stdin produced exact {sessionId,reply} with ${smokeToken}`,
     `four processes continued Captain session ${firstEnvelope.sessionId}`,
-    'schema 3 retained two segmented player identities and frozen structure',
+    'schema 4 retained two segmented player identities and frozen structure',
     'shared roles chained one token; the isolated player kept its own token',
     'ordinary reopen applied current model and effort, including provider-default',
     'continuation replayed no settled effect and invoked no tmux',

@@ -505,13 +505,37 @@ describe('generic strategy defaults', () => {
     ]);
   });
 
-  it('accepts unfinished metadata naming a root final state', () => {
-    expect(() =>
-      createXStatePlaybookRuntime(workflowMachine, {
-        ...workflowSpec,
-        unfinishedFinalStateIds: new Set(['done']),
-      }),
-    ).not.toThrow();
+  it('preserves declared unfinished metadata including explicit emptiness', () => {
+    const createRuntime = createXStatePlaybookRuntime(workflowMachine, {
+      ...workflowSpec,
+      unfinishedFinalStateIds: new Set(['done']),
+    });
+    const runtime = createRuntime({});
+    expect(runtime.retainedGenerationMetadata).toEqual({
+      unfinishedFinalStateIds: ['done'],
+    });
+    expect(Object.isFrozen(runtime.retainedGenerationMetadata)).toBe(true);
+    expect(
+      Object.isFrozen(
+        runtime.retainedGenerationMetadata?.unfinishedFinalStateIds,
+      ),
+    ).toBe(true);
+    const emptyRuntime = createXStatePlaybookRuntime(workflowMachine, {
+      ...workflowSpec,
+      unfinishedFinalStateIds: new Set(),
+    })({});
+    expect(emptyRuntime.retainedGenerationMetadata).toEqual({
+      unfinishedFinalStateIds: [],
+    });
+    expect(Object.isFrozen(emptyRuntime.retainedGenerationMetadata)).toBe(
+      true,
+    );
+    expect(
+      Object.isFrozen(
+        emptyRuntime.retainedGenerationMetadata?.unfinishedFinalStateIds,
+      ),
+    ).toBe(true);
+    expect(createWorkflowRuntime({}).retainedGenerationMetadata).toBeUndefined();
   });
 
   it.each(['implement', 'missing'])(

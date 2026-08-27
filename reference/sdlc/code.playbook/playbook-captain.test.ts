@@ -128,6 +128,7 @@ class FakeRuntime implements PlaybookRuntime {
   restoreCount = 0;
   disposeCount = 0;
   snapshot: PlaybookRuntimeSnapshot | undefined;
+  retainedGenerationMetadata?: PlaybookRuntime['retainedGenerationMetadata'];
   describe?: () => PlaybookControlView;
 
   constructor(
@@ -541,6 +542,20 @@ function fakePlaybookEntry(
   registry.entry.command = command;
   registry.entry.intent = `${id} playbook`;
   return registry;
+}
+
+function enableGenerationRetention(
+  registry: ReturnType<typeof fakeCodeEntry>,
+  unfinishedFinalStateIds: readonly string[] = [],
+): void {
+  const createRuntime = registry.entry.createRuntime;
+  registry.entry.createRuntime = (options) => {
+    const runtime = createRuntime(options) as FakeRuntime;
+    runtime.retainedGenerationMetadata = Object.freeze({
+      unfinishedFinalStateIds: Object.freeze([...unfinishedFinalStateIds]),
+    });
+    return runtime;
+  };
 }
 
 type TestTuning =
@@ -4969,6 +4984,228 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     { id: 'review-coder', adapter: 'claude' },
     { id: 'review-reviewer', adapter: 'codex' },
   ];
+
+  it('exports parked, unfinished-terminal, and clean-terminal retention decisions with the shell snapshot', async () => {
+    let invocation = 0;
+    const code = fakeCodeEntry(
+      async (runtime) => {
+        invocation += 1;
+        if (invocation === 1) {
+          const state = playbookState('editing');
+          runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+          return { outcome: 'quiescent', state };
+        }
+        const stateId = invocation === 2 ? 'reportedReviewFailure' : 'done';
+        const result = terminalResult(stateId);
+        runtime.snapshot = runtimeSnapshot('code', result.state, { turn: 1 });
+        return result;
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+      },
+    );
+    enableGenerationRetention(code, ['reportedReviewFailure']);
+    const shell = makeShell(code, {
+      sessionIds: [
+        ROOT_ID,
+        '30000000-0000-4000-8000-000000000003',
+      ],
+    });
+    await shell.init!(stubSession(roster).session);
+
+    await shell.handleBossTurn(
+      turn('/code start'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Editing is parked.' },
+      ]).context,
+    );
+    const parked = shell.exportSettlement();
+    expect(parked).toMatchObject({
+      snapshot: { mode: 'engaged.parked' },
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: {
+            frames: [{ runtime: { state: { stateId: 'editing' } } }],
+          },
+        },
+      ],
+    });
+
+    await shell.handleBossTurn(
+      turn('/code finish', 2),
+      stubContext([
+        { status: 'ok', turnId: 2, finalText: 'Review failed.' },
+      ]).context,
+    );
+    const unfinished = shell.exportSettlement();
+    expect(unfinished).toMatchObject({
+      snapshot: { mode: 'chat' },
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: {
+            frames: [{ runtime: { state: { stateId: 'editing' } } }],
+          },
+        },
+      ],
+    });
+    expect(
+      unfinished?.retentionUpdates[0]?.kind === 'retain'
+        ? unfinished.retentionUpdates[0].generation.frames[0]?.runtime.state
+            .status
+        : undefined,
+    ).toBe('active');
+
+    await shell.handleBossTurn(
+      turn('/code start clean', 3),
+      stubContext([
+        { status: 'ok', turnId: 3, finalText: 'Clean completion.' },
+      ]).context,
+    );
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: { mode: 'chat' },
+      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+    });
+    await shell.dispose?.();
+  });
+
+  it('exports a clear update instead of retaining a capability-less root', async () => {
+    const code = fakeCodeEntry(
+      async (runtime) => {
+        const state = playbookState('editing');
+        runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+        return { outcome: 'quiescent', state };
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+      },
+    );
+    const shell = makeShell(code, { sessionIds: [ROOT_ID] });
+    await shell.init!(stubSession(roster).session);
+    await shell.handleBossTurn(
+      turn('/code start'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Editing is parked.' },
+      ]).context,
+    );
+
+    expect(shell.exportSettlement()).toMatchObject({
+      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+    });
+    await shell.dispose?.();
+  });
+
+  it('fails closed when a same-turn unfinished terminal has no work-bearing generation', async () => {
+    const code = fakeCodeEntry(
+      async (runtime) => {
+        const result = terminalResult('reportedReviewFailure');
+        runtime.snapshot = runtimeSnapshot('code', result.state, { turn: 1 });
+        return result;
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+      },
+    );
+    enableGenerationRetention(code, ['reportedReviewFailure']);
+    const shell = makeShell(code, { sessionIds: [ROOT_ID] });
+    await shell.init!(stubSession(roster).session);
+    await shell.handleBossTurn(
+      turn('/code fail review'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Review failed.' },
+      ]).context,
+    );
+
+    expect(shell.exportSettlement()).toBeUndefined();
+    await shell.dispose?.();
+  });
+
+  it('preserves the exact parked generation when the root is dismissed', async () => {
+    const code = fakeCodeEntry(
+      async (runtime) => {
+        const state = playbookState('editing');
+        runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+        return { outcome: 'quiescent', state };
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+      },
+    );
+    enableGenerationRetention(code);
+    const shell = makeShell(code, { sessionIds: [ROOT_ID] });
+    await shell.init!(stubSession(roster).session);
+    await shell.handleBossTurn(
+      turn('/code start'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Editing is parked.' },
+      ]).context,
+    );
+    const parked = shell.exportSettlement();
+    await shell.handleBossTurn(
+      turn('stop this work', 2),
+      stubContext([
+        captainJson({ action: 'dismiss' }),
+        { status: 'ok', turnId: 2, finalText: 'Stopped.' },
+      ]).context,
+    );
+
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: { mode: 'chat' },
+      retentionUpdates: parked?.retentionUpdates,
+    });
+    await shell.dispose?.();
+  });
+
+  it.each([
+    'unsafe-generation',
+    'missing-terminal-id',
+    'blank-terminal-id',
+    'non-string-terminal-id',
+  ] as const)(
+    'withholds settlement for a claimed retention capability with %s',
+    async (fault) => {
+      const code = fakeCodeEntry(
+        async (runtime) => {
+          const result = terminalResult('reportedReviewFailure');
+          const state = {
+            ...result.state,
+            ...(fault === 'missing-terminal-id'
+              ? { stateId: undefined }
+              : fault === 'blank-terminal-id'
+                ? { stateId: '   ' }
+                : fault === 'non-string-terminal-id'
+                  ? { stateId: 42 }
+                  : {}),
+          } as PlaybookState;
+          runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+          return { ...result, state };
+        },
+        undefined,
+        async (runtime) => {
+          if (fault !== 'unsafe-generation') {
+            runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+          }
+        },
+      );
+      enableGenerationRetention(code, ['reportedReviewFailure']);
+      const shell = makeShell(code, { sessionIds: [ROOT_ID] });
+      await shell.init!(stubSession(roster).session);
+      await shell
+        .handleBossTurn(turn('/code fail review'), stubContext().context)
+        .catch(() => {});
+
+      expect(shell.exportSettlement()).toBeUndefined();
+      expect(code.runtimes[0]?.disposeCount).toBe(0);
+      await shell.dispose?.();
+    },
+  );
 
   const nestedSnapshotFixture = async (): Promise<PlaybookCaptainShellSnapshot> => {
     const source = makeShell([fakeCodeEntry(), fakePlaybookEntry('review', 'review')]);
