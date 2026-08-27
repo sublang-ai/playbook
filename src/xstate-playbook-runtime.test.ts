@@ -36,8 +36,16 @@ import {
   SUPPORTED_ARTIFACT_SCHEMAS,
   type XStatePlaybookRuntimeSpec,
 } from './xstate-runtime.js';
-import createCodePlaybookRuntime from '../reference/sdlc/code.playbook/code.playbook.js';
+import { captainMachine as maintainedCaptainMachine } from '../reference/sdlc/captain.playbook/captain.fsm.js';
+import { _internal as captainArtifact } from '../reference/sdlc/captain.playbook/captain.playbook.js';
+import { codingMachine } from '../reference/sdlc/code.playbook/code.fsm.js';
+import createCodePlaybookRuntime, {
+  _internal as codeArtifact,
+} from '../reference/sdlc/code.playbook/code.playbook.js';
 import { decideMachine } from '../reference/sdlc/decide.playbook/decide.fsm.js';
+import { _internal as decideArtifact } from '../reference/sdlc/decide.playbook/decide.playbook.js';
+import { reviewMachine } from '../reference/sdlc/review.playbook/review.fsm.js';
+import { _internal as reviewArtifact } from '../reference/sdlc/review.playbook/review.playbook.js';
 
 const meta = (stateId: string) => ({
   playbook: { stateId, description: `${stateId} state` },
@@ -46,6 +54,54 @@ const meta = (stateId: string) => ({
 const roleMeta = (stateId: string, role: string) => ({
   playbook: { ...meta(stateId).playbook, role },
 });
+
+function declaredRootFinalStateIds(machine: unknown): ReadonlySet<string> {
+  const states = (
+    machine as {
+      config?: {
+        states?: Readonly<
+          Record<
+            string,
+            {
+              type?: unknown;
+              meta?: { playbook?: { stateId?: unknown } };
+            }
+          >
+        >;
+      };
+    }
+  ).config?.states;
+  const ids = new Set<string>();
+  for (const state of Object.values(states ?? {})) {
+    if (state.type !== 'final') continue;
+    const stateId = state.meta?.playbook?.stateId;
+    if (typeof stateId === 'string') ids.add(stateId);
+  }
+  return ids;
+}
+
+const maintainedArtifactFinalMetadata = [
+  {
+    label: 'CAPTAIN',
+    machine: maintainedCaptainMachine,
+    unfinishedFinalStateIds: captainArtifact.UNFINISHED_FINAL_STATE_IDS,
+  },
+  {
+    label: 'CODE',
+    machine: codingMachine,
+    unfinishedFinalStateIds: codeArtifact.UNFINISHED_FINAL_STATE_IDS,
+  },
+  {
+    label: 'DECIDE',
+    machine: decideMachine,
+    unfinishedFinalStateIds: decideArtifact.UNFINISHED_FINAL_STATE_IDS,
+  },
+  {
+    label: 'REVIEW',
+    machine: reviewMachine,
+    unfinishedFinalStateIds: reviewArtifact.UNFINISHED_FINAL_STATE_IDS,
+  },
+] as const;
 
 interface RecordedStatus {
   message: string;
@@ -442,6 +498,29 @@ describe('generic strategy defaults', () => {
       'implement',
     ]);
   });
+
+  it('accepts unfinished metadata naming a root final state', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(workflowMachine, {
+        ...workflowSpec,
+        unfinishedFinalStateIds: new Set(['done']),
+      }),
+    ).not.toThrow();
+  });
+
+  it.each(['implement', 'missing'])(
+    'rejects unfinished metadata naming non-final root id %s',
+    (stateId) => {
+      expect(() =>
+        createXStatePlaybookRuntime(workflowMachine, {
+          ...workflowSpec,
+          unfinishedFinalStateIds: new Set([stateId]),
+        }),
+      ).toThrow(
+        `workflow unfinishedFinalStateIds entry ${JSON.stringify(stateId)} does not name a root final state`,
+      );
+    },
+  );
 
   it.each([
     [
@@ -4594,6 +4673,16 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
         'unfinishedFinalStateIds: UNFINISHED_FINAL_STATE_IDS',
       );
     });
+
+    it.each(maintainedArtifactFinalMetadata)(
+      '$label unfinished final ids name root final states',
+      ({ machine, unfinishedFinalStateIds }) => {
+        const rootFinalStateIds = declaredRootFinalStateIds(machine);
+        for (const stateId of unfinishedFinalStateIds) {
+          expect(rootFinalStateIds.has(stateId), stateId).toBe(true);
+        }
+      },
+    );
 
     // DR-034's companion standing guard. A recoverable failure state whose
     // artifact names no retry source is recoverable only while its process

@@ -547,6 +547,10 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(enumeration).toContain('unfinishedFinalStateIds');
     expect(output).toMatch(/mechanical link-time metadata/);
     expect(output).toMatch(/explicitly empty when no terminal outcome does/);
+    expect(output).toMatch(
+      /reject a declared id that does not name a root final state/,
+    );
+    expect(output).toMatch(/reject it at construction before runtime effects/);
     expect(output).toMatch(/declaration alone grants no retention or adoption/);
   });
 

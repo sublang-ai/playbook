@@ -1294,6 +1294,33 @@ function assertFlatStateIdentity(machine, label) {
         }
     }
 }
+function rootFinalStateIdsFromMachine(machine) {
+    const config = machine.config;
+    if (!isPlainObject(config) || !isPlainObject(config.states)) {
+        return new Set();
+    }
+    const stateIds = new Set();
+    for (const [stateId, stateDef] of Object.entries(config.states)) {
+        if (isPlainObject(stateDef) && stateDef.type === 'final') {
+            stateIds.add(stateId);
+        }
+    }
+    return stateIds;
+}
+// PBRT-52: whether a final outcome leaves the procedure unfinished remains
+// authored link metadata. The machine can still prove the mechanical half:
+// every declared stable id must resolve to one of its root final states.
+function assertUnfinishedFinalStateIds(value, machine, label) {
+    if (value === undefined)
+        return;
+    const rootFinalStateIds = rootFinalStateIdsFromMachine(machine);
+    for (const stateId of value) {
+        if (typeof stateId !== 'string' || !rootFinalStateIds.has(stateId)) {
+            throw new TypeError(`${label} unfinishedFinalStateIds entry ${JSON.stringify(stateId)} ` +
+                'does not name a root final state');
+        }
+    }
+}
 /**
  * Build a `PlaybookRuntimeFactory` that interprets the given FSM artifact
  * under the slc/link.md contract. The factory provides every actor kind the
@@ -1325,6 +1352,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         throw new Error(`${label} declares a compound state; the shared runtime supports only flat single-region FSMs`);
     }
     assertFlatStateIdentity(machine, label);
+    assertUnfinishedFinalStateIds(spec.unfinishedFinalStateIds, machine, label);
     const declaredActors = collectInvokeSources(machine);
     const resumableStateIds = spec.resumableStateIds ?? resumableStateIdsFromMachine(machine);
     // DR-029: source state descriptions label the control actions the

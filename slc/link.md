@@ -1697,6 +1697,7 @@ The link compiler emits one TypeScript module per playbook.
 Every linked artifact shall emit an `unfinishedFinalStateIds` set beside its resumable-state registry as mechanical link-time metadata.
 The set shall contain exactly the stable ids of root `type: 'final'` states whose terminal outcomes leave the procedure unfinished, and shall be explicitly empty when no terminal outcome does.
 The linker shall not infer the set from a state description, opaque output, or procedure prose.
+The linker shall reject a declared id that does not name a root final state, and the shared factory shall independently reject it at construction before runtime effects.
 For a factory-backed artifact the set is a `spec` member; a bespoke artifact shall retain equivalent linked metadata, and the declaration alone grants no retention or adoption capability.
 For an FSM that declares no `type: 'parallel'` state — necessarily flat
 under [gears2fsm.md](gears2fsm.md)'s one-state-per-item mapping — it shall

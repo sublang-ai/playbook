@@ -668,6 +668,7 @@ whose `meta.playbook.stateId` is not a string equal to its state key —
 a missing identity included — so every
 snapshot exposes exactly one playbook state id under the one identity
 the factory's state lookups index by.
+The shared factory shall also reject at construction any supplied `unfinishedFinalStateIds` member containing an id that does not name a root `type: 'final'` state, without inferring which final outcomes leave the procedure unfinished ([slc/link.md](../../slc/link.md#output)).
 A state whose source declares no description remains fully usable: the
 runtime shall normalize, enter, and settle it like any described state,
 merely carrying no `stateDescription` downstream.
@@ -1269,6 +1270,7 @@ machine that declares a compound state, a synthetic flat machine
 whose `meta.playbook.stateId` differs from its state key, a synthetic
 flat machine with a root state declaring no string
 `meta.playbook.stateId`, and a machine declaring no root states.
+The suite shall also fail unless factory construction accepts `unfinishedFinalStateIds` naming a root final state and rejects the declaration when it names an existing non-final root state or an unknown state (verifying [[playbook-runtime-52](#playbook-runtime-52)]).
 The suite shall fail unless a state whose source declares no
 description can become active — an `init` whose initial state declares
 none and a turn entering such a state both succeed — with the turn
