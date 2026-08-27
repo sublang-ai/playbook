@@ -80,24 +80,30 @@ function declaredRootFinalStateIds(machine: unknown): ReadonlySet<string> {
   return ids;
 }
 
+// FSM export names are not path-derived, so this registry is explicit; the
+// discovery assertion below proves that it remains exhaustive.
 const maintainedArtifactFinalMetadata = [
   {
     label: 'CAPTAIN',
+    artifactPath: 'reference/sdlc/captain.playbook/captain.playbook.ts',
     machine: maintainedCaptainMachine,
     unfinishedFinalStateIds: captainArtifact.UNFINISHED_FINAL_STATE_IDS,
   },
   {
     label: 'CODE',
+    artifactPath: 'reference/sdlc/code.playbook/code.playbook.ts',
     machine: codingMachine,
     unfinishedFinalStateIds: codeArtifact.UNFINISHED_FINAL_STATE_IDS,
   },
   {
     label: 'DECIDE',
+    artifactPath: 'reference/sdlc/decide.playbook/decide.playbook.ts',
     machine: decideMachine,
     unfinishedFinalStateIds: decideArtifact.UNFINISHED_FINAL_STATE_IDS,
   },
   {
     label: 'REVIEW',
+    artifactPath: 'reference/sdlc/review.playbook/review.playbook.ts',
     machine: reviewMachine,
     unfinishedFinalStateIds: reviewArtifact.UNFINISHED_FINAL_STATE_IDS,
   },
@@ -4644,13 +4650,13 @@ describe('control surface over the shared factory (DR-029 / PBRT-52 / PBRT-53)',
           );
       });
 
-    it('discovers every linked artifact', () => {
-      expect(artifacts.map(([path]) => path).sort()).toEqual([
-        'reference/sdlc/captain.playbook/captain.playbook.ts',
-        'reference/sdlc/code.playbook/code.playbook.ts',
-        'reference/sdlc/decide.playbook/decide.playbook.ts',
-        'reference/sdlc/review.playbook/review.playbook.ts',
-      ]);
+    it('binds every discovered artifact to machine-backed final metadata', () => {
+      const artifactPaths = artifacts.map(([path]) => path).sort();
+      expect(
+        maintainedArtifactFinalMetadata
+          .map(({ artifactPath }) => artifactPath)
+          .sort(),
+      ).toEqual(artifactPaths);
     });
 
     it.each(artifacts)('%s declares what its control view exposes', (
