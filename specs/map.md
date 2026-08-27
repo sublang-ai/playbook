@@ -62,6 +62,7 @@ meta.md       The spec of specs
 | [DR-034](decisions/034-durable-failure-retry-continuity.md) | 034-durable-failure-retry-continuity.md | A parked failure state sources its retry from the persisted machine snapshot, so it recovers identically live and after continuation |
 | [DR-035](decisions/035-truthful-terminal-meaning.md) | 035-truthful-terminal-meaning.md | A final state's description is the workflow's published terminal meaning, so distinct terminal outcomes reach distinct final states |
 | [DR-036](decisions/036-coherent-abort-settlement.md) | 036-coherent-abort-settlement.md | One abort-settlement model: exact-identity cancellation classified at each latch, machine-state settlement precedence with terminal ahead of a coincident abort, delivery refused on a pre-aborted boundary, and invocation-owned resources held to settlement |
+| [DR-037](decisions/037-terminal-result-meaning.md) | 037-terminal-result-meaning.md | A terminal run result carries the reached final state's authored Boss-facing meaning independently of optional runtime control capabilities |
 
 ## Intents
 

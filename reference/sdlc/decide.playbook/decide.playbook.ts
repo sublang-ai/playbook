@@ -114,20 +114,51 @@ function snapshotDecideRuntimeOptions(value: unknown): PlaybookRuntimeOptions {
   return Object.freeze({});
 }
 
-const STATE_DESCRIPTIONS: Readonly<Record<string, string>> = {
-  ready: 'Waiting for a topic to decide.',
-  askCoderProposal: 'Coder independently proposes a spec design.',
-  askReviewerProposal: 'Reviewer independently proposes a spec design.',
-  waitCoderProposalReply: 'Coder waits for Boss to answer a question.',
-  waitReviewerProposalReply: 'Reviewer waits for Boss to answer a question.',
-  commitCoderProposal: 'Coder writes and commits Coder’s independent proposal.',
-  awaitBossReply: 'Waiting for Boss to answer Coder’s question.',
-  reviewCommit: 'REVIEW examines the committed proposal.',
-  failed: 'DECIDE failed and is waiting for a new topic.',
-  reportedReviewFailure:
-    'DECIDE reports REVIEW’s failure and its last commit.',
-  done: 'DECIDE completed with an approved commit.',
-};
+interface AuthoredStateConfig {
+  readonly meta?: {
+    readonly playbook?: {
+      readonly stateId?: unknown;
+      readonly description?: unknown;
+    };
+  };
+  readonly states?: Readonly<Record<string, AuthoredStateConfig>>;
+}
+
+function authoredStateDescriptions(
+  states: Readonly<Record<string, AuthoredStateConfig>> | undefined,
+): Readonly<Record<string, string>> {
+  const descriptions: Record<string, string> = {};
+  const visit = (
+    children: Readonly<Record<string, AuthoredStateConfig>> | undefined,
+  ): void => {
+    for (const state of Object.values(children ?? {})) {
+      const stateId = state.meta?.playbook?.stateId;
+      const description = state.meta?.playbook?.description;
+      if (
+        typeof stateId === 'string' &&
+        typeof description === 'string' &&
+        description.trim().length > 0
+      ) {
+        const existing = descriptions[stateId];
+        if (existing !== undefined && existing !== description) {
+          throw new Error(
+            `DECIDE state ${stateId} declares conflicting descriptions`,
+          );
+        }
+        descriptions[stateId] = description;
+      }
+      visit(state.states);
+    }
+  };
+  visit(states);
+  return Object.freeze(descriptions);
+}
+
+const STATE_DESCRIPTIONS = authoredStateDescriptions(
+  decideMachine.config.states as
+    | Readonly<Record<string, AuthoredStateConfig>>
+    | undefined,
+);
 
 const ROLE_STATES = [
   { stateId: 'askCoderProposal', role: 'coder', sourceItem: 'DECIDE-1' },
@@ -1811,9 +1842,20 @@ export const createPlaybookRuntime: PlaybookRuntimeFactory<
     if (snapshot.status === 'done') {
       const output = (snapshot as { output?: unknown }).output;
       if (output !== undefined) assertJsonSafe(output, 'terminal output');
+      const stateDescription = state.activeStateIds.includes('done')
+        ? STATE_DESCRIPTIONS.done
+        : state.activeStateIds.includes('reportedReviewFailure')
+          ? STATE_DESCRIPTIONS.reportedReviewFailure
+          : undefined;
+      if (stateDescription === undefined) {
+        throw new Error(
+          'decide runtime: completed actor has no authored final-state description',
+        );
+      }
       return {
         outcome: 'terminal',
         state,
+        stateDescription,
         ...(output === undefined ? {} : { output }),
       };
     }

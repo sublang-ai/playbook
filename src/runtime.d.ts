@@ -97,6 +97,7 @@ export type PlaybookRunResult = {
 } | {
     outcome: 'terminal';
     state: PlaybookState;
+    stateDescription?: string;
     output?: JsonValue;
 } | {
     outcome: 'suspended';

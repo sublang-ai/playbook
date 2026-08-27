@@ -31,12 +31,14 @@ Records the abort-settlement model the post-[DR-034](034-durable-failure-retry-c
    An abort observed after the outcome is computed does not rewrite it: the returned result and the already-emitted settlement trace state one fact.
    Decision 5 is an entry refusal before this precedence: a pre-aborted resume reports `aborted` while preserving its suspended pending call rather than reporting `suspended` for work it did not deliver.
 
-4. **Cancellation-coupled channels neither mint failures nor rewrite committed facts.**
+4. **Exact cancellation evidence neither becomes a distinct failure nor rewrites committed facts.**
    The handling point is fixed by this phase matrix:
    - **Before a host call or effect starts (and before apply acceptance):** a start-channel rejection identical to the applicable abort reason starts no host call or effect and latches no control error. If the start was recorded, it receives one best-effort `aborted` finish. An ordinary run boundary then settles through decision 3; a pre-acceptance `apply` instead rejects with that exact reason, records no receipt, and leaves its key reusable.
    - **After a host call or effect starts but before its finish or outcome is recorded:** a rejection identical to an applicable abort reason, including from abort cleanup or an in-flight emission, is cancellation evidence: invocation-owned cleanup completes, any started trace pair receives one `aborted` finish, and the ordinary boundary settles through decision 3. Every distinct host, cleanup, observer, or emission rejection remains a control failure, produces the applicable error finish, and takes distinct-error precedence.
    - **After a call finish is recorded but before the enclosing non-apply outcome is computed:** an identical finish-sink or drain rejection leaves the recorded finish unchanged, emits no corrective second finish, latches nothing, and lets the enclosing boundary settle through decision 3.
    - **After apply acceptance but before receipt publication:** every settlement failure, the exact apply abort reason included, is folded into the current `failed` receipt. Acceptance forbids throwing; the replacement receipt is published, returned, and replayed, and the failure is not carried as a later delivery error.
+   For apply, publication rather than provisional receipt construction commits the receipt: once acceptance permits effects but exact cancellation interrupts settlement before publication, a failed receipt records the incomplete control transaction without claiming that no effect occurred.
+   The failed disposition explicitly says effects may exist and is final for its idempotency key, so a host cannot safely reinterpret it as permission to retry under a fresh key.
    - **After a non-apply outcome is computed or an apply receipt is published:** an identical rejection is dropped without rewriting the outcome or receipt and without poisoning a later boundary. A distinct non-apply settlement rejection retains current-boundary control-error precedence; a distinct post-publication apply rejection retains the published receipt and travels on the delivery-failure channel to the next boundary that drains.
 
 5. **A boundary entered with an already-aborted signal delivers nothing.**
@@ -50,6 +52,7 @@ Records the abort-settlement model the post-[DR-034](034-durable-failure-retry-c
    A startup actor error latches onto the channel `init` and `restore` drain, so the failed-start cleanup runs and the boundary rejects with the original error instead of resolving over a dead machine.
 
 Considered and rejected: name-based (`AbortError`) classification — a fresh failure can wear the name and a cancellation can arrive without it; abort-over-terminal precedence — it converts a completed workflow into a silent rerun; rewriting a computed outcome when an abort lands during settlement emission — the return would disagree with the settlement trace already on the wire.
+Considered and rejected: forgiving an identical pre-publication rejection after an otherwise successful apply — publication commits the receipt, so that alternative would report a fully settled success after its settlement was cancelled instead of the honest failed-after-effects-may-exist disposition.
 
 ## Consequences
 

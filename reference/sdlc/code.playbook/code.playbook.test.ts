@@ -150,6 +150,11 @@ describe('linked CODE runtime', () => {
     });
 
     expect(result.outcome).toBe('terminal');
+    expect(
+      result.outcome === 'terminal' ? result.stateDescription : undefined,
+    ).toBe(
+      'The coding workflow completed after REVIEW found no unsettled findings.',
+    );
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'complete',
       lastCodeCommit: 'abc123',
@@ -297,6 +302,11 @@ describe('linked CODE runtime', () => {
     });
 
     expect(result.outcome).toBe('terminal');
+    expect(
+      result.outcome === 'terminal' ? result.stateDescription : undefined,
+    ).toBe(
+      'The coding workflow completed after REVIEW found no unsettled findings.',
+    );
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'complete',
       lastCodeCommit: 'task2',
@@ -378,6 +388,11 @@ describe('linked CODE runtime', () => {
       signal: new AbortController().signal,
     });
     expect(result.outcome).toBe('terminal');
+    expect(
+      result.outcome === 'terminal' ? result.stateDescription : undefined,
+    ).toBe(
+      'The coding workflow reported a REVIEW failure and the last code-owned commit.',
+    );
     expect(result.outcome === 'terminal' ? result.output : undefined).toEqual({
       status: 'review-failed',
       lastCodeCommit: 'abc123',

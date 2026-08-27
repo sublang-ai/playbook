@@ -2540,14 +2540,17 @@ export function createXStatePlaybookRuntime(machine, spec) {
             }
             if (outcome === 'terminal') {
                 const output = actor?.getSnapshot()?.output;
-                if (output !== undefined) {
-                    return {
-                        outcome,
-                        state,
-                        output: snapshotJsonValue(output, 'terminal playbook output'),
-                    };
-                }
-                return { outcome, state };
+                const stateDescription = stateDescriptionFor(state);
+                return {
+                    outcome,
+                    state,
+                    ...(stateDescription === undefined ? {} : { stateDescription }),
+                    ...(output === undefined
+                        ? {}
+                        : {
+                            output: snapshotJsonValue(output, 'terminal playbook output'),
+                        }),
+                };
             }
             const failure = error ??
                 (outcome === 'failed'

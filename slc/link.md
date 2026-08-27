@@ -151,6 +151,7 @@ type PlaybookRunResult =
   | {
       outcome: 'terminal';
       state: PlaybookState;
+      stateDescription?: string;
       output?: JsonValue;
     }
   | {
@@ -184,8 +185,10 @@ differ from both its `rootSessionId` and `parentSessionId`.
 Run outcomes are exact: `no-action` means no FSM event was sent;
 `quiescent` means a non-failure parked/idle state; `failed` means the FSM is in
 a recoverable failure state; `terminal` means top-level final with optional
-JSON output; `aborted` means the turn signal ended work; and `suspended` means
+JSON output and the exact authored `stateDescription` of the reached final
+state when one is declared; `aborted` means the turn signal ended work; and `suspended` means
 exactly one `pendingCall` is active.
+Only the terminal variant may carry `stateDescription`; the runtime shall omit it when the final state declares none and shall never substitute a state id or derive it from opaque output ([DR-037](../specs/decisions/037-terminal-result-meaning.md)).
 Control-plane exceptions reject the runtime method rather than masquerade as a
 recoverable workflow `failed` result.
 

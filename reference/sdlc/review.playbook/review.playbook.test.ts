@@ -111,6 +111,9 @@ describe('linked REVIEW runtime', () => {
 
     expect(result.outcome).toBe('terminal');
     if (result.outcome === 'terminal') {
+      expect(result.stateDescription).toBe(
+        'The latest commit is approved with no unsettled findings.',
+      );
       expect(result.output).toEqual({
         approvedCommit: 'latest',
         noUnsettledFindings: true,

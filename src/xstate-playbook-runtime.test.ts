@@ -1023,6 +1023,9 @@ describe('player + script workflow over the shared factory', () => {
     expect(result.outcome).toBe('terminal');
     expect(result.state.stateId).toBe('done');
     expect(
+      'stateDescription' in result ? result.stateDescription : undefined,
+    ).toBe('done state');
+    expect(
       'output' in result ? result.output : undefined,
     ).toEqual({ summary: 'shipped the task' });
 
@@ -1044,6 +1047,46 @@ describe('player + script workflow over the shared factory', () => {
         payload: { stateId: 'verify', sourceItem: 'WF-2', exitStatus: 0 },
       },
     ]);
+    await runtime.dispose();
+  });
+
+  it('omits terminal meaning instead of falling back to state id or output', async () => {
+    const machine = createMachine({
+      id: 'undescribedTerminal',
+      initial: 'ready',
+      states: {
+        ready: {
+          meta: meta('ready'),
+          tags: ['playbook.parked'],
+          on: { COMPLETE: 'done' },
+        },
+        done: {
+          meta: { playbook: { stateId: 'done' } },
+          type: 'final',
+        },
+      },
+      output: () => ({
+        stateDescription: 'opaque machine output is not Boss-facing meaning',
+      }),
+    });
+    const runtime = createXStatePlaybookRuntime(machine, {
+      label: 'undescribed-terminal',
+      compat: { artifactSchema: 2, runtimeAbi: RUNTIME_ABI },
+      snapshotOptions: (value) => (value ?? {}) as Record<string, never>,
+      entryEvent: { type: 'COMPLETE', textField: 'task' },
+      roleStates: {},
+    })({});
+    const { ports } = makeRecordingPorts();
+    await runtime.init(makeSession(ports));
+
+    const result = await runtime.handleBossInput(turn('finish'));
+
+    expect(result.outcome).toBe('terminal');
+    expect(result.state.stateId).toBe('done');
+    expect('stateDescription' in result).toBe(false);
+    expect('output' in result ? result.output : undefined).toEqual({
+      stateDescription: 'opaque machine output is not Boss-facing meaning',
+    });
     await runtime.dispose();
   });
 
@@ -3315,6 +3358,9 @@ describe('nested playbook actor over the shared factory', () => {
       signal: new AbortController().signal,
     });
     expect(resumed.outcome).toBe('terminal');
+    expect(
+      'stateDescription' in resumed ? resumed.stateDescription : undefined,
+    ).toBe('done state');
     expect('output' in resumed ? resumed.output : undefined).toEqual({
       childOutput: { note: 'child finished' },
     });

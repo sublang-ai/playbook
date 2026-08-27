@@ -1106,6 +1106,7 @@ describe('DECIDE terminal settlement from REVIEW', () => {
       }),
     ).resolves.toMatchObject({
       outcome: 'terminal',
+      stateDescription: 'DECIDE completed with an approved commit.',
       output: {
         approvedCommit: 'latest',
         noUnsettledFindings: true,
@@ -1146,6 +1147,8 @@ describe('DECIDE terminal settlement from REVIEW', () => {
         }),
       ).resolves.toMatchObject({
         outcome: 'terminal',
+        stateDescription:
+          'DECIDE reports REVIEW’s failure and its last commit.',
         output: {
           lastDecideCommit: 'abc123',
           noUnsettledFindings: false,

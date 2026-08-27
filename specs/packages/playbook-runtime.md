@@ -526,8 +526,9 @@ Boss-relevant state id is active.
 `PlaybookRunResult` shall use its discriminated outcome exactly as
 defined in [slc/link.md](../../slc/link.md#playbookruntime-contract):
 only `suspended` shall carry a required pending call, only `terminal`
-may carry output, `failed` shall mean a recoverable FSM failure state,
+may carry output or `stateDescription`, `failed` shall mean a recoverable FSM failure state,
 and control-plane errors shall reject the runtime method.
+Where the reached final state declares a nonempty description, a terminal result shall carry that exact authored text as `stateDescription`; the runtime shall omit the field when none is declared and shall never substitute a state id or derive prose from opaque output ([DR-037](../decisions/037-terminal-result-meaning.md)).
 Every JSON boundary shall reject cycles, non-plain instances, accessors, symbol
 keys, undefined or sparse values, and non-finite numbers instead of accepting a
 value that serialization would change. The linked runtime shall use the shared
@@ -869,6 +870,7 @@ When `handleBossInput` is invoked with an already-aborted signal, the suite shal
 When an apply has been accepted but a settlement sink rejects before receipt publication, the suite shall fail unless the exact apply abort reason and a distinct rejection alike fold into the current `failed` receipt, which is published, returned, and replayed without carrying either failure to a later boundary (verifying [[playbook-runtime-52](#playbook-runtime-52)]).
 When an `apply.finished` delivery rejection is causally identical to the apply signal's abort reason, the suite shall fail unless the published receipt stands and the next unrelated public boundary settles cleanly; a distinct delivery failure shall still surface from that next boundary's drain (verifying [[playbook-runtime-52](#playbook-runtime-52)]).
 When a machine's initial state entry action throws during `init`, the suite shall fail unless `init` rejects with that error, one best-effort `session.disposed` boundary follows the attempted `session.started`, and a subsequent `init` whose start does not throw succeeds (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
+Where a linked runtime builds its own actor rather than using the shared factory — DECIDE today — when the abort-settlement verification runs, the suite shall drive that runtime's applicable exact-identity classification, ordinary settlement precedence, immutable invocation-and-resume provenance, pre-aborted entry refusal, active-boundary lifetime, and emission-ownership cases and shall fail unless each satisfies [[playbook-runtime-13](#playbook-runtime-13)], [[playbook-runtime-37](#playbook-runtime-37)], [[playbook-runtime-41](#playbook-runtime-41)], and [[playbook-runtime-42](#playbook-runtime-42)].
 
 #### playbook-runtime-19
 
@@ -1102,8 +1104,8 @@ exposes an optional tool allowlist whose omission is distinct from an explicit
 empty list,
 unless `PlaybookRuntime.init` accepts a causal
 `PlaybookSession` with optional exact `PlaybookRoleBinding` metadata and the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-58](#playbook-runtime-58)], unless pending Boss questions use the exact asker union without a player field, and unless `handleBossInput` and
-`resumePlaybookCall` return `PlaybookRunResult`; its import graph
-includes no CODE or FSM module (verifying [[playbook-runtime-34](#playbook-runtime-34)] and [[playbook-runtime-58](#playbook-runtime-58)]).
+`resumePlaybookCall` return `PlaybookRunResult` whose terminal variant alone exposes optional `stateDescription`; its import graph
+includes no CODE or FSM module (verifying [[playbook-runtime-34](#playbook-runtime-34)], [[playbook-runtime-41](#playbook-runtime-41)], and [[playbook-runtime-58](#playbook-runtime-58)]).
 The test suite shall additionally fail unless the linker contract
 itself still states the clauses the shipped artifacts depend on, since
 that contract is the source they are generated from and a rule stated
@@ -1137,6 +1139,7 @@ assignable to the shared types and would therefore pass while an artifact still 
 
 
 Where the integration suite drives CODE, REVIEW, DECIDE, and a direct-Captain runtime through complete sessions, it shall fail unless every emitted trace event has schema version `3`, session identity is immutable, causality is validated, trace sequences are contiguous and boundary-complete, initialization and disposal faults preserve their first causal error, and every started call has exactly one finish — a started-boundary sink that records and then rejects with a distinct error included: the pair finishes `error` with no host call begun and the public method rejects with the original sink error, while a sink that cancels the turn and rejects with the exact signal reason instead finishes the pair `aborted` with no host call and the turn settles as an abort (verifying [[playbook-runtime-37](#playbook-runtime-37)]).
+When a maintained shared-factory runtime or DECIDE reaches a final state, the integration suite shall fail unless its terminal result carries that state's exact authored description and never a state-id or output-derived fallback (verifying [[playbook-runtime-41](#playbook-runtime-41)]).
 The suite shall fail unless every shell-hosted player-call pair retains both its semantic `roleId` and resolved `playerId`, while a standalone call retains its role without inventing a host player id; restoring under compatible changed model tuning shall also make the next composed prompt use the current `promptIdentity` rather than a value persisted in machine context (verifying [[playbook-runtime-15](#playbook-runtime-15)] and [[playbook-runtime-37](#playbook-runtime-37)]).
 The suite shall fail unless a standalone runtime without bindings starts each local role fresh, resumes and rotates that role's validated token in `roleResumeTokens`, clears an omitted token only on `ok`, preserves the prior token when `aborted` or `error` omits one, keeps different roles independent, preserves continuity across parked turns, and discards it on disposal; with bindings but no external store, two sequential roles mapped to one player id shall select and rotate one shared private token while the snapshot projects that token back to both local-role keys (verifying [[playbook-runtime-38](#playbook-runtime-38)] and [[playbook-runtime-45](#playbook-runtime-45)]).
 Host results shall fail unless they are validated, detached, and frozen before any final text, error, or resume token is consumed, and a late result after abort shall not mutate continuity or trace success (verifying [[playbook-runtime-37](#playbook-runtime-37)] and [[playbook-runtime-38](#playbook-runtime-38)]).

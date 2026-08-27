@@ -226,6 +226,7 @@ function quiescentResult(stateId = 'ready'): PlaybookRunResult {
 function terminalResult(
   stateId = 'done',
   output?: JsonValue,
+  stateDescription?: string,
 ): PlaybookRunResult {
   return {
     outcome: 'terminal',
@@ -234,6 +235,7 @@ function terminalResult(
       status: 'done',
       quiescent: true,
     }),
+    ...(stateDescription === undefined ? {} : { stateDescription }),
     ...(output !== undefined ? { output } : {}),
   };
 }
@@ -2748,11 +2750,15 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
       async (runtime) => {
         runtime.describe = () => ({
           state: done,
-          stateDescription: publishedMeaning,
+          stateDescription: 'Legacy description must not win.',
           pendingQuestions: [],
           actions: [],
         });
-        return terminalResult('done', { token: opaqueOutput });
+        return terminalResult(
+          'done',
+          { token: opaqueOutput },
+          publishedMeaning,
+        );
       },
     );
     const shell = makeShell(registry);
@@ -2801,6 +2807,54 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
     );
   });
 
+  it.each([
+    {
+      label: 'live control view',
+      legacyMeaning: 'The legacy runtime completed successfully.',
+      expected:
+        '/legacy completed; its runtime-published result meaning was ' +
+        '"The legacy runtime completed successfully.".',
+    },
+    {
+      label: 'honest absence',
+      legacyMeaning: undefined,
+      expected:
+        '/legacy completed; its runtime published no result description.',
+    },
+  ])('falls back to $label when a terminal result omits meaning', async ({
+    legacyMeaning,
+    expected,
+  }) => {
+    const registry = fakePlaybookEntry(
+      'legacy',
+      'legacy',
+      async (runtime) => {
+        if (legacyMeaning !== undefined) {
+          const done = playbookState('done', {
+            tags: [],
+            status: 'done',
+            quiescent: true,
+          });
+          runtime.describe = () => ({
+            state: done,
+            stateDescription: legacyMeaning,
+            pendingQuestions: [],
+            actions: [],
+          });
+        }
+        return terminalResult();
+      },
+    );
+    const shell = makeShell(registry);
+    const session = stubSession();
+    const context = stubContext();
+
+    await shell.init!(session.session);
+    await shell.handleBossTurn(turn('/legacy finish'), context.context);
+
+    expect(turnSummaryCalls(context)[0]?.prompt).toContain(expected);
+  });
+
   it('records one central completion fact when delivery finishes the root', async () => {
     let run = 0;
     const registry = fakePlaybookEntry(
@@ -2824,7 +2878,13 @@ describe('createPlaybookCaptainShell turn summaries (CAPTAIN-21)', () => {
           pendingQuestions: [],
           actions: [],
         });
-        return terminal ? terminalResult() : quiescentResult();
+        return terminal
+          ? terminalResult(
+              'done',
+              undefined,
+              'The delivered task is complete.',
+            )
+          : quiescentResult();
       },
     );
     const shell = makeShell(registry);

@@ -2335,7 +2335,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 // runtime publishes before disposal removes the frame. The opaque run
                 // output remains runtime-to-runtime data and never becomes Captain
                 // evidence (CAPPLAY-10).
-                activeTurn?.settlementFacts.push(rootCompletionFact(frame));
+                activeTurn?.settlementFacts.push(rootCompletionFact(frame, result));
                 await runEffect(() => disposeStack('final'));
             }
             return;
@@ -3227,10 +3227,10 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     // -------------------------------------------------------------------------
     // The controller port (DR-029): host validation is the sole effector.
     // -------------------------------------------------------------------------
-    // The leaf's published state description, read from its control view the
-    // same way the digest reads it. A leaf without the pair — or one whose view
-    // cannot be read at this moment — publishes none, and the summary then says
-    // so instead of falling back to the state id.
+    // The legacy state-description channel, read from the live control view the
+    // same way the digest reads it. DR-037 makes the terminal result authoritative
+    // for completion; this remains only for an older runtime that omits the new
+    // optional member.
     const leafStateDescription = (frame) => {
         if (typeof frame.runtime.describe !== 'function')
             return undefined;
@@ -3241,9 +3241,16 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return undefined;
         }
     };
-    const rootCompletionFact = (frame) => {
-        const published = leafStateDescription(frame);
-        const description = published === undefined ? '' : compactEvidence(published);
+    const rootCompletionFact = (frame, result) => {
+        const returned = result.stateDescription === undefined
+            ? ''
+            : compactEvidence(result.stateDescription);
+        const legacy = returned === '' ? leafStateDescription(frame) : undefined;
+        const description = returned !== ''
+            ? returned
+            : legacy === undefined
+                ? ''
+                : compactEvidence(legacy);
         return description === ''
             ? `${frameLabel(frame)} completed; its runtime published no result description.`
             : `${frameLabel(frame)} completed; its runtime-published result meaning was ${quoteEvidence(description)}.`;

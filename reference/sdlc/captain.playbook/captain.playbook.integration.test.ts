@@ -1301,6 +1301,8 @@ function advertisedActionIds(prompt: string): string[] {
 
 const CLASSIFIER_MARKER = 'Classify the following Boss message';
 const ADJUDICATION_MARKER = 'Pick exactly one outcome by `guard`';
+const DECIDE_ADJUDICATION_MARKER =
+  'You are the guard adjudicator for a playbook state machine.';
 
 function makeShellHarness(
   entries: readonly RegisteredEntry[],
@@ -1543,7 +1545,10 @@ function realArtifactHarness(
       if (prompt.includes(CLASSIFIER_MARKER)) {
         return okReply(JSON.stringify(classifyFromPrompt(prompt)));
       }
-      if (prompt.includes(ADJUDICATION_MARKER)) {
+      if (
+        prompt.includes(ADJUDICATION_MARKER) ||
+        prompt.includes(DECIDE_ADJUDICATION_MARKER)
+      ) {
         return okReply(
           JSON.stringify(
             script.adjudicate?.(prompt) ?? { guard: 'needsBossReply' },
@@ -2111,6 +2116,121 @@ describe('CAPTAIN-37 observe–act–result loop', () => {
           ),
       ),
     ).toHaveLength(0);
+  });
+
+  // CAPTAIN-37 / DR-037: DECIDE deliberately ships without describe/apply,
+  // so its terminal result is the only runtime-owned channel that can carry
+  // the exact meaning of the final state into the root completion fact.
+  it.each([
+    {
+      label: 'approval-backed completion',
+      reviewResult: 'approved' as const,
+      terminalId: 'done',
+      meaning: 'DECIDE completed with an approved commit.',
+      hiddenOutputKeys: ['approvedCommit', 'noUnsettledFindings'],
+    },
+    {
+      label: 'REVIEW failure report',
+      reviewResult: 'aborted' as const,
+      terminalId: 'reportedReviewFailure',
+      meaning: 'DECIDE reports REVIEW’s failure and its last commit.',
+      hiddenOutputKeys: [
+        'lastDecideCommit',
+        'noUnsettledFindings',
+        'reviewStatus',
+      ],
+    },
+  ])('publishes DECIDE $label through the real shell', async ({
+    reviewResult,
+    terminalId,
+    meaning,
+    hiddenOutputKeys,
+  }) => {
+    let coderCalls = 0;
+    const decide = realEntry(decideRegistryEntry);
+    const review = shellEntry('review', 'review', {
+      onInput: (_text, runtime) =>
+        reviewResult === 'approved'
+          ? {
+              outcome: 'terminal',
+              state: {
+                ...runtime.state(),
+                value: 'done',
+                activeStateIds: ['done'],
+                stateId: 'done',
+                status: 'done',
+              },
+              output: {
+                approvedCommit: 'latest',
+                noUnsettledFindings: true,
+              },
+            }
+          : { outcome: 'aborted', state: runtime.state() },
+    });
+    const harness = realArtifactHarness([decide, review], {
+      players: (playerId) => {
+        if (playerId.endsWith('-reviewer')) {
+          return { status: 'ok', finalText: 'Reviewer proposal' };
+        }
+        coderCalls += 1;
+        return {
+          status: 'ok',
+          finalText:
+            coderCalls === 1
+              ? 'Coder proposal'
+              : 'Committed proposal.\nCommit: abc123',
+        };
+      },
+      adjudicate: (prompt) => {
+        if (prompt.includes('source item DECIDE-3')) {
+          return { guard: 'committed', latestCommit: 'abc123' };
+        }
+        if (
+          prompt.includes('source item DECIDE-1') ||
+          prompt.includes('source item DECIDE-2')
+        ) {
+          return { guard: 'proposed' };
+        }
+        throw new Error(`unexpected DECIDE adjudication prompt: ${prompt}`);
+      },
+      decide: () => {
+        throw new Error('the parsed /decide start needs no controller decision');
+      },
+      closing: () => 'DECIDE finished with its authored terminal meaning.',
+    });
+    await harness.init();
+    await harness.turn('/decide choose the durable design', 1);
+
+    const runtime = decide.runtimes[0]!;
+    expect(runtime.describe).toBeUndefined();
+    expect(runtime.apply).toBeUndefined();
+    const terminalStates = harness.telemetry
+      .filter((event) => event.topic === 'playbook.fsm.state')
+      .map(
+        (event) =>
+          (event.payload as { state?: PlaybookState }).state,
+      )
+      .filter((state): state is PlaybookState => state !== undefined);
+    expect(terminalStates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: 'done',
+          activeStateIds: expect.arrayContaining([terminalId]),
+        }),
+      ]),
+    );
+    expect(harness.closingPrompts()).toHaveLength(1);
+    const closing = harness.closingPrompts()[0]!;
+    expect(closing).toContain(
+      `/decide completed; its runtime-published result meaning was "${meaning}".`,
+    );
+    expect(closing).not.toContain(
+      'runtime published no result description',
+    );
+    for (const key of hiddenOutputKeys) expect(closing).not.toContain(key);
+    expect(harness.surfaced).toEqual([
+      'DECIDE finished with its authored terminal meaning.',
+    ]);
   });
 
   // A28-7: an empty `ok` player result gets DR-028's single corrective

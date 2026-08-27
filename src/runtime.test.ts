@@ -482,6 +482,20 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     );
   });
 
+  it('exposes stateDescription only on the terminal run-result variant', () => {
+    for (const source of [runtimeSource, runtimeDts, linkSpec]) {
+      const result = typeAliasBody(source, 'PlaybookRunResult');
+      const terminal = result.match(
+        /\{[^{}]*outcome:\s*'terminal';[^{}]*\}/,
+      )?.[0];
+      expect(terminal).toBeDefined();
+      expect(terminal).toMatch(/stateDescription\?:\s*string;/);
+      expect(result.replace(terminal!, '')).not.toMatch(
+        /stateDescription\??:/,
+      );
+    }
+  });
+
   // The linker contract is the source the artifacts are generated from, so a
   // rule that lives only in the shipped artifacts is a rule the next re-link
   // can undo. These assert the two clauses the ControlView privacy contract
