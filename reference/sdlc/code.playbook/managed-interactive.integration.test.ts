@@ -294,7 +294,7 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
     const record = await fixture.store.read(fixture.sessionId);
     expect(record).toEqual(visible.durableRecord);
     expect(record).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 3,
       state: 'settled',
       sessionId: fixture.sessionId,
       snapshot: {
@@ -501,7 +501,7 @@ async function assertSettledTurnZero(
 ) {
   const record = await fixture.store.read(fixture.sessionId);
   expect(record).toMatchObject({
-    schemaVersion: 4,
+    schemaVersion: 3,
     state: 'settled',
     sessionId: fixture.sessionId,
     cwd: fixture.cwd,

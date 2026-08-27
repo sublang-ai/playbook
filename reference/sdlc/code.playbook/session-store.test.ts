@@ -338,7 +338,7 @@ function processError(code: string) {
 function settledRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
-    schemaVersion: 4,
+    schemaVersion: 3,
     kind: 'captain-session',
     state: 'settled',
     sessionId,
@@ -368,7 +368,7 @@ function releasedSchema2Record(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function releasedSchema3Record(overrides: Record<string, unknown> = {}) {
+function memberlessSchema3Record(overrides: Record<string, unknown> = {}) {
   const { retainedGenerations: _retainedGenerations, ...record } =
     settledRecord();
   return { ...record, schemaVersion: 3, ...overrides };
@@ -377,7 +377,7 @@ function releasedSchema3Record(overrides: Record<string, unknown> = {}) {
 function freshUncertainRecord(overrides: Record<string, unknown> = {}) {
   const execution = executionProjection();
   return {
-    schemaVersion: 4,
+    schemaVersion: 3,
     kind: 'captain-session',
     state: 'uncertain',
     sessionId,
@@ -443,7 +443,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
       snapshot: shellSnapshot(execution),
     });
     expect(settled).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 3,
       state: 'settled',
       createdAt: '2026-08-11T21:00:00.000Z',
       updatedAt: '2026-08-11T21:00:00.001Z',
@@ -465,6 +465,107 @@ describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
     expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
       .toBe(false);
     await lease.release();
+  });
+
+  it('continues member-less schema 3 and discards to its exact bytes', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = executionProjection();
+    const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    await firstLease.initializeSettled({
+      cwd: process.cwd(),
+      structuralProjection: projectCaptainSessionStructure(execution),
+      executionProjection: execution,
+      snapshot: shellSnapshot(execution),
+    });
+    await firstLease.release();
+
+    const recordPath = join(sessionsDir, `${sessionId}.json`);
+    const persisted = JSON.parse(await readFile(recordPath, 'utf8'));
+    const { retainedGenerations: _retainedGenerations, ...memberless } =
+      persisted;
+    const memberlessBytes = `${JSON.stringify(memberless)}\n`;
+    await writeFile(recordPath, memberlessBytes, 'utf8');
+
+    const nextLease = await fixedStore(sessionsDir, tokenN).acquire(sessionId);
+    expect(await nextLease.read()).not.toHaveProperty('retainedGenerations');
+    const uncertain = await nextLease.beginTurn({
+      input: 'compatible continuation',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    expect(uncertain).not.toHaveProperty('retainedGenerations');
+    const retried = await nextLease.beginRetry({
+      expectedAttemptId: attempt1,
+      nextAttemptId: attempt2,
+    });
+    expect(retried).not.toHaveProperty('retainedGenerations');
+    const discarded = await nextLease.discard({ attemptId: attempt2 });
+    expect(discarded).not.toHaveProperty('retainedGenerations');
+    expect(await readFile(recordPath, 'utf8')).toBe(memberlessBytes);
+    await nextLease.release();
+  });
+
+  it('continues transient schema 4 and canonicalizes a successful settlement', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = executionProjection();
+    const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
+    await firstLease.initializeSettled({
+      cwd: process.cwd(),
+      structuralProjection: projectCaptainSessionStructure(execution),
+      executionProjection: execution,
+      snapshot: shellSnapshot(execution),
+    });
+    await firstLease.release();
+
+    const recordPath = join(sessionsDir, `${sessionId}.json`);
+    const persisted = JSON.parse(await readFile(recordPath, 'utf8'));
+    const { retainedGenerations: _retainedGenerations, ...memberless } =
+      persisted;
+    await writeFile(
+      recordPath,
+      `${JSON.stringify({ ...memberless, schemaVersion: 4 })}\n`,
+      'utf8',
+    );
+    const store = fixedStore(sessionsDir, tokenN);
+    await expect(store.latest()).rejects.toThrow(
+      /missing field "retainedGenerations"/,
+    );
+    const schema4Bytes = `${JSON.stringify({
+      ...persisted,
+      schemaVersion: 4,
+    })}\n`;
+    await writeFile(recordPath, schema4Bytes, 'utf8');
+    expect((await store.latest()).schemaVersion).toBe(4);
+
+    const nextLease = await store.acquire(sessionId);
+    const uncertain = await nextLease.beginTurn({
+      input: 'compatible schema-4 continuation',
+      attemptId: attempt1,
+      attemptedExecutionProjection: execution,
+    });
+    expect(uncertain.schemaVersion).toBe(4);
+    const retried = await nextLease.beginRetry({
+      expectedAttemptId: attempt1,
+      nextAttemptId: attempt2,
+    });
+    expect(retried.schemaVersion).toBe(4);
+    const discarded = await nextLease.discard({ attemptId: attempt2 });
+    expect(discarded.schemaVersion).toBe(4);
+    expect(await readFile(recordPath, 'utf8')).toBe(schema4Bytes);
+
+    const nextTurn = await nextLease.beginTurn({
+      input: 'canonicalize compatible schema 4',
+      attemptId: attempt3,
+      attemptedExecutionProjection: execution,
+    });
+    expect(nextTurn.schemaVersion).toBe(4);
+    const settled = await nextLease.settle({
+      attemptId: attempt3,
+      snapshot: shellSnapshot(execution, 1),
+    });
+    expect(settled.schemaVersion).toBe(3);
+    expect(settled.retainedGenerations).toEqual({});
+    await nextLease.release();
   });
 
   it('validates closed execution and structural projections before effects', () => {
@@ -699,7 +800,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
       fresh: freshBoundary(initialExecution),
     });
     expect(uncertain).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 3,
       kind: 'captain-session',
       state: 'uncertain',
       sessionId,
@@ -1321,7 +1422,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
     await lease.release();
   });
 
-  it('selects tied records, skips released schemas, and fails closed on corruption', async () => {
+  it('selects member-less schema 3, skips released schemas, and fails closed on corruption', async () => {
     const { sessionsDir } = await fixtureDir();
     for (const [id, token, attempt] of [
       [sessionId, tokenO, attempt1],
@@ -1378,7 +1479,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
       new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 2`),
     );
 
-    const releasedSchema3 = releasedSchema3Record({
+    const memberlessSchema3 = memberlessSchema3Record({
       sessionId: secondSessionId,
       createdAt: wrongEmbeddedId.createdAt,
       updatedAt: wrongEmbeddedId.updatedAt,
@@ -1390,7 +1491,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
     });
     await writeFile(
       secondPath,
-      `${JSON.stringify(releasedSchema3)}\n`,
+      `${JSON.stringify(memberlessSchema3)}\n`,
       'utf8',
     );
     legacyRecords.length = 0;
@@ -1400,17 +1501,9 @@ describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
           onLegacyRecord: (record: unknown) => legacyRecords.push(record),
         })
       ).sessionId,
-    ).toBe(sessionId);
-    expect(legacyRecords).toEqual([
-      {
-        sessionId: secondSessionId,
-        path: secondPath,
-        schemaVersion: 3,
-      },
-    ]);
-    await expect(store.read(secondSessionId)).rejects.toThrow(
-      new RegExp(`${secondSessionId}.*${secondSessionId}\\.json.*schema 3`),
-    );
+    ).toBe(secondSessionId);
+    expect(legacyRecords).toEqual([]);
+    expect(await store.read(secondSessionId)).toEqual(memberlessSchema3);
 
     await writeFile(secondPath, '{"schemaVersion":2}\n', 'utf8');
     await expect(store.latest()).rejects.toThrow(

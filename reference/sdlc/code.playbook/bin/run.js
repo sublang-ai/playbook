@@ -1266,9 +1266,6 @@ function legacyCaptainSessionReason(schemaVersion) {
   if (schemaVersion === 2) {
     return 'schema 2 has incompatible player identity';
   }
-  if (schemaVersion === 3) {
-    return 'schema 3 has no retained-generation state';
-  }
   return `schema ${JSON.stringify(schemaVersion)} is unsupported`;
 }
 

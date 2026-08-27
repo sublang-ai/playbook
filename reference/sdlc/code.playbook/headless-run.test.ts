@@ -1154,7 +1154,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
   const thirdId = '90000000-0000-4000-8000-000000000013';
   const fourthId = '90000000-0000-4000-8000-000000000014';
 
-  it('persists a closed v4 record before stdout without semantic disposal', async () => {
+  it('persists a closed v3 record before stdout without semantic disposal', async () => {
     const order: string[] = [];
     let disposals = 0;
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-order-state-'));
@@ -1213,7 +1213,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       'stdout:Captain acknowledged the message.\n',
     ]);
     expect(record).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 3,
       kind: 'captain-session',
       state: 'settled',
       sessionId: firstId,
@@ -1588,7 +1588,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     });
     expect([first.result.code, second.result.code]).toEqual([0, 0]);
     const legacyPath = join(sessionsDir, `${thirdId}.json`);
-    const releasedSchema3Path = join(sessionsDir, `${fourthId}.json`);
+    const memberlessSchema3Path = join(sessionsDir, `${fourthId}.json`);
     const settledRecord = JSON.parse(
       await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
     );
@@ -1609,26 +1609,16 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
     const {
       retainedGenerations: _retainedGenerations,
-      ...releasedSchema3
+      ...memberlessSchema3
     } = settledRecord;
     await writeFile(
-      releasedSchema3Path,
+      memberlessSchema3Path,
       `${JSON.stringify({
-        ...releasedSchema3,
+        ...memberlessSchema3,
         schemaVersion: 3,
         sessionId: fourthId,
       })}\n`,
       { mode: 0o600 },
-    );
-
-    const explicitLegacy = await headlessHarness(
-      ['run', '--session', fourthId, 'must not run'],
-      { sessionsDir },
-    );
-    expect(explicitLegacy.result.code).toBe(1);
-    expect(explicitLegacy.inputs).toEqual([]);
-    expect(explicitLegacy.stderr).toContain(
-      'schema 3 has no retained-generation state',
     );
 
     const continued = await headlessHarness(
@@ -1639,7 +1629,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       },
     );
     expect(continued.result.code).toBe(0);
-    expect(continued.result.sessionId).toBe(secondId);
+    expect(continued.result.sessionId).toBe(fourthId);
     expect(continued.inputs).toEqual(['latest reply']);
     expect(continued.stderr).toContain(
       `skipping legacy Captain session "${thirdId}" at "${legacyPath}"`,
@@ -1647,15 +1637,65 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(continued.stderr).toContain(
       'schema 2 has incompatible player identity',
     );
-    expect(continued.stderr).toContain(
-      `skipping legacy Captain session "${fourthId}" at "${releasedSchema3Path}"`,
-    );
-    expect(continued.stderr).toContain(
-      'schema 3 has no retained-generation state',
+    expect(continued.stderr).not.toContain(
+      `skipping legacy Captain session "${fourthId}"`,
     );
     expect(continued.stderr).toContain(
       'move it outside the sessions directory or remove it',
     );
+    const canonicalized = JSON.parse(
+      await readFile(memberlessSchema3Path, 'utf8'),
+    );
+    expect(canonicalized).toMatchObject({
+      schemaVersion: 3,
+      retainedGenerations: {},
+    });
+    const {
+      retainedGenerations: _canonicalRetainedGenerations,
+      ...memberlessAgain
+    } = canonicalized;
+    await writeFile(
+      memberlessSchema3Path,
+      `${JSON.stringify(memberlessAgain)}\n`,
+      'utf8',
+    );
+
+    const explicitCompatible = await headlessHarness(
+      ['run', '--session', fourthId, 'member-less reply'],
+      {
+        sessionsDir,
+        now: () => new Date('2026-08-11T20:20:03.000Z'),
+      },
+    );
+    expect(explicitCompatible.result.code).toBe(0);
+    expect(explicitCompatible.result.sessionId).toBe(fourthId);
+    expect(explicitCompatible.inputs).toEqual(['member-less reply']);
+    expect(explicitCompatible.stderr).not.toContain(
+      'no retained-generation state',
+    );
+
+    const transientSchema4 = JSON.parse(
+      await readFile(memberlessSchema3Path, 'utf8'),
+    );
+    await writeFile(
+      memberlessSchema3Path,
+      `${JSON.stringify({ ...transientSchema4, schemaVersion: 4 })}\n`,
+      'utf8',
+    );
+    const continuedSchema4 = await headlessHarness(
+      ['run', '--session', fourthId, 'schema-4 reply'],
+      {
+        sessionsDir,
+        now: () => new Date('2026-08-11T20:20:04.000Z'),
+      },
+    );
+    expect(continuedSchema4.result.code).toBe(0);
+    expect(continuedSchema4.result.sessionId).toBe(fourthId);
+    expect(continuedSchema4.inputs).toEqual(['schema-4 reply']);
+    expect(continuedSchema4.stderr).not.toContain('schema 4 is unsupported');
+    expect(
+      JSON.parse(await readFile(memberlessSchema3Path, 'utf8')),
+    ).toMatchObject({ schemaVersion: 3, retainedGenerations: {} });
   });
 
   it('rereads the selected session under its lease before deciding whether to run', async () => {

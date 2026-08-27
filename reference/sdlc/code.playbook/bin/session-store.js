@@ -29,8 +29,11 @@ import {
 } from '../../../../src/xstate-runtime.js';
 import { assertPlaybookCaptainShellSnapshot } from '../playbook-captain.js';
 
-export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 4;
+export const CAPTAIN_SESSION_RECORD_SCHEMA_VERSION = 3;
 export const CAPTAIN_SESSION_RECORD_KIND = 'captain-session';
+// The interrupted retention change emitted this compatible required-member
+// shape before canonical writes returned to additive schema 3.
+const COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION = 4;
 export const SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 export const CAPTAIN_SESSION_STRUCTURAL_PROJECTION_SCHEMA_VERSION = 1;
@@ -52,7 +55,6 @@ const COMMON_RECORD_KEYS = [
   'structuralProjection',
   'lastAppliedExecutionProjection',
   'snapshot',
-  'retainedGenerations',
 ];
 const UNCERTAIN_KEYS = [
   'baseUpdatedAt',
@@ -80,9 +82,6 @@ const RELEASED_SCHEMA_2_UNCERTAIN_KEYS = [
   'attemptNumber',
   'markedAt',
 ];
-const RELEASED_SCHEMA_3_COMMON_RECORD_KEYS = COMMON_RECORD_KEYS.filter(
-  (key) => key !== 'retainedGenerations',
-);
 const LEASE_SCHEMA_VERSION = 1;
 const LEASE_KIND = 'captain-session-lease';
 const LEASE_OWNER_FILE = 'owner.json';
@@ -202,7 +201,7 @@ export function createCaptainSessionStore(options = {}) {
         `${JSON.stringify(path)}`;
       if (cause instanceof CaptainSessionRecordSchemaError) {
         if (
-          (cause.schemaVersion === 2 || cause.schemaVersion === 3) &&
+          cause.schemaVersion === 2 &&
           value.sessionId !== sessionId
         ) {
           throw new Error(
@@ -262,7 +261,7 @@ export function createCaptainSessionStore(options = {}) {
       } catch (error) {
         if (
           error instanceof CaptainSessionRecordSchemaError &&
-          (error.schemaVersion === 2 || error.schemaVersion === 3)
+          error.schemaVersion === 2
         ) {
           await onLegacyRecord?.(
             Object.freeze({
@@ -837,7 +836,7 @@ function createLease({
         }
         const timestamp = nextTimestamp(now(), prior.updatedAt);
         record = validateCaptainSessionRecord({
-          schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+          schemaVersion: prior.schemaVersion,
           kind: CAPTAIN_SESSION_RECORD_KIND,
           state: 'uncertain',
           sessionId,
@@ -848,7 +847,7 @@ function createLease({
           lastAppliedExecutionProjection:
             prior.lastAppliedExecutionProjection,
           snapshot: prior.snapshot,
-          retainedGenerations: prior.retainedGenerations,
+          ...retainedGenerationsMember(prior),
           uncertain: {
             baseUpdatedAt: prior.updatedAt,
             input,
@@ -882,7 +881,7 @@ function createLease({
       }
       const timestamp = nextTimestamp(now(), prior.updatedAt);
       const record = validateCaptainSessionRecord({
-        schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+        schemaVersion: prior.schemaVersion,
         kind: CAPTAIN_SESSION_RECORD_KIND,
         state: 'uncertain',
         sessionId,
@@ -893,7 +892,7 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
-        retainedGenerations: prior.retainedGenerations,
+        ...retainedGenerationsMember(prior),
         uncertain: {
           baseUpdatedAt: prior.uncertain.baseUpdatedAt,
           input: prior.uncertain.input,
@@ -933,7 +932,7 @@ function createLease({
           prior.uncertain.attemptedExecutionProjection,
         snapshot,
         retainedGenerations: applyRetainedGenerationUpdates(
-          prior.retainedGenerations,
+          prior.retainedGenerations ?? {},
           updates,
           prior.structuralProjection,
         ),
@@ -961,7 +960,7 @@ function createLease({
       // writeRecord's stable key order reconstructs the exact prior settled
       // bytes from the baseline carried by the uncertain record.
       const record = validateCaptainSessionRecord({
-        schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+        schemaVersion: prior.schemaVersion,
         kind: CAPTAIN_SESSION_RECORD_KIND,
         state: 'settled',
         sessionId,
@@ -972,7 +971,7 @@ function createLease({
         lastAppliedExecutionProjection:
           prior.lastAppliedExecutionProjection,
         snapshot: prior.snapshot,
-        retainedGenerations: prior.retainedGenerations,
+        ...retainedGenerationsMember(prior),
       });
       await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
@@ -1096,19 +1095,15 @@ export function validateCaptainSessionRecord(value) {
     snapshotJsonValue(value, 'Captain session record'),
     'Captain session record',
   );
-  if (record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION) {
+  if (
+    record.schemaVersion !== CAPTAIN_SESSION_RECORD_SCHEMA_VERSION &&
+    record.schemaVersion !== COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
+  ) {
     if (record.schemaVersion === 2) {
       assertReleasedSchema2CaptainSessionRecord(record);
       throw new CaptainSessionRecordSchemaError(
         record.schemaVersion,
-        'Captain session record schema 2 has incompatible root-owned player identity; schema 4 is required',
-      );
-    }
-    if (record.schemaVersion === 3) {
-      assertReleasedSchema3CaptainSessionRecord(record);
-      throw new CaptainSessionRecordSchemaError(
-        record.schemaVersion,
-        'Captain session record schema 3 has no retained-generation state; schema 4 is required',
+        'Captain session record schema 2 has incompatible root-owned player identity; schema 3 is required',
       );
     }
     throw new CaptainSessionRecordSchemaError(
@@ -1119,11 +1114,18 @@ export function validateCaptainSessionRecord(value) {
   if (record.state !== 'settled' && record.state !== 'uncertain') {
     throw new Error('Captain session record state is not supported');
   }
-  rejectUnknownOrMissingKeys(
+  const recordKeys =
+    record.schemaVersion === COMPATIBLE_RETENTION_RECORD_SCHEMA_VERSION
+      ? [...COMMON_RECORD_KEYS, 'retainedGenerations']
+      : COMMON_RECORD_KEYS;
+  exactOptionalKeys(
     record,
     record.state === 'uncertain'
-      ? [...COMMON_RECORD_KEYS, 'uncertain']
-      : COMMON_RECORD_KEYS,
+      ? [...recordKeys, 'uncertain']
+      : recordKeys,
+    record.schemaVersion === CAPTAIN_SESSION_RECORD_SCHEMA_VERSION
+      ? ['retainedGenerations']
+      : [],
     'Captain session record',
   );
   if (record.kind !== CAPTAIN_SESSION_RECORD_KIND) {
@@ -1157,7 +1159,9 @@ export function validateCaptainSessionRecord(value) {
   void lastApplied;
   const snapshot = assertPlaybookCaptainShellSnapshot(record.snapshot);
   assertSnapshotMatchesStructure(snapshot, structural);
-  validateRetainedGenerations(record.retainedGenerations, structural);
+  if (Object.hasOwn(record, 'retainedGenerations')) {
+    validateRetainedGenerations(record.retainedGenerations, structural);
+  }
   if (
     snapshot.captain.sessionId === record.sessionId ||
     snapshot.issuedSessionIds.includes(record.sessionId)
@@ -1230,24 +1234,6 @@ export function validateCaptainSessionRecord(value) {
   }
 
   return record;
-}
-
-function assertReleasedSchema3CaptainSessionRecord(record) {
-  if (record.state !== 'settled' && record.state !== 'uncertain') {
-    throw new Error('Captain session record state is not supported');
-  }
-  rejectUnknownOrMissingKeys(
-    record,
-    record.state === 'uncertain'
-      ? [...RELEASED_SCHEMA_3_COMMON_RECORD_KEYS, 'uncertain']
-      : RELEASED_SCHEMA_3_COMMON_RECORD_KEYS,
-    'Captain session record',
-  );
-  validateCaptainSessionRecord({
-    ...record,
-    schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
-    retainedGenerations: {},
-  });
 }
 
 function assertReleasedSchema2CaptainSessionRecord(record) {
@@ -1788,6 +1774,12 @@ function applyRetainedGenerationUpdates(
     }
   }
   return Object.fromEntries(next);
+}
+
+function retainedGenerationsMember(record) {
+  return Object.hasOwn(record, 'retainedGenerations')
+    ? { retainedGenerations: record.retainedGenerations }
+    : {};
 }
 
 function validateRetainedGenerations(value, structural) {

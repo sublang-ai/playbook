@@ -283,9 +283,12 @@ reads no input and runs no model: it restores the exact prior settled boundary,
 or deletes a never-settled fresh session, while abandoning the attempted work.
 An interrupted interactive turn uses the same uncertain record and is
 recovered with these headless commands. Session files written by the removed
-direct v6 runner and legacy record schemas are not shared schema-4 Captain
-sessions and cannot be continued. Explicit selection rejects them. Implicit
-`--continue` reports and skips released schema-2 and schema-3 Captain records,
+direct v6 runner and incompatible schema-2 records are not shared schema-3
+Captain sessions and cannot be continued. Explicit selection rejects them.
+Implicit `--continue` reports and skips released schema-2 Captain records,
 naming each session and path; move them outside the sessions directory or
-remove them to silence the warning. Malformed records and unknown schemas
-still fail closed.
+remove them to silence the warning. A schema-3 record without the optional
+retained-generation member remains continuable and treats its absence as an
+empty map. Structurally valid schema-4 records emitted by the earlier
+retention implementation also remain continuable. Malformed records and
+unknown schemas still fail closed.

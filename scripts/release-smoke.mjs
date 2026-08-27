@@ -1142,7 +1142,7 @@ function stepHermetic(root, state) {
     (player) => player.id,
   );
   if (
-    firstRecord.schemaVersion !== 4 ||
+    firstRecord.schemaVersion !== 3 ||
     firstRecord.kind !== 'captain-session' ||
     firstRecord.state !== 'settled' ||
     firstRecord.cwd !== frozenCwd ||
@@ -1160,7 +1160,7 @@ function stepHermetic(root, state) {
       'release-smoke:closing:first:1'
   ) {
     fail(
-      'the first headless turn did not persist its schema-4 identity boundary',
+      'the first headless turn did not persist its schema-3 identity boundary',
       JSON.stringify({
         schemaVersion: firstRecord.schemaVersion,
         kind: firstRecord.kind,
@@ -1257,7 +1257,7 @@ function stepHermetic(root, state) {
   const finalPlayerIds = Object.keys(finalPlayers).sort();
   const finalRoleIds = Object.keys(finalRoles ?? {}).sort();
   if (
-    finalRecord.schemaVersion !== 4 ||
+    finalRecord.schemaVersion !== 3 ||
     finalRecord.kind !== 'captain-session' ||
     finalRecord.sessionId !== firstEnvelope.sessionId ||
     finalRecord.state !== 'settled' ||
@@ -1435,7 +1435,7 @@ function stepHermetic(root, state) {
     'one provisioning line; both engine links resolve into the prefix',
     `stdin produced exact {sessionId,reply} with ${smokeToken}`,
     `four processes continued Captain session ${firstEnvelope.sessionId}`,
-    'schema 4 retained two segmented player identities and frozen structure',
+    'schema 3 retained two segmented player identities and frozen structure',
     'shared roles chained one token; the isolated player kept its own token',
     'ordinary reopen applied current model and effort, including provider-default',
     'continuation replayed no settled effect and invoked no tmux',
