@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [9.0.0] - 2026-08-27
+
 ### Changed
 
 - **A workflow parked in its recoverable failure state now offers the same retry to a continued session as to the process that failed.** The retry replayed the last classified Boss event, which lives in process memory and is deliberately absent from the durable snapshot, so `playbook run --continue` — and any reopening by session id — restored a parked failure with no actions at all, leaving the Captain able only to dismiss and restart it. The same gate withheld the retry inside the live process whenever the last Boss boundary was a reply that resumed work which then failed, because a failure state accepts only its entry event. A workflow artifact now names the FSM context member its entry action copies the exact Boss text into, and the retry is built from that member of the live snapshot, which the persisted machine snapshot already carries; CODE and REVIEW both declare it. Nothing new is persisted, so the runtime snapshot, its schema, and every written record are unchanged, and an artifact that declares no member keeps its previous process-local behavior ([DR-034](specs/decisions/034-durable-failure-retry-continuity.md), [IR-044](specs/intents/044-durable-failure-retry-continuity.md), [[playbook-runtime-52](specs/packages/playbook-runtime.md#playbook-runtime-52)]).
@@ -473,7 +475,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Conformance test suite (386 tests across six files) pinning the gears ↔ FSM 1:1 mapping (PLAYBOOK-1..6), runtime contract (PBRT-5..16), prompt composition, introspect helpers, and onDone arm coverage.
 - Package exports `./code/playbook` (the host-agnostic `createPlaybookRuntime` factory) and `./code/tmux-play` (the cligent-bound Captain factory).
 
-[Unreleased]: https://github.com/sublang-ai/playbook/compare/v8.0.0...HEAD
+[Unreleased]: https://github.com/sublang-ai/playbook/compare/v9.0.0...HEAD
+[9.0.0]: https://github.com/sublang-ai/playbook/compare/v8.0.0...v9.0.0
 [8.0.0]: https://github.com/sublang-ai/playbook/compare/v7.0.0...v8.0.0
 [7.0.0]: https://github.com/sublang-ai/playbook/compare/v6.0.0...v7.0.0
 [6.0.0]: https://github.com/sublang-ai/playbook/compare/v5.0.0...v6.0.0
