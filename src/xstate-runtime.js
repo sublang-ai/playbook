@@ -615,6 +615,9 @@ export function assertPlaybookRuntimeSnapshot(value, expectedPlaybookId, options
     }
     const allowSuspendedCall = capturedOptions.allowSuspendedCall ?? false;
     if (snapshot.schemaVersion !== 3) {
+        if (snapshot.schemaVersion === 1 || snapshot.schemaVersion === 2) {
+            throw new TypeError(`runtime snapshot schemaVersion ${String(snapshot.schemaVersion)} has incompatible player identity; schema 3 is required`);
+        }
         throw new TypeError(`runtime snapshot schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 3)`);
     }
     rejectUnknownKeys(snapshot, [

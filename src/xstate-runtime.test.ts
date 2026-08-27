@@ -319,7 +319,7 @@ describe('runtime snapshot schema validation', () => {
           { ...runtimeSnapshot(), schemaVersion },
           'parent',
         ),
-      ).toThrow('expected 3');
+      ).toThrow('incompatible player identity');
     }
   });
 
@@ -498,7 +498,7 @@ describe('DR-032 schema-3 runtime boundaries', () => {
           { ...schema3Snapshot(), schemaVersion },
           'parent',
         ),
-      ).toThrow('expected 3');
+      ).toThrow('incompatible player identity');
     }
     expect(() =>
       assertPlaybookRuntimeSnapshot(

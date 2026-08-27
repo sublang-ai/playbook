@@ -1330,6 +1330,16 @@ export function assertPlaybookCaptainShellSnapshot(
 ): PlaybookCaptainShellSnapshot {
   const detached = snapshotJsonValue(value, 'Captain shell snapshot');
   const snapshot = snapshotRecord(detached, 'Captain shell snapshot');
+  if (snapshot.schemaVersion !== 3) {
+    if (snapshot.schemaVersion === 1) {
+      throw new TypeError(
+        'Captain shell snapshot schemaVersion 1 has incompatible player identity; schema 3 is required',
+      );
+    }
+    throw new TypeError(
+      `Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 3)`,
+    );
+  }
   const mode = snapshot.mode;
   const commonKeys = [
     'schemaVersion',
@@ -1360,12 +1370,6 @@ export function assertPlaybookCaptainShellSnapshot(
       'Captain shell snapshot.mode must be "chat" or "engaged.parked"',
     );
   }
-  if (snapshot.schemaVersion !== 3) {
-    throw new TypeError(
-      `Captain shell snapshot.schemaVersion ${String(snapshot.schemaVersion)} is not supported (expected 3)`,
-    );
-  }
-
   const captain = snapshotRecord(
     snapshot.captain,
     'Captain shell snapshot.captain',
@@ -5752,33 +5756,37 @@ export function createPlaybookCaptainShell(
     );
   };
 
-  const retainOrClearDisposedRoot = (root: EngagementFrame): void => {
+  const retentionUpdateForPriorGeneration = (
+    root: EngagementFrame,
+  ): PlaybookCaptainRetentionUpdate | undefined => {
     const rootPlaybookId = root.entry.id;
     if (!runtimeRetainsGenerations(root.runtime)) {
-      pendingRetentionUpdates.set(rootPlaybookId, {
+      return {
         kind: 'clear',
         rootPlaybookId,
-      });
-      return;
+      };
     }
     const candidate = retainedGenerationCandidates.get(rootPlaybookId);
     if (candidate?.status === 'incapable') {
-      pendingRetentionUpdates.set(rootPlaybookId, {
-        kind: 'clear',
-        rootPlaybookId,
-      });
-      return;
+      return undefined;
     }
     if (candidate?.status !== 'captured') {
       throw new Error(
         `${frameLabel(root)} could not capture its pre-terminal retained generation`,
       );
     }
-    pendingRetentionUpdates.set(rootPlaybookId, {
+    return {
       kind: 'retain',
       rootPlaybookId,
       generation: candidate.generation,
-    });
+    };
+  };
+
+  const retainOrClearDisposedRoot = (root: EngagementFrame): void => {
+    const update = retentionUpdateForPriorGeneration(root);
+    if (update !== undefined) {
+      pendingRetentionUpdates.set(update.rootPlaybookId, update);
+    }
   };
 
   const recordTerminalRetention = (
@@ -5896,8 +5904,17 @@ export function createPlaybookCaptainShell(
             generation,
           });
         }
-      } else {
+      } else if (!runtimeRetainsGenerations(root.runtime)) {
         updates.set(rootPlaybookId, { kind: 'clear', rootPlaybookId });
+      } else if (retainedGenerationCandidates.has(rootPlaybookId)) {
+        try {
+          const update = retentionUpdateForPriorGeneration(root);
+          if (update !== undefined) {
+            updates.set(rootPlaybookId, update);
+          }
+        } catch {
+          return undefined;
+        }
       }
     }
     return snapshotJsonValue(

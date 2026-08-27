@@ -5100,6 +5100,221 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await shell.dispose?.();
   });
 
+  it('omits retention when a fresh capable root opens a capability-less child', async () => {
+    const callId = 'code:review:fresh-capability-gap';
+    const code = fakeCodeEntry(
+      async (runtime, runtimeTurn) => {
+        const start = await runtime.ports!.callPlaybook(
+          { callId, playbookId: 'review', text: 'review this' },
+          runtimeTurn.signal,
+        );
+        if (start.state !== 'suspended') throw new Error('review must park');
+        const result: PlaybookRunResult = {
+          outcome: 'suspended',
+          state: playbookState('waitingForChild', {
+            tags: ['playbook.suspended'],
+          }),
+          pendingCall: {
+            callId,
+            playbookId: 'review',
+            childSessionId: start.childSessionId,
+          },
+        };
+        runtime.snapshot = runtimeSnapshot('code', result.state, {
+          turn: 1,
+          suspendedCall: {
+            callId,
+            stateId: 'waitingForChild',
+            playbookId: 'review',
+            text: 'review this',
+            childSessionId: start.childSessionId,
+            turnId: 1,
+          },
+        });
+        return result;
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+      },
+    );
+    enableGenerationRetention(code);
+    const review = fakePlaybookEntry(
+      'review',
+      'review',
+      async (runtime) => {
+        const result = quiescentResult('reviewing');
+        runtime.snapshot = runtimeSnapshot('review', result.state, { turn: 1 });
+        return result;
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('review', playbookState('ready'));
+      },
+    );
+    const shell = makeShell([code, review], {
+      sessionIds: [ROOT_ID, CHILD_ID],
+    });
+    await shell.init!(stubSession(roster).session);
+
+    await shell.handleBossTurn(
+      turn('/code call review'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Review is parked.' },
+      ]).context,
+    );
+
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: {
+        mode: 'engaged.parked',
+        frames: [{ playbookId: 'code' }, { playbookId: 'review' }],
+      },
+      retentionUpdates: [],
+    });
+    await shell.dispose?.();
+  });
+
+  it('preserves complete retention around a capability-less child', async () => {
+    const callId = 'code:review:capability-gap';
+    const docsId = '30000000-0000-4000-8000-000000000004';
+    let codeTurns = 0;
+    const code = fakeCodeEntry(
+      async (runtime, runtimeTurn) => {
+        codeTurns += 1;
+        if (codeTurns === 1) {
+          const state = playbookState('editing');
+          runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+          return { outcome: 'quiescent', state };
+        }
+        const start = await runtime.ports!.callPlaybook(
+          { callId, playbookId: 'review', text: 'review this' },
+          runtimeTurn.signal,
+        );
+        if (start.state !== 'suspended') throw new Error('review must park');
+        const result: PlaybookRunResult = {
+          outcome: 'suspended',
+          state: playbookState('waitingForChild', {
+            tags: ['playbook.suspended'],
+          }),
+          pendingCall: {
+            callId,
+            playbookId: 'review',
+            childSessionId: start.childSessionId,
+          },
+        };
+        runtime.snapshot = runtimeSnapshot('code', result.state, {
+          turn: 2,
+          suspendedCall: {
+            callId,
+            stateId: 'waitingForChild',
+            playbookId: 'review',
+            text: 'review this',
+            childSessionId: start.childSessionId,
+            turnId: 2,
+          },
+        });
+        return result;
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+      },
+    );
+    enableGenerationRetention(code);
+    const review = fakePlaybookEntry(
+      'review',
+      'review',
+      async (runtime) => {
+        const result = quiescentResult('reviewing');
+        runtime.snapshot = runtimeSnapshot('review', result.state, { turn: 1 });
+        return result;
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('review', playbookState('ready'));
+      },
+    );
+    const docs = fakePlaybookEntry(
+      'docs',
+      'docs',
+      async (runtime) => {
+        const result = quiescentResult('drafting');
+        runtime.snapshot = runtimeSnapshot('docs', result.state, { turn: 1 });
+        return result;
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('docs', playbookState('ready'));
+      },
+    );
+    enableGenerationRetention(docs);
+    const shell = makeShell([code, review, docs], {
+      sessionIds: [ROOT_ID, CHILD_ID, docsId],
+    });
+    await shell.init!(stubSession(roster).session);
+
+    await shell.handleBossTurn(
+      turn('/code start'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Editing is parked.' },
+      ]).context,
+    );
+    const prior = shell.exportSettlement();
+    expect(prior).toMatchObject({
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: {
+            frames: [{ runtime: { state: { stateId: 'editing' } } }],
+          },
+        },
+      ],
+    });
+
+    await shell.handleBossTurn(
+      turn('/code call review', 2),
+      stubContext([
+        { status: 'ok', turnId: 2, finalText: 'Review is parked.' },
+      ]).context,
+    );
+    const nested = shell.exportSettlement();
+    expect(nested).toMatchObject({
+      snapshot: {
+        mode: 'engaged.parked',
+        frames: [{ playbookId: 'code' }, { playbookId: 'review' }],
+      },
+    });
+    expect(nested?.retentionUpdates).toEqual(prior?.retentionUpdates);
+
+    await shell.handleBossTurn(
+      turn('/docs replace it', 3),
+      stubContext([
+        { status: 'ok', turnId: 3, finalText: 'Docs is parked.' },
+      ]).context,
+    );
+    const switched = shell.exportSettlement();
+    expect(switched).toMatchObject({
+      snapshot: {
+        mode: 'engaged.parked',
+        frames: [{ playbookId: 'docs' }],
+      },
+    });
+    expect(switched?.retentionUpdates).toHaveLength(1);
+    expect(switched?.retentionUpdates[0]).toMatchObject({
+      kind: 'retain',
+      rootPlaybookId: 'docs',
+      generation: {
+        frames: [
+          {
+            runtime: { state: { stateId: 'drafting' } },
+          },
+        ],
+      },
+    });
+    await shell.dispose?.();
+  });
+
   it('settles a same-turn unfinished terminal without a retention update', async () => {
     let disposals = 0;
     const code = fakeCodeEntry(

@@ -27,8 +27,10 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
 2. **Retention captures the last unfinished pre-terminal generation, atomically with its nested stack.**
    At each settlement — abort settlement included per [DR-036](036-coherent-abort-settlement.md) — the Captain session record retains, per enabled root playbook id, the latest quiescent generation that carries unfinished work: the root frame's snapshot together with every nested descendant frame's snapshot and the call bridges between them, as one indivisible generation.
    Final-state snapshots are never retained; a root that completes terminally retains the generation captured before completion when its final state is artifact-declared unfinished, and clears retention otherwise.
+   A capability-less root clears its retained generation.
+   When a capability-bearing root's stack contains a capability-less descendant, Captain retains the last complete generation captured before that descendant opened; when the turn began with that descendant already live or the root began during the turn, Captain emits no update; and Captain never retains the partial stack.
    When a root starts and reaches a declared unfinished terminal in the same turn, before any work-bearing generation can settle, the Captain settles without a retention update for that root rather than retain the initialized state or clear unfinished retention.
-   An existing root that cannot supply its previously settled safe generation still leaves the boundary unsettled.
+   An existing root whose turn-start stack is fully capability-bearing but whose previous generation cannot be captured safely still leaves a boundary that requires that previous candidate unsettled.
    The linked artifact declares its unfinished final-state ids as link-time metadata beside the resumable-state registry — mechanical metadata, not procedure text.
    A later settlement of the same root playbook replaces the generation in place; clean completion clears it.
 
@@ -57,6 +59,7 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
 - A resumed run re-enters mid-procedure states directly, so an interrupted review re-runs from its own state and half-settled work needs no Boss-side instructions.
 - The session record grows by at most one retained generation per enabled root playbook id, bounded and replaced in place; nested descendants ride inside their root's generation and cannot dangle.
 - A root that reaches an unfinished terminal before it has a work-bearing generation still settles and preserves its terminal meaning; the absent retention update leaves any earlier generation untouched.
+- A capability-less descendant can prevent the current stack from becoming a retained generation but neither erases an earlier complete generation nor blocks ordinary same-session snapshot continuation.
 - Runtimes without the adoption capability keep today's behavior; universality is the mechanism and its gating, not a claim about bespoke runtimes.
 - Cross-adapter resumption cannot restore a player's conversation; fidelity rests on externalized effects, per the stated authoring principle.
 - A retained generation can be stale against a world that moved on; the resumed state's own first act observes the world, so staleness surfaces through normal review and failure paths rather than silently.

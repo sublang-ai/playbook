@@ -1001,7 +1001,9 @@ describe('DECIDE suspended REVIEW persistence', () => {
       if (!restored.restore) throw new Error('DECIDE restore is unavailable');
       await expect(
         restored.restore(session(restoredPorts), legacySnapshot),
-      ).rejects.toThrow(`schemaVersion ${schemaVersion} is not supported`);
+      ).rejects.toThrow(
+        `schemaVersion ${schemaVersion} has incompatible player identity`,
+      );
 
       expect(nestedRequests).toEqual([]);
       expect(statuses).toEqual([]);

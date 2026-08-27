@@ -1717,6 +1717,75 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     ).toMatchObject({ schemaVersion: 3, retainedGenerations: {} });
   });
 
+  it.each([
+    {
+      name: 'shell schema 1',
+      mutate(record: any) {
+        record.snapshot.schemaVersion = 1;
+        delete record.snapshot.playerSessions;
+        delete record.snapshot.captain.agent;
+        const runtime = record.snapshot.captain.runtime;
+        runtime.schemaVersion = 2;
+        runtime.playerResumeTokens = runtime.roleResumeTokens;
+        delete runtime.roleResumeTokens;
+      },
+      diagnostic:
+        'Captain shell snapshot schemaVersion 1 has incompatible player identity',
+    },
+    {
+      name: 'runtime schema 1',
+      mutate(record: any) {
+        const runtime = record.snapshot.captain.runtime;
+        runtime.schemaVersion = 1;
+        runtime.playerResumeTokens = runtime.roleResumeTokens;
+        delete runtime.roleResumeTokens;
+      },
+      diagnostic:
+        'runtime snapshot schemaVersion 1 has incompatible player identity',
+    },
+    {
+      name: 'runtime schema 2',
+      mutate(record: any) {
+        const runtime = record.snapshot.captain.runtime;
+        runtime.schemaVersion = 2;
+        runtime.playerResumeTokens = runtime.roleResumeTokens;
+        delete runtime.roleResumeTokens;
+      },
+      diagnostic:
+        'runtime snapshot schemaVersion 2 has incompatible player identity',
+    },
+  ])('rejects explicit released $name before host work', async ({
+    mutate,
+    diagnostic,
+  }) => {
+    const first = await headlessHarness(['run', 'settled selection'], {
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    const recordPath = join(first.sessionsDir, `${firstId}.json`);
+    const record = JSON.parse(await readFile(recordPath, 'utf8'));
+    mutate(record);
+    await writeFile(recordPath, `${JSON.stringify(record)}\n`, 'utf8');
+
+    let hosts = 0;
+    const rejected = await headlessHarness(
+      ['run', '--session', firstId, 'must not run'],
+      {
+        sessionsDir: first.sessionsDir,
+        createHostRuntime: async () => {
+          hosts += 1;
+          throw new Error('must not construct host for a released schema');
+        },
+      },
+    );
+
+    expect(rejected.result.code).toBe(1);
+    expect(rejected.stdout).toBe('');
+    expect(rejected.inputs).toEqual([]);
+    expect(hosts).toBe(0);
+    expect(rejected.stderr).toContain(diagnostic);
+  });
+
   it('rereads the selected session under its lease before deciding whether to run', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-reread-'));
     tempDirs.push(stateRoot);
