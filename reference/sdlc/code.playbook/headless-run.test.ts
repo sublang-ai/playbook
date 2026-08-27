@@ -1621,6 +1621,25 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       { mode: 0o600 },
     );
 
+    let explicitLegacyHosts = 0;
+    const explicitLegacy = await headlessHarness(
+      ['run', '--session', thirdId, 'must not run'],
+      {
+        sessionsDir,
+        createHostRuntime: async () => {
+          explicitLegacyHosts += 1;
+          throw new Error('must not construct host for schema 2');
+        },
+      },
+    );
+    expect(explicitLegacy.result.code).toBe(1);
+    expect(explicitLegacy.stdout).toBe('');
+    expect(explicitLegacy.inputs).toEqual([]);
+    expect(explicitLegacyHosts).toBe(0);
+    expect(explicitLegacy.stderr).toContain(
+      'schema 2 has incompatible root-owned player identity',
+    );
+
     const continued = await headlessHarness(
       ['run', '--continue', 'latest reply'],
       {
@@ -1887,7 +1906,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
   });
 
-  it('leaves a same-turn unfinished terminal uncertain without retaining its initialized state', async () => {
+  it('settles a same-turn unfinished terminal without retaining its initialized state', async () => {
     const fixtures = nestedEntries([]);
     const unfinished = {
       id: 'code',
@@ -1944,26 +1963,26 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       }),
     });
 
-    expect(out.result.code).toBe(2);
-    expect(out.stdout).toBe('');
-    expect(out.stderr).toContain(
+    expect(out.result.code).toBe(0);
+    expect(out.stdout).toBe('Nested CODE and REVIEW completed.\n');
+    expect(out.stderr).not.toContain(
       'Captain turn settled without an exportable session settlement',
     );
-    expect(
-      JSON.parse(
-        await readFile(
-          join(
-            out.sessionsDir,
-            '90000000-0000-4000-8000-000000000001.json',
-          ),
-          'utf8',
+    const record = JSON.parse(
+      await readFile(
+        join(
+          out.sessionsDir,
+          '90000000-0000-4000-8000-000000000001.json',
         ),
+        'utf8',
       ),
-    ).toMatchObject({
-      state: 'uncertain',
-      uncertain: { input },
+    );
+    expect(record).toMatchObject({
+      state: 'settled',
+      snapshot: { mode: 'chat' },
       retainedGenerations: {},
     });
+    expect(record).not.toHaveProperty('uncertain');
   });
 
   it('withholds output but preserves a complete settlement after post-rename sync failure', async () => {

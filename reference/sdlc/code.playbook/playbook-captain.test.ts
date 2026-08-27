@@ -5100,14 +5100,17 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await shell.dispose?.();
   });
 
-  it('fails closed when a same-turn unfinished terminal has no work-bearing generation', async () => {
+  it('settles a same-turn unfinished terminal without a retention update', async () => {
+    let disposals = 0;
     const code = fakeCodeEntry(
       async (runtime) => {
         const result = terminalResult('reportedReviewFailure');
         runtime.snapshot = runtimeSnapshot('code', result.state, { turn: 1 });
         return result;
       },
-      undefined,
+      async () => {
+        disposals += 1;
+      },
       async (runtime) => {
         runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
       },
@@ -5122,7 +5125,11 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       ]).context,
     );
 
-    expect(shell.exportSettlement()).toBeUndefined();
+    expect(shell.exportSettlement()).toMatchObject({
+      snapshot: { mode: 'chat' },
+      retentionUpdates: [],
+    });
+    expect(disposals).toBe(1);
     await shell.dispose?.();
   });
 
@@ -5163,8 +5170,47 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await shell.dispose?.();
   });
 
+  it('withholds settlement when an existing root has no safe generation', async () => {
+    let turns = 0;
+    const code = fakeCodeEntry(
+      async (runtime) => {
+        turns += 1;
+        if (turns === 1) {
+          const state = playbookState('editing');
+          runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+          return { outcome: 'quiescent', state };
+        }
+        const result = terminalResult('reportedReviewFailure');
+        runtime.snapshot = runtimeSnapshot('code', result.state, { turn: 2 });
+        return result;
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+      },
+    );
+    enableGenerationRetention(code, ['reportedReviewFailure']);
+    const shell = makeShell(code, { sessionIds: [ROOT_ID] });
+    await shell.init!(stubSession(roster).session);
+    await shell.handleBossTurn(
+      turn('/code start'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Editing is parked.' },
+      ]).context,
+    );
+    expect(shell.exportSettlement()).toBeDefined();
+
+    code.runtimes[0]!.snapshot = undefined;
+    await shell
+      .handleBossTurn(turn('/code fail review', 2), stubContext().context)
+      .catch(() => {});
+
+    expect(shell.exportSettlement()).toBeUndefined();
+    expect(code.runtimes[0]?.disposeCount).toBe(0);
+    await shell.dispose?.();
+  });
+
   it.each([
-    'unsafe-generation',
     'missing-terminal-id',
     'blank-terminal-id',
     'non-string-terminal-id',
@@ -5180,18 +5226,14 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
               ? { stateId: undefined }
               : fault === 'blank-terminal-id'
                 ? { stateId: '   ' }
-                : fault === 'non-string-terminal-id'
-                  ? { stateId: 42 }
-                  : {}),
+                : { stateId: 42 }),
           } as PlaybookState;
           runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
           return { ...result, state };
         },
         undefined,
         async (runtime) => {
-          if (fault !== 'unsafe-generation') {
-            runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
-          }
+          runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
         },
       );
       enableGenerationRetention(code, ['reportedReviewFailure']);

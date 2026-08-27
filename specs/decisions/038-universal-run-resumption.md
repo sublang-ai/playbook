@@ -5,7 +5,7 @@
 
 ## Status
 
-Proposed
+Accepted.
 
 ## Context
 
@@ -27,7 +27,8 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
 2. **Retention captures the last unfinished pre-terminal generation, atomically with its nested stack.**
    At each settlement — abort settlement included per [DR-036](036-coherent-abort-settlement.md) — the Captain session record retains, per enabled root playbook id, the latest quiescent generation that carries unfinished work: the root frame's snapshot together with every nested descendant frame's snapshot and the call bridges between them, as one indivisible generation.
    Final-state snapshots are never retained; a root that completes terminally retains the generation captured before completion when its final state is artifact-declared unfinished, and clears retention otherwise.
-   When no post-input quiescent generation exists, the Captain leaves the turn unsettled rather than retain the initialized state or clear unfinished retention.
+   When a root starts and reaches a declared unfinished terminal in the same turn, before any work-bearing generation can settle, the Captain settles without a retention update for that root rather than retain the initialized state or clear unfinished retention.
+   An existing root that cannot supply its previously settled safe generation still leaves the boundary unsettled.
    The linked artifact declares its unfinished final-state ids as link-time metadata beside the resumable-state registry — mechanical metadata, not procedure text.
    A later settlement of the same root playbook replaces the generation in place; clean completion clears it.
 
@@ -55,6 +56,7 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
 - Author burden is unchanged; interruption recovery becomes uniform across playbooks, front ends, and sessions, and no longer depends on outcome classification or the acting model's report style.
 - A resumed run re-enters mid-procedure states directly, so an interrupted review re-runs from its own state and half-settled work needs no Boss-side instructions.
 - The session record grows by at most one retained generation per enabled root playbook id, bounded and replaced in place; nested descendants ride inside their root's generation and cannot dangle.
+- A root that reaches an unfinished terminal before it has a work-bearing generation still settles and preserves its terminal meaning; the absent retention update leaves any earlier generation untouched.
 - Runtimes without the adoption capability keep today's behavior; universality is the mechanism and its gating, not a claim about bespoke runtimes.
 - Cross-adapter resumption cannot restore a player's conversation; fidelity rests on externalized effects, per the stated authoring principle.
 - A retained generation can be stale against a world that moved on; the resumed state's own first act observes the world, so staleness surfaces through normal review and failure paths rather than silently.

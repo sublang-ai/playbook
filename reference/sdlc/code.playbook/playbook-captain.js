@@ -4157,6 +4157,10 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
         const unfinished = root.runtime.retainedGenerationMetadata.unfinishedFinalStateIds.includes(terminalStateId);
         if (unfinished) {
+            // A root opened and terminated within this turn has no pre-turn,
+            // work-bearing generation. Leave any earlier store entry untouched.
+            if (!retainedGenerationCandidates.has(rootPlaybookId))
+                return;
             retainOrClearDisposedRoot(root);
         }
         else {

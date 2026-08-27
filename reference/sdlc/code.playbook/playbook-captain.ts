@@ -5807,6 +5807,9 @@ export function createPlaybookCaptainShell(
         terminalStateId,
       );
     if (unfinished) {
+      // A root opened and terminated within this turn has no pre-turn,
+      // work-bearing generation. Leave any earlier store entry untouched.
+      if (!retainedGenerationCandidates.has(rootPlaybookId)) return;
       retainOrClearDisposedRoot(root);
     } else {
       pendingRetentionUpdates.set(rootPlaybookId, {
