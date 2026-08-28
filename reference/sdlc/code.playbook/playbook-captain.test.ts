@@ -8234,6 +8234,110 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     await source.dispose?.();
   });
 
+  it('contains deferred probe construction rejection without clearing its source', async () => {
+    const activeDocsId = '70000000-0000-4000-8000-000000000002';
+    const code = fakeCodeEntry();
+    const docs = fakePlaybookEntry(
+      'docs',
+      'docs',
+      async (runtime) => {
+        const state = playbookState('docsParked');
+        runtime.snapshot = runtimeSnapshot('docs', state, { turn: 1 });
+        return { outcome: 'quiescent', state };
+      },
+      undefined,
+      async (runtime) => {
+        runtime.snapshot = runtimeSnapshot('docs', playbookState('ready'));
+      },
+    );
+    const drafts = fakePlaybookEntry('drafts', 'drafts');
+    const review = fakePlaybookEntry('review', 'review');
+    enableGenerationRetention(code);
+    enableGenerationRetention(drafts);
+    enableGenerationRetention(review);
+
+    const entries = [code, docs, drafts, review];
+    const source = makeShell(entries, { sessionIds: [activeDocsId] });
+    await source.init!(stubSession(roster).session);
+    await source.handleBossTurn(
+      turn('/docs keep working'),
+      stubContext([
+        { status: 'ok', turnId: 1, finalText: 'Docs remain parked.' },
+      ]).context,
+    );
+    const snapshot = source.exportSnapshot()!;
+
+    let reviewConstructionAttempts = 0;
+    review.entry.createRuntime = () => {
+      reviewConstructionAttempts += 1;
+      throw new Error('deferred review probe construction failed');
+    };
+    const target = makeShell(entries, { restoredSession: true });
+    await target.restore(stubSession(roster).session, snapshot);
+    await target.installRetainedGenerations({
+      code: retainedNestedGeneration(),
+      drafts: retainedRootGeneration(
+        'drafts',
+        '40000000-0000-4000-8000-000000000004',
+        'retainedDrafts',
+        'A draft is retained.',
+      ),
+    });
+    expect(code.runtimes).toHaveLength(0);
+    expect(drafts.runtimes).toHaveLength(0);
+
+    await target.handleBossTurn(
+      turn('dismiss the live docs', 2),
+      stubContext([
+        captainJson({ action: 'dismiss' }),
+        { status: 'ok', turnId: 2, finalText: 'Docs dismissed.' },
+      ]).context,
+    );
+    expect(target.exportSettlement()?.retentionUpdates).not.toContainEqual({
+      kind: 'clear',
+      rootPlaybookId: 'code',
+    });
+
+    const firstIdle = stubContext([
+      captainJson({ action: 'respond', text: 'Other work can continue.' }),
+    ]);
+    await target.handleBossTurn(
+      turn('what else can continue?', 3),
+      firstIdle.context,
+    );
+    const firstPrompt = firstIdle.captainCalls.find((call) =>
+      isDecisionPrompt(call.prompt),
+    )?.prompt;
+    const firstControlDigest = firstPrompt!
+      .split('[ControlView digest]')[1]!
+      .split('[Catalog digest]')[0]!;
+    expect(firstControlDigest).toContain('- drafts (/drafts):');
+    expect(firstControlDigest).not.toContain('- code (/code):');
+    expect(firstIdle.replies).toEqual(['Other work can continue.']);
+    expect(reviewConstructionAttempts).toBe(1);
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(drafts.runtimes).toHaveLength(1);
+    expect(target.exportSettlement()?.retentionUpdates).not.toContainEqual({
+      kind: 'clear',
+      rootPlaybookId: 'code',
+    });
+
+    const laterIdle = stubContext([
+      captainJson({ action: 'respond', text: 'The offer remains available.' }),
+    ]);
+    await target.handleBossTurn(
+      turn('is that still available?', 4),
+      laterIdle.context,
+    );
+    expect(laterIdle.replies).toEqual(['The offer remains available.']);
+    expect(reviewConstructionAttempts).toBe(1);
+    expect(code.runtimes).toHaveLength(1);
+    expect(drafts.runtimes).toHaveLength(1);
+
+    await target.dispose?.();
+    await source.dispose?.();
+  });
+
   it('remains re-installable after transient probe construction failure', async () => {
     const code = fakeCodeEntry();
     const docs = fakePlaybookEntry('docs', 'docs');
