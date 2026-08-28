@@ -100,6 +100,12 @@ trusted publishing — static npm tokens shall not be used.
 The scoped `@sublang/playbook` package shall be published with
 `--access public` to ensure public availability.
 
+### Normal test gate
+
+#### release-31
+
+When the normal repository test gate runs through `pnpm test`, its effective pnpm lifecycle shall execute the project-local `spex lint` command to successful completion before starting Vitest.
+
 ### Install closure
 
 #### release-12
@@ -576,7 +582,13 @@ The test suite shall fail unless `package.json` declares
 3.0.0, the root importer in `pnpm-lock.yaml` records the same
 specifier and resolves a version no lower than 3.0.0, and both `@sublang/spex/scaffold/specs/meta.md` and
 `@sublang/spex/scaffold/i18n/zh/specs/meta.md` resolve from the repo
-root to non-empty files, and the normal `pnpm test` gate runs `spex lint` before Vitest (verifying [[release-22](#release-22)]).
+root to non-empty files (verifying [[release-22](#release-22)]).
+
+### Normal Test Gate Coverage
+
+#### release-32
+
+The test suite shall fail unless the effective `pnpm test` lifecycle, in `pretest`, `test`, and `posttest` order, places a fail-fast `spex lint` command before its first Vitest command (verifying [[release-31](#release-31)]).
 
 ### Public Surface Coverage
 

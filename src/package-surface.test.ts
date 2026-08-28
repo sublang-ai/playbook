@@ -161,6 +161,7 @@ const pkg = JSON.parse(
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   pnpm?: { overrides?: Record<string, string> };
+  scripts: Record<string, string>;
 };
 
 const lockfile = parseYaml(
@@ -490,9 +491,6 @@ describe('GEARS grammar provenance (RELEASE-23)', () => {
     expect(lockEntry.specifier).toBe(specifier);
     const [lockedMajor] = lockEntry.version.split('.').map(Number);
     expect(lockedMajor).toBeGreaterThanOrEqual(3);
-    const testScript = pkg.scripts.test;
-    expect(testScript.indexOf('spex lint')).toBeGreaterThanOrEqual(0);
-    expect(testScript.indexOf('vitest')).toBeGreaterThan(testScript.indexOf('spex lint'));
   });
 
   it('resolves both GEARS definition localizations from the repo root', () => {
@@ -513,6 +511,65 @@ describe('GEARS grammar provenance (RELEASE-23)', () => {
       { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     );
     expect(out).toBe('OK');
+  });
+});
+
+describe('normal test gate (RELEASE-32)', () => {
+  it('fails on Spex lint before starting Vitest', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-test-gate-'));
+    const bin = join(scratch, 'node_modules', '.bin');
+    const callLog = join(scratch, 'calls.log');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(scratch, 'package.json'),
+      JSON.stringify({ private: true, scripts: pkg.scripts }),
+    );
+    writeFileSync(
+      join(bin, 'spex'),
+      [
+        '#!/usr/bin/env node',
+        "const { appendFileSync } = require('node:fs');",
+        "appendFileSync(process.env.GATE_LOG, 'spex ' + process.argv.slice(2).join(' ') + '\\n');",
+        'process.exit(Number(process.env.SPEX_EXIT));',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(bin, 'vitest'),
+      [
+        '#!/usr/bin/env node',
+        "const { appendFileSync } = require('node:fs');",
+        "appendFileSync(process.env.GATE_LOG, 'vitest ' + process.argv.slice(2).join(' ') + '\\n');",
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+
+    const runGate = (spexExit: number): void => {
+      execFileSync('pnpm', ['test'], {
+        cwd: scratch,
+        env: {
+          ...process.env,
+          GATE_LOG: callLog,
+          SPEX_EXIT: String(spexExit),
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+    };
+
+    try {
+      expect(() => runGate(1)).toThrow();
+      expect(readFileSync(callLog, 'utf8')).toBe('spex lint\n');
+
+      writeFileSync(callLog, '');
+      runGate(0);
+      const calls = readFileSync(callLog, 'utf8').trimEnd().split('\n');
+      const lintIndex = calls.indexOf('spex lint');
+      const vitestIndex = calls.findIndex((call) => call.startsWith('vitest '));
+      expect(lintIndex).toBeGreaterThanOrEqual(0);
+      expect(vitestIndex).toBeGreaterThan(lintIndex);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
   });
 });
 
