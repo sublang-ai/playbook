@@ -198,6 +198,7 @@ function freshBoundary(execution = executionProjection()) {
   return {
     cwd: process.cwd(),
     structuralProjection: projectCaptainSessionStructure(execution),
+    executionProjection: execution,
     snapshot: shellSnapshot(execution),
   };
 }
@@ -582,7 +583,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const structural = projectCaptainSessionStructure(execution);
 
     await expect(
-      lease.initializeSettled({
+      lease.initializeSettledWithPredecessor({
         cwd: process.cwd(),
         structuralProjection: structural,
         executionProjection: execution,
@@ -593,7 +594,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     ).rejects.toThrow(/player ledger differs/);
     await expect(store.read(sessionId)).rejects.toThrow(/does not exist/);
 
-    const settled = await lease.initializeSettled({
+    const settled = await lease.initializeSettledWithPredecessor({
       cwd: process.cwd(),
       structuralProjection: structural,
       executionProjection: execution,
@@ -611,7 +612,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const recordPath = join(sessionsDir, `${sessionId}.json`);
     const bytes = await readFile(recordPath, 'utf8');
     await expect(
-      lease.initializeSettled({
+      lease.initializeSettledWithPredecessor({
         cwd: process.cwd(),
         structuralProjection: structural,
         executionProjection: execution,
@@ -628,7 +629,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const { sessionsDir } = await fixtureDir();
     const execution = executionProjection();
     const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
-    await firstLease.initializeSettled({
+    await firstLease.initializeSettledWithPredecessor({
       cwd: process.cwd(),
       structuralProjection: projectCaptainSessionStructure(execution),
       executionProjection: execution,
@@ -666,7 +667,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const { sessionsDir } = await fixtureDir();
     const execution = executionProjection();
     const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
-    await firstLease.initializeSettled({
+    await firstLease.initializeSettledWithPredecessor({
       cwd: process.cwd(),
       structuralProjection: projectCaptainSessionStructure(execution),
       executionProjection: execution,
@@ -950,11 +951,14 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     expect(await readdir(canonicalLease)).toEqual(['owner.json']);
     expect((await stat(join(canonicalLease, 'owner.json'))).mode & 0o777)
       .toBe(0o600);
+    const initialized =
+      await firstLease.initializeSettledWithPredecessor(
+        freshBoundary(initialExecution),
+      );
     const uncertain = await firstLease.beginTurn({
       input: '  exact input\n',
       attemptId: attempt1,
       attemptedExecutionProjection: initialExecution,
-      fresh: freshBoundary(initialExecution),
     });
     expect(uncertain).toMatchObject({
       schemaVersion: 3,
@@ -963,7 +967,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       sessionId,
       retainedGenerations: {},
       uncertain: {
-        baseUpdatedAt: null,
+        baseUpdatedAt: initialized.updatedAt,
         input: '  exact input\n',
         attemptId: attempt1,
         attemptNumber: 1,
@@ -1053,17 +1057,47 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       tokenR,
     ).acquire(sessionId);
     await expect(
-      collisionLease.beginTurn({
-        input: 'must not overwrite',
-        attemptId: attempt2,
-        attemptedExecutionProjection: initialExecution,
-        fresh: freshBoundary(initialExecution),
-      }),
-    ).rejects.toThrow(/fresh Captain session record already exists/);
+      collisionLease.initializeSettledWithPredecessor(
+        freshBoundary(initialExecution),
+      ),
+    ).rejects.toThrow(/already exists/);
     expect(await readFile(recordPath, 'utf8')).toBe(settledBytes);
     expect((await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')))
       .toBe(false);
     await collisionLease.release();
+  });
+
+  it('retries and settles a historical never-settled uncertain record', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const execution = executionProjection();
+    await writeRecordFixture(sessionsDir, freshUncertainRecord());
+    const store = fixedStore(sessionsDir, tokenO);
+    const lease = await store.acquire(sessionId);
+
+    const retried = await lease.beginRetry({
+      expectedAttemptId: attempt1,
+      nextAttemptId: attempt2,
+    });
+    expect(retried.uncertain).toMatchObject({
+      baseUpdatedAt: null,
+      input: 'fresh input',
+      attemptId: attempt2,
+      attemptNumber: 2,
+    });
+    const settled = await lease.settle({
+      attemptId: attempt2,
+      snapshot: shellSnapshot(execution, 1),
+      retentionUpdates: [],
+    });
+    expect(settled).toMatchObject({
+      schemaVersion: 3,
+      state: 'settled',
+      sessionId,
+      createdAt: '2026-08-11T21:00:00.000Z',
+      retainedGenerations: {},
+    });
+    expect(settled).not.toHaveProperty('uncertain');
+    await lease.release();
   });
 
   it('replaces and clears one retained generation without disturbing another root', async () => {
@@ -1071,11 +1105,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const store = fixedStore(sessionsDir, tokenO);
     const lease = await store.acquire(sessionId);
     const execution = retentionExecutionProjection();
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
     await lease.beginTurn({
       input: 'retain two roots',
       attemptId: attempt1,
       attemptedExecutionProjection: execution,
-      fresh: freshBoundary(execution),
     });
     const first = await lease.settle({
       attemptId: attempt1,
@@ -1177,7 +1211,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
         id: targetId,
         timestamp: '2026-08-11T21:00:00.070Z',
       });
-      for (const record of [older, empty, uncertain, otherCwd, target]) {
+      for (const record of [older, empty, uncertain, otherCwd]) {
         await writeRecordFixture(sessionsDir, record);
       }
       const legacyPath = join(sessionsDir, `${legacyId}.json`);
@@ -1191,7 +1225,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
         )}\n`,
         { mode: 0o600 },
       );
-      const paths = [olderId, emptyId, targetId].map((id) =>
+      const paths = [olderId, emptyId].map((id) =>
         join(sessionsDir, `${id}.json`),
       );
       const before = await Promise.all(
@@ -1201,16 +1235,20 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       const store = sequencedStore(sessionsDir);
       const lease = await store.acquire(targetId);
       const legacyRecords: unknown[] = [];
-      const predecessor = await lease.predecessor({
+      const initialized = await lease.initializeSettledWithPredecessor({
+        cwd: target.cwd,
+        structuralProjection: target.structuralProjection,
+        executionProjection: target.lastAppliedExecutionProjection,
+        snapshot: target.snapshot,
         onLegacyRecord: (record: unknown) => legacyRecords.push(record),
       });
-      expect(predecessor).toMatchObject({
-        sessionId: emptyId,
-        updatedAt: '2026-08-11T21:00:00.040Z',
-        cwd: process.cwd(),
+      expect(initialized).toMatchObject({
+        sessionId: targetId,
         retainedGenerations: {},
       });
-      expect(Object.isFrozen(predecessor)).toBe(true);
+      expect(Date.parse(initialized.updatedAt)).toBeGreaterThan(
+        Date.parse(empty.updatedAt),
+      );
       expect(legacyRecords).toEqual([
         {
           sessionId: legacyId,
@@ -1218,13 +1256,6 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
           schemaVersion: 2,
         },
       ]);
-      const transfer = await lease.transferPredecessorGenerations({
-        predecessor,
-      });
-      expect(transfer).toEqual({
-        sourceSessionId: emptyId,
-        retainedGenerations: {},
-      });
       await lease.release();
 
       expect(
@@ -1234,6 +1265,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
         code: retainedCodeGeneration(),
         review: retainedReviewGeneration(),
       });
+      expect(await store.read(targetId)).toEqual(initialized);
     },
   );
 
@@ -1391,44 +1423,6 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     },
   );
 
-  it('declines live ownership during detached selection and transfer', async () => {
-    const { sessionsDir } = await fixtureDir();
-    const sourceId = adoptionSessionId(67);
-    const targetId = adoptionSessionId(68);
-    const sourcePath = await writeRecordFixture(
-      sessionsDir,
-      retainedSettledRecord({ id: sourceId }),
-    );
-    const targetPath = await writeRecordFixture(
-      sessionsDir,
-      freshAdoptionTargetRecord({ id: targetId }),
-    );
-    const before = await Promise.all(
-      [sourcePath, targetPath].map((path) => readFile(path, 'utf8')),
-    );
-    const store = sequencedStore(sessionsDir, 90, {
-      probeProcess: async () => {},
-    });
-    const targetLease = await store.acquire(targetId);
-    let sourceLease = await store.acquire(sourceId);
-    await expect(targetLease.predecessor()).resolves.toBeUndefined();
-    await sourceLease.release();
-
-    const predecessor = await targetLease.predecessor();
-    expect(predecessor.sessionId).toBe(sourceId);
-    sourceLease = await store.acquire(sourceId);
-    await expect(
-      targetLease.transferPredecessorGenerations({ predecessor }),
-    ).resolves.toBeUndefined();
-    expect(
-      await Promise.all(
-        [sourcePath, targetPath].map((path) => readFile(path, 'utf8')),
-      ),
-    ).toEqual(before);
-    await targetLease.release();
-    await sourceLease.release();
-  });
-
   it(
     'declines incompatible root options before publishing an empty target',
     async () => {
@@ -1523,6 +1517,62 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     ).rejects.toThrow(/owned by a different token/);
     await expect(store.read(targetId)).rejects.toThrow(/does not exist/);
     await writeFile(ownerPath, `${JSON.stringify(owner)}\n`, 'utf8');
+    await lease.release();
+  });
+
+  it('requires target ownership before clearing a transferable predecessor', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(78);
+    const targetId = adoptionSessionId(79);
+    const sourcePath = await writeRecordFixture(
+      sessionsDir,
+      retainedSettledRecord({ id: sourceId }),
+    );
+    const sourceBytes = await readFile(sourcePath, 'utf8');
+    const sourceLeasePath = join(sessionsDir, `.${sourceId}.lock`);
+    const targetOwnerPath = join(
+      sessionsDir,
+      `.${targetId}.lock`,
+      'owner.json',
+    );
+    let targetOwner: any;
+    let ownerChanged = false;
+    const store = sequencedStore(sessionsDir, 145, {
+      fsOps: {
+        async rename(from: string, to: string) {
+          await rename(from, to);
+          if (to !== sourceLeasePath || ownerChanged) return;
+          ownerChanged = true;
+          await writeFile(
+            targetOwnerPath,
+            `${JSON.stringify({
+              ...targetOwner,
+              ownerToken: adoptionLeaseToken(999),
+            })}\n`,
+            'utf8',
+          );
+        },
+      },
+    });
+    const lease = await store.acquire(targetId);
+    targetOwner = JSON.parse(await readFile(targetOwnerPath, 'utf8'));
+    const target = freshAdoptionTargetRecord({ id: targetId });
+
+    await expect(
+      lease.initializeSettledWithPredecessor({
+        cwd: target.cwd,
+        structuralProjection: target.structuralProjection,
+        executionProjection: target.lastAppliedExecutionProjection,
+        snapshot: target.snapshot,
+      }),
+    ).rejects.toThrow(/owned by a different token/);
+    expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
+    await expect(store.read(targetId)).rejects.toThrow(/does not exist/);
+    await writeFile(
+      targetOwnerPath,
+      `${JSON.stringify(targetOwner)}\n`,
+      'utf8',
+    );
     await lease.release();
   });
 
@@ -1637,11 +1687,9 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       const { sessionsDir } = await fixtureDir();
       const targetId = adoptionSessionId(7);
       const corruptId = adoptionSessionId(8);
-      const targetPath = await writeRecordFixture(
-        sessionsDir,
-        freshAdoptionTargetRecord({ id: targetId }),
-      );
+      const target = freshAdoptionTargetRecord({ id: targetId });
       const corruptPath = join(sessionsDir, `${corruptId}.json`);
+      await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
       if (shape === 'unsafe') {
         await writeRecordFixture(
           sessionsDir,
@@ -1657,17 +1705,23 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
           { mode: 0o600 },
         );
       }
-      const targetBytes = await readFile(targetPath, 'utf8');
       const store = sequencedStore(sessionsDir, 7);
       const lease = await store.acquire(targetId);
-      await expect(lease.predecessor()).rejects.toThrow(
+      await expect(
+        lease.initializeSettledWithPredecessor({
+          cwd: target.cwd,
+          structuralProjection: target.structuralProjection,
+          executionProjection: target.lastAppliedExecutionProjection,
+          snapshot: target.snapshot,
+        }),
+      ).rejects.toThrow(
         shape === 'malformed'
           ? /not valid JSON/
           : shape === 'unknown schema'
             ? /schema 99/
             : /0600/,
       );
-      expect(await readFile(targetPath, 'utf8')).toBe(targetBytes);
+      await expect(store.read(targetId)).rejects.toThrow(/does not exist/);
       await lease.release();
     },
   );
@@ -1720,37 +1774,34 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       execution: targetExecution,
     });
     await writeRecordFixture(sessionsDir, source);
-    await writeRecordFixture(sessionsDir, target);
 
     const store = sequencedStore(sessionsDir, 10);
     const lease = await store.acquire(targetId);
-    const predecessor = await lease.predecessor();
-    const result = await lease.transferPredecessorGenerations({
-      predecessor,
+    const targetAfter = await lease.initializeSettledWithPredecessor({
+      cwd: target.cwd,
+      structuralProjection: target.structuralProjection,
+      executionProjection: target.lastAppliedExecutionProjection,
+      snapshot: target.snapshot,
     });
-    expect(result).toEqual({
-      sourceSessionId: sourceId,
-      retainedGenerations,
-    });
-    expect(Object.isFrozen(result)).toBe(true);
-    expect(Object.isFrozen(result.retainedGenerations.code)).toBe(true);
+    expect(Object.isFrozen(targetAfter)).toBe(true);
+    expect(Object.isFrozen(targetAfter.retainedGenerations.code)).toBe(true);
 
     const sourceAfter = await store.read(sourceId);
-    const targetAfter = await store.read(targetId);
     expect(sourceAfter).toEqual({
       ...source,
       schemaVersion: 3,
       updatedAt: '2026-08-11T21:00:00.041Z',
       retainedGenerations: {},
     });
-    expect(targetAfter).toEqual({
-      ...target,
+    expect(targetAfter).toMatchObject({
+      sessionId: targetId,
+      createdAt: '2026-08-11T21:00:00.000Z',
       updatedAt: '2026-08-11T21:00:00.042Z',
       retainedGenerations,
     });
     expect(sourceAfter.updatedAt).toBe('2026-08-11T21:00:00.041Z');
     expect(targetAfter).toMatchObject({
-      createdAt: target.createdAt,
+      createdAt: '2026-08-11T21:00:00.000Z',
       updatedAt: '2026-08-11T21:00:00.042Z',
       structuralProjection: {
         captain: {
@@ -1789,17 +1840,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     expect((await reopened.read(targetId)).retainedGenerations).toEqual(
       retainedGenerations,
     );
-    const nextTargetId = adoptionSessionId(12);
-    await writeRecordFixture(
-      sessionsDir,
-      freshAdoptionTargetRecord({
-        id: nextTargetId,
-        execution: targetExecution,
-      }),
-    );
-    const nextLease = await reopened.acquire(nextTargetId);
-    expect((await nextLease.predecessor()).sessionId).toBe(targetId);
-    await nextLease.release();
+    expect((await reopened.latest()).sessionId).toBe(targetId);
   });
 
   it('transfers descendant option drift without changing the generation', async () => {
@@ -1820,12 +1861,14 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       execution: targetExecution,
     });
     await writeRecordFixture(sessionsDir, source);
-    await writeRecordFixture(sessionsDir, target);
 
     const store = sequencedStore(sessionsDir, 25);
     const lease = await store.acquire(targetId);
-    const result = await lease.transferPredecessorGenerations({
-      predecessor: await lease.predecessor(),
+    const result = await lease.initializeSettledWithPredecessor({
+      cwd: target.cwd,
+      structuralProjection: target.structuralProjection,
+      executionProjection: target.lastAppliedExecutionProjection,
+      snapshot: target.snapshot,
     });
 
     expect(result.retainedGenerations).toEqual({ code: generation });
@@ -1851,7 +1894,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     'concurrent roles',
     'descendant catalog',
   ] as const)(
-    'rejects an incompatible adoption %s envelope before either write',
+    'declines an incompatible adoption %s envelope into an empty target',
     async (mismatch) => {
       const { sessionsDir } = await fixtureDir();
       const sourceId = adoptionSessionId(20);
@@ -1887,54 +1930,27 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
         execution: targetExecution,
       });
       const sourcePath = await writeRecordFixture(sessionsDir, source);
-      const targetPath = await writeRecordFixture(sessionsDir, target);
       const sourceBytes = await readFile(sourcePath, 'utf8');
-      const targetBytes = await readFile(targetPath, 'utf8');
 
       const store = sequencedStore(sessionsDir, 30);
       const lease = await store.acquire(targetId);
-      const predecessor = await lease.predecessor();
-      await expect(
-        lease.transferPredecessorGenerations({ predecessor }),
-      ).rejects.toThrow(
-        mismatch === 'descendant catalog'
-          ? /no frame playbook "review"/
-          : /root envelope differs for "code"/,
+      const initialized = await lease.initializeSettledWithPredecessor({
+        cwd: target.cwd,
+        structuralProjection: target.structuralProjection,
+        executionProjection: target.lastAppliedExecutionProjection,
+        snapshot: target.snapshot,
+      });
+      expect(initialized.retainedGenerations).toEqual({});
+      expect(Date.parse(initialized.updatedAt)).toBeGreaterThan(
+        Date.parse(source.updatedAt),
       );
       expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
-      expect(await readFile(targetPath, 'utf8')).toBe(targetBytes);
+      expect(await store.read(targetId)).toEqual(initialized);
       await lease.release();
     },
   );
 
-  it('rejects stale predecessor selection without changing either record', async () => {
-    const { sessionsDir } = await fixtureDir();
-    const sourceId = adoptionSessionId(30);
-    const targetId = adoptionSessionId(31);
-    const source = retainedSettledRecord({ id: sourceId });
-    const target = freshAdoptionTargetRecord({ id: targetId });
-    const sourcePath = await writeRecordFixture(sessionsDir, source);
-    const targetPath = await writeRecordFixture(sessionsDir, target);
-    const store = sequencedStore(sessionsDir, 40);
-    const lease = await store.acquire(targetId);
-    const predecessor = await lease.predecessor();
-
-    const changed = {
-      ...source,
-      updatedAt: '2026-08-11T21:00:00.025Z',
-    };
-    await writeRecordFixture(sessionsDir, changed);
-    const changedBytes = await readFile(sourcePath, 'utf8');
-    const targetBytes = await readFile(targetPath, 'utf8');
-    await expect(
-      lease.transferPredecessorGenerations({ predecessor }),
-    ).rejects.toThrow(/adoption predecessor changed/);
-    expect(await readFile(sourcePath, 'utf8')).toBe(changedBytes);
-    expect(await readFile(targetPath, 'utf8')).toBe(targetBytes);
-    await lease.release();
-  });
-
-  it('lets two settled contenders leave exactly one generation owner', async () => {
+  it('lets two concurrent guarded contenders leave one generation owner', async () => {
     const { sessionsDir } = await fixtureDir();
     const sourceId = adoptionSessionId(35);
     const firstTargetId = adoptionSessionId(36);
@@ -1944,29 +1960,53 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       updatedAt: '2026-08-11T21:00:00.040Z',
     });
     await writeRecordFixture(sessionsDir, source);
-    for (const id of [firstTargetId, secondTargetId]) {
-      await writeRecordFixture(
-        sessionsDir,
-        freshAdoptionTargetRecord({ id, timestamp: '2026-08-11T21:00:00.030Z' }),
-      );
-    }
 
-    const store = sequencedStore(sessionsDir, 45);
+    const sourceLeasePath = join(sessionsDir, `.${sourceId}.lock`);
+    let sourceLeasePublished: () => void = () => {};
+    const sourceLeasePublication = new Promise<void>((resolvePromise) => {
+      sourceLeasePublished = resolvePromise;
+    });
+    let continueFirst: () => void = () => {};
+    const firstMayContinue = new Promise<void>((resolvePromise) => {
+      continueFirst = resolvePromise;
+    });
+    let sourceLeasePaused = false;
+    const store = sequencedStore(sessionsDir, 45, {
+      probeProcess: async () => {},
+      fsOps: {
+        async rename(from: string, to: string) {
+          await rename(from, to);
+          if (to !== sourceLeasePath || sourceLeasePaused) return;
+          sourceLeasePaused = true;
+          sourceLeasePublished();
+          await firstMayContinue;
+        },
+      },
+    });
     const firstLease = await store.acquire(firstTargetId);
     const secondLease = await store.acquire(secondTargetId);
-    const firstPredecessor = await firstLease.predecessor();
-    const secondPredecessor = await secondLease.predecessor();
-    expect(firstPredecessor.sessionId).toBe(sourceId);
-    expect(secondPredecessor.sessionId).toBe(sourceId);
-
-    await firstLease.transferPredecessorGenerations({
-      predecessor: firstPredecessor,
-    });
-    await expect(
-      secondLease.transferPredecessorGenerations({
-        predecessor: secondPredecessor,
-      }),
-    ).rejects.toThrow(/adoption predecessor changed/);
+    const target = freshAdoptionTargetRecord({ id: firstTargetId });
+    const firstInitialization =
+      firstLease.initializeSettledWithPredecessor({
+        cwd: target.cwd,
+        structuralProjection: target.structuralProjection,
+        executionProjection: target.lastAppliedExecutionProjection,
+        snapshot: target.snapshot,
+      });
+    await sourceLeasePublication;
+    try {
+      const second = await secondLease.initializeSettledWithPredecessor({
+        cwd: target.cwd,
+        structuralProjection: target.structuralProjection,
+        executionProjection: target.lastAppliedExecutionProjection,
+        snapshot: target.snapshot,
+      });
+      expect(second.retainedGenerations).toEqual({});
+    } finally {
+      continueFirst();
+    }
+    const first = await firstInitialization;
+    expect(first.retainedGenerations).toEqual({});
     const owners = await Promise.all(
       [sourceId, firstTargetId, secondTargetId].map(async (id) => ({
         id,
@@ -1976,99 +2016,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       })),
     );
     expect(owners.filter(({ retained }) => retained > 0)).toEqual([
-      { id: firstTargetId, retained: 2 },
+      { id: sourceId, retained: 2 },
     ]);
     await firstLease.release();
     await secondLease.release();
   });
-
-  it('rejects transfer after target ownership changes without writing', async () => {
-    const { sessionsDir } = await fixtureDir();
-    const sourceId = adoptionSessionId(38);
-    const targetId = adoptionSessionId(39);
-    const sourcePath = await writeRecordFixture(
-      sessionsDir,
-      retainedSettledRecord({ id: sourceId }),
-    );
-    const targetPath = await writeRecordFixture(
-      sessionsDir,
-      freshAdoptionTargetRecord({ id: targetId }),
-    );
-    const store = sequencedStore(sessionsDir, 55);
-    const lease = await store.acquire(targetId);
-    const predecessor = await lease.predecessor();
-    const before = await Promise.all(
-      [sourcePath, targetPath].map((path) => readFile(path, 'utf8')),
-    );
-    const ownerPath = join(sessionsDir, `.${targetId}.lock`, 'owner.json');
-    const owner = JSON.parse(await readFile(ownerPath, 'utf8'));
-    await writeFile(
-      ownerPath,
-      `${JSON.stringify({
-        ...owner,
-        ownerToken: adoptionLeaseToken(999),
-      })}\n`,
-      'utf8',
-    );
-
-    await expect(
-      lease.transferPredecessorGenerations({ predecessor }),
-    ).rejects.toThrow(/owned by a different token/);
-    expect(
-      await Promise.all(
-        [sourcePath, targetPath].map((path) => readFile(path, 'utf8')),
-      ),
-    ).toEqual(before);
-  });
-
-  it.each(['uncertain', 'non-turn-zero', 'already retained'] as const)(
-    'rejects an adoption target that is %s before predecessor acquisition',
-    async (shape) => {
-      const { sessionsDir } = await fixtureDir();
-      const sourceId = adoptionSessionId(40);
-      const targetId = adoptionSessionId(41);
-      const execution = retentionExecutionProjection();
-      const source = retainedSettledRecord({ id: sourceId, execution });
-      const target =
-        shape === 'uncertain'
-          ? freshAdoptionTargetRecord({
-              id: targetId,
-              execution,
-              state: 'uncertain',
-            })
-          : shape === 'non-turn-zero'
-          ? settledRecord({
-              sessionId: targetId,
-              createdAt: '2026-08-11T21:00:00.028Z',
-              updatedAt: '2026-08-11T21:00:00.030Z',
-              structuralProjection:
-                projectCaptainSessionStructure(execution),
-              lastAppliedExecutionProjection: execution,
-              snapshot: shellSnapshot(execution, 1),
-              retainedGenerations: {},
-            })
-          : {
-              ...freshAdoptionTargetRecord({ id: targetId, execution }),
-              retainedGenerations: {
-                review: retainedReviewGeneration(),
-              },
-            };
-      await writeRecordFixture(sessionsDir, source);
-      const targetPath = await writeRecordFixture(sessionsDir, target);
-      const targetBytes = await readFile(targetPath, 'utf8');
-      const store = sequencedStore(sessionsDir, 50);
-      const lease = await store.acquire(targetId);
-      await expect(lease.predecessor()).rejects.toThrow(
-        shape === 'uncertain'
-          ? /must be settled at turn zero/
-          : shape === 'non-turn-zero'
-          ? /turn-zero shell snapshot/
-          : /already retains generations/,
-      );
-      expect(await readFile(targetPath, 'utf8')).toBe(targetBytes);
-      await lease.release();
-    },
-  );
 
   it.each([
     'source pre-publication',
@@ -2256,11 +2208,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const { sessionsDir } = await fixtureDir();
     const store = fixedStore(sessionsDir, tokenO);
     const lease = await store.acquire(sessionId);
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
     await lease.beginTurn({
       input: 'invalid retention update',
       attemptId: attempt1,
       attemptedExecutionProjection: execution,
-      fresh: freshBoundary(execution),
     });
     await expect(
       lease.settle({
@@ -2308,12 +2260,8 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const { sessionsDir } = await fixtureDir();
     const store = fixedStore(sessionsDir, tokenO);
     const lease = await store.acquire(sessionId);
-    const uncertain = await lease.beginTurn({
-      input: 'fresh work',
-      attemptId: attempt1,
-      attemptedExecutionProjection: executionProjection(),
-      fresh: freshBoundary(),
-    });
+    await writeRecordFixture(sessionsDir, freshUncertainRecord());
+    const uncertain = await lease.read();
     expect(validateCaptainSessionRecord(uncertain)).toEqual(uncertain);
     await lease.discard({ attemptId: attempt1 });
     await expect(store.read(sessionId)).rejects.toThrow(/does not exist/);
@@ -2367,11 +2315,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const { sessionsDir } = await fixtureDir();
     const store = fixedStore(sessionsDir, tokenO);
     const lease = await store.acquire(sessionId);
+    await lease.initializeSettledWithPredecessor(freshBoundary());
     await lease.beginTurn({
       input: 'work',
       attemptId: attempt1,
       attemptedExecutionProjection: executionProjection(),
-      fresh: freshBoundary(),
     });
     await expect(
       lease.settle({ attemptId: attempt2, snapshot: { marker: 'wrong' } }),
@@ -2431,7 +2379,7 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       const lease = await store.acquire(sessionId);
       const execution = executionProjection();
       await expect(
-        lease.initializeSettled({
+        lease.initializeSettledWithPredecessor({
           cwd: process.cwd(),
           structuralProjection: projectCaptainSessionStructure(execution),
           executionProjection: execution,
@@ -2453,11 +2401,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const { sessionsDir } = await fixtureDir();
     const firstLease = await fixedStore(sessionsDir, tokenO).acquire(sessionId);
     const execution = retentionExecutionProjection();
+    await firstLease.initializeSettledWithPredecessor(freshBoundary(execution));
     await firstLease.beginTurn({
       input: 'first',
       attemptId: attempt1,
       attemptedExecutionProjection: execution,
-      fresh: freshBoundary(execution),
     });
     await firstLease.settle({
       attemptId: attempt1,
@@ -2546,13 +2494,13 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       },
     });
     const lease = await store.acquire(sessionId);
+    await lease.initializeSettledWithPredecessor(freshBoundary());
     failSessionSync = true;
     await expect(
       lease.beginTurn({
         input: 'published before sync',
         attemptId: attempt1,
         attemptedExecutionProjection: executionProjection(),
-        fresh: freshBoundary(),
       }),
     ).rejects.toThrow(/synthetic record directory sync failure/);
     expect((await store.read(sessionId)).state).toBe('uncertain');
@@ -2584,11 +2532,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     });
     const lease = await store.acquire(sessionId);
     const execution = retentionExecutionProjection();
+    await lease.initializeSettledWithPredecessor(freshBoundary(execution));
     await lease.beginTurn({
       input: 'first turn',
       attemptId: attempt1,
       attemptedExecutionProjection: execution,
-      fresh: freshBoundary(execution),
     });
     await lease.settle({
       attemptId: attempt1,
@@ -2646,11 +2594,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       [secondSessionId, tokenN, attempt2],
     ] as const) {
       const lease = await fixedStore(sessionsDir, token).acquire(id);
+      await lease.initializeSettledWithPredecessor(freshBoundary());
       await lease.beginTurn({
         input: `turn for ${id}`,
         attemptId: attempt,
         attemptedExecutionProjection: executionProjection(),
-        fresh: freshBoundary(),
       });
       await lease.settle({
         attemptId: attempt,
@@ -2760,11 +2708,11 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     const second = await fixtureDir();
     const store = fixedStore(second.sessionsDir, tokenO);
     const lease = await store.acquire(sessionId);
+    await lease.initializeSettledWithPredecessor(freshBoundary());
     await lease.beginTurn({
       input: 'private record',
       attemptId: attempt1,
       attemptedExecutionProjection: executionProjection(),
-      fresh: freshBoundary(),
     });
     await lease.settle({
       attemptId: attempt1,

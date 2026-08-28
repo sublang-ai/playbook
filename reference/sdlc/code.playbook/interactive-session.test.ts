@@ -22,7 +22,9 @@ import {
   createManagedInteractiveSessionCommand,
   MANAGED_INTERACTIVE_PAYLOAD_FILE,
   MANAGED_INTERACTIVE_PAYLOAD_KIND,
+  MANAGED_INTERACTIVE_READINESS_WITNESS_FILE,
   MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,
+  publishManagedInteractiveReadinessWitness,
   runManagedInteractiveSessionChild,
   runManagedInteractiveSessionChildEntry,
   validateManagedInteractivePayload,
@@ -146,62 +148,95 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     expect(events).toEqual(['disposed']);
   });
 
-  it.each([
-    { readiness: 'absent', reason: 'SIGINT', abandoned: true },
-    { readiness: 'error', reason: 'startup failure', abandoned: true },
-    { readiness: 'ready', reason: 'EOF', abandoned: false },
-  ] as const)(
-    '$readiness readiness leaves fresh turn zero abandoned=$abandoned at shutdown',
-    async ({ readiness, reason, abandoned }) => {
-      const fixture = await lifecycleFixture();
-      const events: string[] = [];
-      const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
-        sessionStore: fixture.store,
-        createSessionHost: async () => {
-          const snapshot = shellSnapshot(fixture.execution, 0);
-          return {
-            host: fakeHost(events),
-            shell: {
-              async installRetainedGenerations() {},
-              exportSnapshot: () => snapshot,
-            },
-            snapshot,
-          };
-        },
-      });
-      const runtime = await lifecycle.initializeRuntime(fixture.context);
-      if (readiness !== 'absent') {
-        await writeFile(
-          fixture.payload.readinessPath,
-          `${JSON.stringify({ status: readiness })}\n`,
-          'utf8',
-        );
-      }
+  it('retracts exact empty turn zero when child shutdown wins the readiness claim', async () => {
+    const fixture = await lifecycleFixture();
+    const events: string[] = [];
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      createSessionHost: async () => {
+        const snapshot = shellSnapshot(fixture.execution, 0);
+        return {
+          host: fakeHost(events),
+          shell: {
+            async installRetainedGenerations() {},
+            exportSnapshot: () => snapshot,
+          },
+          snapshot,
+        };
+      },
+    });
+    const runtime = await lifecycle.initializeRuntime(fixture.context);
 
-      await runtime.dispose();
-      await lifecycle.shutdown({
-        sessionId: logicalSessionId,
-        reason,
-        ...(readiness === 'error'
-          ? { error: new Error('synthetic startup failure') }
-          : {}),
-      });
+    await runtime.dispose();
+    await lifecycle.shutdown({
+      sessionId: logicalSessionId,
+      reason: 'SIGINT',
+    });
 
-      if (abandoned) {
-        await expect(
-          fixture.store.read(logicalSessionId),
-        ).rejects.toThrow(/does not exist/);
-      } else {
-        expect(await fixture.store.read(logicalSessionId)).toMatchObject({
-          state: 'settled',
-          retainedGenerations: {},
-        });
-      }
-      const next = await fixture.store.acquire(logicalSessionId);
-      await next.release();
-      expect(events).toEqual(['disposed']);
-    },
-  );
+    await expect(fixture.store.read(logicalSessionId)).rejects.toThrow(
+      /does not exist/,
+    );
+    await expect(
+      publishManagedInteractiveReadinessWitness(
+        fixture.payload.workDir,
+        logicalSessionId,
+      ),
+    ).rejects.toThrow(/readiness claim could not be created/);
+    const next = await fixture.store.acquire(logicalSessionId);
+    await next.release();
+    expect(events).toEqual(['disposed']);
+  });
+
+  it('preserves outer-claimed turn zero after readiness cleanup and detached EOF', async () => {
+    const fixture = await lifecycleFixture();
+    const events: string[] = [];
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      createSessionHost: async () => {
+        const snapshot = shellSnapshot(fixture.execution, 0);
+        return {
+          host: fakeHost(events),
+          shell: {
+            async installRetainedGenerations() {},
+            exportSnapshot: () => snapshot,
+          },
+          snapshot,
+        };
+      },
+    });
+    const runtime = await lifecycle.initializeRuntime(fixture.context);
+    await publishManagedInteractiveReadinessWitness(
+      fixture.payload.workDir,
+      logicalSessionId,
+    );
+    await rm(dirname(fixture.payload.readinessPath), {
+      recursive: true,
+      force: true,
+    });
+
+    await runtime.dispose();
+    await lifecycle.shutdown({
+      sessionId: logicalSessionId,
+      reason: 'EOF',
+    });
+
+    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+      state: 'settled',
+      retainedGenerations: {},
+    });
+    expect(
+      await readFile(
+        join(
+          fixture.payload.workDir,
+          MANAGED_INTERACTIVE_READINESS_WITNESS_FILE,
+        ),
+        'utf8',
+      ),
+    ).toBe(`ready ${logicalSessionId}\n`);
+    const next = await fixture.store.acquire(logicalSessionId);
+    await next.release();
+    expect(events).toEqual(['disposed']);
+  });
 
   it('transfers and installs predecessor generations before fresh readiness', async () => {
     const fixture = await lifecycleFixture();
@@ -466,7 +501,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
   it('rejects uncertain selected state before host work and retires ownership', async () => {
     const fixture = await lifecycleFixture();
     const seed = await fixture.store.acquire(logicalSessionId);
-    await seed.initializeSettled({
+    await seed.initializeSettledWithPredecessor({
       cwd: fixture.payload.cwd,
       structuralProjection: projectCaptainSessionStructure(fixture.execution),
       executionProjection: fixture.execution,
@@ -1349,7 +1384,7 @@ async function seedSettled(
   snapshot: ReturnType<typeof shellSnapshot>,
 ) {
   const lease = await fixture.store.acquire(logicalSessionId);
-  await lease.initializeSettled({
+  await lease.initializeSettledWithPredecessor({
     cwd: fixture.payload.cwd,
     structuralProjection: projectCaptainSessionStructure(fixture.execution),
     executionProjection: fixture.execution,
@@ -1364,7 +1399,7 @@ async function seedRetainedSettled(
 ) {
   const snapshot = shellSnapshot(fixture.execution, 0);
   const lease = await fixture.store.acquire(sessionId);
-  await lease.initializeSettled({
+  await lease.initializeSettledWithPredecessor({
     cwd: fixture.payload.cwd,
     structuralProjection: projectCaptainSessionStructure(fixture.execution),
     executionProjection: fixture.execution,

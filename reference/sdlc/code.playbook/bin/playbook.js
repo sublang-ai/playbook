@@ -34,6 +34,7 @@ import {
   createManagedInteractiveSessionCommand,
   MANAGED_INTERACTIVE_PAYLOAD_KIND,
   MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,
+  publishManagedInteractiveReadinessWitness,
 } from './interactive-session.js';
 import { prepareConfiguredRegistries } from './provision.js';
 import {
@@ -364,6 +365,7 @@ export async function runPlaybookCli(options = {}) {
     projectTmuxConfig(plan),
   );
   let prepared;
+  let managedChildWorkDir;
   try {
     throwIfSignalAborted(options.signal);
     prepared = await awaitManagedPreparation(
@@ -378,8 +380,14 @@ export async function runPlaybookCli(options = {}) {
           ...(options.adapterImports
             ? { adapterImports: options.adapterImports }
             : {}),
-          createSessionCommand: (context) =>
-            createManagedInteractiveSessionCommand(
+          createSessionCommand: (context) => {
+            if (managedChildWorkDir !== undefined) {
+              throw new Error(
+                'managed tmux-play requested more than one session command',
+              );
+            }
+            managedChildWorkDir = context.workDir;
+            return createManagedInteractiveSessionCommand(
               context,
               {
                 schemaVersion: MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION,
@@ -399,7 +407,8 @@ export async function runPlaybookCli(options = {}) {
                   ),
                 ...(options.execPath ? { execPath: options.execPath } : {}),
               },
-            ),
+            );
+          },
         }),
       options.signal,
     );
@@ -408,6 +417,28 @@ export async function runPlaybookCli(options = {}) {
         prepared,
         new Error('managed tmux-play prepared a mismatched session id'),
       );
+    }
+    if (managedChildWorkDir === undefined) {
+      await cancelPreparedAfterFailure(
+        prepared,
+        new Error('managed tmux-play did not request a session command'),
+      );
+    }
+    if (prepared?.workDir !== managedChildWorkDir) {
+      await cancelPreparedAfterFailure(
+        prepared,
+        new Error('managed tmux-play prepared a mismatched work directory'),
+      );
+    }
+    if (!selectedRecord) {
+      try {
+        await (
+          options.publishManagedReadinessWitness ??
+          publishManagedInteractiveReadinessWitness
+        )(managedChildWorkDir, sessionId);
+      } catch (error) {
+        await cancelPreparedAfterFailure(prepared, error);
+      }
     }
     try {
       await writeStream(

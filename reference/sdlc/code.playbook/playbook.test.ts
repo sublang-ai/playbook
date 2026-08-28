@@ -1590,6 +1590,7 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
         );
         return {
           sessionId: id,
+          workDir,
           async cancel() {},
           async attach() {},
         };
@@ -1602,6 +1603,81 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
       noProvision: true,
       workDirOwnedByLauncher: true,
     });
+  });
+
+  it('claims accepted child readiness before reporting and cancels a collision', async () => {
+    const id = '90000000-0000-4000-8000-000000000062';
+    let workDir: string;
+    const events: string[] = [];
+    const stderr = {
+      write(value: string) {
+        events.push(`stderr:${String(value).trim()}`);
+        return true;
+      },
+      text() {
+        return events
+          .filter((event) => event.startsWith('stderr:'))
+          .join('\n');
+      },
+    };
+    const accepted = await managedCliHarness({
+      sessionId: id,
+      stderr,
+      async publishManagedReadinessWitness(path: string, sessionId: string) {
+        expect(path).toBe(workDir);
+        expect(sessionId).toBe(id);
+        events.push('readiness-claimed');
+      },
+      launchManagedTmuxPlay: async (options: any) => {
+        workDir = await requestManagedSessionCommand(options);
+        return {
+          sessionId: id,
+          workDir,
+          async cancel() {
+            events.push('cancel');
+          },
+          async attach() {
+            events.push('attach');
+          },
+        };
+      },
+    });
+    expect(accepted.result).toEqual({ code: 0 });
+    expect(events).toEqual([
+      'readiness-claimed',
+      `stderr:playbook: session ${id}`,
+      'attach',
+    ]);
+
+    events.length = 0;
+    const collided = await managedCliHarness({
+      sessionId: id,
+      stderr,
+      async publishManagedReadinessWitness() {
+        events.push('readiness-collision');
+        throw new Error('synthetic readiness claim collision');
+      },
+      launchManagedTmuxPlay: async (options: any) => {
+        workDir = await requestManagedSessionCommand(options);
+        return {
+          sessionId: id,
+          workDir,
+          async cancel() {
+            events.push('cancel');
+          },
+          async attach() {
+            events.push('attach');
+          },
+        };
+      },
+    });
+    expect(collided.result).toEqual({ code: 1 });
+    expect(events).toEqual([
+      'readiness-collision',
+      'cancel',
+      'stderr:playbook: failed to launch managed session: synthetic readiness claim collision',
+    ]);
+    expect(stderr.text()).not.toContain(`playbook: session ${id}`);
   });
 
   it('cancels a managed session on pre-launch, report-backpressure, and final pre-attach aborts', async () => {
@@ -1769,6 +1845,84 @@ describe('playbook launcher — CLI surface (PBCLI-17)', () => {
     expect(out.result.code).toBe(1);
     expect(events).toEqual(['cancel']);
     expect(out.stderr.text()).toContain('prepared a mismatched session id');
+    expect(out.stderr.text()).not.toContain(`session ${id}\n`);
+  });
+
+  it('cancels a prepared session whose child work directory is mismatched', async () => {
+    const id = '90000000-0000-4000-8000-000000000063';
+    const events: string[] = [];
+    const out = await managedCliHarness({
+      sessionId: id,
+      launchManagedTmuxPlay: async (options: any) => {
+        const childWorkDir = await mkdtemp(
+          join(tmpdir(), 'playbook-managed-child-work-'),
+        );
+        const returnedWorkDir = await mkdtemp(
+          join(tmpdir(), 'playbook-managed-returned-work-'),
+        );
+        const coordinationDir = await mkdtemp(
+          join(tmpdir(), 'playbook-managed-coordination-'),
+        );
+        tempDirs.push(childWorkDir, returnedWorkDir, coordinationDir);
+        await options.createSessionCommand({
+          sessionId: id,
+          cwd: options.cwd,
+          workDir: childWorkDir,
+          workDirOwnedByLauncher: true,
+          readinessPath: join(coordinationDir, 'status.json'),
+          inputGatePath: join(coordinationDir, 'input-ready'),
+          inputActivePath: join(coordinationDir, 'input-active'),
+          shutdownRequestPath: join(coordinationDir, 'shutdown-request'),
+          shutdownCompletePath: join(coordinationDir, 'shutdown-complete'),
+        });
+        return {
+          sessionId: id,
+          workDir: returnedWorkDir,
+          async cancel() {
+            events.push('cancel');
+          },
+          async attach() {
+            events.push('attach');
+          },
+        };
+      },
+    });
+
+    expect(out.result.code).toBe(1);
+    expect(events).toEqual(['cancel']);
+    expect(out.stderr.text()).toContain(
+      'prepared a mismatched work directory',
+    );
+    expect(out.stderr.text()).not.toContain(`session ${id}\n`);
+  });
+
+  it('cancels a prepared session without a child session command', async () => {
+    const id = '90000000-0000-4000-8000-000000000064';
+    const workDir = await mkdtemp(
+      join(tmpdir(), 'playbook-managed-unused-work-'),
+    );
+    tempDirs.push(workDir);
+    const events: string[] = [];
+    const out = await managedCliHarness({
+      sessionId: id,
+      omitManagedSessionCommand: true,
+      launchManagedTmuxPlay: async () => ({
+        sessionId: id,
+        workDir,
+        async cancel() {
+          events.push('cancel');
+        },
+        async attach() {
+          events.push('attach');
+        },
+      }),
+    });
+
+    expect(out.result.code).toBe(1);
+    expect(events).toEqual(['cancel']);
+    expect(out.stderr.text()).toContain(
+      'did not request a session command',
+    );
     expect(out.stderr.text()).not.toContain(`session ${id}\n`);
   });
 
@@ -1977,6 +2131,22 @@ async function managedCliHarness(options: any) {
   await writeUserConfig(home, minimalConfig());
   const stderr = options.stderr ?? writer();
   const run = options.entry ? runPlaybookCliEntry : runPlaybookCli;
+  const launchManagedTmuxPlay = async (launchOptions: any) => {
+    let sessionCommandRequested = false;
+    const instrumentedOptions = {
+      ...launchOptions,
+      async createSessionCommand(context: any) {
+        sessionCommandRequested = true;
+        return launchOptions.createSessionCommand(context);
+      },
+    };
+    const prepared = await options.launchManagedTmuxPlay(instrumentedOptions);
+    if (!sessionCommandRequested && !options.omitManagedSessionCommand) {
+      const workDir = await requestManagedSessionCommand(instrumentedOptions);
+      return { ...prepared, workDir };
+    }
+    return prepared;
+  };
   const result = await run({
     argv: options.argv ?? [],
     env: { ANTHROPIC_API_KEY: 'a', OPENAI_API_KEY: 'o' },
@@ -1986,7 +2156,9 @@ async function managedCliHarness(options: any) {
     tmuxPlayBin: '/tmp/tmux-play.js',
     createLogicalSessionId: () => options.sessionId,
     probeAdapterSdk: async () => true,
-    launchManagedTmuxPlay: options.launchManagedTmuxPlay,
+    launchManagedTmuxPlay,
+    publishManagedReadinessWitness:
+      options.publishManagedReadinessWitness ?? (async () => {}),
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.processLike ? { processLike: options.processLike } : {}),
     ...(options.onBeforeManagedAttach
@@ -2139,11 +2311,8 @@ function fakeSpawn(opts: { exitCode?: number; signal?: string } = {}) {
 }
 
 function fakeManagedLaunch(spawn: ReturnType<typeof fakeSpawn>) {
-  return async (options: {
-    configPath: string;
-    sessionId: string;
-    cwd: string;
-  }) => {
+  return async (options: any) => {
+    const workDir = await requestManagedSessionCommand(options);
     spawn.calls.push({
       command: 'launchManagedTmuxPlay',
       args: ['--config', options.configPath, '--session', options.sessionId],
@@ -2154,10 +2323,31 @@ function fakeManagedLaunch(spawn: ReturnType<typeof fakeSpawn>) {
     });
     return {
       sessionId: options.sessionId,
+      workDir,
       async attach() {},
       async cancel() {},
     };
   };
+}
+
+async function requestManagedSessionCommand(options: any) {
+  const workDir = await mkdtemp(join(tmpdir(), 'playbook-managed-ready-'));
+  const coordinationDir = await mkdtemp(
+    join(tmpdir(), 'playbook-managed-coordination-'),
+  );
+  tempDirs.push(workDir, coordinationDir);
+  await options.createSessionCommand({
+    sessionId: options.sessionId,
+    cwd: options.cwd,
+    workDir,
+    workDirOwnedByLauncher: true,
+    readinessPath: join(coordinationDir, 'status.json'),
+    inputGatePath: join(coordinationDir, 'input-ready'),
+    inputActivePath: join(coordinationDir, 'input-active'),
+    shutdownRequestPath: join(coordinationDir, 'shutdown-request'),
+    shutdownCompletePath: join(coordinationDir, 'shutdown-complete'),
+  });
+  return workDir;
 }
 
 function writer() {

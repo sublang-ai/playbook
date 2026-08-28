@@ -858,163 +858,6 @@ function createLease({
     }
   };
 
-  const predecessor = ({ onLegacyRecord } = {}) =>
-    runExclusive(async () => {
-      await assertOwnerUnchecked();
-      const target = await readRecord(sessionId, { missing: 'undefined' });
-      assertFreshAdoptionTarget(target);
-      const selected = await selectAdoptionPredecessor(target, {
-        onLegacyRecord,
-      });
-      if (selected === undefined) return undefined;
-      const descriptor = await useAvailableSession(
-        selected.sessionId,
-        async (sourceLease) => {
-          const source = await sourceLease.read();
-          if (source === undefined) {
-            throw new Error(
-              'Captain session adoption predecessor disappeared',
-            );
-          }
-          await assertOwnerUnchecked();
-          const currentTarget = await readRecord(sessionId);
-          if (!isDeepStrictEqual(currentTarget, target)) {
-            throw new Error('Captain session adoption target changed');
-          }
-          const current = await selectAdoptionPredecessor(currentTarget);
-          if (current?.sessionId !== source.sessionId) {
-            throw new Error('Captain session adoption predecessor changed');
-          }
-          return adoptionPredecessorDescriptor(source);
-        },
-      );
-      await assertOwnerUnchecked();
-      return descriptor;
-    });
-
-  const transferPredecessorGenerations = ({ predecessor: value } = {}) =>
-    runExclusive(async () => {
-      const expected = validateAdoptionPredecessorDescriptor(value);
-      await assertOwnerUnchecked();
-      const target = await readRecord(sessionId, { missing: 'undefined' });
-      assertFreshAdoptionTarget(target);
-      const selected = await selectAdoptionPredecessor(target);
-      if (selected?.sessionId !== expected.sessionId) {
-        throw new Error('Captain session adoption predecessor changed');
-      }
-      const result = await useAvailableSession(
-        expected.sessionId,
-        async (sourceLease) => {
-          const source = await sourceLease.read();
-          if (source === undefined) {
-            throw new Error(
-              'Captain session adoption predecessor disappeared',
-            );
-          }
-          await assertOwnerUnchecked();
-          const currentTarget = await readRecord(sessionId);
-          if (!isDeepStrictEqual(currentTarget, target)) {
-            throw new Error('Captain session adoption target changed');
-          }
-          const current = await selectAdoptionPredecessor(currentTarget);
-          if (current?.sessionId !== source.sessionId) {
-            throw new Error('Captain session adoption predecessor changed');
-          }
-          if (
-            !isDeepStrictEqual(
-              adoptionPredecessorDescriptor(source),
-              expected,
-            )
-          ) {
-            throw new Error('Captain session adoption predecessor changed');
-          }
-
-          const retainedGenerations = source.retainedGenerations ?? {};
-          assertAdoptionTransferEnvelope(
-            source.structuralProjection,
-            currentTarget.structuralProjection,
-            retainedGenerations,
-          );
-          if (Object.keys(retainedGenerations).length === 0) {
-            return adoptionTransferResult(source, retainedGenerations);
-          }
-          const sourceNext = settledRecordWithRetainedGenerations(
-            source,
-            {},
-            nextTimestamp(now(), source.updatedAt),
-          );
-          const targetTimestampFloor =
-            Date.parse(currentTarget.updatedAt) >
-            Date.parse(sourceNext.updatedAt)
-              ? currentTarget.updatedAt
-              : sourceNext.updatedAt;
-          const targetNext = settledRecordWithRetainedGenerations(
-            currentTarget,
-            retainedGenerations,
-            nextTimestamp(now(), targetTimestampFloor),
-          );
-
-          await sourceLease.assertOwner();
-          await assertOwnerUnchecked();
-          let sourcePublished = false;
-          try {
-            await writeRecord(sourceNext, {
-              noReplace: false,
-              onPublished: () => {
-                sourcePublished = true;
-              },
-            });
-          } catch (cause) {
-            throw new Error(
-              `cannot clear Captain session adoption predecessor: ${errorMessage(cause)}`,
-              { cause },
-            );
-          }
-          if (!sourcePublished) {
-            throw new Error(
-              'Captain session adoption predecessor clear did not publish',
-            );
-          }
-          await sourceLease.assertOwner();
-          await assertOwnerUnchecked();
-
-          let targetPublished = false;
-          try {
-            await writeRecord(targetNext, {
-              noReplace: false,
-              onPublished: () => {
-                targetPublished = true;
-              },
-            });
-          } catch (cause) {
-            if (!targetPublished) {
-              try {
-                await sourceLease.assertOwner();
-                await assertOwnerUnchecked();
-                await writeRecord(source, { noReplace: false });
-                await sourceLease.assertOwner();
-                await assertOwnerUnchecked();
-              } catch (rollbackError) {
-                throw new AggregateError(
-                  [cause, rollbackError],
-                  'Captain session adoption transfer failed and its predecessor could not be restored',
-                );
-              }
-            }
-            throw new Error(
-              `cannot install Captain session adoption generations: ${errorMessage(cause)}`,
-              { cause },
-            );
-          }
-          await sourceLease.assertOwner();
-          await assertOwnerUnchecked();
-          return adoptionTransferResult(source, retainedGenerations);
-        },
-      );
-      await assertOwnerUnchecked();
-      return result;
-    });
-
   const initializeSettledWithPredecessor = (options = {}) =>
     runExclusive(async () => {
       const target = freshSettledRecord(options);
@@ -1190,25 +1033,6 @@ function createLease({
       return emptyTarget;
     });
 
-  const initializeSettled = ({
-    cwd,
-    structuralProjection,
-    executionProjection,
-    snapshot,
-  } = {}) =>
-    runExclusive(async () => {
-      const record = freshSettledRecord({
-        cwd,
-        structuralProjection,
-        executionProjection,
-        snapshot,
-      });
-      await assertOwnerUnchecked();
-      await writeRecord(record, { noReplace: true });
-      await assertOwnerUnchecked();
-      return record;
-    });
-
   const abandonFreshSettled = ({ expected: value } = {}) =>
     runExclusive(async () => {
       const expected = validateCaptainSessionRecord(value);
@@ -1229,7 +1053,6 @@ function createLease({
     input,
     attemptId,
     attemptedExecutionProjection,
-    fresh,
   } = {}) =>
     runExclusive(async () => {
       assertAcceptedInput(input);
@@ -1240,69 +1063,37 @@ function createLease({
       );
       await assertOwnerUnchecked();
       const prior = await readRecord(sessionId, { missing: 'undefined' });
-      let record;
-      if (fresh !== undefined) {
-        if (prior !== undefined) {
-          throw new Error('fresh Captain session record already exists');
-        }
-        const initial = validateFreshBoundary(fresh);
-        const timestamp = timestampFrom(now(), 'session timestamp');
-        record = validateCaptainSessionRecord({
-          schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
-          kind: CAPTAIN_SESSION_RECORD_KIND,
-          state: 'uncertain',
-          sessionId,
-          createdAt: timestamp,
-          updatedAt: timestamp,
-          cwd: initial.cwd,
-          structuralProjection: initial.structuralProjection,
-          lastAppliedExecutionProjection: attempted,
-          snapshot: initial.snapshot,
-          retainedGenerations: {},
-          uncertain: {
-            baseUpdatedAt: null,
-            input,
-            attemptId,
-            attemptNumber: 1,
-            markedAt: timestamp,
-            attemptedExecutionProjection: attempted,
-          },
-        });
-        await assertOwnerUnchecked();
-        await writeRecord(record, { noReplace: true });
-      } else {
-        if (prior === undefined) {
-          throw new Error('Captain session does not exist for continuation');
-        }
-        if (prior.state !== 'settled') {
-          throw new Error('Captain session already has an uncertain turn');
-        }
-        const timestamp = nextTimestamp(now(), prior.updatedAt);
-        record = validateCaptainSessionRecord({
-          schemaVersion: prior.schemaVersion,
-          kind: CAPTAIN_SESSION_RECORD_KIND,
-          state: 'uncertain',
-          sessionId,
-          createdAt: prior.createdAt,
-          updatedAt: timestamp,
-          cwd: prior.cwd,
-          structuralProjection: prior.structuralProjection,
-          lastAppliedExecutionProjection:
-            prior.lastAppliedExecutionProjection,
-          snapshot: prior.snapshot,
-          ...retainedGenerationsMember(prior),
-          uncertain: {
-            baseUpdatedAt: prior.updatedAt,
-            input,
-            attemptId,
-            attemptNumber: 1,
-            markedAt: timestamp,
-            attemptedExecutionProjection: attempted,
-          },
-        });
-        await assertOwnerUnchecked();
-        await writeRecord(record, { noReplace: false });
+      if (prior === undefined) {
+        throw new Error('Captain session does not exist for continuation');
       }
+      if (prior.state !== 'settled') {
+        throw new Error('Captain session already has an uncertain turn');
+      }
+      const timestamp = nextTimestamp(now(), prior.updatedAt);
+      const record = validateCaptainSessionRecord({
+        schemaVersion: prior.schemaVersion,
+        kind: CAPTAIN_SESSION_RECORD_KIND,
+        state: 'uncertain',
+        sessionId,
+        createdAt: prior.createdAt,
+        updatedAt: timestamp,
+        cwd: prior.cwd,
+        structuralProjection: prior.structuralProjection,
+        lastAppliedExecutionProjection:
+          prior.lastAppliedExecutionProjection,
+        snapshot: prior.snapshot,
+        ...retainedGenerationsMember(prior),
+        uncertain: {
+          baseUpdatedAt: prior.updatedAt,
+          input,
+          attemptId,
+          attemptNumber: 1,
+          markedAt: timestamp,
+          attemptedExecutionProjection: attempted,
+        },
+      });
+      await assertOwnerUnchecked();
+      await writeRecord(record, { noReplace: false });
       await assertOwnerUnchecked();
       return record;
     });
@@ -1432,15 +1223,12 @@ function createLease({
     sessionId,
     ownerToken: owner.ownerToken,
     read,
-    initializeSettled,
     initializeSettledWithPredecessor,
     abandonFreshSettled,
     beginTurn,
     beginRetry,
     settle,
     discard,
-    predecessor,
-    transferPredecessorGenerations,
     assertOwner,
     release,
   });
@@ -2238,58 +2026,6 @@ function sortCaptainSessionRecords(records) {
   });
 }
 
-function adoptionPredecessorDescriptor(record) {
-  return validateAdoptionPredecessorDescriptor({
-    sessionId: record.sessionId,
-    updatedAt: record.updatedAt,
-    cwd: record.cwd,
-    structuralProjection: record.structuralProjection,
-    retainedGenerations: record.retainedGenerations ?? {},
-  });
-}
-
-function validateAdoptionPredecessorDescriptor(value) {
-  const descriptor = requireRecord(
-    snapshotJsonValue(value, 'Captain session adoption predecessor'),
-    'Captain session adoption predecessor',
-  );
-  rejectUnknownOrMissingKeys(
-    descriptor,
-    [
-      'sessionId',
-      'updatedAt',
-      'cwd',
-      'structuralProjection',
-      'retainedGenerations',
-    ],
-    'Captain session adoption predecessor',
-  );
-  assertSessionId(descriptor.sessionId);
-  canonicalTimestamp(
-    descriptor.updatedAt,
-    'Captain session adoption predecessor updatedAt',
-  );
-  if (typeof descriptor.cwd !== 'string' || !isAbsolute(descriptor.cwd)) {
-    throw new Error(
-      'Captain session adoption predecessor cwd must be an absolute path',
-    );
-  }
-  if (resolve(descriptor.cwd) !== descriptor.cwd) {
-    throw new Error(
-      'Captain session adoption predecessor cwd must be normalized',
-    );
-  }
-  const structural = validateCaptainSessionStructuralProjection(
-    descriptor.structuralProjection,
-    'Captain session adoption predecessor structuralProjection',
-  );
-  validateRetainedGenerations(
-    descriptor.retainedGenerations,
-    structural,
-  );
-  return descriptor;
-}
-
 function assertFreshAdoptionTarget(record) {
   if (record === undefined) {
     throw new Error('Captain session adoption target does not exist');
@@ -2385,16 +2121,6 @@ function settledRecordWithRetainedGenerations(
     snapshot: record.snapshot,
     retainedGenerations,
   });
-}
-
-function adoptionTransferResult(source, retainedGenerations) {
-  return snapshotJsonValue(
-    {
-      sourceSessionId: source.sessionId,
-      retainedGenerations,
-    },
-    'Captain session adoption transfer result',
-  );
 }
 
 function validateRetainedGenerations(value, structural) {

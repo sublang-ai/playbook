@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { constants, realpathSync } from 'node:fs';
-import { lstat, open, readFile, realpath, unlink } from 'node:fs/promises';
+import { lstat, open, realpath, unlink } from 'node:fs/promises';
 import {
   basename,
   dirname,
@@ -48,6 +48,8 @@ export const MANAGED_INTERACTIVE_PAYLOAD_FILE =
 export const MANAGED_INTERACTIVE_PAYLOAD_SCHEMA_VERSION = 1;
 export const MANAGED_INTERACTIVE_PAYLOAD_KIND =
   'playbook-managed-interactive-launch';
+export const MANAGED_INTERACTIVE_READINESS_WITNESS_FILE =
+  'playbook-managed-readiness';
 
 const PAYLOAD_KEYS = [
   'schemaVersion',
@@ -155,6 +157,18 @@ export async function writeManagedInteractivePayload(workDir, value) {
     await handle.close();
   }
   return path;
+}
+
+export async function publishManagedInteractiveReadinessWitness(
+  workDir,
+  sessionId,
+) {
+  return writeManagedInteractiveReadinessClaim({
+    workDir,
+    sessionId,
+    claim: 'ready',
+    rejectExisting: true,
+  });
 }
 
 export async function readManagedInteractivePayload(path) {
@@ -311,9 +325,8 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
     released = true;
   };
 
-  const abandonFreshLaunchRecord = async () => {
+  const abandonFreshLaunchRecord = async ({ claim = false } = {}) => {
     const record = freshLaunchRecord;
-    freshLaunchRecord = undefined;
     if (
       record === undefined ||
       lease === undefined ||
@@ -321,6 +334,18 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
     ) {
       return;
     }
+    if (
+      claim &&
+      !(await writeManagedInteractiveReadinessClaim({
+        workDir: payload.workDir,
+        sessionId: payload.sessionId,
+        claim: 'abandon',
+        rejectExisting: false,
+      }))
+    ) {
+      return;
+    }
+    freshLaunchRecord = undefined;
     await lease.abandonFreshSettled({ expected: record });
   };
 
@@ -556,12 +581,9 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
       // complete turn transaction, so ownership retirement cannot race either.
       if (leaseQuarantined) return;
       const failures = [];
-      if (
-        context !== undefined &&
-        await managedReadinessAllowsFreshAbandonment(payload.readinessPath)
-      ) {
+      if (context !== undefined) {
         try {
-          await abandonFreshLaunchRecord();
+          await abandonFreshLaunchRecord({ claim: true });
         } catch (error) {
           failures.push(error);
         }
@@ -582,16 +604,48 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
   });
 }
 
-async function managedReadinessAllowsFreshAbandonment(path) {
-  // PBCLI-23/55: only absence or an authored startup-error boundary proves
-  // managed readiness never made this empty logical session reusable.
-  let value;
+async function writeManagedInteractiveReadinessClaim({
+  workDir,
+  sessionId,
+  claim,
+  rejectExisting,
+}) {
+  assertCanonicalAbsolutePath(
+    workDir,
+    'managed interactive readiness work directory',
+  );
+  assertUuid(sessionId, 'managed interactive readiness session id');
+  const path = join(workDir, MANAGED_INTERACTIVE_READINESS_WITNESS_FILE);
+  let handle;
   try {
-    value = JSON.parse(await readFile(path, 'utf8'));
+    handle = await open(path, 'wx', 0o600);
   } catch (cause) {
-    return cause?.code === 'ENOENT';
+    if (cause?.code === 'EEXIST' && !rejectExisting) return false;
+    throw new Error(
+      `managed interactive readiness claim could not be created: ${message(cause)}`,
+      { cause },
+    );
   }
-  return isPlainRecord(value) && value.status === 'error';
+  try {
+    await handle.chmod(0o600);
+    const stat = await handle.stat();
+    if (!stat.isFile() || (stat.mode & 0o7777) !== 0o600) {
+      throw new Error(
+        'managed interactive readiness claim is not a private regular file',
+      );
+    }
+    if (
+      typeof process.getuid === 'function' &&
+      stat.uid !== process.getuid()
+    ) {
+      throw new Error('managed interactive readiness claim has a foreign owner');
+    }
+    await handle.writeFile(`${claim} ${sessionId}\n`, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  return true;
 }
 
 export function parseManagedInteractiveChildArgs(argv) {

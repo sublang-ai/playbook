@@ -3493,14 +3493,34 @@ describe('configured engine provisioning parity (PBCLI-38/48)', () => {
       spawn,
       createLogicalSessionId: () =>
         '90000000-0000-4000-8000-000000000001',
-      launchManagedTmuxPlay: async ({ sessionId }: { sessionId: string }) => {
+      launchManagedTmuxPlay: async (options: any) => {
         spawnCalls.push(true);
+        const workDir = await mkdtemp(
+          join(tmpdir(), 'playbook-engine-managed-work-'),
+        );
+        const coordinationDir = await mkdtemp(
+          join(tmpdir(), 'playbook-engine-managed-coordination-'),
+        );
+        tempDirs.push(workDir, coordinationDir);
+        await options.createSessionCommand({
+          sessionId: options.sessionId,
+          cwd: options.cwd,
+          workDir,
+          workDirOwnedByLauncher: true,
+          readinessPath: join(coordinationDir, 'status.json'),
+          inputGatePath: join(coordinationDir, 'input-ready'),
+          inputActivePath: join(coordinationDir, 'input-active'),
+          shutdownRequestPath: join(coordinationDir, 'shutdown-request'),
+          shutdownCompletePath: join(coordinationDir, 'shutdown-complete'),
+        });
         return {
-          sessionId,
+          sessionId: options.sessionId,
+          workDir,
           async attach() {},
           async cancel() {},
         };
       },
+      publishManagedReadinessWitness: async () => {},
       stdout: writer(),
       stderr: interactiveErr,
     });
