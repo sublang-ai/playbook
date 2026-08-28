@@ -1556,7 +1556,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         retainedGenerationOffers.clear();
         return runtimes;
     };
-    const prepareRetainedGenerationOffers = async (phase = 'install') => {
+    const prepareRetainedGenerationOffers = async () => {
         if (rootFrame() !== undefined)
             return;
         for (const [rootPlaybookId, generation] of [...retainedGenerations].sort(([left], [right]) => left.localeCompare(right))) {
@@ -1611,11 +1611,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                         ? cleanupError.failedRuntimes
                         : []);
                 }
-                if (phase === 'deferred') {
-                    ineligibleRetainedGenerations.add(rootPlaybookId);
-                    continue;
-                }
-                throw error;
+                ineligibleRetainedGenerations.add(rootPlaybookId);
             }
         }
     };
@@ -5125,7 +5121,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             appendJournal('boss', turn.prompt);
             try {
                 await drainRetiredRetainedRuntimes();
-                await prepareRetainedGenerationOffers('deferred');
+                await prepareRetainedGenerationOffers();
                 const result = await captainRuntime.handleBossInput({
                     text: turn.prompt,
                     signal: context.signal,

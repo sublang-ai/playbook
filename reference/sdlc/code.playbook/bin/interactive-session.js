@@ -301,6 +301,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
   let leaseQuarantined = false;
   let activeTurn;
   let executionProjection;
+  let freshLaunchRecord;
 
   const release = async () => {
     if (released || lease === undefined) return;
@@ -308,6 +309,19 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
     await owned.release();
     if (lease === owned) lease = undefined;
     released = true;
+  };
+
+  const abandonFreshLaunchRecord = async () => {
+    const record = freshLaunchRecord;
+    freshLaunchRecord = undefined;
+    if (
+      record === undefined ||
+      lease === undefined ||
+      Object.keys(record.retainedGenerations ?? {}).length !== 0
+    ) {
+      return;
+    }
+    await lease.abandonFreshSettled({ expected: record });
   };
 
   return Object.freeze({
@@ -407,19 +421,23 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
           ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
         });
         ({ host, shell } = created);
-        if (payload.mode === 'fresh') {
-          await lease.initializeSettled({
-            cwd: payload.cwd,
-            structuralProjection:
-              projectCaptainSessionStructure(executionProjection),
-            executionProjection,
-            snapshot: created.snapshot,
-          });
-        }
         await installRetainedGenerationsForLaunch({
           lease,
           shell,
-          fresh: payload.mode === 'fresh',
+          ...(payload.mode === 'fresh'
+            ? {
+                freshBoundary: {
+                  cwd: payload.cwd,
+                  structuralProjection:
+                    projectCaptainSessionStructure(executionProjection),
+                  executionProjection,
+                  snapshot: created.snapshot,
+                },
+                onFreshRecord(record) {
+                  freshLaunchRecord = record;
+                },
+              }
+            : {}),
           retainedGenerations,
         });
         initialized = true;
@@ -452,6 +470,13 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
             // presentation cannot start concurrently with that failed host.
             leaseQuarantined = true;
             failures.push(disposeError);
+          }
+        }
+        if (!leaseQuarantined) {
+          try {
+            await abandonFreshLaunchRecord();
+          } catch (abandonmentError) {
+            failures.push(abandonmentError);
           }
         }
         shell = undefined;
@@ -526,13 +551,47 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
       activeTurn = undefined;
     },
 
-    async shutdown() {
+    async shutdown(context) {
       // Cligent invokes lifecycle shutdown only after runtime disposal and the
       // complete turn transaction, so ownership retirement cannot race either.
       if (leaseQuarantined) return;
-      await release();
+      const failures = [];
+      if (
+        context !== undefined &&
+        await managedReadinessAllowsFreshAbandonment(payload.readinessPath)
+      ) {
+        try {
+          await abandonFreshLaunchRecord();
+        } catch (error) {
+          failures.push(error);
+        }
+      }
+      try {
+        await release();
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length === 1) throw failures[0];
+      if (failures.length > 1) {
+        throw new AggregateError(
+          failures,
+          'managed interactive shutdown could not retract its unused fresh session and retire its lease',
+        );
+      }
     },
   });
+}
+
+async function managedReadinessAllowsFreshAbandonment(path) {
+  // PBCLI-23/55: only absence or an authored startup-error boundary proves
+  // managed readiness never made this empty logical session reusable.
+  let value;
+  try {
+    value = JSON.parse(await readFile(path, 'utf8'));
+  } catch (cause) {
+    return cause?.code === 'ENOENT';
+  }
+  return isPlainRecord(value) && value.status === 'error';
 }
 
 export function parseManagedInteractiveChildArgs(argv) {

@@ -146,6 +146,63 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     expect(events).toEqual(['disposed']);
   });
 
+  it.each([
+    { readiness: 'absent', reason: 'SIGINT', abandoned: true },
+    { readiness: 'error', reason: 'startup failure', abandoned: true },
+    { readiness: 'ready', reason: 'EOF', abandoned: false },
+  ] as const)(
+    '$readiness readiness leaves fresh turn zero abandoned=$abandoned at shutdown',
+    async ({ readiness, reason, abandoned }) => {
+      const fixture = await lifecycleFixture();
+      const events: string[] = [];
+      const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+        sessionStore: fixture.store,
+        createSessionHost: async () => {
+          const snapshot = shellSnapshot(fixture.execution, 0);
+          return {
+            host: fakeHost(events),
+            shell: {
+              async installRetainedGenerations() {},
+              exportSnapshot: () => snapshot,
+            },
+            snapshot,
+          };
+        },
+      });
+      const runtime = await lifecycle.initializeRuntime(fixture.context);
+      if (readiness !== 'absent') {
+        await writeFile(
+          fixture.payload.readinessPath,
+          `${JSON.stringify({ status: readiness })}\n`,
+          'utf8',
+        );
+      }
+
+      await runtime.dispose();
+      await lifecycle.shutdown({
+        sessionId: logicalSessionId,
+        reason,
+        ...(readiness === 'error'
+          ? { error: new Error('synthetic startup failure') }
+          : {}),
+      });
+
+      if (abandoned) {
+        await expect(
+          fixture.store.read(logicalSessionId),
+        ).rejects.toThrow(/does not exist/);
+      } else {
+        expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+          state: 'settled',
+          retainedGenerations: {},
+        });
+      }
+      const next = await fixture.store.acquire(logicalSessionId);
+      await next.release();
+      expect(events).toEqual(['disposed']);
+    },
+  );
+
   it('transfers and installs predecessor generations before fresh readiness', async () => {
     const fixture = await lifecycleFixture();
     await seedRetainedSettled(fixture, predecessorSessionId);
@@ -186,8 +243,45 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     await lifecycle.shutdown();
   });
 
+  it('starts fresh while the newest settled predecessor lease is live', async () => {
+    const fixture = await lifecycleFixture();
+    await seedRetainedSettled(fixture, predecessorSessionId);
+    const sourceBefore = await fixture.store.read(predecessorSessionId);
+    const held = await fixture.store.acquire(predecessorSessionId);
+    const installed: unknown[] = [];
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      createSessionHost: async () => {
+        const snapshot = shellSnapshot(fixture.execution, 0);
+        return {
+          host: fakeHost([]),
+          shell: {
+            async installRetainedGenerations(value: unknown) {
+              installed.push(value);
+            },
+            exportSnapshot: () => snapshot,
+          },
+          snapshot,
+        };
+      },
+    });
+
+    const runtime = await lifecycle.initializeRuntime(fixture.context);
+    expect(installed).toEqual([{}]);
+    expect(await fixture.store.read(predecessorSessionId)).toEqual(
+      sourceBefore,
+    );
+    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+      state: 'settled',
+      retainedGenerations: {},
+    });
+    await runtime.dispose();
+    await lifecycle.shutdown();
+    await held.release();
+  });
+
   it.each([
-    { boundary: 'predecessor selection', transferPublished: false },
+    { boundary: 'guarded initialization', transferPublished: false },
     { boundary: 'predecessor transfer', transferPublished: true },
     { boundary: 'retained installation', transferPublished: true },
   ])(
@@ -205,15 +299,12 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
             if (sessionId !== logicalSessionId) return lease;
             return {
               ...lease,
-              async predecessor() {
-                if (boundary === 'predecessor selection') {
-                  throw new Error('synthetic predecessor selection failure');
+              async initializeSettledWithPredecessor(options: unknown) {
+                if (boundary === 'guarded initialization') {
+                  throw new Error('synthetic guarded initialization failure');
                 }
-                return lease.predecessor();
-              },
-              async transferPredecessorGenerations(options: unknown) {
                 const result =
-                  await lease.transferPredecessorGenerations(options);
+                  await lease.initializeSettledWithPredecessor(options);
                 if (boundary === 'predecessor transfer') {
                   throw new Error('synthetic predecessor transfer failure');
                 }
@@ -255,12 +346,16 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
         boundary === 'retained installation' ? 1 : 0,
       );
       expect(events).toEqual(['disposed']);
-      expect(await fixture.store.read(logicalSessionId)).toMatchObject({
-        state: 'settled',
-        retainedGenerations: transferPublished
-          ? { code: retainedGeneration() }
-          : {},
-      });
+      if (transferPublished) {
+        expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+          state: 'settled',
+          retainedGenerations: { code: retainedGeneration() },
+        });
+      } else {
+        await expect(
+          fixture.store.read(logicalSessionId),
+        ).rejects.toThrow(/does not exist/);
+      }
       expect(await fixture.store.read(predecessorSessionId)).toMatchObject({
         state: 'settled',
         retainedGenerations: transferPublished
@@ -312,10 +407,9 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     );
     expect(installed).toBe(true);
     expect(events).toEqual(['disposed']);
-    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
-      state: 'settled',
-      retainedGenerations: {},
-    });
+    await expect(
+      fixture.store.read(logicalSessionId),
+    ).rejects.toThrow(/does not exist/);
     const next = await fixture.store.acquire(logicalSessionId);
     await next.release();
   });

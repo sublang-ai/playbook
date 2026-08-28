@@ -8338,40 +8338,69 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     await source.dispose?.();
   });
 
-  it('remains re-installable after transient probe construction failure', async () => {
+  it('quarantines install-time probe construction failure until a fresh shell', async () => {
     const code = fakeCodeEntry();
-    const docs = fakePlaybookEntry('docs', 'docs');
+    const drafts = fakePlaybookEntry('drafts', 'drafts');
+    const review = fakePlaybookEntry('review', 'review');
     enableGenerationRetention(code);
-    enableGenerationRetention(docs);
-    const createDocsRuntime = docs.entry.createRuntime;
-    let failConstruction = true;
-    docs.entry.createRuntime = (options) => {
-      if (failConstruction) {
-        failConstruction = false;
+    enableGenerationRetention(drafts);
+    enableGenerationRetention(review);
+    const createReviewRuntime = review.entry.createRuntime;
+    let reviewConstructionAttempts = 0;
+    review.entry.createRuntime = (options) => {
+      reviewConstructionAttempts += 1;
+      if (reviewConstructionAttempts === 1) {
         throw new Error('transient probe construction failure');
       }
-      return createDocsRuntime(options);
+      return createReviewRuntime(options);
     };
-    const shell = makeShell([code, docs]);
+    const entries = [code, drafts, review];
+    const shell = makeShell(entries);
     await shell.init!(stubSession(roster).session);
     const generations = {
-      code: retainedRootGeneration('code', SOURCE_ROOT_ID, 'retainedCode'),
-      docs: retainedRootGeneration(
-        'docs',
+      code: retainedNestedGeneration(),
+      drafts: retainedRootGeneration(
+        'drafts',
         '40000000-0000-4000-8000-000000000004',
-        'retainedDocs',
+        'retainedDrafts',
       ),
     };
 
-    await expect(
-      shell.installRetainedGenerations(generations),
-    ).rejects.toThrow('transient probe construction failure');
-    expect(code.runtimes[0]?.disposeCount).toBe(1);
-
     await shell.installRetainedGenerations(generations);
-    expect(code.runtimes).toHaveLength(2);
-    expect(docs.runtimes).toHaveLength(1);
+    expect(code.runtimes).toHaveLength(1);
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(drafts.runtimes).toHaveLength(1);
+    expect(review.runtimes).toHaveLength(0);
+    expect(reviewConstructionAttempts).toBe(1);
+
+    const idle = stubContext([
+      captainJson({ action: 'respond', text: 'Code can continue.' }),
+    ]);
+    await shell.handleBossTurn(turn('what can continue?'), idle.context);
+    const prompt = idle.captainCalls.find((call) =>
+      isDecisionPrompt(call.prompt),
+    )?.prompt;
+    const controlDigest = prompt!
+      .split('[ControlView digest]')[1]!
+      .split('[Catalog digest]')[0]!;
+    expect(controlDigest).toContain('- drafts (/drafts):');
+    expect(controlDigest).not.toContain('- code (/code):');
+    expect(reviewConstructionAttempts).toBe(1);
+    expect(shell.exportSettlement()?.retentionUpdates).not.toContainEqual({
+      kind: 'clear',
+      rootPlaybookId: 'code',
+    });
     await shell.dispose?.();
+    expect(drafts.runtimes[0]?.disposeCount).toBe(1);
+
+    const retry = makeShell(entries);
+    await retry.init!(stubSession(roster).session);
+    await retry.installRetainedGenerations(generations);
+    expect(code.runtimes).toHaveLength(2);
+    expect(drafts.runtimes).toHaveLength(2);
+    expect(review.runtimes).toHaveLength(1);
+    expect(reviewConstructionAttempts).toBe(2);
+    await retry.dispose?.();
   });
 
   it('closes when capability-probe preparation cleanup rejects', async () => {
@@ -8405,27 +8434,22 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     const code = fakeCodeEntry(undefined, async () => {
       throw new Error('probe cleanup failed');
     });
-    const docs = fakePlaybookEntry('docs', 'docs');
+    const review = fakePlaybookEntry('review', 'review');
     enableGenerationRetention(code);
-    enableGenerationRetention(docs);
-    docs.entry.createRuntime = () => {
+    enableGenerationRetention(review);
+    review.entry.createRuntime = () => {
       throw new Error('probe construction failed');
     };
-    const shell = makeShell([code, docs]);
+    const shell = makeShell([code, review]);
     await shell.init!(stubSession(roster).session);
 
     await expect(
       shell.installRetainedGenerations({
-        code: retainedRootGeneration('code', SOURCE_ROOT_ID, 'retainedCode'),
-        docs: retainedRootGeneration(
-          'docs',
-          '40000000-0000-4000-8000-000000000004',
-          'retainedDocs',
-        ),
+        code: retainedNestedGeneration(),
       }),
     ).rejects.toMatchObject({
-      name: 'AggregateError',
-      message: 'retained-generation installation and cleanup failed',
+      name: 'RetainedRuntimeCleanupError',
+      message: 'retained-generation preparation and cleanup failed',
     });
     expect(code.runtimes[0]?.disposeCount).toBe(1);
     await expect(

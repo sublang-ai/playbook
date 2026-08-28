@@ -36,7 +36,11 @@ Resumption is a machine property synthesized below GEARS; authored sources conti
 
 3. **A retained generation may cross sessions under an exact structural envelope and single-transfer ownership.**
    A fresh session's launch may adopt the retained generation from its predecessor: the newest settled session record with the same working directory, read under the store's lease discipline; adoption moves the generation into the adopting record and clears it at the source in the same guarded exchange, so no generation is adopted twice.
+   The fresh target remains absent until that exchange deliberately publishes either an empty turn-zero boundary when adoption is unavailable or declined, or the transferred generation after its source clear; a fatal failure while target publication is definitively absent leaves no target boundary to shadow the predecessor, while a target whose complete visibility may already have occurred follows the store's existing no-rollback durability posture.
+   A newest predecessor proved to have a live lease declines adoption for that launch without falling through to older work or blocking the fresh session, while ambiguous ownership remains fail-closed.
+   A nominated predecessor that disappears or is superseded by another newest valid boundary during authoritative reread likewise declines adoption without retrying or falling through.
    Adoption validates an exact envelope: working directory, root playbook id and its complete catalog-entry structure — registry module identity, manifest command, options, and role set — and the artifact schema of every frame in the generation.
+   Deterministic envelope drift declines adoption and starts with an empty map rather than blocking unrelated fresh work.
    A referenced player's own structural members may differ; such a role resumes with a fresh conversation, while model and effort retune exactly as ordinary continuation allows.
 
 4. **The Captain-session player ledger is the sole conversation authority.**

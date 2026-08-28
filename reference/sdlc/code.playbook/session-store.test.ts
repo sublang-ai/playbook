@@ -3,6 +3,7 @@
 
 import {
   chmod,
+  link,
   mkdir,
   mkdtemp,
   open,
@@ -12,6 +13,7 @@ import {
   rm,
   stat,
   symlink,
+  unlink,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -1235,6 +1237,400 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     },
   );
 
+  it('declines a live newest predecessor without falling through to older work', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const olderId = adoptionSessionId(60);
+    const liveId = adoptionSessionId(61);
+    const targetId = adoptionSessionId(62);
+    const older = retainedSettledRecord({
+      id: olderId,
+      updatedAt: '2026-08-11T21:00:00.020Z',
+    });
+    const live = retainedSettledRecord({
+      id: liveId,
+      updatedAt: '2026-08-11T21:00:00.040Z',
+    });
+    const olderPath = await writeRecordFixture(sessionsDir, older);
+    const livePath = await writeRecordFixture(sessionsDir, live);
+    const before = await Promise.all(
+      [olderPath, livePath].map((path) => readFile(path, 'utf8')),
+    );
+    const store = sequencedStore(sessionsDir, 60, {
+      probeProcess: async () => {},
+    });
+    const liveLease = await store.acquire(liveId);
+    const targetLease = await store.acquire(targetId);
+    const targetTemplate = freshAdoptionTargetRecord({ id: targetId });
+
+    const initialized =
+      await targetLease.initializeSettledWithPredecessor({
+        cwd: targetTemplate.cwd,
+        structuralProjection: targetTemplate.structuralProjection,
+        executionProjection: targetTemplate.lastAppliedExecutionProjection,
+        snapshot: targetTemplate.snapshot,
+      });
+
+    expect(initialized.retainedGenerations).toEqual({});
+    expect(
+      await Promise.all(
+        [olderPath, livePath].map((path) => readFile(path, 'utf8')),
+      ),
+    ).toEqual(before);
+    expect((await store.read(olderId)).retainedGenerations).not.toEqual({});
+    expect((await store.read(liveId)).retainedGenerations).not.toEqual({});
+    expect((await store.latest()).sessionId).toBe(targetId);
+    await targetLease.release();
+    await liveLease.release();
+  });
+
+  it.each(['foreign', 'permission unknown'] as const)(
+    'fails closed when predecessor lease ownership is %s',
+    async (ownership) => {
+      const { sessionsDir } = await fixtureDir();
+      const sourceId = adoptionSessionId(73);
+      const targetId = adoptionSessionId(74);
+      const sourcePath = await writeRecordFixture(
+        sessionsDir,
+        retainedSettledRecord({ id: sourceId }),
+      );
+      const sourceBytes = await readFile(sourcePath, 'utf8');
+      const ownerStore = sequencedStore(sessionsDir, 120);
+      const sourceLease = await ownerStore.acquire(sourceId);
+      const targetStore = sequencedStore(sessionsDir, 130, {
+        ...(ownership === 'foreign' ? { hostname: 'other-host' } : {}),
+        probeProcess: async () => {
+          throw Object.assign(new Error('permission denied'), {
+            code: 'EPERM',
+          });
+        },
+      });
+      const targetTemplate = freshAdoptionTargetRecord({ id: targetId });
+      const targetLease = await targetStore.acquire(targetId);
+
+      await expect(
+        targetLease.initializeSettledWithPredecessor({
+          cwd: targetTemplate.cwd,
+          structuralProjection: targetTemplate.structuralProjection,
+          executionProjection:
+            targetTemplate.lastAppliedExecutionProjection,
+          snapshot: targetTemplate.snapshot,
+        }),
+      ).rejects.toThrow(
+        ownership === 'foreign'
+          ? /owned by foreign host/
+          : /owner process cannot be ruled dead/,
+      );
+      expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
+      await expect(targetStore.read(targetId)).rejects.toThrow(
+        /does not exist/,
+      );
+      await targetLease.release();
+      await sourceLease.release();
+    },
+  );
+
+  it.each(['disappeared', 'superseded'] as const)(
+    'declines when the nominated predecessor is %s before authoritative read',
+    async (race) => {
+      const { sessionsDir } = await fixtureDir();
+      const sourceId = adoptionSessionId(70);
+      const newerId = adoptionSessionId(71);
+      const targetId = adoptionSessionId(72);
+      const source = retainedSettledRecord({
+        id: sourceId,
+        updatedAt: '2026-08-11T21:00:00.040Z',
+      });
+      const newer = retainedSettledRecord({
+        id: newerId,
+        updatedAt: '2026-08-11T21:00:00.060Z',
+      });
+      const sourcePath = await writeRecordFixture(sessionsDir, source);
+      const sourceBytes = await readFile(sourcePath, 'utf8');
+      const sourceLeasePath = join(sessionsDir, `.${sourceId}.lock`);
+      let raced = false;
+      const store = sequencedStore(sessionsDir, 110, {
+        fsOps: {
+          async rename(from: string, to: string) {
+            await rename(from, to);
+            if (to !== sourceLeasePath || raced) return;
+            raced = true;
+            if (race === 'disappeared') {
+              await unlink(sourcePath);
+            } else {
+              await writeRecordFixture(sessionsDir, newer);
+            }
+          },
+        },
+      });
+      const targetTemplate = freshAdoptionTargetRecord({ id: targetId });
+      const lease = await store.acquire(targetId);
+
+      const initialized =
+        await lease.initializeSettledWithPredecessor({
+          cwd: targetTemplate.cwd,
+          structuralProjection: targetTemplate.structuralProjection,
+          executionProjection:
+            targetTemplate.lastAppliedExecutionProjection,
+          snapshot: targetTemplate.snapshot,
+        });
+
+      expect(initialized.retainedGenerations).toEqual({});
+      expect(Date.parse(initialized.updatedAt)).toBeGreaterThan(
+        Date.parse(race === 'superseded' ? newer.updatedAt : source.updatedAt),
+      );
+      if (race === 'disappeared') {
+        await expect(store.read(sourceId)).rejects.toThrow(/does not exist/);
+      } else {
+        expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
+        expect((await store.read(newerId)).retainedGenerations).not.toEqual(
+          {},
+        );
+      }
+      expect((await store.latest()).sessionId).toBe(targetId);
+      await lease.release();
+    },
+  );
+
+  it('declines live ownership during detached selection and transfer', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(67);
+    const targetId = adoptionSessionId(68);
+    const sourcePath = await writeRecordFixture(
+      sessionsDir,
+      retainedSettledRecord({ id: sourceId }),
+    );
+    const targetPath = await writeRecordFixture(
+      sessionsDir,
+      freshAdoptionTargetRecord({ id: targetId }),
+    );
+    const before = await Promise.all(
+      [sourcePath, targetPath].map((path) => readFile(path, 'utf8')),
+    );
+    const store = sequencedStore(sessionsDir, 90, {
+      probeProcess: async () => {},
+    });
+    const targetLease = await store.acquire(targetId);
+    let sourceLease = await store.acquire(sourceId);
+    await expect(targetLease.predecessor()).resolves.toBeUndefined();
+    await sourceLease.release();
+
+    const predecessor = await targetLease.predecessor();
+    expect(predecessor.sessionId).toBe(sourceId);
+    sourceLease = await store.acquire(sourceId);
+    await expect(
+      targetLease.transferPredecessorGenerations({ predecessor }),
+    ).resolves.toBeUndefined();
+    expect(
+      await Promise.all(
+        [sourcePath, targetPath].map((path) => readFile(path, 'utf8')),
+      ),
+    ).toEqual(before);
+    await targetLease.release();
+    await sourceLease.release();
+  });
+
+  it(
+    'declines incompatible root options before publishing an empty target',
+    async () => {
+      const { sessionsDir } = await fixtureDir();
+      const sourceId = adoptionSessionId(63);
+      const targetId = adoptionSessionId(64);
+      const source = retainedSettledRecord({ id: sourceId });
+      const sourcePath = await writeRecordFixture(sessionsDir, source);
+      const sourceBytes = await readFile(sourcePath, 'utf8');
+      const targetExecution: any = retentionExecutionProjection();
+      targetExecution.catalog.code.options = { incompatible: true };
+      const targetTemplate = freshAdoptionTargetRecord({
+        id: targetId,
+        execution: targetExecution,
+      });
+      const store = sequencedStore(sessionsDir, 70);
+      const lease = await store.acquire(targetId);
+
+      const initialized = await lease.initializeSettledWithPredecessor({
+        cwd: targetTemplate.cwd,
+        structuralProjection: targetTemplate.structuralProjection,
+        executionProjection: targetTemplate.lastAppliedExecutionProjection,
+        snapshot: targetTemplate.snapshot,
+      });
+
+      expect(initialized.retainedGenerations).toEqual({});
+      expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
+      expect(await store.read(targetId)).toEqual(initialized);
+      await lease.release();
+    },
+  );
+
+  it('leaves an absent target absent when predecessor scanning fails closed', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const corruptId = adoptionSessionId(65);
+    const targetId = adoptionSessionId(66);
+    await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
+    await writeFile(join(sessionsDir, `${corruptId}.json`), '{broken\n', {
+      mode: 0o600,
+    });
+    const targetTemplate = freshAdoptionTargetRecord({ id: targetId });
+    const store = sequencedStore(sessionsDir, 80);
+    const lease = await store.acquire(targetId);
+
+    await expect(
+      lease.initializeSettledWithPredecessor({
+        cwd: targetTemplate.cwd,
+        structuralProjection: targetTemplate.structuralProjection,
+        executionProjection: targetTemplate.lastAppliedExecutionProjection,
+        snapshot: targetTemplate.snapshot,
+      }),
+    ).rejects.toThrow(/not valid JSON/);
+    await expect(store.read(targetId)).rejects.toThrow(/does not exist/);
+    await lease.release();
+  });
+
+  it('requires current target ownership immediately before guarded publication', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const legacyId = adoptionSessionId(75);
+    const targetId = adoptionSessionId(76);
+    await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
+    await writeFile(
+      join(sessionsDir, `${legacyId}.json`),
+      `${JSON.stringify(
+        releasedSchema2Record({ sessionId: legacyId }),
+      )}\n`,
+      { mode: 0o600 },
+    );
+    const store = sequencedStore(sessionsDir, 140);
+    const lease = await store.acquire(targetId);
+    const ownerPath = join(sessionsDir, `.${targetId}.lock`, 'owner.json');
+    const owner = JSON.parse(await readFile(ownerPath, 'utf8'));
+    const targetTemplate = freshAdoptionTargetRecord({ id: targetId });
+
+    await expect(
+      lease.initializeSettledWithPredecessor({
+        cwd: targetTemplate.cwd,
+        structuralProjection: targetTemplate.structuralProjection,
+        executionProjection: targetTemplate.lastAppliedExecutionProjection,
+        snapshot: targetTemplate.snapshot,
+        async onLegacyRecord() {
+          await writeFile(
+            ownerPath,
+            `${JSON.stringify({
+              ...owner,
+              ownerToken: adoptionLeaseToken(999),
+            })}\n`,
+            'utf8',
+          );
+        },
+      }),
+    ).rejects.toThrow(/owned by a different token/);
+    await expect(store.read(targetId)).rejects.toThrow(/does not exist/);
+    await writeFile(ownerPath, `${JSON.stringify(owner)}\n`, 'utf8');
+    await lease.release();
+  });
+
+  it('rechecks target ownership before abandoning an exact empty boundary', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const targetId = adoptionSessionId(77);
+    const targetPath = join(sessionsDir, `${targetId}.json`);
+    const ownerPath = join(sessionsDir, `.${targetId}.lock`, 'owner.json');
+    let owner;
+    let armOwnerLoss = false;
+    const store = sequencedStore(sessionsDir, 150, {
+      fsOps: {
+        async open(path: string, flags: string | number, mode?: number) {
+          const handle = await open(path, flags as any, mode);
+          if (path !== targetPath || !armOwnerLoss) return handle;
+          return {
+            stat: () => handle.stat(),
+            async readFile(encoding: BufferEncoding) {
+              const value = await handle.readFile(encoding);
+              armOwnerLoss = false;
+              await writeFile(
+                ownerPath,
+                `${JSON.stringify({
+                  ...owner,
+                  ownerToken: adoptionLeaseToken(999),
+                })}\n`,
+                'utf8',
+              );
+              return value;
+            },
+            close: () => handle.close(),
+          };
+        },
+      },
+    });
+    const lease = await store.acquire(targetId);
+    const targetTemplate = freshAdoptionTargetRecord({ id: targetId });
+    const initialized =
+      await lease.initializeSettledWithPredecessor({
+        cwd: targetTemplate.cwd,
+        structuralProjection: targetTemplate.structuralProjection,
+        executionProjection: targetTemplate.lastAppliedExecutionProjection,
+        snapshot: targetTemplate.snapshot,
+      });
+    owner = JSON.parse(await readFile(ownerPath, 'utf8'));
+    armOwnerLoss = true;
+
+    await expect(
+      lease.abandonFreshSettled({ expected: initialized }),
+    ).rejects.toThrow(/owned by a different token/);
+    expect(await store.read(targetId)).toEqual(initialized);
+    await writeFile(ownerPath, `${JSON.stringify(owner)}\n`, 'utf8');
+    await lease.release();
+  });
+
+  it('preserves an empty target after a post-publication durability failure', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const targetId = adoptionSessionId(69);
+    const targetPath = join(sessionsDir, `${targetId}.json`);
+    const targetTemplate = freshAdoptionTargetRecord({ id: targetId });
+    let targetPublished = false;
+    let syncFailed = false;
+    const store = sequencedStore(sessionsDir, 100, {
+      fsOps: {
+        async link(from: string, to: string) {
+          await link(from, to);
+          if (to === targetPath) targetPublished = true;
+        },
+        async open(
+          path: string,
+          flags: string | number,
+          mode?: number,
+        ) {
+          const handle = await open(path, flags as any, mode);
+          if (path !== sessionsDir || flags !== 'r') return handle;
+          return {
+            async sync() {
+              if (targetPublished && !syncFailed) {
+                syncFailed = true;
+                throw new Error('synthetic empty-target sync failure');
+              }
+              await handle.sync();
+            },
+            close: () => handle.close(),
+          };
+        },
+      },
+    });
+    const lease = await store.acquire(targetId);
+
+    await expect(
+      lease.initializeSettledWithPredecessor({
+        cwd: targetTemplate.cwd,
+        structuralProjection: targetTemplate.structuralProjection,
+        executionProjection: targetTemplate.lastAppliedExecutionProjection,
+        snapshot: targetTemplate.snapshot,
+      }),
+    ).rejects.toThrow(/cannot publish empty Captain session adoption target/);
+    expect(await store.read(targetId)).toMatchObject({
+      state: 'settled',
+      retainedGenerations: {},
+    });
+    expect(
+      (await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')),
+    ).toBe(false);
+    await lease.release();
+  });
+
   it.each(['malformed', 'unknown schema', 'unsafe'] as const)(
     'fails predecessor selection closed on a %s canonical record',
     async (shape) => {
@@ -1688,9 +2084,8 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       const source = retainedSettledRecord({ id: sourceId });
       const target = freshAdoptionTargetRecord({ id: targetId });
       const sourcePath = await writeRecordFixture(sessionsDir, source);
-      const targetPath = await writeRecordFixture(sessionsDir, target);
+      const targetPath = join(sessionsDir, `${targetId}.json`);
       const sourceBytes = await readFile(sourcePath, 'utf8');
-      const targetBytes = await readFile(targetPath, 'utf8');
       let sourcePublished = false;
       let targetPublished = false;
       let syncFailed = false;
@@ -1699,8 +2094,8 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
           async rename(from: string, to: string) {
             if (
               from.endsWith('.tmp') &&
-              ((boundary === 'source pre-publication' && to === sourcePath) ||
-                (boundary === 'target pre-publication' && to === targetPath))
+              boundary === 'source pre-publication' &&
+              to === sourcePath
             ) {
               throw new Error(`synthetic ${boundary} failure`);
             }
@@ -1708,9 +2103,16 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
             if (from.endsWith('.tmp') && to === sourcePath) {
               sourcePublished = true;
             }
-            if (from.endsWith('.tmp') && to === targetPath) {
-              targetPublished = true;
+          },
+          async link(from: string, to: string) {
+            if (
+              boundary === 'target pre-publication' &&
+              to === targetPath
+            ) {
+              throw new Error(`synthetic ${boundary} failure`);
             }
+            await link(from, to);
+            if (to === targetPath) targetPublished = true;
           },
           async open(
             path: string,
@@ -1739,20 +2141,32 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
         },
       });
       const lease = await store.acquire(targetId);
-      const predecessor = await lease.predecessor();
       await expect(
-        lease.transferPredecessorGenerations({ predecessor }),
+        lease.initializeSettledWithPredecessor({
+          cwd: target.cwd,
+          structuralProjection: target.structuralProjection,
+          executionProjection: target.lastAppliedExecutionProjection,
+          snapshot: target.snapshot,
+        }),
       ).rejects.toThrow(/cannot (?:clear|install) Captain session adoption/);
 
       const sourceAfterBytes = await readFile(sourcePath, 'utf8');
-      const targetAfterBytes = await readFile(targetPath, 'utf8');
       const sourceAfter = validateCaptainSessionRecord(
         JSON.parse(sourceAfterBytes),
       );
-      const targetAfter = validateCaptainSessionRecord(
-        JSON.parse(targetAfterBytes),
-      );
+      let targetAfter;
+      let targetAfterBytes;
+      try {
+        targetAfterBytes = await readFile(targetPath, 'utf8');
+        targetAfter = validateCaptainSessionRecord(
+          JSON.parse(targetAfterBytes),
+        );
+      } catch (error: any) {
+        expect(error).toMatchObject({ code: 'ENOENT' });
+      }
       const owners = [sourceAfter, targetAfter].filter(
+        (record) => record !== undefined,
+      ).filter(
         (record) => Object.keys(record.retainedGenerations ?? {}).length > 0,
       );
       expect(owners.length).toBeLessThanOrEqual(1);
@@ -1761,13 +2175,13 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
         boundary === 'target pre-publication'
       ) {
         expect(sourceAfterBytes).toBe(sourceBytes);
-        expect(targetAfterBytes).toBe(targetBytes);
+        expect(targetAfter).toBeUndefined();
       } else if (boundary === 'source post-publication') {
         expect(sourceAfter.retainedGenerations).toEqual({});
-        expect(targetAfterBytes).toBe(targetBytes);
+        expect(targetAfter).toBeUndefined();
       } else {
         expect(sourceAfter.retainedGenerations).toEqual({});
-        expect(targetAfter.retainedGenerations).toEqual(
+        expect(targetAfter?.retainedGenerations).toEqual(
           source.retainedGenerations,
         );
       }

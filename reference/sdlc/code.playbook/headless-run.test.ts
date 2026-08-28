@@ -1230,6 +1230,112 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
 });
 
 describe('durable Captain continuation (PBCLI-24)', () => {
+  it('retracts an unchanged fresh boundary after pre-turn setup fails', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-abandon-state-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const failed = await headlessHarness(['run', 'must not run'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+      installRetainedGenerationsForLaunch: async (options: any) => {
+        await installRetainedGenerationsForLaunch(options);
+        throw new Error('synthetic post-initialization failure');
+      },
+    });
+
+    expect(failed.result.code).toBe(1);
+    expect(failed.stdout).toBe('');
+    expect(failed.inputs).toEqual([]);
+    expect(failed.stderr).toContain('synthetic post-initialization failure');
+    await expect(
+      stat(join(sessionsDir, `${firstId}.json`)),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+
+    const retried = await headlessHarness(['run', 'now run'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+    });
+    expect(retried.result.code).toBe(0);
+    expect(retried.inputs).toEqual(['now run']);
+  });
+
+  it('starts fresh while the newest settled predecessor lease is live', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-live-state-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const first = await headlessHarness(['run', 'first session'], {
+      sessionsDir,
+      createLogicalSessionId: () => firstId,
+    });
+    expect(first.result.code).toBe(0);
+    const sourcePath = join(sessionsDir, `${firstId}.json`);
+    const sourceBytes = await readFile(sourcePath, 'utf8');
+    const store = createCaptainSessionStore({ sessionsDir });
+    const held = await store.acquire(firstId);
+
+    const second = await headlessHarness(['run', 'unrelated work'], {
+      sessionsDir,
+      createLogicalSessionId: () => secondId,
+    });
+
+    expect(second.result.code).toBe(0);
+    expect(second.inputs).toEqual(['unrelated work']);
+    expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
+    await held.release();
+  });
+
+  it('starts fresh when the predecessor root options no longer match', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-drift-state-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const events: string[] = [];
+    const lifecycle = { inits: 0, restores: 0, adopts: 0 };
+    const code = retainedRootEntry(events, lifecycle);
+    const review = nestedEntries([]).review;
+    const loadModule = async (specifier: string) => ({
+      default: specifier === 'mod://code' ? code : review,
+    });
+    const parked = await headlessHarness(['run', '/code retain it'], {
+      sessionsDir,
+      loadModule,
+      createLogicalSessionId: () => firstId,
+      createCaptainRuntime: undefined,
+    });
+    expect(parked.result.code).toBe(0);
+    const sourcePath = join(sessionsDir, `${firstId}.json`);
+    const sourceBytes = await readFile(sourcePath, 'utf8');
+    const overlay = await writeConfig(
+      ['playbooks:', '  code: { changedOption: true }', ''].join('\n'),
+    );
+    const prompts: string[] = [];
+    FakeAdapter.decision = (prompt) => {
+      prompts.push(prompt);
+      return { action: 'respond', text: 'Started unrelated fresh work.' };
+    };
+
+    const fresh = await headlessHarness(
+      ['run', '--with', overlay, 'unrelated work'],
+      {
+        sessionsDir,
+        userConfigPath: parked.configPath,
+        loadModule,
+        createLogicalSessionId: () => secondId,
+        createCaptainRuntime: undefined,
+      },
+    );
+
+    expect(fresh.result.code).toBe(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain('Retained resumptions: none.');
+    expect(lifecycle.adopts).toBe(0);
+    expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
+    expect(
+      JSON.parse(
+        await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
+      ).retainedGenerations,
+    ).toEqual({});
+  });
+
   const firstId = '90000000-0000-4000-8000-000000000011';
   const secondId = '90000000-0000-4000-8000-000000000012';
   const thirdId = '90000000-0000-4000-8000-000000000013';
@@ -1738,14 +1844,15 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     );
     expect(redismissed.result.code).toBe(0);
 
-    const beforeRejectedInstall = await readFile(
-      join(sessionsDir, `${firstId}.json`),
-      'utf8',
-    );
-    FakeAdapter.decision = () => {
-      throw new Error('failed installation must precede Captain arbitration');
+    const degradedPrompts: string[] = [];
+    FakeAdapter.decision = (prompt) => {
+      degradedPrompts.push(prompt);
+      return {
+        action: 'respond',
+        text: 'The retained offer is temporarily unavailable.',
+      };
     };
-    const rejectedInstall = await headlessHarness(
+    const degradedInstall = await headlessHarness(
       ['run', '--session', firstId, 'continue later'],
       {
         sessionsDir,
@@ -1764,13 +1871,21 @@ describe('durable Captain continuation (PBCLI-24)', () => {
         }),
       },
     );
-    expect(rejectedInstall.result.code).toBe(1);
-    expect(rejectedInstall.stderr).toContain(
+    expect(degradedInstall.result.code).toBe(0);
+    expect(degradedInstall.stderr).not.toContain(
       'retained probe construction failed',
     );
+    expect(degradedPrompts).toHaveLength(1);
+    expect(degradedPrompts[0]).toContain('Retained resumptions: none.');
+    expect(degradedInstall.result.snapshot).toMatchObject({
+      mode: 'chat',
+      lastAction: 'respond',
+    });
     expect(
-      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
-    ).toBe(beforeRejectedInstall);
+      JSON.parse(
+        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+      ).retainedGenerations,
+    ).toHaveProperty('code');
 
     const resumePrompts: string[] = [];
     FakeAdapter.decision = (prompt) => {

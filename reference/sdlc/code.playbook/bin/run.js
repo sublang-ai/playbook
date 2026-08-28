@@ -428,6 +428,7 @@ export async function runPlaybookRun(options = {}) {
   }
 
   let settled;
+  let freshLaunchRecord;
   try {
     settled = await driveHeadlessCaptainTurn({
       config,
@@ -455,21 +456,26 @@ export async function runPlaybookRun(options = {}) {
       ...(options.signal ? { signal: options.signal } : {}),
       beforeBossTurn: async (baselineSnapshot, shell) => {
         throwIfAborted(options.signal);
-        if (priorRecord === undefined) {
-          await lease.initializeSettled({
-            cwd,
-            structuralProjection: projectCaptainSessionStructure(config),
-            executionProjection: config,
-            snapshot: baselineSnapshot,
-          });
-        }
         const installForLaunch =
           options.installRetainedGenerationsForLaunch ??
           installRetainedGenerationsForLaunch;
         await installForLaunch({
           lease,
           shell,
-          fresh: priorRecord === undefined,
+          ...(priorRecord === undefined
+            ? {
+                freshBoundary: {
+                  cwd,
+                  structuralProjection:
+                    projectCaptainSessionStructure(config),
+                  executionProjection: config,
+                  snapshot: baselineSnapshot,
+                },
+                onFreshRecord(record) {
+                  freshLaunchRecord = record;
+                },
+              }
+            : {}),
           retainedGenerations: priorRecord?.retainedGenerations ?? {},
         });
         throwIfAborted(options.signal);
@@ -488,6 +494,18 @@ export async function runPlaybookRun(options = {}) {
     });
   } catch (error) {
     const cleanupIncomplete = isCaptainSessionHostCleanupIncomplete(error);
+    let abandonmentError;
+    if (
+      !cleanupIncomplete &&
+      freshLaunchRecord !== undefined &&
+      Object.keys(freshLaunchRecord.retainedGenerations ?? {}).length === 0
+    ) {
+      try {
+        await lease.abandonFreshSettled({ expected: freshLaunchRecord });
+      } catch (cause) {
+        abandonmentError = cause;
+      }
+    }
     const releaseError = cleanupIncomplete
       ? undefined
       : await releaseLease(lease);
@@ -504,9 +522,17 @@ export async function runPlaybookRun(options = {}) {
         `playbook run: cannot release Captain session lease: ${message(releaseError)}\n`,
       );
     }
+    if (abandonmentError !== undefined) {
+      await writeStream(
+        stderr,
+        `playbook run: cannot retract unused fresh Captain session: ${message(abandonmentError)}\n`,
+      );
+    }
     return {
       code:
-        error instanceof HeadlessHostSetupError && releaseError === undefined
+        error instanceof HeadlessHostSetupError &&
+        abandonmentError === undefined &&
+        releaseError === undefined
           ? EXIT.argument
           : EXIT.turn,
     };
@@ -807,25 +833,22 @@ export async function createCaptainSessionHost({
 }
 
 // PBCLI-55: both presentations install one authoritative retention map at the
-// same post-shell, pre-turn boundary. Fresh sessions first become durable
-// turn-zero targets so predecessor transfer never writes into uncertainty.
+// same post-shell, pre-turn boundary. Fresh-session guarded initialization
+// publishes either the intentional empty boundary or the transferred map.
 export async function installRetainedGenerationsForLaunch({
   lease,
   shell,
-  fresh,
+  freshBoundary,
+  onFreshRecord,
   retainedGenerations,
 }) {
   let authoritative = retainedGenerations;
-  if (fresh) {
-    const predecessor = await lease.predecessor();
-    authoritative =
-      predecessor === undefined
-        ? {}
-        : (
-            await lease.transferPredecessorGenerations({
-              predecessor,
-            })
-          ).retainedGenerations;
+  if (freshBoundary !== undefined) {
+    const record = await lease.initializeSettledWithPredecessor(
+      freshBoundary,
+    );
+    onFreshRecord?.(record);
+    authoritative = record.retainedGenerations ?? {};
   }
   await shell.installRetainedGenerations(authoritative);
   await lease.assertOwner();

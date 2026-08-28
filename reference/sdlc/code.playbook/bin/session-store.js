@@ -117,6 +117,17 @@ class CaptainSessionRecordSchemaError extends Error {
   }
 }
 
+class CaptainSessionLeaseActiveError extends Error {
+  constructor(sessionId, pid) {
+    super(
+      `cannot acquire Captain session ${JSON.stringify(sessionId)} lease: Captain session lease is active in process ${pid}`,
+    );
+    this.name = 'CaptainSessionLeaseActiveError';
+    this.sessionId = sessionId;
+    this.pid = pid;
+  }
+}
+
 export function defaultCaptainSessionsDir(
   env = process.env,
   home = env.HOME ?? homedir(),
@@ -649,18 +660,13 @@ export function createCaptainSessionStore(options = {}) {
         }
         try {
           await probeProcess(existing.pid);
-          throw new Error(
-            `Captain session lease is active in process ${existing.pid}`,
+          throw new CaptainSessionLeaseActiveError(
+            sessionId,
+            existing.pid,
           );
         } catch (cause) {
           if (cause?.code !== 'ESRCH') {
-            if (
-              cause instanceof Error &&
-              cause.message ===
-                `Captain session lease is active in process ${existing.pid}`
-            ) {
-              throw cause;
-            }
+            if (cause instanceof CaptainSessionLeaseActiveError) throw cause;
             throw new Error(
               `Captain session lease owner process cannot be ruled dead: ${errorMessage(cause)}`,
             );
@@ -709,6 +715,7 @@ export function createCaptainSessionStore(options = {}) {
           `cannot acquire Captain session ${JSON.stringify(sessionId)} lease without leaving ownership uncertain`,
         );
       }
+      if (cause instanceof CaptainSessionLeaseActiveError) throw cause;
       throw new Error(
         `cannot acquire Captain session ${JSON.stringify(sessionId)} lease: ${errorMessage(cause)}`,
       );
@@ -770,6 +777,52 @@ function createLease({
       return record;
     });
 
+  const freshSettledRecord = ({
+    cwd,
+    structuralProjection,
+    executionProjection,
+    snapshot,
+  } = {}) => {
+    const initial = validateFreshBoundary({
+      cwd,
+      structuralProjection,
+      snapshot,
+    });
+    const applied = assertCaptainSessionExecutionCompatible(
+      initial.structuralProjection,
+      executionProjection,
+    );
+    const createdAt = timestampFrom(now(), 'session timestamp');
+    const updatedAt = nextTimestamp(now(), createdAt);
+    return validateCaptainSessionRecord({
+      schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+      kind: CAPTAIN_SESSION_RECORD_KIND,
+      state: 'settled',
+      sessionId,
+      createdAt,
+      updatedAt,
+      cwd: initial.cwd,
+      structuralProjection: initial.structuralProjection,
+      lastAppliedExecutionProjection: applied,
+      snapshot: initial.snapshot,
+      retainedGenerations: {},
+    });
+  };
+
+  const publishEmptyFreshTarget = async (target) => {
+    try {
+      await assertOwnerUnchecked();
+      await writeRecord(target, {
+        noReplace: true,
+      });
+    } catch (cause) {
+      throw new Error(
+        `cannot publish empty Captain session adoption target: ${errorMessage(cause)}`,
+        { cause },
+      );
+    }
+  };
+
   const useAcquiredSession = async (sourceSessionId, operation) => {
     const sourceLease = await acquireSession(sourceSessionId);
     let result;
@@ -796,6 +849,15 @@ function createLease({
     return result;
   };
 
+  const useAvailableSession = async (sourceSessionId, operation) => {
+    try {
+      return await useAcquiredSession(sourceSessionId, operation);
+    } catch (error) {
+      if (error instanceof CaptainSessionLeaseActiveError) return undefined;
+      throw error;
+    }
+  };
+
   const predecessor = ({ onLegacyRecord } = {}) =>
     runExclusive(async () => {
       await assertOwnerUnchecked();
@@ -805,12 +867,14 @@ function createLease({
         onLegacyRecord,
       });
       if (selected === undefined) return undefined;
-      const descriptor = await useAcquiredSession(
+      const descriptor = await useAvailableSession(
         selected.sessionId,
         async (sourceLease) => {
           const source = await sourceLease.read();
           if (source === undefined) {
-            throw new Error('Captain session adoption predecessor disappeared');
+            throw new Error(
+              'Captain session adoption predecessor disappeared',
+            );
           }
           await assertOwnerUnchecked();
           const currentTarget = await readRecord(sessionId);
@@ -838,12 +902,14 @@ function createLease({
       if (selected?.sessionId !== expected.sessionId) {
         throw new Error('Captain session adoption predecessor changed');
       }
-      const result = await useAcquiredSession(
+      const result = await useAvailableSession(
         expected.sessionId,
         async (sourceLease) => {
           const source = await sourceLease.read();
           if (source === undefined) {
-            throw new Error('Captain session adoption predecessor disappeared');
+            throw new Error(
+              'Captain session adoption predecessor disappeared',
+            );
           }
           await assertOwnerUnchecked();
           const currentTarget = await readRecord(sessionId);
@@ -949,6 +1015,181 @@ function createLease({
       return result;
     });
 
+  const initializeSettledWithPredecessor = (options = {}) =>
+    runExclusive(async () => {
+      const target = freshSettledRecord(options);
+      await assertOwnerUnchecked();
+      if (
+        (await readRecord(sessionId, { missing: 'undefined' })) !== undefined
+      ) {
+        throw new Error(
+          `Captain session ${JSON.stringify(sessionId)} already exists`,
+        );
+      }
+      const selected = await selectAdoptionPredecessor(target, {
+        onLegacyRecord: options.onLegacyRecord,
+      });
+      if (selected === undefined) {
+        await publishEmptyFreshTarget(target);
+        await assertOwnerUnchecked();
+        return target;
+      }
+
+      let result = await useAvailableSession(
+        selected.sessionId,
+        async (sourceLease) => {
+          const source = await sourceLease.read();
+          if (source === undefined) {
+            const current = await selectAdoptionPredecessor(target);
+            return {
+              kind: 'declined',
+              predecessorUpdatedAt:
+                current !== undefined &&
+                Date.parse(current.updatedAt) > Date.parse(selected.updatedAt)
+                  ? current.updatedAt
+                  : selected.updatedAt,
+            };
+          }
+          await assertOwnerUnchecked();
+          if (
+            (await readRecord(sessionId, { missing: 'undefined' })) !==
+            undefined
+          ) {
+            throw new Error('Captain session adoption target changed');
+          }
+          const current = await selectAdoptionPredecessor(target);
+          if (current?.sessionId !== source.sessionId) {
+            return {
+              kind: 'declined',
+              predecessorUpdatedAt:
+                current !== undefined &&
+                Date.parse(current.updatedAt) > Date.parse(source.updatedAt)
+                  ? current.updatedAt
+                  : source.updatedAt,
+            };
+          }
+
+          const retainedGenerations = source.retainedGenerations ?? {};
+          try {
+            assertAdoptionTransferEnvelope(
+              source.structuralProjection,
+              target.structuralProjection,
+              retainedGenerations,
+            );
+          } catch {
+            return {
+              kind: 'declined',
+              predecessorUpdatedAt: source.updatedAt,
+            };
+          }
+          if (Object.keys(retainedGenerations).length === 0) {
+            return {
+              kind: 'empty',
+              predecessorUpdatedAt: source.updatedAt,
+            };
+          }
+
+          const sourceNext = settledRecordWithRetainedGenerations(
+            source,
+            {},
+            nextTimestamp(now(), source.updatedAt),
+          );
+          const targetTimestampFloor =
+            Date.parse(target.updatedAt) > Date.parse(sourceNext.updatedAt)
+              ? target.updatedAt
+              : sourceNext.updatedAt;
+          const targetNext = settledRecordWithRetainedGenerations(
+            target,
+            retainedGenerations,
+            nextTimestamp(now(), targetTimestampFloor),
+          );
+
+          await sourceLease.assertOwner();
+          await assertOwnerUnchecked();
+          let sourcePublished = false;
+          try {
+            await writeRecord(sourceNext, {
+              noReplace: false,
+              onPublished: () => {
+                sourcePublished = true;
+              },
+            });
+          } catch (cause) {
+            throw new Error(
+              `cannot clear Captain session adoption predecessor: ${errorMessage(cause)}`,
+              { cause },
+            );
+          }
+          if (!sourcePublished) {
+            throw new Error(
+              'Captain session adoption predecessor clear did not publish',
+            );
+          }
+          await sourceLease.assertOwner();
+          await assertOwnerUnchecked();
+
+          let targetPublished = false;
+          try {
+            await writeRecord(targetNext, {
+              noReplace: true,
+              onPublished: () => {
+                targetPublished = true;
+              },
+            });
+          } catch (cause) {
+            if (!targetPublished) {
+              try {
+                await sourceLease.assertOwner();
+                await assertOwnerUnchecked();
+                await writeRecord(source, { noReplace: false });
+                await sourceLease.assertOwner();
+                await assertOwnerUnchecked();
+              } catch (rollbackError) {
+                throw new AggregateError(
+                  [cause, rollbackError],
+                  'Captain session adoption transfer failed and its predecessor could not be restored',
+                );
+              }
+            }
+            throw new Error(
+              `cannot install Captain session adoption generations: ${errorMessage(cause)}`,
+              { cause },
+            );
+          }
+          await sourceLease.assertOwner();
+          await assertOwnerUnchecked();
+          return { kind: 'transferred', target: targetNext };
+        },
+      );
+      if (result === undefined) {
+        result = {
+          kind: 'declined',
+          predecessorUpdatedAt: selected.updatedAt,
+        };
+      }
+
+      if (result.kind === 'transferred') return result.target;
+      await assertOwnerUnchecked();
+      if (
+        (await readRecord(sessionId, { missing: 'undefined' })) !== undefined
+      ) {
+        throw new Error('Captain session adoption target changed');
+      }
+      const timestampFloor =
+        Date.parse(target.updatedAt) >
+        Date.parse(result.predecessorUpdatedAt)
+          ? target.updatedAt
+          : result.predecessorUpdatedAt;
+      const emptyTarget = settledRecordWithRetainedGenerations(
+        target,
+        {},
+        nextTimestamp(now(), timestampFloor),
+      );
+      await publishEmptyFreshTarget(emptyTarget);
+      await assertOwnerUnchecked();
+      return emptyTarget;
+    });
+
   const initializeSettled = ({
     cwd,
     structuralProjection,
@@ -956,34 +1197,32 @@ function createLease({
     snapshot,
   } = {}) =>
     runExclusive(async () => {
-      const initial = validateFreshBoundary({
+      const record = freshSettledRecord({
         cwd,
         structuralProjection,
-        snapshot,
-      });
-      const applied = assertCaptainSessionExecutionCompatible(
-        initial.structuralProjection,
         executionProjection,
-      );
-      const createdAt = timestampFrom(now(), 'session timestamp');
-      const updatedAt = nextTimestamp(now(), createdAt);
-      const record = validateCaptainSessionRecord({
-        schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
-        kind: CAPTAIN_SESSION_RECORD_KIND,
-        state: 'settled',
-        sessionId,
-        createdAt,
-        updatedAt,
-        cwd: initial.cwd,
-        structuralProjection: initial.structuralProjection,
-        lastAppliedExecutionProjection: applied,
-        snapshot: initial.snapshot,
-        retainedGenerations: {},
+        snapshot,
       });
       await assertOwnerUnchecked();
       await writeRecord(record, { noReplace: true });
       await assertOwnerUnchecked();
       return record;
+    });
+
+  const abandonFreshSettled = ({ expected: value } = {}) =>
+    runExclusive(async () => {
+      const expected = validateCaptainSessionRecord(value);
+      if (expected.sessionId !== sessionId) {
+        throw new Error('fresh Captain session abandonment id is mismatched');
+      }
+      assertFreshAdoptionTarget(expected);
+      await assertOwnerUnchecked();
+      const current = await readRecord(sessionId, { missing: 'undefined' });
+      if (!isDeepStrictEqual(current, expected)) return false;
+      await assertOwnerUnchecked();
+      await deleteRecord(sessionId);
+      await assertOwnerUnchecked();
+      return true;
     });
 
   const beginTurn = ({
@@ -1194,6 +1433,8 @@ function createLease({
     ownerToken: owner.ownerToken,
     read,
     initializeSettled,
+    initializeSettledWithPredecessor,
+    abandonFreshSettled,
     beginTurn,
     beginRetry,
     settle,
