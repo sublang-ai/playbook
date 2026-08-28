@@ -126,6 +126,11 @@ export interface PlaybookSession {
     playerSessions?: PlayerSessionStore;
     ports: PlaybookPorts;
 }
+export interface PlaybookAdoptionContext {
+    readonly sourceSessionId: string;
+    readonly sourceGenerationId: string;
+    readonly targetChildSessionId?: string;
+}
 export type PlaybookTraceType = 'session.started' | 'boss.input.received' | 'judge.call.started' | 'judge.call.finished' | 'player.call.started' | 'player.call.finished' | 'captain.call.started' | 'captain.call.finished' | 'playbook.call.started' | 'playbook.call.finished' | 'apply.started' | 'apply.finished' | 'fsm.transition' | 'status.emitted' | 'boss.input.settled' | 'session.disposed';
 export interface PlaybookTraceEvent {
     schemaVersion: 3;
@@ -201,7 +206,7 @@ export interface PlaybookRuntime {
     init(session: PlaybookSession): Promise<void>;
     exportSnapshot?(): PlaybookRuntimeSnapshot | undefined;
     restore?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>;
-    adopt?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>;
+    adopt?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot, context: PlaybookAdoptionContext): Promise<void>;
     readonly retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata;
     describe?(): PlaybookControlView;
     apply?(input: {

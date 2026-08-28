@@ -68,7 +68,7 @@ runtime contract types `PlayerResult`, `PlayerCallOptions`,
 `PlaybookCallRequest`, `PlaybookCallResult`, `PlaybookCallStart`,
 `PlaybookStateValue`, `PlaybookState`, `PlaybookPendingCall`,
 `PlaybookRunResult`, `PlaybookPendingBossQuestion`, `PlaybookControlAction`, `PlaybookControlView`,
-`PlaybookControlReceipt`, `PlaybookRetainedGenerationMetadata`, `PlaybookPorts`, `PlaybookSession`,
+`PlaybookControlReceipt`, `PlaybookRetainedGenerationMetadata`, `PlaybookAdoptionContext`, `PlaybookPorts`, `PlaybookSession`,
 `PlaybookTraceType`, `PlaybookTraceEvent`,
 `PlaybookRuntime`, and `PlaybookRuntimeFactory<Options = unknown>`, as
 the TypeScript projection of
@@ -97,7 +97,8 @@ runtime's own classification maps to an FSM entry event
 That keeps the shared contract module free of host and playbook types while
 leaving the injection path typed end to end at the artifact.
 `PlaybookRuntime` shall declare the optional read-only retention-classification marker `retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata`, whose value contains exactly the read-only string array `unfinishedFinalStateIds`; absence means the runtime contributes no retained generation, while presence supplies only terminal classification metadata and does not itself supply the independently feature-detected adoption capability.
-`PlaybookRuntime` shall declare that capability as the optional member `adopt?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>`.
+`PlaybookAdoptionContext` shall contain exactly the nonempty string `sourceSessionId`, the nonempty string `sourceGenerationId` naming the retained stack root frame's `rootSessionId` from [[playbook-captain-41](playbook-captain.md#playbook-captain-41)], and the optional nonempty string `targetChildSessionId`.
+`PlaybookRuntime` shall declare the adoption capability as the optional member `adopt?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot, context: PlaybookAdoptionContext): Promise<void>`.
 `PlaybookRuntime` shall declare the optional control-surface pair —
 `describe?(): PlaybookControlView` and
 `apply?(input: { actionId: string; key: string; signal: AbortSignal }):
@@ -439,6 +440,7 @@ an abort ([[playbook-runtime-13](#playbook-runtime-13)], [DR-036](../decisions/0
 The runtime shall trace session start/disposal, exact Boss input and
 settlement, exact player, Captain, and judge prompts and results, normalized
 errors, every FSM transition, and every status emission.
+Where a runtime starts through retained-snapshot adoption, its trace shall begin with the ordinary `session.started` boundary under the fresh target causality and the adoption-lineage payload of [[playbook-runtime-65](#playbook-runtime-65)], rather than continue the source trace sequence or introduce a second session-start type.
 Each player-call trace pair shall carry the local `roleId` and, where the host supplied binding metadata, the resolved `playerId`; its start and finish shall retain the same values.
 Direct Captain calls shall use paired `captain.call.started` and
 `captain.call.finished` events carrying state identity, exact prompt,
@@ -650,15 +652,15 @@ The compiled default Captain runtime shall expose the shared factory's snapshot 
 
 #### playbook-runtime-61
 
-Where a linked runtime implements the optional adoption capability of `@sublang/playbook/runtime`, `adopt(session, snapshot)` shall be a third initialization path, distinct from `init` and same-engagement `restore`, that may bind a valid fresh `PlaybookSession` identity to the retained machine generation.
+Where a linked runtime implements the optional adoption capability of `@sublang/playbook/runtime`, `adopt(session, snapshot, context)` shall be a third initialization path, distinct from `init` and same-engagement `restore`, that may bind a valid fresh `PlaybookSession` identity to the retained machine generation.
 Every runtime the shared `createXStatePlaybookRuntime` factory constructs shall expose `adopt`, regardless of whether that artifact supplies retained-generation classification metadata; a bespoke runtime may omit it, and member absence shall be the capability boundary.
-Before actor construction or any player-session-store, port, trace, status, or telemetry effect, adoption shall validate and detach the target session and the runtime-visible portion of the structural envelope: a supported schema-version-3 snapshot, the target session's exact playbook id, the factory's already-validated artifact contract, and any supplied local-role binding set against the artifact's declared roles.
+Before actor construction or any player-session-store, port, trace, status, or telemetry effect, adoption shall validate and detach the target session, the exact `PlaybookAdoptionContext` of [[playbook-runtime-65](#playbook-runtime-65)], and the runtime-visible portion of the structural envelope: a supported schema-version-3 snapshot, the target session's exact playbook id, the factory's already-validated artifact contract, and any supplied local-role binding set against the artifact's declared roles.
 The host remains responsible for the generation envelope it alone owns — working directory, complete catalog-entry structure, and every retained frame's artifact schema — before it calls the runtime capability ([DR-038](../decisions/038-universal-run-resumption.md) §3).
-After preflight, adoption shall reconstruct the actor from the persisted machine snapshot with inspection effects suppressed and shall rebuild a suspended nested call through the same prepared bridge transaction as live restore: seed exact call-to-turn ownership, claim the descriptor during actor startup, require an active normalized actor state exactly equal to the persisted state, drain suppressed work, and confirm the bridge only as the final fallible step.
+After preflight, adoption shall reconstruct the actor from the persisted machine snapshot with inspection effects suppressed and shall rebuild a suspended nested call through the same prepared bridge transaction as live restore, except that [[playbook-runtime-65](#playbook-runtime-65)] supplies fresh target call and child identity instead of restoring source call-to-turn ownership: prepare and claim the rebased descriptor during actor startup, require an active normalized actor state equal to the retained state under that rebase, drain suppressed work, and confirm the bridge only as the final fallible step.
 Adoption shall treat the retained snapshot's `roleResumeTokens` as inert during initialization: it shall neither pass them to a supplied `PlayerSessionStore.restore` nor seed runtime-private continuation from them ([[playbook-runtime-58](#playbook-runtime-58)], [DR-038](../decisions/038-universal-run-resumption.md) §4).
-Any envelope, actor-state, or bridge mismatch on an otherwise unused runtime shall reject without a duplicate child call or start/finish boundary, roll provisional ownership back through failed-start cleanup, and leave that runtime reusable after successful cleanup.
+Any envelope, actor-state, or bridge mismatch on an otherwise unused runtime shall reject without a child-host call or playbook-call start/finish boundary, roll provisional ownership back through failed-start cleanup, and leave that runtime reusable after successful cleanup.
 A successful adoption shall close `init`, `restore`, and `adopt` under the ordinary one-start runtime lifecycle.
-Fresh adoption counters and lineage are specified separately and are not part of this capability boundary.
+Fresh adoption identity, counters, and trace lineage shall follow [[playbook-runtime-65](#playbook-runtime-65)].
 
 #### playbook-runtime-63
 
@@ -668,6 +670,23 @@ The player-start trace shall carry the target binding's player id and the select
 Where that post-adoption call returns a validated nonempty replacement token, the runtime shall update the same target ledger view ([[playbook-runtime-58](#playbook-runtime-58)]).
 Thus a shared player that advanced after retention shall continue from its newer ledger token, while a replacement player whose current ledger selection is `false` shall use its new player and prompt identities and start fresh.
 Where the target session supplies no `PlayerSessionStore`, adoption shall leave runtime-private continuation empty, so the first post-adoption call starts fresh ([[playbook-runtime-38](#playbook-runtime-38)]).
+
+#### playbook-runtime-65
+
+Where a runtime adopts a retained snapshot under [[playbook-runtime-61](#playbook-runtime-61)], the required `PlaybookAdoptionContext` shall be a detached closed-schema value whose `sourceSessionId` names that retained frame's source runtime session, whose `sourceGenerationId` names the retained stack root frame's source `rootSessionId` from [[playbook-captain-41](playbook-captain.md#playbook-captain-41)], and whose `targetChildSessionId` is present exactly when the snapshot carries a suspended call.
+The target `sessionId` and `rootSessionId` shall differ respectively from those source identities, `sourceSessionId` shall equal `sourceGenerationId` exactly when the target session is a root frame, and a supplied target child identity shall differ from every source and target identity visible to that frame; an empty, accessor-backed, unknown, missing, extra, or inconsistent adoption-context member shall reject during [[playbook-runtime-61](#playbook-runtime-61)] preflight.
+Adoption shall not restore any source sequence counter: the fresh target trace, turn, judge-call, player-call, supported direct-Captain-call, playbook-call, and apply-call counter spaces shall start at zero.
+Before its session-start trace, a retained snapshot with no suspended call shall leave the target playbook-call counter at zero; where it has one, adoption shall consume the fresh `playbook-1` target call id, replace the descriptor's source child id with `targetChildSessionId`, omit the source `turnId`, and set the target playbook-call counter to one, without changing the opaque persisted machine state or invoking the child host.
+The target runtime shall emit exactly one `session.started` trace as sequence `1` before actor startup, carrying its adopted normalized `state` and optional `stateId` plus the exact nested `adoption` object below, with no `turnId`; a suspended adoption shall additionally carry target call id `playbook-1` as the event's top-level `callId`:
+
+| Adoption shape | Exact `adoption` payload |
+| --- | --- |
+| No suspended call | `{ sourceSessionId, sourceGenerationId }` |
+| Suspended call | `{ sourceSessionId, sourceGenerationId, sourceCallId, sourceChildSessionId, targetCallId: 'playbook-1', targetChildSessionId }` |
+
+Only after that start trace shall actor startup and bridge confirmation commit the adopted state; a later reconstruction mismatch shall perform failed-start cleanup with one best-effort target `session.disposed`, while a preflight rejection shall emit no target trace.
+After successful adoption, the immediate export shall therefore carry trace sequence `1`, zero fresh turn, judge, and player counters, zero direct-Captain counter when supported, and playbook-call sequence zero or one according to the table; every later target boundary shall allocate from those fresh counters rather than continue any source id or sequence ([DR-038](../decisions/038-universal-run-resumption.md) §5).
+Same-engagement `restore` shall remain trace-silent and shall preserve the snapshot's exact identities and counters under [[playbook-runtime-45](#playbook-runtime-45)].
 
 ### Control surface
 
@@ -1120,7 +1139,7 @@ contract agrees with
 `callCaptain`, `callJudge`, `callPlaybook`, `emitStatus`, and
 `emitTelemetry`.
 The test suite shall additionally fail unless the module exports
-the role-binding, player-call, pending-question, player-session-store, Captain-call, nested-call, JSON value/error, structured-state,
+the role-binding, player-call, pending-question, player-session-store, adoption-context, Captain-call, nested-call, JSON value/error, structured-state,
 session, trace, run-result, runtime, and runtime-factory contract types,
 unless `PlayerResult`
 exposes optional `resumeToken`, unless `callPlayer` requires explicit
@@ -1131,7 +1150,7 @@ exposes an optional tool allowlist whose omission is distinct from an explicit
 empty list,
 unless `PlaybookRuntime.init` accepts a causal
 `PlaybookSession` with optional exact `PlaybookRoleBinding` metadata and the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-58](#playbook-runtime-58)], unless pending Boss questions use the exact asker union without a player field, and unless `handleBossInput` and
-`resumePlaybookCall` return `PlaybookRunResult` whose terminal variant alone exposes optional `stateDescription`, and unless `adopt` has the exact optional session-and-snapshot signature; its import graph
+`resumePlaybookCall` return `PlaybookRunResult` whose terminal variant alone exposes optional `stateDescription`, and unless `PlaybookAdoptionContext` and `adopt` have the exact source, target-child, session, snapshot, and context shapes; its import graph
 includes no CODE or FSM module (verifying [[playbook-runtime-34](#playbook-runtime-34)], [[playbook-runtime-41](#playbook-runtime-41)], [[playbook-runtime-58](#playbook-runtime-58)], and [[playbook-runtime-61](#playbook-runtime-61)]).
 The test suite shall additionally fail unless the linker contract
 itself still states the clauses the shipped artifacts depend on, since
@@ -1274,8 +1293,8 @@ The suite shall also fail unless the compiled default Captain exposes both snaps
 
 #### playbook-runtime-62
 
-Where the integration suite exercises retained-snapshot adoption, it shall fail unless every shared-factory runtime exposes `adopt` even without retained-generation metadata, a fresh runtime adopts a parked schema-version-3 snapshot under a distinct valid engagement identity and continues from the persisted state without initial classification, that successful adoption closes all three initialization paths, and a bespoke capability-less runtime remains valid with the member absent (verifying [[playbook-runtime-61](#playbook-runtime-61)]).
-It shall fail unless adopting a suspended nested snapshot reconstructs the exact pending call and turn ownership without another host child call or start trace, then resumes the parent exactly once; unless schema, playbook-id, and local-role binding mismatches reject before any player-session-store or host effect; unless successful adoption leaves retained role-token projections unapplied through both a supplied store whose `restore` rejects and the runtime-private fallback; unless, in that suspended nested case, persisted-state and suspended-bridge mismatches produce no child-host call or duplicate start/finish boundary; and unless failed pre-confirm validation rolls provisional bridge ownership back so the same unused runtime accepts an exact retry (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-42](#playbook-runtime-42)]).
+Where the integration suite exercises retained-snapshot adoption, it shall fail unless every shared-factory runtime exposes `adopt` even without retained-generation metadata, a fresh runtime adopts a parked schema-version-3 snapshot under a distinct valid engagement identity and continues from the persisted state without initial classification, that successful adoption closes all three initialization paths, and a bespoke capability-less runtime remains valid with the member absent (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-65](#playbook-runtime-65)]).
+It shall fail unless adopting a suspended nested snapshot reconstructs the exact persisted invocation under fresh target call, child, and counter ownership without another host child call or `playbook.call.started` trace, then resumes the parent exactly once; unless schema, playbook-id, local-role binding, and adoption-context preflight mismatches reject before any player-session-store or host effect; unless successful adoption leaves retained role-token projections unapplied through both a supplied store whose `restore` rejects and the runtime-private fallback; unless, in that suspended case, persisted-state and bridge mismatches produce no child-host call or playbook-call boundary and clean up the attempted target session; and unless failed reconstruction rolls provisional bridge ownership back so the same unused runtime accepts an exact retry (verifying [[playbook-runtime-61](#playbook-runtime-61)], [[playbook-runtime-65](#playbook-runtime-65)], and [[playbook-runtime-42](#playbook-runtime-42)]).
 
 #### playbook-runtime-64
 
@@ -1283,6 +1302,13 @@ Where the integration suite adopts one parked snapshot into fresh target session
 For every supplied-store case, it shall fail unless adoption itself performs no selection, restore, or update (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-63](#playbook-runtime-63)]).
 It shall fail unless the first resumed player invocation selects exactly once before its start trace and host call, the start trace names the target player and selected continuation, and a validated result carrying a replacement token updates that same target store (verifying [[playbook-runtime-55](#playbook-runtime-55)] and [[playbook-runtime-63](#playbook-runtime-63)]).
 It shall also fail unless the storeless adoption path starts fresh rather than seeding private continuation from the retained projection (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-63](#playbook-runtime-63)]).
+
+#### playbook-runtime-66
+
+Where the integration suite adopts parked snapshots that collectively carry nonzero source trace, turn, judge, player, playbook, and supported direct-Captain counters, it shall fail unless every target session and generation identity differs from its source context, the only adoption-time telemetry for each is one target `session.started` at sequence `1` carrying the exact state and lineage payload of [[playbook-runtime-65](#playbook-runtime-65)], every immediate target snapshot carries fresh counters, and the next target turn plus every applicable judge, player, direct-Captain, and apply call allocate id `1` with a contiguous target trace rather than a source continuation (verifying [[playbook-runtime-65](#playbook-runtime-65)]).
+Where the source snapshot is suspended behind a child, the suite shall fail unless adoption requires a fresh target child identity, exposes target `playbook-1` with no source turn id in both its session-start lineage and exported descriptor, resumes that edge once with its finish at target sequence `2` without another host child call or `playbook.call.started`, and allocates a later target nested call as `playbook-2` rather than colliding with the adopted edge (verifying [[playbook-runtime-65](#playbook-runtime-65)]).
+The suite shall fail unless absent, extra, empty, accessor-backed, source-equal, or suspended-shape-inconsistent adoption context rejects before actor, store, port, status, or telemetry effects; and unless a reconstruction failure after the target start trace emits one best-effort target disposal, releases provisional call ownership, and permits an exact snapshot-and-context retry under a fresh target identity whose trace begins at sequence `1` (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-65](#playbook-runtime-65)]).
+It shall also fail unless same-engagement restore of those snapshots remains trace-silent and preserves their exact source counters, suspended call, child, and turn ownership (verifying [[playbook-runtime-45](#playbook-runtime-45)] and [[playbook-runtime-65](#playbook-runtime-65)]).
 
 #### playbook-runtime-59
 

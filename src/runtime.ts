@@ -174,6 +174,16 @@ export interface PlaybookSession {
   ports: PlaybookPorts;
 }
 
+// DR-038 §5: the source identities and, for a suspended nested call, the
+// fresh target child identity that let adoption start one explicit target
+// trace lineage without carrying source-session counters or child UUIDs
+// forward.
+export interface PlaybookAdoptionContext {
+  readonly sourceSessionId: string;
+  readonly sourceGenerationId: string;
+  readonly targetChildSessionId?: string;
+}
+
 export type PlaybookTraceType =
   | 'session.started'
   | 'boss.input.received'
@@ -297,6 +307,7 @@ export interface PlaybookRuntime {
   adopt?(
     session: PlaybookSession,
     snapshot: PlaybookRuntimeSnapshot,
+    context: PlaybookAdoptionContext,
   ): Promise<void>;
   readonly retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata;
   // DR-029 optional control-surface capability: a runtime implements

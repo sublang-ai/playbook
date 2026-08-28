@@ -325,12 +325,20 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     ).toEqual(
       interfaceProperties(linkSpec, 'PlaybookRetainedGenerationMetadata'),
     );
+    expect(interfaceProperties(runtimeDts, 'PlaybookAdoptionContext')).toEqual([
+      'sourceGenerationId:string',
+      'sourceSessionId:string',
+      'targetChildSessionId?:string',
+    ]);
+    expect(interfaceProperties(runtimeDts, 'PlaybookAdoptionContext')).toEqual(
+      interfaceProperties(linkSpec, 'PlaybookAdoptionContext'),
+    );
     for (const source of [runtimeDts, linkSpec]) {
       expect(interfaceBody(source, 'PlaybookRuntime')).toMatch(
         /readonly retainedGenerationMetadata\?:\s*PlaybookRetainedGenerationMetadata;/,
       );
       expect(interfaceBody(source, 'PlaybookRuntime')).toMatch(
-        /adopt\?\s*\(\s*session:\s*PlaybookSession,\s*snapshot:\s*PlaybookRuntimeSnapshot,?\s*\):\s*Promise<void>;/,
+        /adopt\?\s*\(\s*session:\s*PlaybookSession,\s*snapshot:\s*PlaybookRuntimeSnapshot,\s*context:\s*PlaybookAdoptionContext,?\s*\):\s*Promise<void>;/,
       );
     }
     expect(
@@ -585,12 +593,24 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(classification).toMatch(/opts into classification only/);
     expect(classification).toContain('createXStatePlaybookRuntime');
     const adoption = sectionOf(linkSpec, 'Retained-snapshot adoption (optional)');
-    expect(adoption).toContain('adopt(session, snapshot)');
+    expect(adoption).toContain('adopt(session, snapshot, context)');
     expect(adoption).toMatch(
       /Every runtime the shared `createXStatePlaybookRuntime` factory\s+constructs implements `adopt`/,
     );
     expect(adoption).toMatch(/fresh valid `PlaybookSession`\s+identity/);
     expect(adoption).toMatch(/before calling the\s+runtime capability/);
+    expect(adoption).toMatch(
+      /exact closed-schema `PlaybookAdoptionContext` whose nonempty\s+`sourceSessionId` names the retained frame's source runtime session/,
+    );
+    expect(adoption).toMatch(
+      /consumes `playbook-1` as the fresh target call id/,
+    );
+    expect(adoption).toMatch(
+      /emit exactly\s+one `session\.started` as target trace sequence `1`/,
+    );
+    expect(adoption).toMatch(
+      /same-engagement restore remains trace-silent and preserves its source\s+identities and counters exactly/,
+    );
     expect(adoption).toMatch(
       /shall not apply the retained snapshot's `roleResumeTokens` through a\s+supplied player-session store's `restore` operation or seed runtime-private\s+continuation from them/,
     );
@@ -629,6 +649,7 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       'PlaybookControlView',
       'PlaybookPorts',
       'PlaybookSession',
+      'PlaybookAdoptionContext',
       'PlaybookTraceEvent',
       'PlaybookRuntimeSnapshot',
       'PlaybookRetainedGenerationMetadata',

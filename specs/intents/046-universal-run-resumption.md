@@ -32,7 +32,7 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
    Add optional generation adoption — restore with engagement identity relaxed to the structural envelope — rebuilding the nested call bridges as live restore does, rejecting envelope mismatches before any effect; land the `playbook-runtime.md` items and unit plus integration tests for accepted, rejected, and capability-less paths.
 4. **Bind players from the ledger.** _[done]_
    On adoption, bind each role from the current Captain-session player ledger, never from retained token projections, with fresh conversations for roles the ledger cannot supply; land the continuity items and tests for unchanged, advanced, and swapped players.
-5. **Trace the adoption lineage.**
+5. **Trace the adoption lineage.** _[done]_
    Run adopted generations under fresh runtime session UUIDs and counters, trace the adoption boundary with source session and generation identity, and land the trace items and tests.
 6. **Transfer generations across sessions.**
    Implement predecessor selection (newest settled record, same working directory) and the guarded move-and-clear exchange under the store's lease discipline; land the `playbook-cli.md` items and cross-session store tests.

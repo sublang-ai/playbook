@@ -44,6 +44,7 @@ interface PlaybookRuntime {
   adopt?(
     session: PlaybookSession,
     snapshot: PlaybookRuntimeSnapshot,
+    context: PlaybookAdoptionContext,
   ): Promise<void>;
   handleBossInput(turn: {
     text: string;
@@ -59,6 +60,12 @@ interface PlaybookRuntime {
 
 interface PlaybookRetainedGenerationMetadata {
   readonly unfinishedFinalStateIds: readonly string[];
+}
+
+interface PlaybookAdoptionContext {
+  readonly sourceSessionId: string;
+  readonly sourceGenerationId: string;
+  readonly targetChildSessionId?: string;
 }
 
 interface PlaybookSession {
@@ -465,8 +472,13 @@ Direct-Captain start and finish payloads shall carry `allowedTools` exactly when
 the originating `CaptainCallOptions` selects it and shall omit the member when
 the call preserves the host Captain's configured tools.
 `session.started` and `session.disposed` carry their descriptor as top-level
-`state` and its singular `stateId` when present. Every judge start and finish
-carries the working snapshot's singular `stateId` when one exists;
+`state` and its singular `stateId` when present. An adopted runtime begins its
+fresh target trace with `session.started` at sequence `1`; that event also
+carries an exact nested `adoption` object with `sourceSessionId` and
+`sourceGenerationId`, plus the source/target call and child-session identities
+when a suspended edge was rebased. The suspended form carries the fresh target
+call id as top-level `callId` and carries no source `turnId`. Every judge start
+and finish carries the working snapshot's singular `stateId` when one exists;
 classification uses the current descriptor and adjudication uses the invoking
 actor input. The default Captain always has such a singular id, while a
 parallel snapshot may omit it. Every judge finish also carries
@@ -1408,7 +1420,7 @@ callable and terminal.
 ## Retained-snapshot adoption (optional)
 
 A linked runtime may implement the optional adoption capability of
-`@sublang/playbook/runtime` — `adopt(session, snapshot)` — as a third
+`@sublang/playbook/runtime` — `adopt(session, snapshot, context)` — as a third
 initialization path distinct from `init` and same-engagement `restore`.
 Adoption may bind a retained generation to a fresh valid `PlaybookSession`
 identity. Every runtime the shared `createXStatePlaybookRuntime` factory
@@ -1417,27 +1429,65 @@ retained-generation classification metadata; a bespoke runtime may omit it,
 and hosts feature-detect the capability by member presence.
 
 Before actor construction or any player-session-store, port, trace, status,
-or telemetry effect, `adopt` shall validate and detach the target session and
-the part of the exact structural envelope visible to the runtime: snapshot
-schema version `3`, target playbook id, the factory's already-validated
-artifact contract, and any supplied local-role binding set against the
-artifact's declared roles. The adopting host
+or telemetry effect, `adopt` shall validate and detach the target session, the
+snapshot, and an exact closed-schema `PlaybookAdoptionContext` whose nonempty
+`sourceSessionId` names the retained frame's source runtime session, whose
+nonempty `sourceGenerationId` names the retained stack root's source
+`rootSessionId`, and whose optional nonempty `targetChildSessionId` is present
+exactly when the snapshot carries a suspended call. The source session and
+generation ids shall coincide exactly for a root frame. The target session and
+root ids shall each differ from their source counterparts, and a supplied
+target child id shall differ from every source and target identity visible to
+that frame. Accessors, unknown or missing members, empty identities, and an
+inconsistent child mapping shall reject during preflight.
+
+That preflight shall also validate the part of the exact structural envelope
+visible to the runtime: snapshot schema version `3`, target playbook id, the
+factory's already-validated artifact contract, and any supplied local-role
+binding set against the artifact's declared roles. The adopting host
 owns the working-directory and complete catalog-entry comparison — registry
 module identity, manifest command, options, and role set — plus every retained
 frame's artifact-schema comparison, and shall perform them before calling the
 runtime capability (DR-038 §3).
 
-After preflight, adoption shall reconstruct the persisted actor and nested
-call bridge through the same transaction as restore: prepare the exact
-suspended-call descriptor or its explicit absence, seed call-to-turn
-ownership, suppress startup inspection effects, require the reconstructed
-active normalized state to equal the persisted state, drain suppressed work,
-and confirm the bridge as the final fallible step. Any envelope, state, or
-bridge mismatch on an otherwise unused runtime shall reject without a
-duplicate child call or start/finish boundary, roll provisional ownership back
-through failed-start cleanup, and leave that runtime reusable after successful
-cleanup. A successful adoption shall close `init`, `restore`, and `adopt`
-under the ordinary one-start runtime lifecycle.
+Adoption shall not restore any source counter. The fresh target trace, turn,
+judge-call, player-call, supported direct-Captain-call, playbook-call, and
+apply-call counter spaces shall start at zero. Before its session-start trace,
+a descriptor-free adoption leaves the playbook-call counter at zero. A
+suspended adoption instead consumes `playbook-1` as the fresh target call id,
+replaces the descriptor's source child id with `targetChildSessionId`, omits the
+source `turnId`, and sets the target playbook-call counter to one; it changes no
+opaque persisted machine value and makes no child-host call.
+
+After preflight, adoption shall construct the persisted actor and prepare the
+nested bridge through the same transaction as restore, using the rebased
+descriptor or an explicit absence. Before actor startup it shall emit exactly
+one `session.started` as target trace sequence `1`, carrying the adopted
+top-level `state` and optional `stateId` plus an exact `adoption` object:
+
+- without a suspended call, `{ sourceSessionId, sourceGenerationId }`;
+- with a suspended call, `{ sourceSessionId, sourceGenerationId,
+  sourceCallId, sourceChildSessionId, targetCallId: 'playbook-1',
+  targetChildSessionId }`, while the event also carries top-level
+  `callId: 'playbook-1'` and no `turnId`.
+
+The runtime shall then start the actor with inspection effects suppressed,
+claim the rebased descriptor, require the reconstructed active normalized
+state to equal the retained state under that rebase, drain suppressed work,
+and confirm the bridge as the final fallible step. A preflight mismatch emits
+nothing. A later state or bridge mismatch makes no child-host call or
+playbook-call start/finish boundary, rolls provisional ownership back, and,
+because the target start was attempted, performs failed-start cleanup with one
+best-effort target `session.disposed`; successful cleanup leaves the runtime
+reusable. A successful adoption shall close `init`, `restore`, and `adopt`
+under the ordinary one-start runtime lifecycle. Its immediate export shall
+carry trace sequence `1`, zero fresh turn, judge, and player counters, zero
+direct-Captain counter when supported, and playbook-call sequence zero or one
+according to the suspended shape. Later target turns and calls allocate from
+those fresh counters rather than continue any source id or sequence. Ordinary
+same-engagement restore remains trace-silent and preserves its source
+identities and counters exactly (DR-038 §5).
+
 Adoption shall not apply the retained snapshot's `roleResumeTokens` through a
 supplied player-session store's `restore` operation or seed runtime-private
 continuation from them. For every later local-role invocation, any target
@@ -1450,9 +1500,7 @@ the ordinary continuation rules authorize a store mutation, that mutation
 shall target the same store. It shall never fall back to the retained token
 projection. A replacement binding whose current selection is `false` therefore
 starts fresh under its new identities; without a supplied store, the target
-runtime's private continuation starts empty (DR-038 §4). Fresh counters and
-lineage are independent adoption rules specified by their owning runtime
-behavior.
+runtime's private continuation starts empty (DR-038 §4).
 
 ## Retained-generation classification (optional)
 

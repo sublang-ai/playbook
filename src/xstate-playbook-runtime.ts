@@ -41,6 +41,7 @@ import {
 import type {
   CaptainResult,
   JsonValue,
+  PlaybookAdoptionContext,
   PlaybookCallResult,
   PlaybookControlAction,
   PlaybookControlReceipt,
@@ -52,6 +53,7 @@ import type {
   PlaybookRuntimeSnapshot,
   PlaybookSession,
   PlaybookState,
+  PlaybookSuspendedCall,
   PlaybookTraceEvent,
   PlaybookTraceType,
   PlayerResult,
@@ -763,6 +765,111 @@ function sortJson(value: JsonValue): JsonValue {
 
 function stableJson(value: unknown, path: string): string {
   return JSON.stringify(sortJson(snapshotJsonValue(value, path)));
+}
+
+function requireAdoptionIdentity(
+  value: JsonValue | undefined,
+  path: string,
+): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new TypeError(`${path} must be a non-empty string`);
+  }
+  return value;
+}
+
+// DR-038 §5: capture the host-owned source lineage before adoption binds
+// anything. The retained stack already carries both identities: a frame's
+// sessionId names its source runtime, while the common rootSessionId names the
+// retained generation. A suspended parent also needs the host's freshly
+// allocated target child id so its bridge can be re-keyed without leaking a
+// source-session id into the new engagement.
+function snapshotAdoptionContext(
+  value: PlaybookAdoptionContext | undefined,
+  targetSession: PlaybookSession,
+  sourceSnapshot: PlaybookRuntimeSnapshot,
+): Readonly<PlaybookAdoptionContext> {
+  const captured = snapshotJsonValue(value, 'playbook adoption context');
+  if (
+    captured === null ||
+    Array.isArray(captured) ||
+    typeof captured !== 'object'
+  ) {
+    throw new TypeError('playbook adoption context must be an object');
+  }
+  const fields = captured as { readonly [key: string]: JsonValue };
+  const hasSuspendedCall = sourceSnapshot.suspendedCall !== undefined;
+  const expectedKeys = [
+    'sourceGenerationId',
+    'sourceSessionId',
+    ...(hasSuspendedCall ? ['targetChildSessionId'] : []),
+  ].sort();
+  const actualKeys = Object.keys(fields).sort();
+  if (
+    actualKeys.length !== expectedKeys.length ||
+    actualKeys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    throw new TypeError(
+      `playbook adoption context must contain exactly ${expectedKeys.join(', ')}`,
+    );
+  }
+
+  const sourceSessionId = requireAdoptionIdentity(
+    fields.sourceSessionId,
+    'playbook adoption context sourceSessionId',
+  );
+  const sourceGenerationId = requireAdoptionIdentity(
+    fields.sourceGenerationId,
+    'playbook adoption context sourceGenerationId',
+  );
+  const sourceIsRoot = sourceSessionId === sourceGenerationId;
+  if ((targetSession.depth === 0) !== sourceIsRoot) {
+    throw new TypeError(
+      'playbook adoption context source identities do not match the target frame depth',
+    );
+  }
+
+  const targetChildSessionId = hasSuspendedCall
+    ? requireAdoptionIdentity(
+        fields.targetChildSessionId,
+        'playbook adoption context targetChildSessionId',
+      )
+    : undefined;
+  const sourceIds = new Set([
+    sourceSessionId,
+    sourceGenerationId,
+    ...(sourceSnapshot.suspendedCall === undefined
+      ? []
+      : [sourceSnapshot.suspendedCall.childSessionId]),
+  ]);
+  const targetIds = [
+    targetSession.sessionId,
+    targetSession.rootSessionId,
+    ...(targetSession.parentSessionId === undefined
+      ? []
+      : [targetSession.parentSessionId]),
+    ...(targetChildSessionId === undefined ? [] : [targetChildSessionId]),
+  ];
+  if (targetIds.some((identity) => sourceIds.has(identity))) {
+    throw new TypeError(
+      'playbook adoption target identities must be fresh from the source generation',
+    );
+  }
+  if (
+    targetChildSessionId !== undefined &&
+    (targetChildSessionId === targetSession.sessionId ||
+      targetChildSessionId === targetSession.rootSessionId ||
+      targetChildSessionId === targetSession.parentSessionId)
+  ) {
+    throw new TypeError(
+      'playbook adoption targetChildSessionId must name a fresh child frame',
+    );
+  }
+
+  return Object.freeze({
+    sourceSessionId,
+    sourceGenerationId,
+    ...(targetChildSessionId === undefined ? {} : { targetChildSessionId }),
+  });
 }
 
 /**
@@ -4007,12 +4114,14 @@ export function createXStatePlaybookRuntime<TOptions>(
     // DR-014 / DR-038: restore and adoption share one transactional snapshot
     // start. Adoption deliberately differs at the public boundary so a host
     // can feature-detect permission to bind a retained generation to a fresh
-    // engagement identity; the runtime-visible schema, playbook, actor-state,
-    // and nested-bridge envelope remains exact in either mode.
+    // engagement identity; the runtime-visible schema, playbook, and actor
+    // state remain exact, while adoption deliberately re-keys a suspended
+    // bridge into the fresh target counter and session lineage.
     async function rehydrateSnapshot(
       kind: 'restore' | 'adopt',
       nextSession: PlaybookSession,
       snapshot: PlaybookRuntimeSnapshot,
+      context?: PlaybookAdoptionContext,
     ): Promise<void> {
       if (initialized || disposed || disposalPromise !== undefined) {
         throw new Error(
@@ -4033,11 +4142,26 @@ export function createXStatePlaybookRuntime<TOptions>(
           'runtime snapshot sequences.captainCall is required for a direct-Captain artifact',
         );
       }
-      const suspendedCall = boundSnapshot.suspendedCall;
+      const adoptionContext =
+        kind === 'adopt'
+          ? snapshotAdoptionContext(context, boundSession, boundSnapshot)
+          : undefined;
+      const sourceSuspendedCall = boundSnapshot.suspendedCall;
+      const suspendedCall: PlaybookSuspendedCall | undefined =
+        adoptionContext !== undefined && sourceSuspendedCall !== undefined
+          ? Object.freeze({
+              callId: 'playbook-1',
+              stateId: sourceSuspendedCall.stateId,
+              playbookId: sourceSuspendedCall.playbookId,
+              text: sourceSuspendedCall.text,
+              childSessionId: adoptionContext.targetChildSessionId!,
+            })
+          : sourceSuspendedCall;
       let priorExternalPlayerTokens:
         | Readonly<Record<string, string>>
         | undefined;
       let externalStoreRestoreAttempted = false;
+      let adoptionStartAttempted = false;
       initialized = true;
       let finishInitialization!: () => void;
       const initialization = new Promise<void>((resolve) => {
@@ -4048,17 +4172,30 @@ export function createXStatePlaybookRuntime<TOptions>(
         session = boundSession;
         savedPorts = boundSession.ports;
         runtimePorts = createRuntimePorts(boundSession.ports);
-        traceSequence = boundSnapshot.sequences.trace;
-        turnSequence = boundSnapshot.sequences.turn;
-        judgeCallSequence = boundSnapshot.sequences.judgeCall;
-        playerCallSequence = boundSnapshot.sequences.playerCall;
-        playbookCallSequence = boundSnapshot.sequences.playbookCall;
-        captainCallSequence = boundSnapshot.sequences.captainCall ?? 0;
-        // The runtime snapshot carries no apply counter (PBRT-50); every
-        // apply boundary consumed trace numbers, so the persisted trace
-        // counter is a collision-safe id floor here too, keeping
-        // `apply-<n>` call ids unique across a snapshot start.
-        applyCallSequence = boundSnapshot.sequences.trace;
+        if (adoptionContext === undefined) {
+          traceSequence = boundSnapshot.sequences.trace;
+          turnSequence = boundSnapshot.sequences.turn;
+          judgeCallSequence = boundSnapshot.sequences.judgeCall;
+          playerCallSequence = boundSnapshot.sequences.playerCall;
+          playbookCallSequence = boundSnapshot.sequences.playbookCall;
+          captainCallSequence = boundSnapshot.sequences.captainCall ?? 0;
+          // The runtime snapshot carries no apply counter (PBRT-50); every
+          // apply boundary consumed trace numbers, so the persisted trace
+          // counter is a collision-safe id floor here too, keeping
+          // `apply-<n>` call ids unique across a snapshot start.
+          applyCallSequence = boundSnapshot.sequences.trace;
+        } else {
+          // DR-038 §5: a new engagement owns a new counter space. A
+          // rebased live child consumes the first target-local playbook id;
+          // all other counters begin before their first target boundary.
+          traceSequence = 0;
+          turnSequence = 0;
+          judgeCallSequence = 0;
+          playerCallSequence = 0;
+          playbookCallSequence = suspendedCall === undefined ? 0 : 1;
+          captainCallSequence = 0;
+          applyCallSequence = 0;
+        }
         // Same-engagement restore owns the snapshot's token projection.
         // Adoption leaves it inert: the fresh engagement's player ledger (or
         // the absence of one) is authoritative, and its binding rules land
@@ -4079,6 +4216,33 @@ export function createXStatePlaybookRuntime<TOptions>(
         }
         suppressInspectionEmissions = true;
         actor = buildActor(runtimePorts, boundSnapshot.machine);
+        if (adoptionContext !== undefined) {
+          adoptionStartAttempted = true;
+          await emitTrace(
+            'session.started',
+            {
+              state: boundSnapshot.state,
+              ...stateIdentity(boundSnapshot.state.stateId),
+              adoption: {
+                sourceSessionId: adoptionContext.sourceSessionId,
+                sourceGenerationId: adoptionContext.sourceGenerationId,
+                ...(sourceSuspendedCall === undefined ||
+                suspendedCall === undefined
+                  ? {}
+                  : {
+                      sourceCallId: sourceSuspendedCall.callId,
+                      sourceChildSessionId:
+                        sourceSuspendedCall.childSessionId,
+                      targetCallId: suspendedCall.callId,
+                      targetChildSessionId: suspendedCall.childSessionId,
+                    }),
+              },
+            },
+            suspendedCall === undefined
+              ? {}
+              : { callId: suspendedCall.callId },
+          );
+        }
         actor.start();
         // A start-time actor error rides the startup emission channel
         // (latchRuntimeError); consume both latches here so the original
@@ -4150,7 +4314,9 @@ export function createXStatePlaybookRuntime<TOptions>(
             );
           }
         }
-        await cleanupFailedStart(failure, { emitDisposal: false });
+        await cleanupFailedStart(failure, {
+          emitDisposal: adoptionStartAttempted,
+        });
         throw failure;
       } finally {
         finishInitialization();
@@ -4284,16 +4450,17 @@ export function createXStatePlaybookRuntime<TOptions>(
         await rehydrateSnapshot('restore', nextSession, snapshot);
       },
 
-      // DR-038 §1 / PBRT-61: adoption is restore under a fresh engagement
-      // identity, exposed separately so capability-less bespoke runtimes can
-      // omit it. Runtime-visible preflight mismatches reject before effects;
-      // reconstruction mismatches use the same effect-suppressed rollback as
-      // restore.
+      // DR-038 §§1,5 / PBRT-61/PBRT-65: adoption is restore under a fresh
+      // engagement identity and counter lineage, exposed separately so
+      // capability-less bespoke runtimes can omit it. Runtime-visible
+      // preflight mismatches reject before effects; after preflight the new
+      // session.started boundary owns failed-start cleanup just like init.
       async adopt(
         nextSession: PlaybookSession,
         snapshot: PlaybookRuntimeSnapshot,
+        context: PlaybookAdoptionContext,
       ): Promise<void> {
-        await rehydrateSnapshot('adopt', nextSession, snapshot);
+        await rehydrateSnapshot('adopt', nextSession, snapshot, context);
       },
 
       // DR-029 / PBRT-52: side-effect-free control view over the live

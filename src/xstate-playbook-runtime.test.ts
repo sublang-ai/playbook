@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { assign, createActor, createMachine } from 'xstate';
 
 import type {
+  PlaybookAdoptionContext,
   PlaybookPorts,
   PlaybookRunResult,
   PlaybookRuntime,
@@ -165,6 +166,17 @@ function makeSession(
     depth: 0,
     ...(playerSessions === undefined ? {} : { playerSessions }),
     ports,
+  };
+}
+
+function adoptionFrom(
+  source: Pick<PlaybookSession, 'sessionId' | 'rootSessionId'>,
+  targetChildSessionId?: string,
+) {
+  return {
+    sourceSessionId: source.sessionId,
+    sourceGenerationId: source.rootSessionId,
+    ...(targetChildSessionId === undefined ? {} : { targetChildSessionId }),
   };
 }
 
@@ -2591,6 +2603,67 @@ describe('direct-Captain actor over the shared factory', () => {
     await restored.dispose();
   });
 
+  it('starts direct-Captain counters from one after adoption', async () => {
+    let captainCalls = 0;
+    const { ports, telemetry } = makeRecordingPorts({
+      callCaptain: async () => {
+        captainCalls += 1;
+        return {
+          status: 'ok',
+          finalText:
+            captainCalls === 1 ? 'Which release day?' : 'Release Tuesday.',
+        };
+      },
+      callJudge: async (prompt) => {
+        if (prompt.includes('Classify the following Boss message')) {
+          return '{"type":"BOSS_REPLY","questionId":"captain-q-1"}';
+        }
+        return captainCalls === 1
+          ? '{"guard":"needsBossReply"}'
+          : '{"guard":"final"}';
+      },
+    });
+    const sourceSession = makeSession(ports);
+    const source = createCaptainRuntime({});
+    await source.init(sourceSession);
+    const parked = await source.handleBossInput(turn('release timing'));
+    expect(parked.state.stateId).toBe('awaitBossReply');
+    const snapshot = source.exportSnapshot?.();
+    if (snapshot === undefined) throw new Error('expected parked snapshot');
+    expect(snapshot.sequences.captainCall).toBe(1);
+    await source.dispose();
+    const targetTraceStart = telemetry.length;
+
+    const targetSession = makeSession(ports);
+    const target = createCaptainRuntime({});
+    await target.adopt?.(
+      targetSession,
+      snapshot,
+      adoptionFrom(sourceSession),
+    );
+    expect(target.exportSnapshot?.()?.sequences).toMatchObject({
+      trace: 1,
+      turn: 0,
+      judgeCall: 0,
+      captainCall: 0,
+    });
+    const result = await target.handleBossInput(turn('Tuesday'));
+    expect(result.outcome).toBe('terminal');
+
+    const targetTraces = telemetry
+      .slice(targetTraceStart)
+      .filter(({ topic }) => topic === 'playbook.trace')
+      .map(({ payload }) => payload as PlaybookTraceEvent);
+    expect(targetTraces.map(({ sequence }) => sequence)).toEqual(
+      targetTraces.map((_event, index) => index + 1),
+    );
+    expect(
+      targetTraces.find(({ type }) => type === 'captain.call.started'),
+    ).toMatchObject({ callId: 'captain-1', turnId: 1 });
+
+    await target.dispose();
+  });
+
   it('rejects a direct-Captain snapshot missing its call counter', async () => {
     let captainCalls = 0;
     const { ports, telemetry } = makeRecordingPorts({
@@ -3885,94 +3958,271 @@ describe('nested playbook actor over the shared factory', () => {
     await runtime.dispose();
   });
 
-  it.each(['restore', 'adopt'] as const)(
-    '%ss a suspended child without replaying its start',
-    async (mode) => {
-      let hostStarts = 0;
-      const { ports, statuses, telemetry } = makeRecordingPorts({
-        callPlaybook: async (request) => {
-          hostStarts += 1;
-          expect(request).toMatchObject({ playbookId: 'child', text: 'do it' });
-          return { state: 'suspended', childSessionId: 'child-session-1' };
-        },
-      });
-      const session = makeSession(ports);
-      const first = createNestedRuntime({});
-      await first.init(session);
-      const suspended = await first.handleBossInput(turn('do it'));
-      expect(suspended.outcome).toBe('suspended');
+  it('restores a suspended child without replaying its start', async () => {
+    let hostStarts = 0;
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlaybook: async (request) => {
+        hostStarts += 1;
+        expect(request).toMatchObject({ playbookId: 'child', text: 'do it' });
+        return { state: 'suspended', childSessionId: 'child-session-1' };
+      },
+    });
+    const session = makeSession(ports);
+    const first = createNestedRuntime({});
+    await first.init(session);
+    const suspended = await first.handleBossInput(turn('do it'));
+    expect(suspended.outcome).toBe('suspended');
 
-      const snapshot = first.exportSnapshot?.();
-      if (
-        snapshot?.schemaVersion !== 3 ||
-        snapshot.suspendedCall === undefined
-      ) {
-        throw new Error('expected a schema-3 suspended-call snapshot');
-      }
-      expect(snapshot.suspendedCall).toEqual({
-        callId: 'playbook-1',
-        stateId: 'call',
-        playbookId: 'child',
-        text: 'do it',
-        childSessionId: 'child-session-1',
-        turnId: 1,
-      });
-      expect(snapshot.sequences).toMatchObject({
-        turn: 1,
-        playbookCall: 1,
-      });
-      const telemetryBeforeRestore = telemetry.length;
-      const statusesBeforeRestore = statuses.length;
+    const snapshot = first.exportSnapshot?.();
+    if (
+      snapshot?.schemaVersion !== 3 ||
+      snapshot.suspendedCall === undefined
+    ) {
+      throw new Error('expected a schema-3 suspended-call snapshot');
+    }
+    expect(snapshot.suspendedCall).toEqual({
+      callId: 'playbook-1',
+      stateId: 'call',
+      playbookId: 'child',
+      text: 'do it',
+      childSessionId: 'child-session-1',
+      turnId: 1,
+    });
+    expect(snapshot.sequences).toMatchObject({
+      turn: 1,
+      playbookCall: 1,
+    });
+    const telemetryBeforeRestore = telemetry.length;
+    const statusesBeforeRestore = statuses.length;
 
-      const restored = createNestedRuntime({});
-      const targetSession = mode === 'restore' ? session : makeSession(ports);
-      if (mode === 'adopt') {
-        expect(targetSession.sessionId).not.toBe(session.sessionId);
-      }
-      await restored[mode]?.(targetSession, snapshot);
-      expect(hostStarts).toBe(1);
-      expect(telemetry).toHaveLength(telemetryBeforeRestore);
-      expect(statuses).toHaveLength(statusesBeforeRestore);
-      expect(
-        telemetry
-          .map(({ payload }) => payload as PlaybookTraceEvent)
-          .filter(({ type }) => type === 'playbook.call.started'),
-      ).toHaveLength(1);
-
-      const resumed = await restored.resumePlaybookCall({
-        callId: snapshot.suspendedCall.callId,
-        result: {
-          status: 'ok',
-          playbookId: snapshot.suspendedCall.playbookId,
-          childSessionId: snapshot.suspendedCall.childSessionId,
-          output: { note: 'child finished after restore' },
-        },
-        signal: new AbortController().signal,
-      });
-      expect(resumed.outcome).toBe('terminal');
-      expect('output' in resumed ? resumed.output : undefined).toEqual({
-        childOutput: { note: 'child finished after restore' },
-      });
-      const callTraces = telemetry
+    const restored = createNestedRuntime({});
+    await restored.restore?.(session, snapshot);
+    expect(hostStarts).toBe(1);
+    expect(telemetry).toHaveLength(telemetryBeforeRestore);
+    expect(statuses).toHaveLength(statusesBeforeRestore);
+    expect(
+      telemetry
         .map(({ payload }) => payload as PlaybookTraceEvent)
-        .filter(
-          ({ type }) =>
-            type === 'playbook.call.started' ||
-            type === 'playbook.call.finished',
-        );
-      expect(callTraces).toHaveLength(2);
-      expect(callTraces[1]).toMatchObject({
-        type: 'playbook.call.finished',
-        callId: snapshot.suspendedCall.callId,
-        turnId: snapshot.suspendedCall.turnId,
-        sequence: snapshot.sequences.trace + 1,
-      });
-      expect(hostStarts).toBe(1);
+        .filter(({ type }) => type === 'playbook.call.started'),
+    ).toHaveLength(1);
 
-      await restored.dispose();
-      await first.dispose();
-    },
-  );
+    const resumed = await restored.resumePlaybookCall({
+      callId: snapshot.suspendedCall.callId,
+      result: {
+        status: 'ok',
+        playbookId: snapshot.suspendedCall.playbookId,
+        childSessionId: snapshot.suspendedCall.childSessionId,
+        output: { note: 'child finished after restore' },
+      },
+      signal: new AbortController().signal,
+    });
+    expect(resumed.outcome).toBe('terminal');
+    expect('output' in resumed ? resumed.output : undefined).toEqual({
+      childOutput: { note: 'child finished after restore' },
+    });
+    const callTraces = telemetry
+      .map(({ payload }) => payload as PlaybookTraceEvent)
+      .filter(
+        ({ type }) =>
+          type === 'playbook.call.started' ||
+          type === 'playbook.call.finished',
+      );
+    expect(callTraces).toHaveLength(2);
+    expect(callTraces[1]).toMatchObject({
+      type: 'playbook.call.finished',
+      callId: snapshot.suspendedCall.callId,
+      turnId: snapshot.suspendedCall.turnId,
+      sequence: snapshot.sequences.trace + 1,
+    });
+    expect(hostStarts).toBe(1);
+
+    await restored.dispose();
+    await first.dispose();
+  });
+
+  it('adopts a suspended child under fresh lineage without replaying its start', async () => {
+    let hostStarts = 0;
+    const hostCallIds: string[] = [];
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlaybook: async (request) => {
+        hostStarts += 1;
+        hostCallIds.push(request.callId);
+        expect(request).toMatchObject({ playbookId: 'child' });
+        if (hostStarts === 5) {
+          return {
+            state: 'suspended',
+            childSessionId: 'target-child-session-2',
+          };
+        }
+        if (hostStarts <= 3) {
+          return {
+            state: 'settled',
+            result: {
+              status: 'error',
+              playbookId: 'child',
+              childSessionId: `completed-child-session-${hostStarts}`,
+              error: {
+                name: 'Error',
+                message: `source call ${hostStarts} failed before retry`,
+              },
+            },
+          };
+        }
+        return { state: 'suspended', childSessionId: 'child-session-1' };
+      },
+    });
+    const sourceSession = makeSession(ports);
+    const source = createNestedRuntime({});
+    await source.init(sourceSession);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const failed = await source.handleBossInput(
+        turn(`source failure ${attempt}`),
+      );
+      expect(failed.state.stateId).toBe('failed');
+    }
+    const suspended = await source.handleBossInput(turn('do it'));
+    expect(suspended.outcome).toBe('suspended');
+
+    const sourceSnapshot = source.exportSnapshot?.();
+    if (
+      sourceSnapshot?.schemaVersion !== 3 ||
+      sourceSnapshot.suspendedCall === undefined
+    ) {
+      throw new Error('expected a schema-3 suspended-call snapshot');
+    }
+    expect(sourceSnapshot.suspendedCall).toMatchObject({
+      callId: 'playbook-4',
+      turnId: 4,
+    });
+    const telemetryBeforeAdoption = telemetry.length;
+    const statusesBeforeAdoption = statuses.length;
+    const targetChildSessionId = 'target-child-session-1';
+    const targetSession = makeSession(ports);
+    const adopted = createNestedRuntime({});
+
+    await expect(
+      adopted.adopt?.(
+        targetSession,
+        sourceSnapshot,
+        adoptionFrom(sourceSession),
+      ),
+    ).rejects.toThrow(
+      /must contain exactly sourceGenerationId, sourceSessionId, targetChildSessionId/,
+    );
+    expect(hostStarts).toBe(4);
+    expect(telemetry).toHaveLength(telemetryBeforeAdoption);
+    expect(statuses).toHaveLength(statusesBeforeAdoption);
+
+    await adopted.adopt?.(
+      targetSession,
+      sourceSnapshot,
+      adoptionFrom(sourceSession, targetChildSessionId),
+    );
+
+    expect(hostStarts).toBe(4);
+    expect(statuses).toHaveLength(statusesBeforeAdoption);
+    const targetTraces = telemetry
+      .slice(telemetryBeforeAdoption)
+      .map(({ payload }) => payload as PlaybookTraceEvent);
+    expect(targetTraces).toHaveLength(1);
+    expect(targetTraces[0]).toMatchObject({
+      sessionId: targetSession.sessionId,
+      rootSessionId: targetSession.rootSessionId,
+      sequence: 1,
+      type: 'session.started',
+      callId: 'playbook-1',
+      payload: {
+        state: sourceSnapshot.state,
+        stateId: sourceSnapshot.state.stateId,
+        adoption: {
+          sourceSessionId: sourceSession.sessionId,
+          sourceGenerationId: sourceSession.rootSessionId,
+          sourceCallId: sourceSnapshot.suspendedCall.callId,
+          targetCallId: 'playbook-1',
+          sourceChildSessionId: sourceSnapshot.suspendedCall.childSessionId,
+          targetChildSessionId,
+        },
+      },
+    });
+    const targetSnapshot = adopted.exportSnapshot?.();
+    if (targetSnapshot?.suspendedCall === undefined) {
+      throw new Error('expected an adopted suspended-call snapshot');
+    }
+    expect(targetSnapshot.sequences).toEqual({
+      trace: 1,
+      turn: 0,
+      judgeCall: 0,
+      playerCall: 0,
+      playbookCall: 1,
+    });
+    expect(targetSnapshot.suspendedCall).toEqual({
+      callId: 'playbook-1',
+      stateId: sourceSnapshot.suspendedCall.stateId,
+      playbookId: sourceSnapshot.suspendedCall.playbookId,
+      text: sourceSnapshot.suspendedCall.text,
+      childSessionId: targetChildSessionId,
+    });
+
+    const resumed = await adopted.resumePlaybookCall({
+      callId: targetSnapshot.suspendedCall.callId,
+      result: {
+        status: 'error',
+        playbookId: targetSnapshot.suspendedCall.playbookId,
+        childSessionId: targetSnapshot.suspendedCall.childSessionId,
+        error: {
+          name: 'Error',
+          message: 'adopted child failed before the next call',
+        },
+      },
+      signal: new AbortController().signal,
+    });
+    expect(resumed.state.stateId).toBe('failed');
+    const adoptedCallTraces = telemetry
+      .slice(telemetryBeforeAdoption)
+      .map(({ payload }) => payload as PlaybookTraceEvent)
+      .filter(
+        ({ type }) =>
+          type === 'playbook.call.started' ||
+          type === 'playbook.call.finished',
+      );
+    expect(adoptedCallTraces).toHaveLength(1);
+    expect(adoptedCallTraces[0]).toMatchObject({
+      sessionId: targetSession.sessionId,
+      type: 'playbook.call.finished',
+      callId: 'playbook-1',
+      sequence: 2,
+    });
+    expect(adoptedCallTraces[0]).not.toHaveProperty('turnId');
+    expect(hostStarts).toBe(4);
+
+    const nextSuspended = await adopted.handleBossInput(
+      turn('do it after adoption'),
+    );
+    expect(nextSuspended.outcome).toBe('suspended');
+    const nextPending =
+      'pendingCall' in nextSuspended ? nextSuspended.pendingCall : undefined;
+    expect(nextPending).toEqual({
+      callId: 'playbook-2',
+      playbookId: 'child',
+      childSessionId: 'target-child-session-2',
+    });
+    expect(adopted.exportSnapshot?.()?.suspendedCall).toMatchObject({
+      callId: 'playbook-2',
+      childSessionId: 'target-child-session-2',
+      turnId: 1,
+    });
+    expect(hostStarts).toBe(5);
+    expect(hostCallIds).toEqual([
+      'playbook-1',
+      'playbook-2',
+      'playbook-3',
+      'playbook-4',
+      'playbook-2',
+    ]);
+
+    await adopted.dispose();
+    await source.dispose();
+  });
 
   it.each([
     { mode: 'restore', mismatch: 'state' },
@@ -4008,9 +4258,20 @@ describe('nested playbook actor over the shared factory', () => {
 
       const restored = createNestedRuntime({});
       const targetSession = mode === 'restore' ? session : makeSession(ports);
-      const rejected = expect(
-        restored[mode]?.(targetSession, mismatched),
-      ).rejects;
+      const targetChildSessionId = 'target-child-session-1';
+      const rehydrate = (
+        candidate: PlaybookRuntimeSnapshot,
+        nextSession = targetSession,
+        nextChildSessionId = targetChildSessionId,
+      ) =>
+        mode === 'restore'
+          ? restored.restore?.(nextSession, candidate)
+          : restored.adopt?.(
+              nextSession,
+              candidate,
+              adoptionFrom(session, nextChildSessionId),
+            );
+      const rejected = expect(rehydrate(mismatched)).rejects;
       if (mismatch === 'state') {
         await rejected.toThrow(
           `createPlaybookRuntime.${mode}: restored actor state does not match snapshot state`,
@@ -4019,6 +4280,17 @@ describe('nested playbook actor over the shared factory', () => {
         await rejected.toThrow(
           'restored playbook call playbook-1 text does not match its persisted input',
         );
+      }
+      if (mode === 'adopt') {
+        expect(
+          telemetry
+            .map(({ payload }) => payload as PlaybookTraceEvent)
+            .filter(({ sessionId }) => sessionId === targetSession.sessionId)
+            .map(({ sequence, type }) => ({ sequence, type })),
+        ).toEqual([
+          { sequence: 1, type: 'session.started' },
+          { sequence: 2, type: 'session.disposed' },
+        ]);
       }
       expect(hostStarts).toBe(1);
       expect(
@@ -4034,13 +4306,37 @@ describe('nested playbook actor over the shared factory', () => {
 
       // Failed-start cleanup removes the provisional bridge claim and turn
       // ownership, so the same runtime can retry the authoritative snapshot.
-      await restored[mode]?.(targetSession, snapshot);
+      // An adoption whose start boundary was published has already consumed
+      // that attempted engagement's identities, so reconstruction allocates a
+      // fresh target root and child rather than recycling either UUID.
+      const retryTargetSession =
+        mode === 'restore' ? session : makeSession(ports);
+      const retryTargetChildSessionId = 'target-child-session-2';
+      if (mode === 'adopt') {
+        expect(retryTargetSession.sessionId).not.toBe(targetSession.sessionId);
+        expect(retryTargetChildSessionId).not.toBe(targetChildSessionId);
+      }
+      await rehydrate(
+        snapshot,
+        retryTargetSession,
+        retryTargetChildSessionId,
+      );
+      const resumedSnapshot = restored.exportSnapshot?.();
+      if (resumedSnapshot?.suspendedCall === undefined) {
+        throw new Error('expected a rehydrated suspended-call snapshot');
+      }
+      if (mode === 'adopt') {
+        expect(resumedSnapshot.suspendedCall).toMatchObject({
+          callId: 'playbook-1',
+          childSessionId: retryTargetChildSessionId,
+        });
+      }
       await restored.resumePlaybookCall({
-        callId: snapshot.suspendedCall.callId,
+        callId: resumedSnapshot.suspendedCall.callId,
         result: {
           status: 'ok',
-          playbookId: snapshot.suspendedCall.playbookId,
-          childSessionId: snapshot.suspendedCall.childSessionId,
+          playbookId: resumedSnapshot.suspendedCall.playbookId,
+          childSessionId: resumedSnapshot.suspendedCall.childSessionId,
         },
         signal: new AbortController().signal,
       });
@@ -4324,7 +4620,13 @@ describe('parked-session snapshot over the shared factory', () => {
         targetSession = { ...targetSession, roleBindings: {} };
       }
 
-      await expect(target.adopt?.(targetSession, candidate)).rejects.toThrow(
+      await expect(
+        target.adopt?.(
+          targetSession,
+          candidate,
+          adoptionFrom(sourceSession),
+        ),
+      ).rejects.toThrow(
         mismatch === 'schema'
           ? /incompatible player identity/
           : mismatch === 'playbook'
@@ -4342,6 +4644,96 @@ describe('parked-session snapshot over the shared factory', () => {
       await target.adopt?.(
         makeSession(targetRecording.ports, playerSessions),
         snapshot,
+        adoptionFrom(sourceSession),
+      );
+      expect(target.exportSnapshot?.()?.state).toEqual(snapshot.state);
+      await target.dispose();
+    },
+  );
+
+  it.each([
+    'absent',
+    'missing',
+    'extra',
+    'empty',
+    'accessor',
+    'source-equal',
+  ] as const)(
+    'rejects an %s adoption context before effects and permits exact retry',
+    async (shape) => {
+      const sourceRecording = makeRecordingPorts();
+      const sourceSession = makeSession(sourceRecording.ports);
+      const source = createWorkflowRuntime({});
+      await source.init(sourceSession);
+      const snapshot = source.exportSnapshot?.();
+      if (snapshot === undefined) throw new Error('expected parked snapshot');
+      await source.dispose();
+
+      const targetRecording = makeRecordingPorts();
+      const playerSessions: PlayerSessionStore = {
+        select: vi.fn(() => false),
+        update: vi.fn(),
+        snapshot: vi.fn(() => ({})),
+        restore: vi.fn(),
+      };
+      let targetSession = makeSession(targetRecording.ports, playerSessions);
+      let context: unknown = adoptionFrom(sourceSession);
+      if (shape === 'absent') {
+        context = undefined;
+      } else if (shape === 'missing') {
+        context = { sourceSessionId: sourceSession.sessionId };
+      } else if (shape === 'extra') {
+        context = {
+          ...adoptionFrom(sourceSession),
+          targetChildSessionId: 'unexpected-child',
+        };
+      } else if (shape === 'empty') {
+        context = {
+          sourceSessionId: '',
+          sourceGenerationId: sourceSession.rootSessionId,
+        };
+      } else if (shape === 'accessor') {
+        context = {
+          get sourceSessionId() {
+            throw new Error('accessor must not run');
+          },
+          sourceGenerationId: sourceSession.rootSessionId,
+        };
+      } else {
+        targetSession = {
+          ...targetSession,
+          sessionId: sourceSession.sessionId,
+          rootSessionId: sourceSession.rootSessionId,
+        };
+      }
+
+      const target = createWorkflowRuntime({});
+      await expect(
+        target.adopt?.(
+          targetSession,
+          snapshot,
+          context as PlaybookAdoptionContext,
+        ),
+      ).rejects.toThrow(
+        shape === 'accessor'
+          ? /must be a JSON data property/
+          : shape === 'source-equal'
+            ? /target identities must be fresh/
+            : shape === 'empty'
+              ? /sourceSessionId must be a non-empty string/
+              : /must contain exactly|must be a JSON value/,
+      );
+      expect(targetRecording.statuses).toEqual([]);
+      expect(targetRecording.telemetry).toEqual([]);
+      expect(playerSessions.select).not.toHaveBeenCalled();
+      expect(playerSessions.update).not.toHaveBeenCalled();
+      expect(playerSessions.snapshot).not.toHaveBeenCalled();
+      expect(playerSessions.restore).not.toHaveBeenCalled();
+
+      await target.adopt?.(
+        makeSession(targetRecording.ports, playerSessions),
+        snapshot,
+        adoptionFrom(sourceSession),
       );
       expect(target.exportSnapshot?.()?.state).toEqual(snapshot.state);
       await target.dispose();
@@ -4382,6 +4774,12 @@ describe('parked-session snapshot over the shared factory', () => {
     const snapshot = source.exportSnapshot?.();
     if (snapshot === undefined) throw new Error('expected parked snapshot');
     expect(snapshot.roleResumeTokens).toEqual({ coder: 'retained-token' });
+    expect(snapshot.sequences).toMatchObject({
+      turn: 1,
+      judgeCall: 1,
+      playerCall: 1,
+    });
+    expect(snapshot.sequences.trace).toBeGreaterThan(1);
     await source.dispose();
     const effectsBeforeAdoption = {
       judgeCalls,
@@ -4393,24 +4791,58 @@ describe('parked-session snapshot over the shared factory', () => {
     const target = createWorkflowRuntime({});
     const targetSession = makeSession(ports);
     expect(targetSession.sessionId).not.toBe(sourceSession.sessionId);
-    await target.adopt?.(targetSession, snapshot);
+    await target.adopt?.(
+      targetSession,
+      snapshot,
+      adoptionFrom(sourceSession),
+    );
     expect(target.exportSnapshot?.()).toMatchObject({
       schemaVersion: 3,
       playbookId: sourceSession.playbookId,
       state: snapshot.state,
+      sequences: {
+        trace: 1,
+        turn: 0,
+        judgeCall: 0,
+        playerCall: 0,
+        playbookCall: 0,
+      },
     });
-    expect({
-      judgeCalls,
-      playerCalls,
-      statuses: statuses.length,
-      telemetry: telemetry.length,
-    }).toEqual(effectsBeforeAdoption);
+    expect({ judgeCalls, playerCalls, statuses: statuses.length }).toEqual({
+      judgeCalls: effectsBeforeAdoption.judgeCalls,
+      playerCalls: effectsBeforeAdoption.playerCalls,
+      statuses: effectsBeforeAdoption.statuses,
+    });
+    expect(telemetry).toHaveLength(effectsBeforeAdoption.telemetry + 1);
+    expect(telemetry.at(-1)).toMatchObject({
+      topic: 'playbook.trace',
+      payload: {
+        sessionId: targetSession.sessionId,
+        rootSessionId: targetSession.rootSessionId,
+        sequence: 1,
+        type: 'session.started',
+        payload: {
+          state: snapshot.state,
+          stateId: snapshot.state.stateId,
+          adoption: {
+            sourceSessionId: sourceSession.sessionId,
+            sourceGenerationId: sourceSession.rootSessionId,
+          },
+        },
+      },
+    });
     for (const method of ['init', 'restore', 'adopt'] as const) {
       const anotherSession = makeSession(ports);
       const attempt =
         method === 'init'
           ? target.init(anotherSession)
-          : target[method]?.(anotherSession, snapshot);
+          : method === 'restore'
+            ? target.restore?.(anotherSession, snapshot)
+            : target.adopt?.(
+                anotherSession,
+                snapshot,
+                adoptionFrom(sourceSession),
+              );
       await expect(attempt).rejects.toThrow(
         `createPlaybookRuntime.${method}: already initialized`,
       );
@@ -4420,6 +4852,130 @@ describe('parked-session snapshot over the shared factory', () => {
     expect(resumed.outcome).toBe('terminal');
     expect(playerCalls).toBe(2);
     expect(resumes).toEqual([false, false]);
+    const targetTraces = telemetry
+      .slice(effectsBeforeAdoption.telemetry)
+      .filter(({ topic }) => topic === 'playbook.trace')
+      .map(({ payload }) => payload as PlaybookTraceEvent);
+    expect(targetTraces.map(({ sequence }) => sequence)).toEqual(
+      targetTraces.map((_event, index) => index + 1),
+    );
+    expect(
+      targetTraces.find(({ type }) => type === 'boss.input.received'),
+    ).toMatchObject({ turnId: 1 });
+    expect(
+      targetTraces
+        .filter(({ type }) => type === 'judge.call.started')
+        .map(({ callId }) => callId),
+    ).toEqual(['judge-1', 'judge-2']);
+    expect(
+      targetTraces.find(({ type }) => type === 'player.call.started'),
+    ).toMatchObject({ callId: 'player-1', turnId: 1 });
+    await target.dispose();
+  });
+
+  it('starts a nested frame adoption with a fresh apply counter', async () => {
+    const playerScript: PlayerResult[] = [
+      { status: 'error', error: 'source failed' },
+      { status: 'error', error: 'source retry failed' },
+      { status: 'error', error: 'target retry failed' },
+    ];
+    const { ports, telemetry } = makeRecordingPorts({
+      callPlayer: async () => {
+        const next = playerScript.shift();
+        if (next === undefined) throw new Error('unexpected player call');
+        return next;
+      },
+    });
+    const sourceBase = makeSession(ports);
+    const sourceSession: PlaybookSession = {
+      ...sourceBase,
+      sessionId: `${sourceBase.sessionId}-child`,
+      playbookId: 'code',
+      rootSessionId: `${sourceBase.sessionId}-root`,
+      parentSessionId: `${sourceBase.sessionId}-parent`,
+      parentCallId: 'source-parent-call',
+      depth: 1,
+    };
+    const source = createCodePlaybookRuntime({});
+    await source.init(sourceSession);
+    expect(
+      (await source.handleBossInput(turn('fail inside the child'))).outcome,
+    ).toBe('failed');
+    expect(
+      await source.apply?.({
+        actionId: 'retry:START_CODE',
+        key: 'source-retry',
+        signal: new AbortController().signal,
+      }),
+    ).toMatchObject({ disposition: 'failed' });
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .filter(
+          ({ sessionId, type }) =>
+            sessionId === sourceSession.sessionId &&
+            type === 'apply.started',
+        ),
+    ).toEqual([
+      expect.objectContaining({ callId: 'apply-1' }),
+    ]);
+    const snapshot = source.exportSnapshot?.();
+    if (snapshot === undefined) throw new Error('expected failed snapshot');
+    await source.dispose();
+
+    const targetBase = makeSession(ports);
+    const targetSession: PlaybookSession = {
+      ...targetBase,
+      sessionId: `${targetBase.sessionId}-child`,
+      playbookId: 'code',
+      rootSessionId: `${targetBase.sessionId}-root`,
+      parentSessionId: `${targetBase.sessionId}-parent`,
+      parentCallId: 'target-parent-call',
+      depth: 1,
+    };
+    const target = createCodePlaybookRuntime({});
+    await target.adopt?.(
+      targetSession,
+      snapshot,
+      adoptionFrom(sourceSession),
+    );
+    expect(
+      telemetry
+        .map(({ payload }) => payload as PlaybookTraceEvent)
+        .find(
+          ({ sessionId, type }) =>
+            sessionId === targetSession.sessionId &&
+            type === 'session.started',
+        ),
+    ).toMatchObject({
+      sequence: 1,
+      payload: {
+        adoption: {
+          sourceSessionId: sourceSession.sessionId,
+          sourceGenerationId: sourceSession.rootSessionId,
+        },
+      },
+    });
+
+    expect(
+      await target.apply?.({
+        actionId: 'retry:START_CODE',
+        key: 'target-retry',
+        signal: new AbortController().signal,
+      }),
+    ).toMatchObject({ disposition: 'failed' });
+    const targetApplyTraces = telemetry
+      .map(({ payload }) => payload as PlaybookTraceEvent)
+      .filter(
+        ({ sessionId, type }) =>
+          sessionId === targetSession.sessionId &&
+          (type === 'apply.started' || type === 'apply.finished'),
+      );
+    expect(targetApplyTraces).toHaveLength(2);
+    expect(targetApplyTraces.map(({ callId }) => callId)).toEqual([
+      'apply-1',
+      'apply-1',
+    ]);
     await target.dispose();
   });
 
@@ -4438,7 +4994,8 @@ describe('parked-session snapshot over the shared factory', () => {
         '{"guard":"needsBossReply","question":"Which database?"}',
     });
     const source = createWorkflowRuntime({});
-    await source.init(makeSession(ports));
+    const sourceSession = makeSession(ports);
+    await source.init(sourceSession);
     const parked = await source.handleBossInput(turn('build storage'));
     expect(parked.state.stateId).toBe('awaitBossReply');
     const snapshot = source.exportSnapshot?.();
@@ -4456,7 +5013,11 @@ describe('parked-session snapshot over the shared factory', () => {
     };
     const target = createWorkflowRuntime({});
 
-    await target.adopt?.(makeSession(ports, playerSessions), snapshot);
+    await target.adopt?.(
+      makeSession(ports, playerSessions),
+      snapshot,
+      adoptionFrom(sourceSession),
+    );
 
     expect(playerSessions.select).not.toHaveBeenCalled();
     expect(playerSessions.update).not.toHaveBeenCalled();
@@ -4604,7 +5165,11 @@ describe('parked-session snapshot over the shared factory', () => {
         },
       };
 
-      await target.adopt?.(targetSession, snapshot);
+      await target.adopt?.(
+        targetSession,
+        snapshot,
+        adoptionFrom(sourceSession),
+      );
 
       expect(playerSessions.select).not.toHaveBeenCalled();
       expect(playerSessions.update).not.toHaveBeenCalled();
