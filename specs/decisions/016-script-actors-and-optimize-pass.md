@@ -15,7 +15,7 @@ Some compiled behaviors need none of that.
 A workflow that commits to Git implicitly requires its working directory to be a repository; the setup step that checks and establishes that state is a fixed shell command with a success/failure outcome — no judgment, no language, no context.
 Running it through an LLM burns tokens and latency on a deterministic action, and makes the playbook's cheapest step its least reliable one.
 
-slc is growing an LLVM-style optimization surface: format-preserving *pass phases* that a compile opts into (slc DR-013), sitting between ordinary phases.
+slc is growing an LLVM-style optimization surface: format-preserving *pass phases* that a compile opts into (slc DR-013 [[1]]), sitting between ordinary phases.
 The natural pass for the `playbook` pipeline rewrites mechanical GEARS items so the linked runtime executes them directly.
 That needs an execution primitive the definitions do not have: a state kind that runs without any agent.
 
@@ -54,3 +54,7 @@ That needs an execution primitive the definitions do not have: a state kind that
 - Hosts and trace consumers need no changes; a checker can observe scripted execution through the `playbook.script` telemetry topic and the status line.
 - The GEARS item-syntax contract now has four behavior kinds; conformance tooling that parses acting clauses adds one literal form (`Captain shall run:`).
 - Optimization is opt-in per compile: pipelines and hosts that never request the pass see byte-identical behavior to today.
+
+## References
+
+[1]: https://github.com/sublang-ai/slc/blob/main/specs/decisions/013-normalize-and-pass-phases.md "slc DR-013 — generic input normalization and optimization pass phases"

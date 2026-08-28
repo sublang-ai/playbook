@@ -10,10 +10,10 @@ Done
 ## Intent
 
 Make `needsBossReply` a universal capability of every captain-invoking state, so a player may surface a Boss question from any state with no per-state opt-in.
-The IR-007 `Resumable: Boss reply` source annotation was opaque jargon in the domain source; universal coverage removes the opt-in, and the annotation, entirely.
+The retired per-state opt-in used a `Resumable: Boss reply` source annotation that was opaque jargon in the domain source; universal coverage removes the opt-in, and the annotation, entirely.
 
 After IR-008, `code.md` carries domain prompts only, `code.gears.md` declares no `needsBossReply` guard metadata, and `gears2fsm` wires the suspend/resume path for every captain-invoking state.
-IR-008 supersedes IR-007: the IR-007 record is deleted, while its commits stay in history because the branch is unpushed and Boss chose to supersede rather than rewrite.
+IR-008 supersedes the discarded per-state opt-in iteration: its record is deleted, while its commits stay in history because the branch is unpushed and Boss chose to supersede rather than rewrite.
 
 ## Decisions baked in
 
@@ -27,7 +27,7 @@ IR-008 supersedes IR-007: the IR-007 record is deleted, while its commits stay i
 
 ## Deliverables
 
-- [x] IR-008 doc and its `map.md` row landed; the IR-007 doc deleted and its `map.md` row removed.
+- [x] IR-008 doc and its `map.md` row landed; the superseded opt-in record was deleted and its `map.md` row removed.
 - [x] [DR-005](../decisions/005-boss-reply-suspension-path.md) — §4 made universal; §1 drops the "resumable" qualifier; §9 per-state audit removed; the no-both rule replaced.
 - [x] [`slc/text2gears.md`](../../slc/text2gears.md) — the "Resumable Boss replies" section removed.
 - [x] [`slc/gears2fsm.md`](../../slc/gears2fsm.md) — `needsBossReply` and the `awaitBossReply` / `resumableStates` wiring made universal for captain-invoking states; annotation-driven language removed.
@@ -46,8 +46,8 @@ IR-008 supersedes IR-007: the IR-007 record is deleted, while its commits stay i
 Each task is one commit.
 Order keeps `main` building and test-green: spec amendments land first to give the implementation a contract; the CODE migration moves source, gears, FSM, and runtime together; the deep test-conformance changes land after.
 
-1. **Land IR-008; retire IR-007.**
-   Add this IR doc and its `map.md` row; delete the IR-007 doc and remove its `map.md` row.
+1. **Land IR-008; retire the per-state opt-in iteration.**
+   Add this IR doc and its `map.md` row; delete the superseded opt-in record and remove its `map.md` row.
    No code or behavior change.
 2. **Spec amendments.**
    DR-005 (§4 universal, §1 wording, §9 audit removed, the no-both rule replaced); `slc/text2gears.md` (remove "Resumable Boss replies"); `slc/gears2fsm.md` (universal wiring); `slc/link.md` (inject into every captain prompt); `specs/packages/playbook.md` and `specs/packages/playbook.md` (playbook-12/13/14/15 reworded for universal coverage).
@@ -73,5 +73,5 @@ Order keeps `main` building and test-green: spec amendments land first to give t
 - Every captain state's composed player prompt carries the standard Boss-question instruction immediately before the domain prompt body; no GEARS blockquote carries that instruction.
 - `needsBossReply` end-to-end behavior is unchanged: a player question lands at `awaitBossReply`, `BOSS_REPLY` resumes the originating state, and the DR-005 §8 failure modes still route to `failed`.
 - The CODE Committer states retain `needsBossInput` alongside `needsBossReply`.
-- `specs/intents/007-resumable-state-annotation.md` does not exist, and `map.md` has no IR-007 row.
+- The superseded per-state opt-in record retired in `c356e50` does not exist, and `map.md` has no row for it.
 - `pnpm test` from the repo root is green.

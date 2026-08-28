@@ -31,7 +31,7 @@ Implement [DR-029](../decisions/029-session-scoped-conversational-captain.md): m
 7. Add the packed, model-free release smoke and public-surface gates.
 
 The later review found that separate refusal, failure, and recovery branches still broke the intended single result path and that conversational handoff could omit earlier intent.
-[IR-039](039-unified-captain-results.md) records that focused correction.
+The focused correction completed [DR-029](../decisions/029-session-scoped-conversational-captain.md) by unifying those result paths and carrying the complete agreed request through conversational handoff.
 
 ## Verification
 

@@ -14,15 +14,14 @@ Bring the live gate's conversational config under the normal suite, the way
 
 `acceptance/live-config.ts` exists so an ordinary `pnpm test` case can prove the
 gate's config still composes.
-[IR-036](036-session-scoped-conversational-captain.md)'s fifth (conversational)
-scenario reintroduced the risk that file removes: its config and its two fixture
+The live gate's fifth, conversational scenario reintroduced the risk that file removes: its config and its two fixture
 playbook sources were file-private to
 `acceptance/playbook-live.acceptance.test.ts`, which is excluded from `pnpm test`
 and CI.
 A config-model change — the players shape, a reserved id, the registry-entry
 contract — would break that scenario silently and surface only in a manual
-pre-tag run, and that run is itself blocked on the unpublished cligent 0.19.0
-(IR-036's one open deliverable), so nothing else would notice.
+pre-tag run, and that run was then blocked on the unpublished cligent 0.19.0,
+so nothing else would notice.
 
 Scope is test placement and one new case.
 No runtime, CLI, or published-surface change; `acceptance/` ships in no

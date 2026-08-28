@@ -12,7 +12,7 @@ It had superseded [DR-002](002-in-page-xstate-visualizer.md).
 
 [DR-001](001-state-machine-tooling.md) adopted Stately Sketch [[1]] (MIT,
 self-hostable) for design-time visualization and `@statelyai/inspect` [[2]] for
-runtime monitoring. [DR-002] then built a custom in-page visualizer
+runtime monitoring. [DR-002](002-in-page-xstate-visualizer.md) then built a custom in-page visualizer
 (`views/sketch/`) because neither off-the-shelf tool offered diagram-with-live-
 highlights for runtime actors.
 
@@ -22,7 +22,7 @@ self-hostable upstream UIs could be reused.
 
 Findings:
 
-- **Stately Inspector UI is closed-source.** `https://stately.ai/inspect` is an
+- **Stately Inspector UI is closed-source.** The hosted Stately Inspector route [[3]] is an
   internal route inside Stately Studio's Next.js cloud bundle. Confirmed by
   enumerating `statelyai/*` GitHub repos (no `/inspect` route in `sketch`,
   `xstate-viz` archived, `inspect` is protocol-only) and `@statelyai/*` npm
@@ -254,7 +254,7 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
   state-id and edge-id arrays only; runtime actor data — Captain
   prompts, contexts, event payloads — never leaves the parent process
   via the live-telemetry channel.
-- **Cross-process Captain deployment** (DR-002 §8 / DR-004 wiring) reshapes:
+- **Cross-process Captain deployment** ([DR-002](002-in-page-xstate-visualizer.md) §8 / cligent Captain wiring [[4]]) reshapes:
   Captain runs the parent-side adapter directly against its actor, emits
   postMessage frames over a small SSE-or-WebSocket relay (presenter), browser
   receives and forwards to the iframe. The protocol surface is the same;
@@ -276,3 +276,5 @@ explore back to live re-syncs to the parent's truth on the next snapshot.
 
 [1]: https://github.com/statelyai/sketch "Stately Sketch — MIT, design-time visualizer/simulator for XState"
 [2]: https://github.com/statelyai/inspect "@statelyai/inspect — protocol/SDK package, Stately Inspector wire format"
+[3]: https://stately.ai/inspect "Stately Inspector"
+[4]: https://github.com/sublang-ai/cligent/blob/main/specs/decisions/004-tmux-play-captain-architecture.md "cligent DR-004 — tmux-play Captain architecture"

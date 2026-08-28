@@ -12,8 +12,8 @@ importers:
         specifier: ^0.22.0
         version: 0.22.0(@anthropic-ai/claude-agent-sdk@0.3.221(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3))(@openai/codex-sdk@0.146.0)
       '@sublang/spex':
-        specifier: ^2.1.1
-        version: 2.1.1
+        specifier: ^3.0.0
+        version: 3.0.0
       p-queue:
         specifier: ^9.3.1
         version: 9.3.1
@@ -489,8 +489,8 @@ packages:
       '@opencode-ai/sdk':
         optional: true
 
-  '@sublang/spex@2.1.1':
-    resolution: {integrity: sha512-ipw1y9lqcxrX60AKHJ5+3gdpW9Q2L9Uw8I9sGJAAmHb4HwmNDmV/1JnwkMKaTPvyX2IOHYfV4CQJiqmsLcObxQ==}
+  '@sublang/spex@3.0.0':
+    resolution: {integrity: sha512-ziX9BwhRzqUt4uLydL0fc+7TnOMVQK5eU2m/frnIdPtf50SidHLR69rsuk1/46p7q9ieeH7yPJD8F3dtW0rt6w==}
     engines: {node: '>=20'}
     hasBin: true
 
@@ -1615,7 +1615,7 @@ snapshots:
       '@anthropic-ai/claude-agent-sdk': 0.3.221(@anthropic-ai/sdk@0.96.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
       '@openai/codex-sdk': 0.146.0
 
-  '@sublang/spex@2.1.1':
+  '@sublang/spex@3.0.0':
     dependencies:
       github-slugger: 2.0.0
       remark-gfm: 4.0.1

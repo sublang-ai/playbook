@@ -15,14 +15,14 @@ Implement [DR-028](../decisions/028-empty-ok-result-re-ask.md): an `ok` player o
 
 - [x] DR-028, the amended [[playbook-runtime-9](../packages/playbook-runtime.md#playbook-runtime-9)]/[[playbook-runtime-47](../packages/playbook-runtime.md#playbook-runtime-47)] and [[playbook-runtime-23](../packages/playbook-runtime.md#playbook-runtime-23)], the new [[playbook-runtime-51](../packages/playbook-runtime.md#playbook-runtime-51)], the `slc/link.md` player/Captain result and trace contract updates, this record, the map rows, and the `[Unreleased]` CHANGELOG entry per [[release-4](../packages/release.md#release-4)].
 - [x] The unified empty predicate and single corrective re-ask in the shared engine's delegated-player bridge and direct-Captain boundary/actor (`src/xstate-playbook-runtime.ts`), each call traced as its own started/finished pair, with [[playbook-runtime-38](../packages/playbook-runtime.md#playbook-runtime-38)] resume selection on the corrective player call and compiled siblings rebuilt.
-- [x] The same predicate and re-ask at the linked DISCUSS reference runtime's player boundary (`reference/sdlc/discuss.playbook/discuss.playbook.ts`), with its compiled siblings rebuilt. The compiled default Captain keeps its single-throw until [IR-036](036-session-scoped-conversational-captain.md)'s [DR-029](../decisions/029-session-scoped-conversational-captain.md) rewrite, which carries DR-028's predicate and re-ask (its §7 prose validation).
+- [x] The same predicate and re-ask at the linked DISCUSS reference runtime's player boundary (`reference/sdlc/discuss.playbook/discuss.playbook.ts`), with its compiled siblings rebuilt. The compiled default Captain keeps its single-throw until the session-scoped conversational rewrite governed by [DR-029](../decisions/029-session-scoped-conversational-captain.md), which carries DR-028's predicate and re-ask (its §7 prose validation).
 - [x] Integration tests per playbook-runtime-51 at both boundaries, with the playbook-runtime-23 single-throw pins updated to the amended items.
 
 ## Tasks
 
 1. **Spec surface.** _[done]_ Author DR-028, finalize the PBRT item amendments and the `slc/link.md` contract wording, and add this record and the map rows.
 2. **Engine re-ask and tests.** _[done]_ Add the shared empty predicate and the single re-ask to `createPlayerBridge`, the direct-Captain call boundary, and the captain actor; update the old single-throw pins; add the playbook-runtime-51 suites; rebuild compiled siblings.
-3. **Linked-artifact parity.** _[done]_ Mirror the predicate and re-ask in the DISCUSS reference runtime's player boundary with its tests, and record the compiled default Captain's deferral to IR-036.
+3. **Linked-artifact parity.** _[done]_ Mirror the predicate and re-ask in the DISCUSS reference runtime's player boundary with its tests, and record that the compiled default Captain defers to the session-scoped conversational rewrite governed by [DR-029](../decisions/029-session-scoped-conversational-captain.md).
 
 ## Verification
 

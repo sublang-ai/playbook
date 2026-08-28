@@ -21,7 +21,7 @@ Accepted.
 
 ### 1. The shared factory owns the machinery
 
-- `createXStatePlaybookRuntime(machine, spec)` lives in `src/xstate-playbook-runtime.ts` and is re-exported from `@sublang/playbook/xstate-runtime`, so linked artifacts keep one shared engine import surface.
+- `createXStatePlaybookRuntime(machine, spec)` lives in `src/xstate-playbook-runtime.ts` and is re-exported from `@sublang/playbook/xstate-runtime` ([[playbook-runtime-5](../packages/playbook-runtime.md#playbook-runtime-5)]), so linked artifacts keep one shared engine import surface.
 - The machinery is hoisted from the reference CODE artifact verbatim where possible; the CODE behavior suites are the equivalence proof, and observable behavior shall not change under the move.
 - The factory provides every actor kind the machine declares — `player`, `script` ([DR-016](016-script-actors-and-optimize-pass.md)), direct `captain`, and nested `playbook` (literal and dynamic) via the shared bridge — and always implements the [DR-014](014-durable-one-shot-run-sessions.md) parked-session snapshot capability.
 - Scope: flat FSMs that declare no parallel state (each snapshot exposes exactly one playbook state id).
@@ -30,7 +30,7 @@ Accepted.
 ### 2. The `spec` parameter surface
 
 - Required: `snapshotOptions` — validate and JSON-snapshot the caller's per-run options.
-- Optional strategy members, each with a generic default derived from the FSM artifact's own data per `slc/link.md`: `label`, `machineInput`, `entryEvent` (deterministic textual entry), `bossEvents` (the exact judge-vs-runtime field metadata erased with the FSM's TypeScript event union), `classifyBossText`, `classificationStatus`, `composePlayerPrompt` / `composeCaptainPrompt` (default: continuation blocks plus canonical kebab-token-to-camel-field placeholder substitution), `buildJudgePrompt`, `extractRequiredFields` (default: bilingual `Output shall include` clause scan), `verbatimPayloadFields`, `resumableStateIds` (default: the FSM's `awaitBossReply` BOSS_REPLY targets), `roleStates` (complete local-role and display-label metadata that selects the canonical status and classification defaults), `statusesForState`, `normalizeTransitionEvent` / `transitionEventFields`, and `scriptCwd` (default: the validated options' `cwd`).
+- Optional strategy members, each with a generic default derived from the FSM artifact's own data under the [SLC linker contract](../../slc/link.md): `label`, `machineInput`, `entryEvent` (deterministic textual entry), `bossEvents` (the exact judge-vs-runtime field metadata erased with the FSM's TypeScript event union), `classifyBossText`, `classificationStatus`, `composePlayerPrompt` / `composeCaptainPrompt` (default: continuation blocks plus canonical kebab-token-to-camel-field placeholder substitution), `buildJudgePrompt`, `extractRequiredFields` (default: bilingual `Output shall include` clause scan), `verbatimPayloadFields`, `resumableStateIds` (default: the FSM's `awaitBossReply` BOSS_REPLY targets), `roleStates` (complete local-role and display-label metadata that selects the canonical status and classification defaults), `statusesForState`, `normalizeTransitionEvent` / `transitionEventFields`, and `scriptCwd` (default: the validated options' `cwd`).
 - A linker-emitted thin module therefore supplies `snapshotOptions`, `entryEvent`, complete `roleStates`, any additional `bossEvents` contracts, and `transitionEventFields`; hand-maintained schema-2 artifacts override members only to preserve behavior that does not invent host binding.
 - The shared classifier always uses the flat exact `{ type, ...declaredFields }` wire shape, keeps textual fields runtime-owned, and permits applicable entry or interrupt directives while parked.
 - Supplied metadata may extend a runtime-derived contract but shall not replace or weaken an entry text field or derived closed interrupt target; conflicting duplicates fail factory construction.
@@ -54,8 +54,3 @@ Accepted.
 - A factory-backed linked artifact collapses to its per-workflow spec — roughly two orders of magnitude fewer generated lines — and the expensive agent link step no longer re-derives interpreter machinery it can get wrong.
 - The generic strategy defaults are directly unit-tested in `src/xstate-playbook-runtime.test.ts` over synthetic FSMs covering all four actor kinds.
 - Parallel-region FSMs still require their own linked machinery until the shared factory grows a parallel profile.
-
-## References
-
-- [SLC linker contract](../../slc/link.md)
-- [[playbook-runtime-5](../packages/playbook-runtime.md#playbook-runtime-5)] defines the public linked-runtime profile.

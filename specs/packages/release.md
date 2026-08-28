@@ -190,8 +190,8 @@ specs ([[release-16](#release-16)]) —
 `@sublang/spex/scaffold/specs/meta.md` (English) and
 `@sublang/spex/scaffold/i18n/zh/specs/meta.md` (Chinese) — resolve
 from the installed module tree of every production install.
-The declared range's floor shall be at least `@sublang/spex` 2.1.1,
-the first release whose CLI validates the canonical package-only spec layout used by this repository.
+The declared range's floor shall be at least `@sublang/spex` 3.0.0,
+whose refreshed record and citation law this repository adopts while retaining the canonical package-only spec layout validated since 2.1.1.
 
 ### Public surfaces
 
@@ -573,8 +573,8 @@ package ([DR-027](../decisions/027-runtime-compatibility-from-cligent.md)) (veri
 
 The test suite shall fail unless `package.json` declares
 `@sublang/spex` with a caret SemVer range whose floor is at least
-2.1.1, the root importer in `pnpm-lock.yaml` records the same
-specifier, and both `@sublang/spex/scaffold/specs/meta.md` and
+3.0.0, the root importer in `pnpm-lock.yaml` records the same
+specifier and resolves a version no lower than 3.0.0, and both `@sublang/spex/scaffold/specs/meta.md` and
 `@sublang/spex/scaffold/i18n/zh/specs/meta.md` resolve from the repo
 root to non-empty files, and the normal `pnpm test` gate runs `spex lint` before Vitest (verifying [[release-22](#release-22)]).
 

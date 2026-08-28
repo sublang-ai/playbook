@@ -480,17 +480,19 @@ describe('GEARS grammar provenance (RELEASE-23)', () => {
     '@sublang/spex/scaffold/i18n/zh/specs/meta.md',
   ];
 
-  it('declares @sublang/spex on a caret range no lower than 2.1.1', () => {
+  it('declares and locks @sublang/spex no lower than 3.0.0', () => {
     const specifier = pkg.dependencies[SPEX_DEP];
     const lockEntry = lockfile.importers['.'].dependencies[SPEX_DEP];
 
     expect(specifier).toMatch(/^\^\d+\.\d+\.\d+$/);
-    const [major, minor, patch] = specifier.slice(1).split('.').map(Number);
-    expect(
-      major > 2 ||
-        (major === 2 && (minor > 1 || (minor === 1 && patch >= 1))),
-    ).toBe(true);
+    const [major] = specifier.slice(1).split('.').map(Number);
+    expect(major).toBeGreaterThanOrEqual(3);
     expect(lockEntry.specifier).toBe(specifier);
+    const [lockedMajor] = lockEntry.version.split('.').map(Number);
+    expect(lockedMajor).toBeGreaterThanOrEqual(3);
+    const testScript = pkg.scripts.test;
+    expect(testScript.indexOf('spex lint')).toBeGreaterThanOrEqual(0);
+    expect(testScript.indexOf('vitest')).toBeGreaterThan(testScript.indexOf('spex lint'));
   });
 
   it('resolves both GEARS definition localizations from the repo root', () => {

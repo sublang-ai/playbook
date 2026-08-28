@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Spec validation now runs on Spex 3 while retaining the repository's cohesive-concern item boundary.** The runtime dependency floor, historical intent wording, and decision-reference layout now conform to the refreshed scaffold, while sentence-count findings remain advisory under [DR-039](specs/decisions/039-cohesive-concern-spec-item-boundary.md).
+
 ## [9.0.0] - 2026-08-27
 
 ### Changed

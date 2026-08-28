@@ -5,7 +5,7 @@
 
 ## Status
 
-Planned
+Done
 
 ## Intent
 
@@ -16,13 +16,13 @@ The project-local item boundary and its preservation across scaffold refreshes a
 
 - [x] The meta-29 wording and matching agent guidance required by [DR-039](../decisions/039-cohesive-concern-spec-item-boundary.md) are restored after the scaffold overwrite.
 - [x] The spec map states and implements its minimal decision-record and package index scope.
-- [ ] The project-local Spex dependency and lockfile use version 3, and historical intent records obey the new prohibition on naming or citing another intent.
-- [ ] All 40 decision records obey the refreshed References rule: internal spec and repository links are inline, while a References section contains only cited authoritative external sources.
-- [ ] Project-local `spex lint` exits successfully, and the repository test suite passes.
+- [x] The project-local Spex dependency and lockfile use version 3, and historical intent records obey the new prohibition on naming or citing another intent.
+- [x] All 40 decision records obey the refreshed References rule: internal spec and repository links are inline, while a References section contains only cited authoritative external sources.
+- [x] Project-local `spex lint` exits successfully, and the repository test suite passes.
 
 ## Tasks
 
-1. **Align Spex and the record corpus.**
+1. **Align Spex and the record corpus.** _[done]_
    One commit: upgrade the project dependency and lockfile to Spex 3, replace every cross-intent name or citation with self-contained historical wording, audit all 40 decision records under the refreshed References rule, relocate the internal links and delete the emptied References sections in DR-017, DR-019, DR-022, and DR-030, verify the map remains exact, run project-local `spex lint` plus the complete repository test suite, and close this intent.
 
 ## Verification

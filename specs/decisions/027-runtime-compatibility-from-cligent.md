@@ -10,7 +10,7 @@ Accepted
 ## Context
 
 [DR-026](026-optional-adapter-sdks.md) made the agent SDKs optional peers and added a gate that probes each adapter before launch.
-It also left this repository holding three copies of knowledge that `@sublang/cligent` now owns and publishes ([cligent DR-013](https://github.com/sublang-ai/cligent/blob/main/specs/decisions/013-cligent-owned-runtime-compatibility.md)):
+It also left this repository holding three copies of knowledge that `@sublang/cligent` now owns and publishes in cligent DR-013 [[1]]:
 
 | Copy | Where | Failure it caused or invites |
 | --- | --- | --- |
@@ -44,3 +44,7 @@ Stale runtimes fail before launch with versions named instead of mid-turn with a
 The npx re-run names pinned repair specs, so a re-run installs versions the gate accepts.
 Playbook's manifest carries no agent-SDK version literals; the release-27 identity test becomes an absence test.
 This decision supersedes DR-026 in part, as stated above; DR-026's dependency placement, footprint, and gate-before-launch decisions stay in force.
+
+## References
+
+[1]: https://github.com/sublang-ai/cligent/blob/main/specs/decisions/013-cligent-owned-runtime-compatibility.md "cligent DR-013 — runtime compatibility ownership"

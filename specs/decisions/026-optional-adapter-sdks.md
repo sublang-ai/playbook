@@ -23,7 +23,7 @@ longer does.
   dependencies**, which npm never installs.
 - The two packages therefore disagree about what the SDKs are, and the
   disagreement has two measured symptoms, reported as
-  [sublang-ai/slc#6][3] and [sublang-ai/slc#1][4]:
+  slc issue 6 [[3]] and slc issue 1 [[4]]:
   - **Footprint.** A documented install is 538 MB, of which ~466 MB
     (87%) is agent SDKs. Every user receives every stack: a Codex-only
     user downloads the whole Anthropic stack and vice versa.
@@ -199,7 +199,7 @@ defect.
   migration, not a compatibility.
 - An application depending on `@sublang/playbook` must now declare an
   SDK itself. That is the intended transfer of ownership, and it is the
-  precondition for fixing [sublang-ai/slc#1][4] in the application layer
+  precondition for fixing the application-layer install failure [[4]]
   rather than working around it here.
 - SemVer: removing dependencies other packages relied on transitively is
   breaking. The version bump is deliberately left to the release step

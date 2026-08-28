@@ -15,7 +15,7 @@ the CODE playbook
 and the emitted FSM
 ([`code.fsm.ts`](../../reference/sdlc/code.playbook/code.fsm.ts)),
 and that exercise every declared FSM edge at least once.
-IR-004's acceptance gate was a manual e2e runbook
+The preceding CODE runtime-linking work used a manual e2e acceptance runbook
 ([dropped in `9c36355`](../../));
 this IR replaces it with type-checked, in-CI verification of the
 invariants that runbook was meant to spot-check.

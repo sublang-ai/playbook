@@ -49,7 +49,3 @@ Effort support is validated through the same adapter-scoped path as flag-bound s
 - The `player` catch-all covers roles across playbooks without enumerating them, and unrequired per-role keys stay inert, so one global config serves CODE, REVIEW, DECIDE, and any external playbook.
 - A malformed `run` block stops the run instead of quietly running the built-in lineup.
 - Parked sessions resume the lineup they parked with; changing the config never rewires a suspended run.
-
-## References
-
-- [[playbook-cli-19](../packages/playbook-cli.md#playbook-cli-19)] defines the shared run-agent string and role-binding surface.

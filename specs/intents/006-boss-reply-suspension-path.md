@@ -100,7 +100,7 @@ DR.
 - [x] [`specs/packages/playbook.md`](../packages/playbook.md) — two
   new playbook conformance items, IDs picked per [[meta-11](../meta.md#meta-11)]
   (uniqueness within the package) and [[meta-12](../meta.md#meta-12)] (released concerns retain
-  their IDs). The existing range from IR-005 is
+  their IDs). The existing released range is
   playbook-1..6 (dev) and playbook-7..11 (test), so the new
   dev items are playbook-12 and playbook-13:
   - playbook-12: every captain-invoking state whose `result`
