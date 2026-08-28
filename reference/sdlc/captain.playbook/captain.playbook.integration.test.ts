@@ -22,6 +22,7 @@ import { createActor } from 'xstate';
 import {
   assertPlaybookCaptainShellSnapshot,
   createPlaybookCaptainShell,
+  type PlaybookCaptainRetainedGeneration,
 } from '../code.playbook/playbook-captain.js';
 import createPlaybookRuntime, {
   _internal,
@@ -1354,6 +1355,10 @@ interface ShellHarnessOptions {
     resumeToken?: string;
     error?: string;
   };
+  /** Four hexadecimal digits separating source and target runtime ids. */
+  readonly sessionNamespace?: string;
+  /** Current-session adapter selection for a named Captain-session player. */
+  readonly playerAdapters?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -1392,7 +1397,7 @@ function makeShellHarness(
         )!;
         const playerId = `${owner.entry.id}-${role}`;
         playerAgents[playerId] ??= {
-          adapter: 'claude',
+          adapter: harnessOptions.playerAdapters?.[playerId] ?? 'claude',
           model: { kind: 'provider-default' },
           effort: { kind: 'provider-default' },
         };
@@ -1413,6 +1418,10 @@ function makeShellHarness(
     };
   }
   let sessionSequence = 0;
+  const sessionNamespace = harnessOptions.sessionNamespace ?? '4abc';
+  if (!/^[0-9a-f]{4}$/i.test(sessionNamespace)) {
+    throw new Error('test session namespace must be four hexadecimal digits');
+  }
   const shell = createPlaybookCaptainShell(
     {
       playbooks,
@@ -1429,7 +1438,7 @@ function makeShellHarness(
     {
       loadModule: async (specifier: string) => modules[specifier],
       createSessionId: () =>
-        `4abc0000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`,
+        `${sessionNamespace}0000-0000-4000-8000-${String(++sessionSequence).padStart(12, '0')}`,
     },
   );
   const statuses: string[] = [];
@@ -1451,7 +1460,10 @@ function makeShellHarness(
     players: entries.flatMap((registered) =>
       registered.entry.requiredRoleIds.map((role) => ({
         id: `${registered.entry.id}-${role}`,
-        adapter: 'claude',
+        adapter:
+          harnessOptions.playerAdapters?.[
+            `${registered.entry.id}-${role}`
+          ] ?? 'claude',
       })),
     ),
     emitStatus: async (message: string) => {
@@ -1608,8 +1620,13 @@ interface RealArtifactScript {
 function realArtifactHarness(
   entries: readonly RegisteredEntry[],
   script: RealArtifactScript,
+  options: Pick<
+    ShellHarnessOptions,
+    'playerAdapters' | 'sessionNamespace'
+  > = {},
 ) {
   return makeShellHarness([...entries], [], {
+    ...options,
     ...(script.players === undefined ? {} : { players: script.players }),
     captain: (prompt) => {
       if (prompt.includes(CLASSIFIER_MARKER)) {
@@ -1667,6 +1684,699 @@ function retryOrGroundedReply(
     text: `The coding run is at ${stateLine}; nothing to retry right now.`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// IR-046 task 9: the retained-resumption matrix over the maintained linked
+// artifacts. Earlier retained-generation suites deliberately isolate the
+// shell with hand-written runtimes. These rows cross the remaining seam: a
+// real CODE/REVIEW/DECIDE machine creates the retained boundary, a fresh
+// shell adopts it, and the real machine finishes from that mid-state.
+// ---------------------------------------------------------------------------
+
+describe('IR-046 retained resumption on real linked artifacts', () => {
+  type ArtifactHarness = ReturnType<typeof realArtifactHarness>;
+
+  const CODE_QUESTION = 'Which target should govern the retained change?';
+  const REVIEW_QUESTION = 'Which release target should this review use?';
+  const DUPLICATE_EFFECT_WARNING = 'may duplicate external effects';
+
+  const classifierPrompts = (harness: ArtifactHarness): string[] =>
+    harness.captainCalls
+      .map(({ prompt }) => prompt)
+      .filter((prompt) => prompt.includes(CLASSIFIER_MARKER));
+
+  const traceEvents = (harness: ArtifactHarness): PlaybookTraceEvent[] =>
+    harness.telemetry
+      .filter(({ topic }) => topic === 'playbook.trace')
+      .map(({ payload }) => payload as PlaybookTraceEvent);
+
+  const retainedGeneration = (
+    harness: ArtifactHarness,
+    rootPlaybookId = 'code',
+  ): PlaybookCaptainRetainedGeneration => {
+    const update = harness.shell
+      .exportSettlement()
+      ?.retentionUpdates.find(
+        (candidate) =>
+          candidate.kind === 'retain' &&
+          candidate.rootPlaybookId === rootPlaybookId,
+      );
+    expect(update).toBeDefined();
+    if (update === undefined || update.kind !== 'retain') {
+      throw new Error(`/${rootPlaybookId} did not retain a generation`);
+    }
+    return structuredClone(update.generation);
+  };
+
+  const expectCleanCompletion = (
+    harness: ArtifactHarness,
+    rootPlaybookId = 'code',
+  ): void => {
+    expect(harness.shell.exportSnapshot()).toMatchObject({ mode: 'chat' });
+    expect(harness.statuses).toContain(`◇ /${rootPlaybookId} finished`);
+    expect(
+      harness.shell.exportSettlement()?.retentionUpdates,
+    ).toContainEqual({ kind: 'clear', rootPlaybookId });
+  };
+
+  const expectNoReadyClassification = (harness: ArtifactHarness): void => {
+    for (const prompt of classifierPrompts(harness)) {
+      expect(prompt).not.toContain('Current state: ready');
+    }
+  };
+
+  const retainedDecision = (
+    prompt: string,
+    advertised: readonly string[],
+    boss: string,
+  ): unknown => {
+    if (/\nRetained resumptions:\n- code \(\/code\):/.test(prompt)) {
+      return { action: 'resume', playbookId: 'code' };
+    }
+    const retry = advertised.find((id) => id.startsWith('retry:'));
+    if (retry !== undefined && /retry/i.test(boss)) {
+      return { action: 'runtime', actionId: retry };
+    }
+    if (prompt.includes('Pending Boss questions:\n- ')) {
+      return { action: 'deliver' };
+    }
+    return { action: 'respond', text: 'No retained work is actionable.' };
+  };
+
+  const completionAdjudication = (prompt: string): unknown => {
+    if (prompt.includes('`directCommit`')) {
+      return { guard: 'directCommit', latestCommit: 'abc123' };
+    }
+    if (prompt.includes('`noFindings`')) return { guard: 'noFindings' };
+    throw new Error(`unexpected completion adjudication prompt: ${prompt}`);
+  };
+
+  const completingTarget = (
+    sessionNamespace: string,
+    playerAdapters: Readonly<Record<string, string>> = {},
+  ) => {
+    const code = realEntry(codeRegistryEntry);
+    const review = realEntry(reviewRegistryEntry);
+    const harness = realArtifactHarness(
+      [code, review],
+      {
+        players: (_playerId, prompt) => {
+          if (prompt.includes('Assess whether the coding intent')) {
+            return {
+              status: 'ok',
+              finalText: 'Committed after the answer.\nCommit: abc123',
+              resumeToken: 'target-coder-token',
+            };
+          }
+          if (prompt.includes('A new review begins')) {
+            return {
+              status: 'ok',
+              finalText: 'No unsettled findings.',
+              resumeToken: 'target-review-token',
+            };
+          }
+          throw new Error(`unexpected completion player prompt: ${prompt}`);
+        },
+        adjudicate: completionAdjudication,
+        decide: retainedDecision,
+        closing: () => 'The retained CODE run advanced.',
+      },
+      { playerAdapters, sessionNamespace },
+    );
+    return { code, review, harness };
+  };
+
+  const adoptWithoutDriving = async (
+    harness: ArtifactHarness,
+    generation: PlaybookCaptainRetainedGeneration,
+    turnId = 1,
+  ): Promise<void> => {
+    await harness.init();
+    await harness.shell.installRetainedGenerations({
+      code: structuredClone(generation),
+    });
+    const playerCalls = harness.playerCalls.length;
+    const classifications = classifierPrompts(harness).length;
+    await harness.turn('Continue the retained CODE run.', turnId);
+    expect(harness.playerCalls).toHaveLength(playerCalls);
+    expect(classifierPrompts(harness)).toHaveLength(classifications);
+    expect(harness.surfaced.at(-1)).toContain(DUPLICATE_EFFECT_WARNING);
+    expect(harness.shell.exportSnapshot()).toMatchObject({
+      mode: 'engaged.parked',
+      lastAction: 'resume',
+    });
+    const sourceIds = new Set(
+      generation.frames.map(({ sessionId }) => sessionId),
+    );
+    const adopted = harness.shell.exportSnapshot();
+    if (adopted?.mode !== 'engaged.parked') {
+      throw new Error('retained generation did not install a parked stack');
+    }
+    for (const frame of adopted.frames) {
+      expect(sourceIds.has(frame.sessionId)).toBe(false);
+    }
+  };
+
+  it.each([
+    {
+      label: 'a parked Boss question across source disposal and an adapter swap',
+      dismiss: false,
+      sourceNamespace: '4a10',
+      targetNamespace: '5a10',
+      targetAdapter: 'codex',
+    },
+    {
+      label: 'the exact turn-start generation after root dismissal',
+      dismiss: true,
+      sourceNamespace: '4a11',
+      targetNamespace: '5a11',
+      targetAdapter: 'claude',
+    },
+  ])('resumes and completes $label', async (scenario) => {
+    const sourceCode = realEntry(codeRegistryEntry);
+    const sourceReview = realEntry(reviewRegistryEntry);
+    const source = realArtifactHarness(
+      [sourceCode, sourceReview],
+      {
+        players: (_playerId, prompt) => {
+          if (!prompt.includes('Assess whether the coding intent')) {
+            throw new Error(`unexpected source player prompt: ${prompt}`);
+          }
+          return {
+            status: 'ok',
+            finalText: 'The change is drafted; one choice remains.',
+            resumeToken: 'source-coder-token',
+          };
+        },
+        adjudicate: () => ({
+          guard: 'needsBossReply',
+          question: CODE_QUESTION,
+        }),
+        decide: (_prompt, _advertised, boss) =>
+          scenario.dismiss && /dismiss/i.test(boss)
+            ? { action: 'dismiss' }
+            : { action: 'respond', text: 'The question remains pending.' },
+        closing: () => 'CODE is waiting on the target choice.',
+      },
+      { sessionNamespace: scenario.sourceNamespace },
+    );
+    await source.init();
+    await source.turn('/code implement the retained change', 1);
+
+    expect(sourceCode.runtimes[0]?.describe?.()).toMatchObject({
+      state: { stateId: 'awaitBossReply' },
+      pendingQuestions: [
+        expect.objectContaining({ question: CODE_QUESTION }),
+      ],
+    });
+    const parked = retainedGeneration(source);
+    expect(parked).toMatchObject({
+      rootStateDescription: 'Waiting for Boss to answer Coder.',
+      frames: [
+        {
+          playbookId: 'code',
+          runtime: {
+            state: { stateId: 'awaitBossReply' },
+            roleResumeTokens: { coder: 'source-coder-token' },
+          },
+        },
+      ],
+    });
+
+    let transferable = parked;
+    if (scenario.dismiss) {
+      await source.turn('Dismiss this root but keep its work resumable.', 2);
+      transferable = retainedGeneration(source);
+      expect(transferable).toEqual(parked);
+      expect(source.shell.exportSnapshot()).toMatchObject({ mode: 'chat' });
+      expect(source.statuses).toContain('◇ /code stopped');
+    }
+    await source.shell.dispose?.();
+
+    const target = completingTarget(scenario.targetNamespace, {
+      'code-coder': scenario.targetAdapter,
+    });
+    await adoptWithoutDriving(target.harness, transferable);
+    expect(target.code.runtimes).toHaveLength(1);
+    expect(target.code.runtimes[0]?.describe?.().state.stateId).toBe(
+      'awaitBossReply',
+    );
+    expect(
+      target.harness.session.players.find(({ id }) => id === 'code-coder')
+        ?.adapter,
+    ).toBe(scenario.targetAdapter);
+    expect(
+      target.harness.shell.exportSnapshot()?.playerSessions['code-coder']
+        ?.adapter,
+    ).toBe(scenario.targetAdapter);
+
+    await target.harness.turn('Use the narrow release target.', 2);
+
+    expect(target.harness.playerCalls).toEqual([
+      'code-coder',
+      'review-reviewer',
+    ]);
+    expect(target.harness.playerResumes[0]).toBe(false);
+    expect(target.harness.playerPrompts[0]).toContain(
+      `Boss question:\n${CODE_QUESTION}`,
+    );
+    expect(target.harness.playerPrompts[0]).toContain(
+      'Boss reply:\nUse the narrow release target.',
+    );
+    expect(classifierPrompts(target.harness)).toHaveLength(1);
+    expect(classifierPrompts(target.harness)[0]).toContain(
+      'Current state: awaitBossReply',
+    );
+    expectNoReadyClassification(target.harness);
+    expectCleanCompletion(target.harness);
+    await target.harness.shell.dispose?.();
+  });
+
+  it('adopts a real CODE failure and completes through its retained retry', async () => {
+    const sourceCode = realEntry(codeRegistryEntry);
+    const sourceReview = realEntry(reviewRegistryEntry);
+    const source = realArtifactHarness(
+      [sourceCode, sourceReview],
+      {
+        players: () => ({ status: 'error', error: 'coder exploded' }),
+        adjudicate: (prompt) => {
+          throw new Error(`failure setup must not adjudicate: ${prompt}`);
+        },
+        decide: retainedDecision,
+        closing: () => 'CODE stopped on the coder error.',
+      },
+      { sessionNamespace: '4a20' },
+    );
+    await source.init();
+    const originalIntent = 'continue the exact retained failure input';
+    await source.turn(`/code ${originalIntent}`, 1);
+    expect(sourceCode.runtimes[0]?.describe?.()).toMatchObject({
+      state: { stateId: 'failed' },
+      lastError: { message: 'coder exploded' },
+    });
+    const generation = retainedGeneration(source);
+    expect(generation.frames[0]?.runtime.state.stateId).toBe('failed');
+    await source.shell.dispose?.();
+
+    const target = completingTarget('5a20');
+    await adoptWithoutDriving(target.harness, generation);
+    expect(target.code.runtimes[0]?.describe?.().state.stateId).toBe('failed');
+
+    await target.harness.turn('Retry the retained failure now.', 2);
+
+    expect(target.harness.playerCalls).toEqual([
+      'code-coder',
+      'review-reviewer',
+    ]);
+    expect(target.harness.playerPrompts[0]).toContain(`> ${originalIntent}`);
+    expect(target.harness.playerPrompts[0]).not.toContain(
+      'Retry the retained failure now.',
+    );
+    expect(classifierPrompts(target.harness)).toEqual([]);
+    expectCleanCompletion(target.harness);
+    await target.harness.shell.dispose?.();
+  });
+
+  it('adopts a real nested REVIEW edge and surfaces stale world state through review', async () => {
+    let worldRevision = 'captured';
+    const sourceCode = realEntry(codeRegistryEntry);
+    const sourceReview = realEntry(reviewRegistryEntry);
+    const source = realArtifactHarness(
+      [sourceCode, sourceReview],
+      {
+        players: (_playerId, prompt) => {
+          if (prompt.includes('Assess whether the coding intent')) {
+            return {
+              status: 'ok',
+              finalText: 'Implemented the change.\nCommit: abc123',
+              resumeToken: 'source-code-token',
+            };
+          }
+          if (prompt.includes('A new review begins')) {
+            return {
+              status: 'ok',
+              finalText: 'The review needs a release-target answer.',
+              resumeToken: 'source-review-token',
+            };
+          }
+          throw new Error(`unexpected nested source player prompt: ${prompt}`);
+        },
+        adjudicate: (prompt) =>
+          prompt.includes('`directCommit`')
+            ? { guard: 'directCommit', latestCommit: 'abc123' }
+            : { guard: 'needsBossReply', question: REVIEW_QUESTION },
+        decide: retainedDecision,
+        closing: () => 'The nested review is waiting on Boss.',
+      },
+      { sessionNamespace: '4a30' },
+    );
+    await source.init();
+    await source.turn('/code implement and review the retained change', 1);
+
+    const generation = retainedGeneration(source);
+    expect(generation.frames).toHaveLength(2);
+    expect(generation.frames).toMatchObject([
+      {
+        playbookId: 'code',
+        runtime: {
+          state: { stateId: 'reviewFirstCommit' },
+          suspendedCall: {
+            playbookId: 'review',
+            childSessionId: generation.frames[1]?.sessionId,
+          },
+        },
+      },
+      {
+        playbookId: 'review',
+        parentSessionId: generation.frames[0]?.sessionId,
+        runtime: {
+          state: { stateId: 'awaitBossReply' },
+          pendingBossQuestions: [
+            expect.objectContaining({ question: REVIEW_QUESTION }),
+          ],
+        },
+      },
+    ]);
+    expect(generation.frames[1]?.parentCallId).toBe(
+      generation.frames[0]?.runtime.suspendedCall?.callId,
+    );
+    await source.shell.dispose?.();
+    worldRevision = 'advanced';
+
+    const targetCode = realEntry(codeRegistryEntry);
+    const targetReview = realEntry(reviewRegistryEntry);
+    const target = realArtifactHarness(
+      [targetCode, targetReview],
+      {
+        players: (_playerId, prompt) => {
+          if (prompt.includes('A new review begins')) {
+            if (worldRevision !== 'advanced') {
+              throw new Error('the external world did not advance after capture');
+            }
+            return {
+              status: 'ok',
+              finalText: `1. The generated output is stale in the ${worldRevision} world.`,
+              resumeToken: 'target-review-token-1',
+            };
+          }
+          if (prompt.includes('For each review item')) {
+            return {
+              status: 'ok',
+              finalText: 'Accepted and fixed.\nCommit: def456',
+              resumeToken: 'target-coder-token',
+            };
+          }
+          if (prompt.includes('Review the latest commit and resulting')) {
+            return {
+              status: 'ok',
+              finalText: 'No unsettled findings.',
+              resumeToken: 'target-review-token-2',
+            };
+          }
+          throw new Error(`unexpected nested target player prompt: ${prompt}`);
+        },
+        adjudicate: (prompt) => {
+          if (prompt.includes('stale in the advanced world')) {
+            return { guard: 'hasFindings' };
+          }
+          if (prompt.includes('Accepted and fixed')) {
+            return { guard: 'committed' };
+          }
+          if (prompt.includes('No unsettled findings')) {
+            return { guard: 'noFindings' };
+          }
+          throw new Error(`unexpected stale-world adjudication: ${prompt}`);
+        },
+        decide: retainedDecision,
+        closing: () => 'The retained review observed and fixed the stale world.',
+      },
+      { sessionNamespace: '5a30' },
+    );
+    await adoptWithoutDriving(target, generation);
+
+    expect(targetCode.runtimes).toHaveLength(1);
+    expect(targetReview.runtimes).toHaveLength(1);
+    expect(
+      traceEvents(target).filter(({ type }) => type === 'playbook.call.started'),
+    ).toEqual([]);
+    const adoptedSnapshot = target.shell.exportSnapshot();
+    expect(adoptedSnapshot).toMatchObject({
+      frames: [
+        {
+          playbookId: 'code',
+          runtime: {
+            suspendedCall: {
+              callId: 'playbook-1',
+              childSessionId: adoptedSnapshot?.frames?.[1]?.sessionId,
+            },
+          },
+        },
+        {
+          playbookId: 'review',
+          parentCallId: 'playbook-1',
+        },
+      ],
+    });
+    const adoptionStarts = traceEvents(target).filter(
+      (event) =>
+        event.type === 'session.started' &&
+        typeof (event.payload as { adoption?: unknown }).adoption === 'object',
+    );
+    expect(adoptionStarts).toHaveLength(2);
+    expect(adoptionStarts.map(({ sequence }) => sequence)).toEqual([1, 1]);
+    expect(adoptionStarts[0]).toMatchObject({
+      callId: 'playbook-1',
+      payload: {
+        adoption: {
+          sourceSessionId: generation.frames[0]?.sessionId,
+          sourceGenerationId: generation.frames[0]?.rootSessionId,
+          sourceCallId: generation.frames[0]?.runtime.suspendedCall?.callId,
+          sourceChildSessionId:
+            generation.frames[0]?.runtime.suspendedCall?.childSessionId,
+          targetCallId: 'playbook-1',
+          targetChildSessionId: adoptedSnapshot?.frames?.[1]?.sessionId,
+        },
+      },
+    });
+    expect(adoptionStarts[1]).toMatchObject({
+      payload: {
+        adoption: {
+          sourceSessionId: generation.frames[1]?.sessionId,
+          sourceGenerationId: generation.frames[0]?.rootSessionId,
+        },
+      },
+    });
+
+    await target.turn('Use release 6.0 and re-check the current world.', 2);
+
+    expect(target.playerCalls).toEqual([
+      'review-reviewer',
+      'code-coder',
+      'review-reviewer',
+    ]);
+    expect(target.playerPrompts).not.toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Assess whether the coding intent'),
+      ]),
+    );
+    expect(target.playerPrompts[1]).toContain(
+      'The generated output is stale in the advanced world.',
+    );
+    expect(classifierPrompts(target)).toHaveLength(1);
+    expect(classifierPrompts(target)[0]).toContain(
+      'Current state: awaitBossReply',
+    );
+    expectNoReadyClassification(target);
+    expect(
+      traceEvents(target).filter(
+        ({ type }) => type === 'playbook.call.started',
+      ),
+    ).toEqual([]);
+    expect(
+      traceEvents(target).filter(
+        ({ type }) => type === 'playbook.call.finished',
+      ),
+    ).toHaveLength(1);
+    expectCleanCompletion(target);
+    await target.shell.dispose?.();
+  });
+
+  it('retains the real pre-terminal stack across CODE reportedReviewFailure', async () => {
+    let breakReview = false;
+    const sourceCode = realEntry(codeRegistryEntry);
+    const sourceReview = realEntry(reviewRegistryEntry);
+    const source = realArtifactHarness(
+      [sourceCode, sourceReview],
+      {
+        players: (_playerId, prompt) => {
+          if (prompt.includes('Assess whether the coding intent')) {
+            return {
+              status: 'ok',
+              finalText: 'Implemented the change.\nCommit: abc123',
+              resumeToken: 'source-code-token',
+            };
+          }
+          if (prompt.includes('A new review begins')) {
+            return {
+              status: 'ok',
+              finalText: breakReview
+                ? 'The resumed review reached its adjudication boundary.'
+                : 'The review needs a release-target answer.',
+              resumeToken: 'source-review-token',
+            };
+          }
+          throw new Error(`unexpected unfinished source prompt: ${prompt}`);
+        },
+        adjudicate: (prompt) => {
+          if (prompt.includes('`directCommit`')) {
+            return { guard: 'directCommit', latestCommit: 'abc123' };
+          }
+          return breakReview
+            ? { guard: 'undeclaredReviewOutcome' }
+            : { guard: 'needsBossReply', question: REVIEW_QUESTION };
+        },
+        decide: retainedDecision,
+        closing: () => 'The REVIEW boundary was reported truthfully.',
+      },
+      { sessionNamespace: '4a40' },
+    );
+    await source.init();
+    await source.turn('/code implement before the interrupted review', 1);
+    const preTerminal = retainedGeneration(source);
+    expect(preTerminal.frames).toHaveLength(2);
+
+    breakReview = true;
+    await source.turn('Use release 6.0 for the review.', 2);
+
+    expect(source.shell.exportSnapshot()).toMatchObject({ mode: 'chat' });
+    expect(
+      source.telemetry
+        .filter(({ topic }) => topic === 'playbook.fsm.state')
+        .some(
+          ({ payload }) =>
+            (payload as { state?: PlaybookState }).state?.stateId ===
+            'reportedReviewFailure',
+        ),
+    ).toBe(true);
+    const retainedAfterTerminal = retainedGeneration(source);
+    expect(retainedAfterTerminal).toEqual(preTerminal);
+    expect(retainedAfterTerminal.frames[0]?.runtime.state.stateId).toBe(
+      'reviewFirstCommit',
+    );
+    expect(retainedAfterTerminal.frames[1]?.runtime.state.stateId).toBe(
+      'awaitBossReply',
+    );
+    await source.shell.dispose?.();
+
+    const targetCode = realEntry(codeRegistryEntry);
+    const targetReview = realEntry(reviewRegistryEntry);
+    const target = realArtifactHarness(
+      [targetCode, targetReview],
+      {
+        players: (_playerId, prompt) => {
+          if (!prompt.includes('A new review begins')) {
+            throw new Error(`unexpected unfinished target prompt: ${prompt}`);
+          }
+          return {
+            status: 'ok',
+            finalText: 'No unsettled findings.',
+            resumeToken: 'target-review-token',
+          };
+        },
+        adjudicate: () => ({ guard: 'noFindings' }),
+        decide: retainedDecision,
+        closing: () => 'The retained pre-terminal review completed.',
+      },
+      { sessionNamespace: '5a40' },
+    );
+    await adoptWithoutDriving(target, retainedAfterTerminal);
+    await target.turn('Use release 6.0 and finish the review.', 2);
+
+    expect(target.playerCalls).toEqual(['review-reviewer']);
+    expect(classifierPrompts(target)).toHaveLength(1);
+    expect(classifierPrompts(target)[0]).toContain(
+      'Current state: awaitBossReply',
+    );
+    expectNoReadyClassification(target);
+    expectCleanCompletion(target);
+    await target.shell.dispose?.();
+  });
+
+  it('degrades the real capability-less DECIDE artifact to fresh behavior', async () => {
+    const decideQuestions = (prompt: string): unknown => {
+      if (prompt.includes('source item DECIDE-1')) {
+        return { guard: 'needsBossReply', question: 'Coder question?' };
+      }
+      if (prompt.includes('source item DECIDE-2')) {
+        return { guard: 'needsBossReply', question: 'Reviewer question?' };
+      }
+      throw new Error(`unexpected DECIDE adjudication prompt: ${prompt}`);
+    };
+    const decidePlayers = (playerId: string) => ({
+      status: 'ok',
+      finalText: `Need ${playerId} clarification`,
+      resumeToken: `${playerId}-token`,
+    });
+    const sourceDecide = realEntry(decideRegistryEntry);
+    const source = realArtifactHarness(
+      [sourceDecide],
+      {
+        players: decidePlayers,
+        adjudicate: decideQuestions,
+        decide: () => ({ action: 'respond', text: 'No resumption exists.' }),
+        closing: () => 'DECIDE is waiting on its two questions.',
+      },
+      { sessionNamespace: '4a50' },
+    );
+    await source.init();
+    await source.turn('/decide compare the retained designs', 1);
+
+    expect(sourceDecide.runtimes).toHaveLength(1);
+    expect(sourceDecide.runtimes[0]?.adopt).toBeUndefined();
+    expect(
+      sourceDecide.runtimes[0]?.retainedGenerationMetadata,
+    ).toBeUndefined();
+    expect(source.shell.exportSnapshot()).toMatchObject({
+      mode: 'engaged.parked',
+      pendingBossQuestions: expect.arrayContaining([
+        expect.objectContaining({ question: 'Coder question?' }),
+        expect.objectContaining({ question: 'Reviewer question?' }),
+      ]),
+    });
+    expect(source.shell.exportSettlement()?.retentionUpdates).toEqual([
+      { kind: 'clear', rootPlaybookId: 'decide' },
+    ]);
+    await source.shell.dispose?.();
+
+    const targetDecide = realEntry(decideRegistryEntry);
+    const target = realArtifactHarness(
+      [targetDecide],
+      {
+        players: decidePlayers,
+        adjudicate: decideQuestions,
+        decide: (prompt) => {
+          expect(prompt).toContain('Retained resumptions: none.');
+          return { action: 'respond', text: 'Start DECIDE fresh if needed.' };
+        },
+        closing: () => 'Fresh DECIDE is waiting on its own questions.',
+      },
+      { sessionNamespace: '5a50' },
+    );
+    await target.init();
+    await target.shell.installRetainedGenerations({});
+    await target.turn('Continue the earlier decision.', 1);
+    expect(targetDecide.runtimes).toHaveLength(0);
+    expect(target.surfaced).toEqual(['Start DECIDE fresh if needed.']);
+
+    await target.turn('/decide start a fresh comparison', 2);
+    expect(targetDecide.runtimes).toHaveLength(1);
+    expect(targetDecide.runtimes[0]?.adopt).toBeUndefined();
+    expect(target.shell.exportSnapshot()).toMatchObject({
+      mode: 'engaged.parked',
+    });
+    await target.shell.dispose?.();
+  });
+});
 
 // ---------------------------------------------------------------------------
 // A-29 / A-28 rows over the real Playbook Captain shell (IR-036 task 4):

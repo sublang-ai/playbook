@@ -40,7 +40,7 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
    Surface retained generations in the shell's control digest labeled by the retained root state's published description, add the validated resume selection to the Captain's closed action set with the decided arbitration order, and land the `playbook-captain.md` items and shell tests.
 8. **Address resumption from both front ends.** _[done]_
    Make a bare continuation request select resumption in `playbook run --continue` and interactive reopen with explicit fresh-start intent winning, and land the `playbook-cli.md` items with headless and interactive tests.
-9. **Prove the interruption matrix end to end.**
+9. **Prove the interruption matrix end to end.** _[done]_
    Drive real linked artifacts through each matrix class — Boss-question suspension, park, failure, real nested suspension with a child call, artifact-declared unfinished terminal, dismissed root, and adapter-swap fresh session — asserting each resumes mid-state with no initial-state classification and completes; include capability-less degradation, the stale-world resume surfacing through review, and the duplicate-effect warning assertions.
 10. **Verify and hand over.**
     Run the full suites and `spex lint` to clean and hand the changes to review.
