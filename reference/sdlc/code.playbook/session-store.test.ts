@@ -1406,6 +1406,47 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     await nextLease.release();
   });
 
+  it('transfers descendant option drift without changing the generation', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(13);
+    const targetId = adoptionSessionId(14);
+    const sourceExecution = retentionExecutionProjection();
+    const targetExecution: any = structuredClone(sourceExecution);
+    targetExecution.catalog.review.options = { targetVariant: 'current' };
+    const generation = retainedCodeGeneration();
+    const source = retainedSettledRecord({
+      id: sourceId,
+      execution: sourceExecution,
+      retainedGenerations: { code: generation },
+    });
+    const target = freshAdoptionTargetRecord({
+      id: targetId,
+      execution: targetExecution,
+    });
+    await writeRecordFixture(sessionsDir, source);
+    await writeRecordFixture(sessionsDir, target);
+
+    const store = sequencedStore(sessionsDir, 25);
+    const lease = await store.acquire(targetId);
+    const result = await lease.transferPredecessorGenerations({
+      predecessor: await lease.predecessor(),
+    });
+
+    expect(result.retainedGenerations).toEqual({ code: generation });
+    expect((await store.read(sourceId)).retainedGenerations).toEqual({});
+    expect((await store.read(targetId))).toMatchObject({
+      structuralProjection: {
+        catalog: {
+          review: { options: { targetVariant: 'current' } },
+        },
+      },
+      retainedGenerations: {
+        code: { frames: [{}, { options: {} }] },
+      },
+    });
+    await lease.release();
+  });
+
   it.each([
     'registry module',
     'manifest command',

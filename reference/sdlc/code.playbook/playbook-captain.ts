@@ -2489,7 +2489,10 @@ export function createPlaybookCaptainShell(
                 `${framePath}.parentCallId`,
               );
         const options = frame.options as JsonValue;
-        if (!isDeepStrictEqual(options, frameEnablement.options)) {
+        if (
+          index === 0 &&
+          !isDeepStrictEqual(options, frameEnablement.options)
+        ) {
           throw new TypeError(`${framePath}.options changed`);
         }
         const roleBindings = snapshotFrameRoleBindings(
@@ -2625,9 +2628,16 @@ export function createPlaybookCaptainShell(
   };
 
   class RetainedRuntimeCleanupError extends AggregateError {
-    constructor(failures: readonly unknown[], message: string) {
+    readonly failedRuntimes: readonly PlaybookRuntime[];
+
+    constructor(
+      failures: readonly unknown[],
+      message: string,
+      failedRuntimes: readonly PlaybookRuntime[] = [],
+    ) {
       super(failures, message);
       this.name = 'RetainedRuntimeCleanupError';
+      this.failedRuntimes = failedRuntimes;
     }
   }
 
@@ -2636,15 +2646,21 @@ export function createPlaybookCaptainShell(
     message: string,
   ): Promise<void> => {
     const failures: unknown[] = [];
+    const failedRuntimes: PlaybookRuntime[] = [];
     for (const runtime of [...runtimes].reverse()) {
       try {
         await runtime.dispose();
       } catch (error) {
         failures.push(error);
+        failedRuntimes.unshift(runtime);
       }
     }
     if (failures.length > 0) {
-      throw new RetainedRuntimeCleanupError(failures, message);
+      throw new RetainedRuntimeCleanupError(
+        failures,
+        message,
+        failedRuntimes,
+      );
     }
   };
 
@@ -2675,12 +2691,20 @@ export function createPlaybookCaptainShell(
 
   const drainRetiredRetainedRuntimes = async (): Promise<void> => {
     if (retiredRetainedRuntimes.length === 0) return;
-    const runtimes = [...retiredRetainedRuntimes];
-    await disposeRetainedRuntimeSet(
-      runtimes,
-      'retired retained-generation runtime cleanup failed',
-    );
-    retiredRetainedRuntimes.splice(0, runtimes.length);
+    const runtimes = retiredRetainedRuntimes.splice(0);
+    try {
+      await disposeRetainedRuntimeSet(
+        runtimes,
+        'retired retained-generation runtime cleanup failed',
+      );
+    } catch (error) {
+      if (error instanceof RetainedRuntimeCleanupError) {
+        retiredRetainedRuntimes.unshift(...error.failedRuntimes);
+      }
+      terminallyDisposed = true;
+      lifecycle = 'closed';
+      throw error;
+    }
   };
 
   const takeRetainedOfferRuntimes = (): readonly PlaybookRuntime[] => {
@@ -2730,7 +2754,7 @@ export function createPlaybookCaptainShell(
         });
       } catch (error) {
         if (error instanceof RetainedRuntimeCleanupError) {
-          retiredRetainedRuntimes.push(...runtimes);
+          retiredRetainedRuntimes.push(...error.failedRuntimes);
           terminallyDisposed = true;
           lifecycle = 'closed';
           throw error;
@@ -2747,12 +2771,19 @@ export function createPlaybookCaptainShell(
           }
         }
         if (cleanupError !== undefined) {
-          retiredRetainedRuntimes.push(...runtimes);
+          if (cleanupError instanceof RetainedRuntimeCleanupError) {
+            retiredRetainedRuntimes.push(
+              ...cleanupError.failedRuntimes,
+            );
+          }
           terminallyDisposed = true;
           lifecycle = 'closed';
           throw new RetainedRuntimeCleanupError(
             [error, cleanupError],
             'retained-generation preparation and cleanup failed',
+            cleanupError instanceof RetainedRuntimeCleanupError
+              ? cleanupError.failedRuntimes
+              : [],
           );
         }
         throw error;
@@ -4315,7 +4346,6 @@ export function createPlaybookCaptainShell(
     if (offers.length === 0) return 'Retained resumptions: none.';
     const lines = ['Retained resumptions:'];
     for (const [rootPlaybookId, offer] of offers) {
-      recordSuppliedIdentifier(rootPlaybookId);
       const enablement = enablementById.get(rootPlaybookId)!;
       lines.push(
         digestLine`- ${rootPlaybookId} (/${enablement.command}): ${
@@ -6891,7 +6921,9 @@ export function createPlaybookCaptainShell(
           'retained-generation installation cleanup failed',
         );
       } catch (cleanupError) {
-        retiredRetainedRuntimes.push(...runtimes);
+        if (cleanupError instanceof RetainedRuntimeCleanupError) {
+          retiredRetainedRuntimes.push(...cleanupError.failedRuntimes);
+        }
         terminallyDisposed = true;
         lifecycle = 'closed';
         throw new AggregateError(

@@ -683,6 +683,7 @@ function makeShell(
     | ReturnType<typeof fakeCodeEntry>[],
   opts: {
     options?: unknown;
+    playbookOptions?: Readonly<Record<string, unknown>>;
     sessionIds?: string[];
     restoredSession?: boolean;
     commands?: Readonly<Record<string, string>>;
@@ -738,7 +739,7 @@ function makeShell(
         ? { command: opts.commands[r.entry.id] }
         : {}),
       roles,
-      options: opts.options ?? {},
+      options: opts.playbookOptions?.[r.entry.id] ?? opts.options ?? {},
     };
   }
   let sessionSequence = 0;
@@ -7817,6 +7818,47 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     await shell.dispose?.();
   });
 
+  it('keeps retained playbook ids available as repeatable Boss prose', async () => {
+    const codeReview = fakePlaybookEntry('code-review', 'code-review');
+    enableGenerationRetention(codeReview);
+    const shell = makeShell(codeReview, { sessionIds: [TARGET_ROOT_ID] });
+    await shell.init!(stubSession(roster).session);
+    await shell.installRetainedGenerations({
+      'code-review': retainedRootGeneration(
+        'code-review',
+        SOURCE_ROOT_ID,
+        'retainedReview',
+        'Review work remains.',
+      ),
+    });
+    const context = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code-review' }),
+      {
+        status: 'ok',
+        turnId: 1,
+        finalText: 'I resumed code-review from where it stopped.',
+      },
+    ]);
+
+    await shell.handleBossTurn(
+      turn('continue the retained review'),
+      context.context,
+    );
+
+    expect(
+      context.captainCalls.filter((call) =>
+        call.prompt.includes('[Reply rejected]'),
+      ),
+    ).toHaveLength(0);
+    expect(turnSummaryCalls(context)[0]?.prompt).toContain(
+      'Resumed /code-review from the retained state described as "Review work remains."',
+    );
+    expect(context.replies[0]).toContain(
+      'I resumed code-review from where it stopped.',
+    );
+    await shell.dispose?.();
+  });
+
   it('preserves an unadvertised generation with a capability-less descendant', async () => {
     const code = fakeCodeEntry();
     const review = fakePlaybookEntry('review', 'review');
@@ -7846,6 +7888,7 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     const controlDigest = prompt!
       .split('[ControlView digest]')[1]!
       .split('[Catalog digest]')[0]!;
+    expect(controlDigest).toContain('Retained resumptions: none.');
     expect(controlDigest).not.toContain('- code (/code):');
     expect(code.runtimes[0]?.disposeCount).toBe(1);
     expect(review.runtimes[0]?.disposeCount).toBe(1);
@@ -8019,6 +8062,48 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     },
   );
 
+  it('rebinds descendant option drift to the current enabled options', async () => {
+    const code = fakeCodeEntry();
+    const review = fakePlaybookEntry('review', 'review');
+    enableGenerationRetention(code);
+    enableGenerationRetention(review);
+    const generation = structuredClone(retainedNestedGeneration());
+    (generation.frames[1] as { options: JsonValue }).options = {
+      sourceVariant: 'legacy',
+    };
+    const currentReviewOptions = { targetVariant: 'current' };
+    const shell = makeShell([code, review], {
+      playbookOptions: { code: {}, review: currentReviewOptions },
+      sessionIds: [TARGET_ROOT_ID, TARGET_CHILD_ID],
+    });
+    await shell.init!(stubSession(roster).session);
+
+    await shell.installRetainedGenerations({ code: generation });
+    const context = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code' }),
+      { status: 'ok', turnId: 1, finalText: 'The review resumed.' },
+    ]);
+    await shell.handleBossTurn(turn('resume the review'), context.context);
+
+    expect(review.createRuntime).toHaveBeenCalledWith(currentReviewOptions);
+    expect(review.runtimes[0]?.session?.roleBindings).toMatchObject({
+      coder: { playerId: 'code-coder' },
+      reviewer: { playerId: 'code-reviewer' },
+    });
+    expect(shell.exportSettlement()).toMatchObject({
+      retentionUpdates: [
+        {
+          kind: 'retain',
+          rootPlaybookId: 'code',
+          generation: {
+            frames: [{ options: {} }, { options: currentReviewOptions }],
+          },
+        },
+      ],
+    });
+    await shell.dispose?.();
+  });
+
   it('accepts an empty retained map after shell restore', async () => {
     const code = fakeCodeEntry();
     const source = makeShell(code);
@@ -8105,13 +8190,21 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     });
     expect(code.runtimes).toHaveLength(0);
 
-    await target.handleBossTurn(
-      turn('dismiss the live docs'),
-      stubContext([
-        captainJson({ action: 'dismiss' }),
-        { status: 'ok', turnId: 2, finalText: 'Docs dismissed.' },
-      ]).context,
+    const dismiss = stubContext([
+      captainJson({ action: 'dismiss' }),
+      { status: 'ok', turnId: 2, finalText: 'Docs dismissed.' },
+    ]);
+    await target.handleBossTurn(turn('dismiss the live docs'), dismiss.context);
+    const livePrompt = dismiss.captainCalls.find((call) =>
+      isDecisionPrompt(call.prompt),
+    )?.prompt;
+    expect(livePrompt).toContain(
+      'Retained resumptions: unavailable while a playbook is engaged.',
     );
+    const liveControlDigest = livePrompt!
+      .split('[ControlView digest]')[1]!
+      .split('[Catalog digest]')[0]!;
+    expect(liveControlDigest).not.toContain('- code (/code):');
     expect(code.runtimes).toHaveLength(0);
 
     const resumed = stubContext([
@@ -8139,6 +8232,69 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     expect(resumed.replies[0]).toContain('may duplicate external effects');
     await target.dispose?.();
     await source.dispose?.();
+  });
+
+  it('remains re-installable after transient probe construction failure', async () => {
+    const code = fakeCodeEntry();
+    const docs = fakePlaybookEntry('docs', 'docs');
+    enableGenerationRetention(code);
+    enableGenerationRetention(docs);
+    const createDocsRuntime = docs.entry.createRuntime;
+    let failConstruction = true;
+    docs.entry.createRuntime = (options) => {
+      if (failConstruction) {
+        failConstruction = false;
+        throw new Error('transient probe construction failure');
+      }
+      return createDocsRuntime(options);
+    };
+    const shell = makeShell([code, docs]);
+    await shell.init!(stubSession(roster).session);
+    const generations = {
+      code: retainedRootGeneration('code', SOURCE_ROOT_ID, 'retainedCode'),
+      docs: retainedRootGeneration(
+        'docs',
+        '40000000-0000-4000-8000-000000000004',
+        'retainedDocs',
+      ),
+    };
+
+    await expect(
+      shell.installRetainedGenerations(generations),
+    ).rejects.toThrow('transient probe construction failure');
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+
+    await shell.installRetainedGenerations(generations);
+    expect(code.runtimes).toHaveLength(2);
+    expect(docs.runtimes).toHaveLength(1);
+    await shell.dispose?.();
+  });
+
+  it('closes when capability-probe preparation cleanup rejects', async () => {
+    let rejectCleanup = true;
+    const code = fakeCodeEntry(undefined, async () => {
+      if (rejectCleanup) {
+        rejectCleanup = false;
+        throw new Error('capability probe cleanup failed');
+      }
+    });
+    const shell = makeShell(code);
+    await shell.init!(stubSession(roster).session);
+
+    await expect(
+      shell.installRetainedGenerations({
+        code: retainedRootGeneration('code', SOURCE_ROOT_ID, 'retainedCode'),
+      }),
+    ).rejects.toMatchObject({
+      name: 'RetainedRuntimeCleanupError',
+      message: '/code retained-generation capability cleanup failed',
+    });
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    await expect(
+      shell.handleBossTurn(turn('cannot continue'), stubContext().context),
+    ).rejects.toThrow(/init must be called first|restore must complete/);
+    await shell.dispose?.();
+    expect(code.runtimes[0]?.disposeCount).toBe(2);
   });
 
   it('closes after retained probe construction and cleanup fail together', async () => {
@@ -8216,6 +8372,75 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     await shell.dispose?.();
 
     expect(disposeOrder).toEqual(['docs', 'code', 'captain']);
+  });
+
+  it('closes on retired-probe cleanup failure and retries only that probe', async () => {
+    const disposeOrder: string[] = [];
+    const code = fakeCodeEntry(
+      async (runtime) => {
+        const state = playbookState('freshEditing');
+        runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+        return { outcome: 'quiescent', state };
+      },
+      async () => {
+        disposeOrder.push('code');
+      },
+    );
+    let rejectReviewCleanup = true;
+    const review = fakePlaybookEntry(
+      'review',
+      'review',
+      undefined,
+      async () => {
+        disposeOrder.push('review');
+        if (rejectReviewCleanup) {
+          rejectReviewCleanup = false;
+          throw new Error('retired review probe cleanup failed');
+        }
+      },
+    );
+    enableGenerationRetention(code);
+    enableGenerationRetention(review);
+    const shell = makeShell([code, review], {
+      sessionIds: [TARGET_ROOT_ID],
+    });
+    await shell.init!(stubSession(roster).session);
+    await shell.installRetainedGenerations({
+      code: retainedNestedGeneration(),
+    });
+    await shell.handleBossTurn(
+      turn('start code fresh'),
+      stubContext([
+        captainJson({
+          action: 'start',
+          playbookId: 'code',
+          input: 'start fresh work',
+        }),
+        { status: 'ok', turnId: 1, finalText: 'Fresh code started.' },
+      ]).context,
+    );
+    expect(shell.exportSettlement()).toMatchObject({
+      retentionUpdates: [{ kind: 'retain', rootPlaybookId: 'code' }],
+    });
+
+    await expect(
+      shell.handleBossTurn(turn('continue fresh work', 2), stubContext().context),
+    ).rejects.toMatchObject({
+      name: 'RetainedRuntimeCleanupError',
+      message: 'retired retained-generation runtime cleanup failed',
+    });
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(review.runtimes[0]?.disposeCount).toBe(1);
+    expect(code.runtimes[1]?.disposeCount).toBe(0);
+    expect(disposeOrder).toEqual(['review', 'code']);
+    await expect(
+      shell.handleBossTurn(turn('cannot retry', 3), stubContext().context),
+    ).rejects.toThrow(/init must be called first|restore must complete/);
+
+    await shell.dispose?.();
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(review.runtimes[0]?.disposeCount).toBe(2);
+    expect(code.runtimes[1]?.disposeCount).toBe(1);
   });
 
   it('adopts a nested generation under fresh identities and the current player ledger', async () => {
@@ -8323,6 +8548,9 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     expect(turnSummaryCalls(context)[0]?.prompt).toContain(
       'may duplicate external effects',
     );
+    expect(turnSummaryCalls(context)[0]?.prompt).toContain(
+      'Resumed /code from the retained state described as "Review of the retained edit is still pending."',
+    );
     expect(context.replies).toEqual([
       expect.stringContaining('may duplicate external effects'),
     ]);
@@ -8371,8 +8599,10 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
       captainJson({ action: 'resume', playbookId: 'code' }),
     ]);
     const callCaptain = context.context.callCaptain;
+    let closingPrompt: string | undefined;
     context.context.callCaptain = async (prompt, options) => {
       if (isClosingReplyPrompt(prompt)) {
+        closingPrompt = prompt;
         throw new Error('closing report unavailable');
       }
       return callCaptain(prompt, options);
@@ -8383,6 +8613,12 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
     expect(context.replies).toEqual([
       expect.stringContaining('may duplicate external effects'),
     ]);
+    expect(closingPrompt).toContain(
+      'no published root-state description was retained',
+    );
+    expect(context.replies[0]).toContain(
+      'no published root-state description was retained',
+    );
     await shell.dispose?.();
   });
 
@@ -8455,6 +8691,89 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
         { sessionId: RETRY_CHILD_ID },
       ],
     });
+    await shell.dispose?.();
+  });
+
+  it('rolls back a post-install visibility failure and retries cleanly', async () => {
+    const code = fakeCodeEntry();
+    enableGenerationRetention(code);
+    const shell = makeShell(code, {
+      sessionIds: [TARGET_ROOT_ID, RETRY_ROOT_ID],
+    });
+    await shell.init!(stubSession(roster).session);
+    await shell.installRetainedGenerations({
+      code: retainedRootGeneration('code', SOURCE_ROOT_ID, 'retainedCode'),
+    });
+    const failed = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code' }),
+      { status: 'ok', turnId: 1, finalText: 'The resume attempt failed.' },
+    ]);
+    failed.context.setVisiblePlayers = async () => {
+      throw new Error('resume visibility failed');
+    };
+
+    await shell.handleBossTurn(turn('resume the retained root'), failed.context);
+
+    expect(turnSummaryCalls(failed)[0]?.prompt).toContain(
+      'resume visibility failed',
+    );
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    expect(shell.exportSnapshot()).toMatchObject({ mode: 'chat' });
+    expect(shell.exportSnapshot()).not.toHaveProperty('frames');
+
+    const retry = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code' }),
+      { status: 'ok', turnId: 2, finalText: 'The retained root resumed.' },
+    ]);
+    await shell.handleBossTurn(turn('retry the resume', 2), retry.context);
+    expect(code.runtimes).toHaveLength(2);
+    expect(code.runtimes[1]?.session?.sessionId).toBe(RETRY_ROOT_ID);
+    expect(code.runtimes[1]?.adoptCount).toBe(1);
+    expect(shell.exportSnapshot()).toMatchObject({
+      mode: 'engaged.parked',
+      frames: [{ sessionId: RETRY_ROOT_ID }],
+    });
+    await shell.dispose?.();
+  });
+
+  it('closes when post-install telemetry rollback rejects', async () => {
+    const code = fakeCodeEntry();
+    enableGenerationRetention(code);
+    const host = stubSession(roster);
+    const emitTelemetry = host.session.emitTelemetry;
+    let rollbackAttempts = 0;
+    host.session.emitTelemetry = async (event) => {
+      if (
+        (event.payload as { event?: unknown }).event === 'resume.failed'
+      ) {
+        rollbackAttempts += 1;
+        throw new Error('resume telemetry rollback failed');
+      }
+      await emitTelemetry(event);
+    };
+    const shell = makeShell(code, { sessionIds: [TARGET_ROOT_ID] });
+    await shell.init!(host.session);
+    await shell.installRetainedGenerations({
+      code: retainedRootGeneration('code', SOURCE_ROOT_ID, 'retainedCode'),
+    });
+    const failed = stubContext([
+      captainJson({ action: 'resume', playbookId: 'code' }),
+      { status: 'ok', turnId: 1, finalText: 'The resume attempt failed.' },
+    ]);
+    failed.context.setVisiblePlayers = async () => {
+      throw new Error('resume visibility failed');
+    };
+
+    await shell.handleBossTurn(turn('resume the retained root'), failed.context);
+
+    expect(turnSummaryCalls(failed)[0]?.prompt).toContain(
+      'retained-generation adoption and rollback failed',
+    );
+    expect(rollbackAttempts).toBe(1);
+    expect(code.runtimes[0]?.disposeCount).toBe(1);
+    await expect(
+      shell.handleBossTurn(turn('cannot retry', 2), stubContext().context),
+    ).rejects.toThrow(/init must be called first|restore must complete/);
     await shell.dispose?.();
   });
 
@@ -8537,6 +8856,31 @@ describe('Playbook Captain retained resumption (CAPTAIN-46/47/48)', () => {
       ],
     });
     expect(code.runtimes[0]?.disposeCount).toBe(2);
+  });
+
+  it('rejects resume for an enabled root without an advertised offer', async () => {
+    const code = fakeCodeEntry();
+    const docs = fakePlaybookEntry('docs', 'docs');
+    enableGenerationRetention(code);
+    enableGenerationRetention(docs);
+    const shell = makeShell([code, docs]);
+    await shell.init!(stubSession(roster).session);
+    await shell.installRetainedGenerations({
+      code: retainedRootGeneration('code', SOURCE_ROOT_ID, 'retainedCode'),
+    });
+    const context = stubContext([
+      captainJson({ action: 'resume', playbookId: 'docs' }),
+      { status: 'ok', turnId: 1, finalText: 'Docs cannot resume.' },
+    ]);
+
+    await shell.handleBossTurn(turn('resume docs'), context.context);
+
+    expect(turnSummaryCalls(context)[0]?.prompt).toContain(
+      '/docs has no resumable retained generation',
+    );
+    expect(docs.runtimes).toHaveLength(0);
+    expect(code.runtimes[0]?.adoptCount).toBe(0);
+    await shell.dispose?.();
   });
 
   it('keeps explicit start fresh and refuses resume while a live action is available', async () => {
