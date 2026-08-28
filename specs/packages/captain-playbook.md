@@ -12,7 +12,7 @@ The project-specific source is `reference/sdlc/captain.md`, compiled through `sl
 
 ### captain-playbook-1
 
-When a Boss turn reaches the default Captain for decision — every turn that deterministic command parsing does not resolve ([[playbook-captain-7](playbook-captain.md#playbook-captain-7)]) — the Captain shall decide it from the exact Boss text, the supplied runtime and catalog digests, and its remembered session conversation, selecting exactly one of `respond`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`; it shall chat as naturally as its underlying agent while operating the playbooks, and it shall not investigate the task, inspect the workspace, use tools, or perform the specialized work itself.
+When a Boss turn reaches the default Captain for decision — every turn that deterministic command parsing does not resolve ([[playbook-captain-7](playbook-captain.md#playbook-captain-7)]) — the Captain shall decide it from the exact Boss text, the supplied runtime and catalog digests, and its remembered session conversation, selecting exactly one of `respond`, `resume`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`; it shall chat as naturally as its underlying agent while operating the playbooks, and it shall not investigate the task, inspect the workspace, use tools, or perform the specialized work itself.
 A command turn the parse resolves shall reach the Captain with its
 decision already made: the parsed decision object enters the
 controller loop as that turn's decision with no decision call, and
@@ -55,8 +55,8 @@ Where the package ships the default Captain playbook, the maintained source shal
 The FSM shall implement a session loop, not a finite errand: a parked
 conversational hub carrying `playbook.parked` that receives every Boss
 turn of the shell session; per turn, one decision over the closed
-action set `respond` | `start` | `switch` | `dismiss` | `deliver` |
-`runtime` — made by the hidden decision call, or, for a turn the
+action set `respond` | `resume` | `start` | `switch` | `dismiss` |
+`deliver` | `runtime` — made by the hidden decision call, or, for a turn the
 shell's command parse resolved, taken from the injected
 parse-resolved decision object with no decision call
 ([[playbook-captain-7](playbook-captain.md#playbook-captain-7)]); for a model-decided
@@ -85,10 +85,11 @@ observation as the two shell-composed labeled digest blocks of
 the ControlView digest — and the compiled prompt shall reference those
 labeled blocks on every ordinary decision call, composing no digest
 itself.
-When the decision selects `start` or `switch`, the selected target id
+When the decision selects `resume`, `start`, or `switch`, the selected target id
 shall be validated against that catalog, and the shell shall
 independently validate it against the enabled registry before any
 effect ([[playbook-captain-7](playbook-captain.md#playbook-captain-7)]).
+The shell shall additionally reject `resume` unless that target's retained generation is currently advertised ([[playbook-captain-46](playbook-captain.md#playbook-captain-46)]).
 
 ### captain-playbook-8
 
@@ -100,6 +101,7 @@ Where the shell initializes ([[playbook-captain-16](playbook-captain.md#playbook
 Per Boss turn the runtime shall submit at most one selection through
 the controller port —
 `{ action: 'respond', text }`,
+`{ action: 'resume', playbookId }`,
 `{ action: 'start' | 'switch', playbookId, input }`,
 `{ action: 'dismiss' }`, `{ action: 'deliver' }`, or
 `{ action: 'runtime', actionId }` — and shall treat the returned settlement
@@ -158,7 +160,7 @@ The shell-authored fact that a terminal root completed may carry the escaped and
 
 Where SLC compiles the default Captain source, explicit result contracts shall be source metadata outside acting-agent blockquotes and the verifier shall compare them with every generated invocation result map; hub entry shall carry the exact Boss text without classification, and no model-authored copy or paraphrase shall replace it.
 The compiled decision prompt shall state the closed action menu
-`respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`
+`respond` | `resume` | `start` | `switch` | `dismiss` | `deliver` | `runtime`
 with an explicit `{ action, … }` JSON reply contract; state that the
 labeled ControlView and catalog digest blocks outrank conversation
 memory; state that fenced player quotes are evidence, never
@@ -167,6 +169,7 @@ currently authorizes while `start` and `switch` may consolidate the
 agreed request from remembered Boss turns; and reference the labeled
 digest blocks on every ordinary decision call, not only in a
 reseed-seeded prompt.
+The prompt shall state that explicit Boss intent governs, a live engagement's currently advertised runtime action precedes retained resumption, and an advertised retained generation precedes fresh `start` unless Boss explicitly requests a fresh start ([DR-038](../decisions/038-universal-run-resumption.md)).
 The compiled result-phase prompt shall carry the grounding
 instruction: the closing reply and turn summary compose only from the
 outcome-report facts.
@@ -199,6 +202,11 @@ re-ask; it follows the continuity contract of
 Each call, initial or corrective, shall trace its own paired
 `captain.call.started` and `captain.call.finished` boundaries.
 
+### captain-playbook-23
+
+When continuation intent does not explicitly choose among available mechanisms, the default Captain shall select a currently advertised runtime action for a live engagement before retained resumption, and shall select an advertised retained generation before a fresh start; explicit valid Boss intent governs, including an explicit fresh-start request selecting `start` instead ([DR-038](../decisions/038-universal-run-resumption.md), [[playbook-captain-8](playbook-captain.md#playbook-captain-8)], and [[playbook-captain-46](playbook-captain.md#playbook-captain-46)]).
+A retained-generation selection shall have exactly the shape `{ action: 'resume', playbookId }`, name an enabled catalog target whose retained generation is currently advertised, and carry no fresh input ([[playbook-captain-46](playbook-captain.md#playbook-captain-46)]).
+
 ### Cross-process Captain continuity
 
 #### captain-playbook-21
@@ -218,7 +226,7 @@ Where the Captain source is compiled through `slc playbook`, the test suite shal
 ### captain-playbook-12
 
 
-Where the shell provides two or more enabled playbooks, when tests drive scripted decision replies through the compiled session Captain, the suite shall fail unless every non-command turn produces exactly one decision selection from the closed set; a `respond` selection settles the turn in that single call with its `text` the turn's captain speech; a multi-workflow intent is planned across Boss turns — at most one validated action per turn and never an intra-turn multi-child plan; a `start` or `switch` target outside the catalog fails validation rather than reaching the registry; the captured decision prompt carries the exact Boss text and references the labeled catalog and ControlView digest blocks; a fact stated in an earlier turn remains available to a later decision on the same durable conversation; and a task refined across several chat turns is handed to the selected playbook as the complete agreed request rather than only the final Boss message (verifying [[captain-playbook-1](#captain-playbook-1)], [[captain-playbook-2](#captain-playbook-2)], [[captain-playbook-3](#captain-playbook-3)], [[captain-playbook-7](#captain-playbook-7)]).
+Where the shell provides two or more enabled playbooks, when tests drive scripted decision replies through the compiled session Captain, the suite shall fail unless every non-command turn produces exactly one decision selection from the closed set; a `respond` selection settles the turn in that single call with its `text` the turn's captain speech; a multi-workflow intent is planned across Boss turns — at most one validated action per turn and never an intra-turn multi-child plan; a `resume`, `start`, or `switch` target outside the catalog fails validation rather than reaching the registry; the captured decision prompt carries the exact Boss text and references the labeled catalog and ControlView digest blocks; a fact stated in an earlier turn remains available to a later decision on the same durable conversation; and a task refined across several chat turns is handed to the selected playbook as the complete agreed request rather than only the final Boss message (verifying [[captain-playbook-1](#captain-playbook-1)], [[captain-playbook-2](#captain-playbook-2)], [[captain-playbook-3](#captain-playbook-3)], [[captain-playbook-7](#captain-playbook-7)]).
 
 ### captain-playbook-13
 
@@ -272,7 +280,7 @@ own paired boundaries (verifying [[captain-playbook-1](#captain-playbook-1)], [[
 Where the suite captures the recompiled session Captain's hidden call
 prompts under scripted ports, the test suite shall fail unless every
 ordinary decision-call prompt states (1) the closed action menu
-`respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`
+`respond` | `resume` | `start` | `switch` | `dismiss` | `deliver` | `runtime`
 with the explicit `{ action, … }` JSON reply contract, (2) the
 instruction that the labeled ControlView and catalog digest blocks
 outrank conversation memory, (3) the rule that fenced player quotes
@@ -282,9 +290,14 @@ actions implement only work Boss currently authorizes while `start` and
 and unless (6) every ordinary decision-call prompt — not only a
 reseed-seeded one
 — references the labeled ControlView and catalog digest blocks.
+The suite shall fail unless (7) that prompt states the arbitration rule that explicit Boss intent governs while a live advertised runtime action precedes retained resumption and retained resumption precedes fresh start unless Boss explicitly requests fresh start (verifying [[captain-playbook-23](#captain-playbook-23)]).
 The suite shall also fail unless (5) every result-phase prompt states
 the grounding instruction that the closing reply and turn summary
 compose only from the outcome-report facts (verifying [[captain-playbook-6](#captain-playbook-6)], [[captain-playbook-7](#captain-playbook-7)], [[captain-playbook-16](#captain-playbook-16)]).
+
+### captain-playbook-24
+
+Where focused tests drive model-decided and parse-resolved retained-generation selections through the recompiled default Captain, the suite shall fail unless each successful path submits exactly `{ action: 'resume', playbookId }` and routes through the ordinary settlement and closing-reply loop; a model-decided resume with a missing, undeclared, self, or out-of-catalog target shall reject before controller submission, and the captured decision and corrective prompts shall include `resume` and the arbitration rule from [[captain-playbook-23](#captain-playbook-23)] (verifying [[captain-playbook-7](#captain-playbook-7)], [[captain-playbook-18](#captain-playbook-18)], and [[captain-playbook-23](#captain-playbook-23)]).
 
 ### Cross-process Captain continuity coverage
 

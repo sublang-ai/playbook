@@ -5,10 +5,13 @@ export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, Pla
 export type { DecisionAction, EnabledPlaybook, ParsedActingDecision, SettlementEvidence, SettlementReceiptEvidence, };
 /** One nonempty complete standalone request selected for `start` or `switch`. */
 export type CaptainControllerInput = string;
-/** One validated controller selection submitted through the port (DR-029). */
+/** One validated controller selection submitted through the port (DR-029, DR-038). */
 export type CaptainControllerSelection = {
     readonly action: 'respond';
     readonly text: string;
+} | {
+    readonly action: 'resume';
+    readonly playbookId: string;
 } | {
     readonly action: 'start' | 'switch';
     readonly playbookId: string;

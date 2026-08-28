@@ -21,6 +21,7 @@ const PINNED = {
         "deliver",
         "dismiss",
         "respond",
+        "resume",
         "runtime",
         "start",
         "switch"
@@ -58,6 +59,11 @@ const PINNED = {
         },
         {
           "index": 6,
+          "target": "reporting",
+          "guarded": true
+        },
+        {
+          "index": 7,
           "target": "failed",
           "guarded": false
         }

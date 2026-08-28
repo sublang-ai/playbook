@@ -36,7 +36,7 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
    Run adopted generations under fresh runtime session UUIDs and counters, trace the adoption boundary with source session and generation identity, and land the trace items and tests.
 6. **Transfer generations across sessions.** _[done]_
    Implement predecessor selection (newest settled record, same working directory) and the guarded move-and-clear exchange under the store's lease discipline; land the `playbook-cli.md` items and cross-session store tests.
-7. **Advertise and select resumption.**
+7. **Advertise and select resumption.** _[done]_
    Surface retained generations in the shell's control digest labeled by the retained root state's published description, add the validated resume selection to the Captain's closed action set with the decided arbitration order, and land the `playbook-captain.md` items and shell tests.
 8. **Address resumption from both front ends.**
    Make a bare continuation request select resumption in `playbook run --continue` and interactive reopen with explicit fresh-start intent winning, and land the `playbook-cli.md` items with headless and interactive tests.

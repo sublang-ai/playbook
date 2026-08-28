@@ -74,6 +74,7 @@ explicit stop request dismisses; an explicit replacement request
 switches; and an explicit recovery or resume request may execute one
 runtime-advertised action
 ([[playbook-captain-8](playbook-captain.md#playbook-captain-8)]).
+While an engagement is live, its delivered text and advertised runtime actions shall take precedence over retained-generation adoption, and a `resume` selection shall reject without changing either generation.
 While an acting-agent question is pending on the active leaf, when the Boss
 answers, the shell shall deliver the answer to that same leaf, which
 shall resume its suspended state with the answer in context.
@@ -90,6 +91,7 @@ Where the Playbook Captain shell is running under tmux-play, when
 the shell engages, dismisses, or disposes an enabled external root playbook,
 the shell shall emit Boss-visible Captain status lines
 `◇ /<command> started` when it engages the playbook,
+`◇ /<command> resumed` when it adopts a retained generation,
 `◇ /<command> stopped` when the engagement is dismissed, and
 `◇ /<command> finished` when it disposes the playbook after final
 completion, using the registered slash command such as `/code`
@@ -341,14 +343,14 @@ The shell shall submit every other non-empty Boss turn to the
 session Captain for its hidden decision call, and every selection —
 parse-injected or model-decided — arrives through the host-supplied
 controller port ([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]) as one
-of `respond`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`,
+of `respond`, `resume`, `start`, `switch`, `dismiss`, `deliver`, or `runtime`,
 a model-decided `respond` carrying the turn's reply prose so a chat
 turn settles in that one decision call.
 The shell shall validate a selection against host state before any
 effect: `start` and `switch` targets shall be enabled registry
 entries; `start` and `switch` inputs shall be nonempty standalone
 request strings ([[captain-playbook-9](captain-playbook.md#captain-playbook-9)]); `start` shall require
-an idle shell; `switch` shall require
+an idle shell; `resume` shall require an idle shell and an installed retained generation for an enabled root whose freshly constructed frame runtimes carry the complete participation capability of [[playbook-captain-46](#playbook-captain-46)]; `switch` shall require
 an active root and a target absent from the active path; `dismiss`,
 `deliver`, and `runtime` shall require an active leaf; and `runtime`
 shall require the active leaf's current `describe()` to advertise
@@ -446,8 +448,9 @@ leaf's runtime authored into its ControlView projection
 pending questions verbatim with their question ids, the last error
 as `{ name, message }`, and the advertised actions as id plus label,
 composed from the active leaf's `describe()`
-([[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)]) — and the catalog digest —
+([[playbook-runtime-52](playbook-runtime.md#playbook-runtime-52)]), plus the idle shell's capability-bearing retained resumptions as root playbook id, effective command, and retained root-state description — and the catalog digest —
 each enabled playbook's id, effective command, and intent.
+An installed generation lacking `rootStateDescription` shall remain resumable and shall be labeled as having no retained published description rather than exposing its state id; while an engagement is live the digest shall advertise no retained resumption.
 Where the active leaf's runtime implements no control surface, the shell
 shall compose the degraded ControlView digest rather than omit the block:
 the engagement frame — the active path as commands root to leaf — plus the
@@ -1020,13 +1023,13 @@ the underlying diagnostic outside Boss-visible prose.
 
 #### playbook-captain-41
 
-Where `@sublang/playbook/playbook-captain` exposes the Playbook Captain shell, the module shall export `PlaybookCaptainShellSnapshot`, `assertPlaybookCaptainShellSnapshot(value: unknown): PlaybookCaptainShellSnapshot`, `PlaybookCaptainFrameSnapshot`, `PlaybookCaptainRetainedGeneration`, `PlaybookCaptainRetentionUpdate`, `PlaybookCaptainSettlement`, and `PlaybookCaptainShell`, with `PlaybookCaptainShell` extending tmux-play's `Captain` by exactly `exportSnapshot(): PlaybookCaptainShellSnapshot | undefined`, `exportSettlement(): PlaybookCaptainSettlement | undefined`, and `restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>`.
+Where `@sublang/playbook/playbook-captain` exposes the Playbook Captain shell, the module shall export `PlaybookCaptainShellSnapshot`, `assertPlaybookCaptainShellSnapshot(value: unknown): PlaybookCaptainShellSnapshot`, `PlaybookCaptainFrameSnapshot`, `PlaybookCaptainRetainedGeneration`, `PlaybookCaptainRetentionUpdate`, `PlaybookCaptainSettlement`, and `PlaybookCaptainShell`, with `PlaybookCaptainShell` extending tmux-play's `Captain` by exactly `installRetainedGenerations(generations: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>): Promise<void>`, `exportSnapshot(): PlaybookCaptainShellSnapshot | undefined`, `exportSettlement(): PlaybookCaptainSettlement | undefined`, and `restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>`.
 The module's default shell factory shall return `PlaybookCaptainShell`.
 `PlaybookCaptainShellSnapshot` shall be a detached JSON-safe schema-version-3 value with these exact common and mode-discriminated members:
 
 | Part | Exact content |
 | --- | --- |
-| Common | `schemaVersion: 3`; `captain: { sessionId: UUID, runtime: PlaybookRuntimeSnapshot, agent: { adapter, instruction?, permissions? }, conversation }`; `playerSessions: Readonly<Record<playerId, { adapter, instruction?, permissions?, resumeToken? }>>`; `issuedSessionIds: readonly UUID[]`; nonnegative-integer `sequences: { turn, journal }`; `journal: readonly JournalRecord[]`; optional `lastAction: 'respond' \| 'start' \| 'switch' \| 'dismiss' \| 'deliver' \| 'runtime'`; optional `lastSettlementStatus: 'ok' \| 'rejected' \| 'failed'` |
+| Common | `schemaVersion: 3`; `captain: { sessionId: UUID, runtime: PlaybookRuntimeSnapshot, agent: { adapter, instruction?, permissions? }, conversation }`; `playerSessions: Readonly<Record<playerId, { adapter, instruction?, permissions?, resumeToken? }>>`; `issuedSessionIds: readonly UUID[]`; nonnegative-integer `sequences: { turn, journal }`; `journal: readonly JournalRecord[]`; optional `lastAction: 'respond' \| 'resume' \| 'start' \| 'switch' \| 'dismiss' \| 'deliver' \| 'runtime'`; optional `lastSettlementStatus: 'ok' \| 'rejected' \| 'failed'` |
 | Captain conversation | Exactly `{ kind: 'unopened' }`, `{ kind: 'pinned', token: nonempty string }`, `{ kind: 'needsCatchUp', resume: nonempty string \| false, afterJournalSeq: nonnegative integer }`, or `{ kind: 'needsSeeding' }` |
 | Journal record | `{ seq, turnId, kind, payload }`, where `kind` is `boss`, `reply`, `handoff`, `action`, or `outcome`, and `payload` is JSON-safe |
 | `mode: 'chat'` | No frame, pending-question, last-error, or separately derived control-ledger member |
@@ -1067,13 +1070,39 @@ When that cleanup succeeds, the shell shall remain fresh for a later `init` or `
 #### playbook-captain-44
 
 After a nonempty Boss turn settles at the same safe boundary where the complete shell snapshot can be exported ([[playbook-captain-41](#playbook-captain-41)]), `exportSettlement()` shall return one detached JSON-safe `PlaybookCaptainSettlement` containing that snapshot and zero or more unique per-root `PlaybookCaptainRetentionUpdate` values; before a turn, during work, after unsafe settlement, or after disposal it shall return `undefined`.
-`PlaybookCaptainRetainedGeneration` shall contain the exact nonempty root-to-leaf `PlaybookCaptainFrameSnapshot` stack from [[playbook-captain-41](#playbook-captain-41)], including each nested call bridge and active quiescent schema-3 runtime snapshot exported under [[playbook-runtime-45](playbook-runtime.md#playbook-runtime-45)], and shall never contain a final runtime snapshot.
-A frame shall participate only when its runtime exposes the adoption capability together with valid `retainedGenerationMetadata` classification from [[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)] and [[playbook-runtime-61](playbook-runtime.md#playbook-runtime-61)]; a root lacking either member shall emit `clear`; and, for an outcome that would otherwise `retain`, when the root stack selected by that outcome contains such a capability-less descendant, the shell shall retain the last complete turn-start candidate or, when the turn began with such a descendant already live or the root began during the turn, emit no update for that root, and shall never retain a partial stack.
+`PlaybookCaptainRetainedGeneration` shall contain the exact nonempty root-to-leaf `PlaybookCaptainFrameSnapshot` stack from [[playbook-captain-41](#playbook-captain-41)], including each nested call bridge and active quiescent schema-3 runtime snapshot exported under [[playbook-runtime-45](playbook-runtime.md#playbook-runtime-45)], may additionally contain the nonblank `rootStateDescription` published by the root runtime's matching ControlView at capture, and shall never contain a final runtime snapshot.
+Failure or absence of that matching published description shall omit the member without making the generation incompatible or substituting an internal state id.
+A frame shall participate only when its runtime exposes the parked-session `exportSnapshot`/`restore` pair, the adoption capability, and valid `retainedGenerationMetadata` classification from [[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)], [[playbook-runtime-45](playbook-runtime.md#playbook-runtime-45)], and [[playbook-runtime-61](playbook-runtime.md#playbook-runtime-61)]; a root lacking any member shall emit `clear`; and, for an outcome that would otherwise `retain`, when the root stack selected by that outcome contains such a capability-less descendant, the shell shall retain the last complete turn-start candidate or, when the turn began with such a descendant already live or the root began during the turn, emit no update for that root, and shall never retain a partial stack.
 Before controller work can dismiss or complete an existing root, the shell shall capture the latest eligible generation from a live root that has previously settled active and quiescent, without moving a runtime or emitting a host record.
 When the root remains parked, the generation selected for `retain` shall be its current complete generation; when dismissal removes the root, the selected generation shall be the captured turn-start candidate; and when a terminal result removes the root with a stable id that belongs to the root runtime's immutable `unfinishedFinalStateIds` ([[playbook-runtime-34](playbook-runtime.md#playbook-runtime-34)]), the selected generation shall be the captured turn-start candidate; a terminal result with a stable id outside that set shall emit `clear` regardless of capability gaps.
 An initialized root that has not yet reached a post-input quiescent settlement shall not count as carrying unfinished work; if it reaches a declared unfinished terminal first, the shell shall settle without a retention update for that root rather than retain its initial state or emit `clear`.
 Whenever the preceding rules require a capability-bearing frame to supply a complete candidate, failure to capture it shall fail the settlement boundary; a runtime claiming the marker but unable to supply a stable terminal state id shall likewise fail rather than classify the terminal as clean.
 Child return or dismissal shall produce no independent retained root: the resulting live root stack, or the eventual root terminal decision, shall remain authoritative.
+
+### Retained generation resumption
+
+#### playbook-captain-46
+
+Where an initialized or restored `PlaybookCaptainShell` receives the current session record's retention map through `installRetainedGenerations`, the shell shall accept that map exactly once after setup and before its first nonempty Boss turn, detach and validate every generation against the enabled registry, current frame options and role set, schema-3 runtime snapshots, unique source identities, root-to-leaf topology, suspended-call bridges, and parked leaf of [[playbook-captain-44](#playbook-captain-44)], and reject malformed or disabled input before advertising it.
+An empty map and a generation omitting `rootStateDescription` shall remain valid.
+For each retained frame the shell shall construct one fresh uninitialized runtime under current options and shall advertise the root only when every runtime carries the complete participation capability of [[playbook-captain-44](#playbook-captain-44)]; capability absence shall dispose those probes and omit that generation without initializing, restoring, or moving it.
+A capability-less root shall schedule `clear` at the next settlement, while a capability-less descendant shall leave the complete unadvertised generation untouched.
+An install-time construction or cleanup failure shall install no partial offer, and a failed cleanup shall close the shell rather than claim reusable state.
+An active restored engagement may carry an installed map, but the shell shall prepare and advertise retained offers only while idle; offer replacement or clear, failed adoption, and terminal teardown shall dispose every unclaimed probe without disposing a runtime that became a live adopted frame.
+The idle ControlView digest of [[playbook-captain-9](#playbook-captain-9)] shall list offers deterministically by root playbook id beside the empty runtime-action list, label each with its effective command and a bounded escaped rendering of retained `rootStateDescription`, or state honestly that no published description was retained, and shall expose no source session, generation, child, call, trace, state, option, module, player, or token identity.
+Every foreign label in that list shall pass through [[playbook-captain-9](#playbook-captain-9)]'s bounded escaping seam.
+
+#### playbook-captain-47
+
+Where the shell is idle and [[playbook-captain-46](#playbook-captain-46)] advertises an enabled root, a validated `{ action: 'resume', playbookId }` selection shall consume that offer as the turn's sole action and adopt its complete retained generation from root to leaf through [[playbook-runtime-61](playbook-runtime.md#playbook-runtime-61)].
+The shell shall allocate one fresh target runtime UUID per frame that differs from every source and target identity, bind each target frame exclusively from the current enabled options and Captain-session player ledger of [[playbook-captain-26](#playbook-captain-26)], and call each reserved runtime's `adopt` once with that target session, the retained runtime snapshot, the frame's source session id, the retained root's source generation id, and the fresh next-child session id exactly where a suspended child exists.
+The adopted root shall have its fresh session id as root id, each descendant shall name its fresh parent at the next depth through target call id `playbook-1`, and no source call id, child id, turn id, role binding, or player token shall become target ownership ([[playbook-runtime-63](playbook-runtime.md#playbook-runtime-63)] and [[playbook-runtime-65](playbook-runtime.md#playbook-runtime-65)]).
+Adoption shall call neither `init`, `restore`, `handleBossInput`, nor the nested-playbook host port, shall apply no initial-state classification, and shall not deliver the selecting Boss text to a working runtime.
+Only after every frame adopts shall the shell atomically install the target stack as `engaged.parked`, restore the retained leaf's pending-question projection, make its current bound players visible, emit `◇ /<command> resumed`, and settle with a bounded fact naming the published retained description or its honest absence plus a shell-authored Boss-visible warning that external effects attempted after the retained boundary may be duplicated.
+The next settlement shall retain the adopted root under its fresh generation rather than leave the consumed source identities selectable.
+If target identity allocation fails before adoption, the shell shall leave the unconsumed offer fresh and selectable for a later retry.
+If any adoption, visibility, status, or cleanup step fails after the attempt begins, the shell shall expose no partial live stack, dispose every provisional target runtime leaf to root, keep the retained source generation eligible for an exact later retry under newly allocated target identities when cleanup succeeds, and aggregate a cleanup or telemetry-rollback failure while closing unsafe shell reuse.
+While an engagement is live, `resume` shall reject and that engagement's delivery and current runtime actions shall precede adoption; while idle, an explicitly selected fresh `start` shall start rather than adopt, otherwise the compiled Captain shall prefer an advertised resume over a fresh start unless the Boss explicitly requests fresh work ([[captain-playbook-23](captain-playbook.md#captain-playbook-23)]).
 
 ## Verification
 
@@ -1108,7 +1137,7 @@ Where the test suite drives ordinary Boss text through the Playbook
 Captain shell with scripted decision replies, the test suite shall
 fail unless every non-command turn produces exactly one hidden
 durable decision call; the executable selections are exactly
-`respond`, `start`, `switch`, `dismiss`, `deliver`, and `runtime`;
+`respond`, `resume`, `start`, `switch`, `dismiss`, `deliver`, and `runtime`;
 `deliver` hands the shell-supplied original Boss text unchanged to
 the active leaf — a scripted `deliver` selection carrying a
 divergent text payload still delivers the exact Boss text, the
@@ -1689,5 +1718,11 @@ Where the integration suite drives the public Playbook Captain shell through saf
 
 #### playbook-captain-45
 
-Where the integration suite drives the public shell through retained-generation-capable and capability-less runtimes, it shall fail unless a parked root exports its current active generation with the shell snapshot, an artifact-declared unfinished terminal exports the last active pre-terminal generation rather than its final state, a same-turn unfinished terminal with no prior work-bearing generation settles in chat with no retain or clear update, a clean terminal emits `clear`, and a root lacking adoption or classification capability — including a marker-only runtime — emits `clear` without a partial generation (verifying [[playbook-captain-44](#playbook-captain-44)]).
+Where the integration suite drives the public shell through retained-generation-capable and capability-less runtimes, it shall fail unless a parked root exports its current active generation and matching published description with the shell snapshot, description failure or mismatch omits that optional member, an artifact-declared unfinished terminal exports the last active pre-terminal generation rather than its final state, a same-turn unfinished terminal with no prior work-bearing generation settles in chat with no retain or clear update, a clean terminal emits `clear`, and a root lacking any participation capability — including marker-only and adoption-only runtimes — emits `clear` without a partial generation (verifying [[playbook-captain-44](#playbook-captain-44)]).
 The suite shall also fail unless dismissal preserves the exact previously parked generation, a nested parked stack exports both frame snapshots and both halves of every call bridge as one root generation, a capable root that begins and opens a capability-less child in the same turn emits no retention update, a capable existing root that opens such a child retains its exact complete turn-start generation without a partial stack while a later settlement that begins with that child emits no update for the root, and an unsafe claimed-capable generation or missing stable terminal id prevents settlement rather than preserving stale state (verifying [[playbook-captain-44](#playbook-captain-44)]).
+
+#### playbook-captain-48
+
+Where the integration suite installs valid or empty retained maps into fresh and restored shells and drives model-decided selections through the compiled Captain, it shall fail unless described and description-less roots advertise deterministically without an internal identity leak, a frame lacking any complete participation member advertises nothing and is disposed with a capability-less root cleared but a capability-less descendant preserved, hostile descriptions remain one escaped bounded digest line, and install rejects disabled, structurally malformed, duplicate, concurrent, late, or repeated input without a partial offer while joint construction and cleanup failure closes the shell (verifying [[playbook-captain-9](#playbook-captain-9)], [[playbook-captain-41](#playbook-captain-41)], [[playbook-captain-44](#playbook-captain-44)], and [[playbook-captain-46](#playbook-captain-46)]).
+The suite shall fail unless a root and nested stack resume root to leaf under distinct fresh target identities and current player-ledger bindings, rebase every suspended edge to target call id `playbook-1`, invoke only `adopt` once per frame without initialization, restoration, Boss input, or child-host work, publish the resumed status and visibility, preserve the retained pending question, export a safe fresh generation with `lastAction: 'resume'`, and append the duplicate-effect warning to the actual Boss reply (verifying [[playbook-captain-3](#playbook-captain-3)], [[playbook-captain-41](#playbook-captain-41)], and [[playbook-captain-47](#playbook-captain-47)]).
+The suite shall also fail unless an active resume rejects while a live advertised action remains authoritative, an explicitly selected start constructs fresh work without adopting, transactional target-identity allocation rejects without consuming or contaminating an offer, a failing nested adoption disposes provisional runtimes leaf to root with no partial stack and permits an exact source-generation retry under new target identities after successful cleanup, and shell teardown disposes unclaimed offers before the compiled Captain (verifying [[playbook-captain-2](#playbook-captain-2)], [[playbook-captain-7](#playbook-captain-7)], and [[playbook-captain-47](#playbook-captain-47)]).

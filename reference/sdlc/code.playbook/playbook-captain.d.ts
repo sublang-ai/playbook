@@ -89,7 +89,7 @@ interface PlaybookCaptainShellSnapshotFields {
         readonly journal: number;
     };
     readonly journal: readonly PlaybookCaptainJournalRecord[];
-    readonly lastAction?: 'respond' | 'start' | 'switch' | 'dismiss' | 'deliver' | 'runtime';
+    readonly lastAction?: 'respond' | 'start' | 'switch' | 'resume' | 'dismiss' | 'deliver' | 'runtime';
     readonly lastSettlementStatus?: 'ok' | 'rejected' | 'failed';
 }
 /**
@@ -114,6 +114,8 @@ type PlaybookCaptainShellSnapshotValue = PlaybookCaptainShellSnapshotFields & ({
 export type PlaybookCaptainShellSnapshot = DeepReadonly<PlaybookCaptainShellSnapshotValue>;
 export interface PlaybookCaptainRetainedGeneration {
     readonly frames: readonly PlaybookCaptainFrameSnapshot[];
+    /** Boss-facing description published for the retained root state, if any. */
+    readonly rootStateDescription?: string;
 }
 export type PlaybookCaptainRetentionUpdate = {
     readonly kind: 'retain';
@@ -129,6 +131,7 @@ export interface PlaybookCaptainSettlement {
 }
 /** tmux and headless front ends share this one durable Captain shell API. */
 export interface PlaybookCaptainShell extends Captain {
+    installRetainedGenerations(generations: Readonly<Record<string, PlaybookCaptainRetainedGeneration>>): Promise<void>;
     exportSnapshot(): PlaybookCaptainShellSnapshot | undefined;
     exportSettlement(): PlaybookCaptainSettlement | undefined;
     restore(session: CaptainSession, snapshot: PlaybookCaptainShellSnapshot): Promise<void>;

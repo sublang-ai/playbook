@@ -7,14 +7,17 @@ export type EnabledPlaybook = {
     readonly command: string;
     readonly intent: string;
 };
-/** The closed controller action set (DR-029; stable machine contract). */
-export type DecisionAction = 'respond' | 'start' | 'switch' | 'dismiss' | 'deliver' | 'runtime';
+/** The closed controller action set (DR-029, DR-038; stable machine contract). */
+export type DecisionAction = 'respond' | 'resume' | 'start' | 'switch' | 'dismiss' | 'deliver' | 'runtime';
 /**
  * A deterministic parse-resolved acting decision injected by the host
  * (CAPTAIN-7 parse table): the turn's decision object, entering the decision
  * state with no decision model call.
  */
 export type ParsedActingDecision = {
+    readonly action: 'resume';
+    readonly playbookId: string;
+} | {
     readonly action: 'start' | 'switch';
     readonly playbookId: string;
     readonly input: string;
@@ -65,15 +68,19 @@ export type CaptainInput = {
 };
 /**
  * Decision-state output: the validated selection under the stable controller
- * guard contract — `respond` | `start` | `switch` | `dismiss` | `deliver` |
- * `runtime`, with the payload fields DR-029 requires — plus the
- * controller-port settlement evidence of the executed submission. The prose
- * states (`answeringCommand`, `reporting`) carry the default single-outcome
- * `done` contract.
+ * guard contract — `respond` | `resume` | `start` | `switch` | `dismiss` |
+ * `deliver` | `runtime`, with the payload fields DR-029 and DR-038 require —
+ * plus the controller-port settlement evidence of the executed submission.
+ * The prose states (`answeringCommand`, `reporting`) carry the default
+ * single-outcome `done` contract.
  */
 export type CaptainOutput = {
     readonly guard: 'respond';
     readonly text: string;
+    readonly settlement: SettlementEvidence;
+} | {
+    readonly guard: 'resume';
+    readonly playbookId: string;
     readonly settlement: SettlementEvidence;
 } | {
     readonly guard: 'start';
@@ -158,6 +165,9 @@ export declare const captainMachine: import("xstate").StateMachine<Context, Boss
     params: import("xstate").NonReducibleUnknown;
 }, {
     type: "start";
+    params: unknown;
+} | {
+    type: "resume";
     params: unknown;
 } | {
     type: "respond";

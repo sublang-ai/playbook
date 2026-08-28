@@ -39,6 +39,7 @@ const INTERNAL_CAPTAIN_ID = 'captain';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
 const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
+const RESUMPTION_DUPLICATE_EFFECT_WARNING = 'Warning: resumption may duplicate external effects attempted after the retained boundary; verify the current world before continuing.';
 function parseRegisteredCommand(prompt) {
     const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
     if (!match)
@@ -503,6 +504,7 @@ const SNAPSHOT_ACTIONS = new Set([
     'respond',
     'start',
     'switch',
+    'resume',
     'dismiss',
     'deliver',
     'runtime',
@@ -1319,6 +1321,14 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     let lastSettlementStatus;
     const retainedGenerationCandidates = new Map();
     const pendingRetentionUpdates = new Map();
+    const retainedGenerations = new Map();
+    const retainedGenerationOffers = new Map();
+    const ineligibleRetainedGenerations = new Set();
+    const retainedGenerationRootClears = new Set();
+    const retiredRetainedRuntimes = [];
+    let retainedGenerationsInstalled = false;
+    let retainedGenerationInstallationInProgress = false;
+    let retainedGenerationInstallationClosed = false;
     let retentionSettlementReady = false;
     // DR-029: a run that lands in the runtime's own failure state
     // is an outcome the report must name. `processFrameResult` records it here
@@ -1328,12 +1338,264 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const rootFrame = () => frames[0];
     const leafFrame = () => frames.at(-1);
     const frameLabel = (frame) => `/${frame.enablement.command}`;
+    const normalizeInstalledRetainedGenerations = (value) => {
+        const path = 'Captain retained generations';
+        const detached = snapshotJsonValue(value, path);
+        const record = snapshotRecord(detached, path);
+        const sourceSessionIds = new Set();
+        const normalized = new Map();
+        for (const [rootPlaybookId, rawGeneration] of Object.entries(record)) {
+            const generationPath = `${path}[${JSON.stringify(rootPlaybookId)}]`;
+            const enablement = enablementById.get(rootPlaybookId);
+            if (enablement === undefined) {
+                throw new TypeError(`${generationPath} names a disabled root playbook`);
+            }
+            const generation = snapshotRecord(rawGeneration, generationPath);
+            rejectSnapshotKeys(generation, ['frames', 'rootStateDescription'], generationPath);
+            if (!Array.isArray(generation.frames) || generation.frames.length === 0) {
+                throw new TypeError(`${generationPath}.frames must be non-empty`);
+            }
+            const rootStateDescription = generation.rootStateDescription === undefined
+                ? undefined
+                : snapshotString(generation.rootStateDescription, `${generationPath}.rootStateDescription`);
+            const normalizedFrames = [];
+            const playbookIds = new Set();
+            for (const [index, rawFrame] of generation.frames.entries()) {
+                const framePath = `${generationPath}.frames[${index}]`;
+                const frame = snapshotRecord(rawFrame, framePath);
+                rejectSnapshotKeys(frame, [
+                    'playbookId',
+                    'sessionId',
+                    'rootSessionId',
+                    'depth',
+                    'parentSessionId',
+                    'parentCallId',
+                    'options',
+                    'roleBindings',
+                    'runtime',
+                ], framePath);
+                const playbookId = snapshotString(frame.playbookId, `${framePath}.playbookId`);
+                const frameEnablement = enablementById.get(playbookId);
+                if (frameEnablement === undefined) {
+                    throw new TypeError(`${framePath} names a disabled playbook`);
+                }
+                if (playbookIds.has(playbookId)) {
+                    throw new TypeError(`${generationPath}.frames must not contain a playbook cycle`);
+                }
+                playbookIds.add(playbookId);
+                const sessionId = snapshotUuid(frame.sessionId, `${framePath}.sessionId`);
+                if (sourceSessionIds.has(sessionId)) {
+                    throw new TypeError(`${path} frame session ids must be unique across generations`);
+                }
+                sourceSessionIds.add(sessionId);
+                const rootSessionId = snapshotUuid(frame.rootSessionId, `${framePath}.rootSessionId`);
+                const depth = snapshotInteger(frame.depth, `${framePath}.depth`);
+                const parentSessionId = frame.parentSessionId === undefined
+                    ? undefined
+                    : snapshotUuid(frame.parentSessionId, `${framePath}.parentSessionId`);
+                const parentCallId = frame.parentCallId === undefined
+                    ? undefined
+                    : snapshotString(frame.parentCallId, `${framePath}.parentCallId`);
+                const options = frame.options;
+                if (!isDeepStrictEqual(options, frameEnablement.options)) {
+                    throw new TypeError(`${framePath}.options changed`);
+                }
+                const roleBindings = snapshotFrameRoleBindings(frame.roleBindings, `${framePath}.roleBindings`);
+                if (!isDeepStrictEqual(Object.keys(roleBindings).sort(), [...frameEnablement.entry.requiredRoleIds].sort())) {
+                    throw new TypeError(`${framePath}.roleBindings do not cover the current role set`);
+                }
+                const runtime = assertPlaybookRuntimeSnapshot(frame.runtime, playbookId, { allowSuspendedCall: true });
+                if (runtime.state.status !== 'active' ||
+                    !runtime.state.quiescent ||
+                    typeof runtime.state.stateId !== 'string' ||
+                    runtime.state.stateId.trim().length === 0) {
+                    throw new TypeError(`${framePath}.runtime must be active, quiescent, and state-identified`);
+                }
+                for (const question of runtime.pendingBossQuestions) {
+                    if (question.asker.kind === 'role' &&
+                        roleBindings[question.asker.roleId] === undefined) {
+                        throw new TypeError(`${framePath}.runtime pending question names an unbound role`);
+                    }
+                }
+                for (const roleId of Object.keys(runtime.roleResumeTokens)) {
+                    if (roleBindings[roleId] === undefined) {
+                        throw new TypeError(`${framePath}.runtime role-resume token names an unbound role`);
+                    }
+                }
+                normalizedFrames.push({
+                    playbookId,
+                    sessionId,
+                    rootSessionId,
+                    depth,
+                    ...(parentSessionId === undefined ? {} : { parentSessionId }),
+                    ...(parentCallId === undefined ? {} : { parentCallId }),
+                    options,
+                    roleBindings,
+                    runtime,
+                });
+            }
+            const sourceRootSessionId = normalizedFrames[0].sessionId;
+            for (const [index, frame] of normalizedFrames.entries()) {
+                if (frame.depth !== index || frame.rootSessionId !== sourceRootSessionId) {
+                    throw new TypeError(`${generationPath}.frames have inconsistent depth or root identity`);
+                }
+                if (index === 0) {
+                    if (frame.playbookId !== rootPlaybookId ||
+                        frame.sessionId !== frame.rootSessionId ||
+                        frame.parentSessionId !== undefined ||
+                        frame.parentCallId !== undefined) {
+                        throw new TypeError(`${generationPath}.frames[0] is not the named root`);
+                    }
+                    continue;
+                }
+                const parent = normalizedFrames[index - 1];
+                const suspended = parent.runtime.suspendedCall;
+                if (frame.parentSessionId !== parent.sessionId ||
+                    frame.parentCallId === undefined ||
+                    suspended === undefined ||
+                    suspended.callId !== frame.parentCallId ||
+                    suspended.playbookId !== frame.playbookId ||
+                    suspended.childSessionId !== frame.sessionId) {
+                    throw new TypeError(`${generationPath}.frames[${index}] does not match its suspended parent edge`);
+                }
+            }
+            const leaf = normalizedFrames.at(-1);
+            if (leaf.runtime.suspendedCall !== undefined ||
+                !leaf.runtime.state.tags.includes('playbook.parked')) {
+                throw new TypeError(`${generationPath} leaf must be parked without a suspended child`);
+            }
+            normalized.set(rootPlaybookId, snapshotJsonValue({
+                frames: normalizedFrames,
+                ...(rootStateDescription === undefined
+                    ? {}
+                    : { rootStateDescription }),
+            }, generationPath));
+        }
+        return normalized;
+    };
     const runtimeRetainsGenerations = (runtime) => {
         const metadata = runtime.retainedGenerationMetadata;
-        return (typeof runtime.adopt === 'function' &&
+        return (typeof runtime.exportSnapshot === 'function' &&
+            typeof runtime.restore === 'function' &&
+            typeof runtime.adopt === 'function' &&
             metadata !== undefined &&
             Array.isArray(metadata.unfinishedFinalStateIds) &&
             metadata.unfinishedFinalStateIds.every((stateId) => typeof stateId === 'string'));
+    };
+    class RetainedRuntimeCleanupError extends AggregateError {
+        constructor(failures, message) {
+            super(failures, message);
+            this.name = 'RetainedRuntimeCleanupError';
+        }
+    }
+    const disposeRetainedRuntimeSet = async (runtimes, message) => {
+        const failures = [];
+        for (const runtime of [...runtimes].reverse()) {
+            try {
+                await runtime.dispose();
+            }
+            catch (error) {
+                failures.push(error);
+            }
+        }
+        if (failures.length > 0) {
+            throw new RetainedRuntimeCleanupError(failures, message);
+        }
+    };
+    const retireRetainedOffer = (rootPlaybookId) => {
+        const offer = retainedGenerationOffers.get(rootPlaybookId);
+        if (offer === undefined)
+            return;
+        retainedGenerationOffers.delete(rootPlaybookId);
+        retiredRetainedRuntimes.push(...offer.runtimes);
+    };
+    const applyRetentionUpdateToCatalog = (update) => {
+        if (update.kind === 'clear') {
+            retireRetainedOffer(update.rootPlaybookId);
+            retainedGenerations.delete(update.rootPlaybookId);
+            ineligibleRetainedGenerations.delete(update.rootPlaybookId);
+            retainedGenerationRootClears.delete(update.rootPlaybookId);
+            return;
+        }
+        const prior = retainedGenerations.get(update.rootPlaybookId);
+        if (isDeepStrictEqual(prior, update.generation))
+            return;
+        retireRetainedOffer(update.rootPlaybookId);
+        retainedGenerations.set(update.rootPlaybookId, update.generation);
+        ineligibleRetainedGenerations.delete(update.rootPlaybookId);
+        retainedGenerationRootClears.delete(update.rootPlaybookId);
+    };
+    const drainRetiredRetainedRuntimes = async () => {
+        if (retiredRetainedRuntimes.length === 0)
+            return;
+        const runtimes = [...retiredRetainedRuntimes];
+        await disposeRetainedRuntimeSet(runtimes, 'retired retained-generation runtime cleanup failed');
+        retiredRetainedRuntimes.splice(0, runtimes.length);
+    };
+    const takeRetainedOfferRuntimes = () => {
+        const runtimes = [
+            ...[...retainedGenerationOffers.values()].flatMap((offer) => [
+                ...offer.runtimes,
+            ]),
+            ...retiredRetainedRuntimes.splice(0),
+        ];
+        retainedGenerationOffers.clear();
+        return runtimes;
+    };
+    const prepareRetainedGenerationOffers = async () => {
+        if (rootFrame() !== undefined)
+            return;
+        for (const [rootPlaybookId, generation] of [...retainedGenerations].sort(([left], [right]) => left.localeCompare(right))) {
+            if (retainedGenerationOffers.has(rootPlaybookId) ||
+                ineligibleRetainedGenerations.has(rootPlaybookId)) {
+                continue;
+            }
+            const runtimes = [];
+            try {
+                for (const sourceFrame of generation.frames) {
+                    const enablement = enablementById.get(sourceFrame.playbookId);
+                    runtimes.push(enablement.entry.createRuntime(enablement.options));
+                }
+                if (runtimes.some((runtime) => !runtimeRetainsGenerations(runtime))) {
+                    const rootRetainsGenerations = runtimeRetainsGenerations(runtimes[0]);
+                    await disposeRetainedRuntimeSet(runtimes, `/${enablementById.get(rootPlaybookId).command} retained-generation capability cleanup failed`);
+                    runtimes.splice(0);
+                    ineligibleRetainedGenerations.add(rootPlaybookId);
+                    if (!rootRetainsGenerations) {
+                        retainedGenerationRootClears.add(rootPlaybookId);
+                    }
+                    continue;
+                }
+                retainedGenerationOffers.set(rootPlaybookId, {
+                    generation,
+                    runtimes,
+                });
+            }
+            catch (error) {
+                if (error instanceof RetainedRuntimeCleanupError) {
+                    retiredRetainedRuntimes.push(...runtimes);
+                    terminallyDisposed = true;
+                    lifecycle = 'closed';
+                    throw error;
+                }
+                let cleanupError;
+                if (runtimes.length > 0) {
+                    try {
+                        await disposeRetainedRuntimeSet(runtimes, 'retained-generation preparation cleanup failed');
+                    }
+                    catch (caught) {
+                        cleanupError = caught;
+                    }
+                }
+                if (cleanupError !== undefined) {
+                    retiredRetainedRuntimes.push(...runtimes);
+                    terminallyDisposed = true;
+                    lifecycle = 'closed';
+                    throw new RetainedRuntimeCleanupError([error, cleanupError], 'retained-generation preparation and cleanup failed');
+                }
+                throw error;
+            }
+        }
     };
     const bindingFor = (frame, localRole) => {
         const binding = frame.playerBindings.get(localRole);
@@ -1761,16 +2023,41 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             throw new VisibilityControlError(error);
         }
     };
-    const allocateSessionId = () => {
+    const generatedSessionId = () => {
         const sessionId = createSessionId();
         if (!UUID_PATTERN.test(sessionId)) {
             throw new Error(`playbook session id generator returned a non-UUID value: ${JSON.stringify(sessionId)}`);
         }
+        return sessionId;
+    };
+    const allocateSessionId = () => {
+        const sessionId = generatedSessionId();
         if (issuedSessionIds.has(sessionId)) {
             throw new Error(`playbook session id collision: ${sessionId}`);
         }
         issuedSessionIds.add(sessionId);
         return sessionId;
+    };
+    const allocateAdoptionSessionIds = (count, sourceSessionIds) => {
+        const candidates = [];
+        const rejectedSourceIds = new Set();
+        while (candidates.length < count) {
+            const candidate = generatedSessionId();
+            if (sourceSessionIds.has(candidate)) {
+                if (rejectedSourceIds.has(candidate)) {
+                    throw new Error(`playbook source session id collision: ${candidate}`);
+                }
+                rejectedSourceIds.add(candidate);
+                continue;
+            }
+            if (issuedSessionIds.has(candidate) || candidates.includes(candidate)) {
+                throw new Error(`playbook session id collision: ${candidate}`);
+            }
+            candidates.push(candidate);
+        }
+        for (const candidate of candidates)
+            issuedSessionIds.add(candidate);
+        return candidates;
     };
     const normalizeErrorFull = (value) => {
         const compact = normalizeErrorCompact(value) ?? {
@@ -2594,12 +2881,29 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             ...entries.map(([key, value]) => digestLine `- ${key}: ${JSON.stringify(value)}`),
         ];
     };
+    const retainedResumptionDigest = () => {
+        if (rootFrame() !== undefined) {
+            return 'Retained resumptions: unavailable while a playbook is engaged.';
+        }
+        const offers = [...retainedGenerationOffers].sort(([left], [right]) => left.localeCompare(right));
+        if (offers.length === 0)
+            return 'Retained resumptions: none.';
+        const lines = ['Retained resumptions:'];
+        for (const [rootPlaybookId, offer] of offers) {
+            recordSuppliedIdentifier(rootPlaybookId);
+            const enablement = enablementById.get(rootPlaybookId);
+            lines.push(digestLine `- ${rootPlaybookId} (/${enablement.command}): ${offer.generation.rootStateDescription ??
+                '(no published root-state description was retained)'}`);
+        }
+        return lines.join('\n');
+    };
     const controlViewDigest = () => {
         const leaf = leafFrame();
         const lines = [digestLine `Active path: ${activePathDigest()}`];
         if (!leaf) {
             lines.push('The shell is idle: no leaf state, no pending question.');
             lines.push('Advertised actions: none.');
+            lines.push(retainedResumptionDigest());
             return lines.join('\n');
         }
         let view;
@@ -2648,6 +2952,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             lines.push(describeFailure === undefined
                 ? 'This leaf advertises no runtime action, so plain text delivery is the only machine verb against it and a `runtime` selection is invalid. Conversation is unaffected: `respond` stays valid for any turn.'
                 : 'No runtime action can be validated while the control view is unreadable, so plain text delivery is the only machine verb against it this turn and a `runtime` selection is invalid. Conversation is unaffected: `respond` stays valid for any turn.');
+            lines.push(retainedResumptionDigest());
             return lines.join('\n');
         }
         // CAPTAIN-9: the guarded set is what the digest supplies *for selection* —
@@ -2686,6 +2991,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 'Advertised actions:',
                 ...view.actions.map((action) => digestLine `- ${action.id}: ${action.label}`),
             ].join('\n'));
+        lines.push(retainedResumptionDigest());
         return lines.join('\n');
     };
     // The catalog is registry-authored, not shell-authored: an id, a command,
@@ -2761,9 +3067,13 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         // all of this prose. Preserve the exact attempt before crossing the
         // boundary; the uncertainty record below keeps recovery from pretending
         // delivery was confirmed while still understanding a Boss follow-up.
-        appendJournal('reply', settlement.text);
+        const suffix = turn?.mandatoryPresentationSuffix;
+        const visibleText = suffix === undefined || settlement.text.includes(suffix)
+            ? settlement.text
+            : `${settlement.text.trimEnd()}\n\n${suffix}`;
+        appendJournal('reply', visibleText);
         try {
-            await trackTurnCall(settlement.context.emitReply(settlement.text));
+            await trackTurnCall(settlement.context.emitReply(visibleText));
         }
         catch (error) {
             conversation = { kind: 'needsSeeding' };
@@ -2903,8 +3213,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
     };
     /**
-     * CAPTAIN-35: the one wrapper an effect runs through — a runtime driven, an
-     * engagement constructed, a stack disposed, an advertised action applied.
+     * CAPTAIN-35: the one wrapper an effect runs through — a runtime driven or
+     * adopted, an engagement constructed, a stack disposed, an advertised
+     * action applied.
      * Attribution is recorded here, at the operation that threw, and nowhere
      * else: an error acquires the mark by escaping this call, so no later
      * failure can inherit it.
@@ -2917,7 +3228,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
      * instead of settling, so a misfiling costs the Boss their only settlement.
      *
      * Neither can a boundary drawn around a *region* of the turn. `operation` is
-     * therefore always one call expression naming one of those four operations,
+     * therefore always one call expression naming one of those five operations,
      * never a closure that also performs the shell work leading to it: the leaf
      * check, the visibility request, the mode change, and the processing of what
      * the runtime returned are all shell control work, and a boundary wide
@@ -3368,6 +3679,113 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         }
         return { frame, report: outcome.report, failed: false };
     };
+    const adoptRetainedGeneration = async (rootPlaybookId, offer) => {
+        const generation = offer.generation;
+        const sourceSessionIds = new Set(generation.frames.map((frame) => frame.sessionId));
+        const targetSessionIds = allocateAdoptionSessionIds(generation.frames.length, sourceSessionIds);
+        const targetRootSessionId = targetSessionIds[0];
+        const adoptedFrames = [];
+        for (const [index, sourceFrame] of generation.frames.entries()) {
+            const enablement = enablementById.get(sourceFrame.playbookId);
+            const parent = adoptedFrames.at(-1);
+            adoptedFrames.push({
+                entry: enablement.entry,
+                enablement,
+                runtime: offer.runtimes[index],
+                sessionId: targetSessionIds[index],
+                rootSessionId: targetRootSessionId,
+                depth: index,
+                playerBindings: makePlayerBindings(enablement),
+                ...(parent
+                    ? { parent: { frame: parent, callId: 'playbook-1' } }
+                    : {}),
+                state: sourceFrame.runtime.state,
+                inFlightHostCalls: new Set(),
+            });
+        }
+        retainedGenerationOffers.delete(rootPlaybookId);
+        let installed = false;
+        try {
+            for (const [index, frame] of adoptedFrames.entries()) {
+                const sourceFrame = generation.frames[index];
+                const targetChild = adoptedFrames[index + 1];
+                await runEffect(() => frame.runtime.adopt(frameSession(frame), sourceFrame.runtime, {
+                    sourceSessionId: sourceFrame.sessionId,
+                    sourceGenerationId: generation.frames[0].rootSessionId,
+                    ...(targetChild === undefined
+                        ? {}
+                        : { targetChildSessionId: targetChild.sessionId }),
+                }));
+            }
+            frames.push(...adoptedFrames);
+            installed = true;
+            for (const parent of adoptedFrames.slice(0, -1)) {
+                pendingChildParents.add(parent);
+            }
+            const retainedQuestions = generation.frames.at(-1).runtime
+                .pendingBossQuestions;
+            pendingBossQuestions =
+                retainedQuestions.length === 0
+                    ? undefined
+                    : mirroredBossQuestions(retainedQuestions);
+            lastError = undefined;
+            retainedGenerations.delete(rootPlaybookId);
+            ineligibleRetainedGenerations.delete(rootPlaybookId);
+            await setMode('engaged.parked', 'resume', rootPlaybookId, targetRootSessionId);
+            await requestVisibility(adoptedFrames.at(-1));
+            await requireSession().emitStatus(`◇ /${enablementById.get(rootPlaybookId).command} resumed`);
+            if (activeTurn) {
+                activeTurn.mandatoryPresentationSuffix =
+                    RESUMPTION_DUPLICATE_EFFECT_WARNING;
+            }
+            return [
+                generation.rootStateDescription === undefined
+                    ? `Resumed /${enablementById.get(rootPlaybookId).command} from its retained state; no published root-state description was retained.`
+                    : `Resumed /${enablementById.get(rootPlaybookId).command} from the retained state described as ${quoteEvidence(compactEvidence(generation.rootStateDescription))}.`,
+                RESUMPTION_DUPLICATE_EFFECT_WARNING,
+            ];
+        }
+        catch (error) {
+            if (installed) {
+                frames.splice(0);
+                pendingChildParents.clear();
+                clearLeafLedger();
+            }
+            const cleanupFailures = [];
+            const failedCleanupRuntimes = [];
+            for (const frame of [...adoptedFrames].reverse()) {
+                try {
+                    await disposeFrame(frame);
+                }
+                catch (cleanupError) {
+                    cleanupFailures.push(cleanupError);
+                    failedCleanupRuntimes.push(frame.runtime);
+                }
+            }
+            const rollbackFailures = [];
+            if (installed) {
+                try {
+                    await setMode('chat', 'resume.failed');
+                }
+                catch (rollbackError) {
+                    rollbackFailures.push(rollbackError);
+                }
+            }
+            else {
+                mode = 'chat';
+            }
+            if (cleanupFailures.length > 0 || rollbackFailures.length > 0) {
+                retiredRetainedRuntimes.push(...failedCleanupRuntimes);
+                ineligibleRetainedGenerations.add(rootPlaybookId);
+                terminallyDisposed = true;
+                lifecycle = 'closed';
+                throw new AggregateError([error, ...cleanupFailures, ...rollbackFailures], 'retained-generation adoption and rollback failed');
+            }
+            retainedGenerations.set(rootPlaybookId, generation);
+            ineligibleRetainedGenerations.delete(rootPlaybookId);
+            throw error;
+        }
+    };
     const driveAndProcess = async (frame, text, context, onDriven) => {
         try {
             // CAPTAIN-35: no boundary here. `driveFrame` marks the runtime call and
@@ -3393,6 +3811,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 await setMode('engaged.parked', 'turn.settled');
             }
         }
+    };
+    const containsEffectThrow = (turn, error) => {
+        if (turn.effectThrows.has(error))
+            return true;
+        return (error instanceof AggregateError &&
+            error.errors.some((nested) => containsEffectThrow(turn, nested)));
     };
     const settleSelection = async (selection, signal) => {
         const turn = activeTurn;
@@ -3422,7 +3846,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 turn.settlementFacts.push(...runFailureFacts.splice(0));
             }
             const mayHaveApplied = selection.action !== 'respond' &&
-                turn.effectThrows.has(error);
+                containsEffectThrow(turn, error);
             turn.settlementFacts.push(mayHaveApplied
                 ? `The ${selection.action} action failed before its complete outcome could be confirmed and may have changed the session: ${normalized.name}: ${compactEvidence(normalized.message)}. It was not repeated automatically.`
                 : `The ${selection.action} action failed before its complete outcome could be confirmed: ${normalized.name}: ${compactEvidence(normalized.message)}. It was not repeated automatically.`);
@@ -3520,6 +3944,36 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 ...(leafStateSummary() === undefined
                     ? {}
                     : { leafStateSummary: leafStateSummary() }),
+            };
+        }
+        if (selection.action === 'resume') {
+            const entry = byId.get(selection.playbookId);
+            if (entry === undefined) {
+                return rejectSelection(selection, `"${selection.playbookId}" is not an enabled playbook`);
+            }
+            if (rootFrame() !== undefined) {
+                return rejectSelection(selection, 'a playbook is already engaged; its live actions take precedence');
+            }
+            const offer = retainedGenerationOffers.get(entry.id);
+            if (offer === undefined) {
+                return rejectSelection(selection, `/${enablementById.get(entry.id).command} has no resumable retained generation`);
+            }
+            turn.settled = true;
+            journalAction({ action: 'resume', playbookId: entry.id });
+            facts.push(...(await adoptRetainedGeneration(entry.id, offer)));
+            const summary = leafStateSummary();
+            turn.report = {
+                ...emptyReport(),
+                facts,
+                status: 'ok',
+                ...(summary === undefined ? {} : { leafStateSummary: summary }),
+            };
+            journalOutcome([...facts]);
+            lastSettlementStatus = 'ok';
+            return {
+                status: 'ok',
+                facts: [...facts],
+                ...(summary === undefined ? {} : { leafStateSummary: summary }),
             };
         }
         if (selection.action === 'start' || selection.action === 'switch') {
@@ -4092,6 +4546,31 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             return undefined;
         }
     };
+    const rootStateDescriptionForRetention = (root, retainedState) => {
+        if (typeof root.runtime.describe !== 'function')
+            return undefined;
+        try {
+            const view = root.runtime.describe();
+            if (!isDeepStrictEqual(view.state, retainedState))
+                return undefined;
+            return typeof view.stateDescription === 'string' &&
+                view.stateDescription.trim().length > 0
+                ? view.stateDescription
+                : undefined;
+        }
+        catch {
+            return undefined;
+        }
+    };
+    const retainedGenerationFromFrames = (root, frameSnapshots) => {
+        const rootStateDescription = rootStateDescriptionForRetention(root, frameSnapshots[0].runtime.state);
+        return snapshotJsonValue({
+            frames: frameSnapshots,
+            ...(rootStateDescription === undefined
+                ? {}
+                : { rootStateDescription }),
+        }, 'Captain retained generation');
+    };
     const captureRetainedGeneration = () => {
         const root = rootFrame();
         if (!root ||
@@ -4102,7 +4581,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (frameSnapshots === undefined || frameSnapshots.length === 0) {
             return undefined;
         }
-        return snapshotJsonValue({ frames: frameSnapshots }, 'Captain retained generation');
+        return retainedGenerationFromFrames(root, frameSnapshots);
     };
     const rememberRetainedGeneration = () => {
         const root = rootFrame();
@@ -4236,12 +4715,15 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         if (snapshot === undefined)
             return undefined;
         const updates = new Map(pendingRetentionUpdates);
+        for (const rootPlaybookId of retainedGenerationRootClears) {
+            updates.set(rootPlaybookId, { kind: 'clear', rootPlaybookId });
+        }
         const root = rootFrame();
         if (root !== undefined) {
             const rootPlaybookId = root.entry.id;
             if (frames.every((frame) => runtimeRetainsGenerations(frame.runtime))) {
                 const generation = snapshot.mode === 'engaged.parked'
-                    ? { frames: snapshot.frames }
+                    ? retainedGenerationFromFrames(root, snapshot.frames)
                     : undefined;
                 if (generation !== undefined) {
                     updates.set(rootPlaybookId, {
@@ -4265,6 +4747,9 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                     return undefined;
                 }
             }
+        }
+        for (const update of updates.values()) {
+            applyRetentionUpdateToCatalog(update);
         }
         return snapshotJsonValue({
             snapshot,
@@ -4300,6 +4785,15 @@ export function createPlaybookCaptainShell(options, deps = {}) {
                 cleanupFailures.push(error);
             }
         }
+        const retainedRuntimes = takeRetainedOfferRuntimes();
+        if (retainedRuntimes.length > 0) {
+            try {
+                await disposeRetainedRuntimeSet(retainedRuntimes, 'retained-generation restore cleanup failed');
+            }
+            catch (error) {
+                cleanupFailures.push(error);
+            }
+        }
         if (captainRuntime) {
             shuttingDown = true;
             try {
@@ -4322,6 +4816,12 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         playerAgents = new Map();
         playerLedger.clear();
         playerTransactions.clear();
+        retainedGenerations.clear();
+        ineligibleRetainedGenerations.clear();
+        retainedGenerationRootClears.clear();
+        retainedGenerationsInstalled = false;
+        retainedGenerationInstallationInProgress = false;
+        retainedGenerationInstallationClosed = false;
         session = undefined;
         sessionEmissionsOpen = false;
         closedGateAttempted = false;
@@ -4459,6 +4959,55 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             throw error;
         }
     };
+    const installRetainedGenerations = async (generations) => {
+        if (lifecycle !== 'ready' || terminallyDisposed) {
+            throw new Error('retained generations require an initialized or restored Captain shell');
+        }
+        if (retainedGenerationsInstalled ||
+            retainedGenerationInstallationInProgress ||
+            retainedGenerationInstallationClosed ||
+            activeTurnHostCalls !== undefined) {
+            throw new Error('retained generations may be installed exactly once before the first nonempty Boss turn');
+        }
+        const normalized = normalizeInstalledRetainedGenerations(generations);
+        retainedGenerationInstallationInProgress = true;
+        try {
+            retainedGenerations.clear();
+            retainedGenerationOffers.clear();
+            ineligibleRetainedGenerations.clear();
+            retainedGenerationRootClears.clear();
+            for (const [rootPlaybookId, generation] of normalized) {
+                retainedGenerations.set(rootPlaybookId, generation);
+            }
+            await prepareRetainedGenerationOffers();
+            retainedGenerationsInstalled = true;
+        }
+        catch (error) {
+            const preparationCleanupFailed = error instanceof RetainedRuntimeCleanupError;
+            const runtimes = [...retainedGenerationOffers.values()].flatMap((offer) => [...offer.runtimes]);
+            retainedGenerationOffers.clear();
+            retainedGenerations.clear();
+            ineligibleRetainedGenerations.clear();
+            retainedGenerationRootClears.clear();
+            try {
+                await disposeRetainedRuntimeSet(runtimes, 'retained-generation installation cleanup failed');
+            }
+            catch (cleanupError) {
+                retiredRetainedRuntimes.push(...runtimes);
+                terminallyDisposed = true;
+                lifecycle = 'closed';
+                throw new AggregateError([error, cleanupError], 'retained-generation installation and cleanup failed');
+            }
+            if (preparationCleanupFailed) {
+                terminallyDisposed = true;
+                lifecycle = 'closed';
+            }
+            throw error;
+        }
+        finally {
+            retainedGenerationInstallationInProgress = false;
+        }
+    };
     return {
         async init(initSession) {
             if (lifecycle !== 'fresh' || terminallyDisposed) {
@@ -4501,6 +5050,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         exportSnapshot: exportShellSnapshot,
         exportSettlement,
         restore: restoreShellSnapshot,
+        installRetainedGenerations,
         async handleBossTurn(turn, context) {
             if (lifecycle !== 'ready' || terminallyDisposed) {
                 throw new Error('init must be called first, or restore must complete before handling a Boss turn');
@@ -4512,11 +5062,18 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             if (activeTurnHostCalls !== undefined) {
                 throw new Error('cannot handle concurrent Boss turns');
             }
+            if (retainedGenerationInstallationInProgress) {
+                throw new Error('cannot handle a Boss turn while retained generations are installing');
+            }
             // Empty or whitespace-only input allocates no call, session, or
             // telemetry (CAPTAIN-7).
             retentionSettlementReady = false;
             if (turn.prompt.trim().length === 0)
                 return;
+            retainedGenerationInstallationClosed = true;
+            for (const update of pendingRetentionUpdates.values()) {
+                applyRetentionUpdateToCatalog(update);
+            }
             retainedGenerationCandidates.clear();
             pendingRetentionUpdates.clear();
             // A terminal or dismissal can remove the whole stack during this turn;
@@ -4544,6 +5101,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             decisionCall = undefined;
             appendJournal('boss', turn.prompt);
             try {
+                await drainRetiredRetainedRuntimes();
+                await prepareRetainedGenerationOffers();
                 const result = await captainRuntime.handleBossInput({
                     text: turn.prompt,
                     signal: context.signal,
@@ -4610,14 +5169,18 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             }
         },
         async prepareDispose() {
-            if (lifecycle === 'initializing' || lifecycle === 'restoring') {
+            if (lifecycle === 'initializing' ||
+                lifecycle === 'restoring' ||
+                retainedGenerationInstallationInProgress) {
                 throw new Error('cannot dispose while Captain shell setup is in progress');
             }
             activeContext = undefined;
             await teardown();
         },
         async dispose() {
-            if (lifecycle === 'initializing' || lifecycle === 'restoring') {
+            if (lifecycle === 'initializing' ||
+                lifecycle === 'restoring' ||
+                retainedGenerationInstallationInProgress) {
                 throw new Error('cannot dispose while Captain shell setup is in progress');
             }
             activeContext = undefined;
@@ -4636,6 +5199,18 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         catch (error) {
             failure = error;
         }
+        const retainedRuntimes = takeRetainedOfferRuntimes();
+        if (retainedRuntimes.length > 0) {
+            try {
+                await disposeRetainedRuntimeSet(retainedRuntimes, 'retained-generation shell cleanup failed');
+            }
+            catch (error) {
+                failure ??= error;
+            }
+        }
+        retainedGenerations.clear();
+        ineligibleRetainedGenerations.clear();
+        retainedGenerationRootClears.clear();
         const runtime = captainRuntime;
         captainRuntime = undefined;
         if (runtime) {

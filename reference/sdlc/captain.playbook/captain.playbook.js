@@ -119,6 +119,18 @@ function validateParsedActingDecision(value) {
         }
         return { action: 'deliver' };
     }
+    if (value.action === 'resume') {
+        const allowed = new Set(['action', 'playbookId']);
+        for (const key of Object.keys(value)) {
+            if (!allowed.has(key)) {
+                throw new TypeError(`parse-resolved decision carries undeclared ${key}`);
+            }
+        }
+        return {
+            action: 'resume',
+            playbookId: assertNonEmptyString(value.playbookId, 'parse-resolved decision playbookId'),
+        };
+    }
     if (value.action !== 'start' && value.action !== 'switch') {
         throw new TypeError(`parse-resolved decision names unknown action ${String(value.action)}`);
     }
@@ -168,8 +180,8 @@ function classifyControllerTurn(text, _ports, _signal, _snapshotOrState, _bounda
 // the turn as a recoverable hub return with no action executed.
 // ---------------------------------------------------------------------------
 const RESTATED_REPLY_CONTRACT = [
-    'Reply again with exactly one JSON object `{ "action": …, … }` and no other text, selecting exactly one action from the closed set `respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`:',
-    '`{ "action": "respond", "text": … }`, `{ "action": "start", "playbookId": …, "input": … }`, `{ "action": "switch", "playbookId": …, "input": … }`, `{ "action": "dismiss" }`, `{ "action": "deliver" }`, or `{ "action": "runtime", "actionId": … }`; every `input` is one nonempty complete standalone request.',
+    'Reply again with exactly one JSON object `{ "action": …, … }` and no other text, selecting exactly one action from the closed set `respond` | `resume` | `start` | `switch` | `dismiss` | `deliver` | `runtime`:',
+    '`{ "action": "respond", "text": … }`, `{ "action": "resume", "playbookId": … }`, `{ "action": "start", "playbookId": …, "input": … }`, `{ "action": "switch", "playbookId": …, "input": … }`, `{ "action": "dismiss" }`, `{ "action": "deliver" }`, or `{ "action": "runtime", "actionId": … }`; every `input` is one nonempty complete standalone request.',
 ].join('\n');
 function correctiveDecisionPrompt(prompt, reason) {
     return [
@@ -220,6 +232,23 @@ function readDecisionReply(reply, options, selfPlaybookId, declaredActions) {
             if (shape !== undefined)
                 return { reason: shape };
             return { selection: { action, text: parsed.text } };
+        }
+        case 'resume': {
+            const shape = requireKeys(['playbookId']) ?? nonEmpty('playbookId');
+            if (shape !== undefined)
+                return { reason: shape };
+            const playbookId = parsed.playbookId;
+            if (playbookId === selfPlaybookId) {
+                return {
+                    reason: `the ${action} target may never be this Captain playbook itself`,
+                };
+            }
+            if (!options.enabledPlaybooks.some((entry) => entry.id === playbookId)) {
+                return {
+                    reason: `the ${action} target ${JSON.stringify(playbookId)} is not an enabled catalog id`,
+                };
+            }
+            return { selection: { action, playbookId } };
         }
         case 'start':
         case 'switch': {
@@ -275,6 +304,9 @@ function readDecisionReply(reply, options, selfPlaybookId, declaredActions) {
 function selectionFromParsedDecision(decision) {
     if (decision.action === 'deliver') {
         return { action: 'deliver' };
+    }
+    if (decision.action === 'resume') {
+        return { action: 'resume', playbookId: decision.playbookId };
     }
     // A parse-resolved `start` / `switch` is always the exact command remainder
     // supplied by the host (CAPTAIN-7 command table).

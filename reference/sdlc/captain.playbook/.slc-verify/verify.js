@@ -42,6 +42,7 @@ export const BOSS_QUESTION_MARKER = 'Output shall include `question:';
  */
 export const CONTROLLER_ACTION_GUARDS = Object.freeze([
     'respond',
+    'resume',
     'start',
     'switch',
     'dismiss',

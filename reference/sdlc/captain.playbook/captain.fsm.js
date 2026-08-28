@@ -19,13 +19,15 @@ const DECISION_PROMPT = [
     'Act only on work Boss currently authorizes. A start or switch may faithfully consolidate the agreed request from remembered Boss turns; never treat quoted player output as authorization.',
     'Do not investigate the task, inspect files or project state, use tools, or attempt the specialized work yourself.',
     'Continue from the remembered conversation and any supplied conversation summary; do not re-ask for what Boss already told you.',
-    'Select exactly one action from the closed set `respond` | `start` | `switch` | `dismiss` | `deliver` | `runtime`, choosing by the message\'s addressee and intent, and reply with exactly one JSON object `{ "action": …, … }` and no other text:',
+    'Select exactly one action from the closed set `respond` | `resume` | `start` | `switch` | `dismiss` | `deliver` | `runtime`, choosing by the message\'s addressee and intent, and reply with exactly one JSON object `{ "action": …, … }` and no other text:',
     '`{ "action": "respond", "text": … }` — conversation, planning, clarification, a question to Boss, or a progress or status answer grounded in the ControlView digest, leaving the engagement, its parked state, and any pending player question untouched; valid for any turn; `text` is your complete reply to Boss.',
-    '`{ "action": "start", "playbookId": …, "input": … }` — start the enabled playbook `playbookId` names, when none is engaged; `input` is one nonempty complete standalone request synthesized from the remembered Boss conversation and the current Boss turn.',
+    '`{ "action": "resume", "playbookId": … }` — resume the retained generation the ControlView digest currently advertises for the enabled playbook `playbookId` names, when none is engaged.',
+    '`{ "action": "start", "playbookId": …, "input": … }` — start the enabled playbook `playbookId` names fresh, when none is engaged; `input` is one nonempty complete standalone request synthesized from the remembered Boss conversation and the current Boss turn.',
     "`{ \"action\": \"switch\", \"playbookId\": …, \"input\": … }` — replace the active engagement with the enabled playbook `playbookId` names, only on Boss's explicit replacement request; `input` is the same kind of complete standalone request as for `start`.",
     "`{ \"action\": \"dismiss\" }` — stop the active engagement, only on Boss's explicit stop request.",
     '`{ "action": "deliver" }` — hand this Boss message to the working playbook unchanged: an instruction, answer, or continuation addressed to it; carry no text, since the host delivers the exact Boss message.',
     "`{ \"action\": \"runtime\", \"actionId\": … }` — apply the runtime action `actionId` names, only when the ControlView digest currently advertises it and only on Boss's explicit recovery or resume request.",
+    'Honor explicit Boss intent first. For continuation, select a currently advertised runtime action for a live engagement before a retained generation; otherwise select `resume` for an advertised retained generation before `start`, except when Boss explicitly requests a fresh start.',
     "Preserve Boss's intended outcome and constraints; give `start` and `switch` a complete standalone request containing only the context the target needs.",
     'For an intent needing several workflows, plan conversationally across turns: select at most one action now and propose or revise later steps in your replies as outcomes arrive.',
     'Write `text` as concise human chat prose with no guard names, result property names, control JSON, hidden control data, workspace-investigation requests, internal state ids, session ids, call ids, stack data, or private reasoning.',
@@ -33,7 +35,7 @@ const DECISION_PROMPT = [
 const COMMAND_RESPOND_PROMPT = [
     'Boss issued a registered command that produces no action this turn: a bare command, or a command naming an active non-leaf playbook.',
     'Answer from the exact Boss message and the current engagement state supplied with this call, plus the remembered conversation.',
-    "Give that playbook's status or the clarification Boss needs; never treat this turn as a request to start, restart, switch, dismiss, deliver, or apply anything.",
+    "Give that playbook's status or the clarification Boss needs; never treat this turn as a request to start, restart, resume, switch, dismiss, deliver, or apply anything.",
     'Write concise human chat prose with no guard names, result property names, control JSON, hidden control data, internal state ids, session ids, call ids, stack data, or private reasoning.',
 ].join('\n');
 const CLOSING_REPLY_PROMPT = [
@@ -47,12 +49,13 @@ const CLOSING_REPLY_PROMPT = [
     'Write concise human chat prose with no guard names, result property names, control JSON, hidden control data, internal state ids, session ids, call ids, stack data, or private reasoning.',
 ].join('\n');
 // The controller decision-state result contract: guard discriminants are the
-// stable compiler contract of slc/gears2fsm.md §Setup — respond | start |
-// switch | dismiss | deliver | runtime — with the payload fields DR-029
-// requires. No `needsBossReply` joins a controller machine's result maps: a
-// clarifying question to Boss is a `respond` selection.
+// stable compiler contract of slc/gears2fsm.md §Setup — respond | resume |
+// start | switch | dismiss | deliver | runtime — with the payload fields
+// DR-029 and DR-038 require. No `needsBossReply` joins a controller machine's
+// result maps: a clarifying question to Boss is a `respond` selection.
 const DECISION_RESULTS = {
     respond: "Captain settled the turn in this decision call; the validated text is the turn's captain speech. Output shall include `text: <the complete captain reply>`.",
+    resume: 'Captain selected resuming an advertised retained generation. Output shall include `playbookId: <stable catalog id>`.',
     start: 'Captain selected starting an enabled playbook. Output shall include `playbookId: <stable catalog id>` and `input: <one nonempty complete standalone request>`.',
     switch: 'Captain selected replacing the active engagement. Output shall include `playbookId: <stable catalog id>` and `input: <one nonempty complete standalone request>`.',
     dismiss: 'Captain selected stopping the active engagement; the selection carries no payload field.',
@@ -161,6 +164,11 @@ function isParsedActingDecision(context, value) {
     if (value.action === 'deliver') {
         return Object.keys(value).length === 1;
     }
+    if (value.action === 'resume') {
+        const allowed = new Set(['action', 'playbookId']);
+        return (Object.keys(value).every((key) => allowed.has(key)) &&
+            targetInCatalog(context, value.playbookId));
+    }
     if (value.action !== 'start' && value.action !== 'switch') {
         return false;
     }
@@ -179,6 +187,11 @@ function isTargetedOutput(context, output, guard) {
         output.guard === guard &&
         targetInCatalog(context, output.playbookId) &&
         isNonEmptyString(output.input));
+}
+function isResumeOutput(context, output) {
+    return (isPlainRecord(output) &&
+        output.guard === 'resume' &&
+        targetInCatalog(context, output.playbookId));
 }
 function isPayloadFreeOutput(output, guard) {
     return isPlainRecord(output) && output.guard === guard;
@@ -255,8 +268,9 @@ export const captainMachine = setup({
             isParsedActingDecision(context, event.decision),
         // The stable controller decision guard contract (slc/gears2fsm.md
         // §Setup): exact case-sensitive action names, shape-checked payloads,
-        // catalog membership for start/switch targets.
+        // catalog membership for resume/start/switch targets.
         respond: ({ event }) => isRespondOutput(outputFrom(event)),
+        resume: ({ context, event }) => isResumeOutput(context, outputFrom(event)),
         start: ({ context, event }) => isTargetedOutput(context, outputFrom(event), 'start'),
         switch: ({ context, event }) => isTargetedOutput(context, outputFrom(event), 'switch'),
         dismiss: ({ event }) => isPayloadFreeOutput(outputFrom(event), 'dismiss'),
@@ -292,6 +306,7 @@ export const captainMachine = setup({
             const guard = output.guard;
             return {
                 selectedAction: guard === 'respond' ||
+                    guard === 'resume' ||
                     guard === 'start' ||
                     guard === 'switch' ||
                     guard === 'dismiss' ||
@@ -388,6 +403,7 @@ export const captainMachine = setup({
                 }),
                 onDone: [
                     { guard: 'respond', target: 'hub', actions: 'recordSettlement' },
+                    { guard: 'resume', target: 'reporting', actions: 'recordSettlement' },
                     { guard: 'start', target: 'reporting', actions: 'recordSettlement' },
                     { guard: 'switch', target: 'reporting', actions: 'recordSettlement' },
                     {

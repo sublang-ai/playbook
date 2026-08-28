@@ -2172,7 +2172,18 @@ function validateRetainedGenerations(value, structural) {
       );
     }
     const generation = requireRecord(value, path);
-    rejectUnknownOrMissingKeys(generation, ['frames'], path);
+    exactOptionalKeys(
+      generation,
+      ['frames'],
+      ['rootStateDescription'],
+      path,
+    );
+    if (generation.rootStateDescription !== undefined) {
+      requireNonblank(
+        generation.rootStateDescription,
+        `${path}.rootStateDescription`,
+      );
+    }
     if (!Array.isArray(generation.frames) || generation.frames.length === 0) {
       throw new Error(`${path}.frames must be a non-empty array`);
     }

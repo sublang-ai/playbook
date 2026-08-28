@@ -222,12 +222,13 @@ teardown event. The completion rule of
 output clause binds only where Source declares a terminal result, which a
 controller Source does not.
 The controller decision state's direct-Captain result contract discriminates
-the closed action set of DR-029. Its guard discriminants are a stable
-compiler contract, not names the compiler may invent — `respond`, `start`,
-`switch`, `dismiss`, `deliver`, and `runtime` — with each guard's required
-payload fields:
+the closed action set of DR-029 as extended by DR-038. Its guard discriminants
+are a stable compiler contract, not names the compiler may invent — `respond`, `resume`,
+`start`, `switch`, `dismiss`, `deliver`, and `runtime` — with each guard's
+required payload fields:
 
 - `respond` requires `text`;
+- `resume` requires `playbookId` and carries no `input`;
 - `start` and `switch` each require `playbookId` and `input`;
 - `runtime` requires `actionId`;
 - `dismiss` and `deliver` require none — a `deliver` result in particular
@@ -653,7 +654,7 @@ Boss-reply suspension, because its hub already receives every Boss turn and a
 clarifying question to Boss is a `respond` selection over the closed action
 set. The rule below is therefore universal over workflow states and silent
 about that class; in particular, adding `needsBossReply` to the controller
-decision state would add a seventh outcome to a closed six-action contract
+decision state would add an eighth outcome to a closed seven-action contract
 whose guard discriminants [Setup](#setup) fixes, and is nonconformant.
 There is no source-level opt-in annotation and no `needsBossReply` result metadata in GEARS output.
 The FSM compiler shall preserve the GEARS blockquote as the state's domain `prompt` body and shall not inject any Boss-question instruction into `invoke.input.prompt`.

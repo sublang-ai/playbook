@@ -292,6 +292,7 @@ function retainedCodeGeneration(childStateId = 'reviewing') {
         },
       },
     ],
+    rootStateDescription: 'CODE is waiting for REVIEW to finish.',
   };
 }
 
@@ -1092,6 +1093,12 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
     });
     expect(Object.isFrozen(first.retainedGenerations.code)).toBe(true);
     expect(Object.keys(first.retainedGenerations)).toEqual(['code', 'review']);
+    expect(first.retainedGenerations.code.rootStateDescription).toBe(
+      'CODE is waiting for REVIEW to finish.',
+    );
+    expect(first.retainedGenerations.review).not.toHaveProperty(
+      'rootStateDescription',
+    );
 
     await lease.beginTurn({
       input: 'replace code',
@@ -1745,6 +1752,9 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
       }],
       ['empty stack', (value) => {
         value.retainedGenerations.code.frames = [];
+      }],
+      ['blank root-state description', (value) => {
+        value.retainedGenerations.code.rootStateDescription = '  ';
       }],
       ['root mismatch', (value) => {
         value.retainedGenerations.code.frames[0].playbookId = 'review';
