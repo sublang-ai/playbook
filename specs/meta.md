@@ -36,7 +36,7 @@ A spec file shall keep one sentence per line — with lists, tables, and diagram
 
 ### meta-4
 
-Each DR shall follow the ADR format [[2]], with required sections Status, Context, Decision, and Consequences, plus an optional References section.
+Each DR shall follow the ADR format [[2]], with sections Status, Context, Decision, and Consequences, plus References where it cites an external source [[meta-19](#meta-19)].
 
 ### meta-5
 
@@ -87,7 +87,7 @@ Each spec item shall be self-contained: every reliance on another item is an exp
 
 ### meta-29
 
-Each spec item shall define one cohesive concern using one or more GEARS statements [[meta-6](#meta-6)], with attachments introduced by a colon at a statement's end and elaborating only that concern:
+Each spec item shall state one requirement in one GEARS statement [[meta-6](#meta-6)], with attachments introduced by a colon at the statement's end and elaborating only that requirement:
 
 | Item kind | Example attachment |
 | --- | --- |
@@ -95,8 +95,8 @@ Each spec item shall define one cohesive concern using one or more GEARS stateme
 | Test | the assertions of one execution flow or one explicit case matrix |
 
 - An attachment may take a form such as a note, list, table, (renderable) diagram, or example.
-- A condition inside an attachment is a case label, and an explicit case matrix may state the conditions and outcomes that jointly define the concern.
-- Independent subjects or outcomes that can change and be verified separately are evidence of additional spec items; multiple preconditions, triggers, phases, or cases may remain together when they form one cohesive contract.
+- A condition inside an attachment is a case label.
+- Differing stateful preconditions or triggers are evidence of additional spec items.
 
 ## Spec packages
 
@@ -181,16 +181,16 @@ Each package's `Verification` section shall verify every behavior in that packag
 
 ### meta-16
 
-A citation of a spec item or record shall be an inline relative link with the cited ID as its link text:
+A citation of a spec item or DR shall be an inline relative link with the cited ID as its link text:
 
 | Cited | Form |
 | --- | --- |
 | Spec item | its heading anchor, in an outer pair of square brackets (e.g., `[[meta-1](meta.md#meta-1)]`) |
-| Record | its file, with no outer brackets (e.g., `[DR-000](decisions/000-spec-structure-format.md)`) |
+| DR | its file, with no outer brackets (e.g., `[DR-000](decisions/000-spec-structure-format.md)`) |
 
 ### meta-18
 
-No DR or spec item shall cite an IR or name it in prose.
+No spec shall cite an IR or name it in prose, except that IR itself.
 
 ### meta-19
 
