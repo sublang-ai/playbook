@@ -19,6 +19,7 @@ import type {
   PlaybookPorts,
   PlaybookRunResult,
   PlaybookRuntime,
+  PlaybookRuntimeSnapshot,
   PlaybookSession,
   PlaybookTraceEvent,
   PlayerSessionStore,
@@ -43,7 +44,9 @@ import createCodePlaybookRuntime, {
   _internal as codeArtifact,
 } from '../reference/sdlc/code.playbook/code.playbook.js';
 import { decideMachine } from '../reference/sdlc/decide.playbook/decide.fsm.js';
-import { _internal as decideArtifact } from '../reference/sdlc/decide.playbook/decide.playbook.js';
+import createDecidePlaybookRuntime, {
+  _internal as decideArtifact,
+} from '../reference/sdlc/decide.playbook/decide.playbook.js';
 import { reviewMachine } from '../reference/sdlc/review.playbook/review.fsm.js';
 import { _internal as reviewArtifact } from '../reference/sdlc/review.playbook/review.playbook.js';
 
@@ -505,12 +508,13 @@ describe('generic strategy defaults', () => {
     ]);
   });
 
-  it('preserves declared unfinished metadata including explicit emptiness', () => {
+  it('exposes adoption independently while preserving declared retention metadata', () => {
     const createRuntime = createXStatePlaybookRuntime(workflowMachine, {
       ...workflowSpec,
       unfinishedFinalStateIds: new Set(['done']),
     });
     const runtime = createRuntime({});
+    expect(typeof runtime.adopt).toBe('function');
     expect(runtime.retainedGenerationMetadata).toEqual({
       unfinishedFinalStateIds: ['done'],
     });
@@ -524,6 +528,7 @@ describe('generic strategy defaults', () => {
       ...workflowSpec,
       unfinishedFinalStateIds: new Set(),
     })({});
+    expect(typeof emptyRuntime.adopt).toBe('function');
     expect(emptyRuntime.retainedGenerationMetadata).toEqual({
       unfinishedFinalStateIds: [],
     });
@@ -535,7 +540,10 @@ describe('generic strategy defaults', () => {
         emptyRuntime.retainedGenerationMetadata?.unfinishedFinalStateIds,
       ),
     ).toBe(true);
-    expect(createWorkflowRuntime({}).retainedGenerationMetadata).toBeUndefined();
+    const unclassifiedRuntime = createWorkflowRuntime({});
+    expect(unclassifiedRuntime.retainedGenerationMetadata).toBeUndefined();
+    expect(typeof unclassifiedRuntime.adopt).toBe('function');
+    expect(createDecidePlaybookRuntime({}).adopt).toBeUndefined();
   });
 
   it.each(['implement', 'missing'])(
@@ -3868,143 +3876,176 @@ describe('nested playbook actor over the shared factory', () => {
     await runtime.dispose();
   });
 
-  it('restores a suspended child without replaying its start', async () => {
-    let hostStarts = 0;
-    const { ports, statuses, telemetry } = makeRecordingPorts({
-      callPlaybook: async (request) => {
-        hostStarts += 1;
-        expect(request).toMatchObject({ playbookId: 'child', text: 'do it' });
-        return { state: 'suspended', childSessionId: 'child-session-1' };
-      },
-    });
-    const session = makeSession(ports);
-    const first = createNestedRuntime({});
-    await first.init(session);
-    const suspended = await first.handleBossInput(turn('do it'));
-    expect(suspended.outcome).toBe('suspended');
+  it.each(['restore', 'adopt'] as const)(
+    '%ss a suspended child without replaying its start',
+    async (mode) => {
+      let hostStarts = 0;
+      const { ports, statuses, telemetry } = makeRecordingPorts({
+        callPlaybook: async (request) => {
+          hostStarts += 1;
+          expect(request).toMatchObject({ playbookId: 'child', text: 'do it' });
+          return { state: 'suspended', childSessionId: 'child-session-1' };
+        },
+      });
+      const session = makeSession(ports);
+      const first = createNestedRuntime({});
+      await first.init(session);
+      const suspended = await first.handleBossInput(turn('do it'));
+      expect(suspended.outcome).toBe('suspended');
 
-    const snapshot = first.exportSnapshot?.();
-    if (
-      snapshot?.schemaVersion !== 3 ||
-      snapshot.suspendedCall === undefined
-    ) {
-      throw new Error('expected a schema-3 suspended-call snapshot');
-    }
-    expect(snapshot.suspendedCall).toEqual({
-      callId: 'playbook-1',
-      stateId: 'call',
-      playbookId: 'child',
-      text: 'do it',
-      childSessionId: 'child-session-1',
-      turnId: 1,
-    });
-    expect(snapshot.sequences).toMatchObject({
-      turn: 1,
-      playbookCall: 1,
-    });
-    const telemetryBeforeRestore = telemetry.length;
-    const statusesBeforeRestore = statuses.length;
+      const snapshot = first.exportSnapshot?.();
+      if (
+        snapshot?.schemaVersion !== 3 ||
+        snapshot.suspendedCall === undefined
+      ) {
+        throw new Error('expected a schema-3 suspended-call snapshot');
+      }
+      expect(snapshot.suspendedCall).toEqual({
+        callId: 'playbook-1',
+        stateId: 'call',
+        playbookId: 'child',
+        text: 'do it',
+        childSessionId: 'child-session-1',
+        turnId: 1,
+      });
+      expect(snapshot.sequences).toMatchObject({
+        turn: 1,
+        playbookCall: 1,
+      });
+      const telemetryBeforeRestore = telemetry.length;
+      const statusesBeforeRestore = statuses.length;
 
-    const restored = createNestedRuntime({});
-    await restored.restore?.(session, snapshot);
-    expect(hostStarts).toBe(1);
-    expect(telemetry).toHaveLength(telemetryBeforeRestore);
-    expect(statuses).toHaveLength(statusesBeforeRestore);
-    expect(
-      telemetry
+      const restored = createNestedRuntime({});
+      const targetSession = mode === 'restore' ? session : makeSession(ports);
+      if (mode === 'adopt') {
+        expect(targetSession.sessionId).not.toBe(session.sessionId);
+      }
+      await restored[mode]?.(targetSession, snapshot);
+      expect(hostStarts).toBe(1);
+      expect(telemetry).toHaveLength(telemetryBeforeRestore);
+      expect(statuses).toHaveLength(statusesBeforeRestore);
+      expect(
+        telemetry
+          .map(({ payload }) => payload as PlaybookTraceEvent)
+          .filter(({ type }) => type === 'playbook.call.started'),
+      ).toHaveLength(1);
+
+      const resumed = await restored.resumePlaybookCall({
+        callId: snapshot.suspendedCall.callId,
+        result: {
+          status: 'ok',
+          playbookId: snapshot.suspendedCall.playbookId,
+          childSessionId: snapshot.suspendedCall.childSessionId,
+          output: { note: 'child finished after restore' },
+        },
+        signal: new AbortController().signal,
+      });
+      expect(resumed.outcome).toBe('terminal');
+      expect('output' in resumed ? resumed.output : undefined).toEqual({
+        childOutput: { note: 'child finished after restore' },
+      });
+      const callTraces = telemetry
         .map(({ payload }) => payload as PlaybookTraceEvent)
-        .filter(({ type }) => type === 'playbook.call.started'),
-    ).toHaveLength(1);
+        .filter(
+          ({ type }) =>
+            type === 'playbook.call.started' ||
+            type === 'playbook.call.finished',
+        );
+      expect(callTraces).toHaveLength(2);
+      expect(callTraces[1]).toMatchObject({
+        type: 'playbook.call.finished',
+        callId: snapshot.suspendedCall.callId,
+        turnId: snapshot.suspendedCall.turnId,
+        sequence: snapshot.sequences.trace + 1,
+      });
+      expect(hostStarts).toBe(1);
 
-    const resumed = await restored.resumePlaybookCall({
-      callId: snapshot.suspendedCall.callId,
-      result: {
-        status: 'ok',
-        playbookId: snapshot.suspendedCall.playbookId,
-        childSessionId: snapshot.suspendedCall.childSessionId,
-        output: { note: 'child finished after restore' },
-      },
-      signal: new AbortController().signal,
-    });
-    expect(resumed.outcome).toBe('terminal');
-    expect('output' in resumed ? resumed.output : undefined).toEqual({
-      childOutput: { note: 'child finished after restore' },
-    });
-    const callTraces = telemetry
-      .map(({ payload }) => payload as PlaybookTraceEvent)
-      .filter(
-        ({ type }) =>
-          type === 'playbook.call.started' ||
-          type === 'playbook.call.finished',
-      );
-    expect(callTraces).toHaveLength(2);
-    expect(callTraces[1]).toMatchObject({
-      type: 'playbook.call.finished',
-      callId: snapshot.suspendedCall.callId,
-      turnId: snapshot.suspendedCall.turnId,
-      sequence: snapshot.sequences.trace + 1,
-    });
-    expect(hostStarts).toBe(1);
+      await restored.dispose();
+      await first.dispose();
+    },
+  );
 
-    await restored.dispose();
-    await first.dispose();
-  });
+  it.each([
+    { mode: 'restore', mismatch: 'state' },
+    { mode: 'adopt', mismatch: 'state' },
+    { mode: 'adopt', mismatch: 'descriptor' },
+  ] as const)(
+    'rolls back a $mode $mismatch mismatch and permits exact retry',
+    async ({ mode, mismatch }) => {
+      let hostStarts = 0;
+      const { ports, telemetry } = makeRecordingPorts({
+        callPlaybook: async () => {
+          hostStarts += 1;
+          return { state: 'suspended', childSessionId: 'child-session-1' };
+        },
+      });
+      const session = makeSession(ports);
+      const first = createNestedRuntime({});
+      await first.init(session);
+      await first.handleBossInput(turn('do it'));
+      const snapshot = first.exportSnapshot?.();
+      if (
+        snapshot?.schemaVersion !== 3 ||
+        snapshot.suspendedCall === undefined
+      ) {
+        throw new Error('expected a schema-3 suspended-call snapshot');
+      }
+      const mismatched = structuredClone(snapshot);
+      if (mismatch === 'state') {
+        (mismatched.state as { value: unknown }).value = 'ready';
+      } else {
+        mismatched.suspendedCall.text = 'different input';
+      }
 
-  it('rolls back a pre-confirm state mismatch and permits exact retry', async () => {
-    let hostStarts = 0;
-    const { ports, telemetry } = makeRecordingPorts({
-      callPlaybook: async () => {
-        hostStarts += 1;
-        return { state: 'suspended', childSessionId: 'child-session-1' };
-      },
-    });
-    const session = makeSession(ports);
-    const first = createNestedRuntime({});
-    await first.init(session);
-    await first.handleBossInput(turn('do it'));
-    const snapshot = first.exportSnapshot?.();
-    if (
-      snapshot?.schemaVersion !== 3 ||
-      snapshot.suspendedCall === undefined
-    ) {
-      throw new Error('expected a schema-3 suspended-call snapshot');
-    }
-    const mismatched = structuredClone(snapshot);
-    (mismatched.state as { value: unknown }).value = 'ready';
+      const restored = createNestedRuntime({});
+      const targetSession = mode === 'restore' ? session : makeSession(ports);
+      const rejected = expect(
+        restored[mode]?.(targetSession, mismatched),
+      ).rejects;
+      if (mismatch === 'state') {
+        await rejected.toThrow(
+          `createPlaybookRuntime.${mode}: restored actor state does not match snapshot state`,
+        );
+      } else {
+        await rejected.toThrow(
+          'restored playbook call playbook-1 text does not match its persisted input',
+        );
+      }
+      expect(hostStarts).toBe(1);
+      expect(
+        telemetry
+          .map(({ payload }) => payload as PlaybookTraceEvent)
+          .filter(({ type }) => type === 'playbook.call.started'),
+      ).toHaveLength(1);
+      expect(
+        telemetry
+          .map(({ payload }) => payload as PlaybookTraceEvent)
+          .filter(({ type }) => type === 'playbook.call.finished'),
+      ).toEqual([]);
 
-    const restored = createNestedRuntime({});
-    await expect(restored.restore?.(session, mismatched)).rejects.toThrow(
-      'restored actor state does not match snapshot state',
-    );
-    expect(hostStarts).toBe(1);
-    expect(
-      telemetry
-        .map(({ payload }) => payload as PlaybookTraceEvent)
-        .filter(({ type }) => type === 'playbook.call.finished'),
-    ).toEqual([]);
+      // Failed-start cleanup removes the provisional bridge claim and turn
+      // ownership, so the same runtime can retry the authoritative snapshot.
+      await restored[mode]?.(targetSession, snapshot);
+      await restored.resumePlaybookCall({
+        callId: snapshot.suspendedCall.callId,
+        result: {
+          status: 'ok',
+          playbookId: snapshot.suspendedCall.playbookId,
+          childSessionId: snapshot.suspendedCall.childSessionId,
+        },
+        signal: new AbortController().signal,
+      });
+      expect(hostStarts).toBe(1);
+      expect(
+        telemetry
+          .map(({ payload }) => payload as PlaybookTraceEvent)
+          .filter(({ type }) => type === 'playbook.call.finished'),
+      ).toHaveLength(1);
 
-    // Failed-start cleanup removes the provisional bridge claim and turn
-    // ownership, so the same runtime can retry the authoritative snapshot.
-    await restored.restore?.(session, snapshot);
-    await restored.resumePlaybookCall({
-      callId: snapshot.suspendedCall.callId,
-      result: {
-        status: 'ok',
-        playbookId: snapshot.suspendedCall.playbookId,
-        childSessionId: snapshot.suspendedCall.childSessionId,
-      },
-      signal: new AbortController().signal,
-    });
-    expect(hostStarts).toBe(1);
-    expect(
-      telemetry
-        .map(({ payload }) => payload as PlaybookTraceEvent)
-        .filter(({ type }) => type === 'playbook.call.finished'),
-    ).toHaveLength(1);
-
-    await restored.dispose();
-    await first.dispose();
-  });
+      await restored.dispose();
+      await first.dispose();
+    },
+  );
 
   it('arms descriptor-free restores so an opaque invoke cannot reopen a child', async () => {
     let hostStarts = 0;
@@ -4216,6 +4257,153 @@ describe('parked-session snapshot over the shared factory', () => {
     const resumed = await second.handleBossInput(turn('use sqlite'));
     expect(resumed.outcome).toBe('terminal');
     await second.dispose();
+  });
+
+  it.each(['schema', 'playbook', 'role bindings'] as const)(
+    'rejects an adoption %s mismatch before effects and permits exact retry',
+    async (mismatch) => {
+      const sourceRecording = makeRecordingPorts();
+      const source = createWorkflowRuntime({});
+      const sourceSession = makeSession(sourceRecording.ports);
+      await source.init(sourceSession);
+      const snapshot = source.exportSnapshot?.();
+      if (snapshot === undefined) throw new Error('expected parked snapshot');
+      await source.dispose();
+
+      let hostEffects = 0;
+      const targetRecording = makeRecordingPorts({
+        callPlayer: async () => {
+          hostEffects += 1;
+          return { status: 'ok', finalText: 'unexpected' };
+        },
+        callCaptain: async () => {
+          hostEffects += 1;
+          return { status: 'ok', finalText: 'unexpected' };
+        },
+        callJudge: async () => {
+          hostEffects += 1;
+          return '{}';
+        },
+        callPlaybook: async () => {
+          hostEffects += 1;
+          return { state: 'suspended', childSessionId: 'unexpected' };
+        },
+        emitStatus: async () => {
+          hostEffects += 1;
+        },
+        emitTelemetry: async () => {
+          hostEffects += 1;
+        },
+      });
+      const playerSessions: PlayerSessionStore = {
+        select: vi.fn(() => false),
+        update: vi.fn(),
+        snapshot: vi.fn(() => ({})),
+        restore: vi.fn(),
+      };
+      const target = createWorkflowRuntime({});
+      let targetSession = makeSession(targetRecording.ports, playerSessions);
+      let candidate = snapshot;
+      if (mismatch === 'schema') {
+        candidate = {
+          ...snapshot,
+          schemaVersion: 2,
+        } as unknown as PlaybookRuntimeSnapshot;
+      } else if (mismatch === 'playbook') {
+        candidate = { ...snapshot, playbookId: 'other' };
+      } else {
+        targetSession = { ...targetSession, roleBindings: {} };
+      }
+
+      await expect(target.adopt?.(targetSession, candidate)).rejects.toThrow(
+        mismatch === 'schema'
+          ? /incompatible player identity/
+          : mismatch === 'playbook'
+            ? /does not match runtime playbook/
+            : /roleBindings must cover exactly/,
+      );
+      expect(hostEffects).toBe(0);
+      expect(targetRecording.statuses).toEqual([]);
+      expect(targetRecording.telemetry).toEqual([]);
+      expect(playerSessions.select).not.toHaveBeenCalled();
+      expect(playerSessions.update).not.toHaveBeenCalled();
+      expect(playerSessions.snapshot).not.toHaveBeenCalled();
+      expect(playerSessions.restore).not.toHaveBeenCalled();
+
+      await target.adopt?.(
+        makeSession(targetRecording.ports, playerSessions),
+        snapshot,
+      );
+      expect(target.exportSnapshot?.()?.state).toEqual(snapshot.state);
+      await target.dispose();
+    },
+  );
+
+  it('adopts a parked snapshot under a fresh engagement identity', async () => {
+    let playerCalls = 0;
+    let judgeCalls = 0;
+    const { ports, statuses, telemetry } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return playerCalls === 1
+          ? { status: 'ok', finalText: 'Which database should I use?' }
+          : { status: 'ok', finalText: 'Done with sqlite.' };
+      },
+      callJudge: async (prompt) => {
+        judgeCalls += 1;
+        if (prompt.includes('Classify the following Boss message')) {
+          return '{"type":"BOSS_REPLY","questionId":"q-1"}';
+        }
+        return playerCalls === 1
+          ? '{"guard":"needsBossReply","question":"Which database?"}'
+          : '{"guard":"implemented","summary":"used sqlite"}';
+      },
+    });
+    const source = createWorkflowRuntime({});
+    const sourceSession = makeSession(ports);
+    await source.init(sourceSession);
+    const parked = await source.handleBossInput(turn('build storage'));
+    expect(parked.state.stateId).toBe('awaitBossReply');
+    const snapshot = source.exportSnapshot?.();
+    if (snapshot === undefined) throw new Error('expected parked snapshot');
+    await source.dispose();
+    const effectsBeforeAdoption = {
+      judgeCalls,
+      playerCalls,
+      statuses: statuses.length,
+      telemetry: telemetry.length,
+    };
+
+    const target = createWorkflowRuntime({});
+    const targetSession = makeSession(ports);
+    expect(targetSession.sessionId).not.toBe(sourceSession.sessionId);
+    await target.adopt?.(targetSession, snapshot);
+    expect(target.exportSnapshot?.()).toMatchObject({
+      schemaVersion: 3,
+      playbookId: sourceSession.playbookId,
+      state: snapshot.state,
+    });
+    expect({
+      judgeCalls,
+      playerCalls,
+      statuses: statuses.length,
+      telemetry: telemetry.length,
+    }).toEqual(effectsBeforeAdoption);
+    for (const method of ['init', 'restore', 'adopt'] as const) {
+      const anotherSession = makeSession(ports);
+      const attempt =
+        method === 'init'
+          ? target.init(anotherSession)
+          : target[method]?.(anotherSession, snapshot);
+      await expect(attempt).rejects.toThrow(
+        `createPlaybookRuntime.${method}: already initialized`,
+      );
+    }
+
+    const resumed = await target.handleBossInput(turn('use sqlite'));
+    expect(resumed.outcome).toBe('terminal');
+    expect(playerCalls).toBe(2);
+    await target.dispose();
   });
 });
 

@@ -201,6 +201,7 @@ export interface PlaybookRuntime {
     init(session: PlaybookSession): Promise<void>;
     exportSnapshot?(): PlaybookRuntimeSnapshot | undefined;
     restore?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>;
+    adopt?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>;
     readonly retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata;
     describe?(): PlaybookControlView;
     apply?(input: {

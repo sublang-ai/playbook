@@ -129,6 +129,7 @@ class FakeRuntime implements PlaybookRuntime {
   disposeCount = 0;
   snapshot: PlaybookRuntimeSnapshot | undefined;
   retainedGenerationMetadata?: PlaybookRuntime['retainedGenerationMetadata'];
+  adopt?: PlaybookRuntime['adopt'];
   describe?: () => PlaybookControlView;
 
   constructor(
@@ -554,6 +555,9 @@ function enableGenerationRetention(
     runtime.retainedGenerationMetadata = Object.freeze({
       unfinishedFinalStateIds: Object.freeze([...unfinishedFinalStateIds]),
     });
+    runtime.adopt = async (session, snapshot) => {
+      await runtime.restore(session, snapshot);
+    };
     return runtime;
   };
 }
@@ -5073,32 +5077,49 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     await shell.dispose?.();
   });
 
-  it('exports a clear update instead of retaining a capability-less root', async () => {
-    const code = fakeCodeEntry(
-      async (runtime) => {
-        const state = playbookState('editing');
-        runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
-        return { outcome: 'quiescent', state };
-      },
-      undefined,
-      async (runtime) => {
-        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
-      },
-    );
-    const shell = makeShell(code, { sessionIds: [ROOT_ID] });
-    await shell.init!(stubSession(roster).session);
-    await shell.handleBossTurn(
-      turn('/code start'),
-      stubContext([
-        { status: 'ok', turnId: 1, finalText: 'Editing is parked.' },
-      ]).context,
-    );
+  it.each(['marker-only', 'adoption-only'] as const)(
+    'clears a %s root without the complete retention capability',
+    async (capability) => {
+      const code = fakeCodeEntry(
+        async (runtime) => {
+          const state = playbookState('editing');
+          runtime.snapshot = runtimeSnapshot('code', state, { turn: 1 });
+          return { outcome: 'quiescent', state };
+        },
+        undefined,
+        async (runtime) => {
+          runtime.snapshot = runtimeSnapshot('code', playbookState('ready'));
+        },
+      );
+      const createRuntime = code.entry.createRuntime;
+      code.entry.createRuntime = (options) => {
+        const runtime = createRuntime(options) as FakeRuntime;
+        if (capability === 'marker-only') {
+          runtime.retainedGenerationMetadata = Object.freeze({
+            unfinishedFinalStateIds: Object.freeze([]),
+          });
+        } else {
+          runtime.adopt = async (session, snapshot) => {
+            await runtime.restore(session, snapshot);
+          };
+        }
+        return runtime;
+      };
+      const shell = makeShell(code, { sessionIds: [ROOT_ID] });
+      await shell.init!(stubSession(roster).session);
+      await shell.handleBossTurn(
+        turn('/code start'),
+        stubContext([
+          { status: 'ok', turnId: 1, finalText: 'Editing is parked.' },
+        ]).context,
+      );
 
-    expect(shell.exportSettlement()).toMatchObject({
-      retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
-    });
-    await shell.dispose?.();
-  });
+      expect(shell.exportSettlement()).toMatchObject({
+        retentionUpdates: [{ kind: 'clear', rootPlaybookId: 'code' }],
+      });
+      await shell.dispose?.();
+    },
+  );
 
   it('omits retention when a fresh capable root opens a capability-less child', async () => {
     const callId = 'code:review:fresh-capability-gap';

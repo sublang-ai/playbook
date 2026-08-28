@@ -1330,7 +1330,8 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const frameLabel = (frame) => `/${frame.enablement.command}`;
     const runtimeRetainsGenerations = (runtime) => {
         const metadata = runtime.retainedGenerationMetadata;
-        return (metadata !== undefined &&
+        return (typeof runtime.adopt === 'function' &&
+            metadata !== undefined &&
             Array.isArray(metadata.unfinishedFinalStateIds) &&
             metadata.unfinishedFinalStateIds.every((stateId) => typeof stateId === 'string'));
     };

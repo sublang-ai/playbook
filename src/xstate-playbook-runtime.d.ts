@@ -322,7 +322,8 @@ export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): 
  * under the slc/link.md contract. The factory provides every actor kind the
  * machine declares — `player`, `script`, `captain`, and nested `playbook`
  * (literal and dynamic) — and implements the full runtime lifecycle including
- * the optional parked-session snapshot capability (DR-014).
+ * the optional parked-session snapshot capability (DR-014) and the retained-
+ * snapshot adoption capability (DR-038).
  *
  * Scope: flat single-region machines — no parallel state, no compound
  * child states, and every root state's `meta.playbook.stateId` equal to its

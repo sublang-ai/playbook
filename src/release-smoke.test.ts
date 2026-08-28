@@ -81,6 +81,8 @@ describe('deterministic packed release lane smoke', () => {
 
     expect(source).toContain('runtime: reviewFactory({})');
     expect(source).toContain('runtime: decideFactory({})');
+    expect(source).toContain("const adoptionMembers = ['adopt']");
+    expect(source).toContain('absentMembers: adoptionMembers');
     expect(source).not.toContain('coderLlm');
     expect(source).not.toContain('reviewerLlm');
   });

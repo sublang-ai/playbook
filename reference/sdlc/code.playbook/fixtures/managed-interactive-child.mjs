@@ -184,6 +184,10 @@ function fixtureRegistryEntry() {
               retainedGenerationMetadata: Object.freeze({
                 unfinishedFinalStateIds: Object.freeze([]),
               }),
+              async adopt(next, snapshot) {
+                session = next;
+                turns = snapshot.sequences.turn;
+              },
             }
           : {}),
         async init(next) {

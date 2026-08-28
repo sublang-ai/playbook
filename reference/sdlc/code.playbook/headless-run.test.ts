@@ -376,6 +376,13 @@ function nestedParkedEntries(
           turnCount = snapshot.sequences.turn;
           suspendedCall = snapshot.suspendedCall;
         },
+        async adopt(next, snapshot) {
+          lifecycle.codeRestores += 1;
+          session = next;
+          state = snapshot.state;
+          turnCount = snapshot.sequences.turn;
+          suspendedCall = snapshot.suspendedCall;
+        },
         exportSnapshot() {
           return {
             schemaVersion: 3,
@@ -461,6 +468,12 @@ function nestedParkedEntries(
           lifecycle.reviewInits += 1;
         },
         async restore(_session, snapshot) {
+          lifecycle.reviewRestores += 1;
+          restored = true;
+          state = snapshot.state;
+          turnCount = snapshot.sequences.turn;
+        },
+        async adopt(_session, snapshot) {
           lifecycle.reviewRestores += 1;
           restored = true;
           state = snapshot.state;
@@ -1997,6 +2010,11 @@ describe('durable Captain continuation (PBCLI-24)', () => {
             session = next;
           },
           async restore(next, snapshot) {
+            session = next;
+            state = snapshot.state;
+            turns = snapshot.sequences.turn;
+          },
+          async adopt(next, snapshot) {
             session = next;
             state = snapshot.state;
             turns = snapshot.sequences.turn;

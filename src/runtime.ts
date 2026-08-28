@@ -271,9 +271,9 @@ export type PlaybookControlReceipt =
 
 // DR-038 §2: link-authored metadata the Captain uses to decide whether a
 // quiescent generation is eligible for retention and whether a root terminal
-// outcome preserves its pre-terminal generation. Presence identifies a
-// shared-factory runtime that participates in universal generation handling;
-// an explicitly empty final-state list is meaningful.
+// outcome preserves its pre-terminal generation. Presence is classification
+// data, independent from the optional adoption operation; an explicitly empty
+// final-state list is meaningful.
 export interface PlaybookRetainedGenerationMetadata {
   readonly unfinishedFinalStateIds: readonly string[];
 }
@@ -287,6 +287,14 @@ export interface PlaybookRuntime {
   // snapshot under the same immutable session identity.
   exportSnapshot?(): PlaybookRuntimeSnapshot | undefined;
   restore?(
+    session: PlaybookSession,
+    snapshot: PlaybookRuntimeSnapshot,
+  ): Promise<void>;
+  // DR-038 §1 optional generation-adoption capability: a distinct
+  // initialization path that rehydrates a retained snapshot under a fresh
+  // engagement identity. Presence is feature-detected independently from
+  // retained-generation classification metadata.
+  adopt?(
     session: PlaybookSession,
     snapshot: PlaybookRuntimeSnapshot,
   ): Promise<void>;

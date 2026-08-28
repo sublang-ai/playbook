@@ -5,7 +5,8 @@
 // machinery that slc/link.md previously regenerated inside every linked
 // `<name>.playbook.ts` artifact — actor wiring, boundary tracing, judge
 // classification/adjudication, script execution, nested-playbook bridging,
-// Boss-reply suspension, snapshot/restore, and disposal — lives here once.
+// Boss-reply suspension, snapshot restore/adoption, and disposal — lives here
+// once.
 // A linked artifact supplies only its per-workflow `spec` (options
 // validation and any strategy overrides) and its own FSM; the factory
 // interprets the FSM data the artifact already carries.
@@ -1326,7 +1327,8 @@ function assertUnfinishedFinalStateIds(value, machine, label) {
  * under the slc/link.md contract. The factory provides every actor kind the
  * machine declares — `player`, `script`, `captain`, and nested `playbook`
  * (literal and dynamic) — and implements the full runtime lifecycle including
- * the optional parked-session snapshot capability (DR-014).
+ * the optional parked-session snapshot capability (DR-014) and the retained-
+ * snapshot adoption capability (DR-038).
  *
  * Scope: flat single-region machines — no parallel state, no compound
  * child states, and every root state's `meta.playbook.stateId` equal to its
@@ -2630,12 +2632,12 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 ...stateIdentity(result.state.stateId),
             };
         }
-        // Shared failed-start cleanup for init and restore: stop the actor,
-        // abort/drain nested and host work, optionally emit one best-effort
+        // Shared failed-start cleanup for init, restore, and adoption: stop the
+        // actor, abort/drain nested and host work, optionally emit one best-effort
         // session.disposed boundary, and unbind every closure field so dispose
-        // stays callable. The caller rethrows its original failure. A restore
-        // failure skips the disposal trace — the parked session was never
-        // re-bound in this process, so its persisted snapshot stays
+        // stays callable. The caller rethrows its original failure. A snapshot
+        // start failure skips the disposal trace — the parked generation was
+        // never re-bound in this process, so its persisted snapshot stays
         // authoritative (DR-014 §2).
         async function cleanupFailedStart(cause, options) {
             let finalState;
@@ -2891,6 +2893,121 @@ export function createXStatePlaybookRuntime(machine, spec) {
                 ...(receipt.disposition === 'executed' ? { run: receipt.run } : {}),
             };
         }
+        // DR-014 / DR-038: restore and adoption share one transactional snapshot
+        // start. Adoption deliberately differs at the public boundary so a host
+        // can feature-detect permission to bind a retained generation to a fresh
+        // engagement identity; the runtime-visible schema, playbook, actor-state,
+        // and nested-bridge envelope remains exact in either mode.
+        async function rehydrateSnapshot(kind, nextSession, snapshot) {
+            if (initialized || disposed || disposalPromise !== undefined) {
+                throw new Error(`createPlaybookRuntime.${kind}: already initialized`);
+            }
+            const boundSession = bindSession(nextSession);
+            const boundSnapshot = assertPlaybookRuntimeSnapshot(snapshot, boundSession.playbookId, { allowSuspendedCall: true });
+            if (declaredActors.has('captain') &&
+                boundSnapshot.sequences.captainCall === undefined) {
+                throw new TypeError('runtime snapshot sequences.captainCall is required for a direct-Captain artifact');
+            }
+            const suspendedCall = boundSnapshot.suspendedCall;
+            let priorExternalPlayerTokens;
+            let externalStoreRestoreAttempted = false;
+            initialized = true;
+            let finishInitialization;
+            const initialization = new Promise((resolve) => {
+                finishInitialization = resolve;
+            });
+            initInFlight = initialization;
+            const initTask = (async () => {
+                session = boundSession;
+                savedPorts = boundSession.ports;
+                runtimePorts = createRuntimePorts(boundSession.ports);
+                traceSequence = boundSnapshot.sequences.trace;
+                turnSequence = boundSnapshot.sequences.turn;
+                judgeCallSequence = boundSnapshot.sequences.judgeCall;
+                playerCallSequence = boundSnapshot.sequences.playerCall;
+                playbookCallSequence = boundSnapshot.sequences.playbookCall;
+                captainCallSequence = boundSnapshot.sequences.captainCall ?? 0;
+                // The runtime snapshot carries no apply counter (PBRT-50); every
+                // apply boundary consumed trace numbers, so the persisted trace
+                // counter is a collision-safe id floor here too, keeping
+                // `apply-<n>` call ids unique across a snapshot start.
+                applyCallSequence = boundSnapshot.sequences.trace;
+                if (boundSession.playerSessions) {
+                    priorExternalPlayerTokens = snapshotRoleResumeTokens();
+                    externalStoreRestoreAttempted = true;
+                }
+                restoreRoleResumeTokens(boundSnapshot.roleResumeTokens);
+                nestedBridge.prepareRestore(suspendedCall);
+                if (suspendedCall !== undefined) {
+                    playbookCallTurnIds.set(suspendedCall.callId, suspendedCall.turnId);
+                }
+                suppressInspectionEmissions = true;
+                actor = buildActor(runtimePorts, boundSnapshot.machine);
+                actor.start();
+                // A start-time actor error rides the startup emission channel
+                // (latchRuntimeError); consume both latches here so the original
+                // error outranks the derived status check below.
+                {
+                    const startupFailure = emissionFailure;
+                    if (controlPlaneError !== undefined ||
+                        startupFailure !== undefined) {
+                        const startupError = controlPlaneError !== undefined
+                            ? controlPlaneError
+                            : startupFailure.error;
+                        controlPlaneError = undefined;
+                        if (emissionFailure === startupFailure) {
+                            emissionFailure = undefined;
+                        }
+                        throw startupError;
+                    }
+                }
+                const restoredState = normalizePlaybookSnapshot(actor.getSnapshot(), suspendedCall === undefined
+                    ? {}
+                    : {
+                        pendingCall: {
+                            callId: suspendedCall.callId,
+                            playbookId: suspendedCall.playbookId,
+                            childSessionId: suspendedCall.childSessionId,
+                        },
+                    });
+                if (restoredState.status !== 'active') {
+                    throw new Error(`createPlaybookRuntime.${kind}: restored actor status is ${restoredState.status}, expected active`);
+                }
+                if (stableJson(restoredState, 'restored runtime state') !==
+                    stableJson(boundSnapshot.state, 'runtime snapshot state')) {
+                    throw new Error(`createPlaybookRuntime.${kind}: restored actor state does not match snapshot state`);
+                }
+                priorState = restoredState;
+                await drainEmissions();
+                suppressInspectionEmissions = false;
+                // Final fallible step: after this publication the authoritative
+                // child has rejoined ordinary resume/abort ownership, so no later
+                // snapshot-start validation may trigger failed-start rollback.
+                nestedBridge.confirmRestore();
+            })();
+            try {
+                await initTask;
+            }
+            catch (error) {
+                let failure = error;
+                if (externalStoreRestoreAttempted &&
+                    priorExternalPlayerTokens !== undefined) {
+                    try {
+                        boundSession.playerSessions.restore(priorExternalPlayerTokens);
+                    }
+                    catch (rollbackError) {
+                        failure = new AggregateError([error, rollbackError], `createPlaybookRuntime.${kind} and player continuation rollback failed`);
+                    }
+                }
+                await cleanupFailedStart(failure, { emitDisposal: false });
+                throw failure;
+            }
+            finally {
+                finishInitialization();
+                if (initInFlight === initialization)
+                    initInFlight = undefined;
+            }
+        }
         const runtime = {
             ...(retainedGenerationMetadata === undefined
                 ? {}
@@ -3007,114 +3124,15 @@ export function createXStatePlaybookRuntime(machine, spec) {
             // the session already started; the next public boundary continues
             // the contiguous trace sequence.
             async restore(nextSession, snapshot) {
-                if (initialized || disposed || disposalPromise !== undefined) {
-                    throw new Error('createPlaybookRuntime.restore: already initialized');
-                }
-                const boundSession = bindSession(nextSession);
-                const boundSnapshot = assertPlaybookRuntimeSnapshot(snapshot, boundSession.playbookId, { allowSuspendedCall: true });
-                if (declaredActors.has('captain') &&
-                    boundSnapshot.sequences.captainCall === undefined) {
-                    throw new TypeError('runtime snapshot sequences.captainCall is required for a direct-Captain artifact');
-                }
-                const suspendedCall = boundSnapshot.suspendedCall;
-                let priorExternalPlayerTokens;
-                let externalStoreRestoreAttempted = false;
-                initialized = true;
-                let finishInitialization;
-                const initialization = new Promise((resolve) => {
-                    finishInitialization = resolve;
-                });
-                initInFlight = initialization;
-                const initTask = (async () => {
-                    session = boundSession;
-                    savedPorts = boundSession.ports;
-                    runtimePorts = createRuntimePorts(boundSession.ports);
-                    traceSequence = boundSnapshot.sequences.trace;
-                    turnSequence = boundSnapshot.sequences.turn;
-                    judgeCallSequence = boundSnapshot.sequences.judgeCall;
-                    playerCallSequence = boundSnapshot.sequences.playerCall;
-                    playbookCallSequence = boundSnapshot.sequences.playbookCall;
-                    captainCallSequence = boundSnapshot.sequences.captainCall ?? 0;
-                    // The runtime snapshot carries no apply counter (PBRT-50); every
-                    // apply boundary consumed trace numbers, so the persisted trace
-                    // counter is a collision-safe id floor here too, keeping
-                    // `apply-<n>` call ids unique across restore.
-                    applyCallSequence = boundSnapshot.sequences.trace;
-                    if (boundSession.playerSessions) {
-                        priorExternalPlayerTokens = snapshotRoleResumeTokens();
-                        externalStoreRestoreAttempted = true;
-                    }
-                    restoreRoleResumeTokens(boundSnapshot.roleResumeTokens);
-                    nestedBridge.prepareRestore(suspendedCall);
-                    if (suspendedCall !== undefined) {
-                        playbookCallTurnIds.set(suspendedCall.callId, suspendedCall.turnId);
-                    }
-                    suppressInspectionEmissions = true;
-                    actor = buildActor(runtimePorts, boundSnapshot.machine);
-                    actor.start();
-                    // A start-time actor error rides the startup emission channel
-                    // (latchRuntimeError); consume both latches here so the original
-                    // error outranks the derived status check below.
-                    {
-                        const startupFailure = emissionFailure;
-                        if (controlPlaneError !== undefined ||
-                            startupFailure !== undefined) {
-                            const startupError = controlPlaneError !== undefined
-                                ? controlPlaneError
-                                : startupFailure.error;
-                            controlPlaneError = undefined;
-                            if (emissionFailure === startupFailure) {
-                                emissionFailure = undefined;
-                            }
-                            throw startupError;
-                        }
-                    }
-                    const restoredState = normalizePlaybookSnapshot(actor.getSnapshot(), suspendedCall === undefined
-                        ? {}
-                        : {
-                            pendingCall: {
-                                callId: suspendedCall.callId,
-                                playbookId: suspendedCall.playbookId,
-                                childSessionId: suspendedCall.childSessionId,
-                            },
-                        });
-                    if (restoredState.status !== 'active') {
-                        throw new Error(`createPlaybookRuntime.restore: restored actor status is ${restoredState.status}, expected active`);
-                    }
-                    if (stableJson(restoredState, 'restored runtime state') !==
-                        stableJson(boundSnapshot.state, 'runtime snapshot state')) {
-                        throw new Error('createPlaybookRuntime.restore: restored actor state does not match snapshot state');
-                    }
-                    priorState = restoredState;
-                    await drainEmissions();
-                    suppressInspectionEmissions = false;
-                    // Final fallible step: after this publication the authoritative
-                    // child has rejoined ordinary resume/abort ownership, so no later
-                    // restore validation may trigger failed-start rollback.
-                    nestedBridge.confirmRestore();
-                })();
-                try {
-                    await initTask;
-                }
-                catch (error) {
-                    let failure = error;
-                    if (externalStoreRestoreAttempted &&
-                        priorExternalPlayerTokens !== undefined) {
-                        try {
-                            boundSession.playerSessions.restore(priorExternalPlayerTokens);
-                        }
-                        catch (rollbackError) {
-                            failure = new AggregateError([error, rollbackError], 'createPlaybookRuntime.restore and player continuation rollback failed');
-                        }
-                    }
-                    await cleanupFailedStart(failure, { emitDisposal: false });
-                    throw failure;
-                }
-                finally {
-                    finishInitialization();
-                    if (initInFlight === initialization)
-                        initInFlight = undefined;
-                }
+                await rehydrateSnapshot('restore', nextSession, snapshot);
+            },
+            // DR-038 §1 / PBRT-61: adoption is restore under a fresh engagement
+            // identity, exposed separately so capability-less bespoke runtimes can
+            // omit it. Runtime-visible preflight mismatches reject before effects;
+            // reconstruction mismatches use the same effect-suppressed rollback as
+            // restore.
+            async adopt(nextSession, snapshot) {
+                await rehydrateSnapshot('adopt', nextSession, snapshot);
             },
             // DR-029 / PBRT-52: side-effect-free control view over the live
             // snapshot, valid at parked quiescence outside an active boundary.

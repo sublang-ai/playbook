@@ -781,33 +781,42 @@ const coreMembers = [
   'dispose',
 ];
 const controlMembers = ['describe', 'apply'];
+const adoptionMembers = ['adopt'];
 const cases = [
   {
     id: 'captain',
     runtime: captainFactory({ enabledPlaybooks, controller }),
-    members: [...coreMembers, ...controlMembers],
+    members: [...coreMembers, ...controlMembers, ...adoptionMembers],
   },
   {
     id: 'code',
     runtime: codeFactory({}),
-    members: [...coreMembers, ...controlMembers],
+    members: [...coreMembers, ...controlMembers, ...adoptionMembers],
   },
   {
     id: 'review',
     runtime: reviewFactory({}),
-    members: [...coreMembers, ...controlMembers],
+    members: [...coreMembers, ...controlMembers, ...adoptionMembers],
   },
   {
     id: 'decide',
     runtime: decideFactory({}),
     members: coreMembers,
+    absentMembers: adoptionMembers,
   },
 ];
 
-for (const { id, runtime, members } of cases) {
+for (const { id, runtime, members, absentMembers = [] } of cases) {
   const missing = members.filter((name) => typeof runtime[name] !== 'function');
   if (missing.length > 0) {
     console.error(\`\${id}/playbook runtime is missing: \${missing.join(', ')}\`);
+    process.exit(1);
+  }
+  const unexpected = absentMembers.filter((name) => name in runtime);
+  if (unexpected.length > 0) {
+    console.error(
+      \`\${id}/playbook runtime unexpectedly exposes: \${unexpected.join(', ')}\`,
+    );
     process.exit(1);
   }
   console.log(\`OK    \${id}/playbook constructs with \${members.length} contract members\`);

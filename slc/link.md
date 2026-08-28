@@ -41,6 +41,10 @@ The emitted module shall default-export a factory of the following shape:
 interface PlaybookRuntime {
   readonly retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata;
   init(session: PlaybookSession): Promise<void>;
+  adopt?(
+    session: PlaybookSession,
+    snapshot: PlaybookRuntimeSnapshot,
+  ): Promise<void>;
   handleBossInput(turn: {
     text: string;
     signal: AbortSignal;
@@ -1401,6 +1405,42 @@ ownership without a child-host call or duplicate start/finish boundary.
 A restore failure shall leave the runtime unbound so `dispose` remains
 callable and terminal.
 
+## Retained-snapshot adoption (optional)
+
+A linked runtime may implement the optional adoption capability of
+`@sublang/playbook/runtime` — `adopt(session, snapshot)` — as a third
+initialization path distinct from `init` and same-engagement `restore`.
+Adoption may bind a retained generation to a fresh valid `PlaybookSession`
+identity. Every runtime the shared `createXStatePlaybookRuntime` factory
+constructs implements `adopt`, regardless of whether the artifact supplies
+retained-generation classification metadata; a bespoke runtime may omit it,
+and hosts feature-detect the capability by member presence.
+
+Before actor construction or any player-session-store, port, trace, status,
+or telemetry effect, `adopt` shall validate and detach the target session and
+the part of the exact structural envelope visible to the runtime: snapshot
+schema version `3`, target playbook id, the factory's already-validated
+artifact contract, and any supplied local-role binding set against the
+artifact's declared roles. The adopting host
+owns the working-directory and complete catalog-entry comparison — registry
+module identity, manifest command, options, and role set — plus every retained
+frame's artifact-schema comparison, and shall perform them before calling the
+runtime capability (DR-038 §3).
+
+After preflight, adoption shall reconstruct the persisted actor and nested
+call bridge through the same transaction as restore: prepare the exact
+suspended-call descriptor or its explicit absence, seed call-to-turn
+ownership, suppress startup inspection effects, require the reconstructed
+active normalized state to equal the persisted state, drain suppressed work,
+and confirm the bridge as the final fallible step. Any envelope, state, or
+bridge mismatch on an otherwise unused runtime shall reject without a
+duplicate child call or start/finish boundary, roll provisional ownership back
+through failed-start cleanup, and leave that runtime reusable after successful
+cleanup. A successful adoption shall close `init`, `restore`, and `adopt`
+under the ordinary one-start runtime lifecycle.
+Player-ledger selection and fresh counters and lineage are independent
+adoption rules specified by their owning host/runtime behavior.
+
 ## Retained-generation classification (optional)
 
 A linked runtime may expose the optional read-only
@@ -1410,7 +1450,8 @@ pre-terminal generations. Its `unfinishedFinalStateIds` array shall preserve
 the artifact's link-time declaration exactly, including an explicitly empty
 set, and shall be immutable and detached from that declaration. Absence means
 the runtime contributes no retained generation; presence supplies only
-terminal classification metadata and no snapshot-adoption operation.
+terminal classification metadata and does not itself supply the independently
+feature-detected adoption operation.
 Every runtime the shared `createXStatePlaybookRuntime` factory constructs from
 a supplied `unfinishedFinalStateIds` spec member shall expose the marker; a
 bespoke runtime opts in only by implementing the public member itself.
@@ -1727,8 +1768,9 @@ machinery satisfying this document's runtime contract and shall not invoke
 FSMs under [DR-019](../specs/decisions/019-shared-linked-runtime-factory.md).
 The FSM-interpreter machinery — actor wiring, boundary tracing, Boss-event
 mapping, adjudication, script execution, nested-playbook bridging, session
-lifecycle, abort handling, and the optional parked-session snapshot
-capability — is not regenerated for a factory-backed artifact: it ships once
+lifecycle, abort handling, and the optional parked-session snapshot and
+retained-snapshot adoption capabilities — is not regenerated for a
+factory-backed artifact: it ships once
 as the shared `createXStatePlaybookRuntime(machine, spec)` factory exported by
 `@sublang/playbook/xstate-runtime`, and the emitted module hands its FSM and
 a small per-playbook `spec` to that factory. Every behavioral section of

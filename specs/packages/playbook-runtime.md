@@ -96,7 +96,8 @@ runtime's own classification maps to an FSM entry event
 ([[playbook-runtime-7](#playbook-runtime-7)], [[captain-playbook-9](captain-playbook.md#captain-playbook-9)]).
 That keeps the shared contract module free of host and playbook types while
 leaving the injection path typed end to end at the artifact.
-`PlaybookRuntime` shall declare the optional read-only retention-capability marker `retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata`, whose value contains exactly the read-only string array `unfinishedFinalStateIds`; absence means the runtime contributes no retained generation, while presence supplies only terminal classification metadata and no snapshot-adoption operation.
+`PlaybookRuntime` shall declare the optional read-only retention-classification marker `retainedGenerationMetadata?: PlaybookRetainedGenerationMetadata`, whose value contains exactly the read-only string array `unfinishedFinalStateIds`; absence means the runtime contributes no retained generation, while presence supplies only terminal classification metadata and does not itself supply the independently feature-detected adoption capability.
+`PlaybookRuntime` shall declare that capability as the optional member `adopt?(session: PlaybookSession, snapshot: PlaybookRuntimeSnapshot): Promise<void>`.
 `PlaybookRuntime` shall declare the optional control-surface pair —
 `describe?(): PlaybookControlView` and
 `apply?(input: { actionId: string; key: string; signal: AbortSignal }):
@@ -645,6 +646,19 @@ disposing, or disposed runtime, following the same failed-start cleanup
 as `init` so provisional nested ownership rolls back without a duplicate start or finish and `dispose` remains callable.
 The compiled default Captain runtime shall expose the shared factory's snapshot methods, while the Playbook Captain shell shall embed and restore that runtime snapshot only as part of its complete logical-session snapshot ([[playbook-captain-41](playbook-captain.md#playbook-captain-41)], [[playbook-captain-42](playbook-captain.md#playbook-captain-42)], [DR-031](../decisions/031-shared-captain-session-front-ends.md)).
 
+### Retained-snapshot adoption
+
+#### playbook-runtime-61
+
+Where a linked runtime implements the optional adoption capability of `@sublang/playbook/runtime`, `adopt(session, snapshot)` shall be a third initialization path, distinct from `init` and same-engagement `restore`, that may bind a valid fresh `PlaybookSession` identity to the retained machine generation.
+Every runtime the shared `createXStatePlaybookRuntime` factory constructs shall expose `adopt`, regardless of whether that artifact supplies retained-generation classification metadata; a bespoke runtime may omit it, and member absence shall be the capability boundary.
+Before actor construction or any player-session-store, port, trace, status, or telemetry effect, adoption shall validate and detach the target session and the runtime-visible portion of the structural envelope: a supported schema-version-3 snapshot, the target session's exact playbook id, the factory's already-validated artifact contract, and any supplied local-role binding set against the artifact's declared roles.
+The host remains responsible for the generation envelope it alone owns — working directory, complete catalog-entry structure, and every retained frame's artifact schema — before it calls the runtime capability ([DR-038](../decisions/038-universal-run-resumption.md) §3).
+After preflight, adoption shall reconstruct the actor from the persisted machine snapshot with inspection effects suppressed and shall rebuild a suspended nested call through the same prepared bridge transaction as live restore: seed exact call-to-turn ownership, claim the descriptor during actor startup, require an active normalized actor state exactly equal to the persisted state, drain suppressed work, and confirm the bridge only as the final fallible step.
+Any envelope, actor-state, or bridge mismatch on an otherwise unused runtime shall reject without a duplicate child call or start/finish boundary, roll provisional ownership back through failed-start cleanup, and leave that runtime reusable after successful cleanup.
+A successful adoption shall close `init`, `restore`, and `adopt` under the ordinary one-start runtime lifecycle.
+Player-ledger binding and fresh adoption counters and lineage are specified separately and are not part of this capability boundary.
+
 ### Control surface
 
 #### playbook-runtime-52
@@ -1107,8 +1121,8 @@ exposes an optional tool allowlist whose omission is distinct from an explicit
 empty list,
 unless `PlaybookRuntime.init` accepts a causal
 `PlaybookSession` with optional exact `PlaybookRoleBinding` metadata and the optional `PlayerSessionStore` whose four methods have the exact synchronous signatures and local-role snapshot shape of [[playbook-runtime-58](#playbook-runtime-58)], unless pending Boss questions use the exact asker union without a player field, and unless `handleBossInput` and
-`resumePlaybookCall` return `PlaybookRunResult` whose terminal variant alone exposes optional `stateDescription`; its import graph
-includes no CODE or FSM module (verifying [[playbook-runtime-34](#playbook-runtime-34)], [[playbook-runtime-41](#playbook-runtime-41)], and [[playbook-runtime-58](#playbook-runtime-58)]).
+`resumePlaybookCall` return `PlaybookRunResult` whose terminal variant alone exposes optional `stateDescription`, and unless `adopt` has the exact optional session-and-snapshot signature; its import graph
+includes no CODE or FSM module (verifying [[playbook-runtime-34](#playbook-runtime-34)], [[playbook-runtime-41](#playbook-runtime-41)], [[playbook-runtime-58](#playbook-runtime-58)], and [[playbook-runtime-61](#playbook-runtime-61)]).
 The test suite shall additionally fail unless the linker contract
 itself still states the clauses the shipped artifacts depend on, since
 that contract is the source they are generated from and a rule stated
@@ -1247,6 +1261,11 @@ answered branch or commit question disappearing from every transition
 of the resumed turn while an unanswered sibling branch question
 remains reported (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
 The suite shall also fail unless the compiled default Captain exposes both snapshot methods and the real Playbook Captain shell embeds its exported runtime snapshot in, and restores it from, one complete shell snapshot without calling `init` on the restored runtime (verifying [[playbook-runtime-45](#playbook-runtime-45)]).
+
+#### playbook-runtime-62
+
+Where the integration suite exercises retained-snapshot adoption, it shall fail unless every shared-factory runtime exposes `adopt` even without retained-generation metadata, a fresh runtime adopts a parked schema-version-3 snapshot under a distinct valid engagement identity and continues from the persisted state without initial classification, that successful adoption closes all three initialization paths, and a bespoke capability-less runtime remains valid with the member absent (verifying [[playbook-runtime-61](#playbook-runtime-61)]).
+It shall fail unless adopting a suspended nested snapshot reconstructs the exact pending call and turn ownership without another host child call or start trace, then resumes the parent exactly once; unless schema, playbook-id, and local-role binding mismatches reject before any player-session-store or host effect; unless, in that suspended nested case, persisted-state and suspended-bridge mismatches produce no child-host call or duplicate start/finish boundary; and unless failed pre-confirm validation rolls provisional bridge ownership back so the same unused runtime accepts an exact retry (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-42](#playbook-runtime-42)]).
 
 #### playbook-runtime-59
 

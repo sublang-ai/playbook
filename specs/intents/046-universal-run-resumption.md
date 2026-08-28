@@ -28,7 +28,7 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
    Emit the unfinished final-state id set as link-time metadata beside the resumable-state registry, declare it for the maintained artifacts, and land the `slc/link.md` output note and conformance tests.
 2. **Retain the pre-terminal generation atomically.** _[done]_
    Extend the captain session record with the per-root-playbook retained generation — root and nested snapshots with call bridges — written at every settlement that leaves unfinished work, replaced in place, cleared on clean completion, and kept across disposal; land the store items in `playbook-cli.md` and the session-store tests.
-3. **Expose the adoption capability on the shared factory.**
+3. **Expose the adoption capability on the shared factory.** _[done]_
    Add optional generation adoption — restore with engagement identity relaxed to the structural envelope — rebuilding the nested call bridges as live restore does, rejecting envelope mismatches before any effect; land the `playbook-runtime.md` items and unit plus integration tests for accepted, rejected, and capability-less paths.
 4. **Bind players from the ledger.**
    On adoption, bind each role from the current Captain-session player ledger, never from retained token projections, with fresh conversations for roles the ledger cannot supply; land the continuity items and tests for unchanged, advanced, and swapped players.

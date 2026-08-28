@@ -329,6 +329,9 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
       expect(interfaceBody(source, 'PlaybookRuntime')).toMatch(
         /readonly retainedGenerationMetadata\?:\s*PlaybookRetainedGenerationMetadata;/,
       );
+      expect(interfaceBody(source, 'PlaybookRuntime')).toMatch(
+        /adopt\?\s*\(\s*session:\s*PlaybookSession,\s*snapshot:\s*PlaybookRuntimeSnapshot,?\s*\):\s*Promise<void>;/,
+      );
     }
     expect(
       interfaceProperties(runtimeSource, 'PlaybookPendingBossQuestion'),
@@ -573,8 +576,17 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     );
     expect(classification).toContain('retainedGenerationMetadata');
     expect(classification).toMatch(/explicitly empty/);
-    expect(classification).toMatch(/no snapshot-adoption operation/);
+    expect(classification).toMatch(
+      /does not itself supply the independently\s+feature-detected adoption operation/,
+    );
     expect(classification).toContain('createXStatePlaybookRuntime');
+    const adoption = sectionOf(linkSpec, 'Retained-snapshot adoption (optional)');
+    expect(adoption).toContain('adopt(session, snapshot)');
+    expect(adoption).toMatch(
+      /Every runtime the shared `createXStatePlaybookRuntime` factory\s+constructs implements `adopt`/,
+    );
+    expect(adoption).toMatch(/fresh valid `PlaybookSession`\s+identity/);
+    expect(adoption).toMatch(/before calling the\s+runtime capability/);
   });
 
   // PBRT-34/35: every authored contract type is exported.

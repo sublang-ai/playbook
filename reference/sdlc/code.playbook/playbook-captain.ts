@@ -2364,6 +2364,7 @@ export function createPlaybookCaptainShell(
   const runtimeRetainsGenerations = (runtime: PlaybookRuntime): boolean => {
     const metadata = runtime.retainedGenerationMetadata;
     return (
+      typeof runtime.adopt === 'function' &&
       metadata !== undefined &&
       Array.isArray(metadata.unfinishedFinalStateIds) &&
       metadata.unfinishedFinalStateIds.every(
