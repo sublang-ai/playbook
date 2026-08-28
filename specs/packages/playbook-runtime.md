@@ -658,7 +658,16 @@ After preflight, adoption shall reconstruct the actor from the persisted machine
 Adoption shall treat the retained snapshot's `roleResumeTokens` as inert during initialization: it shall neither pass them to a supplied `PlayerSessionStore.restore` nor seed runtime-private continuation from them ([[playbook-runtime-58](#playbook-runtime-58)], [DR-038](../decisions/038-universal-run-resumption.md) §4).
 Any envelope, actor-state, or bridge mismatch on an otherwise unused runtime shall reject without a duplicate child call or start/finish boundary, roll provisional ownership back through failed-start cleanup, and leave that runtime reusable after successful cleanup.
 A successful adoption shall close `init`, `restore`, and `adopt` under the ordinary one-start runtime lifecycle.
-Player-ledger binding and fresh adoption counters and lineage are specified separately and are not part of this capability boundary.
+Fresh adoption counters and lineage are specified separately and are not part of this capability boundary.
+
+#### playbook-runtime-63
+
+Where an adopted runtime whose target session supplies `roleBindings` and a `PlayerSessionStore` frame-local view of the target Captain-session player ledger later invokes a local role, it shall derive the player id and prompt identity exclusively from those detached target bindings and shall select continuation from that target ledger view at the invocation boundary, immediately before the player start trace and host call ([[playbook-runtime-15](#playbook-runtime-15)], [[playbook-runtime-55](#playbook-runtime-55)], and [[playbook-captain-26](playbook-captain.md#playbook-captain-26)]).
+The selected current token shall be passed through exactly, while `false` shall start a fresh conversation; the adopted snapshot's inert `roleResumeTokens` shall never be a fallback for either result ([[playbook-runtime-61](#playbook-runtime-61)] and [DR-038](../decisions/038-universal-run-resumption.md) §4).
+The player-start trace shall carry the target binding's player id and the selected continuation ([[playbook-runtime-37](#playbook-runtime-37)]).
+Where that post-adoption call returns a validated nonempty replacement token, the runtime shall update the same target ledger view ([[playbook-runtime-58](#playbook-runtime-58)]).
+Thus a shared player that advanced after retention shall continue from its newer ledger token, while a replacement player whose current ledger selection is `false` shall use its new player and prompt identities and start fresh.
+Where the target session supplies no `PlayerSessionStore`, adoption shall leave runtime-private continuation empty, so the first post-adoption call starts fresh ([[playbook-runtime-38](#playbook-runtime-38)]).
 
 ### Control surface
 
@@ -1267,6 +1276,13 @@ The suite shall also fail unless the compiled default Captain exposes both snaps
 
 Where the integration suite exercises retained-snapshot adoption, it shall fail unless every shared-factory runtime exposes `adopt` even without retained-generation metadata, a fresh runtime adopts a parked schema-version-3 snapshot under a distinct valid engagement identity and continues from the persisted state without initial classification, that successful adoption closes all three initialization paths, and a bespoke capability-less runtime remains valid with the member absent (verifying [[playbook-runtime-61](#playbook-runtime-61)]).
 It shall fail unless adopting a suspended nested snapshot reconstructs the exact pending call and turn ownership without another host child call or start trace, then resumes the parent exactly once; unless schema, playbook-id, and local-role binding mismatches reject before any player-session-store or host effect; unless successful adoption leaves retained role-token projections unapplied through both a supplied store whose `restore` rejects and the runtime-private fallback; unless, in that suspended nested case, persisted-state and suspended-bridge mismatches produce no child-host call or duplicate start/finish boundary; and unless failed pre-confirm validation rolls provisional bridge ownership back so the same unused runtime accepts an exact retry (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-42](#playbook-runtime-42)]).
+
+#### playbook-runtime-64
+
+Where the integration suite adopts one parked snapshot into fresh target sessions, it shall fail unless an unchanged player's current ledger token is selected exactly, a shared player's newer ledger token after adoption wins over the retained projection, and a replacement player with a `false` current selection starts fresh under the target binding's player and prompt identities (verifying [[playbook-runtime-63](#playbook-runtime-63)]).
+For every supplied-store case, it shall fail unless adoption itself performs no selection, restore, or update (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-63](#playbook-runtime-63)]).
+It shall fail unless the first resumed player invocation selects exactly once before its start trace and host call, the start trace names the target player and selected continuation, and a validated result carrying a replacement token updates that same target store (verifying [[playbook-runtime-55](#playbook-runtime-55)] and [[playbook-runtime-63](#playbook-runtime-63)]).
+It shall also fail unless the storeless adoption path starts fresh rather than seeding private continuation from the retained projection (verifying [[playbook-runtime-61](#playbook-runtime-61)] and [[playbook-runtime-63](#playbook-runtime-63)]).
 
 #### playbook-runtime-59
 

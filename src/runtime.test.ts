@@ -594,6 +594,21 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(adoption).toMatch(
       /shall not apply the retained snapshot's `roleResumeTokens` through a\s+supplied player-session store's `restore` operation or seed runtime-private\s+continuation from them/,
     );
+    expect(adoption).toMatch(
+      /target\s+session `roleBindings` are the sole source of supplied player and prompt\s+identities, and any supplied player-session store is the sole conversation\s+authority/,
+    );
+    expect(adoption).toMatch(
+      /resolve the current binding and, when a store is\s+supplied, select it at the invocation boundary and pass the exact selected\s+token or `false`/,
+    );
+    expect(adoption).toMatch(
+      /ordinary\s+continuation rules authorize a store mutation, that mutation\s+shall target the same store/,
+    );
+    expect(adoption).toMatch(
+      /never fall back to the retained token\s+projection/,
+    );
+    expect(adoption).toMatch(
+      /replacement binding whose current selection is `false`\s+therefore\s+starts fresh under its new identities/,
+    );
   });
 
   // PBRT-34/35: every authored contract type is exported.

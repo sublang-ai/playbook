@@ -1440,8 +1440,19 @@ cleanup. A successful adoption shall close `init`, `restore`, and `adopt`
 under the ordinary one-start runtime lifecycle.
 Adoption shall not apply the retained snapshot's `roleResumeTokens` through a
 supplied player-session store's `restore` operation or seed runtime-private
-continuation from them. Player-ledger selection and fresh counters and lineage
-are independent adoption rules specified by their owning host/runtime behavior.
+continuation from them. For every later local-role invocation, any target
+session `roleBindings` are the sole source of supplied player and prompt
+identities, and any supplied player-session store is the sole conversation
+authority. The runtime shall resolve the current binding and, when a store is
+supplied, select it at the invocation boundary and pass the exact selected
+token or `false`. Where
+the ordinary continuation rules authorize a store mutation, that mutation
+shall target the same store. It shall never fall back to the retained token
+projection. A replacement binding whose current selection is `false` therefore
+starts fresh under its new identities; without a supplied store, the target
+runtime's private continuation starts empty (DR-038 §4). Fresh counters and
+lineage are independent adoption rules specified by their owning runtime
+behavior.
 
 ## Retained-generation classification (optional)
 

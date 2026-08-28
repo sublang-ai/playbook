@@ -383,6 +383,15 @@ const createWorkflowRuntime = createXStatePlaybookRuntime(
   workflowSpec,
 );
 
+const createLedgerAdoptionWorkflowRuntime = createXStatePlaybookRuntime(
+  workflowMachine,
+  {
+    ...workflowSpec,
+    composePlayerPrompt: (input, promptIdentity) =>
+      `[${promptIdentity(input.role)}]\n${defaultComposePlayerPrompt(input)}`,
+  },
+);
+
 const createWorkflowRuntimeWithBossEvents = createXStatePlaybookRuntime(
   workflowMachine,
   {
@@ -4456,6 +4465,203 @@ describe('parked-session snapshot over the shared factory', () => {
     expect(target.describe().state).toEqual(snapshot.state);
     await target.dispose();
   });
+
+  it.each([
+    [
+      'unchanged player',
+      {
+        targetPlayerId: 'source-player',
+        targetPromptIdentity: 'source-model',
+        tokenAtAdoption: 'retained-token',
+        tokenAtInvocation: 'retained-token',
+        expectedResume: 'retained-token',
+      },
+    ],
+    [
+      'advanced shared player',
+      {
+        targetPlayerId: 'source-player',
+        targetPromptIdentity: 'source-model',
+        tokenAtAdoption: 'retained-token',
+        tokenAtInvocation: 'advanced-token',
+        expectedResume: 'advanced-token',
+      },
+    ],
+    [
+      'swapped player',
+      {
+        targetPlayerId: 'replacement-player',
+        targetPromptIdentity: 'replacement-model',
+        tokenAtAdoption: undefined,
+        tokenAtInvocation: undefined,
+        expectedResume: false,
+      },
+    ],
+  ] as const)(
+    'binds an adopted role from the target ledger in the %s case',
+    async (
+      _label,
+      {
+        targetPlayerId,
+        targetPromptIdentity,
+        tokenAtAdoption,
+        tokenAtInvocation,
+        expectedResume,
+      },
+    ) => {
+      const sourceRecording = makeRecordingPorts({
+        callPlayer: async () => ({
+          status: 'ok',
+          finalText: 'Which database should I use?',
+          resumeToken: 'retained-token',
+        }),
+        callJudge: async () =>
+          '{"guard":"needsBossReply","question":"Which database?"}',
+      });
+      const source = createLedgerAdoptionWorkflowRuntime({});
+      const sourceSession: PlaybookSession = {
+        ...makeSession(sourceRecording.ports),
+        roleBindings: {
+          coder: {
+            playerId: 'source-player',
+            promptIdentity: 'source-model',
+          },
+        },
+      };
+      await source.init(sourceSession);
+      const parked = await source.handleBossInput(turn('build storage'));
+      expect(parked.state.stateId).toBe('awaitBossReply');
+      const snapshot = source.exportSnapshot?.();
+      if (snapshot === undefined) throw new Error('expected parked snapshot');
+      expect(snapshot.roleResumeTokens).toEqual({ coder: 'retained-token' });
+      await source.dispose();
+
+      const operations: string[] = [];
+      let ledgerToken: string | undefined = tokenAtAdoption;
+      const playerSessions: PlayerSessionStore = {
+        select: vi.fn((_roleId: string) => {
+          operations.push(`select:${ledgerToken ?? 'fresh'}`);
+          return ledgerToken ?? false;
+        }),
+        update: vi.fn((_roleId: string, resumeToken?: string) => {
+          operations.push(`update:${resumeToken ?? 'clear'}`);
+          ledgerToken = resumeToken;
+        }),
+        snapshot: vi.fn(() =>
+          ledgerToken === undefined ? {} : { coder: ledgerToken },
+        ),
+        restore: vi.fn(() => {
+          throw new Error('adoption shall not restore retained tokens');
+        }),
+      };
+      const playerCalls: Array<{
+        roleId: string;
+        prompt: string;
+        resume: string | false;
+      }> = [];
+      const targetPlayerTraces: PlaybookTraceEvent[] = [];
+      const targetRecording = makeRecordingPorts({
+        callPlayer: async (roleId, prompt, _signal, options) => {
+          operations.push(`host:${options.resume}`);
+          playerCalls.push({ roleId, prompt, resume: options.resume });
+          return {
+            status: 'ok',
+            finalText: 'Done with sqlite.',
+            resumeToken: 'next-token',
+          };
+        },
+        callJudge: async (prompt) =>
+          prompt.includes('Classify the following Boss message')
+            ? '{"type":"BOSS_REPLY","questionId":"q-1"}'
+            : '{"guard":"implemented","summary":"used sqlite"}',
+        emitTelemetry: async (event) => {
+          if (event.topic !== 'playbook.trace') return;
+          const trace = event.payload as PlaybookTraceEvent;
+          targetPlayerTraces.push(trace);
+          if (trace.type === 'player.call.started') {
+            operations.push(
+              `started:${String(
+                (trace.payload as { resume?: unknown }).resume,
+              )}`,
+            );
+          } else if (trace.type === 'player.call.finished') {
+            operations.push(
+              `finished:${String(
+                (trace.payload as { resumeToken?: unknown }).resumeToken,
+              )}`,
+            );
+          }
+        },
+      });
+      const target = createLedgerAdoptionWorkflowRuntime({});
+      const targetSession: PlaybookSession = {
+        ...makeSession(targetRecording.ports, playerSessions),
+        roleBindings: {
+          coder: {
+            playerId: targetPlayerId,
+            promptIdentity: targetPromptIdentity,
+          },
+        },
+      };
+
+      await target.adopt?.(targetSession, snapshot);
+
+      expect(playerSessions.select).not.toHaveBeenCalled();
+      expect(playerSessions.update).not.toHaveBeenCalled();
+      expect(playerSessions.snapshot).not.toHaveBeenCalled();
+      expect(playerSessions.restore).not.toHaveBeenCalled();
+
+      ledgerToken = tokenAtInvocation;
+      const resumed = await target.handleBossInput(turn('use sqlite'));
+
+      expect(resumed.outcome).toBe('terminal');
+      expect(playerCalls).toHaveLength(1);
+      expect(playerCalls[0]).toMatchObject({
+        roleId: 'coder',
+        resume: expectedResume,
+      });
+      expect(playerCalls[0].prompt).toMatch(
+        new RegExp(`^\\[${targetPromptIdentity}\\]\\n`),
+      );
+      expect(playerSessions.select).toHaveBeenCalledTimes(1);
+      expect(playerSessions.select).toHaveBeenCalledWith('coder');
+      expect(playerSessions.update).toHaveBeenCalledTimes(1);
+      expect(playerSessions.update).toHaveBeenCalledWith('coder', 'next-token');
+      expect(playerSessions.snapshot).not.toHaveBeenCalled();
+      expect(playerSessions.restore).not.toHaveBeenCalled();
+      expect(ledgerToken).toBe('next-token');
+      expect(operations).toEqual([
+        `select:${expectedResume === false ? 'fresh' : expectedResume}`,
+        `started:${expectedResume}`,
+        `host:${expectedResume}`,
+        'update:next-token',
+        'finished:next-token',
+      ]);
+      const playerTraces = targetPlayerTraces.filter(
+        ({ type }) =>
+          type === 'player.call.started' || type === 'player.call.finished',
+      );
+      expect(playerTraces).toHaveLength(2);
+      expect(playerTraces[0]).toMatchObject({
+        type: 'player.call.started',
+        payload: {
+          roleId: 'coder',
+          playerId: targetPlayerId,
+          resume: expectedResume,
+        },
+      });
+      expect(playerTraces[1]).toMatchObject({
+        type: 'player.call.finished',
+        payload: {
+          roleId: 'coder',
+          playerId: targetPlayerId,
+          resume: expectedResume,
+          resumeToken: 'next-token',
+        },
+      });
+      await target.dispose();
+    },
+  );
 });
 
 describe('boundary hygiene', () => {
