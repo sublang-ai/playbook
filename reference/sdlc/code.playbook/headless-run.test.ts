@@ -38,7 +38,7 @@ import type {
 const { runPlaybookCli, runPlaybookCliEntry } = await import(
   new URL('./bin/playbook.js', import.meta.url).href
 );
-const { parseRunArgs } = await import(
+const { installRetainedGenerationsForLaunch, parseRunArgs } = await import(
   new URL('./bin/run.js', import.meta.url).href
 );
 const { createCaptainSessionStore } = await import(
@@ -50,6 +50,7 @@ const tempDirs: string[] = [];
 afterEach(async () => {
   FakeAdapter.calls = [];
   FakeAdapter.options = [];
+  FakeAdapter.decision = undefined;
   await Promise.all(
     tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })),
   );
@@ -69,6 +70,7 @@ function writer() {
 class FakeAdapter implements AgentAdapter {
   static calls: Array<{ prompt: string; resume: string | undefined }> = [];
   static options: Array<AgentOptions | undefined> = [];
+  static decision: ((prompt: string) => unknown) | undefined;
   readonly agent = 'claude-code';
 
   async *run(
@@ -80,10 +82,12 @@ class FakeAdapter implements AgentAdapter {
     const result = prompt.includes(
       'Select exactly one action from the closed set',
     )
-      ? JSON.stringify({
-          action: 'respond',
-          text: 'Shipped Captain answered the Boss.',
-        })
+      ? JSON.stringify(
+          FakeAdapter.decision?.(prompt) ?? {
+            action: 'respond',
+            text: 'Shipped Captain answered the Boss.',
+          },
+        )
       : prompt.includes('compose closing reply')
         ? 'Nested CODE and REVIEW completed.'
         : prompt.includes('compose conversational reply')
@@ -162,7 +166,8 @@ function runtimeSnapshot(
 
 function scriptedCaptainRuntime(
   inputs: string[],
-  restoredDecision?: { action: string },
+  selectedDecision?: { action: string; playbookId?: string },
+  selectAfterInit = false,
 ) {
   return ({ controller }: any): PlaybookRuntime => {
     let session: PlaybookSession;
@@ -188,8 +193,8 @@ function scriptedCaptainRuntime(
           payload: { turn: turns },
         });
         const parsed =
-          restored && restoredDecision !== undefined
-            ? { kind: 'action', decision: restoredDecision }
+          selectedDecision !== undefined && (restored || selectAfterInit)
+            ? { kind: 'action', decision: selectedDecision }
             : controller.resolveParsedTurn(text);
         if (parsed?.kind === 'action') {
           await controller.submit(parsed.decision, signal);
@@ -332,6 +337,69 @@ function nestedEntries(events: string[]) {
     },
   };
   return { code, review };
+}
+
+function retainedRootEntry(
+  events: string[],
+  lifecycle: { inits: number; restores: number; adopts: number },
+) {
+  return {
+    id: 'code',
+    command: 'code',
+    intent: 'retain a parked root',
+    artifactSchema: 2 as const,
+    requiredRoleIds: ['coder'],
+    concurrentRoleSets: [] as const,
+    validateOptions: (value: unknown) => value,
+    createRuntime(): PlaybookRuntime {
+      let state = activeState();
+      let turnCount = 0;
+      return {
+        retainedGenerationMetadata: { unfinishedFinalStateIds: [] },
+        async init() {
+          lifecycle.inits += 1;
+        },
+        async restore(_session, snapshot) {
+          lifecycle.restores += 1;
+          state = snapshot.state;
+          turnCount = snapshot.sequences.turn;
+        },
+        async adopt(_session, snapshot) {
+          lifecycle.adopts += 1;
+          state = snapshot.state;
+          turnCount = snapshot.sequences.turn;
+        },
+        exportSnapshot() {
+          return {
+            schemaVersion: 3,
+            playbookId: 'code',
+            machine: { value: state.value, status: state.status },
+            roleResumeTokens: {},
+            sequences: {
+              trace: 0,
+              turn: turnCount,
+              judgeCall: 0,
+              playerCall: 0,
+              playbookCall: 0,
+              captainCall: 0,
+            },
+            state,
+            pendingBossQuestions: [],
+          } as PlaybookRuntimeSnapshot;
+        },
+        async handleBossInput({ text }) {
+          turnCount += 1;
+          events.push(`code:park:${text}`);
+          state = activeState('editing');
+          return { outcome: 'quiescent', state };
+        },
+        async resumePlaybookCall() {
+          return { outcome: 'no-action', state };
+        },
+        async dispose() {},
+      };
+    },
+  };
 }
 
 function nestedParkedEntries(
@@ -1231,7 +1299,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       state: 'settled',
       sessionId: firstId,
       createdAt: '2026-08-11T20:00:00.000Z',
-      updatedAt: '2026-08-11T20:00:00.001Z',
+      updatedAt: '2026-08-11T20:00:00.003Z',
       cwd: process.cwd(),
       structuralProjection: {
         schemaVersion: 1,
@@ -1274,7 +1342,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(collision.stdout).toBe('');
     expect(collision.inputs).toEqual([]);
     expect(collision.stderr).toContain(
-      'fresh Captain session record already exists',
+      `Captain session "${firstId}" already exists`,
     );
     expect(await readFile(path, 'utf8')).toBe(before);
   });
@@ -1359,7 +1427,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
     );
     expect(record.createdAt).toBe('2026-08-11T20:10:00.000Z');
-    expect(record.updatedAt).toBe('2026-08-11T20:10:00.003Z');
+    expect(record.updatedAt).toBe('2026-08-11T20:10:00.005Z');
     expect(record.cwd).toBe(frozenCwd);
     expect(record.snapshot.sequences.turn).toBe(2);
     expect(record.lastAppliedExecutionProjection.captain.model).toEqual({
@@ -1585,6 +1653,251 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(settled.retainedGenerations).toEqual({});
   });
 
+  it('lets explicit start beat an offer before bare --continue adopts it (PBCLI-56)', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-resume-state-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const events: string[] = [];
+    const lifecycle = { inits: 0, restores: 0, adopts: 0 };
+    const code = retainedRootEntry(events, lifecycle);
+    const review = nestedEntries([]).review;
+    const createCaptainSessionId = uuidSequence();
+    const loadModule = async (specifier: string) => ({
+      default: specifier === 'mod://code' ? code : review,
+    });
+
+    const parked = await headlessHarness(['run', '/code retain it'], {
+      sessionsDir,
+      loadModule,
+      createLogicalSessionId: () => firstId,
+      createCaptainSessionId,
+      createCaptainRuntime: undefined,
+    });
+    expect(parked.result.code).toBe(0);
+
+    FakeAdapter.decision = () => ({ action: 'dismiss' });
+    const dismissed = await headlessHarness(
+      ['run', '--session', firstId, 'leave it for later'],
+      {
+        sessionsDir,
+        loadModule,
+        createCaptainSessionId,
+        createCaptainRuntime: undefined,
+      },
+    );
+    expect(dismissed.result.code).toBe(0);
+    expect(dismissed.result.snapshot).toMatchObject({
+      mode: 'chat',
+      lastAction: 'dismiss',
+    });
+    const retained = JSON.parse(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    );
+    expect(retained).toMatchObject({
+      state: 'settled',
+      snapshot: { mode: 'chat' },
+      retainedGenerations: { code: { frames: [{ playbookId: 'code' }] } },
+    });
+
+    FakeAdapter.decision = () => {
+      throw new Error('explicit fresh start must bypass Captain arbitration');
+    };
+    const restarted = await headlessHarness(
+      ['run', '--session', firstId, '/code fresh replacement'],
+      {
+        sessionsDir,
+        loadModule,
+        createCaptainSessionId,
+        createCaptainRuntime: undefined,
+      },
+    );
+    expect(restarted.result.code).toBe(0);
+    expect(events).toEqual([
+      'code:park:retain it',
+      'code:park:fresh replacement',
+    ]);
+    expect(restarted.result.snapshot).toMatchObject({
+      mode: 'engaged.parked',
+      lastAction: 'start',
+    });
+    expect(lifecycle).toMatchObject({
+      inits: 2,
+      restores: 1,
+      adopts: 0,
+    });
+
+    FakeAdapter.decision = () => ({ action: 'dismiss' });
+    const redismissed = await headlessHarness(
+      ['run', '--session', firstId, 'leave the replacement for later'],
+      {
+        sessionsDir,
+        loadModule,
+        createCaptainSessionId,
+        createCaptainRuntime: undefined,
+      },
+    );
+    expect(redismissed.result.code).toBe(0);
+
+    const beforeRejectedInstall = await readFile(
+      join(sessionsDir, `${firstId}.json`),
+      'utf8',
+    );
+    FakeAdapter.decision = () => {
+      throw new Error('failed installation must precede Captain arbitration');
+    };
+    const rejectedInstall = await headlessHarness(
+      ['run', '--session', firstId, 'continue later'],
+      {
+        sessionsDir,
+        createCaptainSessionId,
+        createCaptainRuntime: undefined,
+        loadModule: async (specifier: string) => ({
+          default:
+            specifier === 'mod://code'
+              ? {
+                  ...code,
+                  createRuntime() {
+                    throw new Error('retained probe construction failed');
+                  },
+                }
+              : review,
+        }),
+      },
+    );
+    expect(rejectedInstall.result.code).toBe(1);
+    expect(rejectedInstall.stderr).toContain(
+      'retained probe construction failed',
+    );
+    expect(
+      await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+    ).toBe(beforeRejectedInstall);
+
+    const resumePrompts: string[] = [];
+    FakeAdapter.decision = (prompt) => {
+      resumePrompts.push(prompt);
+      return { action: 'resume', playbookId: 'code' };
+    };
+    const resumed = await headlessHarness(
+      ['run', '--continue', 'continue'],
+      {
+        sessionsDir,
+        loadModule,
+        createCaptainSessionId,
+        createCaptainRuntime: undefined,
+      },
+    );
+    expect(resumed.result.code).toBe(0);
+    expect(resumed.result.sessionId).toBe(firstId);
+    expect(resumePrompts).toHaveLength(1);
+    expect(resumePrompts[0]).toContain('[Boss message]\ncontinue');
+    expect(resumePrompts[0]).toContain(
+      'Retained resumptions:\n- code (/code):',
+    );
+    expect(lifecycle).toMatchObject({
+      inits: 2,
+      restores: 2,
+      adopts: 1,
+    });
+    expect(events).toEqual([
+      'code:park:retain it',
+      'code:park:fresh replacement',
+    ]);
+    expect(resumed.result.snapshot).toMatchObject({
+      mode: 'engaged.parked',
+      lastAction: 'resume',
+      frames: [{ playbookId: 'code' }],
+    });
+
+    FakeAdapter.decision = () => ({ action: 'dismiss' });
+    const pausedForRetry = await headlessHarness(
+      ['run', '--session', firstId, 'pause before retry'],
+      {
+        sessionsDir,
+        loadModule,
+        createCaptainSessionId,
+        createCaptainRuntime: undefined,
+      },
+    );
+    expect(pausedForRetry.result.snapshot).toMatchObject({
+      mode: 'chat',
+      lastAction: 'dismiss',
+    });
+    const retryStore = createCaptainSessionStore({ sessionsDir });
+    const retryLease = await retryStore.acquire(firstId);
+    const retryBoundary = await retryLease.read();
+    await retryLease.beginTurn({
+      input: 'continue',
+      attemptId: thirdId,
+      attemptedExecutionProjection:
+        retryBoundary.lastAppliedExecutionProjection,
+    });
+    await retryLease.release();
+    expect(await retryStore.read(firstId)).toMatchObject({
+      state: 'uncertain',
+      retainedGenerations: { code: { frames: [{ playbookId: 'code' }] } },
+    });
+
+    const retryPrompts: string[] = [];
+    FakeAdapter.decision = (prompt) => {
+      retryPrompts.push(prompt);
+      return { action: 'resume', playbookId: 'code' };
+    };
+    const retried = await headlessHarness(
+      ['run', '--session', firstId, '--retry-uncertain'],
+      {
+        sessionsDir,
+        loadModule,
+        createCaptainSessionId,
+        createAttemptId: () => fourthId,
+        createCaptainRuntime: undefined,
+      },
+    );
+    expect(retried.result.code).toBe(0);
+    expect(retryPrompts).toHaveLength(1);
+    expect(retryPrompts[0]).toContain('[Boss message]\ncontinue');
+    expect(retried.result.snapshot).toMatchObject({
+      mode: 'engaged.parked',
+      lastAction: 'resume',
+    });
+    expect(lifecycle.adopts).toBe(2);
+
+    const adoptionPrompts: string[] = [];
+    FakeAdapter.decision = (prompt) => {
+      adoptionPrompts.push(prompt);
+      return { action: 'resume', playbookId: 'code' };
+    };
+    const adopted = await headlessHarness(['run', 'continue'], {
+      sessionsDir,
+      loadModule,
+      createLogicalSessionId: () => secondId,
+      createCaptainSessionId,
+      createCaptainRuntime: undefined,
+    });
+    expect(adopted.result.code).toBe(0);
+    expect(adopted.result.sessionId).toBe(secondId);
+    expect(adoptionPrompts).toHaveLength(1);
+    expect(adoptionPrompts[0]).toContain('[Boss message]\ncontinue');
+    expect(adoptionPrompts[0]).toContain(
+      'Retained resumptions:\n- code (/code):',
+    );
+    expect(lifecycle.adopts).toBe(3);
+    expect(adopted.result.snapshot).toMatchObject({
+      mode: 'engaged.parked',
+      lastAction: 'resume',
+      frames: [{ playbookId: 'code' }],
+    });
+    expect(
+      JSON.parse(
+        await readFile(join(sessionsDir, `${firstId}.json`), 'utf8'),
+      ).retainedGenerations,
+    ).toEqual({});
+    expect(
+      JSON.parse(
+        await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
+      ).retainedGenerations,
+    ).toHaveProperty('code');
+  });
+
   it('selects the newest valid session by updatedAt for --continue', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-latest-'));
     tempDirs.push(stateRoot);
@@ -1633,6 +1946,11 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       })}\n`,
       { mode: 0o600 },
     );
+    const memberlessInstalls: unknown[] = [];
+    const observeMemberlessInstall = async (options: any) => {
+      memberlessInstalls.push(options.retainedGenerations);
+      return installRetainedGenerationsForLaunch(options);
+    };
 
     let explicitLegacyHosts = 0;
     const explicitLegacy = await headlessHarness(
@@ -1658,11 +1976,13 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       {
         sessionsDir,
         now: () => new Date('2026-08-11T20:20:02.000Z'),
+        installRetainedGenerationsForLaunch: observeMemberlessInstall,
       },
     );
     expect(continued.result.code).toBe(0);
     expect(continued.result.sessionId).toBe(fourthId);
     expect(continued.inputs).toEqual(['latest reply']);
+    expect(memberlessInstalls).toEqual([{}]);
     expect(continued.stderr).toContain(
       `skipping legacy Captain session "${thirdId}" at "${legacyPath}"`,
     );
@@ -1697,11 +2017,13 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       {
         sessionsDir,
         now: () => new Date('2026-08-11T20:20:03.000Z'),
+        installRetainedGenerationsForLaunch: observeMemberlessInstall,
       },
     );
     expect(explicitCompatible.result.code).toBe(0);
     expect(explicitCompatible.result.sessionId).toBe(fourthId);
     expect(explicitCompatible.inputs).toEqual(['member-less reply']);
+    expect(memberlessInstalls).toEqual([{}, {}]);
     expect(explicitCompatible.stderr).not.toContain(
       'no retained-generation state',
     );
@@ -1946,11 +2268,16 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     tempDirs.push(stateRoot);
     const sessionsDir = join(stateRoot, 'sessions');
     const recordPath = join(sessionsDir, `${firstId}.json`);
+    let replacementWrites = 0;
     const sessionStore = createCaptainSessionStore({
       sessionsDir,
       fsOps: {
         async rename(from: string, to: string) {
-          if (from.endsWith('.tmp') && to === recordPath) {
+          if (
+            from.endsWith('.tmp') &&
+            to === recordPath &&
+            ++replacementWrites === 2
+          ) {
             throw new Error('synthetic settlement rename failure');
           }
           return rename(from, to);
@@ -2177,7 +2504,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
       sessionId: firstId,
       snapshot: { sequences: { turn: 0 } },
       uncertain: {
-        baseUpdatedAt: null,
+        baseUpdatedAt: expect.any(String),
         input: exactInput,
         attemptId: secondId,
         attemptNumber: 1,
@@ -2186,7 +2513,9 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(markerDuringTurn.uncertain.markedAt).toBe(
       markerDuringTurn.updatedAt,
     );
-    expect(markerDuringTurn.createdAt).toBe(markerDuringTurn.updatedAt);
+    expect(markerDuringTurn.uncertain.baseUpdatedAt).not.toBe(
+      markerDuringTurn.updatedAt,
+    );
 
     let reads = 0;
     let hosts = 0;
@@ -2509,7 +2838,7 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(calls).toEqual({ stdin: 0, load: 0, probe: 0, host: 0 });
     expect(await readFile(path, 'utf8')).toBe(settledBytes);
 
-    const freshFailed = await headlessHarness(['run', 'never settled'], {
+    const freshFailed = await headlessHarness(['run', 'fresh turn-zero crash'], {
       sessionsDir,
       createLogicalSessionId: () => secondId,
       createAttemptId: () => thirdId,
@@ -2550,9 +2879,74 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     expect(freshDiscarded.result.code).toBe(0);
     expect(freshDiscarded.stdout).toBe('');
     expect(freshCalls).toEqual({ stdin: 0, load: 0, probe: 0, host: 0 });
-    await expect(
-      readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
-    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(
+      JSON.parse(
+        await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
+      ),
+    ).toMatchObject({
+      state: 'settled',
+      snapshot: { sequences: { turn: 0 } },
+      retainedGenerations: {},
+    });
+
+    const settledTurnZero = JSON.parse(
+      await readFile(join(sessionsDir, `${secondId}.json`), 'utf8'),
+    );
+    const {
+      retainedGenerations: _retainedGenerations,
+      ...legacyNeverSettled
+    } = settledTurnZero;
+    const legacyMarkedAt = '2026-08-11T20:59:00.000Z';
+    const legacyPath = join(sessionsDir, `${fourthId}.json`);
+    await writeFile(
+      legacyPath,
+      `${JSON.stringify({
+        ...legacyNeverSettled,
+        state: 'uncertain',
+        sessionId: fourthId,
+        createdAt: legacyMarkedAt,
+        updatedAt: legacyMarkedAt,
+        uncertain: {
+          baseUpdatedAt: null,
+          input: 'legacy never-settled turn',
+          attemptId: thirdId,
+          attemptNumber: 1,
+          markedAt: legacyMarkedAt,
+          attemptedExecutionProjection:
+            settledTurnZero.lastAppliedExecutionProjection,
+        },
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const legacyCalls = { stdin: 0, load: 0, probe: 0, host: 0 };
+    const legacyDiscarded = await headlessHarness(
+      ['run', '--session', fourthId, '--discard-uncertain'],
+      {
+        sessionsDir,
+        readStdin: async () => {
+          legacyCalls.stdin += 1;
+          return 'must not read';
+        },
+        loadModule: async () => {
+          legacyCalls.load += 1;
+          throw new Error('must not import');
+        },
+        probeAdapterSdk: async () => {
+          legacyCalls.probe += 1;
+          return false;
+        },
+        createHostRuntime: async () => {
+          legacyCalls.host += 1;
+          throw new Error('must not host');
+        },
+      },
+    );
+    expect(legacyDiscarded.result.code).toBe(0);
+    expect(legacyDiscarded.stdout).toBe('');
+    expect(legacyCalls).toEqual({ stdin: 0, load: 0, probe: 0, host: 0 });
+    await expect(readFile(legacyPath, 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    });
   });
 
   it('rejects a concurrent writer while the first turn owns the session lease', async () => {

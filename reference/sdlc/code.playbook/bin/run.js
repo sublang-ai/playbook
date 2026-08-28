@@ -453,7 +453,25 @@ export async function runPlaybookRun(options = {}) {
         ? { restoreSnapshot }
         : {}),
       ...(options.signal ? { signal: options.signal } : {}),
-      beforeBossTurn: async (baselineSnapshot) => {
+      beforeBossTurn: async (baselineSnapshot, shell) => {
+        throwIfAborted(options.signal);
+        if (priorRecord === undefined) {
+          await lease.initializeSettled({
+            cwd,
+            structuralProjection: projectCaptainSessionStructure(config),
+            executionProjection: config,
+            snapshot: baselineSnapshot,
+          });
+        }
+        const installForLaunch =
+          options.installRetainedGenerationsForLaunch ??
+          installRetainedGenerationsForLaunch;
+        await installForLaunch({
+          lease,
+          shell,
+          fresh: priorRecord === undefined,
+          retainedGenerations: priorRecord?.retainedGenerations ?? {},
+        });
         throwIfAborted(options.signal);
         return args.retryUncertain
           ? lease.beginRetry({
@@ -464,16 +482,6 @@ export async function runPlaybookRun(options = {}) {
               input,
               attemptId,
               attemptedExecutionProjection: config,
-              ...(priorRecord === undefined
-                ? {
-                    fresh: {
-                      cwd,
-                      structuralProjection:
-                        projectCaptainSessionStructure(config),
-                      snapshot: baselineSnapshot,
-                    },
-                  }
-                : {}),
             });
       },
       assertBeforeBossTurn: () => lease.assertOwner(),
@@ -643,7 +651,7 @@ export async function driveHeadlessCaptainTurn({
         ...(restoreSnapshot !== undefined ? { restoreSnapshot } : {}),
       });
       ({ shell, host, snapshot: baselineSnapshot } = created);
-      uncertainRecord = await beforeBossTurn?.(baselineSnapshot);
+      uncertainRecord = await beforeBossTurn?.(baselineSnapshot, shell);
     } catch (error) {
       throw new HeadlessHostSetupError(error);
     }
@@ -796,6 +804,32 @@ export async function createCaptainSessionHost({
     }
     throw error;
   }
+}
+
+// PBCLI-55: both presentations install one authoritative retention map at the
+// same post-shell, pre-turn boundary. Fresh sessions first become durable
+// turn-zero targets so predecessor transfer never writes into uncertainty.
+export async function installRetainedGenerationsForLaunch({
+  lease,
+  shell,
+  fresh,
+  retainedGenerations,
+}) {
+  let authoritative = retainedGenerations;
+  if (fresh) {
+    const predecessor = await lease.predecessor();
+    authoritative =
+      predecessor === undefined
+        ? {}
+        : (
+            await lease.transferPredecessorGenerations({
+              predecessor,
+            })
+          ).retainedGenerations;
+  }
+  await shell.installRetainedGenerations(authoritative);
+  await lease.assertOwner();
+  return authoritative;
 }
 
 // PBCLI-20: restoration enters through the host's one init boundary. The

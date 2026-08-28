@@ -35,6 +35,7 @@ const sessionIds = [
   '92000000-0000-4000-8000-000000000001',
   '92000000-0000-4000-8000-000000000002',
   '92000000-0000-4000-8000-000000000003',
+  '92000000-0000-4000-8000-000000000004',
 ] as const;
 // Match Cligent's production managed-activation bound.
 const CROSS_PROCESS_BOUNDARY_TIMEOUT_MS = 30_000;
@@ -55,7 +56,7 @@ afterEach(async () => {
   );
 });
 
-describe('managed interactive cross-front durability (PBCLI-50)', () => {
+describe('managed interactive cross-front durability (PBCLI-50/56)', () => {
   it('reopens an interactive-fresh session headlessly with current tuning and prior player continuity', async () => {
     const fixture = await crossFrontFixture(sessionIds[0]);
     const first = await startManagedChild(fixture, {
@@ -327,6 +328,137 @@ describe('managed interactive cross-front durability (PBCLI-50)', () => {
     const next = await fixture.store.acquire(fixture.sessionId);
     await next.release();
   }, CROSS_FRONT_TEST_TIMEOUT_MS);
+
+  it('arbitrates bare resumption and explicit fresh start after interactive reopen', async () => {
+    const fixture = await crossFrontFixture(sessionIds[3]);
+    const first = await startManagedChild(fixture, {
+      mode: 'fresh',
+      executionProjection: fixture.executionA,
+      tmuxConfig: fixture.tmuxA,
+      namespace: 'interactive-resume-source',
+      retainParked: true,
+      resumeArbitration: true,
+    });
+
+    await first.waitFor('initialized');
+    first.send({ type: 'release-readiness' });
+    await waitForFile(fixture.controls.readinessPath);
+    await publishInputGate(fixture.controls.inputGatePath);
+    await waitForFile(fixture.controls.inputActivePath);
+    first.send({ type: 'submit', text: '/code retain it' });
+    await first.waitFor(
+      'reply-visible',
+      (message) => message.durableSnapshot.lastAction === 'start',
+    );
+    first.send({ type: 'close' });
+    await first.waitFor('complete');
+    first.child.disconnect();
+    await waitForExit(first.child);
+    await Promise.all(
+      [
+        fixture.controls.readinessPath,
+        fixture.controls.inputGatePath,
+        fixture.controls.inputActivePath,
+        fixture.controls.shutdownRequestPath,
+        fixture.controls.shutdownCompletePath,
+      ].map((path) => rm(path, { force: true })),
+    );
+
+    const selected = await startManagedChild(fixture, {
+      mode: 'selected',
+      executionProjection: fixture.executionA,
+      tmuxConfig: fixture.tmuxA,
+      namespace: 'interactive-resume-target',
+      retainParked: true,
+      resumeArbitration: true,
+      sessionIdPrefix: '70000001',
+    });
+    await selected.waitFor('initialized');
+    expect(
+      selected.messages.filter(
+        (message) =>
+          message.type === 'runtime-lifecycle' && message.method === 'init',
+      ),
+    ).toHaveLength(0);
+    selected.send({ type: 'release-readiness' });
+    await waitForFile(fixture.controls.readinessPath);
+    await publishInputGate(fixture.controls.inputGatePath);
+    await waitForFile(fixture.controls.inputActivePath);
+
+    selected.send({ type: 'submit', text: 'dismiss' });
+    const dismissed = await selected.waitFor(
+      'reply-visible',
+      (message) => message.durableSnapshot.lastAction === 'dismiss',
+    );
+    expect(dismissed.durableRecord.retainedGenerations).toHaveProperty('code');
+
+    selected.send({ type: 'submit', text: 'continue' });
+    await selected.waitFor(
+      'runtime-lifecycle',
+      (message) => message.method === 'adopt',
+    );
+    const resumed = await selected.waitFor(
+      'reply-visible',
+      (message) =>
+        message.turnId > dismissed.turnId &&
+        message.durableSnapshot.lastAction === 'resume',
+    );
+    expect(resumed.durableSnapshot).toMatchObject({
+      mode: 'engaged.parked',
+      frames: [{ playbookId: 'code' }],
+    });
+
+    selected.send({ type: 'submit', text: 'dismiss' });
+    const dismissedAgain = await selected.waitFor(
+      'reply-visible',
+      (message) =>
+        message.turnId > resumed.turnId &&
+        message.durableSnapshot.lastAction === 'dismiss',
+    );
+    selected.send({ type: 'submit', text: '/code start fresh' });
+    await selected.waitFor(
+      'runtime-lifecycle',
+      (message) => message.method === 'init',
+    );
+    const restarted = await selected.waitFor(
+      'reply-visible',
+      (message) =>
+        message.turnId > dismissedAgain.turnId &&
+        message.durableSnapshot.lastAction === 'start',
+    );
+    expect(restarted.durableSnapshot.mode).toBe('engaged.parked');
+    expect(
+      selected.messages
+        .filter((message) => message.type === 'runtime-lifecycle')
+        .map((message) => message.method)
+        .filter((method) => method === 'adopt' || method === 'init'),
+    ).toEqual(['adopt', 'init']);
+    expect(
+      selected.messages
+        .filter(
+          (message) =>
+            message.type === 'effect' && message.kind === 'player',
+        )
+        .map((message) => message.prompt),
+    ).toEqual(['cross-front-player:start fresh']);
+    expect(
+      selected.messages
+        .filter(
+          (message) =>
+            message.type === 'effect' &&
+            message.kind === 'captain' &&
+            message.prompt.includes(
+              'Select exactly one action from the closed set',
+            ),
+        )
+        .map((message) => message.prompt.match(/\[Boss message\]\n([^\n]+)/)?.[1]),
+    ).toEqual(['dismiss', 'continue', 'dismiss']);
+
+    selected.send({ type: 'close' });
+    await selected.waitFor('complete');
+    selected.child.disconnect();
+    await waitForExit(selected.child);
+  }, CROSS_FRONT_TEST_TIMEOUT_MS);
 });
 
 async function crossFrontFixture(sessionId: string) {
@@ -387,6 +519,8 @@ async function startManagedChild(
     namespace: string;
     failReplyObserver?: boolean;
     retainParked?: boolean;
+    resumeArbitration?: boolean;
+    sessionIdPrefix?: string;
   },
 ) {
   await writeFile(
@@ -413,6 +547,12 @@ async function startManagedChild(
         ? { PLAYBOOK_FAIL_REPLY_OBSERVER: '1' }
         : {}),
       ...(options.retainParked ? { PLAYBOOK_RETAIN_PARKED: '1' } : {}),
+      ...(options.resumeArbitration
+        ? { PLAYBOOK_RESUME_ARBITRATION: '1' }
+        : {}),
+      ...(options.sessionIdPrefix
+        ? { PLAYBOOK_SESSION_ID_PREFIX: options.sessionIdPrefix }
+        : {}),
     },
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
@@ -452,6 +592,7 @@ async function startManagedChild(
   });
   return {
     child,
+    messages,
     send: (message: unknown) => child.send(message),
     waitFor(type: string, predicate = (_value: any) => true) {
       const prior = messages.find(

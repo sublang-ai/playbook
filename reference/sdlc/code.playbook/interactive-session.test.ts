@@ -41,6 +41,7 @@ const logicalSessionId = '90000000-0000-4000-8000-000000000041';
 const internalSessionId = '80000000-0000-4000-8000-000000000041';
 const retainedFrameSessionId = '80000000-0000-4000-8000-000000000042';
 const attemptId = '90000000-0000-4000-8000-000000000042';
+const predecessorSessionId = '90000000-0000-4000-8000-000000000043';
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -49,7 +50,7 @@ afterEach(async () => {
   );
 });
 
-describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
+describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
   it('rejects a mismatched tmux snapshot before lease acquisition', async () => {
     const fixture = await lifecycleFixture();
     let acquired = 0;
@@ -75,12 +76,16 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
     const fixture = await lifecycleFixture();
     let snapshot = shellSnapshot(fixture.execution, 0);
     const events: string[] = [];
+    const installed: unknown[] = [];
     const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
       sessionStore: fixture.store,
       createAttemptId: () => attemptId,
       createSessionHost: async () => ({
         host: fakeHost(events),
         shell: {
+          async installRetainedGenerations(value: unknown) {
+            installed.push(value);
+          },
           exportSnapshot: () => snapshot,
           exportSettlement: () => ({
             snapshot,
@@ -98,6 +103,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
     });
 
     const runtime = await lifecycle.initializeRuntime(fixture.context);
+    expect(installed).toEqual([{}]);
     expect((await fixture.store.read(logicalSessionId)).state).toBe('settled');
     await expect(fixture.store.acquire(logicalSessionId)).rejects.toThrow(
       /lease is active/,
@@ -140,10 +146,186 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
     expect(events).toEqual(['disposed']);
   });
 
-  it('authoritatively restores a selected settled session and leaves an aborted turn uncertain', async () => {
+  it('transfers and installs predecessor generations before fresh readiness', async () => {
     const fixture = await lifecycleFixture();
-    await seedSettled(fixture, shellSnapshot(fixture.execution, 0));
+    await seedRetainedSettled(fixture, predecessorSessionId);
+    let installCalls = 0;
+    let installed: unknown;
+    let targetDuringInstall: unknown;
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      createSessionHost: async () => {
+        const snapshot = shellSnapshot(fixture.execution, 0);
+        return {
+          host: fakeHost([]),
+          shell: {
+            async installRetainedGenerations(value: unknown) {
+              installCalls += 1;
+              installed = value;
+              targetDuringInstall = await fixture.store.read(logicalSessionId);
+            },
+            exportSnapshot: () => snapshot,
+          },
+          snapshot,
+        };
+      },
+    });
+
+    const runtime = await lifecycle.initializeRuntime(fixture.context);
+    expect(installCalls).toBe(1);
+    expect(installed).toEqual({ code: retainedGeneration() });
+    expect(targetDuringInstall).toMatchObject({
+      state: 'settled',
+      retainedGenerations: { code: retainedGeneration() },
+    });
+    expect(await fixture.store.read(predecessorSessionId)).toMatchObject({
+      state: 'settled',
+      retainedGenerations: {},
+    });
+    await runtime.dispose();
+    await lifecycle.shutdown();
+  });
+
+  it.each([
+    { boundary: 'predecessor selection', transferPublished: false },
+    { boundary: 'predecessor transfer', transferPublished: true },
+    { boundary: 'retained installation', transferPublished: true },
+  ])(
+    'contains a $boundary failure before readiness',
+    async ({ boundary, transferPublished }) => {
+      const fixture = await lifecycleFixture();
+      await seedRetainedSettled(fixture, predecessorSessionId);
+      const events: string[] = [];
+      let installCalls = 0;
+      const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+        sessionStore: {
+          ...fixture.store,
+          async acquire(sessionId: string) {
+            const lease = await fixture.store.acquire(sessionId);
+            if (sessionId !== logicalSessionId) return lease;
+            return {
+              ...lease,
+              async predecessor() {
+                if (boundary === 'predecessor selection') {
+                  throw new Error('synthetic predecessor selection failure');
+                }
+                return lease.predecessor();
+              },
+              async transferPredecessorGenerations(options: unknown) {
+                const result =
+                  await lease.transferPredecessorGenerations(options);
+                if (boundary === 'predecessor transfer') {
+                  throw new Error('synthetic predecessor transfer failure');
+                }
+                return result;
+              },
+            };
+          },
+        },
+        createSessionHost: async () => {
+          const snapshot = shellSnapshot(fixture.execution, 0);
+          return {
+            host: {
+              abortActiveTurn() {},
+              async runBossTurn() {
+                events.push('boss');
+              },
+              async dispose() {
+                events.push('disposed');
+              },
+            },
+            shell: {
+              async installRetainedGenerations() {
+                installCalls += 1;
+                if (boundary === 'retained installation') {
+                  throw new Error('synthetic retained installation failure');
+                }
+              },
+              exportSnapshot: () => snapshot,
+            },
+            snapshot,
+          };
+        },
+      });
+
+      await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
+        `synthetic ${boundary} failure`,
+      );
+      expect(installCalls).toBe(
+        boundary === 'retained installation' ? 1 : 0,
+      );
+      expect(events).toEqual(['disposed']);
+      expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+        state: 'settled',
+        retainedGenerations: transferPublished
+          ? { code: retainedGeneration() }
+          : {},
+      });
+      expect(await fixture.store.read(predecessorSessionId)).toMatchObject({
+        state: 'settled',
+        retainedGenerations: transferPublished
+          ? {}
+          : { code: retainedGeneration() },
+      });
+      const next = await fixture.store.acquire(logicalSessionId);
+      await next.release();
+    },
+  );
+
+  it('rechecks lease ownership after installation before fresh readiness', async () => {
+    const fixture = await lifecycleFixture();
+    const events: string[] = [];
+    let installed = false;
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: {
+        ...fixture.store,
+        async acquire(sessionId: string) {
+          const lease = await fixture.store.acquire(sessionId);
+          return {
+            ...lease,
+            async assertOwner() {
+              if (installed) {
+                throw new Error('synthetic owner loss after installation');
+              }
+              return lease.assertOwner();
+            },
+          };
+        },
+      },
+      createSessionHost: async () => {
+        const snapshot = shellSnapshot(fixture.execution, 0);
+        return {
+          host: fakeHost(events),
+          shell: {
+            async installRetainedGenerations() {
+              installed = true;
+            },
+            exportSnapshot: () => snapshot,
+          },
+          snapshot,
+        };
+      },
+    });
+
+    await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
+      'synthetic owner loss after installation',
+    );
+    expect(installed).toBe(true);
+    expect(events).toEqual(['disposed']);
+    expect(await fixture.store.read(logicalSessionId)).toMatchObject({
+      state: 'settled',
+      retainedGenerations: {},
+    });
+    const next = await fixture.store.acquire(logicalSessionId);
+    await next.release();
+  });
+
+  it('restores and installs a selected map before leaving an aborted turn uncertain', async () => {
+    const fixture = await lifecycleFixture();
+    await seedRetainedSettled(fixture, logicalSessionId);
     let restored: unknown;
+    let installCalls = 0;
+    let installed: unknown;
     const lifecycle = createManagedInteractiveLifecycle(
       { ...fixture.payload, mode: 'selected' },
       {
@@ -154,7 +336,13 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
           restored = options.restoreSnapshot;
           return {
             host: fakeHost([]),
-            shell: { exportSnapshot: () => options.restoreSnapshot },
+            shell: {
+              async installRetainedGenerations(value: unknown) {
+                installCalls += 1;
+                installed = value;
+              },
+              exportSnapshot: () => options.restoreSnapshot,
+            },
             snapshot: options.restoreSnapshot,
           };
         },
@@ -163,6 +351,8 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
 
     await lifecycle.initializeRuntime(fixture.context);
     expect(restored).toEqual(shellSnapshot(fixture.execution, 0));
+    expect(installCalls).toBe(1);
+    expect(installed).toEqual({ code: retainedGeneration() });
     await lifecycle.beforeNonEmptyTurn({
       sessionId: logicalSessionId,
       prompt: 'will abort',
@@ -366,6 +556,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
           createSessionHost: async (options: any) => ({
             host: fakeHost([]),
             shell: {
+              async installRetainedGenerations() {},
               exportSnapshot: () =>
                 options.restoreSnapshot ?? shellSnapshot(fixture.execution, 0),
             },
@@ -398,7 +589,10 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
             throw new Error('dispose failed');
           },
         },
-        shell: { exportSnapshot: () => undefined },
+        shell: {
+          async installRetainedGenerations() {},
+          exportSnapshot: () => undefined,
+        },
         snapshot: undefined,
       }),
     });
@@ -424,7 +618,10 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
             throw new Error('runtime dispose failed');
           },
         },
-        shell: { exportSnapshot: () => snapshot },
+        shell: {
+          async installRetainedGenerations() {},
+          exportSnapshot: () => snapshot,
+        },
         snapshot,
       }),
     });
@@ -476,6 +673,7 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50)', () => {
       createSessionHost: async () => ({
         host: fakeHost([]),
         shell: {
+          async installRetainedGenerations() {},
           exportSnapshot: () => snapshot,
           exportSettlement: () => ({ snapshot, retentionUpdates: [] }),
         },
@@ -1062,6 +1260,37 @@ async function seedSettled(
     structuralProjection: projectCaptainSessionStructure(fixture.execution),
     executionProjection: fixture.execution,
     snapshot,
+  });
+  await lease.release();
+}
+
+async function seedRetainedSettled(
+  fixture: Awaited<ReturnType<typeof lifecycleFixture>>,
+  sessionId: string,
+) {
+  const snapshot = shellSnapshot(fixture.execution, 0);
+  const lease = await fixture.store.acquire(sessionId);
+  await lease.initializeSettled({
+    cwd: fixture.payload.cwd,
+    structuralProjection: projectCaptainSessionStructure(fixture.execution),
+    executionProjection: fixture.execution,
+    snapshot,
+  });
+  await lease.beginTurn({
+    input: 'seed retained generation',
+    attemptId,
+    attemptedExecutionProjection: fixture.execution,
+  });
+  await lease.settle({
+    attemptId,
+    snapshot,
+    retentionUpdates: [
+      {
+        kind: 'retain',
+        rootPlaybookId: 'code',
+        generation: retainedGeneration(),
+      },
+    ],
   });
   await lease.release();
 }

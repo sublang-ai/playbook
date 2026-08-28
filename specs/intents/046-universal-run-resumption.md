@@ -38,7 +38,7 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
    Implement predecessor selection (newest settled record, same working directory) and the guarded move-and-clear exchange under the store's lease discipline; land the `playbook-cli.md` items and cross-session store tests.
 7. **Advertise and select resumption.** _[done]_
    Surface retained generations in the shell's control digest labeled by the retained root state's published description, add the validated resume selection to the Captain's closed action set with the decided arbitration order, and land the `playbook-captain.md` items and shell tests.
-8. **Address resumption from both front ends.**
+8. **Address resumption from both front ends.** _[done]_
    Make a bare continuation request select resumption in `playbook run --continue` and interactive reopen with explicit fresh-start intent winning, and land the `playbook-cli.md` items with headless and interactive tests.
 9. **Prove the interruption matrix end to end.**
    Drive real linked artifacts through each matrix class — Boss-question suspension, park, failure, real nested suspension with a child call, artifact-declared unfinished terminal, dismissed root, and adapter-swap fresh session — asserting each resumes mid-state with no initial-state classification and completes; include capability-less degradation, the stale-world resume surfacing through review, and the duplicate-effect warning assertions.

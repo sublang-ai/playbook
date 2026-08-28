@@ -30,6 +30,7 @@ import {
   CaptainSessionHostCleanupError,
   captainOptionsFromConfig,
   createCaptainSessionHost,
+  installRetainedGenerationsForLaunch,
   validateFrozenExecutionConfig,
 } from './run.js';
 import { prepareConfiguredRegistries } from './provision.js';
@@ -329,6 +330,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
       try {
         lease = await store.acquire(payload.sessionId);
         const authoritative = await lease.read();
+        let retainedGenerations = {};
         let restoreSnapshot;
         const prepareRegistryModule =
           options.prepareRegistryModule ??
@@ -381,6 +383,7 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
             { loadModule, prepareRegistryModule },
           );
           restoreSnapshot = record.snapshot;
+          retainedGenerations = record.retainedGenerations ?? {};
         }
 
         const created = await createSessionHost({
@@ -413,6 +416,12 @@ export function createManagedInteractiveLifecycle(payloadValue, options = {}) {
             snapshot: created.snapshot,
           });
         }
+        await installRetainedGenerationsForLaunch({
+          lease,
+          shell,
+          fresh: payload.mode === 'fresh',
+          retainedGenerations,
+        });
         initialized = true;
         return {
           abortActiveTurn: (...args) => host.abortActiveTurn(...args),

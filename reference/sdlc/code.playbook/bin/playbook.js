@@ -126,6 +126,12 @@ export async function runPlaybookCli(options = {}) {
       ...(options.createAttemptId
         ? { createAttemptId: options.createAttemptId }
         : {}),
+      ...(options.installRetainedGenerationsForLaunch
+        ? {
+            installRetainedGenerationsForLaunch:
+              options.installRetainedGenerationsForLaunch,
+          }
+        : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       // PBCLI-39: the run path gates on SDK availability too.
       ...(options.probeAdapterSdk

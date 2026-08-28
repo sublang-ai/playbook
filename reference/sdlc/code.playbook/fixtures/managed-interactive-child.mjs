@@ -12,6 +12,9 @@ const payload = JSON.parse(requiredEnv('PLAYBOOK_MANAGED_PAYLOAD'));
 const tokenNamespace = requiredEnv('PLAYBOOK_TOKEN_NAMESPACE');
 const failReplyObserver = process.env.PLAYBOOK_FAIL_REPLY_OBSERVER === '1';
 const retainParked = process.env.PLAYBOOK_RETAIN_PARKED === '1';
+const resumeArbitration = process.env.PLAYBOOK_RESUME_ARBITRATION === '1';
+const sessionIdPrefix =
+  process.env.PLAYBOOK_SESSION_ID_PREFIX ?? '70000000';
 const store = createCaptainSessionStore({ sessionsDir: payload.sessionsDir });
 const input = new PassThrough();
 const output = new Writable({
@@ -45,7 +48,10 @@ class FixtureAdapter {
     const result =
       kind === 'player'
         ? `worker result ${sequence}`
-        : `Cross-front durable reply ${tokenNamespace}:${sequence}`;
+        : resumeArbitration &&
+            prompt.includes('Select exactly one action from the closed set')
+          ? captainDecision(prompt)
+          : `Cross-front durable reply ${tokenNamespace}:${sequence}`;
     yield createEvent(
       'done',
       this.agent,
@@ -81,9 +87,11 @@ const baseLifecycle = createManagedInteractiveLifecycle(payload, {
     return { default: fixtureRegistryEntry() };
   },
   adapterImports,
-  createCaptainRuntime: fixtureCaptainRuntime,
+  ...(resumeArbitration
+    ? {}
+    : { createCaptainRuntime: fixtureCaptainRuntime }),
   createCaptainSessionId: () =>
-    `70000000-0000-4000-8000-${String(++sessionIdSequence).padStart(12, '0')}`,
+    `${sessionIdPrefix}-0000-4000-8000-${String(++sessionIdSequence).padStart(12, '0')}`,
   createAttemptId: () =>
     `71000000-0000-4000-8000-${String(++attemptSequence).padStart(12, '0')}`,
 });
@@ -187,15 +195,18 @@ function fixtureRegistryEntry() {
               async adopt(next, snapshot) {
                 session = next;
                 turns = snapshot.sequences.turn;
+                send({ type: 'runtime-lifecycle', method: 'adopt' });
               },
             }
           : {}),
         async init(next) {
           session = next;
+          send({ type: 'runtime-lifecycle', method: 'init' });
         },
         async restore(next, snapshot) {
           session = next;
           turns = snapshot.sequences.turn;
+          send({ type: 'runtime-lifecycle', method: 'restore' });
         },
         exportSnapshot() {
           if (!retainParked) return undefined;
@@ -242,6 +253,16 @@ function fixtureRegistryEntry() {
       };
     },
   };
+}
+
+function captainDecision(prompt) {
+  if (prompt.includes('[Boss message]\ncontinue')) {
+    return JSON.stringify({ action: 'resume', playbookId: 'code' });
+  }
+  if (prompt.includes('[Boss message]\ndismiss')) {
+    return JSON.stringify({ action: 'dismiss' });
+  }
+  throw new Error(`unexpected arbitration prompt ${JSON.stringify(prompt)}`);
 }
 
 function fixtureCaptainRuntime({ controller }) {
