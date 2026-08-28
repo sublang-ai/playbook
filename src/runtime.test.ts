@@ -577,8 +577,12 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     expect(classification).toContain('retainedGenerationMetadata');
     expect(classification).toMatch(/explicitly empty/);
     expect(classification).toMatch(
-      /does not itself supply the independently\s+feature-detected adoption operation/,
+      /presence supplies only\s+terminal classification metadata\s+and does not itself supply the adoption operation/,
     );
+    expect(classification).toMatch(
+      /parked-session snapshot pair and the independently feature-detected\s+adoption capability so a Captain can retain/,
+    );
+    expect(classification).toMatch(/opts into classification only/);
     expect(classification).toContain('createXStatePlaybookRuntime');
     const adoption = sectionOf(linkSpec, 'Retained-snapshot adoption (optional)');
     expect(adoption).toContain('adopt(session, snapshot)');
@@ -587,6 +591,9 @@ describe('@sublang/playbook/runtime contract module (PBRT-34/35)', () => {
     );
     expect(adoption).toMatch(/fresh valid `PlaybookSession`\s+identity/);
     expect(adoption).toMatch(/before calling the\s+runtime capability/);
+    expect(adoption).toMatch(
+      /shall not apply the retained snapshot's `roleResumeTokens` through a\s+supplied player-session store's `restore` operation or seed runtime-private\s+continuation from them/,
+    );
   });
 
   // PBRT-34/35: every authored contract type is exported.

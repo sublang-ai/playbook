@@ -1438,23 +1438,26 @@ duplicate child call or start/finish boundary, roll provisional ownership back
 through failed-start cleanup, and leave that runtime reusable after successful
 cleanup. A successful adoption shall close `init`, `restore`, and `adopt`
 under the ordinary one-start runtime lifecycle.
-Player-ledger selection and fresh counters and lineage are independent
-adoption rules specified by their owning host/runtime behavior.
+Adoption shall not apply the retained snapshot's `roleResumeTokens` through a
+supplied player-session store's `restore` operation or seed runtime-private
+continuation from them. Player-ledger selection and fresh counters and lineage
+are independent adoption rules specified by their owning host/runtime behavior.
 
 ## Retained-generation classification (optional)
 
 A linked runtime may expose the optional read-only
 `retainedGenerationMetadata` marker of `@sublang/playbook/runtime` together
-with the parked-session snapshot pair so a Captain can retain its safe
-pre-terminal generations. Its `unfinishedFinalStateIds` array shall preserve
-the artifact's link-time declaration exactly, including an explicitly empty
-set, and shall be immutable and detached from that declaration. Absence means
-the runtime contributes no retained generation; presence supplies only
-terminal classification metadata and does not itself supply the independently
-feature-detected adoption operation.
+with the parked-session snapshot pair and the independently feature-detected
+adoption capability so a Captain can retain its safe pre-terminal generations.
+Its `unfinishedFinalStateIds` array shall preserve the artifact's link-time
+declaration exactly, including an explicitly empty set, and shall be immutable
+and detached from that declaration. Absence means the runtime contributes no
+retained generation; presence supplies only terminal classification metadata
+and does not itself supply the adoption operation.
 Every runtime the shared `createXStatePlaybookRuntime` factory constructs from
 a supplied `unfinishedFinalStateIds` spec member shall expose the marker; a
-bespoke runtime opts in only by implementing the public member itself.
+bespoke runtime opts into classification only by implementing the public member
+itself.
 
 ## Control surface (optional)
 

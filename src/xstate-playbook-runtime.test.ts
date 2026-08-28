@@ -4342,11 +4342,17 @@ describe('parked-session snapshot over the shared factory', () => {
   it('adopts a parked snapshot under a fresh engagement identity', async () => {
     let playerCalls = 0;
     let judgeCalls = 0;
+    const resumes: Array<string | false> = [];
     const { ports, statuses, telemetry } = makeRecordingPorts({
-      callPlayer: async () => {
+      callPlayer: async (_roleId, _prompt, _signal, options) => {
         playerCalls += 1;
+        resumes.push(options.resume);
         return playerCalls === 1
-          ? { status: 'ok', finalText: 'Which database should I use?' }
+          ? {
+              status: 'ok',
+              finalText: 'Which database should I use?',
+              resumeToken: 'retained-token',
+            }
           : { status: 'ok', finalText: 'Done with sqlite.' };
       },
       callJudge: async (prompt) => {
@@ -4366,6 +4372,7 @@ describe('parked-session snapshot over the shared factory', () => {
     expect(parked.state.stateId).toBe('awaitBossReply');
     const snapshot = source.exportSnapshot?.();
     if (snapshot === undefined) throw new Error('expected parked snapshot');
+    expect(snapshot.roleResumeTokens).toEqual({ coder: 'retained-token' });
     await source.dispose();
     const effectsBeforeAdoption = {
       judgeCalls,
@@ -4403,6 +4410,50 @@ describe('parked-session snapshot over the shared factory', () => {
     const resumed = await target.handleBossInput(turn('use sqlite'));
     expect(resumed.outcome).toBe('terminal');
     expect(playerCalls).toBe(2);
+    expect(resumes).toEqual([false, false]);
+    await target.dispose();
+  });
+
+  it('adopts without restoring retained tokens through a supplied store', async () => {
+    let playerCalls = 0;
+    const { ports } = makeRecordingPorts({
+      callPlayer: async () => {
+        playerCalls += 1;
+        return {
+          status: 'ok',
+          finalText: 'Which database should I use?',
+          resumeToken: 'retained-token',
+        };
+      },
+      callJudge: async () =>
+        '{"guard":"needsBossReply","question":"Which database?"}',
+    });
+    const source = createWorkflowRuntime({});
+    await source.init(makeSession(ports));
+    const parked = await source.handleBossInput(turn('build storage'));
+    expect(parked.state.stateId).toBe('awaitBossReply');
+    const snapshot = source.exportSnapshot?.();
+    if (snapshot === undefined) throw new Error('expected parked snapshot');
+    expect(snapshot.roleResumeTokens).toEqual({ coder: 'retained-token' });
+    await source.dispose();
+
+    const playerSessions: PlayerSessionStore = {
+      select: vi.fn(() => 'current-ledger-token'),
+      update: vi.fn(),
+      snapshot: vi.fn(() => ({ coder: 'current-ledger-token' })),
+      restore: vi.fn(() => {
+        throw new Error('restore is unavailable outside shell restoration');
+      }),
+    };
+    const target = createWorkflowRuntime({});
+
+    await target.adopt?.(makeSession(ports, playerSessions), snapshot);
+
+    expect(playerSessions.select).not.toHaveBeenCalled();
+    expect(playerSessions.update).not.toHaveBeenCalled();
+    expect(playerSessions.snapshot).not.toHaveBeenCalled();
+    expect(playerSessions.restore).not.toHaveBeenCalled();
+    expect(target.describe().state).toEqual(snapshot.state);
     await target.dispose();
   });
 });

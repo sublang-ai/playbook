@@ -4059,11 +4059,17 @@ export function createXStatePlaybookRuntime<TOptions>(
         // counter is a collision-safe id floor here too, keeping
         // `apply-<n>` call ids unique across a snapshot start.
         applyCallSequence = boundSnapshot.sequences.trace;
-        if (boundSession.playerSessions) {
-          priorExternalPlayerTokens = snapshotRoleResumeTokens();
-          externalStoreRestoreAttempted = true;
+        // Same-engagement restore owns the snapshot's token projection.
+        // Adoption leaves it inert: the fresh engagement's player ledger (or
+        // the absence of one) is authoritative, and its binding rules land
+        // independently under DR-038 §4.
+        if (kind === 'restore') {
+          if (boundSession.playerSessions) {
+            priorExternalPlayerTokens = snapshotRoleResumeTokens();
+            externalStoreRestoreAttempted = true;
+          }
+          restoreRoleResumeTokens(boundSnapshot.roleResumeTokens);
         }
-        restoreRoleResumeTokens(boundSnapshot.roleResumeTokens);
         nestedBridge.prepareRestore(suspendedCall);
         if (suspendedCall !== undefined) {
           playbookCallTurnIds.set(
