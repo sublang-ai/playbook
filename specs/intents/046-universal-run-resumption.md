@@ -5,7 +5,7 @@
 
 ## Status
 
-In progress
+Done
 
 ## Intent
 
@@ -13,14 +13,14 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
 
 ## Deliverables
 
-- [ ] The Captain session record retains one unfinished pre-terminal generation per enabled root playbook id — root and nested frame snapshots with their call bridges, as one unit — surviving disposal and session replacement, replaced on later settlement, and cleared by clean completion per the artifact-declared unfinished final-state ids.
-- [ ] The shared linked-runtime factory implements the optional adoption capability; a capability-less runtime retains and advertises nothing and the shell degrades as for a capability-less control surface.
-- [ ] Cross-session adoption moves the generation from the predecessor record (newest settled, same working directory) in one guarded exchange, validated by the exact structural envelope, with per-role fresh-conversation fallback and ledger-authoritative player binding.
-- [ ] Adoption runs under fresh runtime session UUIDs and counters with an adoption-lineage trace.
-- [ ] The shell advertises retained generations, the Captain's closed action set gains the resume selection, and both front ends address it with the decided arbitration order.
-- [ ] Spec items land in `playbook-runtime.md`, `playbook-captain.md`, and `playbook-cli.md`.
-- [ ] Integration coverage spans the interruption matrix — Boss-question suspension, park, failure, real nested suspension, artifact-declared unfinished terminal, dismissed root, and fresh session after an adapter swap — each resuming and completing on real linked artifacts, plus capability-less degradation and a stale-world resume surfacing through review.
-- [ ] `spex lint` and the full suites pass.
+- [x] The Captain session record retains one unfinished pre-terminal generation per enabled root playbook id — root and nested frame snapshots with their call bridges, as one unit — surviving disposal and session replacement, replaced on later settlement, and cleared by clean completion per the artifact-declared unfinished final-state ids.
+- [x] The shared linked-runtime factory implements the optional adoption capability; a capability-less runtime retains and advertises nothing and the shell degrades as for a capability-less control surface.
+- [x] Cross-session adoption moves the generation from the predecessor record (newest settled, same working directory) in one guarded exchange, validated by the exact structural envelope, with per-role fresh-conversation fallback and ledger-authoritative player binding.
+- [x] Adoption runs under fresh runtime session UUIDs and counters with an adoption-lineage trace.
+- [x] The shell advertises retained generations, the Captain's closed action set gains the resume selection, and both front ends address it with the decided arbitration order.
+- [x] Spec items land in `playbook-runtime.md`, `playbook-captain.md`, and `playbook-cli.md`.
+- [x] Integration coverage spans the interruption matrix — Boss-question suspension, park, failure, real nested suspension, artifact-declared unfinished terminal, dismissed root, and fresh session after an adapter swap — each resuming and completing on real linked artifacts, plus capability-less degradation and a stale-world resume surfacing through review.
+- [x] `spex lint` and the full suites pass.
 
 ## Tasks
 
@@ -42,7 +42,7 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
    Make a bare continuation request select resumption in `playbook run --continue` and interactive reopen with explicit fresh-start intent winning, and land the `playbook-cli.md` items with headless and interactive tests.
 9. **Prove the interruption matrix end to end.** _[done]_
    Drive real linked artifacts through each matrix class — Boss-question suspension, park, failure, real nested suspension with a child call, artifact-declared unfinished terminal, dismissed root, and adapter-swap fresh session — asserting each resumes mid-state with no initial-state classification and completes; include capability-less degradation, the stale-world resume surfacing through review, and the duplicate-effect warning assertions.
-10. **Verify and hand over.**
+10. **Verify and hand over.** _[done]_
     Run the full suites and `spex lint` to clean and hand the changes to review.
 
 ## Verification
