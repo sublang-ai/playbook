@@ -9,39 +9,26 @@ Planned
 
 ## Intent
 
-Complete the Spex 3 scaffold merge by bringing the project-local Spex dependency, historical intent records, and every spec package into the refreshed law of [DR-000](../decisions/000-spec-structure-format.md) while preserving released item IDs, normative concerns, package boundaries, and implementation behavior.
+Complete the Spex 3 scaffold merge by bringing the project-local Spex dependency, decision and intent records, and the spec map into the refreshed law of [DR-000](../decisions/000-spec-structure-format.md) while preserving local policy, released item IDs, normative concerns, package boundaries, and implementation behavior.
+The scaffold overwrite dropped the reviewed project amendment from `7123802`, which defines an item as one cohesive concern and permits multiple GEARS statements, preconditions, triggers, phases, or cases when they form one cohesive contract; this intent restores that local rule rather than treating 172 advisory sentence-count findings as migration tasks.
 
 ## Deliverables
 
+- [x] The reviewed cohesive-concern rule and its matching agent guidance are restored over the scaffold overwrite.
+- [x] The spec map states and implements its minimal decision-record and package index scope.
 - [ ] The project-local Spex dependency and lockfile use version 3, and historical intent records obey the new prohibition on naming or citing another intent.
-- [ ] Every package item states one requirement in one GEARS statement while preserving all released concerns and IDs.
-- [ ] Package behavior remains correctly classified as External or Internal relative to its users.
-- [ ] Behavior bindings and verification evidence remain inline, correctly enclosed, and confined to their lawful package scope.
-- [ ] The spec map remains a minimal and accurate index of decision records and packages.
-- [ ] Project-local `spex lint` and the repository test suite pass against the migrated tree.
+- [ ] All 39 decision records obey the refreshed References rule: internal spec and repository links are inline, while a References section contains only cited authoritative external sources.
+- [ ] Project-local `spex lint` exits successfully with sentence-count findings treated as advisory review prompts under the local cohesive-concern rule, and the repository test suite passes.
 
 ## Tasks
 
-1. **Align the Spex toolchain and historical records.**
-   One commit: upgrade the project dependency and lockfile to Spex 3, replace every cross-intent name or citation with self-contained historical wording, normalize or split the one flagged `cross-references.md` item with its behavior placement audited, and verify that remaining lint findings are confined to the package tasks below.
-2. **Migrate the compiled Captain package.**
-   One commit: audit and normalize or split the 16 flagged items in `captain-playbook.md`, keep each released ID on its existing core concern, assign each other separated concern the lowest available unreserved ID, confirm External/Internal placement, update affected inline citations, and confirm the map summary remains exact.
-3. **Migrate the maintained playbook package.**
-   One commit: audit and normalize or split the three flagged items in `playbook.md`, keep each released ID on its existing core concern, assign each other separated concern the lowest available unreserved ID, confirm External/Internal placement, update affected inline citations, and confirm the map summary remains exact.
-4. **Migrate the Captain host package.**
-   One commit: audit and normalize or split the 42 flagged items in `playbook-captain.md`, keep each released ID on its existing core concern, assign each other separated concern the lowest available unreserved ID, reclassify hidden behavior where required, update affected inline citations, and confirm the map summary remains exact.
-5. **Migrate the CLI package.**
-   One commit: audit and normalize or split the 41 flagged items in `playbook-cli.md`, keep each released ID on its existing core concern, assign each other separated concern the lowest available unreserved ID, reclassify hidden behavior where required, update affected inline citations, and confirm the map summary remains exact.
-6. **Migrate the linked-runtime package.**
-   One commit: audit and normalize or split the 48 flagged items in `playbook-runtime.md`, keep each released ID on its existing core concern, assign each other separated concern the lowest available unreserved ID, reclassify hidden behavior where required, update affected inline citations, and confirm the map summary remains exact.
-7. **Migrate release behavior and close the merge.**
-   One commit: audit and normalize or split the 21 flagged items in `release.md`, keep each released ID on its existing core concern, assign each other separated concern the lowest available unreserved ID, confirm External/Internal placement, update affected inline citations, verify the unchanged `git.md` and `licensing.md` packages, reconcile the final map summaries, and run project-local `spex lint` plus the complete repository test suite.
+1. **Align Spex and the record corpus.**
+   One commit: upgrade the project dependency and lockfile to Spex 3, replace every cross-intent name or citation with self-contained historical wording, audit all 39 decision records under the refreshed References rule, relocate the internal links and delete the emptied References sections in DR-017, DR-019, DR-022, and DR-030, verify the map remains exact, run project-local `spex lint` plus the complete repository test suite, and close this intent.
 
 ## Verification
 
-- A released item ID remains attached to its prior core concern, and every other separated concern receives the lowest positive ID that is neither assigned nor reserved by a public release.
-- Every package contains only the lawful sections in order, with a self-contained intent and correctly classified behavior.
-- Every item citation uses the enclosed ID-text form, every decision citation uses the plain ID-text form, and no spec names or cites another intent.
-- Every behavior binding appears at the phrase it makes specific, and every verification citation appears at the assertion it verifies within the containing package.
+- The installed meta-29 wording and agent guidance retain the reviewed cohesive-concern boundary from `7123802`, and no released package item is split merely because Spex reports an advisory sentence-count finding.
+- Every internal spec or repository link in a decision record appears inline, and a References section exists only when cited authoritative external sources require it.
+- Every item citation uses the enclosed ID-text form, every decision citation uses the plain ID-text form, and no spec names or cites an intent except that intent itself.
 - `specs/map.md` indexes every decision record and package, indexes no intent record, and gives an accurate package summary.
-- Project-local `spex lint` reports no findings, and the complete repository test suite passes.
+- Project-local `spex lint` reports no errors, its sentence-count warnings remain advisory under local meta-29, and the complete repository test suite passes.
