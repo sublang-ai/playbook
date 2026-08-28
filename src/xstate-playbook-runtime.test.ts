@@ -4113,6 +4113,17 @@ describe('nested playbook actor over the shared factory', () => {
     expect(telemetry).toHaveLength(telemetryBeforeAdoption);
     expect(statuses).toHaveLength(statusesBeforeAdoption);
 
+    await expect(
+      adopted.adopt?.(
+        targetSession,
+        sourceSnapshot,
+        adoptionFrom(sourceSession, targetSession.sessionId),
+      ),
+    ).rejects.toThrow(/targetChildSessionId must name a fresh child frame/);
+    expect(hostStarts).toBe(4);
+    expect(telemetry).toHaveLength(telemetryBeforeAdoption);
+    expect(statuses).toHaveLength(statusesBeforeAdoption);
+
     await adopted.adopt?.(
       targetSession,
       sourceSnapshot,
@@ -4330,6 +4341,15 @@ describe('nested playbook actor over the shared factory', () => {
           callId: 'playbook-1',
           childSessionId: retryTargetChildSessionId,
         });
+        expect(
+          telemetry
+            .map(({ payload }) => payload as PlaybookTraceEvent)
+            .filter(
+              ({ sessionId }) =>
+                sessionId === retryTargetSession.sessionId,
+            )
+            .map(({ sequence, type }) => ({ sequence, type })),
+        ).toEqual([{ sequence: 1, type: 'session.started' }]);
       }
       await restored.resumePlaybookCall({
         callId: resumedSnapshot.suspendedCall.callId,
@@ -4657,6 +4677,7 @@ describe('parked-session snapshot over the shared factory', () => {
     'extra',
     'empty',
     'accessor',
+    'frame-depth',
     'source-equal',
   ] as const)(
     'rejects an %s adoption context before effects and permits exact retry',
@@ -4699,6 +4720,11 @@ describe('parked-session snapshot over the shared factory', () => {
           },
           sourceGenerationId: sourceSession.rootSessionId,
         };
+      } else if (shape === 'frame-depth') {
+        context = {
+          sourceSessionId: `${sourceSession.sessionId}-child`,
+          sourceGenerationId: sourceSession.rootSessionId,
+        };
       } else {
         targetSession = {
           ...targetSession,
@@ -4717,11 +4743,13 @@ describe('parked-session snapshot over the shared factory', () => {
       ).rejects.toThrow(
         shape === 'accessor'
           ? /must be a JSON data property/
-          : shape === 'source-equal'
-            ? /target identities must be fresh/
-            : shape === 'empty'
-              ? /sourceSessionId must be a non-empty string/
-              : /must contain exactly|must be a JSON value/,
+          : shape === 'frame-depth'
+            ? /source identities do not match the target frame depth/
+            : shape === 'source-equal'
+              ? /target identities must be fresh/
+              : shape === 'empty'
+                ? /sourceSessionId must be a non-empty string/
+                : /must contain exactly|must be a JSON value/,
       );
       expect(targetRecording.statuses).toEqual([]);
       expect(targetRecording.telemetry).toEqual([]);
