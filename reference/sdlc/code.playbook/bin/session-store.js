@@ -3,6 +3,8 @@
 
 // PBCLI-23: durable headless Captain sessions use one exact settled/uncertain
 // record union and one exclusive, crash-recoverable lease per logical session.
+// PBCLI-53: a fresh lease may move its newest same-directory predecessor's
+// complete retained-generation map under guarded source-first publication.
 
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
@@ -230,7 +232,7 @@ export function createCaptainSessionStore(options = {}) {
 
   const read = (sessionId) => readRecord(sessionId);
 
-  const latest = async ({ onLegacyRecord } = {}) => {
+  const listRecords = async ({ onLegacyRecord } = {}) => {
     if (
       onLegacyRecord !== undefined &&
       typeof onLegacyRecord !== 'function'
@@ -245,7 +247,7 @@ export function createCaptainSessionStore(options = {}) {
       names = await fs.readdir(sessionsDir);
     } catch (cause) {
       if (cause?.code === 'ENOENT') {
-        throw new Error('no resumable Captain session exists');
+        return [];
       }
       throw new Error(`cannot list Captain sessions: ${errorMessage(cause)}`);
     }
@@ -275,19 +277,36 @@ export function createCaptainSessionStore(options = {}) {
         throw error;
       }
     }
-    candidates.sort((left, right) => {
-      const byUpdated = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
-      if (byUpdated !== 0) return byUpdated;
-      if (right.sessionId === left.sessionId) return 0;
-      return right.sessionId < left.sessionId ? -1 : 1;
-    });
+    return candidates;
+  };
+
+  const latest = async ({ onLegacyRecord } = {}) => {
+    const candidates = sortCaptainSessionRecords(
+      await listRecords({ onLegacyRecord }),
+    );
     if (candidates.length === 0) {
       throw new Error('no resumable Captain session exists');
     }
     return candidates[0];
   };
 
-  const writeRecord = async (recordValue, { noReplace }) => {
+  const selectAdoptionPredecessor = async (
+    target,
+    { onLegacyRecord } = {},
+  ) =>
+    sortCaptainSessionRecords(
+      (await listRecords({ onLegacyRecord })).filter(
+        (candidate) =>
+          candidate.sessionId !== target.sessionId &&
+          candidate.state === 'settled' &&
+          candidate.cwd === target.cwd,
+      ),
+    )[0];
+
+  const writeRecord = async (
+    recordValue,
+    { noReplace, onPublished },
+  ) => {
     const record = validateCaptainSessionRecord(recordValue);
     const destination = recordPathFor(record.sessionId);
     await ensurePrivateDirectory(sessionsDir, fs);
@@ -328,6 +347,7 @@ export function createCaptainSessionStore(options = {}) {
         try {
           await fs.link(temporary, destination);
           published = true;
+          onPublished?.();
         } catch (cause) {
           if (cause?.code === 'EEXIST') {
             throw new Error(
@@ -348,6 +368,7 @@ export function createCaptainSessionStore(options = {}) {
         await fs.rename(temporary, destination);
         ownsTemporary = false;
         published = true;
+        onPublished?.();
       }
       await syncDirectory(sessionsDir, fs);
       return record;
@@ -661,6 +682,8 @@ export function createCaptainSessionStore(options = {}) {
         readRecord,
         writeRecord,
         deleteRecord,
+        selectAdoptionPredecessor,
+        acquireSession: acquire,
         readLeaseOwner,
         retireObservedLease,
         validateRetiredLeases,
@@ -701,6 +724,8 @@ function createLease({
   readRecord,
   writeRecord,
   deleteRecord,
+  selectAdoptionPredecessor,
+  acquireSession,
   readLeaseOwner,
   retireObservedLease,
   validateRetiredLeases,
@@ -743,6 +768,185 @@ function createLease({
       const record = await readRecord(sessionId, { missing: 'undefined' });
       await assertOwnerUnchecked();
       return record;
+    });
+
+  const useAcquiredSession = async (sourceSessionId, operation) => {
+    const sourceLease = await acquireSession(sourceSessionId);
+    let result;
+    let operationFailed = false;
+    let operationError;
+    try {
+      result = await operation(sourceLease);
+    } catch (cause) {
+      operationFailed = true;
+      operationError = cause;
+    }
+    try {
+      await sourceLease.release();
+    } catch (releaseError) {
+      if (operationFailed) {
+        throw new AggregateError(
+          [operationError, releaseError],
+          'Captain session adoption predecessor operation failed and its lease could not be released',
+        );
+      }
+      throw releaseError;
+    }
+    if (operationFailed) throw operationError;
+    return result;
+  };
+
+  const predecessor = ({ onLegacyRecord } = {}) =>
+    runExclusive(async () => {
+      await assertOwnerUnchecked();
+      const target = await readRecord(sessionId, { missing: 'undefined' });
+      assertFreshAdoptionTarget(target);
+      const selected = await selectAdoptionPredecessor(target, {
+        onLegacyRecord,
+      });
+      if (selected === undefined) return undefined;
+      const descriptor = await useAcquiredSession(
+        selected.sessionId,
+        async (sourceLease) => {
+          const source = await sourceLease.read();
+          if (source === undefined) {
+            throw new Error('Captain session adoption predecessor disappeared');
+          }
+          await assertOwnerUnchecked();
+          const currentTarget = await readRecord(sessionId);
+          if (!isDeepStrictEqual(currentTarget, target)) {
+            throw new Error('Captain session adoption target changed');
+          }
+          const current = await selectAdoptionPredecessor(currentTarget);
+          if (current?.sessionId !== source.sessionId) {
+            throw new Error('Captain session adoption predecessor changed');
+          }
+          return adoptionPredecessorDescriptor(source);
+        },
+      );
+      await assertOwnerUnchecked();
+      return descriptor;
+    });
+
+  const transferPredecessorGenerations = ({ predecessor: value } = {}) =>
+    runExclusive(async () => {
+      const expected = validateAdoptionPredecessorDescriptor(value);
+      await assertOwnerUnchecked();
+      const target = await readRecord(sessionId, { missing: 'undefined' });
+      assertFreshAdoptionTarget(target);
+      const selected = await selectAdoptionPredecessor(target);
+      if (selected?.sessionId !== expected.sessionId) {
+        throw new Error('Captain session adoption predecessor changed');
+      }
+      const result = await useAcquiredSession(
+        expected.sessionId,
+        async (sourceLease) => {
+          const source = await sourceLease.read();
+          if (source === undefined) {
+            throw new Error('Captain session adoption predecessor disappeared');
+          }
+          await assertOwnerUnchecked();
+          const currentTarget = await readRecord(sessionId);
+          if (!isDeepStrictEqual(currentTarget, target)) {
+            throw new Error('Captain session adoption target changed');
+          }
+          const current = await selectAdoptionPredecessor(currentTarget);
+          if (current?.sessionId !== source.sessionId) {
+            throw new Error('Captain session adoption predecessor changed');
+          }
+          if (
+            !isDeepStrictEqual(
+              adoptionPredecessorDescriptor(source),
+              expected,
+            )
+          ) {
+            throw new Error('Captain session adoption predecessor changed');
+          }
+
+          const retainedGenerations = source.retainedGenerations ?? {};
+          assertAdoptionTransferEnvelope(
+            source.structuralProjection,
+            currentTarget.structuralProjection,
+            retainedGenerations,
+          );
+          if (Object.keys(retainedGenerations).length === 0) {
+            return adoptionTransferResult(source, retainedGenerations);
+          }
+          const sourceNext = settledRecordWithRetainedGenerations(
+            source,
+            {},
+            nextTimestamp(now(), source.updatedAt),
+          );
+          const targetTimestampFloor =
+            Date.parse(currentTarget.updatedAt) >
+            Date.parse(sourceNext.updatedAt)
+              ? currentTarget.updatedAt
+              : sourceNext.updatedAt;
+          const targetNext = settledRecordWithRetainedGenerations(
+            currentTarget,
+            retainedGenerations,
+            nextTimestamp(now(), targetTimestampFloor),
+          );
+
+          await sourceLease.assertOwner();
+          await assertOwnerUnchecked();
+          let sourcePublished = false;
+          try {
+            await writeRecord(sourceNext, {
+              noReplace: false,
+              onPublished: () => {
+                sourcePublished = true;
+              },
+            });
+          } catch (cause) {
+            throw new Error(
+              `cannot clear Captain session adoption predecessor: ${errorMessage(cause)}`,
+              { cause },
+            );
+          }
+          if (!sourcePublished) {
+            throw new Error(
+              'Captain session adoption predecessor clear did not publish',
+            );
+          }
+          await sourceLease.assertOwner();
+          await assertOwnerUnchecked();
+
+          let targetPublished = false;
+          try {
+            await writeRecord(targetNext, {
+              noReplace: false,
+              onPublished: () => {
+                targetPublished = true;
+              },
+            });
+          } catch (cause) {
+            if (!targetPublished) {
+              try {
+                await sourceLease.assertOwner();
+                await assertOwnerUnchecked();
+                await writeRecord(source, { noReplace: false });
+                await sourceLease.assertOwner();
+                await assertOwnerUnchecked();
+              } catch (rollbackError) {
+                throw new AggregateError(
+                  [cause, rollbackError],
+                  'Captain session adoption transfer failed and its predecessor could not be restored',
+                );
+              }
+            }
+            throw new Error(
+              `cannot install Captain session adoption generations: ${errorMessage(cause)}`,
+              { cause },
+            );
+          }
+          await sourceLease.assertOwner();
+          await assertOwnerUnchecked();
+          return adoptionTransferResult(source, retainedGenerations);
+        },
+      );
+      await assertOwnerUnchecked();
+      return result;
     });
 
   const initializeSettled = ({
@@ -994,6 +1198,8 @@ function createLease({
     beginRetry,
     settle,
     discard,
+    predecessor,
+    transferPredecessorGenerations,
     assertOwner,
     release,
   });
@@ -1780,6 +1986,174 @@ function retainedGenerationsMember(record) {
   return Object.hasOwn(record, 'retainedGenerations')
     ? { retainedGenerations: record.retainedGenerations }
     : {};
+}
+
+function sortCaptainSessionRecords(records) {
+  return [...records].sort((left, right) => {
+    const byUpdated = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    if (byUpdated !== 0) return byUpdated;
+    if (right.sessionId === left.sessionId) return 0;
+    return right.sessionId < left.sessionId ? -1 : 1;
+  });
+}
+
+function adoptionPredecessorDescriptor(record) {
+  return validateAdoptionPredecessorDescriptor({
+    sessionId: record.sessionId,
+    updatedAt: record.updatedAt,
+    cwd: record.cwd,
+    structuralProjection: record.structuralProjection,
+    retainedGenerations: record.retainedGenerations ?? {},
+  });
+}
+
+function validateAdoptionPredecessorDescriptor(value) {
+  const descriptor = requireRecord(
+    snapshotJsonValue(value, 'Captain session adoption predecessor'),
+    'Captain session adoption predecessor',
+  );
+  rejectUnknownOrMissingKeys(
+    descriptor,
+    [
+      'sessionId',
+      'updatedAt',
+      'cwd',
+      'structuralProjection',
+      'retainedGenerations',
+    ],
+    'Captain session adoption predecessor',
+  );
+  assertSessionId(descriptor.sessionId);
+  canonicalTimestamp(
+    descriptor.updatedAt,
+    'Captain session adoption predecessor updatedAt',
+  );
+  if (typeof descriptor.cwd !== 'string' || !isAbsolute(descriptor.cwd)) {
+    throw new Error(
+      'Captain session adoption predecessor cwd must be an absolute path',
+    );
+  }
+  if (resolve(descriptor.cwd) !== descriptor.cwd) {
+    throw new Error(
+      'Captain session adoption predecessor cwd must be normalized',
+    );
+  }
+  const structural = validateCaptainSessionStructuralProjection(
+    descriptor.structuralProjection,
+    'Captain session adoption predecessor structuralProjection',
+  );
+  validateRetainedGenerations(
+    descriptor.retainedGenerations,
+    structural,
+  );
+  return descriptor;
+}
+
+function assertFreshAdoptionTarget(record) {
+  if (record === undefined) {
+    throw new Error('Captain session adoption target does not exist');
+  }
+  if (Object.keys(record.retainedGenerations ?? {}).length !== 0) {
+    throw new Error(
+      'Captain session adoption target already retains generations',
+    );
+  }
+  if (record.snapshot.mode !== 'chat') {
+    throw new Error(
+      'Captain session adoption target must have no live engagement',
+    );
+  }
+  if (record.state !== 'settled') {
+    throw new Error(
+      'Captain session adoption target must be settled at turn zero',
+    );
+  }
+  assertTurnZeroSnapshot(
+    record.snapshot,
+    'Captain session adoption target snapshot',
+  );
+}
+
+function assertAdoptionTransferEnvelope(
+  sourceStructural,
+  targetStructural,
+  retainedGenerations,
+) {
+  for (const [rootPlaybookId, generation] of Object.entries(
+    retainedGenerations,
+  )) {
+    const sourceRoot = sourceStructural.catalog[rootPlaybookId];
+    const targetRoot = targetStructural.catalog[rootPlaybookId];
+    if (targetRoot === undefined) {
+      throw new Error(
+        `Captain session adoption target has no root playbook ${JSON.stringify(rootPlaybookId)}`,
+      );
+    }
+    const rootEnvelope = (item) => ({
+      from: item.from,
+      manifestCommand: item.manifestCommand,
+      options: item.options,
+      requiredRoleIds: item.requiredRoleIds,
+      concurrentRoleSets: item.concurrentRoleSets,
+    });
+    if (
+      !isDeepStrictEqual(
+        rootEnvelope(sourceRoot),
+        rootEnvelope(targetRoot),
+      )
+    ) {
+      throw new Error(
+        `Captain session adoption target root envelope differs for ${JSON.stringify(rootPlaybookId)}`,
+      );
+    }
+    for (const frame of generation.frames) {
+      const sourceFrame = sourceStructural.catalog[frame.playbookId];
+      const targetFrame = targetStructural.catalog[frame.playbookId];
+      if (targetFrame === undefined) {
+        throw new Error(
+          `Captain session adoption target has no frame playbook ${JSON.stringify(frame.playbookId)}`,
+        );
+      }
+      if (targetFrame.artifactSchema !== sourceFrame.artifactSchema) {
+        throw new Error(
+          `Captain session adoption target artifact schema differs for ${JSON.stringify(frame.playbookId)}`,
+        );
+      }
+    }
+  }
+}
+
+function settledRecordWithRetainedGenerations(
+  record,
+  retainedGenerations,
+  updatedAt,
+) {
+  if (record.state !== 'settled') {
+    throw new Error('Captain session adoption exchange requires settled records');
+  }
+  return validateCaptainSessionRecord({
+    schemaVersion: CAPTAIN_SESSION_RECORD_SCHEMA_VERSION,
+    kind: record.kind,
+    state: record.state,
+    sessionId: record.sessionId,
+    createdAt: record.createdAt,
+    updatedAt,
+    cwd: record.cwd,
+    structuralProjection: record.structuralProjection,
+    lastAppliedExecutionProjection: record.lastAppliedExecutionProjection,
+    snapshot: record.snapshot,
+    retainedGenerations,
+  });
+}
+
+function adoptionTransferResult(source, retainedGenerations) {
+  return snapshotJsonValue(
+    {
+      sourceSessionId: source.sessionId,
+      retainedGenerations,
+    },
+    'Captain session adoption transfer result',
+  );
 }
 
 function validateRetainedGenerations(value, structural) {

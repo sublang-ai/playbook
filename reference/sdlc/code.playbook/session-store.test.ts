@@ -331,6 +331,160 @@ function fixedStore(
   });
 }
 
+function adoptionSessionId(index: number) {
+  return `91000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+}
+
+function adoptionLeaseToken(index: number) {
+  return `a1000000-0000-4000-8000-${String(index).padStart(12, '0')}`;
+}
+
+function sequencedStore(
+  sessionsDir: string,
+  tokenStart = 1,
+  options: Record<string, unknown> = {},
+) {
+  let nextToken = tokenStart;
+  return createCaptainSessionStore({
+    sessionsDir,
+    now: () => instant,
+    hostname: 'test-host',
+    pid: 101,
+    createLeaseToken: () => adoptionLeaseToken(nextToken++),
+    ...options,
+  });
+}
+
+async function writeRecordFixture(
+  sessionsDir: string,
+  record: Record<string, unknown>,
+) {
+  await mkdir(sessionsDir, { recursive: true, mode: 0o700 });
+  await chmod(sessionsDir, 0o700);
+  const validated = validateCaptainSessionRecord(record);
+  const path = join(sessionsDir, `${validated.sessionId}.json`);
+  await writeFile(path, `${JSON.stringify(validated)}\n`, { mode: 0o600 });
+  await chmod(path, 0o600);
+  return path;
+}
+
+function retainedSettledRecord({
+  id,
+  execution = retentionExecutionProjection(),
+  retainedGenerations = {
+    code: retainedCodeGeneration(),
+    review: retainedReviewGeneration(),
+  },
+  schemaVersion = 3,
+  cwd = process.cwd(),
+  updatedAt = '2026-08-11T21:00:00.020Z',
+}: {
+  id: string;
+  execution?: ReturnType<typeof retentionExecutionProjection>;
+  retainedGenerations?: Record<string, unknown>;
+  schemaVersion?: number;
+  cwd?: string;
+  updatedAt?: string;
+}) {
+  return settledRecord({
+    schemaVersion,
+    sessionId: id,
+    createdAt: '2026-08-11T21:00:00.000Z',
+    updatedAt,
+    cwd,
+    structuralProjection: projectCaptainSessionStructure(execution),
+    lastAppliedExecutionProjection: execution,
+    snapshot: shellSnapshot(execution, 1, `source-${id}`),
+    retainedGenerations,
+  });
+}
+
+function freshAdoptionTargetRecord({
+  id,
+  execution = retentionExecutionProjection(),
+  state = 'settled',
+  cwd = process.cwd(),
+  timestamp = '2026-08-11T21:00:00.030Z',
+}: {
+  id: string;
+  execution?: ReturnType<typeof retentionExecutionProjection>;
+  state?: 'settled' | 'uncertain';
+  cwd?: string;
+  timestamp?: string;
+}) {
+  const structuralProjection = projectCaptainSessionStructure(execution);
+  if (state === 'uncertain') {
+    return freshUncertainRecord({
+      sessionId: id,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      cwd,
+      structuralProjection,
+      lastAppliedExecutionProjection: execution,
+      snapshot: shellSnapshot(execution),
+      retainedGenerations: {},
+      uncertain: {
+        baseUpdatedAt: null,
+        input: 'adopt retained work',
+        attemptId: attempt1,
+        attemptNumber: 1,
+        markedAt: timestamp,
+        attemptedExecutionProjection: execution,
+      },
+    });
+  }
+  return settledRecord({
+    sessionId: id,
+    createdAt: '2026-08-11T21:00:00.028Z',
+    updatedAt: timestamp,
+    cwd,
+    structuralProjection,
+    lastAppliedExecutionProjection: execution,
+    snapshot: shellSnapshot(execution),
+    retainedGenerations: {},
+  });
+}
+
+function withCodeReviewer(
+  execution: ReturnType<typeof retentionExecutionProjection>,
+  concurrentRoleSets: string[][] = [],
+) {
+  const reviewer = {
+    id: 'dev.reviewer',
+    adapter: 'codex',
+    model: { kind: 'provider-default' },
+    effort: { kind: 'value', value: 'high' },
+    permissions: { fileWrite: 'ask' },
+  };
+  return {
+    ...execution,
+    players: [...execution.players, reviewer],
+    catalog: {
+      ...execution.catalog,
+      code: {
+        ...execution.catalog.code,
+        requiredRoleIds: ['coder', 'reviewer'],
+        concurrentRoleSets,
+        roles: {
+          ...execution.catalog.code.roles,
+          reviewer: {
+            playerId: reviewer.id,
+            model: reviewer.model,
+            effort: reviewer.effort,
+          },
+        },
+      },
+    },
+  };
+}
+
+function retainedCodeGenerationWithReviewer() {
+  const generation = structuredClone(retainedCodeGeneration());
+  (generation.frames[0]!.roleBindings as Record<string, string>).reviewer =
+    'dev.reviewer';
+  return generation;
+}
+
 function processError(code: string) {
   return Object.assign(new Error(`process probe ${code}`), { code });
 }
@@ -416,7 +570,7 @@ function leaseOwner(
   };
 }
 
-describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
+describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
   it('atomically initializes one validated turn-zero settled record without replacement', async () => {
     const { sessionsDir } = await fixtureDir();
     const store = fixedStore(sessionsDir, tokenO);
@@ -977,6 +1131,604 @@ describe('durable Captain session records (PBCLI-23/24/51/52)', () => {
     });
     await lease.release();
   });
+
+  it.each(['member-less schema 3', 'explicitly empty'] as const)(
+    'selects the newest settled same-cwd %s predecessor without older fallback',
+    async (shape) => {
+      const { sessionsDir } = await fixtureDir();
+      const olderId = adoptionSessionId(1);
+      const emptyId = adoptionSessionId(2);
+      const uncertainId = adoptionSessionId(3);
+      const otherCwdId = adoptionSessionId(4);
+      const targetId = adoptionSessionId(5);
+      const legacyId = adoptionSessionId(6);
+      const older = retainedSettledRecord({
+        id: olderId,
+        updatedAt: '2026-08-11T21:00:00.040Z',
+      });
+      const empty: any = retainedSettledRecord({
+        id: emptyId,
+        retainedGenerations: {},
+        updatedAt: '2026-08-11T21:00:00.040Z',
+      });
+      if (shape === 'member-less schema 3') {
+        delete empty.retainedGenerations;
+      }
+      const uncertain = freshAdoptionTargetRecord({
+        id: uncertainId,
+        state: 'uncertain',
+        timestamp: '2026-08-11T21:00:00.060Z',
+      });
+      const otherCwd = retainedSettledRecord({
+        id: otherCwdId,
+        cwd: join(process.cwd(), 'other-working-directory'),
+        updatedAt: '2026-08-11T21:00:00.080Z',
+      });
+      const target = freshAdoptionTargetRecord({
+        id: targetId,
+        timestamp: '2026-08-11T21:00:00.070Z',
+      });
+      for (const record of [older, empty, uncertain, otherCwd, target]) {
+        await writeRecordFixture(sessionsDir, record);
+      }
+      const legacyPath = join(sessionsDir, `${legacyId}.json`);
+      await writeFile(
+        legacyPath,
+        `${JSON.stringify(
+          releasedSchema2Record({
+            sessionId: legacyId,
+            updatedAt: '2026-08-11T21:00:00.090Z',
+          }),
+        )}\n`,
+        { mode: 0o600 },
+      );
+      const paths = [olderId, emptyId, targetId].map((id) =>
+        join(sessionsDir, `${id}.json`),
+      );
+      const before = await Promise.all(
+        paths.map((path) => readFile(path, 'utf8')),
+      );
+
+      const store = sequencedStore(sessionsDir);
+      const lease = await store.acquire(targetId);
+      const legacyRecords: unknown[] = [];
+      const predecessor = await lease.predecessor({
+        onLegacyRecord: (record: unknown) => legacyRecords.push(record),
+      });
+      expect(predecessor).toMatchObject({
+        sessionId: emptyId,
+        updatedAt: '2026-08-11T21:00:00.040Z',
+        cwd: process.cwd(),
+        retainedGenerations: {},
+      });
+      expect(Object.isFrozen(predecessor)).toBe(true);
+      expect(legacyRecords).toEqual([
+        {
+          sessionId: legacyId,
+          path: legacyPath,
+          schemaVersion: 2,
+        },
+      ]);
+      const transfer = await lease.transferPredecessorGenerations({
+        predecessor,
+      });
+      expect(transfer).toEqual({
+        sourceSessionId: emptyId,
+        retainedGenerations: {},
+      });
+      await lease.release();
+
+      expect(
+        await Promise.all(paths.map((path) => readFile(path, 'utf8'))),
+      ).toEqual(before);
+      expect((await store.read(olderId)).retainedGenerations).toEqual({
+        code: retainedCodeGeneration(),
+        review: retainedReviewGeneration(),
+      });
+    },
+  );
+
+  it.each(['malformed', 'unknown schema', 'unsafe'] as const)(
+    'fails predecessor selection closed on a %s canonical record',
+    async (shape) => {
+      const { sessionsDir } = await fixtureDir();
+      const targetId = adoptionSessionId(7);
+      const corruptId = adoptionSessionId(8);
+      const targetPath = await writeRecordFixture(
+        sessionsDir,
+        freshAdoptionTargetRecord({ id: targetId }),
+      );
+      const corruptPath = join(sessionsDir, `${corruptId}.json`);
+      if (shape === 'unsafe') {
+        await writeRecordFixture(
+          sessionsDir,
+          retainedSettledRecord({ id: corruptId }),
+        );
+        await chmod(corruptPath, 0o644);
+      } else {
+        await writeFile(
+          corruptPath,
+          shape === 'malformed'
+            ? '{not-json\n'
+            : '{"schemaVersion":99}\n',
+          { mode: 0o600 },
+        );
+      }
+      const targetBytes = await readFile(targetPath, 'utf8');
+      const store = sequencedStore(sessionsDir, 7);
+      const lease = await store.acquire(targetId);
+      await expect(lease.predecessor()).rejects.toThrow(
+        shape === 'malformed'
+          ? /not valid JSON/
+          : shape === 'unknown schema'
+            ? /schema 99/
+            : /0600/,
+      );
+      expect(await readFile(targetPath, 'utf8')).toBe(targetBytes);
+      await lease.release();
+    },
+  );
+
+  it('moves a schema-4 map whole, orders its new owner, and preserves discard', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(10);
+    const targetId = adoptionSessionId(11);
+    const sourceExecution = retentionExecutionProjection();
+    const targetBase = retentionExecutionProjection({
+      captainModel: 'captain-current',
+      playerModel: 'coder-current',
+      playerId: 'replacement.coder',
+    });
+    const targetExecution: any = {
+      ...targetBase,
+      captain: {
+        ...targetBase.captain,
+        adapter: 'codex',
+        instruction: 'Current Captain instruction.',
+      },
+      players: targetBase.players.map((player) => ({
+        ...player,
+        instruction: 'Current player instruction.',
+      })),
+      catalog: Object.fromEntries(
+        Object.entries(targetBase.catalog).map(([id, item]) => [
+          id,
+          {
+            ...item,
+            command: `${item.command}-current`,
+            intent: `${item.intent} Current wording.`,
+          },
+        ]),
+      ),
+    };
+    const retainedGenerations = {
+      code: retainedCodeGeneration(),
+      review: retainedReviewGeneration(),
+    };
+    const source = retainedSettledRecord({
+      id: sourceId,
+      execution: sourceExecution,
+      retainedGenerations,
+      schemaVersion: 4,
+      updatedAt: '2026-08-11T21:00:00.040Z',
+    });
+    const target = freshAdoptionTargetRecord({
+      id: targetId,
+      execution: targetExecution,
+    });
+    await writeRecordFixture(sessionsDir, source);
+    await writeRecordFixture(sessionsDir, target);
+
+    const store = sequencedStore(sessionsDir, 10);
+    const lease = await store.acquire(targetId);
+    const predecessor = await lease.predecessor();
+    const result = await lease.transferPredecessorGenerations({
+      predecessor,
+    });
+    expect(result).toEqual({
+      sourceSessionId: sourceId,
+      retainedGenerations,
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(Object.isFrozen(result.retainedGenerations.code)).toBe(true);
+
+    const sourceAfter = await store.read(sourceId);
+    const targetAfter = await store.read(targetId);
+    expect(sourceAfter).toEqual({
+      ...source,
+      schemaVersion: 3,
+      updatedAt: '2026-08-11T21:00:00.041Z',
+      retainedGenerations: {},
+    });
+    expect(targetAfter).toEqual({
+      ...target,
+      updatedAt: '2026-08-11T21:00:00.042Z',
+      retainedGenerations,
+    });
+    expect(sourceAfter.updatedAt).toBe('2026-08-11T21:00:00.041Z');
+    expect(targetAfter).toMatchObject({
+      createdAt: target.createdAt,
+      updatedAt: '2026-08-11T21:00:00.042Z',
+      structuralProjection: {
+        captain: {
+          adapter: 'codex',
+          instruction: 'Current Captain instruction.',
+        },
+        players: [{ id: 'replacement.coder' }],
+        catalog: {
+          code: {
+            command: 'code-current',
+            intent: 'Implement a requested change. Current wording.',
+          },
+        },
+      },
+    });
+    expect(
+      targetAfter.retainedGenerations.code.frames[0].roleBindings,
+    ).toEqual({ coder: 'dev.coder' });
+    const targetBytes = await readFile(
+      join(sessionsDir, `${targetId}.json`),
+      'utf8',
+    );
+    await lease.beginTurn({
+      input: 'discard after adoption transfer',
+      attemptId: attempt1,
+      attemptedExecutionProjection: targetExecution,
+    });
+    await lease.discard({ attemptId: attempt1 });
+    expect(
+      await readFile(join(sessionsDir, `${targetId}.json`), 'utf8'),
+    ).toBe(targetBytes);
+    await lease.release();
+
+    const reopened = sequencedStore(sessionsDir, 20);
+    expect((await reopened.read(sourceId)).retainedGenerations).toEqual({});
+    expect((await reopened.read(targetId)).retainedGenerations).toEqual(
+      retainedGenerations,
+    );
+    const nextTargetId = adoptionSessionId(12);
+    await writeRecordFixture(
+      sessionsDir,
+      freshAdoptionTargetRecord({
+        id: nextTargetId,
+        execution: targetExecution,
+      }),
+    );
+    const nextLease = await reopened.acquire(nextTargetId);
+    expect((await nextLease.predecessor()).sessionId).toBe(targetId);
+    await nextLease.release();
+  });
+
+  it.each([
+    'registry module',
+    'manifest command',
+    'raw options',
+    'required roles',
+    'concurrent roles',
+    'descendant catalog',
+  ] as const)(
+    'rejects an incompatible adoption %s envelope before either write',
+    async (mismatch) => {
+      const { sessionsDir } = await fixtureDir();
+      const sourceId = adoptionSessionId(20);
+      const targetId = adoptionSessionId(21);
+      let sourceExecution: any = retentionExecutionProjection();
+      let targetExecution: any = structuredClone(sourceExecution);
+      let generation: any = retainedCodeGeneration();
+      if (mismatch === 'registry module') {
+        targetExecution.catalog.code.from = '@example/code/registry';
+      } else if (mismatch === 'manifest command') {
+        targetExecution.catalog.code.manifestCommand = 'other-code';
+      } else if (mismatch === 'raw options') {
+        targetExecution.catalog.code.options = { variant: 'other' };
+      } else if (mismatch === 'required roles') {
+        targetExecution = withCodeReviewer(targetExecution);
+      } else if (mismatch === 'concurrent roles') {
+        sourceExecution = withCodeReviewer(sourceExecution);
+        targetExecution = withCodeReviewer(
+          structuredClone(retentionExecutionProjection()),
+          [['coder', 'reviewer']],
+        );
+        generation = retainedCodeGenerationWithReviewer();
+      } else {
+        delete targetExecution.catalog.review;
+      }
+      const source = retainedSettledRecord({
+        id: sourceId,
+        execution: sourceExecution,
+        retainedGenerations: { code: generation },
+      });
+      const target = freshAdoptionTargetRecord({
+        id: targetId,
+        execution: targetExecution,
+      });
+      const sourcePath = await writeRecordFixture(sessionsDir, source);
+      const targetPath = await writeRecordFixture(sessionsDir, target);
+      const sourceBytes = await readFile(sourcePath, 'utf8');
+      const targetBytes = await readFile(targetPath, 'utf8');
+
+      const store = sequencedStore(sessionsDir, 30);
+      const lease = await store.acquire(targetId);
+      const predecessor = await lease.predecessor();
+      await expect(
+        lease.transferPredecessorGenerations({ predecessor }),
+      ).rejects.toThrow(
+        mismatch === 'descendant catalog'
+          ? /no frame playbook "review"/
+          : /root envelope differs for "code"/,
+      );
+      expect(await readFile(sourcePath, 'utf8')).toBe(sourceBytes);
+      expect(await readFile(targetPath, 'utf8')).toBe(targetBytes);
+      await lease.release();
+    },
+  );
+
+  it('rejects stale predecessor selection without changing either record', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(30);
+    const targetId = adoptionSessionId(31);
+    const source = retainedSettledRecord({ id: sourceId });
+    const target = freshAdoptionTargetRecord({ id: targetId });
+    const sourcePath = await writeRecordFixture(sessionsDir, source);
+    const targetPath = await writeRecordFixture(sessionsDir, target);
+    const store = sequencedStore(sessionsDir, 40);
+    const lease = await store.acquire(targetId);
+    const predecessor = await lease.predecessor();
+
+    const changed = {
+      ...source,
+      updatedAt: '2026-08-11T21:00:00.025Z',
+    };
+    await writeRecordFixture(sessionsDir, changed);
+    const changedBytes = await readFile(sourcePath, 'utf8');
+    const targetBytes = await readFile(targetPath, 'utf8');
+    await expect(
+      lease.transferPredecessorGenerations({ predecessor }),
+    ).rejects.toThrow(/adoption predecessor changed/);
+    expect(await readFile(sourcePath, 'utf8')).toBe(changedBytes);
+    expect(await readFile(targetPath, 'utf8')).toBe(targetBytes);
+    await lease.release();
+  });
+
+  it('lets two settled contenders leave exactly one generation owner', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(35);
+    const firstTargetId = adoptionSessionId(36);
+    const secondTargetId = adoptionSessionId(37);
+    const source = retainedSettledRecord({
+      id: sourceId,
+      updatedAt: '2026-08-11T21:00:00.040Z',
+    });
+    await writeRecordFixture(sessionsDir, source);
+    for (const id of [firstTargetId, secondTargetId]) {
+      await writeRecordFixture(
+        sessionsDir,
+        freshAdoptionTargetRecord({ id, timestamp: '2026-08-11T21:00:00.030Z' }),
+      );
+    }
+
+    const store = sequencedStore(sessionsDir, 45);
+    const firstLease = await store.acquire(firstTargetId);
+    const secondLease = await store.acquire(secondTargetId);
+    const firstPredecessor = await firstLease.predecessor();
+    const secondPredecessor = await secondLease.predecessor();
+    expect(firstPredecessor.sessionId).toBe(sourceId);
+    expect(secondPredecessor.sessionId).toBe(sourceId);
+
+    await firstLease.transferPredecessorGenerations({
+      predecessor: firstPredecessor,
+    });
+    await expect(
+      secondLease.transferPredecessorGenerations({
+        predecessor: secondPredecessor,
+      }),
+    ).rejects.toThrow(/adoption predecessor changed/);
+    const owners = await Promise.all(
+      [sourceId, firstTargetId, secondTargetId].map(async (id) => ({
+        id,
+        retained: Object.keys(
+          (await store.read(id)).retainedGenerations ?? {},
+        ).length,
+      })),
+    );
+    expect(owners.filter(({ retained }) => retained > 0)).toEqual([
+      { id: firstTargetId, retained: 2 },
+    ]);
+    await firstLease.release();
+    await secondLease.release();
+  });
+
+  it('rejects transfer after target ownership changes without writing', async () => {
+    const { sessionsDir } = await fixtureDir();
+    const sourceId = adoptionSessionId(38);
+    const targetId = adoptionSessionId(39);
+    const sourcePath = await writeRecordFixture(
+      sessionsDir,
+      retainedSettledRecord({ id: sourceId }),
+    );
+    const targetPath = await writeRecordFixture(
+      sessionsDir,
+      freshAdoptionTargetRecord({ id: targetId }),
+    );
+    const store = sequencedStore(sessionsDir, 55);
+    const lease = await store.acquire(targetId);
+    const predecessor = await lease.predecessor();
+    const before = await Promise.all(
+      [sourcePath, targetPath].map((path) => readFile(path, 'utf8')),
+    );
+    const ownerPath = join(sessionsDir, `.${targetId}.lock`, 'owner.json');
+    const owner = JSON.parse(await readFile(ownerPath, 'utf8'));
+    await writeFile(
+      ownerPath,
+      `${JSON.stringify({
+        ...owner,
+        ownerToken: adoptionLeaseToken(999),
+      })}\n`,
+      'utf8',
+    );
+
+    await expect(
+      lease.transferPredecessorGenerations({ predecessor }),
+    ).rejects.toThrow(/owned by a different token/);
+    expect(
+      await Promise.all(
+        [sourcePath, targetPath].map((path) => readFile(path, 'utf8')),
+      ),
+    ).toEqual(before);
+  });
+
+  it.each(['uncertain', 'non-turn-zero', 'already retained'] as const)(
+    'rejects an adoption target that is %s before predecessor acquisition',
+    async (shape) => {
+      const { sessionsDir } = await fixtureDir();
+      const sourceId = adoptionSessionId(40);
+      const targetId = adoptionSessionId(41);
+      const execution = retentionExecutionProjection();
+      const source = retainedSettledRecord({ id: sourceId, execution });
+      const target =
+        shape === 'uncertain'
+          ? freshAdoptionTargetRecord({
+              id: targetId,
+              execution,
+              state: 'uncertain',
+            })
+          : shape === 'non-turn-zero'
+          ? settledRecord({
+              sessionId: targetId,
+              createdAt: '2026-08-11T21:00:00.028Z',
+              updatedAt: '2026-08-11T21:00:00.030Z',
+              structuralProjection:
+                projectCaptainSessionStructure(execution),
+              lastAppliedExecutionProjection: execution,
+              snapshot: shellSnapshot(execution, 1),
+              retainedGenerations: {},
+            })
+          : {
+              ...freshAdoptionTargetRecord({ id: targetId, execution }),
+              retainedGenerations: {
+                review: retainedReviewGeneration(),
+              },
+            };
+      await writeRecordFixture(sessionsDir, source);
+      const targetPath = await writeRecordFixture(sessionsDir, target);
+      const targetBytes = await readFile(targetPath, 'utf8');
+      const store = sequencedStore(sessionsDir, 50);
+      const lease = await store.acquire(targetId);
+      await expect(lease.predecessor()).rejects.toThrow(
+        shape === 'uncertain'
+          ? /must be settled at turn zero/
+          : shape === 'non-turn-zero'
+          ? /turn-zero shell snapshot/
+          : /already retains generations/,
+      );
+      expect(await readFile(targetPath, 'utf8')).toBe(targetBytes);
+      await lease.release();
+    },
+  );
+
+  it.each([
+    'source pre-publication',
+    'source post-publication',
+    'target pre-publication',
+    'target post-publication',
+  ] as const)(
+    'keeps at most one complete generation owner after a %s fault',
+    async (boundary) => {
+      const { sessionsDir } = await fixtureDir();
+      const sourceId = adoptionSessionId(50);
+      const targetId = adoptionSessionId(51);
+      const source = retainedSettledRecord({ id: sourceId });
+      const target = freshAdoptionTargetRecord({ id: targetId });
+      const sourcePath = await writeRecordFixture(sessionsDir, source);
+      const targetPath = await writeRecordFixture(sessionsDir, target);
+      const sourceBytes = await readFile(sourcePath, 'utf8');
+      const targetBytes = await readFile(targetPath, 'utf8');
+      let sourcePublished = false;
+      let targetPublished = false;
+      let syncFailed = false;
+      const store = sequencedStore(sessionsDir, 60, {
+        fsOps: {
+          async rename(from: string, to: string) {
+            if (
+              from.endsWith('.tmp') &&
+              ((boundary === 'source pre-publication' && to === sourcePath) ||
+                (boundary === 'target pre-publication' && to === targetPath))
+            ) {
+              throw new Error(`synthetic ${boundary} failure`);
+            }
+            await rename(from, to);
+            if (from.endsWith('.tmp') && to === sourcePath) {
+              sourcePublished = true;
+            }
+            if (from.endsWith('.tmp') && to === targetPath) {
+              targetPublished = true;
+            }
+          },
+          async open(
+            path: string,
+            flags: string | number,
+            mode?: number,
+          ) {
+            const handle = await open(path, flags as any, mode);
+            if (path !== sessionsDir || flags !== 'r') return handle;
+            return {
+              async sync() {
+                const failAfterSource =
+                  boundary === 'source post-publication' &&
+                  sourcePublished &&
+                  !targetPublished;
+                const failAfterTarget =
+                  boundary === 'target post-publication' && targetPublished;
+                if (!syncFailed && (failAfterSource || failAfterTarget)) {
+                  syncFailed = true;
+                  throw new Error(`synthetic ${boundary} failure`);
+                }
+                await handle.sync();
+              },
+              close: () => handle.close(),
+            };
+          },
+        },
+      });
+      const lease = await store.acquire(targetId);
+      const predecessor = await lease.predecessor();
+      await expect(
+        lease.transferPredecessorGenerations({ predecessor }),
+      ).rejects.toThrow(/cannot (?:clear|install) Captain session adoption/);
+
+      const sourceAfterBytes = await readFile(sourcePath, 'utf8');
+      const targetAfterBytes = await readFile(targetPath, 'utf8');
+      const sourceAfter = validateCaptainSessionRecord(
+        JSON.parse(sourceAfterBytes),
+      );
+      const targetAfter = validateCaptainSessionRecord(
+        JSON.parse(targetAfterBytes),
+      );
+      const owners = [sourceAfter, targetAfter].filter(
+        (record) => Object.keys(record.retainedGenerations ?? {}).length > 0,
+      );
+      expect(owners.length).toBeLessThanOrEqual(1);
+      if (
+        boundary === 'source pre-publication' ||
+        boundary === 'target pre-publication'
+      ) {
+        expect(sourceAfterBytes).toBe(sourceBytes);
+        expect(targetAfterBytes).toBe(targetBytes);
+      } else if (boundary === 'source post-publication') {
+        expect(sourceAfter.retainedGenerations).toEqual({});
+        expect(targetAfterBytes).toBe(targetBytes);
+      } else {
+        expect(sourceAfter.retainedGenerations).toEqual({});
+        expect(targetAfter.retainedGenerations).toEqual(
+          source.retainedGenerations,
+        );
+      }
+      expect(
+        (await readdir(sessionsDir)).some((name) => name.endsWith('.tmp')),
+      ).toBe(false);
+      await lease.release();
+    },
+  );
 
   it('rejects malformed or dangling retained generations before persistence', async () => {
     const execution = retentionExecutionProjection();

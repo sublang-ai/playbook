@@ -34,7 +34,7 @@ Implement [DR-038](../decisions/038-universal-run-resumption.md): retain each ro
    On adoption, bind each role from the current Captain-session player ledger, never from retained token projections, with fresh conversations for roles the ledger cannot supply; land the continuity items and tests for unchanged, advanced, and swapped players.
 5. **Trace the adoption lineage.** _[done]_
    Run adopted generations under fresh runtime session UUIDs and counters, trace the adoption boundary with source session and generation identity, and land the trace items and tests.
-6. **Transfer generations across sessions.**
+6. **Transfer generations across sessions.** _[done]_
    Implement predecessor selection (newest settled record, same working directory) and the guarded move-and-clear exchange under the store's lease discipline; land the `playbook-cli.md` items and cross-session store tests.
 7. **Advertise and select resumption.**
    Surface retained generations in the shell's control digest labeled by the retained root state's published description, add the validated resume selection to the Captain's closed action set with the decided arbitration order, and land the `playbook-captain.md` items and shell tests.
