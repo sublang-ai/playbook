@@ -1078,7 +1078,7 @@ describe('playbook launcher — adapter SDK preflight (PBCLI-41)', () => {
     expect(result.code).not.toBe(0);
     expect(result.code).not.toBe(127);
     expect(stderr.text()).toContain(
-      `Adapter runtimes not usable: claude (${CLAUDE_TARGET.bundles} not installed)`,
+      `Adapter runtimes not usable: claude (${CLAUDE_TARGET.bundles ?? CLAUDE_TARGET.package} not installed)`,
     );
     expect(stderr.text()).toContain(
       `npm install -g ${CLAUDE_TARGET.repairSpec}`,
