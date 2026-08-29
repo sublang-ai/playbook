@@ -6,7 +6,7 @@
 ## Status
 
 Accepted.
-[DR-040](040-outcome-authority-effect-reconciliation.md) requires every outstanding governed-call boundary to reconcile before retained-generation adoption and forbids duplicate-effect replay from an unresolved generation.
+[DR-040](040-outcome-authority-effect-reconciliation.md) requires every outstanding governed-call boundary to reconcile before retained-generation adoption, forbids duplicate-effect replay from an unresolved generation, and makes explicit unresolved abandonment clear the root's prior retained generation rather than preserve a dismissal candidate.
 
 ## Context
 

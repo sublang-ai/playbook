@@ -9,6 +9,7 @@ Accepted.
 [DR-010](010-playbook-session-tracing-and-resume.md) permits the resumed player call to continue its backend conversation in addition to receiving explicit question-and-answer context.
 [DR-011](011-composable-playbook-execution.md) extends the same contract to independently parked parallel branches.
 [DR-032](032-explicit-roles-session-players.md) replaces the question record's overloaded player label with a discriminated Captain-or-local-role asker.
+[DR-040](040-outcome-authority-effect-reconciliation.md) binds an effect-authorized question to one cumulative repository operation, permits only a checkpoint-identical authored continuation, and sends any other exit to unresolved reconciliation while leaving read-only question calls on their unchanged predicate.
 
 ## Context
 

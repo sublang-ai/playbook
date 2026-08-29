@@ -7,7 +7,7 @@
 
 Accepted.
 [DR-032](032-explicit-roles-session-players.md) uses the declared transition path to replace artifact schema `1` with schema `2`; every registry now advertises the artifact schema of every runtime profile, and declaration-free or schema-1 linked artifacts are incompatible with explicit local-role metadata in the next major.
-[DR-040](040-outcome-authority-effect-reconciliation.md) adds authority schema `3` alongside schema `2` under runtime ABI `1`, then removes schema `2` and adds the public `unresolved-effect` run-result variant in the next major.
+[DR-040](040-outcome-authority-effect-reconciliation.md) adds authority schema `3` alongside schema `2` under runtime ABI `1`, then removes schema `2` and adds the public `unresolved-effect` run-result variant plus bounded Captain-settlement evidence in the next major.
 
 ## Context
 
