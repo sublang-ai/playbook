@@ -145,6 +145,7 @@ export its compatibility self-report
 integer `RUNTIME_ABI` it implements and the read-only integer array
 `SUPPORTED_ARTIFACT_SCHEMAS` it accepts.
 The supported set shall be exactly `[2, 3]` under runtime ABI `1` and shall exclude schema `1`.
+Each successfully constructed shared factory shall expose the exact validated `{ artifactSchema, runtimeAbi }` pair as an immutable own `compat` data property, captured before later mutation of the supplied spec, so a containing registry can declare the factory profile without duplicating or re-reading link-time compatibility.
 Schema `2` shall require the canonical `role` field, shall supply no concrete host binding, shall forbid `outcomeAuthority`, and shall otherwise preserve its present factory and runtime behavior.
 Schema `3` shall require `outcomeAuthority` as an own exact plain-JSON data property whose `governedPlayerStates` keys exactly cover `roleStates`, or are explicitly empty for a roleless artifact; each governed state shall exactly cover its invoked result outcomes, each outcome shall carry only `fields` and `repositoryDisposition`, and its field keys shall exactly cover the non-`guard` payload fields named by that outcome's result description.
 Each schema-3 payload field shall declare exactly one of `presentation`, `semantic`, `effect`, or `runtime` authority: `question` and every linker-declared verbatim field shall be presentation-owned, `latestCommit` shall be effect-owned, and `irNumber` and `irTask` shall be semantic-owned, while the outcome key owns the semantic discriminator.

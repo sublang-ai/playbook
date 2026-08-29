@@ -21,6 +21,10 @@ export interface DecidePlaybookRegistryEntry {
   command: 'decide';
   intent: string;
   artifactSchema: 2;
+  runtimeProfile: {
+    readonly kind: 'bespoke';
+    readonly artifactSchema: 2;
+  };
   requiredRoleIds: readonly ['coder', 'reviewer'];
   concurrentRoleSets: readonly [readonly ['coder', 'reviewer']];
   summaryPolicy: PlaybookSummaryPolicy;
@@ -89,6 +93,10 @@ export const decidePlaybookRegistryEntry: DecidePlaybookRegistryEntry = {
   intent:
     'turn independent Coder and Reviewer proposals into an approved spec-design commit',
   artifactSchema: 2,
+  runtimeProfile: Object.freeze({
+    kind: 'bespoke',
+    artifactSchema: 2,
+  }),
   requiredRoleIds: ['coder', 'reviewer'],
   concurrentRoleSets: [['coder', 'reviewer']],
   summaryPolicy: decideSummaryPolicy,

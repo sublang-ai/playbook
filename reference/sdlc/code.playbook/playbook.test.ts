@@ -76,6 +76,7 @@ const fakeEntry = {
   command: 'code',
   intent: 'software development / SDLC coding workflow',
   artifactSchema: 2 as const,
+  runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
   requiredRoleIds: ['coder', 'reviewer'],
   concurrentRoleSets: [] as const,
   validateOptions: () => ({}),

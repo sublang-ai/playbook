@@ -1,4 +1,4 @@
-import { type XStatePromptIdentity } from '@sublang/playbook/xstate-runtime';
+import { type XStatePlaybookRuntimeFactory, type XStatePromptIdentity } from '@sublang/playbook/xstate-runtime';
 import { type CodingInput, type PlayerInput } from './code.fsm.js';
 import type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookControlReceipt, PlaybookControlView, PlaybookPendingCall, PlaybookPorts, PlaybookRunResult, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, PlayerResult, PlayerSessionStore } from '@sublang/playbook/runtime';
 export type { CaptainCallOptions, CaptainResult, JsonValue, NormalizedError, PlayerCallOptions, PlaybookCallRequest, PlaybookCallResult, PlaybookCallStart, PlaybookControlReceipt, PlaybookControlView, PlaybookPendingCall, PlaybookPorts, PlaybookRunResult, PlaybookRuntime, PlaybookRuntimeFactory, PlaybookRuntimeSnapshot, PlaybookSession, PlaybookState, PlaybookStateValue, PlaybookTraceEvent, PlaybookTraceType, PlayerResult, PlayerSessionStore, };
@@ -14,5 +14,5 @@ export declare const _internal: {
     VERBATIM_PAYLOAD_FIELDS: ReadonlySet<string>;
     UNFINISHED_FINAL_STATE_IDS: ReadonlySet<string>;
 };
-declare const createPlaybookRuntime: PlaybookRuntimeFactory<CodePlaybookOptions>;
+declare const createPlaybookRuntime: XStatePlaybookRuntimeFactory<CodePlaybookOptions, 2>;
 export default createPlaybookRuntime;

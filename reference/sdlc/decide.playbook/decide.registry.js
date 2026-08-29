@@ -43,6 +43,10 @@ export const decidePlaybookRegistryEntry = {
     command: 'decide',
     intent: 'turn independent Coder and Reviewer proposals into an approved spec-design commit',
     artifactSchema: 2,
+    runtimeProfile: Object.freeze({
+        kind: 'bespoke',
+        artifactSchema: 2,
+    }),
     requiredRoleIds: ['coder', 'reviewer'],
     concurrentRoleSets: [['coder', 'reviewer']],
     summaryPolicy: decideSummaryPolicy,

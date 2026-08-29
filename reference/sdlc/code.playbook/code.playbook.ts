@@ -14,6 +14,7 @@ import {
   createXStatePlaybookRuntime,
   snapshotJsonValue,
   type PlaybookPlayerInput,
+  type XStatePlaybookRuntimeFactory,
   type XStatePromptIdentity,
   type XStatePlaybookRuntimeSpec,
 } from '@sublang/playbook/xstate-runtime';
@@ -206,7 +207,9 @@ const runtimeSpec = {
   transitionEventFields: ['callerInput', 'answer', 'questionId'],
 } satisfies XStatePlaybookRuntimeSpec<CodePlaybookOptions>;
 
-const createPlaybookRuntime: PlaybookRuntimeFactory<CodePlaybookOptions> =
-  createXStatePlaybookRuntime(codingMachine, runtimeSpec);
+const createPlaybookRuntime: XStatePlaybookRuntimeFactory<
+  CodePlaybookOptions,
+  2
+> = createXStatePlaybookRuntime(codingMachine, runtimeSpec);
 
 export default createPlaybookRuntime;

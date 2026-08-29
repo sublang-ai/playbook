@@ -13,6 +13,13 @@ export interface ReviewPlaybookRegistryEntry {
     command: 'review';
     intent: string;
     artifactSchema: 2;
+    runtimeProfile: {
+        readonly kind: 'shared-factory';
+        readonly compat: {
+            readonly artifactSchema: 2;
+            readonly runtimeAbi: number;
+        };
+    };
     requiredRoleIds: readonly ['coder', 'reviewer'];
     concurrentRoleSets: readonly [];
     summaryPolicy: PlaybookSummaryPolicy;

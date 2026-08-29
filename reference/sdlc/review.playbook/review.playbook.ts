@@ -14,6 +14,7 @@ import {
   createXStatePlaybookRuntime,
   snapshotJsonValue,
   type PlaybookPlayerInput,
+  type XStatePlaybookRuntimeFactory,
   type XStatePromptIdentity,
   type XStatePlaybookRuntimeSpec,
 } from '@sublang/playbook/xstate-runtime';
@@ -208,7 +209,9 @@ const runtimeSpec = {
   ],
 } satisfies XStatePlaybookRuntimeSpec<ReviewPlaybookOptions>;
 
-const createPlaybookRuntime: PlaybookRuntimeFactory<ReviewPlaybookOptions> =
-  createXStatePlaybookRuntime(reviewMachine, runtimeSpec);
+const createPlaybookRuntime: XStatePlaybookRuntimeFactory<
+  ReviewPlaybookOptions,
+  2
+> = createXStatePlaybookRuntime(reviewMachine, runtimeSpec);
 
 export default createPlaybookRuntime;

@@ -21,6 +21,13 @@ export interface ReviewPlaybookRegistryEntry {
   command: 'review';
   intent: string;
   artifactSchema: 2;
+  runtimeProfile: {
+    readonly kind: 'shared-factory';
+    readonly compat: {
+      readonly artifactSchema: 2;
+      readonly runtimeAbi: number;
+    };
+  };
   requiredRoleIds: readonly ['coder', 'reviewer'];
   concurrentRoleSets: readonly [];
   summaryPolicy: PlaybookSummaryPolicy;
@@ -95,6 +102,10 @@ export const reviewPlaybookRegistryEntry: ReviewPlaybookRegistryEntry = {
   intent:
     'review the latest commit until no material correctness or spec findings remain',
   artifactSchema: 2,
+  runtimeProfile: Object.freeze({
+    kind: 'shared-factory',
+    compat: createPlaybookRuntime.compat,
+  }),
   requiredRoleIds: ['coder', 'reviewer'],
   concurrentRoleSets: [],
   summaryPolicy: reviewSummaryPolicy,

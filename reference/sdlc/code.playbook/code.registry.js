@@ -48,6 +48,10 @@ export const codePlaybookRegistryEntry = {
     command: 'code',
     intent: 'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
     artifactSchema: 2,
+    runtimeProfile: Object.freeze({
+        kind: 'shared-factory',
+        compat: createPlaybookRuntime.compat,
+    }),
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [],
     summaryPolicy: codeSummaryPolicy,

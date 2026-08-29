@@ -84,8 +84,7 @@ function configuredOptionsFromFactoryInput(value, artifactSchema, label) {
         !keys.includes(HOST_CAPABILITIES_OPTION_KEY) ||
         keys.some((key) => {
             const descriptor = descriptors[key];
-            return (typeof key !== 'string' ||
-                descriptor?.get !== undefined ||
+            return (descriptor?.get !== undefined ||
                 descriptor?.set !== undefined ||
                 descriptor?.enumerable !== true ||
                 !Object.prototype.hasOwnProperty.call(descriptor, 'value'));
@@ -1030,11 +1029,9 @@ const REPOSITORY_DISPOSITIONS = new Set([
     'deferred',
 ]);
 const OUTCOME_FIELD_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const SEMANTIC_OUTCOME_FIELDS = new Set([
+const SEMANTIC_PAYLOAD_FIELDS = new Set([
     'irNumber',
     'irTask',
-    'moreTasks',
-    'finalTask',
 ]);
 function requireExactObjectKeys(value, expected, path) {
     const actual = Object.keys(value);
@@ -1045,11 +1042,6 @@ function requireExactObjectKeys(value, expected, path) {
     throw new TypeError(`${path} must contain exactly ${expected.join(', ')}` +
         (missing.length === 0 ? '' : `; missing ${missing.join(', ')}`) +
         (extra.length === 0 ? '' : `; unknown ${extra.join(', ')}`));
-}
-function requireCanonicalAuthorityKey(value, path) {
-    if (value.length === 0 || value !== value.trim()) {
-        throw new TypeError(`${path} must be a canonical non-empty string`);
-    }
 }
 function requireAuthorityIdentifier(value, path) {
     if (!OUTCOME_FIELD_KEY_PATTERN.test(value)) {
@@ -1084,7 +1076,6 @@ function snapshotOutcomeAuthority(descriptor, artifactSchema, label, playerState
         }
     }
     for (const stateId of Object.keys(governed)) {
-        requireCanonicalAuthorityKey(stateId, `${path}.governedPlayerStates key`);
         if (!playerStates.has(stateId)) {
             throw new TypeError(`${path}.governedPlayerStates.${stateId} does not name a player state`);
         }
@@ -1120,7 +1111,7 @@ function snapshotOutcomeAuthority(descriptor, artifactSchema, label, playerState
                 const requiredAuthorities = new Set();
                 if (field === 'latestCommit')
                     requiredAuthorities.add('effect');
-                if (SEMANTIC_OUTCOME_FIELDS.has(field)) {
+                if (SEMANTIC_PAYLOAD_FIELDS.has(field)) {
                     requiredAuthorities.add('semantic');
                 }
                 if (field === 'question' || verbatimPayloadFields.has(field)) {
@@ -1135,11 +1126,6 @@ function snapshotOutcomeAuthority(descriptor, artifactSchema, label, playerState
                 }
                 if (verbatimPayloadFields.has(field))
                     usedVerbatimFields.add(field);
-                if (authority === 'presentation' &&
-                    field !== 'question' &&
-                    !verbatimPayloadFields.has(field)) {
-                    throw new TypeError(`${outcomePath}.fields.${field} presentation authority requires a linker-declared verbatim payload field`);
-                }
                 fields[field] = authority;
             }
             const disposition = rawSpec.repositoryDisposition;
@@ -4163,5 +4149,11 @@ export function createXStatePlaybookRuntime(machine, spec) {
         };
         return runtime;
     };
+    Object.defineProperty(createPlaybookRuntime, 'compat', {
+        value: Object.freeze({ artifactSchema, runtimeAbi: RUNTIME_ABI }),
+        enumerable: true,
+        writable: false,
+        configurable: false,
+    });
     return createPlaybookRuntime;
 }

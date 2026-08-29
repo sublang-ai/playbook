@@ -37,20 +37,31 @@ export interface PlaybookCaptainDeps {
 export interface PlaybookHostConstructionCapabilities {
     readonly [capability: string]: unknown;
 }
-interface PlaybookCaptainRegistryEntryBase {
+export type PlaybookCaptainRuntimeProfile<ArtifactSchema extends 2 | 3> = {
+    readonly kind: 'shared-factory';
+    readonly compat: {
+        readonly artifactSchema: ArtifactSchema;
+        readonly runtimeAbi: number;
+    };
+} | {
+    readonly kind: 'bespoke';
+    readonly artifactSchema: ArtifactSchema;
+};
+interface PlaybookCaptainRegistryEntryBase<ArtifactSchema extends 2 | 3> {
     id: string;
     command: string;
     intent: string;
+    runtimeProfile: PlaybookCaptainRuntimeProfile<ArtifactSchema>;
     requiredRoleIds: readonly string[];
     concurrentRoleSets: readonly (readonly string[])[];
     summaryPolicy?: PlaybookSummaryPolicy;
     validateOptions(optionSlice: unknown): unknown;
 }
-export interface PlaybookCaptainRegistryEntryV2 extends PlaybookCaptainRegistryEntryBase {
+export interface PlaybookCaptainRegistryEntryV2 extends PlaybookCaptainRegistryEntryBase<2> {
     artifactSchema: 2;
     createRuntime(configuredOptions: unknown): PlaybookRuntime;
 }
-export interface PlaybookCaptainRegistryEntryV3 extends PlaybookCaptainRegistryEntryBase {
+export interface PlaybookCaptainRegistryEntryV3 extends PlaybookCaptainRegistryEntryBase<3> {
     artifactSchema: 3;
     createRuntime(configuredOptions: unknown, hostCapabilities: PlaybookHostConstructionCapabilities): PlaybookRuntime;
 }

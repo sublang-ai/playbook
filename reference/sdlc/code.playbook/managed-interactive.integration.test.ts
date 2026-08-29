@@ -788,6 +788,7 @@ function fixtureRegistryEntry() {
     command: 'code',
     intent: 'exercise one durable player',
     artifactSchema: 2 as const,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 } as const,
     requiredRoleIds: ['coder'],
     concurrentRoleSets: [] as const,
     validateOptions: (value: unknown) => value,

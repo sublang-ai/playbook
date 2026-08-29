@@ -1253,6 +1253,7 @@ function shellEntry(
       command,
       intent: `${id} playbook`,
       artifactSchema: 2,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
       requiredRoleIds: ['worker'],
       concurrentRoleSets: [],
       ...(summaryPolicy === undefined ? {} : { summaryPolicy }),

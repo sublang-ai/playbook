@@ -25,12 +25,14 @@ function entry(
   command = id,
   concurrentRoleSets: string[][] = [],
   artifactSchema = 2,
+  runtimeProfile: unknown = { kind: 'bespoke', artifactSchema },
 ) {
   return {
     id,
     command,
     intent: `${id} intent`,
     artifactSchema,
+    runtimeProfile,
     requiredRoleIds,
     concurrentRoleSets,
     validateOptions: () => ({}),
@@ -258,7 +260,10 @@ describe('shared launch-config plan (PBCLI-47)', () => {
   it('accepts and projects a schema-3 registry advertisement', async () => {
     const plan = await launchConfig.normalizeLaunchPlan(oneRoleConfig(), {
       loadModule: moduleLoader({
-        'mod://code': entry('code', ['coder'], 'code', [], 3),
+        'mod://code': entry('code', ['coder'], 'code', [], 3, {
+          kind: 'shared-factory',
+          compat: { artifactSchema: 3, runtimeAbi: 17 },
+        }),
       }),
     });
 
@@ -273,6 +278,39 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     ).resolves.toMatchObject({
       catalog: { code: { artifactSchema: 3 } },
     });
+  });
+
+  it('snapshots every consumed registry member once before validation and projection', async () => {
+    const consumed = [
+      'id',
+      'command',
+      'intent',
+      'artifactSchema',
+      'runtimeProfile',
+      'requiredRoleIds',
+      'concurrentRoleSets',
+      'validateOptions',
+      'createRuntime',
+    ] as const;
+    const reads = Object.fromEntries(consumed.map((key) => [key, 0]));
+    const manifest = new Proxy(entry('code', ['coder']), {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && key in reads) {
+          reads[key] += 1;
+          if (key === 'artifactSchema' && reads[key] > 1) return 3;
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    });
+
+    const plan = await launchConfig.normalizeLaunchPlan(oneRoleConfig(), {
+      loadModule: async () => ({ default: manifest }),
+    });
+
+    expect(reads).toEqual(
+      Object.fromEntries(consumed.map((key) => [key, 1])),
+    );
+    expect(plan.catalog.code.artifactSchema).toBe(2);
   });
 
   it('rejects host capabilities from a stored structural projection', async () => {
@@ -1193,6 +1231,38 @@ describe('shared launch-config plan (PBCLI-47)', () => {
   it.each([
     ['artifact schema 1', { artifactSchema: 1 }],
     ['artifact schema 4', { artifactSchema: 4 }],
+    ['missing runtime profile', { runtimeProfile: undefined }],
+    [
+      'shared-factory schema skew',
+      {
+        runtimeProfile: {
+          kind: 'shared-factory',
+          compat: { artifactSchema: 3, runtimeAbi: 1 },
+        },
+      },
+    ],
+    [
+      'bespoke schema skew',
+      { runtimeProfile: { kind: 'bespoke', artifactSchema: 3 } },
+    ],
+    [
+      'malformed shared-factory compat',
+      {
+        runtimeProfile: {
+          kind: 'shared-factory',
+          compat: { artifactSchema: 2, runtimeAbi: 1, extra: true },
+        },
+      },
+    ],
+    [
+      'noninteger shared-factory ABI',
+      {
+        runtimeProfile: {
+          kind: 'shared-factory',
+          compat: { artifactSchema: 2, runtimeAbi: 1.5 },
+        },
+      },
+    ],
     ['missing concurrent sets', { concurrentRoleSets: undefined }],
     ['one-role concurrent set', { concurrentRoleSets: [['coder']] }],
     ['unknown concurrent role', { concurrentRoleSets: [['coder', 'other']] }],

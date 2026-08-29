@@ -478,6 +478,64 @@ function summaryProgressRoundCount(stateCounts) {
 function guardFromJudgeReply(finalText) {
     return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
 }
+function captureRegistryEntry(value) {
+    if (value === null || typeof value !== 'object')
+        return value;
+    const source = value;
+    return {
+        id: source.id,
+        command: source.command,
+        intent: source.intent,
+        artifactSchema: source.artifactSchema,
+        runtimeProfile: source.runtimeProfile,
+        requiredRoleIds: source.requiredRoleIds,
+        concurrentRoleSets: source.concurrentRoleSets,
+        summaryPolicy: source.summaryPolicy,
+        validateOptions: source.validateOptions,
+        createRuntime: source.createRuntime,
+    };
+}
+function exactOwnDataRecord(value, keys) {
+    if (value === null ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        (Object.getPrototypeOf(value) !== Object.prototype &&
+            Object.getPrototypeOf(value) !== null)) {
+        return undefined;
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(descriptors).length !== keys.length ||
+        keys.some((key) => !Object.hasOwn(descriptors, key) ||
+            !Object.hasOwn(descriptors[key], 'value') ||
+            descriptors[key].enumerable !== true)) {
+        return undefined;
+    }
+    return Object.fromEntries(keys.map((key) => [key, descriptors[key].value]));
+}
+function validateRuntimeProfile(value) {
+    const shared = exactOwnDataRecord(value, ['kind', 'compat']);
+    if (shared?.kind === 'shared-factory') {
+        const compat = exactOwnDataRecord(shared.compat, [
+            'artifactSchema',
+            'runtimeAbi',
+        ]);
+        if ((compat?.artifactSchema === 2 || compat?.artifactSchema === 3) &&
+            typeof compat.runtimeAbi === 'number' &&
+            Number.isSafeInteger(compat.runtimeAbi)) {
+            return {
+                kind: 'shared-factory',
+                artifactSchema: compat.artifactSchema,
+            };
+        }
+        return undefined;
+    }
+    const bespoke = exactOwnDataRecord(value, ['kind', 'artifactSchema']);
+    if (bespoke?.kind === 'bespoke' &&
+        (bespoke.artifactSchema === 2 || bespoke.artifactSchema === 3)) {
+        return { kind: 'bespoke', artifactSchema: bespoke.artifactSchema };
+    }
+    return undefined;
+}
 function isValidRegistryEntry(value, artifactSchema) {
     if (typeof value !== 'object' || value === null)
         return false;
@@ -1167,12 +1225,21 @@ async function buildEnablements(options, loadModule) {
         catch (cause) {
             throw new Error(`captain.options.playbooks.${id}.from "${from}" failed to import: ${String(cause?.message ?? cause)}`);
         }
-        const entry = mod?.default;
+        const entry = captureRegistryEntry(mod?.default);
         const artifactSchema = entry
             ?.artifactSchema;
+        const runtimeProfile = validateRuntimeProfile(entry?.runtimeProfile);
         if ((artifactSchema !== 2 && artifactSchema !== 3) ||
+            runtimeProfile === undefined ||
             !isValidRegistryEntry(entry, artifactSchema)) {
             throw new Error(`captain.options.playbooks.${id}.from "${from}" exposes no valid registry entry`);
+        }
+        if (runtimeProfile.artifactSchema !== artifactSchema) {
+            const implementation = runtimeProfile.kind === 'shared-factory'
+                ? 'shared factory'
+                : 'bespoke runtime';
+            throw new Error(`captain.options.playbooks.${id}.from "${from}" advertises artifact schema ${artifactSchema} ` +
+                `but its ${implementation} implements schema ${runtimeProfile.artifactSchema}`);
         }
         if (entry.id !== id) {
             throw new Error(`captain.options.playbooks.${id} key must equal the module manifest id "${entry.id}"`);

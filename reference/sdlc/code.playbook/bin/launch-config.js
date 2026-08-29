@@ -822,7 +822,7 @@ export async function normalizeLaunchPlan(
         `playbooks.${id}.from "${from}" failed to import: ${errorMessage(cause)}`,
       );
     }
-    const entry = mod?.default;
+    const entry = snapshotRegistryEntry(mod?.default);
     const registryProblem = invalidRegistryEntryReason(entry);
     if (registryProblem !== undefined) {
       throw new Error(
@@ -1268,7 +1268,26 @@ function assertNoRetiredProfiles(top, configPath) {
   }
 }
 
-function invalidRegistryEntryReason(value) {
+// Imported manifests remain live JavaScript objects. Capture every member this
+// host consumes once, then validate and project only the detached record so a
+// getter or later mutation cannot make those two phases observe different
+// compatibility declarations or identities.
+export function snapshotRegistryEntry(value) {
+  if (!isObject(value)) return value;
+  return {
+    id: value.id,
+    command: value.command,
+    intent: value.intent,
+    artifactSchema: value.artifactSchema,
+    runtimeProfile: value.runtimeProfile,
+    requiredRoleIds: value.requiredRoleIds,
+    concurrentRoleSets: value.concurrentRoleSets,
+    validateOptions: value.validateOptions,
+    createRuntime: value.createRuntime,
+  };
+}
+
+export function invalidRegistryEntryReason(value) {
   if (!isObject(value)) return 'the default export must be an object';
   if (
     typeof value.id !== 'string' ||
@@ -1288,6 +1307,11 @@ function invalidRegistryEntryReason(value) {
   if (value.artifactSchema !== 2 && value.artifactSchema !== 3) {
     return 'artifactSchema must be 2 or 3';
   }
+  const runtimeProfileProblem = invalidRuntimeProfileReason(
+    value.runtimeProfile,
+    value.artifactSchema,
+  );
+  if (runtimeProfileProblem !== undefined) return runtimeProfileProblem;
   const roleProblem = invalidManifestRoles(value.requiredRoleIds);
   if (roleProblem !== undefined) return `requiredRoleIds ${roleProblem}`;
   const concurrentProblem = invalidConcurrentRoleSets(
@@ -1304,6 +1328,89 @@ function invalidRegistryEntryReason(value) {
     return 'createRuntime must be a function';
   }
   return undefined;
+}
+
+function invalidRuntimeProfileReason(value, advertisedArtifactSchema) {
+  if (!isPlainObject(value)) {
+    return 'runtimeProfile must be a plain object';
+  }
+  const kindDescriptor = Object.getOwnPropertyDescriptor(value, 'kind');
+  if (
+    kindDescriptor === undefined ||
+    kindDescriptor.get !== undefined ||
+    kindDescriptor.set !== undefined ||
+    kindDescriptor.enumerable !== true
+  ) {
+    return 'runtimeProfile.kind must be an enumerable data property';
+  }
+  const kind = kindDescriptor.value;
+  if (kind === 'shared-factory') {
+    const profile = exactPlainDataRecord(value, ['kind', 'compat']);
+    if (profile === undefined) {
+      return 'shared-factory runtimeProfile must contain exactly kind and compat data properties';
+    }
+    const compat = exactPlainDataRecord(profile.compat, [
+      'artifactSchema',
+      'runtimeAbi',
+    ]);
+    if (compat === undefined) {
+      return 'shared-factory runtimeProfile.compat must contain exactly artifactSchema and runtimeAbi data properties';
+    }
+    if (!Number.isSafeInteger(compat.artifactSchema)) {
+      return 'shared-factory runtimeProfile.compat.artifactSchema must be an integer';
+    }
+    if (!Number.isSafeInteger(compat.runtimeAbi)) {
+      return 'shared-factory runtimeProfile.compat.runtimeAbi must be an integer';
+    }
+    if (compat.artifactSchema !== advertisedArtifactSchema) {
+      return 'artifactSchema must match runtimeProfile.compat.artifactSchema';
+    }
+    return undefined;
+  }
+  if (kind === 'bespoke') {
+    const profile = exactPlainDataRecord(value, ['kind', 'artifactSchema']);
+    if (profile === undefined) {
+      return 'bespoke runtimeProfile must contain exactly kind and artifactSchema data properties';
+    }
+    if (!Number.isSafeInteger(profile.artifactSchema)) {
+      return 'bespoke runtimeProfile.artifactSchema must be an integer';
+    }
+    if (profile.artifactSchema !== advertisedArtifactSchema) {
+      return 'artifactSchema must match runtimeProfile.artifactSchema';
+    }
+    return undefined;
+  }
+  return 'runtimeProfile.kind must be shared-factory or bespoke';
+}
+
+function exactPlainDataRecord(value, expectedKeys) {
+  if (!isPlainObject(value)) return undefined;
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some(
+      (key) => typeof key !== 'string' || !expectedKeys.includes(key),
+    )
+  ) {
+    return undefined;
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (
+    expectedKeys.some((key) => {
+      const descriptor = descriptors[key];
+      return (
+        descriptor === undefined ||
+        descriptor.get !== undefined ||
+        descriptor.set !== undefined ||
+        descriptor.enumerable !== true
+      );
+    })
+  ) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    expectedKeys.map((key) => [key, descriptors[key].value]),
+  );
 }
 
 function validateStoredStructuralProjection(value) {

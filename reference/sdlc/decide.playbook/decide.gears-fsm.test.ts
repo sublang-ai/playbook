@@ -373,6 +373,7 @@ describe('DECIDE GEARS to FSM compilation', () => {
       id: 'decide',
       command: 'decide',
       artifactSchema: 2,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
       requiredRoleIds: ['coder', 'reviewer'],
       concurrentRoleSets: [['coder', 'reviewer']],
     });

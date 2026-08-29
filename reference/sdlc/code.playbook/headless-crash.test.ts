@@ -48,6 +48,7 @@ async function crashFixture() {
       'export default {',
       "  id: 'fixture', command: 'fixture', intent: 'crash fixture',",
       '  artifactSchema: 2,',
+      "  runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },",
       "  requiredRoleIds: ['worker'],",
       '  concurrentRoleSets: [],',
       '  validateOptions(value) { return value; },',

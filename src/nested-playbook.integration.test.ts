@@ -464,6 +464,7 @@ function registryEntry(
     command,
     intent: `${id} integration playbook`,
     artifactSchema: 2,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
     requiredRoleIds,
     concurrentRoleSets: [],
     validateOptions: (options) => options,

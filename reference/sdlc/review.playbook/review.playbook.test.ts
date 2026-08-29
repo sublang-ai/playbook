@@ -493,9 +493,16 @@ describe('linked REVIEW runtime', () => {
   it('advertises the schema-2 local-role manifest', () => {
     expect(reviewPlaybookRegistryEntry).toMatchObject({
       artifactSchema: 2,
+      runtimeProfile: {
+        kind: 'shared-factory',
+        compat: { artifactSchema: 2, runtimeAbi: 1 },
+      },
       requiredRoleIds: ['coder', 'reviewer'],
       concurrentRoleSets: [],
     });
+    expect(reviewPlaybookRegistryEntry.runtimeProfile.compat).toBe(
+      createPlaybookRuntime.compat,
+    );
   });
 
   it('validates the registry slice without deriving host identity', () => {

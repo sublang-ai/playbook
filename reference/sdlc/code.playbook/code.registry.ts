@@ -21,6 +21,13 @@ export interface CodePlaybookRegistryEntry {
   command: 'code';
   intent: string;
   artifactSchema: 2;
+  runtimeProfile: {
+    readonly kind: 'shared-factory';
+    readonly compat: {
+      readonly artifactSchema: 2;
+      readonly runtimeAbi: number;
+    };
+  };
   requiredRoleIds: readonly ['coder'];
   concurrentRoleSets: readonly [];
   summaryPolicy: PlaybookSummaryPolicy;
@@ -92,6 +99,10 @@ export const codePlaybookRegistryEntry: CodePlaybookRegistryEntry = {
   intent:
     'implement a coding intent in reviewed, one-commit phases, using an intent record when needed',
   artifactSchema: 2,
+  runtimeProfile: Object.freeze({
+    kind: 'shared-factory',
+    compat: createPlaybookRuntime.compat,
+  }),
   requiredRoleIds: ['coder'],
   concurrentRoleSets: [],
   summaryPolicy: codeSummaryPolicy,

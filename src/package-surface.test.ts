@@ -1246,6 +1246,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'XStateOutcomeAuthoritySpec',
       'XStateOutcomeFieldAuthority',
       'XStatePlaybookRuntimeConstruction',
+      'XStatePlaybookRuntimeFactory',
       'XStatePlaybookRuntimeFactoryOptions',
       'XStatePlaybookRuntimeSpecV2',
       'XStatePlaybookRuntimeSpecV3',
@@ -1371,6 +1372,7 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCaptainRegistryEntry',
       'PlaybookCaptainRegistryEntryV2',
       'PlaybookCaptainRegistryEntryV3',
+      'PlaybookCaptainRuntimeProfile',
       'PlaybookCaptainRetainedGeneration',
       'PlaybookCaptainRetentionUpdate',
       'PlaybookCaptainSettlement',
@@ -1663,8 +1665,10 @@ if (snapshot.mode === 'engaged.parked') {
 import type {
   PlaybookCaptainRegistryEntryV2,
   PlaybookCaptainRegistryEntryV3,
+  PlaybookCaptainRuntimeProfile,
   PlaybookHostConstructionCapabilities,
 } from '@sublang/playbook/playbook-captain';
+import type { PlaybookPorts } from '@sublang/playbook/runtime';
 
 interface Options { readonly mode: string }
 interface Capabilities { readonly observe: () => string }
@@ -1678,11 +1682,13 @@ legacyFactory({ mode: 'safe' });
 
 const v2Factory = createXStatePlaybookRuntime<Options>(machine, v2Spec);
 v2Factory({ mode: 'safe' });
+const v2FactorySchema: 2 = v2Factory.compat.artifactSchema;
 // @ts-expect-error schema 2 retains raw configured factory options
 v2Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
 
 const v3Factory = createXStatePlaybookRuntime<Options, Capabilities>(machine, v3Spec);
 v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
+const v3FactorySchema: 3 = v3Factory.compat.artifactSchema;
 // @ts-expect-error schema 3 requires the disjoint construction object
 v3Factory({ mode: 'safe' });
 // @ts-expect-error live host capabilities must use an object type
@@ -1704,14 +1710,26 @@ void wrongV3;
 
 declare const configuredOptions: unknown;
 declare const hostCapabilities: PlaybookHostConstructionCapabilities;
+declare const ports: PlaybookPorts;
 declare const v2Entry: PlaybookCaptainRegistryEntryV2;
 declare const v3Entry: PlaybookCaptainRegistryEntryV3;
+// @ts-expect-error live construction capabilities are not runtime ports
+ports.hostCapabilities;
+const v2Profile: PlaybookCaptainRuntimeProfile<2> = v2Entry.runtimeProfile;
+const v3Profile: PlaybookCaptainRuntimeProfile<3> = v3Entry.runtimeProfile;
+// @ts-expect-error a schema-2 registry profile cannot claim schema 3
+const wrongProfile: PlaybookCaptainRuntimeProfile<2> = { kind: 'bespoke', artifactSchema: 3 };
 v2Entry.createRuntime(configuredOptions);
 // @ts-expect-error schema 2 registry construction has no capability argument
 v2Entry.createRuntime(configuredOptions, hostCapabilities);
 // @ts-expect-error schema 3 registry construction requires capabilities
 v3Entry.createRuntime(configuredOptions);
 v3Entry.createRuntime(configuredOptions, hostCapabilities);
+void v2FactorySchema;
+void v3FactorySchema;
+void v2Profile;
+void v3Profile;
+void wrongProfile;
 `,
       );
       const program = ts.createProgram([fixture], {

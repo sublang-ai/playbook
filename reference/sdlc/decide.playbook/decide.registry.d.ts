@@ -13,6 +13,10 @@ export interface DecidePlaybookRegistryEntry {
     command: 'decide';
     intent: string;
     artifactSchema: 2;
+    runtimeProfile: {
+        readonly kind: 'bespoke';
+        readonly artifactSchema: 2;
+    };
     requiredRoleIds: readonly ['coder', 'reviewer'];
     concurrentRoleSets: readonly [readonly ['coder', 'reviewer']];
     summaryPolicy: PlaybookSummaryPolicy;

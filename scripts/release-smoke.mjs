@@ -423,6 +423,7 @@ export default {
   command: 'smoke',
   intent: 'deterministic release smoke fixture',
   artifactSchema: 2,
+  runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: [],
   concurrentRoleSets: [],
   validateOptions(value) {
@@ -547,6 +548,7 @@ export default {
   command: 'recover',
   intent: 'deterministic recoverable-failure fixture',
   artifactSchema: 2,
+  runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: [],
   concurrentRoleSets: [],
   validateOptions(value) {
@@ -569,6 +571,7 @@ export default {
   command: 'lanes',
   intent: 'exercise segmented shared and isolated session players',
   artifactSchema: 2,
+  runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
   requiredRoleIds: ['first', 'second', 'isolated'],
   concurrentRoleSets: [],
   validateOptions(value) {

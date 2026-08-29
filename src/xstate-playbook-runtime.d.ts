@@ -133,6 +133,13 @@ export interface XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabi
     readonly hostCapabilities: HostCapabilities;
 }
 export type XStatePlaybookRuntimeFactoryOptions<ConfiguredOptions, HostCapabilities extends object> = [HostCapabilities] extends [never] ? ConfiguredOptions : XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
+/** Shared XState factory with its captured, validated artifact compatibility. */
+export type XStatePlaybookRuntimeFactory<Options = unknown, ArtifactSchema extends 2 | 3 = 2 | 3> = PlaybookRuntimeFactory<Options> & {
+    readonly compat: Readonly<{
+        readonly artifactSchema: ArtifactSchema;
+        readonly runtimeAbi: typeof RUNTIME_ABI;
+    }>;
+};
 /**
  * One direct-Captain actor invocation handed to a spec's `captainStrategy`
  * (slc/link.md §Captain adjudication, controller form). The engine owns
@@ -374,6 +381,6 @@ export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): 
  * state key — so each snapshot exposes exactly one playbook state id.
  * Parallel-region FSMs keep their own linked runtimes.
  */
-export declare function createXStatePlaybookRuntime<TOptions>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpec<TOptions>): PlaybookRuntimeFactory<TOptions>;
-export declare function createXStatePlaybookRuntime<TOptions, THostCapabilities extends object>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpecV3<TOptions>): PlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<TOptions, THostCapabilities>>;
+export declare function createXStatePlaybookRuntime<TOptions>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpec<TOptions>): XStatePlaybookRuntimeFactory<TOptions, 2>;
+export declare function createXStatePlaybookRuntime<TOptions, THostCapabilities extends object>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpecV3<TOptions>): XStatePlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<TOptions, THostCapabilities>, 3>;
 export {};

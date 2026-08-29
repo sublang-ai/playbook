@@ -519,6 +519,10 @@ function fakeCodeEntry(
       command: 'code',
       intent: 'software development / SDLC coding workflow',
       artifactSchema: 2,
+      runtimeProfile: {
+        kind: 'shared-factory',
+        compat: { artifactSchema: 2, runtimeAbi: 1 },
+      },
       requiredRoleIds: ['coder', 'reviewer'],
       concurrentRoleSets: [],
       summaryPolicy: {
@@ -928,6 +932,108 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     expect(registry.createRuntime).not.toHaveBeenCalled();
   });
 
+  it('rejects a registry without an implementation runtime profile', async () => {
+    const registry = fakeCodeEntry();
+    const { runtimeProfile: _runtimeProfile, ...entry } = registry.entry;
+    registry.entry = entry as unknown as PlaybookCaptainRegistryEntryV2;
+    const shell = makeShell(registry);
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      /exposes no valid registry entry/,
+    );
+
+    expect(registry.validateOptions).not.toHaveBeenCalled();
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'an extra profile field',
+      { kind: 'bespoke', artifactSchema: 2, extra: true },
+    ],
+    [
+      'an unsafe shared-factory ABI',
+      {
+        kind: 'shared-factory',
+        compat: {
+          artifactSchema: 2,
+          runtimeAbi: Number.MAX_SAFE_INTEGER + 1,
+        },
+      },
+    ],
+    [
+      'a non-plain profile',
+      Object.assign(Object.create({ inherited: true }), {
+        kind: 'bespoke',
+        artifactSchema: 2,
+      }),
+    ],
+    [
+      'a hidden profile member',
+      Object.defineProperty(
+        { kind: 'bespoke' },
+        'artifactSchema',
+        { value: 2 },
+      ),
+    ],
+  ])('rejects a runtime profile with %s', async (_name, runtimeProfile) => {
+    const registry = fakeCodeEntry();
+    registry.entry = {
+      ...registry.entry,
+      runtimeProfile,
+    } as unknown as PlaybookCaptainRegistryEntryV2;
+    const shell = makeShell(registry);
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      /exposes no valid registry entry/,
+    );
+
+    expect(registry.validateOptions).not.toHaveBeenCalled();
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['schema-3 manifest around a schema-2 shared factory', 3, 2],
+    ['schema-2 manifest around a schema-3 shared factory', 2, 3],
+  ] as const)(
+    'rejects %s before option validation or runtime construction',
+    async (_name, advertisedSchema, implementedSchema) => {
+      const registry = fakeCodeEntry();
+      registry.entry = {
+        ...registry.entry,
+        artifactSchema: advertisedSchema,
+        runtimeProfile: {
+          kind: 'shared-factory',
+          compat: { artifactSchema: implementedSchema, runtimeAbi: 1 },
+        },
+      } as unknown as PlaybookCaptainRegistryEntryV2;
+      const shell = makeShell(registry);
+
+      await expect(shell.init!(stubSession().session)).rejects.toThrow(
+        `advertises artifact schema ${advertisedSchema} but its shared factory implements schema ${implementedSchema}`,
+      );
+
+      expect(registry.validateOptions).not.toHaveBeenCalled();
+      expect(registry.createRuntime).not.toHaveBeenCalled();
+    },
+  );
+
+  it('rejects a disagreeing bespoke runtime profile before construction', async () => {
+    const registry = fakeCodeEntry();
+    registry.entry = {
+      ...registry.entry,
+      runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+    } as unknown as PlaybookCaptainRegistryEntryV2;
+    const shell = makeShell(registry);
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      'advertises artifact schema 2 but its bespoke runtime implements schema 3',
+    );
+
+    expect(registry.validateOptions).not.toHaveBeenCalled();
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
   it('accepts a schema-3 registry manifest but requires host construction capabilities', async () => {
     const registry = fakeCodeEntry();
     const createRuntime = vi.fn(
@@ -937,6 +1043,10 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     registry.entry = {
       ...registry.entry,
       artifactSchema: 3,
+      runtimeProfile: {
+        kind: 'shared-factory',
+        compat: { artifactSchema: 3, runtimeAbi: 1 },
+      },
       createRuntime,
     } as unknown as PlaybookCaptainRegistryEntryV2;
     const shell = makeShell(registry);
@@ -950,6 +1060,40 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
       '/code schema-3 runtime requires current-host construction capabilities',
     );
     expect(createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('captures every imported registry member once before later use', async () => {
+    const registry = fakeCodeEntry();
+    const reads = new Map<PropertyKey, number>();
+    const importedEntry = new Proxy(registry.entry, {
+      get(target, property, receiver) {
+        reads.set(property, (reads.get(property) ?? 0) + 1);
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const shell = makeShell(registry, {
+      loadModule: async () => ({ default: importedEntry }),
+    });
+    const context = stubContext();
+
+    await shell.init!(stubSession().session);
+    await shell.handleBossTurn(turn('/code task'), context.context);
+
+    for (const member of [
+      'id',
+      'command',
+      'intent',
+      'artifactSchema',
+      'runtimeProfile',
+      'requiredRoleIds',
+      'concurrentRoleSets',
+      'summaryPolicy',
+      'validateOptions',
+      'createRuntime',
+    ]) {
+      expect(reads.get(member), member).toBe(1);
+    }
+    expect(registry.createRuntime).toHaveBeenCalledTimes(1);
   });
 
   it('dispatches /code text to a lazily constructed CODE runtime', async () => {

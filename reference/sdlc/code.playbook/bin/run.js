@@ -20,9 +20,11 @@ import {
 } from './adapter-sdk.js';
 import {
   checkReadiness,
+  invalidRegistryEntryReason,
   loadLaunchPlan,
   projectHostAgent,
   resolveUserConfigPath,
+  snapshotRegistryEntry,
 } from './launch-config.js';
 import { prepareConfiguredRegistries } from './provision.js';
 import {
@@ -943,11 +945,11 @@ export async function validateFrozenExecutionConfig(
   for (const [id, item] of catalogItems) {
     let entry;
     try {
-      entry = (await loadModule(item.from))?.default;
+      entry = snapshotRegistryEntry((await loadModule(item.from))?.default);
     } catch (cause) {
       throw new Error(`stored playbook ${JSON.stringify(id)} failed to import: ${message(cause)}`);
     }
-    if (!isValidRegistryEntry(entry)) {
+    if (invalidRegistryEntryReason(entry) !== undefined) {
       throw new Error(`stored playbook ${JSON.stringify(id)} exposes no valid registry entry`);
     }
     if (
@@ -998,38 +1000,6 @@ function memoizedModuleLoader(loadModule) {
     }
     return modules.get(specifier);
   };
-}
-
-function isValidRegistryEntry(value) {
-  if (
-    value === null ||
-    typeof value !== 'object' ||
-    Array.isArray(value) ||
-    typeof value.id !== 'string' ||
-    value.id.trim().length === 0 ||
-    typeof value.command !== 'string' ||
-    value.command.trim().length === 0 ||
-    typeof value.intent !== 'string' ||
-    (value.artifactSchema !== 2 && value.artifactSchema !== 3) ||
-    !Array.isArray(value.requiredRoleIds) ||
-    value.requiredRoleIds.some(
-      (role) => typeof role !== 'string' || role.trim().length === 0,
-    ) ||
-    new Set(value.requiredRoleIds).size !== value.requiredRoleIds.length ||
-    !Array.isArray(value.concurrentRoleSets) ||
-    typeof value.validateOptions !== 'function' ||
-    typeof value.createRuntime !== 'function'
-  ) {
-    return false;
-  }
-  const roles = new Set(value.requiredRoleIds);
-  return value.concurrentRoleSets.every(
-    (set) =>
-      Array.isArray(set) &&
-      set.length >= 2 &&
-      set.every((role) => typeof role === 'string' && roles.has(role)) &&
-      new Set(set).size === set.length,
-  );
 }
 
 export function captainOptionsFromConfig(config) {

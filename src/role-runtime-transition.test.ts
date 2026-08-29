@@ -415,6 +415,23 @@ describe('DR-032 shared role runtime transition', () => {
         {
           governedPlayerStates: {
             work: {
+              committed: {
+                fields: {},
+                repositoryDisposition: 'one-descendant-commit',
+              },
+              needsBossReply: {
+                fields: {},
+                repositoryDisposition: 'deferred',
+              },
+            },
+          },
+        },
+        'must declare presentation-owned question',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
               needsBossReply: {
                 fields: { question: 'presentation' },
                 repositoryDisposition: 'deferred',
@@ -427,6 +444,12 @@ describe('DR-032 shared role runtime transition', () => {
       [
         {
           governedPlayerStates: {
+            work: {
+              complete: {
+                fields: {},
+                repositoryDisposition: 'unchanged',
+              },
+            },
             other: {
               complete: {
                 fields: {},
@@ -435,7 +458,7 @@ describe('DR-032 shared role runtime transition', () => {
             },
           },
         },
-        'must declare player state work',
+        'other does not name a player state',
       ],
     ];
     for (const [outcomeAuthority, diagnostic] of cases) {
@@ -536,7 +559,27 @@ describe('DR-032 shared role runtime transition', () => {
           },
         }),
       ),
-    ).toThrow('presentation authority requires a linker-declared verbatim');
+    ).not.toThrow();
+    expect(() =>
+      createXStatePlaybookRuntime(
+        repeatMachine,
+        repeatSchema3Spec({
+          outcomeAuthority: {
+            governedPlayerStates: {
+              work: {
+                complete: {
+                  fields: {
+                    moreTasks: 'runtime',
+                    finalTask: 'runtime',
+                  },
+                  repositoryDisposition: 'unchanged',
+                },
+              },
+            },
+          },
+        }),
+      ),
+    ).not.toThrow();
     expect(() =>
       createXStatePlaybookRuntime(
         repeatMachine,
@@ -568,26 +611,73 @@ describe('DR-032 shared role runtime transition', () => {
   });
 
   it('keeps schema-3 configured options disjoint from live capabilities', async () => {
-    const snapshotOptions = vi.fn(() => ({}));
-    const callPlayer = vi.fn(async () => ({
-      status: 'ok' as const,
-      finalText: 'done',
-    }));
-    const createRuntime = createXStatePlaybookRuntime<
-      EmptyOptions,
-      { readonly observe: () => string }
-    >(
-      repeatMachine,
-      repeatSchema3Spec({ snapshotOptions }),
+    interface ConfiguredOptions {
+      readonly marker: string;
+    }
+    interface CapabilityMachineInput {
+      readonly configuredOptions: ConfiguredOptions;
+    }
+    const configuredOptions = { marker: 'configured-marker' };
+    const hostCapabilities = {
+      marker: 'capability-marker',
+      observe: () => 'observed',
+    };
+    const snapshotOptions = vi.fn((value: unknown): ConfiguredOptions => {
+      const options = value as ConfiguredOptions;
+      return { marker: options.marker };
+    });
+    const machineInput = vi.fn(
+      (options: ConfiguredOptions): CapabilityMachineInput => ({
+        configuredOptions: options,
+      }),
     );
-    const hostCapabilities = { observe: () => 'capability-marker' };
+    const capabilityMachine = createMachine({
+      id: 'schema-3-capability-exclusion',
+      context: ({
+        input,
+      }: {
+        input: CapabilityMachineInput | undefined;
+      }) => ({ configuredOptions: input?.configuredOptions }),
+      initial: 'ready',
+      states: {
+        ready: {
+          meta: stateMeta('ready', 'Waiting.'),
+          tags: ['playbook.parked'],
+        },
+      },
+    });
+    const createRuntime = createXStatePlaybookRuntime<
+      ConfiguredOptions,
+      typeof hostCapabilities
+    >(capabilityMachine, {
+      label: 'CAPABILITY-EXCLUSION',
+      compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+      snapshotOptions,
+      machineInput,
+      roleStates: {},
+      outcomeAuthority: { governedPlayerStates: {} },
+    });
 
     const mutableSchema3Spec = repeatSchema3Spec();
     const schema3Factory = createXStatePlaybookRuntime<
       EmptyOptions,
       typeof hostCapabilities
     >(repeatMachine, mutableSchema3Spec);
+    const schema3Compat = schema3Factory.compat;
+    expect(schema3Compat).toEqual({
+      artifactSchema: 3,
+      runtimeAbi: RUNTIME_ABI,
+    });
+    expect(Object.isFrozen(schema3Compat)).toBe(true);
+    expect(
+      Object.getOwnPropertyDescriptor(schema3Factory, 'compat'),
+    ).toMatchObject({
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
     (mutableSchema3Spec.compat as { artifactSchema: number }).artifactSchema = 2;
+    expect(schema3Factory.compat).toBe(schema3Compat);
     expect(() =>
       schema3Factory({} as {
         configuredOptions: EmptyOptions;
@@ -600,44 +690,61 @@ describe('DR-032 shared role runtime transition', () => {
       repeatMachine,
       mutableSchema2Spec,
     );
+    const schema2Compat = schema2Factory.compat;
+    expect(schema2Compat).toEqual({
+      artifactSchema: 2,
+      runtimeAbi: RUNTIME_ABI,
+    });
+    expect(Object.isFrozen(schema2Compat)).toBe(true);
     (mutableSchema2Spec.compat as { artifactSchema: number }).artifactSchema = 3;
+    expect(schema2Factory.compat).toBe(schema2Compat);
     expect(() => schema2Factory({})).not.toThrow();
 
     expect(() =>
       createRuntime({} as {
-        configuredOptions: EmptyOptions;
+        configuredOptions: ConfiguredOptions;
         hostCapabilities: typeof hostCapabilities;
       }),
     ).toThrow('schema-3 factory input must contain exactly');
+    const nonPlainInput = Object.assign(Object.create({ inherited: true }), {
+      configuredOptions,
+      hostCapabilities,
+    });
+    expect(() =>
+      createRuntime(nonPlainInput as {
+        configuredOptions: ConfiguredOptions;
+        hostCapabilities: typeof hostCapabilities;
+      }),
+    ).toThrow('schema-3 factory input must be a plain object');
     expect(() =>
       createRuntime({
-        configuredOptions: {},
+        configuredOptions,
         hostCapabilities: 1,
       } as unknown as {
-        configuredOptions: EmptyOptions;
+        configuredOptions: ConfiguredOptions;
         hostCapabilities: typeof hostCapabilities;
       }),
     ).toThrow('hostCapabilities must be a live object');
     expect(() =>
       createRuntime({
-        configuredOptions: {},
+        configuredOptions,
         hostCapabilities,
         extra: true,
       } as unknown as {
-        configuredOptions: EmptyOptions;
+        configuredOptions: ConfiguredOptions;
         hostCapabilities: typeof hostCapabilities;
       }),
     ).toThrow('schema-3 factory input must contain exactly');
 
     const capabilityGetter = vi.fn(() => hostCapabilities);
-    const accessorInput = { configuredOptions: {} } as Record<string, unknown>;
+    const accessorInput = { configuredOptions } as Record<string, unknown>;
     Object.defineProperty(accessorInput, 'hostCapabilities', {
       enumerable: true,
       get: capabilityGetter,
     });
     expect(() =>
       createRuntime(accessorInput as {
-        configuredOptions: EmptyOptions;
+        configuredOptions: ConfiguredOptions;
         hostCapabilities: typeof hostCapabilities;
       }),
     ).toThrow('schema-3 factory input must contain exactly');
@@ -645,20 +752,37 @@ describe('DR-032 shared role runtime transition', () => {
     expect(snapshotOptions).not.toHaveBeenCalled();
     expect(() =>
       createRuntime({
-        configuredOptions: { hostCapabilities: {} },
+        configuredOptions: {
+          marker: 'configured-marker',
+          hostCapabilities: {},
+        },
         hostCapabilities,
+      } as unknown as {
+        configuredOptions: ConfiguredOptions;
+        hostCapabilities: typeof hostCapabilities;
       }),
     ).toThrow('configured options must not contain hostCapabilities');
     expect(snapshotOptions).not.toHaveBeenCalled();
 
-    const runtime = createRuntime({ configuredOptions: {}, hostCapabilities });
-    expect(snapshotOptions).toHaveBeenCalledWith({});
+    const runtime = createRuntime({ configuredOptions, hostCapabilities });
+    expect(snapshotOptions).toHaveBeenCalledOnce();
+    expect(snapshotOptions).toHaveBeenCalledWith(configuredOptions);
+    const callPlayer = vi.fn(async () => {
+      throw new Error('roleless runtime must not call a player');
+    });
     await runtime.init(session(recordingPorts(callPlayer)));
-    await runtime.handleBossInput(bossTurn('the task'));
-    expect(callPlayer).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(runtime.exportSnapshot?.())).not.toContain(
-      'capability-marker',
+    expect(machineInput).toHaveBeenCalledOnce();
+    expect(machineInput).toHaveBeenCalledWith(
+      { marker: 'configured-marker' },
+      expect.objectContaining({ playbookId: 'role-fixture' }),
     );
+    const exported = runtime.exportSnapshot?.();
+    expect(exported?.machine).toMatchObject({
+      context: { configuredOptions: { marker: 'configured-marker' } },
+    });
+    expect(JSON.stringify(exported)).toContain('configured-marker');
+    expect(JSON.stringify(exported)).not.toContain('capability-marker');
+    expect(callPlayer).not.toHaveBeenCalled();
     await runtime.dispose();
 
     const injectedFactory = createXStatePlaybookRuntime<

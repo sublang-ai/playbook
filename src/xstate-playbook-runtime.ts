@@ -267,7 +267,6 @@ function configuredOptionsFromFactoryInput(
     keys.some((key) => {
       const descriptor = descriptors[key as keyof typeof descriptors];
       return (
-        typeof key !== 'string' ||
         descriptor?.get !== undefined ||
         descriptor?.set !== undefined ||
         descriptor?.enumerable !== true ||
@@ -383,6 +382,17 @@ export type XStatePlaybookRuntimeFactoryOptions<
 > = [HostCapabilities] extends [never]
   ? ConfiguredOptions
   : XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
+
+/** Shared XState factory with its captured, validated artifact compatibility. */
+export type XStatePlaybookRuntimeFactory<
+  Options = unknown,
+  ArtifactSchema extends 2 | 3 = 2 | 3,
+> = PlaybookRuntimeFactory<Options> & {
+  readonly compat: Readonly<{
+    readonly artifactSchema: ArtifactSchema;
+    readonly runtimeAbi: typeof RUNTIME_ABI;
+  }>;
+};
 
 // PBRT-50: validate a declaration against the loaded engine, schema first,
 // so one clear diagnostic covers a fully skewed artifact. Declaration-free
@@ -1743,11 +1753,9 @@ const REPOSITORY_DISPOSITIONS: ReadonlySet<string> = new Set([
   'deferred',
 ]);
 const OUTCOME_FIELD_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const SEMANTIC_OUTCOME_FIELDS: ReadonlySet<string> = new Set([
+const SEMANTIC_PAYLOAD_FIELDS: ReadonlySet<string> = new Set([
   'irNumber',
   'irTask',
-  'moreTasks',
-  'finalTask',
 ]);
 
 function requireExactObjectKeys(
@@ -1764,12 +1772,6 @@ function requireExactObjectKeys(
       (missing.length === 0 ? '' : `; missing ${missing.join(', ')}`) +
       (extra.length === 0 ? '' : `; unknown ${extra.join(', ')}`),
   );
-}
-
-function requireCanonicalAuthorityKey(value: string, path: string): void {
-  if (value.length === 0 || value !== value.trim()) {
-    throw new TypeError(`${path} must be a canonical non-empty string`);
-  }
 }
 
 function requireAuthorityIdentifier(value: string, path: string): void {
@@ -1819,10 +1821,6 @@ function snapshotOutcomeAuthority(
     }
   }
   for (const stateId of Object.keys(governed)) {
-    requireCanonicalAuthorityKey(
-      stateId,
-      `${path}.governedPlayerStates key`,
-    );
     if (!playerStates.has(stateId)) {
       throw new TypeError(
         `${path}.governedPlayerStates.${stateId} does not name a player state`,
@@ -1882,7 +1880,7 @@ function snapshotOutcomeAuthority(
         }
         const requiredAuthorities = new Set<XStateOutcomeFieldAuthority>();
         if (field === 'latestCommit') requiredAuthorities.add('effect');
-        if (SEMANTIC_OUTCOME_FIELDS.has(field)) {
+        if (SEMANTIC_PAYLOAD_FIELDS.has(field)) {
           requiredAuthorities.add('semantic');
         }
         if (field === 'question' || verbatimPayloadFields.has(field)) {
@@ -1900,15 +1898,6 @@ function snapshotOutcomeAuthority(
           );
         }
         if (verbatimPayloadFields.has(field)) usedVerbatimFields.add(field);
-        if (
-          authority === 'presentation' &&
-          field !== 'question' &&
-          !verbatimPayloadFields.has(field)
-        ) {
-          throw new TypeError(
-            `${outcomePath}.fields.${field} presentation authority requires a linker-declared verbatim payload field`,
-          );
-        }
         fields[field] = authority as XStateOutcomeFieldAuthority;
       }
       const disposition = rawSpec.repositoryDisposition;
@@ -2624,15 +2613,16 @@ function assertUnfinishedFinalStateIds(
 export function createXStatePlaybookRuntime<TOptions>(
   machine: AnyStateMachine,
   spec: XStatePlaybookRuntimeSpec<TOptions>,
-): PlaybookRuntimeFactory<TOptions>;
+): XStatePlaybookRuntimeFactory<TOptions, 2>;
 export function createXStatePlaybookRuntime<
   TOptions,
   THostCapabilities extends object,
 >(
   machine: AnyStateMachine,
   spec: XStatePlaybookRuntimeSpecV3<TOptions>,
-): PlaybookRuntimeFactory<
-  XStatePlaybookRuntimeConstruction<TOptions, THostCapabilities>
+): XStatePlaybookRuntimeFactory<
+  XStatePlaybookRuntimeConstruction<TOptions, THostCapabilities>,
+  3
 >;
 export function createXStatePlaybookRuntime<
   TOptions,
@@ -2640,7 +2630,7 @@ export function createXStatePlaybookRuntime<
 >(
   machine: AnyStateMachine,
   spec: UncheckedXStatePlaybookRuntimeSpec<TOptions>,
-): PlaybookRuntimeFactory<
+): XStatePlaybookRuntimeFactory<
   XStatePlaybookRuntimeFactoryOptions<TOptions, THostCapabilities>
 > {
   const label = spec.label ?? 'playbook';
@@ -5706,7 +5696,13 @@ export function createXStatePlaybookRuntime<
     };
     return runtime as PlaybookRuntime;
   };
-  return createPlaybookRuntime as PlaybookRuntimeFactory<
+  Object.defineProperty(createPlaybookRuntime, 'compat', {
+    value: Object.freeze({ artifactSchema, runtimeAbi: RUNTIME_ABI }),
+    enumerable: true,
+    writable: false,
+    configurable: false,
+  });
+  return createPlaybookRuntime as XStatePlaybookRuntimeFactory<
     XStatePlaybookRuntimeFactoryOptions<TOptions, THostCapabilities>
   >;
 }

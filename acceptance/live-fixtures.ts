@@ -153,6 +153,7 @@ export default {
   command: 'hermetic',
   intent: 'hermetic global-only acceptance fixture',
   artifactSchema: 2,
+  runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: ['worker'],
   concurrentRoleSets: [],
   validateOptions(value) {
@@ -333,6 +334,7 @@ export default {
   command: 'checklist',
   intent: 'run the fixture release checklist end to end',
   artifactSchema: 2,
+  runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: [],
   concurrentRoleSets: [],
   validateOptions(value) {
@@ -469,6 +471,7 @@ export default {
   command: 'notes',
   intent: 'draft and discuss the release notes for this repository',
   artifactSchema: 2,
+  runtimeProfile: { kind: 'shared-factory', compat: createRuntime.compat },
   requiredRoleIds: [],
   concurrentRoleSets: [],
   validateOptions(value) {

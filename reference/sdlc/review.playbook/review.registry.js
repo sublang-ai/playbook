@@ -49,6 +49,10 @@ export const reviewPlaybookRegistryEntry = {
     command: 'review',
     intent: 'review the latest commit until no material correctness or spec findings remain',
     artifactSchema: 2,
+    runtimeProfile: Object.freeze({
+        kind: 'shared-factory',
+        compat: createPlaybookRuntime.compat,
+    }),
     requiredRoleIds: ['coder', 'reviewer'],
     concurrentRoleSets: [],
     summaryPolicy: reviewSummaryPolicy,

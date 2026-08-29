@@ -123,9 +123,16 @@ describe('linked CODE runtime', () => {
   it('advertises the schema-2 local-role manifest', () => {
     expect(codePlaybookRegistryEntry).toMatchObject({
       artifactSchema: 2,
+      runtimeProfile: {
+        kind: 'shared-factory',
+        compat: { artifactSchema: 2, runtimeAbi: 1 },
+      },
       requiredRoleIds: ['coder'],
       concurrentRoleSets: [],
     });
+    expect(codePlaybookRegistryEntry.runtimeProfile.compat).toBe(
+      createPlaybookRuntime.compat,
+    );
     expect(codePlaybookRegistryEntry.createRuntime(validateCodeOptions({}))).toBeDefined();
   });
 

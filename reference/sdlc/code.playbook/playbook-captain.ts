@@ -93,10 +93,24 @@ export interface PlaybookHostConstructionCapabilities {
   readonly [capability: string]: unknown;
 }
 
-interface PlaybookCaptainRegistryEntryBase {
+export type PlaybookCaptainRuntimeProfile<ArtifactSchema extends 2 | 3> =
+  | {
+      readonly kind: 'shared-factory';
+      readonly compat: {
+        readonly artifactSchema: ArtifactSchema;
+        readonly runtimeAbi: number;
+      };
+    }
+  | {
+      readonly kind: 'bespoke';
+      readonly artifactSchema: ArtifactSchema;
+    };
+
+interface PlaybookCaptainRegistryEntryBase<ArtifactSchema extends 2 | 3> {
   id: string;
   command: string;
   intent: string;
+  runtimeProfile: PlaybookCaptainRuntimeProfile<ArtifactSchema>;
   requiredRoleIds: readonly string[];
   concurrentRoleSets: readonly (readonly string[])[];
   summaryPolicy?: PlaybookSummaryPolicy;
@@ -104,13 +118,13 @@ interface PlaybookCaptainRegistryEntryBase {
 }
 
 export interface PlaybookCaptainRegistryEntryV2
-  extends PlaybookCaptainRegistryEntryBase {
+  extends PlaybookCaptainRegistryEntryBase<2> {
   artifactSchema: 2;
   createRuntime(configuredOptions: unknown): PlaybookRuntime;
 }
 
 export interface PlaybookCaptainRegistryEntryV3
-  extends PlaybookCaptainRegistryEntryBase {
+  extends PlaybookCaptainRegistryEntryBase<3> {
   artifactSchema: 3;
   createRuntime(
     configuredOptions: unknown,
@@ -1051,6 +1065,89 @@ function summaryProgressRoundCount(
 
 function guardFromJudgeReply(finalText: string): string | undefined {
   return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
+}
+
+interface ValidatedRuntimeProfile {
+  readonly kind: 'shared-factory' | 'bespoke';
+  readonly artifactSchema: 2 | 3;
+}
+
+function captureRegistryEntry(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  const source = value as Record<string, unknown>;
+  return {
+    id: source.id,
+    command: source.command,
+    intent: source.intent,
+    artifactSchema: source.artifactSchema,
+    runtimeProfile: source.runtimeProfile,
+    requiredRoleIds: source.requiredRoleIds,
+    concurrentRoleSets: source.concurrentRoleSets,
+    summaryPolicy: source.summaryPolicy,
+    validateOptions: source.validateOptions,
+    createRuntime: source.createRuntime,
+  };
+}
+
+function exactOwnDataRecord(
+  value: unknown,
+  keys: readonly string[],
+): Readonly<Record<string, unknown>> | undefined {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype &&
+      Object.getPrototypeOf(value) !== null)
+  ) {
+    return undefined;
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (
+    Reflect.ownKeys(descriptors).length !== keys.length ||
+    keys.some(
+      (key) =>
+        !Object.hasOwn(descriptors, key) ||
+        !Object.hasOwn(descriptors[key]!, 'value') ||
+        descriptors[key]!.enumerable !== true,
+    )
+  ) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    keys.map((key) => [key, descriptors[key]!.value]),
+  );
+}
+
+function validateRuntimeProfile(
+  value: unknown,
+): ValidatedRuntimeProfile | undefined {
+  const shared = exactOwnDataRecord(value, ['kind', 'compat']);
+  if (shared?.kind === 'shared-factory') {
+    const compat = exactOwnDataRecord(shared.compat, [
+      'artifactSchema',
+      'runtimeAbi',
+    ]);
+    if (
+      (compat?.artifactSchema === 2 || compat?.artifactSchema === 3) &&
+      typeof compat.runtimeAbi === 'number' &&
+      Number.isSafeInteger(compat.runtimeAbi)
+    ) {
+      return {
+        kind: 'shared-factory',
+        artifactSchema: compat.artifactSchema,
+      };
+    }
+    return undefined;
+  }
+  const bespoke = exactOwnDataRecord(value, ['kind', 'artifactSchema']);
+  if (
+    bespoke?.kind === 'bespoke' &&
+    (bespoke.artifactSchema === 2 || bespoke.artifactSchema === 3)
+  ) {
+    return { kind: 'bespoke', artifactSchema: bespoke.artifactSchema };
+  }
+  return undefined;
 }
 
 function isValidRegistryEntry(
@@ -2171,15 +2268,31 @@ async function buildEnablements(
         )}`,
       );
     }
-    const entry = (mod as { default?: unknown })?.default;
+    const entry = captureRegistryEntry(
+      (mod as { default?: unknown })?.default,
+    );
     const artifactSchema = (entry as { artifactSchema?: unknown } | null)
       ?.artifactSchema;
+    const runtimeProfile = validateRuntimeProfile(
+      (entry as { runtimeProfile?: unknown } | null)?.runtimeProfile,
+    );
     if (
       (artifactSchema !== 2 && artifactSchema !== 3) ||
+      runtimeProfile === undefined ||
       !isValidRegistryEntry(entry, artifactSchema)
     ) {
       throw new Error(
         `captain.options.playbooks.${id}.from "${from}" exposes no valid registry entry`,
+      );
+    }
+    if (runtimeProfile.artifactSchema !== artifactSchema) {
+      const implementation =
+        runtimeProfile.kind === 'shared-factory'
+          ? 'shared factory'
+          : 'bespoke runtime';
+      throw new Error(
+        `captain.options.playbooks.${id}.from "${from}" advertises artifact schema ${artifactSchema} ` +
+          `but its ${implementation} implements schema ${runtimeProfile.artifactSchema}`,
       );
     }
     if (entry.id !== id) {

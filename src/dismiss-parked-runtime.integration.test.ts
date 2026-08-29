@@ -136,6 +136,7 @@ function registryEntry(
     command,
     intent: `${id} dismissal-status fixture`,
     artifactSchema: 2,
+    runtimeProfile: { kind: 'bespoke', artifactSchema: 2 },
     requiredRoleIds: [],
     concurrentRoleSets: [],
     validateOptions: (options) => options,

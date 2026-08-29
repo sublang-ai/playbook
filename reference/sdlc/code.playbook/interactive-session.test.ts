@@ -577,6 +577,45 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
     await next.release();
   });
 
+  it('snapshots every consumed reopened manifest member once under the lease', async () => {
+    const fixture = await lifecycleFixture();
+    const consumed = [
+      'id',
+      'command',
+      'intent',
+      'artifactSchema',
+      'runtimeProfile',
+      'requiredRoleIds',
+      'concurrentRoleSets',
+      'validateOptions',
+      'createRuntime',
+    ] as const;
+    const reads = Object.fromEntries(consumed.map((key) => [key, 0]));
+    const manifest = new Proxy(registryEntry(fixture.execution), {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && key in reads) {
+          reads[key] += 1;
+          if (key === 'artifactSchema' && reads[key] > 1) return 3;
+        }
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const lifecycle = createManagedInteractiveLifecycle(fixture.payload, {
+      sessionStore: fixture.store,
+      loadModule: async () => ({ default: manifest }),
+      createSessionHost: async () => {
+        throw new Error('manifest snapshot complete');
+      },
+    });
+
+    await expect(lifecycle.initializeRuntime(fixture.context)).rejects.toThrow(
+      'manifest snapshot complete',
+    );
+    expect(reads).toEqual(
+      Object.fromEntries(consumed.map((key) => [key, 1])),
+    );
+  });
+
   it.each([
     {
       label: 'manifest command',
@@ -592,6 +631,14 @@ describe('managed interactive Captain lifecycle (PBCLI-49/50/56)', () => {
       label: 'artifact schema',
       execution: executionProjection,
       mutate: (entry: any) => ({ ...entry, artifactSchema: 1 }),
+    },
+    {
+      label: 'runtime profile schema',
+      execution: executionProjection,
+      mutate: (entry: any) => ({
+        ...entry,
+        runtimeProfile: { kind: 'bespoke', artifactSchema: 3 },
+      }),
     },
     {
       label: 'concurrent roles',
@@ -1257,6 +1304,10 @@ function registryEntry(execution: ReturnType<typeof executionProjection>) {
     command: item.manifestCommand,
     intent: item.intent,
     artifactSchema: item.artifactSchema,
+    runtimeProfile: {
+      kind: 'bespoke',
+      artifactSchema: item.artifactSchema,
+    },
     requiredRoleIds: [...item.requiredRoleIds],
     concurrentRoleSets: item.concurrentRoleSets.map((set) => [...set]),
     validateOptions: (value: unknown) => value,

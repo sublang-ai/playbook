@@ -2012,16 +2012,20 @@ The thin emitted module:
   one engine cannot run silently skewed under another. Modules emitted
   before this contract carry no `compat` member and shall reject before interpretation.
 - Requires the containing public registry manifest to advertise the identical
-  `artifactSchema`. A schema-2 registry factory accepts configured options
+  `artifactSchema` and an exact implementation `runtimeProfile`. A shared
+  factory profile is `{ kind: 'shared-factory', compat }`, where `compat` is
+  the immutable compatibility record captured by that actual factory from
+  its validated `spec.compat`; a bespoke profile is
+  `{ kind: 'bespoke', artifactSchema }`, with the schema declared directly by
+  that implementation and no `runtimeAbi` claim. A schema-2 registry factory accepts configured options
   alone; a schema-3 registry factory accepts configured options and current
   host capabilities separately and composes the linked runtime's exact
   `{ configuredOptions, hostCapabilities }` input. The Captain host shall
-  reject a missing or disagreeing registry value before constructing this
-  runtime, and a bespoke runtime profile shall advertise the same schema
-  without claiming this shared factory's `runtimeAbi`.
+  capture the imported manifest fields once and reject a missing, malformed,
+  or disagreeing profile before option validation or runtime construction.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
-  `PlaybookRuntimeFactory<PlaybookRuntimeOptions>` for schema `2` or as a
-  `PlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<PlaybookRuntimeOptions, HostCapabilities>>`
+  `XStatePlaybookRuntimeFactory<PlaybookRuntimeOptions, 2>` for schema `2` or as a
+  `XStatePlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<PlaybookRuntimeOptions, HostCapabilities>, 3>`
   with the artifact's declared live capability type for schema `3`. A registry module loads
   dynamically inside the host's caught boundary, so its eager module-scope
   factory call fails fast there. The compiled session Captain module is the
