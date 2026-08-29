@@ -297,12 +297,7 @@ diagnostic shall name whether the reserved collision is an internal playbook
 name or player/role identity — a manifest `requiredRoleIds`
 entry that is missing from the exact role-binding map, a malformed concurrent role set, a role binding naming an unknown player, an extra configured role, or two roles in one concurrent role set bound to the same player id.
 An enabled playbook whose manifest requires no roles shall carry the exact empty `roles: {}` map and contribute no player to the referenced roster; the launcher shall not invent a visible role or fallback player for it.
-At runtime `init` the Playbook Captain shell re-validates only the
-loading checks it shares with
-[[playbook-captain-16](playbook-captain.md#playbook-captain-16)] — missing `from`, failed
-import, invalid entry, key / manifest-`id` mismatch, duplicate id, and
-duplicate effective command, plus the reserved playbook id and effective
-command.
+At runtime `init` the Playbook Captain shell re-validates only the loading checks it shares with [[playbook-captain-16](playbook-captain.md#playbook-captain-16)] and the registry-schema checks under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)] — missing `from`, failed import, invalid entry, an absent or non-`2`/`3` artifact-schema advertisement, a missing or malformed exact plain-data `runtimeProfile`, disagreement between the artifact-schema advertisement and runtime profile, key / manifest-`id` mismatch, duplicate id, duplicate effective command, and the reserved playbook id and effective command.
 The roster-resolution, reserved-role, exact-binding, and concurrent-player checks above
 are launcher-owned
 ([DR-009](../decisions/009-generic-playbook-cli-and-registry.md) §4);

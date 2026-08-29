@@ -637,7 +637,7 @@ describe('DR-032 shared role runtime transition', () => {
         input,
       }: {
         input: CapabilityMachineInput | undefined;
-      }) => ({ configuredOptions: input?.configuredOptions }),
+      }) => ({ ...input }),
       initial: 'ready',
       states: {
         ready: {
