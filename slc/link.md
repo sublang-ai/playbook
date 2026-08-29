@@ -187,6 +187,53 @@ export default function createPlaybookRuntime(
 
 The default export conforms to `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`, the generic factory type the shared contract module exposes (§Output).
 
+Artifact schema `2` shall omit `outcomeAuthority` and shall retain the existing one-argument `PlaybookRuntimeFactory<PlaybookRuntimeOptions>` contract.
+Artifact schema `3` shall require `outcomeAuthority` as an own plain-JSON data property and shall instantiate the shared factory with exactly `{ configuredOptions, hostCapabilities }`, where `configuredOptions` is the registry-validated plain-JSON workflow slice and `hostCapabilities` is a non-null live current-host object.
+For schema `3`, the `Options` argument of the one-argument shared `PlaybookRuntimeFactory<Options>` shall be `XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>`; the registry's public entry receives the two members separately and composes that one internal argument only at the artifact boundary.
+Only `configuredOptions` may reach option snapshotting and FSM input, while `hostCapabilities` shall enter neither `PlaybookPorts`, machine input or context, runtime snapshots, launch or durable projections, nor continuation identity.
+
+```typescript
+type XStateOutcomeFieldAuthority =
+  | 'presentation'
+  | 'semantic'
+  | 'effect'
+  | 'runtime';
+
+type XStateRepositoryDisposition =
+  | 'unchanged'
+  | 'one-descendant-commit'
+  | 'deferred';
+
+interface XStateGovernedOutcomeSpec {
+  readonly fields: Readonly<Record<string, XStateOutcomeFieldAuthority>>;
+  readonly repositoryDisposition: XStateRepositoryDisposition;
+}
+
+interface XStateOutcomeAuthoritySpec {
+  readonly governedPlayerStates: Readonly<
+    Record<
+      string,
+      Readonly<Record<string, XStateGovernedOutcomeSpec>>
+    >
+  >;
+}
+
+interface XStatePlaybookRuntimeConstruction<
+  ConfiguredOptions,
+  HostCapabilities extends object,
+> {
+  readonly configuredOptions: ConfiguredOptions;
+  readonly hostCapabilities: HostCapabilities;
+}
+```
+
+`governedPlayerStates` shall name every delegated-player state declared by `roleStates`, or shall be exactly empty for an artifact with no delegated-player state; it shall name no other state.
+Each state shall name exactly the outcomes in that state's `invoke.input.result`, and each outcome shall contain exactly `fields` and `repositoryDisposition`.
+The outcome key owns the semantic discriminator, so `guard` shall not appear in `fields`; the `fields` keys shall equal every additional payload field named by that outcome's result description.
+Each field shall have exactly one authority from `presentation`, `semantic`, `effect`, or `runtime`; every linker-declared verbatim payload field and `question` shall be `presentation`, `latestCommit` shall be `effect`, and the payload fields `irNumber` and `irTask` shall be `semantic`, while outcome keys such as `moreTasks` and `finalTask` remain semantic discriminators.
+Each repository disposition shall be exactly `unchanged`, `one-descendant-commit`, or `deferred`; an effect-owned field is valid only on `one-descendant-commit`, and `deferred` is valid only on `needsBossReply` with presentation-owned `question` and another outcome in that state declaring `one-descendant-commit`.
+The shared factory shall reject schema-2 authority metadata and reject schema-3 missing, extra, unknown, wrongly owned, or inconsistent metadata before the affected player call.
+
 `init` receives the host-owned playbook session identity and ports, constructs the XState actor with FSM `input` derived from `options`, and starts the actor.
 The runtime owns the actor for its lifetime; `handleBossInput` runs one turn, and `dispose` stops the actor and drains pending port emissions.
 The host shall generate a non-empty, globally unique `sessionId` for each init-to-dispose lifecycle and shall supply the stable registry or authored playbook id as `playbookId`.
@@ -208,7 +255,8 @@ Only the terminal variant may carry `stateDescription`; the runtime shall omit i
 Control-plane exceptions reject the runtime method rather than masquerade as a
 recoverable workflow `failed` result.
 
-`PlaybookRuntimeOptions` is host-agnostic and carries only _per-run_ workflow knobs, strategy overrides the linker exposes, and — where the compiled playbook's policy needs a host seam — host-supplied port-shaped callbacks the linker exposes as option members whose types the artifact itself declares, so the six-member `PlaybookPorts` contract and the shared contract module stay free of host types.
+For schema `2`, `PlaybookRuntimeOptions` is host-agnostic and carries only _per-run_ workflow knobs, strategy overrides the linker exposes, and — where the compiled playbook's policy needs a host seam — host-supplied port-shaped callbacks the linker exposes as option members whose types the artifact itself declares, so the six-member `PlaybookPorts` contract and the shared contract module stay free of host types.
+For schema `3`, configured options shall instead be plain JSON and live host seams shall enter only through `hostCapabilities` in the disjoint construction input above.
 The link compiler emits a typed options interface per playbook based on the FSM's `CodingInput` (or equivalent).
 The CLI's absence of `--link-option` values does not mean that
 `PlaybookRuntimeOptions` is empty. CLI link options are compile-time inputs;
@@ -1305,7 +1353,7 @@ rider) when a settling actor output carries a guard, and
 `⤷ <Role>: <label>` only when the entered state appears in the linked module's `roleStates` metadata.
 It shall emit no raw state-id fallback for any other state.
 `roleStates` shall be a complete map of the FSM states
-that invoke the typed `player` actor; each schema-2 value carries the exact
+that invoke the typed `player` actor; each schema-2 or schema-3 value carries the exact
 local role from that state's source-derived `meta.playbook.role` and the state's exact FSM description as `{ role, label }`.
 The factory shall reject an
 incomplete entry, a non-player state, or a role or label that differs from the FSM metadata.
@@ -1886,7 +1934,10 @@ The thin emitted module:
   complete `roleStates` status map derived from every FSM state that invokes
   the typed `player` actor, with each `role` copied from that state's
   source-derived `meta.playbook.role` (an empty map when there is no such
-  state); the
+  state); for artifact schema `3`, the exact `outcomeAuthority` map derived
+  from every such state's `invoke.input.result` contract and its linked field
+  authorities and repository dispositions (an explicit empty governed map
+  when there is no such state), while schema `2` omits that member; the
   `verbatimPayloadFields` set derived from annotated result fields above; the
   explicitly empty or populated `unfinishedFinalStateIds` set declared above;
   the `controlContextFields` projection of §Control surface; and any
@@ -1946,9 +1997,10 @@ The thin emitted module:
   runtime-owned arm to have lost payload detail under erasure shall report
   that gap rather than emit the entry.
 - Supplies `spec.compat` with the compatibility values current at link time:
-  `{ artifactSchema, runtimeAbi }`, where `artifactSchema` is `2` — the
-  schema number of the local-role thin-module format this §Output defines — and
-  `runtimeAbi` is the installed shared engine's `RUNTIME_ABI` self-report.
+  `{ artifactSchema, runtimeAbi }`, where `artifactSchema` is `2` for the
+  legacy local-role thin-module format or `3` for the authority-bearing
+  format defined above, and `runtimeAbi` is the installed shared engine's
+  `RUNTIME_ABI` self-report.
   The linker shall verify that the installed engine lists the emitted
   schema in `SUPPORTED_ARTIFACT_SCHEMAS` and treat its absence as a
   link-time error; it shall not stamp a different member (such as the
@@ -1959,9 +2011,18 @@ The thin emitted module:
   module and fails construction on a mismatch, so an artifact linked under
   one engine cannot run silently skewed under another. Modules emitted
   before this contract carry no `compat` member and shall reject before interpretation.
-- Requires the containing public registry manifest to advertise the same `artifactSchema: 2`; the Captain host shall reject a missing or disagreeing registry value before constructing this runtime, and a bespoke runtime profile shall advertise the same schema without claiming this shared factory's `runtimeAbi`.
+- Requires the containing public registry manifest to advertise the identical
+  `artifactSchema`. A schema-2 registry factory accepts configured options
+  alone; a schema-3 registry factory accepts configured options and current
+  host capabilities separately and composes the linked runtime's exact
+  `{ configuredOptions, hostCapabilities }` input. The Captain host shall
+  reject a missing or disagreeing registry value before constructing this
+  runtime, and a bespoke runtime profile shall advertise the same schema
+  without claiming this shared factory's `runtimeAbi`.
 - Default-exports the factory call as `createPlaybookRuntime`, typed
-  `PlaybookRuntimeFactory<PlaybookRuntimeOptions>`. A registry module loads
+  `PlaybookRuntimeFactory<PlaybookRuntimeOptions>` for schema `2` or as a
+  `PlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<PlaybookRuntimeOptions, HostCapabilities>>`
+  with the artifact's declared live capability type for schema `3`. A registry module loads
   dynamically inside the host's caught boundary, so its eager module-scope
   factory call fails fast there. The compiled session Captain module is the
   exception: the shell and both CLI front ends import it statically, so it

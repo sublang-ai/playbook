@@ -1010,7 +1010,7 @@ function isValidRegistryEntry(value) {
     typeof value.command !== 'string' ||
     value.command.trim().length === 0 ||
     typeof value.intent !== 'string' ||
-    value.artifactSchema !== 2 ||
+    (value.artifactSchema !== 2 && value.artifactSchema !== 3) ||
     !Array.isArray(value.requiredRoleIds) ||
     value.requiredRoleIds.some(
       (role) => typeof role !== 'string' || role.trim().length === 0,

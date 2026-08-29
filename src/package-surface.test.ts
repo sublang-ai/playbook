@@ -656,15 +656,17 @@ describe('public XState runtime surface (RELEASE-15)', () => {
       }
       // DR-022: the engine compatibility self-report ships on the same
       // public engine subpath the factory does.
-      if (!Number.isSafeInteger(RUNTIME_ABI)) {
-        throw new Error('missing RUNTIME_ABI');
+      if (RUNTIME_ABI !== 1) {
+        throw new Error('unexpected RUNTIME_ABI');
       }
       if (
         !Array.isArray(SUPPORTED_ARTIFACT_SCHEMAS) ||
-        SUPPORTED_ARTIFACT_SCHEMAS.length === 0 ||
-        !SUPPORTED_ARTIFACT_SCHEMAS.every(Number.isSafeInteger)
+        !Object.isFrozen(SUPPORTED_ARTIFACT_SCHEMAS) ||
+        SUPPORTED_ARTIFACT_SCHEMAS.length !== 2 ||
+        SUPPORTED_ARTIFACT_SCHEMAS[0] !== 2 ||
+        SUPPORTED_ARTIFACT_SCHEMAS[1] !== 3
       ) {
-        throw new Error('missing SUPPORTED_ARTIFACT_SCHEMAS');
+        throw new Error('unexpected SUPPORTED_ARTIFACT_SCHEMAS');
       }
       // DR-029 / PBRT-52: every runtime the shipped shared factory
       // constructs implements the optional control-surface pair together.
@@ -1240,10 +1242,18 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'XStateCaptainCallOptions',
       'XStateCaptainStrategy',
       'XStateCaptainStrategyRun',
+      'XStateGovernedOutcomeSpec',
+      'XStateOutcomeAuthoritySpec',
+      'XStateOutcomeFieldAuthority',
+      'XStatePlaybookRuntimeConstruction',
+      'XStatePlaybookRuntimeFactoryOptions',
+      'XStatePlaybookRuntimeSpecV2',
+      'XStatePlaybookRuntimeSpecV3',
       'XStatePromptIdentity',
       'XStateRoleStateStatus',
       'XStatePlaybookRuntimeCompat',
       'XStatePlaybookRuntimeSpec',
+      'XStateRepositoryDisposition',
       'activePlaybookStateMetadata',
       'adjudicatePlayerOutput',
       'assertJsonSafe',
@@ -1359,11 +1369,14 @@ describe('public CLI and registry surface (RELEASE-21)', () => {
       'PlaybookCaptainDeps',
       'PlaybookCaptainFrameSnapshot',
       'PlaybookCaptainRegistryEntry',
+      'PlaybookCaptainRegistryEntryV2',
+      'PlaybookCaptainRegistryEntryV3',
       'PlaybookCaptainRetainedGeneration',
       'PlaybookCaptainRetentionUpdate',
       'PlaybookCaptainSettlement',
       'PlaybookCaptainShell',
       'PlaybookCaptainShellSnapshot',
+      'PlaybookHostConstructionCapabilities',
       'assertPlaybookCaptainShellSnapshot',
       'createPlaybookCaptainShell',
       'default',
@@ -1607,6 +1620,98 @@ if (snapshot.mode === 'engaged.parked') {
   // @ts-expect-error validated frame runtime snapshots are frozen
   snapshot.frames[0]!.runtime.state.status = 'done';
 }
+`,
+      );
+      const program = ts.createProgram([fixture], {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        target: ts.ScriptTarget.ES2022,
+        strict: true,
+        noEmit: true,
+        skipLibCheck: true,
+        types: ['node'],
+        typeRoots: [join(repoRoot, 'node_modules', '@types')],
+      });
+      expect(
+        ts.getPreEmitDiagnostics(program).map((diagnostic) =>
+          ts.flattenDiagnosticMessageText(diagnostic.messageText, ' '),
+        ),
+      ).toEqual([]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
+  it('discriminates schema-gated factory and registry construction types', () => {
+    const scratch = mkdtempSync(join(tmpdir(), 'playbook-schema-types-'));
+    try {
+      mkdirSync(join(scratch, 'node_modules', '@sublang'), { recursive: true });
+      symlinkSync(
+        repoRoot,
+        join(scratch, 'node_modules', '@sublang', 'playbook'),
+        'junction',
+      );
+      const fixture = join(scratch, 'consumer.ts');
+      writeFileSync(
+        fixture,
+        `import {
+  createXStatePlaybookRuntime,
+  type XStatePlaybookRuntimeSpec,
+  type XStatePlaybookRuntimeSpecV2,
+  type XStatePlaybookRuntimeSpecV3,
+} from '@sublang/playbook/xstate-runtime';
+import type {
+  PlaybookCaptainRegistryEntryV2,
+  PlaybookCaptainRegistryEntryV3,
+  PlaybookHostConstructionCapabilities,
+} from '@sublang/playbook/playbook-captain';
+
+interface Options { readonly mode: string }
+interface Capabilities { readonly observe: () => string }
+declare const machine: any;
+declare const legacySpec: XStatePlaybookRuntimeSpec<Options>;
+declare const v2Spec: XStatePlaybookRuntimeSpecV2<Options>;
+declare const v3Spec: XStatePlaybookRuntimeSpecV3<Options>;
+
+const legacyFactory = createXStatePlaybookRuntime<Options>(machine, legacySpec);
+legacyFactory({ mode: 'safe' });
+
+const v2Factory = createXStatePlaybookRuntime<Options>(machine, v2Spec);
+v2Factory({ mode: 'safe' });
+// @ts-expect-error schema 2 retains raw configured factory options
+v2Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
+
+const v3Factory = createXStatePlaybookRuntime<Options, Capabilities>(machine, v3Spec);
+v3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: { observe: () => 'head' } });
+// @ts-expect-error schema 3 requires the disjoint construction object
+v3Factory({ mode: 'safe' });
+// @ts-expect-error live host capabilities must use an object type
+createXStatePlaybookRuntime<Options, number>(machine, v3Spec);
+
+const inferredV3Factory = createXStatePlaybookRuntime(machine, v3Spec);
+inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: {} });
+// @ts-expect-error inferred schema 3 still rejects raw configured options
+inferredV3Factory({ mode: 'safe' });
+// @ts-expect-error inferred schema 3 still requires an object capability
+inferredV3Factory({ configuredOptions: { mode: 'safe' }, hostCapabilities: 1 });
+
+// @ts-expect-error schema 2 forbids outcome authority metadata
+const wrongV2: XStatePlaybookRuntimeSpecV2<Options> = { ...v2Spec, outcomeAuthority: { governedPlayerStates: {} } };
+// @ts-expect-error schema 3 requires outcome authority metadata
+const wrongV3: XStatePlaybookRuntimeSpecV3<Options> = { ...v2Spec, compat: { artifactSchema: 3, runtimeAbi: 1 } };
+void wrongV2;
+void wrongV3;
+
+declare const configuredOptions: unknown;
+declare const hostCapabilities: PlaybookHostConstructionCapabilities;
+declare const v2Entry: PlaybookCaptainRegistryEntryV2;
+declare const v3Entry: PlaybookCaptainRegistryEntryV3;
+v2Entry.createRuntime(configuredOptions);
+// @ts-expect-error schema 2 registry construction has no capability argument
+v2Entry.createRuntime(configuredOptions, hostCapabilities);
+// @ts-expect-error schema 3 registry construction requires capabilities
+v3Entry.createRuntime(configuredOptions);
+v3Entry.createRuntime(configuredOptions, hostCapabilities);
 `,
       );
       const program = ts.createProgram([fixture], {

@@ -20,7 +20,7 @@ it('loads the roleless Captain as an artifact-schema-2 module', () => {
     ),
     'utf8',
   );
-  expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([2]);
+  expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([2, 3]);
   expect(typeof createCaptainPlaybookRuntime).toBe('function');
   // DR-022 / slc/link.md: the compat declaration is the link-time literal.
   // Importing the loading engine's RUNTIME_ABI would make the factory's

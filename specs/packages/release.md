@@ -228,6 +228,8 @@ judge reply contract shared with compiled Captain artifacts
 [[captain-playbook-18](captain-playbook.md#captain-playbook-18)]).
 This engine subpath shall depend one-way on the
 type-only runtime contract and shall import no generated FSM or host adapter.
+The public XState engine shall keep `RUNTIME_ABI` at `1`, export the frozen `SUPPORTED_ARTIFACT_SCHEMAS` value `[2, 3]`, and export the schema-3 authority, repository-disposition, governed-outcome, authority-specification, construction-input, factory-option, and schema-discriminated specification declaration types governed by [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)].
+The public Playbook Captain declaration surface shall expose the schema-2 and schema-3 registry-entry variants and their live host-construction-capability type under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)].
 The `PlaybookSession`, player-resume, and trace shapes introduced by
 [DR-010](../decisions/010-playbook-session-tracing-and-resume.md) are
 such a breaking public-contract change.
@@ -628,6 +630,7 @@ declaration files behind every public subpath are exactly the recorded
 sets, so removing or renaming one goes red at the gate and is decided as
 a [[release-1](release.md#release-1)] release event before the tag
 rather than adjudicated after it.
+The public-surface suite shall import the XState engine and fail unless its runtime ABI is `1` and its supported schema set is the frozen exact value `[2, 3]` (verifying [[release-15](#release-15)]).
 Which subpaths those are shall be derived from `package.json`'s
 `exports` map minus a recorded exclusion carrying its reason, and the
 suite shall fail unless the recorded sets cover exactly that derivation.

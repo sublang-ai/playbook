@@ -261,12 +261,14 @@ runtime may pass to `callPlayer`), `concurrentRoleSets` (ordered arrays of at le
 ([[playbook-captain-20](#playbook-captain-20)]), a `validateOptions` function for that
 entry's own option slice, and a `createRuntime` factory for the
 linked runtime.
+The registry-entry contract shall be discriminated by that advertisement: schema `2` shall expose `createRuntime(configuredOptions)`, while schema `3` shall expose `createRuntime(configuredOptions, hostCapabilities)` with the second input required and host-owned; both variants shall retain the common manifest fields above.
 The CODE entry shall declare `id` and command `code` with artifact schema `2`, required role `coder`, and no concurrent role set; REVIEW shall declare `review` with schema `2`, roles `coder` and `reviewer`, and no concurrent role set; and DECIDE shall declare `decide` with schema `2`, roles `coder` and `reviewer`, and exact concurrent role sets `[['coder', 'reviewer']]`.
 The shell shall reject a missing or unsupported advertisement or a shared-factory entry whose advertised artifact schema differs from its factory `spec.compat.artifactSchema` under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)] before runtime construction; a bespoke runtime profile shall advertise the schema it implements directly.
 The shell shall take each playbook's artifact schema, required roles, concurrent role sets, summary policy,
 option validator, and runtime factory
 from its manifest entry.
-The shell shall take each enabled playbook's option slice and exact role-to-player map from its normalized `captain.options.playbooks.<id>` config ([[playbook-captain-16](#playbook-captain-16)]), require artifact schema `2` under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], require the role keys to equal that entry's `requiredRoleIds`, validate the options against that entry, and retain the bindings under [[playbook-captain-10](#playbook-captain-10)].
+The shell shall take each enabled playbook's option slice and exact role-to-player map from its normalized `captain.options.playbooks.<id>` config ([[playbook-captain-16](#playbook-captain-16)]), require artifact schema `2` or `3` under [[playbook-runtime-50](playbook-runtime.md#playbook-runtime-50)], require the role keys to equal that entry's `requiredRoleIds`, validate the options against that entry, and retain the bindings under [[playbook-captain-10](#playbook-captain-10)].
+The shell shall pass only the registry-validated plain-JSON option slice as configured options and shall reject a raw or validator-produced own `hostCapabilities` key; a schema-3 construction without current-host capabilities shall reject before calling its runtime factory or beginning governed work.
 The shell shall use run-result outcomes and normalized descriptor tags
 for lifecycle and shall not hardcode CODE state ids or CODE-specific
 summary labels.
@@ -802,7 +804,7 @@ controller port, while constructing no working-playbook sub-runtime.
 The shell shall require `captain.options.playbooks` and shall reject
 `init` when it is missing or empty; it shall not infer a CODE-only
 default from `captain.options.code`.
-Each `captain.options.playbooks.<id>` entry in the normalized shell config shall carry a `from` module specifier, an optional `command` override, exact `roles: Readonly<Record<roleId, { playerId: string; model: TuningSelection; effort: TuningSelection }>>`, and an `options` slice, where `TuningSelection` has the exact shape defined by [[playbook-cli-8](playbook-cli.md#playbook-cli-8)].
+Each `captain.options.playbooks.<id>` entry in the normalized shell config shall carry a `from` module specifier, an optional `command` override, exact `roles: Readonly<Record<roleId, { playerId: string; model: TuningSelection; effort: TuningSelection }>>`, and a configured-only plain-JSON `options` slice under [[playbook-cli-8](playbook-cli.md#playbook-cli-8)], where `TuningSelection` has the exact shape defined by that same contract.
 The shell shall require `captain.options.sessionAgents` from [[playbook-cli-8](playbook-cli.md#playbook-cli-8)] to be exactly `{ captain: SessionAgent; players: Readonly<Record<playerId, SessionAgent>> }`, with each `SessionAgent` carrying the top-level defaults `{ adapter: string; model: TuningSelection; effort: TuningSelection; instruction?: string; permissions?: PermissionPolicy }` under that same normalized contract, and shall reject a referenced player absent from that exact map or any unreferenced entry.
 The shell shall consume those exact blocks and bindings without deriving a binding from names, and every call shall pass both normalized selections even when either requests the provider default.
 For each enabled playbook the shell shall import the module named by
@@ -819,7 +821,7 @@ The shell shall reject `init` when `from` is missing, the import
 fails, the module exposes no valid registry entry, a map key differs
 from its module's manifest `id`, two enabled playbooks share an `id`,
 two enabled playbooks resolve to the same effective command, or an enabled
-playbook's id or effective command is the reserved internal name `captain`, or the manifest omits artifact schema `2`.
+playbook's id or effective command is the reserved internal name `captain`, or the manifest omits supported artifact schema `2` or `3`.
 The shell shall pass each entry only its normalized option slice and
 shall not extract an entry's namespace from the full Captain options
 bag.
@@ -1202,7 +1204,7 @@ Captain and its durable conversation live (verifying [[playbook-captain-3](#play
 #### playbook-captain-15
 
 
-Where the test suite initializes the shell with the real CODE, REVIEW, and DECIDE registries, it shall fail unless every registry declares artifact schema `2`, a missing, other, or shared-factory-disagreeing schema rejects before runtime construction, CODE declares role `coder`, REVIEW and DECIDE declare `coder` and `reviewer`, CODE and REVIEW declare no concurrent role set, DECIDE declares exactly `[['coder', 'reviewer']]`, malformed concurrent sets reject, each normalized role map covers the exact required set, each current empty option schema is validated without constructing a runtime, each runtime init receives exact role bindings whose prompt identities use the concrete model value or the established adapter for `provider-default`, and each later player call reaches only its explicitly bound player id (verifying [[playbook-captain-5](#playbook-captain-5)], [[playbook-captain-10](#playbook-captain-10)], and [[playbook-captain-16](#playbook-captain-16)]).
+Where the test suite initializes the shell with the real CODE, REVIEW, and DECIDE registries, it shall fail unless every maintained registry declares artifact schema `2`; a schema-3 manifest shape is accepted; a missing, unsupported, or shared-factory-disagreeing schema rejects before runtime construction; raw and validator-produced `hostCapabilities` reject before factory work; absent current-host schema-3 capabilities reject before `createRuntime`; CODE declares role `coder`; REVIEW and DECIDE declare `coder` and `reviewer`; CODE and REVIEW declare no concurrent role set; DECIDE declares exactly `[['coder', 'reviewer']]`; malformed concurrent sets reject; each normalized role map covers the exact required set; each current empty option schema is validated without constructing a runtime; each runtime init receives exact role bindings whose prompt identities use the concrete model value or the established adapter for `provider-default`; and each later player call reaches only its explicitly bound player id (verifying [[playbook-captain-5](#playbook-captain-5)], [[playbook-captain-10](#playbook-captain-10)], and [[playbook-captain-16](#playbook-captain-16)]).
 The suite shall reject an absent `sessionAgents` projection, a referenced player missing from it, or an extra unreferenced player before runtime construction (verifying [[playbook-captain-16](#playbook-captain-16)]).
 The suite shall also fail unless runtime Captain and judge calls preserve their visibility, resume, and optional tool-isolation selections through the shared single-flight Captain queue (verifying [[playbook-captain-9](#playbook-captain-9)] and [[playbook-captain-10](#playbook-captain-10)]).
 

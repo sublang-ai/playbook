@@ -12,10 +12,13 @@ import type {
   PlayerSessionStore,
 } from './runtime.js';
 import {
+  adjudicatePlayerOutput,
   createXStatePlaybookRuntime,
   RUNTIME_ABI,
   SUPPORTED_ARTIFACT_SCHEMAS,
+  type XStateOutcomeAuthoritySpec,
   type XStatePlaybookRuntimeSpec,
+  type XStatePlaybookRuntimeSpecV3,
 } from './xstate-runtime.js';
 
 const stateMeta = (stateId: string, description: string) => ({
@@ -77,6 +80,25 @@ function repeatSpec(
   };
 }
 
+const repeatOutcomeAuthority: XStateOutcomeAuthoritySpec = {
+  governedPlayerStates: {
+    work: {
+      complete: { fields: {}, repositoryDisposition: 'unchanged' },
+    },
+  },
+};
+
+function repeatSchema3Spec(
+  overrides: Partial<XStatePlaybookRuntimeSpecV3<EmptyOptions>> = {},
+): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return {
+    ...repeatSpec(),
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+    outcomeAuthority: repeatOutcomeAuthority,
+    ...overrides,
+  };
+}
+
 function recordingPorts(
   callPlayer: PlaybookPorts['callPlayer'],
   telemetry: unknown[] = [],
@@ -123,8 +145,8 @@ const bossTurn = (text: string) => ({
 });
 
 describe('DR-032 shared role runtime transition', () => {
-  it('advertises only artifact schema 2 and rejects legacy declarations', () => {
-    expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([2]);
+  it('advertises artifact schemas 2 and 3 and rejects legacy declarations', () => {
+    expect(SUPPORTED_ARTIFACT_SCHEMAS).toEqual([2, 3]);
     expect(Object.isFrozen(SUPPORTED_ARTIFACT_SCHEMAS)).toBe(true);
 
     expect(() =>
@@ -138,7 +160,7 @@ describe('DR-032 shared role runtime transition', () => {
         ...repeatSpec(),
         compat: { artifactSchema: 1, runtimeAbi: RUNTIME_ABI },
       }),
-    ).toThrow('supports [2]');
+    ).toThrow('supports [2, 3]');
     expect(() =>
       createXStatePlaybookRuntime(repeatMachine, {
         ...repeatSpec(),
@@ -220,6 +242,581 @@ describe('DR-032 shared role runtime transition', () => {
       } as unknown as XStatePlaybookRuntimeSpec<EmptyOptions>),
     ).toThrow('roleStates.work.role must be a JSON data property');
     expect(roleGetter).not.toHaveBeenCalled();
+  });
+
+  it('validates the closed schema-3 authority contract at construction', () => {
+    expect(() =>
+      createXStatePlaybookRuntime(repeatMachine, repeatSchema3Spec()),
+    ).not.toThrow();
+    expect(() =>
+      createXStatePlaybookRuntime(repeatMachine, {
+        ...repeatSpec(),
+        outcomeAuthority: repeatOutcomeAuthority,
+      }),
+    ).toThrow('outcomeAuthority is not allowed for schema 2');
+    expect(() =>
+      createXStatePlaybookRuntime(repeatMachine, {
+        ...repeatSpec(),
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+      }),
+    ).toThrow(
+      'outcomeAuthority must be an own enumerable data property for schema 3',
+    );
+
+    const cases: readonly [
+      authority: unknown,
+      diagnostic: string,
+    ][] = [
+      [
+        { governedPlayerStates: {}, extra: true },
+        'must contain exactly governedPlayerStates',
+      ],
+      [
+        { governedPlayerStates: {} },
+        'must declare player state work',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {},
+          },
+        },
+        'work must declare at least one outcome',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: {},
+                repositoryDisposition: 'unchanged',
+                extra: true,
+              },
+            },
+          },
+        },
+        'must contain exactly fields, repositoryDisposition',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              complete: { fields: {} },
+            },
+          },
+        },
+        'missing repositoryDisposition',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: {},
+                repositoryDisposition: 'changed',
+              },
+            },
+          },
+        },
+        'repositoryDisposition must be unchanged, one-descendant-commit, or deferred',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: { message: 'operator' },
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
+        'must name presentation, semantic, effect, or runtime authority',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: { guard: 'semantic' },
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
+        'outcome key owns the semantic discriminator',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              committed: {
+                fields: { latestCommit: 'semantic' },
+                repositoryDisposition: 'one-descendant-commit',
+              },
+            },
+          },
+        },
+        'latestCommit must use effect authority',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: { irNumber: 'runtime' },
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
+        'irNumber must use semantic authority',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              needsBossReply: {
+                fields: { question: 'semantic' },
+                repositoryDisposition: 'deferred',
+              },
+            },
+          },
+        },
+        'question must use presentation authority',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: { latestCommit: 'effect' },
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
+        'effect-owned fields only for one-descendant-commit',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              paused: {
+                fields: { question: 'presentation' },
+                repositoryDisposition: 'deferred',
+              },
+            },
+          },
+        },
+        'may use deferred only for needsBossReply',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            work: {
+              needsBossReply: {
+                fields: { question: 'presentation' },
+                repositoryDisposition: 'deferred',
+              },
+            },
+          },
+        },
+        'requires another one-descendant-commit outcome',
+      ],
+      [
+        {
+          governedPlayerStates: {
+            other: {
+              complete: {
+                fields: {},
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
+        'must declare player state work',
+      ],
+    ];
+    for (const [outcomeAuthority, diagnostic] of cases) {
+      expect(() =>
+        createXStatePlaybookRuntime(
+          repeatMachine,
+          repeatSchema3Spec({
+            outcomeAuthority:
+              outcomeAuthority as XStateOutcomeAuthoritySpec,
+          }),
+        ),
+      ).toThrow(diagnostic);
+    }
+
+    expect(() =>
+      createXStatePlaybookRuntime(
+        repeatMachine,
+        repeatSchema3Spec({
+          outcomeAuthority: {
+            governedPlayerStates: {
+              work: {
+                committed: {
+                  fields: { latestCommit: 'effect' },
+                  repositoryDisposition: 'one-descendant-commit',
+                },
+                needsBossReply: {
+                  fields: { question: 'presentation' },
+                  repositoryDisposition: 'deferred',
+                },
+              },
+            },
+          },
+        }),
+      ),
+    ).not.toThrow();
+
+    const authorityGetter = vi.fn(() => repeatOutcomeAuthority);
+    const accessorSpec = repeatSchema3Spec() as Record<string, unknown>;
+    Object.defineProperty(accessorSpec, 'outcomeAuthority', {
+      enumerable: true,
+      get: authorityGetter,
+    });
+    expect(() =>
+      createXStatePlaybookRuntime(
+        repeatMachine,
+        accessorSpec as unknown as XStatePlaybookRuntimeSpec<EmptyOptions>,
+      ),
+    ).toThrow(
+      'outcomeAuthority must be an own enumerable data property for schema 3',
+    );
+    expect(authorityGetter).not.toHaveBeenCalled();
+
+    const nonEnumerableSpec = repeatSchema3Spec() as Record<string, unknown>;
+    Object.defineProperty(nonEnumerableSpec, 'outcomeAuthority', {
+      value: repeatOutcomeAuthority,
+      enumerable: false,
+    });
+    expect(() =>
+      createXStatePlaybookRuntime(
+        repeatMachine,
+        nonEnumerableSpec as unknown as XStatePlaybookRuntimeSpecV3<EmptyOptions>,
+      ),
+    ).toThrow(
+      'outcomeAuthority must be an own enumerable data property for schema 3',
+    );
+
+    expect(() =>
+      createXStatePlaybookRuntime(
+        repeatMachine,
+        repeatSchema3Spec({
+          verbatimPayloadFields: new Set(['message']),
+          outcomeAuthority: {
+            governedPlayerStates: {
+              work: {
+                complete: {
+                  fields: { message: 'semantic' },
+                  repositoryDisposition: 'unchanged',
+                },
+              },
+            },
+          },
+        }),
+      ),
+    ).toThrow('message must use presentation authority');
+    expect(() =>
+      createXStatePlaybookRuntime(
+        repeatMachine,
+        repeatSchema3Spec({
+          outcomeAuthority: {
+            governedPlayerStates: {
+              work: {
+                complete: {
+                  fields: { message: 'presentation' },
+                  repositoryDisposition: 'unchanged',
+                },
+              },
+            },
+          },
+        }),
+      ),
+    ).toThrow('presentation authority requires a linker-declared verbatim');
+    expect(() =>
+      createXStatePlaybookRuntime(
+        repeatMachine,
+        repeatSchema3Spec({
+          verbatimPayloadFields: new Set(['unused']),
+        }),
+      ),
+    ).toThrow('unused is absent from governed payload fields');
+
+    const rolelessMachine = createMachine({
+      id: 'schema-3-roleless',
+      initial: 'ready',
+      states: {
+        ready: {
+          meta: stateMeta('ready', 'Waiting.'),
+          tags: ['playbook.parked'],
+        },
+      },
+    });
+    expect(() =>
+      createXStatePlaybookRuntime(rolelessMachine, {
+        label: 'ROLELESS-3',
+        compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+        snapshotOptions: () => ({}),
+        roleStates: {},
+        outcomeAuthority: { governedPlayerStates: {} },
+      }),
+    ).not.toThrow();
+  });
+
+  it('keeps schema-3 configured options disjoint from live capabilities', async () => {
+    const snapshotOptions = vi.fn(() => ({}));
+    const callPlayer = vi.fn(async () => ({
+      status: 'ok' as const,
+      finalText: 'done',
+    }));
+    const createRuntime = createXStatePlaybookRuntime<
+      EmptyOptions,
+      { readonly observe: () => string }
+    >(
+      repeatMachine,
+      repeatSchema3Spec({ snapshotOptions }),
+    );
+    const hostCapabilities = { observe: () => 'capability-marker' };
+
+    const mutableSchema3Spec = repeatSchema3Spec();
+    const schema3Factory = createXStatePlaybookRuntime<
+      EmptyOptions,
+      typeof hostCapabilities
+    >(repeatMachine, mutableSchema3Spec);
+    (mutableSchema3Spec.compat as { artifactSchema: number }).artifactSchema = 2;
+    expect(() =>
+      schema3Factory({} as {
+        configuredOptions: EmptyOptions;
+        hostCapabilities: typeof hostCapabilities;
+      }),
+    ).toThrow('schema-3 factory input must contain exactly');
+
+    const mutableSchema2Spec = repeatSpec();
+    const schema2Factory = createXStatePlaybookRuntime(
+      repeatMachine,
+      mutableSchema2Spec,
+    );
+    (mutableSchema2Spec.compat as { artifactSchema: number }).artifactSchema = 3;
+    expect(() => schema2Factory({})).not.toThrow();
+
+    expect(() =>
+      createRuntime({} as {
+        configuredOptions: EmptyOptions;
+        hostCapabilities: typeof hostCapabilities;
+      }),
+    ).toThrow('schema-3 factory input must contain exactly');
+    expect(() =>
+      createRuntime({
+        configuredOptions: {},
+        hostCapabilities: 1,
+      } as unknown as {
+        configuredOptions: EmptyOptions;
+        hostCapabilities: typeof hostCapabilities;
+      }),
+    ).toThrow('hostCapabilities must be a live object');
+    expect(() =>
+      createRuntime({
+        configuredOptions: {},
+        hostCapabilities,
+        extra: true,
+      } as unknown as {
+        configuredOptions: EmptyOptions;
+        hostCapabilities: typeof hostCapabilities;
+      }),
+    ).toThrow('schema-3 factory input must contain exactly');
+
+    const capabilityGetter = vi.fn(() => hostCapabilities);
+    const accessorInput = { configuredOptions: {} } as Record<string, unknown>;
+    Object.defineProperty(accessorInput, 'hostCapabilities', {
+      enumerable: true,
+      get: capabilityGetter,
+    });
+    expect(() =>
+      createRuntime(accessorInput as {
+        configuredOptions: EmptyOptions;
+        hostCapabilities: typeof hostCapabilities;
+      }),
+    ).toThrow('schema-3 factory input must contain exactly');
+    expect(capabilityGetter).not.toHaveBeenCalled();
+    expect(snapshotOptions).not.toHaveBeenCalled();
+    expect(() =>
+      createRuntime({
+        configuredOptions: { hostCapabilities: {} },
+        hostCapabilities,
+      }),
+    ).toThrow('configured options must not contain hostCapabilities');
+    expect(snapshotOptions).not.toHaveBeenCalled();
+
+    const runtime = createRuntime({ configuredOptions: {}, hostCapabilities });
+    expect(snapshotOptions).toHaveBeenCalledWith({});
+    await runtime.init(session(recordingPorts(callPlayer)));
+    await runtime.handleBossInput(bossTurn('the task'));
+    expect(callPlayer).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(runtime.exportSnapshot?.())).not.toContain(
+      'capability-marker',
+    );
+    await runtime.dispose();
+
+    const injectedFactory = createXStatePlaybookRuntime<
+      EmptyOptions,
+      typeof hostCapabilities
+    >(
+      repeatMachine,
+      repeatSchema3Spec({
+        snapshotOptions: () =>
+          ({ hostCapabilities: {} }) as unknown as EmptyOptions,
+      }),
+    );
+    expect(() =>
+      injectedFactory({ configuredOptions: {}, hostCapabilities }),
+    ).toThrow('configured options must not contain hostCapabilities');
+  });
+
+  it('snapshots linker-declared verbatim fields at factory construction', async () => {
+    const mutableVerbatimFields = new Set(['message']);
+    const callPlayer = vi.fn(async () => ({
+      status: 'ok' as const,
+      finalText: 'exact player prose',
+    }));
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      repeatMachine,
+      repeatSchema3Spec({
+        extractRequiredFields: () => ['message'],
+        verbatimPayloadFields: mutableVerbatimFields,
+        outcomeAuthority: {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: { message: 'presentation' },
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
+      }),
+    )({ configuredOptions: {}, hostCapabilities: {} });
+    mutableVerbatimFields.clear();
+    await runtime.init(session(recordingPorts(callPlayer)));
+
+    await expect(
+      runtime.handleBossInput(bossTurn('the task')),
+    ).resolves.toBeDefined();
+
+    expect(callPlayer).toHaveBeenCalledTimes(1);
+    await runtime.dispose();
+  });
+
+  it('rejects mismatched schema-3 outcome fields before a player call', async () => {
+    const callPlayer = vi.fn(async () => ({
+      status: 'ok' as const,
+      finalText: 'unused',
+    }));
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      repeatMachine,
+      repeatSchema3Spec({
+        outcomeAuthority: {
+          governedPlayerStates: {
+            work: {
+              complete: {
+                fields: { message: 'semantic' },
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
+      }),
+    )({ configuredOptions: {}, hostCapabilities: {} });
+    await runtime.init(session(recordingPorts(callPlayer)));
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
+      'must exactly match its described output fields',
+    );
+
+    expect(callPlayer).not.toHaveBeenCalled();
+    await runtime.dispose();
+
+    const mismatchedOutcomeCall = vi.fn(async () => ({
+      status: 'ok' as const,
+      finalText: 'unused',
+    }));
+    const mismatchedOutcomeRuntime = createXStatePlaybookRuntime<
+      EmptyOptions,
+      object
+    >(
+      repeatMachine,
+      repeatSchema3Spec({
+        outcomeAuthority: {
+          governedPlayerStates: {
+            work: {
+              other: {
+                fields: {},
+                repositoryDisposition: 'unchanged',
+              },
+            },
+          },
+        },
+      }),
+    )({ configuredOptions: {}, hostCapabilities: {} });
+    await mismatchedOutcomeRuntime.init(
+      session(recordingPorts(mismatchedOutcomeCall)),
+    );
+
+    await expect(
+      mismatchedOutcomeRuntime.handleBossInput(bossTurn('the task')),
+    ).rejects.toThrow('must exactly match outcomes other');
+
+    expect(mismatchedOutcomeCall).not.toHaveBeenCalled();
+    await mismatchedOutcomeRuntime.dispose();
+  });
+
+  it('preserves prototype-shaped authority field identifiers exactly', async () => {
+    const callPlayer = vi.fn(async () => ({
+      status: 'ok' as const,
+      finalText: 'done',
+    }));
+    const outcomeAuthority = JSON.parse(
+      '{"governedPlayerStates":{"work":{"complete":{"fields":{"__proto__":"runtime"},"repositoryDisposition":"unchanged"}}}}',
+    ) as XStateOutcomeAuthoritySpec;
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      repeatMachine,
+      repeatSchema3Spec({
+        extractRequiredFields: () => ['__proto__'],
+        outcomeAuthority,
+      }),
+    )({ configuredOptions: {}, hostCapabilities: {} });
+    await runtime.init(session(recordingPorts(callPlayer)));
+
+    await expect(runtime.handleBossInput(bossTurn('the task'))).rejects.toThrow(
+      'missing required field "__proto__"',
+    );
+
+    expect(callPlayer).toHaveBeenCalledTimes(1);
+    await runtime.dispose();
+
+    const adjudicated = await adjudicatePlayerOutput(
+      {
+        extractRequiredFields: () => ['__proto__'],
+        verbatimPayloadFields: new Set(['__proto__']),
+      },
+      {
+        stateId: 'work',
+        role: 'coder',
+        sourceItem: 'ROLE-1',
+        prompt: 'Implement the task.',
+        result: { complete: 'The task is complete.' },
+      },
+      'exact player prose',
+      recordingPorts(callPlayer),
+      new AbortController().signal,
+    );
+    expect(Object.hasOwn(adjudicated, '__proto__')).toBe(true);
+    expect(
+      Object.getOwnPropertyDescriptor(adjudicated, '__proto__')?.value,
+    ).toBe('exact player prose');
   });
 
   it('uses detached bindings for prompt identity while the port receives the role', async () => {

@@ -37,6 +37,7 @@ const DEFAULT_TEMPLATE_PATH = resolve(
 export const PLAYBOOK_CAPTAIN_MODULE =
   '@sublang/playbook/playbook-captain';
 const PLAYBOOK_LAUNCHER_KEYS = ['from', 'command', 'roles'];
+const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
 const PLAYBOOK_TOP_LEVEL_KEYS = new Set([
   'captain',
   'players',
@@ -291,6 +292,7 @@ export async function normalizeSelectedLaunchPlanDataOnly(
     if (hasOwn(block, 'players')) {
       throw legacyPlayersError(`playbooks.${id}.players`, configPath);
     }
+    rejectConfiguredHostCapabilities(block, `playbooks.${id}`);
     if (
       typeof block.from !== 'string' ||
       block.from.trim().length === 0 ||
@@ -519,6 +521,19 @@ export function resolveAgent(value, path, reservedKeys = []) {
   throw new Error(`${path} must be an adapter shorthand or an agent block`);
 }
 
+function rejectConfiguredHostCapabilities(value, path) {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    hasOwn(value, HOST_CAPABILITIES_OPTION_KEY)
+  ) {
+    throw new Error(
+      `${path}.${HOST_CAPABILITIES_OPTION_KEY} is host-owned and cannot be configured`,
+    );
+  }
+}
+
 // PBCLI-46: normalize into a detached, deeply frozen JSON plan. The plan has
 // only execution data and presentation data; imported registry functions are
 // consulted for validation and then discarded.
@@ -597,6 +612,7 @@ export async function normalizeLaunchPlan(
     if (hasOwn(block, 'players')) {
       throw legacyPlayersError(`playbooks.${id}.players`, configPath);
     }
+    rejectConfiguredHostCapabilities(block, `playbooks.${id}`);
     const from = block.from;
     if (
       typeof from !== 'string' ||
@@ -1269,8 +1285,8 @@ function invalidRegistryEntryReason(value) {
     return 'command must be a canonical trimmed nonblank string';
   }
   if (typeof value.intent !== 'string') return 'intent must be a string';
-  if (value.artifactSchema !== 2) {
-    return 'artifactSchema must be exactly 2';
+  if (value.artifactSchema !== 2 && value.artifactSchema !== 3) {
+    return 'artifactSchema must be 2 or 3';
   }
   const roleProblem = invalidManifestRoles(value.requiredRoleIds);
   if (roleProblem !== undefined) return `requiredRoleIds ${roleProblem}`;
@@ -1340,6 +1356,15 @@ function validateStoredStructuralProjection(value) {
     ) {
       throw new Error(`stored structural catalog.${id} is malformed`);
     }
+    if (item.artifactSchema !== 2 && item.artifactSchema !== 3) {
+      throw new Error(
+        `stored structural catalog.${id}.artifactSchema must be 2 or 3`,
+      );
+    }
+    rejectConfiguredHostCapabilities(
+      item.options,
+      `stored structural catalog.${id}.options`,
+    );
     if (
       JSON.stringify(Object.keys(item.roles)) !==
       JSON.stringify(item.requiredRoleIds)

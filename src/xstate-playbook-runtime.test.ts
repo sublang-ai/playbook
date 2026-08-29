@@ -5427,7 +5427,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
     ).toThrow(
       new TypeError(
         'workflow artifact declares schema 99, but this ' +
-          '@sublang/playbook/xstate-runtime engine supports [2]',
+          '@sublang/playbook/xstate-runtime engine supports [2, 3]',
       ),
     );
   });
@@ -5452,7 +5452,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
         ...workflowSpec,
         compat: { artifactSchema: 99, runtimeAbi: RUNTIME_ABI + 1 },
       }),
-    ).toThrow(/declares schema 99.*supports \[2\]/);
+    ).toThrow(/declares schema 99.*supports \[2, 3\]/);
   });
 
   it('rejects a malformed declaration naming the offending member', () => {
@@ -5484,7 +5484,7 @@ describe('runtime compatibility declaration (DR-022)', () => {
     ).toThrow(
       new TypeError(
         'decide-control artifact declares schema 99, but this ' +
-          '@sublang/playbook/xstate-runtime engine supports [2]',
+          '@sublang/playbook/xstate-runtime engine supports [2, 3]',
       ),
     );
   });

@@ -106,6 +106,33 @@ export interface XStatePlaybookRuntimeCompat {
     /** The engine ABI the artifact was linked against. */
     runtimeAbi: number;
 }
+/** Authority for one schema-3 delegated-player outcome payload field. */
+export type XStateOutcomeFieldAuthority = 'presentation' | 'semantic' | 'effect' | 'runtime';
+/** Repository disposition required by one schema-3 outcome arm. */
+export type XStateRepositoryDisposition = 'unchanged' | 'one-descendant-commit' | 'deferred';
+/** Closed authority and repository contract for one governed outcome. */
+export interface XStateGovernedOutcomeSpec {
+    readonly fields: Readonly<Record<string, XStateOutcomeFieldAuthority>>;
+    readonly repositoryDisposition: XStateRepositoryDisposition;
+}
+/**
+ * Schema-3 authority metadata, keyed first by player state and then by its
+ * declared outcome. A roleless artifact supplies an explicitly empty
+ * `governedPlayerStates` object.
+ */
+export interface XStateOutcomeAuthoritySpec {
+    readonly governedPlayerStates: Readonly<Record<string, Readonly<Record<string, XStateGovernedOutcomeSpec>>>>;
+}
+/**
+ * Schema-3 factory input composed by a registry from persisted configured
+ * options and live current-host capabilities. The engine snapshots only the
+ * first member and never places the second in machine input or persistence.
+ */
+export interface XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities extends object> {
+    readonly configuredOptions: ConfiguredOptions;
+    readonly hostCapabilities: HostCapabilities;
+}
+export type XStatePlaybookRuntimeFactoryOptions<ConfiguredOptions, HostCapabilities extends object> = [HostCapabilities] extends [never] ? ConfiguredOptions : XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
 /**
  * One direct-Captain actor invocation handed to a spec's `captainStrategy`
  * (slc/link.md §Captain adjudication, controller form). The engine owns
@@ -146,15 +173,9 @@ export interface XStateCaptainStrategyRun<TOptions> {
     recoverableFailure<E extends Error>(error: E): E;
 }
 export type XStateCaptainStrategy<TOptions> = (run: XStateCaptainStrategyRun<TOptions>) => Promise<PlaybookActorOutput>;
-export interface XStatePlaybookRuntimeSpec<TOptions> {
+interface XStatePlaybookRuntimeSpecBase<TOptions> {
     /** Diagnostic label used in internal invariant errors. Default 'playbook'. */
     label?: string;
-    /**
-     * Link-time compatibility declaration checked at construction against the
-     * loaded engine's self-report (DR-022). Absent declarations reject because
-     * their overloaded player metadata has no safe local-role interpretation.
-     */
-    compat?: XStatePlaybookRuntimeCompat;
     /** Validate and JSON-snapshot the caller's per-run options. */
     snapshotOptions: (value: unknown) => TOptions;
     /** Derive the FSM machine input from validated options. Default: identity. */
@@ -239,6 +260,28 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
     /** Working directory for `script` actors. Default: the validated options' string `cwd`, else the process working directory. */
     scriptCwd?: (options: TOptions) => string | undefined;
 }
+/**
+ * Legacy schema-2-compatible shared-engine spec name. Its optional compat
+ * member is retained for downstream source compatibility; construction still
+ * rejects an absent or unsupported declaration before interpretation.
+ */
+export interface XStatePlaybookRuntimeSpec<TOptions> extends XStatePlaybookRuntimeSpecBase<TOptions> {
+    compat?: XStatePlaybookRuntimeCompat;
+    outcomeAuthority?: never;
+}
+/** Exact schema-2 shared-engine spec; its one-argument factory is intact. */
+export interface XStatePlaybookRuntimeSpecV2<TOptions> extends XStatePlaybookRuntimeSpec<TOptions> {
+    compat: XStatePlaybookRuntimeCompat & {
+        artifactSchema: 2;
+    };
+}
+/** Schema-3 shared-engine spec with required exact outcome authority metadata. */
+export interface XStatePlaybookRuntimeSpecV3<TOptions> extends XStatePlaybookRuntimeSpecBase<TOptions> {
+    compat: XStatePlaybookRuntimeCompat & {
+        artifactSchema: 3;
+    };
+    outcomeAuthority: XStateOutcomeAuthoritySpec;
+}
 /** Strip a single Markdown code fence that wraps the whole string. */
 export declare function stripCodeFence(text: string): string;
 export declare function extractJsonValue(text: string, start: number, repair: boolean): string | undefined;
@@ -294,6 +337,7 @@ export interface PlayerAdjudicationSpec {
 export declare function adjudicatePlayerOutput(spec: PlayerAdjudicationSpec, input: PlaybookPlayerInput, finalText: string, ports: PlaybookPorts, signal: AbortSignal, boundary?: RuntimeBoundaryCalls): Promise<PlaybookActorOutput>;
 interface PlayerBridgeSpec {
     resolveRoleId: (input: PlaybookPlayerInput) => string;
+    validateInput?: (input: PlaybookPlayerInput) => void;
     composePlayerPrompt: (input: PlaybookPlayerInput) => string;
     adjudication: PlayerAdjudicationSpec;
     resumableStateIds: ReadonlySet<string>;
@@ -331,4 +375,5 @@ export declare function stateDescriptionsFromMachine(machine: AnyStateMachine): 
  * Parallel-region FSMs keep their own linked runtimes.
  */
 export declare function createXStatePlaybookRuntime<TOptions>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpec<TOptions>): PlaybookRuntimeFactory<TOptions>;
+export declare function createXStatePlaybookRuntime<TOptions, THostCapabilities extends object>(machine: AnyStateMachine, spec: XStatePlaybookRuntimeSpecV3<TOptions>): PlaybookRuntimeFactory<XStatePlaybookRuntimeConstruction<TOptions, THostCapabilities>>;
 export {};

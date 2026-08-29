@@ -48,6 +48,7 @@ The CODE registry shall require `coder`, and the REVIEW and DECIDE registries sh
 
 The current CODE, REVIEW, and DECIDE registries accept no workflow-specific options and shall reject every nonempty option slice.
 Host-observable agent, layout, notification, permission, and presentation settings shall remain host configuration rather than workflow options.
+Every configured option slice shall be plain JSON and shall reject the reserved own key `hostCapabilities` before and after registry option validation under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)]; live host construction capabilities are not workflow options.
 
 ### Module boundary
 
@@ -56,7 +57,7 @@ Host-observable agent, layout, notification, permission, and presentation settin
 Each linked workflow runtime shall import its FSM and the shared runtime contract types from `@sublang/playbook/runtime`, hold no host-specific type, and interact with its host only through `PlaybookPorts`.
 Each public workflow module shall default-export a `createPlaybookRuntime(options)` factory and shall re-export rather than redefine the shared runtime types.
 A flat single-region artifact shall use `createXStatePlaybookRuntime` from `@sublang/playbook/xstate-runtime`, while a parallel artifact may emit bespoke linked machinery that implements the same public contract per [DR-019](../decisions/019-shared-linked-runtime-factory.md).
-An artifact-specific host capability shall enter through that artifact's typed options and shall not widen `PlaybookPorts` or `handleBossInput`.
+Schema `2` shall retain its existing typed factory-options contract; for schema `3`, the shared factory shall receive the exact disjoint construction object defined by [[playbook-runtime-50](#playbook-runtime-50)], while the registry accepts configured options and live host capabilities separately under [[playbook-captain-5](playbook-captain.md#playbook-captain-5)]; neither form shall widen `PlaybookPorts` or `handleBossInput`.
 
 #### playbook-runtime-34
 
@@ -143,7 +144,12 @@ export its compatibility self-report
 ([DR-022](../decisions/022-runtime-compatibility-contract.md)): the
 integer `RUNTIME_ABI` it implements and the read-only integer array
 `SUPPORTED_ARTIFACT_SCHEMAS` it accepts.
-The supported set shall contain local-role artifact schema `2` and shall exclude schema `1`; schema `2` shall require the canonical `role` field and shall supply no concrete host binding.
+The supported set shall be exactly `[2, 3]` under runtime ABI `1` and shall exclude schema `1`.
+Schema `2` shall require the canonical `role` field, shall supply no concrete host binding, shall forbid `outcomeAuthority`, and shall otherwise preserve its present factory and runtime behavior.
+Schema `3` shall require `outcomeAuthority` as an own exact plain-JSON data property whose `governedPlayerStates` keys exactly cover `roleStates`, or are explicitly empty for a roleless artifact; each governed state shall exactly cover its invoked result outcomes, each outcome shall carry only `fields` and `repositoryDisposition`, and its field keys shall exactly cover the non-`guard` payload fields named by that outcome's result description.
+Each schema-3 payload field shall declare exactly one of `presentation`, `semantic`, `effect`, or `runtime` authority: `question` and every linker-declared verbatim field shall be presentation-owned, `latestCommit` shall be effect-owned, and `irNumber` and `irTask` shall be semantic-owned, while the outcome key owns the semantic discriminator.
+Each schema-3 outcome shall declare exactly one repository disposition from `unchanged`, `one-descendant-commit`, or `deferred`; effect-owned fields shall occur only on `one-descendant-commit`, and `deferred` shall occur only on `needsBossReply` with a presentation-owned question and a sibling `one-descendant-commit` outcome.
+The schema-3 shared factory shall accept one exact construction object `{ configuredOptions, hostCapabilities }`, snapshot and pass only the configured options to FSM input, require the capability member to be a non-null live object, and exclude that member from `PlaybookPorts`, machine input and context, and runtime snapshots.
 When `createXStatePlaybookRuntime(machine, spec)` is called with a
 `spec.compat` declaration `{ artifactSchema, runtimeAbi }`, the factory
 shall check that declaration against the self-report of the engine
@@ -1453,3 +1459,4 @@ projected run result and no start-only field, `stateId` appearing on
 #### playbook-runtime-54
 
 Where the integration suite constructs a linked artifact against the real shared engine, when its shared-factory declaration is absent, malformed, schema `1`, or disagrees with the loaded engine, the suite shall fail unless runtime construction rejects before any machine interpretation or agent call with a diagnostic naming the offending declaration and supported value; compatible schema-2 `{ role, label }` metadata and the bespoke DECIDE profile shall preserve local roles without creating a host binding (verifying [[playbook-runtime-50](#playbook-runtime-50)]).
+The suite shall also fail unless the engine exports the frozen supported set `[2, 3]`; accepts valid governed and explicit roleless-empty schema-3 metadata; rejects schema-2 metadata and schema-3 missing, extra, accessor, unknown, wrongly owned, inconsistent, or FSM-mismatched state, outcome, payload-field, authority, and disposition declarations before a player call; requires an exact accessor-free schema-3 construction object with a live capability object; and passes only configured options to option snapshotting and persisted runtime identity (verifying [[playbook-runtime-29](#playbook-runtime-29)] and [[playbook-runtime-50](#playbook-runtime-50)]).

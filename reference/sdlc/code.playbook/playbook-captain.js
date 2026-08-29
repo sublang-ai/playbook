@@ -6,6 +6,12 @@ import PQueue from 'p-queue';
 import { isAgentCallSettingsError, } from '@sublang/cligent/tmux-play';
 import { assertPlaybookRuntimeSnapshot, hiddenControlEnvelope, registerPlaybookAbortCleanup, snapshotJsonValue, validatePlayerResult, } from '../../../src/xstate-runtime.js';
 import createDefaultCaptainRuntime from '../captain.playbook/captain.playbook.js';
+function createRuntimeForEnablement(enablement) {
+    if (enablement.artifactSchema === 3) {
+        throw new Error(`/${enablement.command} schema-3 runtime requires current-host construction capabilities`);
+    }
+    return enablement.entry.createRuntime(enablement.options);
+}
 class VisibilityControlError extends Error {
     constructor(cause) {
         super(`playbook visibility request failed: ${String(cause?.message ?? cause)}`, { cause });
@@ -39,6 +45,7 @@ const INTERNAL_CAPTAIN_ID = 'captain';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
 const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
+const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
 const RESUMPTION_DUPLICATE_EFFECT_WARNING = 'Warning: resumption may duplicate external effects attempted after the retained boundary; verify the current world before continuing.';
 function parseRegisteredCommand(prompt) {
     const match = /^\/([A-Za-z][A-Za-z0-9_-]*)(?:\s+([\s\S]*))?$/.exec(prompt.trim());
@@ -471,7 +478,7 @@ function summaryProgressRoundCount(stateCounts) {
 function guardFromJudgeReply(finalText) {
     return /"guard"\s*:\s*"([^"]+)"/.exec(finalText)?.[1];
 }
-function isValidRegistryEntry(value) {
+function isValidRegistryEntry(value, artifactSchema) {
     if (typeof value !== 'object' || value === null)
         return false;
     const e = value;
@@ -496,7 +503,7 @@ function isValidRegistryEntry(value) {
     return (typeof e.id === 'string' &&
         typeof e.command === 'string' &&
         typeof e.intent === 'string' &&
-        e.artifactSchema === 2 &&
+        (artifactSchema === 2 || artifactSchema === 3) &&
         typeof e.validateOptions === 'function' &&
         typeof e.createRuntime === 'function');
 }
@@ -1093,6 +1100,14 @@ function promptIdentity(binding) {
         ? binding.model.value
         : binding.agent.adapter;
 }
+function rejectConfiguredHostCapabilities(value, path) {
+    if (value !== null &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        Object.prototype.hasOwnProperty.call(value, HOST_CAPABILITIES_OPTION_KEY)) {
+        throw new Error(`${path}.${HOST_CAPABILITIES_OPTION_KEY} is host-owned and cannot be configured`);
+    }
+}
 // Resolve the active registry at init from exact normalized role and session
 // agent projections (CAPTAIN-16). No role, ancestor, or generated-name fallback
 // exists at this boundary.
@@ -1140,6 +1155,7 @@ async function buildEnablements(options, loadModule) {
         }
         const record = block;
         rejectSnapshotKeys(record, ['from', 'command', 'roles', 'options'], `captain.options.playbooks.${id}`);
+        rejectConfiguredHostCapabilities(record.options, `captain.options.playbooks.${id}.options`);
         const from = record.from;
         if (typeof from !== 'string' || from.length === 0) {
             throw new Error(`captain.options.playbooks.${id}.from must be a module specifier`);
@@ -1152,7 +1168,10 @@ async function buildEnablements(options, loadModule) {
             throw new Error(`captain.options.playbooks.${id}.from "${from}" failed to import: ${String(cause?.message ?? cause)}`);
         }
         const entry = mod?.default;
-        if (!isValidRegistryEntry(entry)) {
+        const artifactSchema = entry
+            ?.artifactSchema;
+        if ((artifactSchema !== 2 && artifactSchema !== 3) ||
+            !isValidRegistryEntry(entry, artifactSchema)) {
             throw new Error(`captain.options.playbooks.${id}.from "${from}" exposes no valid registry entry`);
         }
         if (entry.id !== id) {
@@ -1205,11 +1224,13 @@ async function buildEnablements(options, loadModule) {
             }
         }
         const validatedOptions = snapshotJsonValue(entry.validateOptions(record.options), `captain.options.playbooks.${id}.options`);
+        rejectConfiguredHostCapabilities(validatedOptions, `captain.options.playbooks.${id}.options`);
         entries.push(entry);
         byId.set(entry.id, entry);
         byCommand.set(command, entry);
         enablementById.set(entry.id, {
             entry,
+            artifactSchema,
             command,
             options: validatedOptions,
             roleBindings,
@@ -1568,7 +1589,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
             try {
                 for (const sourceFrame of generation.frames) {
                     const enablement = enablementById.get(sourceFrame.playbookId);
-                    runtimes.push(enablement.entry.createRuntime(enablement.options));
+                    runtimes.push(createRuntimeForEnablement(enablement));
                 }
                 if (runtimes.some((runtime) => !runtimeRetainsGenerations(runtime))) {
                     const rootRetainsGenerations = runtimeRetainsGenerations(runtimes[0]);
@@ -2096,7 +2117,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
         const entry = enablement.entry;
         const sessionId = allocateSessionId();
         const playerBindings = makePlayerBindings(enablement);
-        const runtime = entry.createRuntime(enablement.options);
+        const runtime = createRuntimeForEnablement(enablement);
         return {
             entry,
             enablement,
@@ -2112,7 +2133,7 @@ export function createPlaybookCaptainShell(options, deps = {}) {
     const makeRestoredFrame = (enablement, snapshot, parent) => {
         const entry = enablement.entry;
         const playerBindings = makePlayerBindings(enablement);
-        const runtime = entry.createRuntime(enablement.options);
+        const runtime = createRuntimeForEnablement(enablement);
         return {
             entry,
             enablement,

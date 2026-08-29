@@ -35,7 +35,7 @@ import {
   createPlaybookCaptainShell,
   type PlaybookCaptainDeps,
   type PlaybookCaptainFrameSnapshot,
-  type PlaybookCaptainRegistryEntry,
+  type PlaybookCaptainRegistryEntryV2,
   type PlaybookCaptainRetainedGeneration,
   type PlaybookCaptainShellSnapshot,
 } from './playbook-captain.js';
@@ -495,7 +495,7 @@ function fakeCodeEntry(
   resumeHook?: ResumeHook,
   restoreHook?: RestoreHook,
 ): {
-  entry: PlaybookCaptainRegistryEntry;
+  entry: PlaybookCaptainRegistryEntryV2;
   validateOptions: ReturnType<typeof vi.fn>;
   createRuntime: ReturnType<typeof vi.fn>;
   runtimes: FakeRuntime[];
@@ -898,6 +898,58 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
     );
 
     expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('rejects configured host capabilities before loading a registry', async () => {
+    const registry = fakeCodeEntry();
+    const loadModule = vi.fn(async () => ({ default: registry.entry }));
+    const shell = makeShell(registry, {
+      options: { hostCapabilities: {} },
+      loadModule,
+    });
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      'options.hostCapabilities is host-owned and cannot be configured',
+    );
+
+    expect(loadModule).not.toHaveBeenCalled();
+    expect(registry.validateOptions).not.toHaveBeenCalled();
+  });
+
+  it('rejects host capabilities injected by registry option validation', async () => {
+    const registry = fakeCodeEntry();
+    registry.validateOptions.mockReturnValue({ hostCapabilities: {} });
+    const shell = makeShell(registry);
+
+    await expect(shell.init!(stubSession().session)).rejects.toThrow(
+      'options.hostCapabilities is host-owned and cannot be configured',
+    );
+
+    expect(registry.createRuntime).not.toHaveBeenCalled();
+  });
+
+  it('accepts a schema-3 registry manifest but requires host construction capabilities', async () => {
+    const registry = fakeCodeEntry();
+    const createRuntime = vi.fn(
+      (_configuredOptions: unknown, _hostCapabilities: object) =>
+        new FakeRuntime(),
+    );
+    registry.entry = {
+      ...registry.entry,
+      artifactSchema: 3,
+      createRuntime,
+    } as unknown as PlaybookCaptainRegistryEntryV2;
+    const shell = makeShell(registry);
+    const context = stubContext();
+    await shell.init!(stubSession().session);
+    (registry.entry as unknown as { artifactSchema: number }).artifactSchema = 2;
+
+    await shell.handleBossTurn(turn('/code task'), context.context);
+
+    expect(turnSummaryCalls(context)[0]?.prompt).toContain(
+      '/code schema-3 runtime requires current-host construction capabilities',
+    );
+    expect(createRuntime).not.toHaveBeenCalled();
   });
 
   it('dispatches /code text to a lazily constructed CODE runtime', async () => {

@@ -751,6 +751,26 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
         }),
       ),
     ).toMatchObject({ captain: { model: { value: 'next-captain' } } });
+    const schema3Execution = structuredClone(execution);
+    schema3Execution.catalog.code.artifactSchema = 3;
+    expect(
+      validateCaptainSessionExecutionProjection(schema3Execution).catalog.code
+        .artifactSchema,
+    ).toBe(3);
+    expect(
+      validateCaptainSessionStructuralProjection(
+        projectCaptainSessionStructure(schema3Execution),
+      ).catalog.code.artifactSchema,
+    ).toBe(3);
+    const structuralWithCapabilities = structuredClone(structural);
+    structuralWithCapabilities.catalog.code.options = {
+      hostCapabilities: {},
+    };
+    expect(() =>
+      validateCaptainSessionStructuralProjection(structuralWithCapabilities),
+    ).toThrow(
+      /options\.hostCapabilities is host-owned and cannot be persisted/,
+    );
     const retunedEffort = {
       ...execution,
       captain: {
@@ -828,6 +848,39 @@ describe('durable Captain session records (PBCLI-23/24/51/52/53/54)', () => {
           },
         },
         /canonical trimmed form/,
+      ],
+      [
+        'unsupported artifact schema',
+        {
+          ...execution,
+          catalog: {
+            code: { ...execution.catalog.code, artifactSchema: 1 },
+          },
+        },
+        /artifactSchema must be 2 or 3/,
+      ],
+      [
+        'future artifact schema',
+        {
+          ...execution,
+          catalog: {
+            code: { ...execution.catalog.code, artifactSchema: 4 },
+          },
+        },
+        /artifactSchema must be 2 or 3/,
+      ],
+      [
+        'persisted host capabilities',
+        {
+          ...execution,
+          catalog: {
+            code: {
+              ...execution.catalog.code,
+              options: { hostCapabilities: {} },
+            },
+          },
+        },
+        /options\.hostCapabilities is host-owned and cannot be persisted/,
       ],
       [
         'extra roster member',

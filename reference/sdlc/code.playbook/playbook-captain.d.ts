@@ -33,17 +33,28 @@ export interface PlaybookCaptainDeps {
         readonly controller: CaptainControllerPort;
     }) => PlaybookRuntime;
 }
-export interface PlaybookCaptainRegistryEntry {
+/** Live, artifact-typed host facilities supplied outside configured options. */
+export interface PlaybookHostConstructionCapabilities {
+    readonly [capability: string]: unknown;
+}
+interface PlaybookCaptainRegistryEntryBase {
     id: string;
     command: string;
     intent: string;
-    artifactSchema: 2;
     requiredRoleIds: readonly string[];
     concurrentRoleSets: readonly (readonly string[])[];
     summaryPolicy?: PlaybookSummaryPolicy;
     validateOptions(optionSlice: unknown): unknown;
-    createRuntime(options: unknown): PlaybookRuntime;
 }
+export interface PlaybookCaptainRegistryEntryV2 extends PlaybookCaptainRegistryEntryBase {
+    artifactSchema: 2;
+    createRuntime(configuredOptions: unknown): PlaybookRuntime;
+}
+export interface PlaybookCaptainRegistryEntryV3 extends PlaybookCaptainRegistryEntryBase {
+    artifactSchema: 3;
+    createRuntime(configuredOptions: unknown, hostCapabilities: PlaybookHostConstructionCapabilities): PlaybookRuntime;
+}
+export type PlaybookCaptainRegistryEntry = PlaybookCaptainRegistryEntryV2 | PlaybookCaptainRegistryEntryV3;
 type PlaybookCaptainConversationSnapshot = {
     readonly kind: 'unopened';
 } | {

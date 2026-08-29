@@ -24,12 +24,13 @@ function entry(
   requiredRoleIds: string[],
   command = id,
   concurrentRoleSets: string[][] = [],
+  artifactSchema = 2,
 ) {
   return {
     id,
     command,
     intent: `${id} intent`,
-    artifactSchema: 2,
+    artifactSchema,
     requiredRoleIds,
     concurrentRoleSets,
     validateOptions: () => ({}),
@@ -254,6 +255,45 @@ describe('shared launch-config plan (PBCLI-47)', () => {
     expect(plan.players[0].agent.adapter).toBe('codex');
   });
 
+  it('accepts and projects a schema-3 registry advertisement', async () => {
+    const plan = await launchConfig.normalizeLaunchPlan(oneRoleConfig(), {
+      loadModule: moduleLoader({
+        'mod://code': entry('code', ['coder'], 'code', [], 3),
+      }),
+    });
+
+    const structural = structuralProjection(plan);
+    expect(plan.catalog.code.artifactSchema).toBe(3);
+    expect(structural.catalog.code.artifactSchema).toBe(3);
+    await expect(
+      launchConfig.normalizeSelectedLaunchPlanDataOnly(oneRoleConfig(), {
+        configPath: '/tmp/playbook.config.yaml',
+        stored: structural,
+      }),
+    ).resolves.toMatchObject({
+      catalog: { code: { artifactSchema: 3 } },
+    });
+  });
+
+  it('rejects host capabilities from a stored structural projection', async () => {
+    const plan = await launchConfig.normalizeLaunchPlan(oneRoleConfig(), {
+      loadModule: moduleLoader({
+        'mod://code': entry('code', ['coder']),
+      }),
+    });
+    const structural = structuralProjection(plan);
+    structural.catalog.code.options = { hostCapabilities: {} };
+
+    await expect(
+      launchConfig.normalizeSelectedLaunchPlanDataOnly(oneRoleConfig(), {
+        configPath: '/tmp/playbook.config.yaml',
+        stored: structural,
+      }),
+    ).rejects.toThrow(
+      'stored structural catalog.code.options.hostCapabilities is host-owned and cannot be configured',
+    );
+  });
+
   it('shares exact referenced ids and excludes unused players from roster and readiness', async () => {
     const plan = await launchConfig.normalizeLaunchPlan(
       {
@@ -410,6 +450,29 @@ describe('shared launch-config plan (PBCLI-47)', () => {
         { prepareRegistryModule, loadModule },
       ),
     ).rejects.toThrow(/effort/);
+    expect(prepareRegistryModule).not.toHaveBeenCalled();
+    expect(loadModule).not.toHaveBeenCalled();
+  });
+
+  it('rejects configured host capabilities before registry preparation', async () => {
+    const prepareRegistryModule = vi.fn();
+    const loadModule = vi.fn();
+    await expect(
+      launchConfig.normalizeLaunchPlan(
+        {
+          ...oneRoleConfig(),
+          playbooks: {
+            code: {
+              ...oneRoleConfig().playbooks.code,
+              hostCapabilities: {},
+            },
+          },
+        },
+        { prepareRegistryModule, loadModule },
+      ),
+    ).rejects.toThrow(
+      'playbooks.code.hostCapabilities is host-owned and cannot be configured',
+    );
     expect(prepareRegistryModule).not.toHaveBeenCalled();
     expect(loadModule).not.toHaveBeenCalled();
   });
@@ -1129,6 +1192,7 @@ describe('shared launch-config plan (PBCLI-47)', () => {
 
   it.each([
     ['artifact schema 1', { artifactSchema: 1 }],
+    ['artifact schema 4', { artifactSchema: 4 }],
     ['missing concurrent sets', { concurrentRoleSets: undefined }],
     ['one-role concurrent set', { concurrentRoleSets: [['coder']] }],
     ['unknown concurrent role', { concurrentRoleSets: [['coder', 'other']] }],

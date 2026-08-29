@@ -57,6 +57,51 @@ function isEmptyFinalText(finalText) {
     return finalText === undefined || finalText.trim().length === 0;
 }
 const emptyOkRetryFailures = new WeakSet();
+const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
+function assertNoConfiguredHostCapabilities(value, label) {
+    if (value !== null &&
+        typeof value === 'object' &&
+        Object.prototype.hasOwnProperty.call(value, HOST_CAPABILITIES_OPTION_KEY)) {
+        throw new TypeError(`${label} configured options must not contain hostCapabilities`);
+    }
+}
+function configuredOptionsFromFactoryInput(value, artifactSchema, label) {
+    if (artifactSchema === 2) {
+        assertNoConfiguredHostCapabilities(value, label);
+        return value;
+    }
+    if (value === null ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        (Object.getPrototypeOf(value) !== Object.prototype &&
+            Object.getPrototypeOf(value) !== null)) {
+        throw new TypeError(`${label} schema-3 factory input must be a plain object`);
+    }
+    const descriptors = Object.getOwnPropertyDescriptors(value);
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== 2 ||
+        !keys.includes('configuredOptions') ||
+        !keys.includes(HOST_CAPABILITIES_OPTION_KEY) ||
+        keys.some((key) => {
+            const descriptor = descriptors[key];
+            return (typeof key !== 'string' ||
+                descriptor?.get !== undefined ||
+                descriptor?.set !== undefined ||
+                descriptor?.enumerable !== true ||
+                !Object.prototype.hasOwnProperty.call(descriptor, 'value'));
+        })) {
+        throw new TypeError(`${label} schema-3 factory input must contain exactly configuredOptions and hostCapabilities data properties`);
+    }
+    const hostCapabilities = descriptors.hostCapabilities.value;
+    if (hostCapabilities === null ||
+        typeof hostCapabilities !== 'object' ||
+        Array.isArray(hostCapabilities)) {
+        throw new TypeError(`${label} schema-3 factory input hostCapabilities must be a live object`);
+    }
+    const configuredOptions = descriptors.configuredOptions.value;
+    assertNoConfiguredHostCapabilities(configuredOptions, label);
+    return configuredOptions;
+}
 function markEmptyOkRetryFailure(error) {
     emptyOkRetryFailures.add(error);
     return error;
@@ -80,6 +125,7 @@ export const RUNTIME_ABI = 1;
 /** The linked-artifact schema versions this engine accepts (DR-022). */
 export const SUPPORTED_ARTIFACT_SCHEMAS = Object.freeze([
     2,
+    3,
 ]);
 // PBRT-50: validate a declaration against the loaded engine, schema first,
 // so one clear diagnostic covers a fully skewed artifact. Declaration-free
@@ -107,6 +153,7 @@ function assertRuntimeCompat(compat, label) {
         throw new TypeError(`${label} artifact declares runtime ABI ${runtimeAbi}, but this ` +
             `@sublang/playbook/xstate-runtime engine implements ${RUNTIME_ABI}`);
     }
+    return artifactSchema;
 }
 // ---------------------------------------------------------------------------
 // Tolerant judge-JSON recovery (slc/link.md §Boss-event mapping).
@@ -533,7 +580,12 @@ export async function adjudicatePlayerOutput(spec, input, finalText, ports, sign
     const verbatim = finalText.trim();
     for (const field of extractFields(input.result[guard])) {
         if (verbatimFields.has(field)) {
-            obj[field] = verbatim;
+            Object.defineProperty(obj, field, {
+                value: verbatim,
+                enumerable: true,
+                configurable: true,
+                writable: true,
+            });
             continue;
         }
         if (typeof obj[field] !== 'string') {
@@ -561,6 +613,7 @@ export function createPlayerBridge(spec, ports, getActiveSignal, boundary, onCon
         let roleId;
         let prompt;
         try {
+            spec.validateInput?.(input);
             roleId = spec.resolveRoleId(input);
             prompt = spec.composePlayerPrompt(input);
         }
@@ -919,9 +972,9 @@ function makeDefaultNormalizeTransitionEvent(transitionEventFields) {
         return snapshotJsonValue(out, 'FSM event');
     };
 }
-function snapshotRoleStateStatuses(value, label, machine, stateDescriptions) {
+function snapshotRoleStateStatuses(value, label, artifactSchema, machine, stateDescriptions) {
     if (value === undefined) {
-        throw new TypeError(`${label} roleStates must be supplied for schema 2`);
+        throw new TypeError(`${label} roleStates must be supplied for schema ${artifactSchema}`);
     }
     const captured = snapshotJsonValue(value, `${label} roleStates`);
     if (!isPlainObject(captured)) {
@@ -964,6 +1017,202 @@ function snapshotRoleStateStatuses(value, label, machine, stateDescriptions) {
         }
     }
     return statuses;
+}
+const OUTCOME_FIELD_AUTHORITIES = new Set([
+    'presentation',
+    'semantic',
+    'effect',
+    'runtime',
+]);
+const REPOSITORY_DISPOSITIONS = new Set([
+    'unchanged',
+    'one-descendant-commit',
+    'deferred',
+]);
+const OUTCOME_FIELD_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+const SEMANTIC_OUTCOME_FIELDS = new Set([
+    'irNumber',
+    'irTask',
+    'moreTasks',
+    'finalTask',
+]);
+function requireExactObjectKeys(value, expected, path) {
+    const actual = Object.keys(value);
+    const missing = expected.filter((key) => !actual.includes(key));
+    const extra = actual.filter((key) => !expected.includes(key));
+    if (missing.length === 0 && extra.length === 0)
+        return;
+    throw new TypeError(`${path} must contain exactly ${expected.join(', ')}` +
+        (missing.length === 0 ? '' : `; missing ${missing.join(', ')}`) +
+        (extra.length === 0 ? '' : `; unknown ${extra.join(', ')}`));
+}
+function requireCanonicalAuthorityKey(value, path) {
+    if (value.length === 0 || value !== value.trim()) {
+        throw new TypeError(`${path} must be a canonical non-empty string`);
+    }
+}
+function requireAuthorityIdentifier(value, path) {
+    if (!OUTCOME_FIELD_KEY_PATTERN.test(value)) {
+        throw new TypeError(`${path} must be an identifier`);
+    }
+}
+function snapshotOutcomeAuthority(descriptor, artifactSchema, label, playerStates, verbatimPayloadFields) {
+    const path = `${label} outcomeAuthority`;
+    if (artifactSchema === 2) {
+        if (descriptor !== undefined) {
+            throw new TypeError(`${path} is not allowed for schema 2`);
+        }
+        return undefined;
+    }
+    if (descriptor === undefined ||
+        !Object.prototype.hasOwnProperty.call(descriptor, 'value') ||
+        descriptor.enumerable !== true) {
+        throw new TypeError(`${path} must be an own enumerable data property for schema 3`);
+    }
+    const captured = snapshotJsonValue(descriptor.value, path);
+    if (!isPlainObject(captured)) {
+        throw new TypeError(`${path} must be an object`);
+    }
+    requireExactObjectKeys(captured, ['governedPlayerStates'], path);
+    const governed = captured.governedPlayerStates;
+    if (!isPlainObject(governed)) {
+        throw new TypeError(`${path}.governedPlayerStates must be an object`);
+    }
+    for (const stateId of playerStates.keys()) {
+        if (!Object.prototype.hasOwnProperty.call(governed, stateId)) {
+            throw new TypeError(`${path}.governedPlayerStates must declare player state ${stateId}`);
+        }
+    }
+    for (const stateId of Object.keys(governed)) {
+        requireCanonicalAuthorityKey(stateId, `${path}.governedPlayerStates key`);
+        if (!playerStates.has(stateId)) {
+            throw new TypeError(`${path}.governedPlayerStates.${stateId} does not name a player state`);
+        }
+    }
+    const usedVerbatimFields = new Set();
+    const normalizedStates = Object.create(null);
+    for (const [stateId, rawOutcomes] of Object.entries(governed)) {
+        const statePath = `${path}.governedPlayerStates.${stateId}`;
+        if (!isPlainObject(rawOutcomes) || Object.keys(rawOutcomes).length === 0) {
+            throw new TypeError(`${statePath} must declare at least one outcome`);
+        }
+        const outcomes = Object.create(null);
+        for (const [outcome, rawSpec] of Object.entries(rawOutcomes)) {
+            requireAuthorityIdentifier(outcome, `${statePath} outcome key`);
+            const outcomePath = `${statePath}.${outcome}`;
+            if (!isPlainObject(rawSpec)) {
+                throw new TypeError(`${outcomePath} must be an object`);
+            }
+            requireExactObjectKeys(rawSpec, ['fields', 'repositoryDisposition'], outcomePath);
+            if (!isPlainObject(rawSpec.fields)) {
+                throw new TypeError(`${outcomePath}.fields must be an object`);
+            }
+            const fields = Object.create(null);
+            for (const [field, authority] of Object.entries(rawSpec.fields)) {
+                requireAuthorityIdentifier(field, `${outcomePath}.fields key`);
+                if (field === 'guard') {
+                    throw new TypeError(`${outcomePath}.fields.guard is not allowed; the outcome key owns the semantic discriminator`);
+                }
+                if (typeof authority !== 'string' ||
+                    !OUTCOME_FIELD_AUTHORITIES.has(authority)) {
+                    throw new TypeError(`${outcomePath}.fields.${field} must name presentation, semantic, effect, or runtime authority`);
+                }
+                const requiredAuthorities = new Set();
+                if (field === 'latestCommit')
+                    requiredAuthorities.add('effect');
+                if (SEMANTIC_OUTCOME_FIELDS.has(field)) {
+                    requiredAuthorities.add('semantic');
+                }
+                if (field === 'question' || verbatimPayloadFields.has(field)) {
+                    requiredAuthorities.add('presentation');
+                }
+                if (requiredAuthorities.size > 1) {
+                    throw new TypeError(`${outcomePath}.fields.${field} has conflicting linker authority requirements`);
+                }
+                const requiredAuthority = [...requiredAuthorities][0];
+                if (requiredAuthority !== undefined && authority !== requiredAuthority) {
+                    throw new TypeError(`${outcomePath}.fields.${field} must use ${requiredAuthority} authority`);
+                }
+                if (verbatimPayloadFields.has(field))
+                    usedVerbatimFields.add(field);
+                if (authority === 'presentation' &&
+                    field !== 'question' &&
+                    !verbatimPayloadFields.has(field)) {
+                    throw new TypeError(`${outcomePath}.fields.${field} presentation authority requires a linker-declared verbatim payload field`);
+                }
+                fields[field] = authority;
+            }
+            const disposition = rawSpec.repositoryDisposition;
+            if (typeof disposition !== 'string' ||
+                !REPOSITORY_DISPOSITIONS.has(disposition)) {
+                throw new TypeError(`${outcomePath}.repositoryDisposition must be unchanged, one-descendant-commit, or deferred`);
+            }
+            if (disposition !== 'one-descendant-commit' &&
+                Object.values(fields).includes('effect')) {
+                throw new TypeError(`${outcomePath} may declare effect-owned fields only for one-descendant-commit`);
+            }
+            outcomes[outcome] = Object.freeze({
+                fields: Object.freeze(fields),
+                repositoryDisposition: disposition,
+            });
+        }
+        for (const [outcome, outcomeSpec] of Object.entries(outcomes)) {
+            if (outcomeSpec.repositoryDisposition !== 'deferred')
+                continue;
+            if (outcome !== 'needsBossReply') {
+                throw new TypeError(`${statePath}.${outcome} may use deferred only for needsBossReply`);
+            }
+            if (outcomeSpec.fields.question !== 'presentation') {
+                throw new TypeError(`${statePath}.needsBossReply deferred outcome must declare presentation-owned question`);
+            }
+            if (!Object.entries(outcomes).some(([other, candidate]) => other !== outcome &&
+                candidate.repositoryDisposition === 'one-descendant-commit')) {
+                throw new TypeError(`${statePath}.needsBossReply deferred outcome requires another one-descendant-commit outcome`);
+            }
+        }
+        normalizedStates[stateId] = Object.freeze(outcomes);
+    }
+    for (const field of verbatimPayloadFields) {
+        requireAuthorityIdentifier(field, `${path} verbatimPayloadFields entry`);
+        if (!usedVerbatimFields.has(field)) {
+            throw new TypeError(`${path} verbatimPayloadFields entry ${field} is absent from governed payload fields`);
+        }
+    }
+    return Object.freeze({
+        governedPlayerStates: Object.freeze(normalizedStates),
+    });
+}
+function sameStringSet(left, right) {
+    if (left.length !== right.length)
+        return false;
+    const expected = new Set(right);
+    return left.every((value) => expected.has(value));
+}
+function assertGovernedPlayerInput(authority, input, extractFields, label) {
+    if (authority === undefined)
+        return;
+    const state = authority.governedPlayerStates[input.stateId];
+    if (state === undefined) {
+        throw new TypeError(`${label} outcomeAuthority has no governed player state ${input.stateId}`);
+    }
+    const actualOutcomes = Object.keys(input.result);
+    const governedOutcomes = Object.keys(state);
+    if (!sameStringSet(actualOutcomes, governedOutcomes)) {
+        throw new TypeError(`${label} outcomeAuthority for ${input.stateId} must exactly match outcomes ` +
+            governedOutcomes.join(', '));
+    }
+    for (const outcome of governedOutcomes) {
+        const description = input.result[outcome];
+        if (typeof description !== 'string') {
+            throw new TypeError(`${label} player outcome ${input.stateId}.${outcome} must have a string description`);
+        }
+        const describedFields = [...new Set(extractFields(description))];
+        const candidateFields = Object.keys(state[outcome].fields);
+        if (!sameStringSet(describedFields, candidateFields)) {
+            throw new TypeError(`${label} outcomeAuthority fields for ${input.stateId}.${outcome} ` +
+                'must exactly match its described output fields');
+        }
+    }
 }
 function settlingGuard(event) {
     if (!isPlainObject(event) || !isPlainObject(event.output))
@@ -1392,24 +1641,11 @@ function assertUnfinishedFinalStateIds(value, machine, label) {
         }
     }
 }
-/**
- * Build a `PlaybookRuntimeFactory` that interprets the given FSM artifact
- * under the slc/link.md contract. The factory provides every actor kind the
- * machine declares — `player`, `script`, `captain`, and nested `playbook`
- * (literal and dynamic) — and implements the full runtime lifecycle including
- * the optional parked-session snapshot capability (DR-014) and the retained-
- * snapshot adoption capability (DR-038).
- *
- * Scope: flat single-region machines — no parallel state, no compound
- * child states, and every root state's `meta.playbook.stateId` equal to its
- * state key — so each snapshot exposes exactly one playbook state id.
- * Parallel-region FSMs keep their own linked runtimes.
- */
 export function createXStatePlaybookRuntime(machine, spec) {
     const label = spec.label ?? 'playbook';
     // DR-022 / PBRT-50: reject an incompatible artifact declaration before any
     // machine interpretation, against this loaded engine's own self-report.
-    assertRuntimeCompat(spec.compat, label);
+    const artifactSchema = assertRuntimeCompat(spec.compat, label);
     const specDescriptors = Object.getOwnPropertyDescriptors(spec);
     if (Object.prototype.hasOwnProperty.call(specDescriptors, 'playerStates')) {
         throw new TypeError(`${label} schema-2 artifacts must supply roleStates, not playerStates`);
@@ -1442,7 +1678,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         !Object.prototype.hasOwnProperty.call(roleStatesDescriptor, 'value')) {
         throw new TypeError(`${label} roleStates must be an own data property`);
     }
-    const roleStates = snapshotRoleStateStatuses(roleStatesDescriptor?.value, label, machine, stateDescriptions);
+    const roleStates = snapshotRoleStateStatuses(roleStatesDescriptor?.value, label, artifactSchema, machine, stateDescriptions);
     const declaredRoleIds = Object.freeze([
         ...new Set([...roleStates.values()].map(({ role }) => role)),
     ]);
@@ -1464,18 +1700,16 @@ export function createXStatePlaybookRuntime(machine, spec) {
         ((input) => defaultComposePlayerPrompt(input, spec.placeholderFields));
     const composeCaptainPrompt = spec.composeCaptainPrompt ??
         ((input) => defaultComposeCaptainPrompt(input, spec.placeholderFields));
+    const extractFields = spec.extractRequiredFields ?? defaultExtractRequiredFields;
+    const verbatimPayloadFields = new Set(spec.verbatimPayloadFields ?? NO_VERBATIM_FIELDS);
     const adjudication = {
         ...(spec.buildJudgePrompt !== undefined
             ? { buildJudgePrompt: spec.buildJudgePrompt }
             : {}),
-        ...(spec.extractRequiredFields !== undefined
-            ? { extractRequiredFields: spec.extractRequiredFields }
-            : {}),
-        ...(spec.verbatimPayloadFields !== undefined
-            ? { verbatimPayloadFields: spec.verbatimPayloadFields }
-            : {}),
+        extractRequiredFields: extractFields,
+        verbatimPayloadFields,
     };
-    const extractFields = spec.extractRequiredFields ?? defaultExtractRequiredFields;
+    const outcomeAuthority = snapshotOutcomeAuthority(specDescriptors.outcomeAuthority, artifactSchema, label, roleStates, verbatimPayloadFields);
     // Build the derived classifier unconditionally: it is the sole validator of
     // supplied `bossEvents`, and DR-019 §2 requires a conflicting duplicate to
     // fail factory construction whether or not this spec overrides the
@@ -1494,8 +1728,10 @@ export function createXStatePlaybookRuntime(machine, spec) {
             const cwd = options?.cwd;
             return typeof cwd === 'string' ? cwd : undefined;
         });
-    return function createPlaybookRuntime(options) {
-        const boundOptions = spec.snapshotOptions(options);
+    const createPlaybookRuntime = function createPlaybookRuntime(factoryOptions) {
+        const configuredOptions = configuredOptionsFromFactoryInput(factoryOptions, artifactSchema, label);
+        const boundOptions = spec.snapshotOptions(configuredOptions);
+        assertNoConfiguredHostCapabilities(boundOptions, label);
         const boundScriptCwd = scriptCwd(boundOptions);
         let actor;
         let session;
@@ -2157,6 +2393,7 @@ export function createXStatePlaybookRuntime(machine, spec) {
         function playerActor(ports) {
             return createPlayerBridge({
                 resolveRoleId: requireRoleId,
+                validateInput: (input) => assertGovernedPlayerInput(outcomeAuthority, input, extractFields, label),
                 composePlayerPrompt: composeBoundPlayerPrompt,
                 adjudication,
                 resumableStateIds,
@@ -3926,4 +4163,5 @@ export function createXStatePlaybookRuntime(machine, spec) {
         };
         return runtime;
     };
+    return createPlaybookRuntime;
 }

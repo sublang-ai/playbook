@@ -224,6 +224,75 @@ function isEmptyFinalText(finalText: string | undefined): boolean {
 }
 
 const emptyOkRetryFailures = new WeakSet<object>();
+const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
+
+function assertNoConfiguredHostCapabilities(value: unknown, label: string): void {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    Object.prototype.hasOwnProperty.call(value, HOST_CAPABILITIES_OPTION_KEY)
+  ) {
+    throw new TypeError(
+      `${label} configured options must not contain hostCapabilities`,
+    );
+  }
+}
+
+function configuredOptionsFromFactoryInput(
+  value: unknown,
+  artifactSchema: number,
+  label: string,
+): unknown {
+  if (artifactSchema === 2) {
+    assertNoConfiguredHostCapabilities(value, label);
+    return value;
+  }
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype &&
+      Object.getPrototypeOf(value) !== null)
+  ) {
+    throw new TypeError(
+      `${label} schema-3 factory input must be a plain object`,
+    );
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== 2 ||
+    !keys.includes('configuredOptions') ||
+    !keys.includes(HOST_CAPABILITIES_OPTION_KEY) ||
+    keys.some((key) => {
+      const descriptor = descriptors[key as keyof typeof descriptors];
+      return (
+        typeof key !== 'string' ||
+        descriptor?.get !== undefined ||
+        descriptor?.set !== undefined ||
+        descriptor?.enumerable !== true ||
+        !Object.prototype.hasOwnProperty.call(descriptor, 'value')
+      );
+    })
+  ) {
+    throw new TypeError(
+      `${label} schema-3 factory input must contain exactly configuredOptions and hostCapabilities data properties`,
+    );
+  }
+  const hostCapabilities = descriptors.hostCapabilities!.value;
+  if (
+    hostCapabilities === null ||
+    typeof hostCapabilities !== 'object' ||
+    Array.isArray(hostCapabilities)
+  ) {
+    throw new TypeError(
+      `${label} schema-3 factory input hostCapabilities must be a live object`,
+    );
+  }
+  const configuredOptions = descriptors.configuredOptions!.value;
+  assertNoConfiguredHostCapabilities(configuredOptions, label);
+  return configuredOptions;
+}
 
 function markEmptyOkRetryFailure(error: Error): Error {
   emptyOkRetryFailures.add(error);
@@ -254,6 +323,7 @@ export const RUNTIME_ABI = 1;
 /** The linked-artifact schema versions this engine accepts (DR-022). */
 export const SUPPORTED_ARTIFACT_SCHEMAS: readonly number[] = Object.freeze([
   2,
+  3,
 ]);
 
 /** A linked artifact's declared link-time compatibility values (DR-022). */
@@ -264,13 +334,63 @@ export interface XStatePlaybookRuntimeCompat {
   runtimeAbi: number;
 }
 
+/** Authority for one schema-3 delegated-player outcome payload field. */
+export type XStateOutcomeFieldAuthority =
+  | 'presentation'
+  | 'semantic'
+  | 'effect'
+  | 'runtime';
+
+/** Repository disposition required by one schema-3 outcome arm. */
+export type XStateRepositoryDisposition =
+  | 'unchanged'
+  | 'one-descendant-commit'
+  | 'deferred';
+
+/** Closed authority and repository contract for one governed outcome. */
+export interface XStateGovernedOutcomeSpec {
+  readonly fields: Readonly<Record<string, XStateOutcomeFieldAuthority>>;
+  readonly repositoryDisposition: XStateRepositoryDisposition;
+}
+
+/**
+ * Schema-3 authority metadata, keyed first by player state and then by its
+ * declared outcome. A roleless artifact supplies an explicitly empty
+ * `governedPlayerStates` object.
+ */
+export interface XStateOutcomeAuthoritySpec {
+  readonly governedPlayerStates: Readonly<
+    Record<string, Readonly<Record<string, XStateGovernedOutcomeSpec>>>
+  >;
+}
+
+/**
+ * Schema-3 factory input composed by a registry from persisted configured
+ * options and live current-host capabilities. The engine snapshots only the
+ * first member and never places the second in machine input or persistence.
+ */
+export interface XStatePlaybookRuntimeConstruction<
+  ConfiguredOptions,
+  HostCapabilities extends object,
+> {
+  readonly configuredOptions: ConfiguredOptions;
+  readonly hostCapabilities: HostCapabilities;
+}
+
+export type XStatePlaybookRuntimeFactoryOptions<
+  ConfiguredOptions,
+  HostCapabilities extends object,
+> = [HostCapabilities] extends [never]
+  ? ConfiguredOptions
+  : XStatePlaybookRuntimeConstruction<ConfiguredOptions, HostCapabilities>;
+
 // PBRT-50: validate a declaration against the loaded engine, schema first,
 // so one clear diagnostic covers a fully skewed artifact. Declaration-free
 // artifacts are schema 1 and cannot be interpreted as local-role artifacts.
 function assertRuntimeCompat(
   compat: XStatePlaybookRuntimeCompat | undefined,
   label: string,
-): void {
+): 2 | 3 {
   if (compat === undefined) {
     throw new TypeError(
       `${label} spec.compat is required for local-role artifacts`,
@@ -301,6 +421,7 @@ function assertRuntimeCompat(
         `@sublang/playbook/xstate-runtime engine implements ${RUNTIME_ABI}`,
     );
   }
+  return artifactSchema as 2 | 3;
 }
 
 // ---------------------------------------------------------------------------
@@ -359,15 +480,9 @@ export type XStateCaptainStrategy<TOptions> = (
   run: XStateCaptainStrategyRun<TOptions>,
 ) => Promise<PlaybookActorOutput>;
 
-export interface XStatePlaybookRuntimeSpec<TOptions> {
+interface XStatePlaybookRuntimeSpecBase<TOptions> {
   /** Diagnostic label used in internal invariant errors. Default 'playbook'. */
   label?: string;
-  /**
-   * Link-time compatibility declaration checked at construction against the
-   * loaded engine's self-report (DR-022). Absent declarations reject because
-   * their overloaded player metadata has no safe local-role interpretation.
-   */
-  compat?: XStatePlaybookRuntimeCompat;
   /** Validate and JSON-snapshot the caller's per-run options. */
   snapshotOptions: (value: unknown) => TOptions;
   /** Derive the FSM machine input from validated options. Default: identity. */
@@ -466,6 +581,36 @@ export interface XStatePlaybookRuntimeSpec<TOptions> {
   /** Working directory for `script` actors. Default: the validated options' string `cwd`, else the process working directory. */
   scriptCwd?: (options: TOptions) => string | undefined;
 }
+
+/**
+ * Legacy schema-2-compatible shared-engine spec name. Its optional compat
+ * member is retained for downstream source compatibility; construction still
+ * rejects an absent or unsupported declaration before interpretation.
+ */
+export interface XStatePlaybookRuntimeSpec<TOptions>
+  extends XStatePlaybookRuntimeSpecBase<TOptions> {
+  compat?: XStatePlaybookRuntimeCompat;
+  outcomeAuthority?: never;
+}
+
+/** Exact schema-2 shared-engine spec; its one-argument factory is intact. */
+export interface XStatePlaybookRuntimeSpecV2<TOptions>
+  extends XStatePlaybookRuntimeSpec<TOptions> {
+  compat: XStatePlaybookRuntimeCompat & { artifactSchema: 2 };
+}
+
+/** Schema-3 shared-engine spec with required exact outcome authority metadata. */
+export interface XStatePlaybookRuntimeSpecV3<TOptions>
+  extends XStatePlaybookRuntimeSpecBase<TOptions> {
+  compat: XStatePlaybookRuntimeCompat & { artifactSchema: 3 };
+  outcomeAuthority: XStateOutcomeAuthoritySpec;
+}
+
+type UncheckedXStatePlaybookRuntimeSpec<TOptions> =
+  XStatePlaybookRuntimeSpecBase<TOptions> & {
+    compat?: XStatePlaybookRuntimeCompat;
+    outcomeAuthority?: XStateOutcomeAuthoritySpec;
+  };
 
 // ---------------------------------------------------------------------------
 // Tolerant judge-JSON recovery (slc/link.md §Boss-event mapping).
@@ -1010,7 +1155,12 @@ export async function adjudicatePlayerOutput(
   const verbatim = finalText.trim();
   for (const field of extractFields(input.result[guard])) {
     if (verbatimFields.has(field)) {
-      obj[field] = verbatim;
+      Object.defineProperty(obj, field, {
+        value: verbatim,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
       continue;
     }
     if (typeof obj[field] !== 'string') {
@@ -1055,6 +1205,7 @@ function validateBossReplyOutput(
 
 interface PlayerBridgeSpec {
   resolveRoleId: (input: PlaybookPlayerInput) => string;
+  validateInput?: (input: PlaybookPlayerInput) => void;
   composePlayerPrompt: (input: PlaybookPlayerInput) => string;
   adjudication: PlayerAdjudicationSpec;
   resumableStateIds: ReadonlySet<string>;
@@ -1073,6 +1224,7 @@ export function createPlayerBridge(
       let roleId: string;
       let prompt: string;
       try {
+        spec.validateInput?.(input);
         roleId = spec.resolveRoleId(input);
         prompt = spec.composePlayerPrompt(input);
       } catch (error) {
@@ -1510,11 +1662,14 @@ function makeDefaultNormalizeTransitionEvent(
 function snapshotRoleStateStatuses(
   value: unknown,
   label: string,
+  artifactSchema: number,
   machine: AnyStateMachine,
   stateDescriptions: ReadonlyMap<string, string>,
 ): ReadonlyMap<string, XStateRoleStateStatus> {
   if (value === undefined) {
-    throw new TypeError(`${label} roleStates must be supplied for schema 2`);
+    throw new TypeError(
+      `${label} roleStates must be supplied for schema ${artifactSchema}`,
+    );
   }
   const captured = snapshotJsonValue(value, `${label} roleStates`);
   if (!isPlainObject(captured)) {
@@ -1573,6 +1728,293 @@ function snapshotRoleStateStatuses(
     }
   }
   return statuses;
+}
+
+const OUTCOME_FIELD_AUTHORITIES: ReadonlySet<string> = new Set([
+  'presentation',
+  'semantic',
+  'effect',
+  'runtime',
+]);
+
+const REPOSITORY_DISPOSITIONS: ReadonlySet<string> = new Set([
+  'unchanged',
+  'one-descendant-commit',
+  'deferred',
+]);
+const OUTCOME_FIELD_KEY_PATTERN = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+const SEMANTIC_OUTCOME_FIELDS: ReadonlySet<string> = new Set([
+  'irNumber',
+  'irTask',
+  'moreTasks',
+  'finalTask',
+]);
+
+function requireExactObjectKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  path: string,
+): void {
+  const actual = Object.keys(value);
+  const missing = expected.filter((key) => !actual.includes(key));
+  const extra = actual.filter((key) => !expected.includes(key));
+  if (missing.length === 0 && extra.length === 0) return;
+  throw new TypeError(
+    `${path} must contain exactly ${expected.join(', ')}` +
+      (missing.length === 0 ? '' : `; missing ${missing.join(', ')}`) +
+      (extra.length === 0 ? '' : `; unknown ${extra.join(', ')}`),
+  );
+}
+
+function requireCanonicalAuthorityKey(value: string, path: string): void {
+  if (value.length === 0 || value !== value.trim()) {
+    throw new TypeError(`${path} must be a canonical non-empty string`);
+  }
+}
+
+function requireAuthorityIdentifier(value: string, path: string): void {
+  if (!OUTCOME_FIELD_KEY_PATTERN.test(value)) {
+    throw new TypeError(`${path} must be an identifier`);
+  }
+}
+
+function snapshotOutcomeAuthority(
+  descriptor: PropertyDescriptor | undefined,
+  artifactSchema: number,
+  label: string,
+  playerStates: ReadonlyMap<string, XStateRoleStateStatus>,
+  verbatimPayloadFields: ReadonlySet<string>,
+): XStateOutcomeAuthoritySpec | undefined {
+  const path = `${label} outcomeAuthority`;
+  if (artifactSchema === 2) {
+    if (descriptor !== undefined) {
+      throw new TypeError(`${path} is not allowed for schema 2`);
+    }
+    return undefined;
+  }
+  if (
+    descriptor === undefined ||
+    !Object.prototype.hasOwnProperty.call(descriptor, 'value') ||
+    descriptor.enumerable !== true
+  ) {
+    throw new TypeError(
+      `${path} must be an own enumerable data property for schema 3`,
+    );
+  }
+  const captured = snapshotJsonValue(descriptor.value, path);
+  if (!isPlainObject(captured)) {
+    throw new TypeError(`${path} must be an object`);
+  }
+  requireExactObjectKeys(captured, ['governedPlayerStates'], path);
+  const governed = captured.governedPlayerStates;
+  if (!isPlainObject(governed)) {
+    throw new TypeError(`${path}.governedPlayerStates must be an object`);
+  }
+
+  for (const stateId of playerStates.keys()) {
+    if (!Object.prototype.hasOwnProperty.call(governed, stateId)) {
+      throw new TypeError(
+        `${path}.governedPlayerStates must declare player state ${stateId}`,
+      );
+    }
+  }
+  for (const stateId of Object.keys(governed)) {
+    requireCanonicalAuthorityKey(
+      stateId,
+      `${path}.governedPlayerStates key`,
+    );
+    if (!playerStates.has(stateId)) {
+      throw new TypeError(
+        `${path}.governedPlayerStates.${stateId} does not name a player state`,
+      );
+    }
+  }
+
+  const usedVerbatimFields = new Set<string>();
+  const normalizedStates: Record<
+    string,
+    Readonly<Record<string, XStateGovernedOutcomeSpec>>
+  > = Object.create(null) as Record<
+    string,
+    Readonly<Record<string, XStateGovernedOutcomeSpec>>
+  >;
+  for (const [stateId, rawOutcomes] of Object.entries(governed)) {
+    const statePath = `${path}.governedPlayerStates.${stateId}`;
+    if (!isPlainObject(rawOutcomes) || Object.keys(rawOutcomes).length === 0) {
+      throw new TypeError(`${statePath} must declare at least one outcome`);
+    }
+    const outcomes = Object.create(null) as Record<
+      string,
+      XStateGovernedOutcomeSpec
+    >;
+    for (const [outcome, rawSpec] of Object.entries(rawOutcomes)) {
+      requireAuthorityIdentifier(outcome, `${statePath} outcome key`);
+      const outcomePath = `${statePath}.${outcome}`;
+      if (!isPlainObject(rawSpec)) {
+        throw new TypeError(`${outcomePath} must be an object`);
+      }
+      requireExactObjectKeys(
+        rawSpec,
+        ['fields', 'repositoryDisposition'],
+        outcomePath,
+      );
+      if (!isPlainObject(rawSpec.fields)) {
+        throw new TypeError(`${outcomePath}.fields must be an object`);
+      }
+      const fields = Object.create(null) as Record<
+        string,
+        XStateOutcomeFieldAuthority
+      >;
+      for (const [field, authority] of Object.entries(rawSpec.fields)) {
+        requireAuthorityIdentifier(field, `${outcomePath}.fields key`);
+        if (field === 'guard') {
+          throw new TypeError(
+            `${outcomePath}.fields.guard is not allowed; the outcome key owns the semantic discriminator`,
+          );
+        }
+        if (
+          typeof authority !== 'string' ||
+          !OUTCOME_FIELD_AUTHORITIES.has(authority)
+        ) {
+          throw new TypeError(
+            `${outcomePath}.fields.${field} must name presentation, semantic, effect, or runtime authority`,
+          );
+        }
+        const requiredAuthorities = new Set<XStateOutcomeFieldAuthority>();
+        if (field === 'latestCommit') requiredAuthorities.add('effect');
+        if (SEMANTIC_OUTCOME_FIELDS.has(field)) {
+          requiredAuthorities.add('semantic');
+        }
+        if (field === 'question' || verbatimPayloadFields.has(field)) {
+          requiredAuthorities.add('presentation');
+        }
+        if (requiredAuthorities.size > 1) {
+          throw new TypeError(
+            `${outcomePath}.fields.${field} has conflicting linker authority requirements`,
+          );
+        }
+        const requiredAuthority = [...requiredAuthorities][0];
+        if (requiredAuthority !== undefined && authority !== requiredAuthority) {
+          throw new TypeError(
+            `${outcomePath}.fields.${field} must use ${requiredAuthority} authority`,
+          );
+        }
+        if (verbatimPayloadFields.has(field)) usedVerbatimFields.add(field);
+        if (
+          authority === 'presentation' &&
+          field !== 'question' &&
+          !verbatimPayloadFields.has(field)
+        ) {
+          throw new TypeError(
+            `${outcomePath}.fields.${field} presentation authority requires a linker-declared verbatim payload field`,
+          );
+        }
+        fields[field] = authority as XStateOutcomeFieldAuthority;
+      }
+      const disposition = rawSpec.repositoryDisposition;
+      if (
+        typeof disposition !== 'string' ||
+        !REPOSITORY_DISPOSITIONS.has(disposition)
+      ) {
+        throw new TypeError(
+          `${outcomePath}.repositoryDisposition must be unchanged, one-descendant-commit, or deferred`,
+        );
+      }
+      if (
+        disposition !== 'one-descendant-commit' &&
+        Object.values(fields).includes('effect')
+      ) {
+        throw new TypeError(
+          `${outcomePath} may declare effect-owned fields only for one-descendant-commit`,
+        );
+      }
+      outcomes[outcome] = Object.freeze({
+        fields: Object.freeze(fields),
+        repositoryDisposition: disposition as XStateRepositoryDisposition,
+      });
+    }
+    for (const [outcome, outcomeSpec] of Object.entries(outcomes)) {
+      if (outcomeSpec.repositoryDisposition !== 'deferred') continue;
+      if (outcome !== 'needsBossReply') {
+        throw new TypeError(
+          `${statePath}.${outcome} may use deferred only for needsBossReply`,
+        );
+      }
+      if (outcomeSpec.fields.question !== 'presentation') {
+        throw new TypeError(
+          `${statePath}.needsBossReply deferred outcome must declare presentation-owned question`,
+        );
+      }
+      if (
+        !Object.entries(outcomes).some(
+          ([other, candidate]) =>
+            other !== outcome &&
+            candidate.repositoryDisposition === 'one-descendant-commit',
+        )
+      ) {
+        throw new TypeError(
+          `${statePath}.needsBossReply deferred outcome requires another one-descendant-commit outcome`,
+        );
+      }
+    }
+    normalizedStates[stateId] = Object.freeze(outcomes);
+  }
+  for (const field of verbatimPayloadFields) {
+    requireAuthorityIdentifier(field, `${path} verbatimPayloadFields entry`);
+    if (!usedVerbatimFields.has(field)) {
+      throw new TypeError(
+        `${path} verbatimPayloadFields entry ${field} is absent from governed payload fields`,
+      );
+    }
+  }
+  return Object.freeze({
+    governedPlayerStates: Object.freeze(normalizedStates),
+  });
+}
+
+function sameStringSet(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) return false;
+  const expected = new Set(right);
+  return left.every((value) => expected.has(value));
+}
+
+function assertGovernedPlayerInput(
+  authority: XStateOutcomeAuthoritySpec | undefined,
+  input: PlaybookPlayerInput,
+  extractFields: (description: string) => string[],
+  label: string,
+): void {
+  if (authority === undefined) return;
+  const state = authority.governedPlayerStates[input.stateId];
+  if (state === undefined) {
+    throw new TypeError(
+      `${label} outcomeAuthority has no governed player state ${input.stateId}`,
+    );
+  }
+  const actualOutcomes = Object.keys(input.result);
+  const governedOutcomes = Object.keys(state);
+  if (!sameStringSet(actualOutcomes, governedOutcomes)) {
+    throw new TypeError(
+      `${label} outcomeAuthority for ${input.stateId} must exactly match outcomes ` +
+        governedOutcomes.join(', '),
+    );
+  }
+  for (const outcome of governedOutcomes) {
+    const description = input.result[outcome];
+    if (typeof description !== 'string') {
+      throw new TypeError(
+        `${label} player outcome ${input.stateId}.${outcome} must have a string description`,
+      );
+    }
+    const describedFields = [...new Set(extractFields(description))];
+    const candidateFields = Object.keys(state[outcome]!.fields);
+    if (!sameStringSet(describedFields, candidateFields)) {
+      throw new TypeError(
+        `${label} outcomeAuthority fields for ${input.stateId}.${outcome} ` +
+          'must exactly match its described output fields',
+      );
+    }
+  }
 }
 
 function settlingGuard(event: unknown): string | undefined {
@@ -2182,11 +2624,29 @@ function assertUnfinishedFinalStateIds(
 export function createXStatePlaybookRuntime<TOptions>(
   machine: AnyStateMachine,
   spec: XStatePlaybookRuntimeSpec<TOptions>,
-): PlaybookRuntimeFactory<TOptions> {
+): PlaybookRuntimeFactory<TOptions>;
+export function createXStatePlaybookRuntime<
+  TOptions,
+  THostCapabilities extends object,
+>(
+  machine: AnyStateMachine,
+  spec: XStatePlaybookRuntimeSpecV3<TOptions>,
+): PlaybookRuntimeFactory<
+  XStatePlaybookRuntimeConstruction<TOptions, THostCapabilities>
+>;
+export function createXStatePlaybookRuntime<
+  TOptions,
+  THostCapabilities extends object = never,
+>(
+  machine: AnyStateMachine,
+  spec: UncheckedXStatePlaybookRuntimeSpec<TOptions>,
+): PlaybookRuntimeFactory<
+  XStatePlaybookRuntimeFactoryOptions<TOptions, THostCapabilities>
+> {
   const label = spec.label ?? 'playbook';
   // DR-022 / PBRT-50: reject an incompatible artifact declaration before any
   // machine interpretation, against this loaded engine's own self-report.
-  assertRuntimeCompat(spec.compat, label);
+  const artifactSchema = assertRuntimeCompat(spec.compat, label);
   const specDescriptors = Object.getOwnPropertyDescriptors(spec);
   if (Object.prototype.hasOwnProperty.call(specDescriptors, 'playerStates')) {
     throw new TypeError(
@@ -2238,6 +2698,7 @@ export function createXStatePlaybookRuntime<TOptions>(
   const roleStates = snapshotRoleStateStatuses(
     roleStatesDescriptor?.value,
     label,
+    artifactSchema,
     machine,
     stateDescriptions,
   );
@@ -2268,19 +2729,25 @@ export function createXStatePlaybookRuntime<TOptions>(
     spec.composeCaptainPrompt ??
     ((input: PlaybookCaptainInput) =>
       defaultComposeCaptainPrompt(input, spec.placeholderFields));
+  const extractFields =
+    spec.extractRequiredFields ?? defaultExtractRequiredFields;
+  const verbatimPayloadFields: ReadonlySet<string> = new Set(
+    spec.verbatimPayloadFields ?? NO_VERBATIM_FIELDS,
+  );
   const adjudication: PlayerAdjudicationSpec = {
     ...(spec.buildJudgePrompt !== undefined
       ? { buildJudgePrompt: spec.buildJudgePrompt }
       : {}),
-    ...(spec.extractRequiredFields !== undefined
-      ? { extractRequiredFields: spec.extractRequiredFields }
-      : {}),
-    ...(spec.verbatimPayloadFields !== undefined
-      ? { verbatimPayloadFields: spec.verbatimPayloadFields }
-      : {}),
+    extractRequiredFields: extractFields,
+    verbatimPayloadFields,
   };
-  const extractFields =
-    spec.extractRequiredFields ?? defaultExtractRequiredFields;
+  const outcomeAuthority = snapshotOutcomeAuthority(
+    specDescriptors.outcomeAuthority,
+    artifactSchema,
+    label,
+    roleStates,
+    verbatimPayloadFields,
+  );
   // Build the derived classifier unconditionally: it is the sole validator of
   // supplied `bossEvents`, and DR-019 §2 requires a conflicting duplicate to
   // fail factory construction whether or not this spec overrides the
@@ -2311,8 +2778,16 @@ export function createXStatePlaybookRuntime<TOptions>(
       return typeof cwd === 'string' ? cwd : undefined;
     });
 
-  return function createPlaybookRuntime(options: TOptions): PlaybookRuntime {
-    const boundOptions = spec.snapshotOptions(options);
+  const createPlaybookRuntime = function createPlaybookRuntime(
+    factoryOptions: unknown,
+  ): PlaybookRuntime {
+    const configuredOptions = configuredOptionsFromFactoryInput(
+      factoryOptions,
+      artifactSchema,
+      label,
+    ) as TOptions;
+    const boundOptions = spec.snapshotOptions(configuredOptions);
+    assertNoConfiguredHostCapabilities(boundOptions, label);
     const boundScriptCwd = scriptCwd(boundOptions);
     let actor: ReturnType<typeof createActor> | undefined;
     let session: PlaybookSession | undefined;
@@ -3167,6 +3642,13 @@ export function createXStatePlaybookRuntime<TOptions>(
       return createPlayerBridge(
         {
           resolveRoleId: requireRoleId,
+          validateInput: (input) =>
+            assertGovernedPlayerInput(
+              outcomeAuthority,
+              input,
+              extractFields,
+              label,
+            ),
           composePlayerPrompt: composeBoundPlayerPrompt,
           adjudication,
           resumableStateIds,
@@ -5224,4 +5706,7 @@ export function createXStatePlaybookRuntime<TOptions>(
     };
     return runtime as PlaybookRuntime;
   };
+  return createPlaybookRuntime as PlaybookRuntimeFactory<
+    XStatePlaybookRuntimeFactoryOptions<TOptions, THostCapabilities>
+  >;
 }

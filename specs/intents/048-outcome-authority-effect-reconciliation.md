@@ -5,7 +5,7 @@
 
 ## Status
 
-Planned
+In progress
 
 ## Intent
 
@@ -28,7 +28,7 @@ Consumption and packed acceptance of the upstream transport repair gate only tas
 
 ## Tasks
 
-1. **Add schema-3 authority contracts.**
+1. **Add schema-3 authority contracts.** _[done]_
    One commit: extend the SLC, linker, shared engine, registry, and CLI artifact contracts to accept artifact schema `3` alongside legacy schema `2` under runtime ABI `1`; validate exact field authority and per-outcome `unchanged`, `one-descendant-commit`, or restricted `deferred` repository dispositions or an explicit empty governed set; define disjoint plain-JSON configured-option and live host-construction-capability inputs with capability keys rejected from configuration and excluded from persisted identity; and land the corresponding `playbook`, `playbook-runtime`, `playbook-captain`, `playbook-cli`, and `release` items plus conformance tests without migrating workflow behavior.
 2. **Build repository observation and cooperative leasing.**
    One commit: add the detached HEAD and repository-relevant projection observer plus canonical-worktree coordination, prove exact `unchanged` and `one-descendant-commit` receipts across staged, tracked, non-ignored-untracked, ignored-only, unchanged pre-existing, residual, and ambiguous-overlap cases, serialize same-worktree governed calls except one dynamic declared zero-only cohort such as DECIDE's proposal pair, keep different worktrees independent, and land the corresponding runtime and CLI items plus focused tests.

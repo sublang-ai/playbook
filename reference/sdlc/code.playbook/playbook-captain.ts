@@ -88,17 +88,39 @@ export interface PlaybookCaptainDeps {
   }) => PlaybookRuntime;
 }
 
-export interface PlaybookCaptainRegistryEntry {
+/** Live, artifact-typed host facilities supplied outside configured options. */
+export interface PlaybookHostConstructionCapabilities {
+  readonly [capability: string]: unknown;
+}
+
+interface PlaybookCaptainRegistryEntryBase {
   id: string;
   command: string;
   intent: string;
-  artifactSchema: 2;
   requiredRoleIds: readonly string[];
   concurrentRoleSets: readonly (readonly string[])[];
   summaryPolicy?: PlaybookSummaryPolicy;
   validateOptions(optionSlice: unknown): unknown;
-  createRuntime(options: unknown): PlaybookRuntime;
 }
+
+export interface PlaybookCaptainRegistryEntryV2
+  extends PlaybookCaptainRegistryEntryBase {
+  artifactSchema: 2;
+  createRuntime(configuredOptions: unknown): PlaybookRuntime;
+}
+
+export interface PlaybookCaptainRegistryEntryV3
+  extends PlaybookCaptainRegistryEntryBase {
+  artifactSchema: 3;
+  createRuntime(
+    configuredOptions: unknown,
+    hostCapabilities: PlaybookHostConstructionCapabilities,
+  ): PlaybookRuntime;
+}
+
+export type PlaybookCaptainRegistryEntry =
+  | PlaybookCaptainRegistryEntryV2
+  | PlaybookCaptainRegistryEntryV3;
 
 type PlaybookCaptainConversationSnapshot =
   | { readonly kind: 'unopened' }
@@ -219,9 +241,21 @@ export interface PlaybookCaptainShell extends Captain {
 // normalized `captain.options.playbooks.<id>` role map.
 interface Enablement {
   entry: PlaybookCaptainRegistryEntry;
+  artifactSchema: 2 | 3;
   command: string;
   options: JsonValue;
   roleBindings: ReadonlyMap<string, EffectivePlayerBinding>;
+}
+
+function createRuntimeForEnablement(enablement: Enablement): PlaybookRuntime {
+  if (enablement.artifactSchema === 3) {
+    throw new Error(
+      `/${enablement.command} schema-3 runtime requires current-host construction capabilities`,
+    );
+  }
+  return (enablement.entry as PlaybookCaptainRegistryEntryV2).createRuntime(
+    enablement.options,
+  );
 }
 
 interface EffectivePlayerBinding {
@@ -392,6 +426,7 @@ const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
 const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
+const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
 const RESUMPTION_DUPLICATE_EFFECT_WARNING =
   'Warning: resumption may duplicate external effects attempted after the retained boundary; verify the current world before continuing.';
 
@@ -1020,6 +1055,7 @@ function guardFromJudgeReply(finalText: string): string | undefined {
 
 function isValidRegistryEntry(
   value: unknown,
+  artifactSchema: unknown,
 ): value is PlaybookCaptainRegistryEntry {
   if (typeof value !== 'object' || value === null) return false;
   const e = value as Record<string, unknown>;
@@ -1055,7 +1091,7 @@ function isValidRegistryEntry(
     typeof e.id === 'string' &&
     typeof e.command === 'string' &&
     typeof e.intent === 'string' &&
-    e.artifactSchema === 2 &&
+    (artifactSchema === 2 || artifactSchema === 3) &&
     typeof e.validateOptions === 'function' &&
     typeof e.createRuntime === 'function'
   );
@@ -2010,6 +2046,19 @@ function promptIdentity(binding: EffectivePlayerBinding): string {
     : binding.agent.adapter;
 }
 
+function rejectConfiguredHostCapabilities(value: JsonValue | undefined, path: string): void {
+  if (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    Object.prototype.hasOwnProperty.call(value, HOST_CAPABILITIES_OPTION_KEY)
+  ) {
+    throw new Error(
+      `${path}.${HOST_CAPABILITIES_OPTION_KEY} is host-owned and cannot be configured`,
+    );
+  }
+}
+
 // Resolve the active registry at init from exact normalized role and session
 // agent projections (CAPTAIN-16). No role, ancestor, or generated-name fallback
 // exists at this boundary.
@@ -2102,6 +2151,10 @@ async function buildEnablements(
       ['from', 'command', 'roles', 'options'],
       `captain.options.playbooks.${id}`,
     );
+    rejectConfiguredHostCapabilities(
+      record.options,
+      `captain.options.playbooks.${id}.options`,
+    );
     const from = record.from;
     if (typeof from !== 'string' || from.length === 0) {
       throw new Error(
@@ -2119,7 +2172,12 @@ async function buildEnablements(
       );
     }
     const entry = (mod as { default?: unknown })?.default;
-    if (!isValidRegistryEntry(entry)) {
+    const artifactSchema = (entry as { artifactSchema?: unknown } | null)
+      ?.artifactSchema;
+    if (
+      (artifactSchema !== 2 && artifactSchema !== 3) ||
+      !isValidRegistryEntry(entry, artifactSchema)
+    ) {
       throw new Error(
         `captain.options.playbooks.${id}.from "${from}" exposes no valid registry entry`,
       );
@@ -2199,11 +2257,16 @@ async function buildEnablements(
       entry.validateOptions(record.options),
       `captain.options.playbooks.${id}.options`,
     );
+    rejectConfiguredHostCapabilities(
+      validatedOptions,
+      `captain.options.playbooks.${id}.options`,
+    );
     entries.push(entry);
     byId.set(entry.id, entry);
     byCommand.set(command, entry);
     enablementById.set(entry.id, {
       entry,
+      artifactSchema,
       command,
       options: validatedOptions,
       roleBindings,
@@ -2733,7 +2796,7 @@ export function createPlaybookCaptainShell(
       try {
         for (const sourceFrame of generation.frames) {
           const enablement = enablementById.get(sourceFrame.playbookId)!;
-          runtimes.push(enablement.entry.createRuntime(enablement.options));
+          runtimes.push(createRuntimeForEnablement(enablement));
         }
         if (runtimes.some((runtime) => !runtimeRetainsGenerations(runtime))) {
           const rootRetainsGenerations = runtimeRetainsGenerations(runtimes[0]!);
@@ -3399,7 +3462,7 @@ export function createPlaybookCaptainShell(
     const entry = enablement.entry;
     const sessionId = allocateSessionId();
     const playerBindings = makePlayerBindings(enablement);
-    const runtime = entry.createRuntime(enablement.options);
+    const runtime = createRuntimeForEnablement(enablement);
     return {
       entry,
       enablement,
@@ -3420,7 +3483,7 @@ export function createPlaybookCaptainShell(
   ): EngagementFrame => {
     const entry = enablement.entry;
     const playerBindings = makePlayerBindings(enablement);
-    const runtime = entry.createRuntime(enablement.options);
+    const runtime = createRuntimeForEnablement(enablement);
     return {
       entry,
       enablement,

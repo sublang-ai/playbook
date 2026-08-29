@@ -44,6 +44,7 @@ export const CAPTAIN_SESSION_EXECUTION_PROJECTION_SCHEMA_VERSION = 2;
 const PLAYER_ID_PATTERN = /^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)*$/;
 const ROLE_ID_PATTERN = /^[a-z][a-z0-9_-]*$/;
 const RESERVED_ID = 'captain';
+const HOST_CAPABILITIES_OPTION_KEY = 'hostCapabilities';
 const KNOWN_ADAPTERS = new Set(KNOWN_PLAYER_ADAPTERS);
 
 const COMMON_RECORD_KEYS = [
@@ -1685,8 +1686,21 @@ function validateCaptainSessionProjection(
     if (typeof item.intent !== 'string') {
       throw new Error(`${itemPath}.intent must be a string`);
     }
-    if (item.artifactSchema !== 2) {
-      throw new Error(`${itemPath}.artifactSchema must be exactly 2`);
+    if (item.artifactSchema !== 2 && item.artifactSchema !== 3) {
+      throw new Error(`${itemPath}.artifactSchema must be 2 or 3`);
+    }
+    if (
+      item.options !== null &&
+      typeof item.options === 'object' &&
+      !Array.isArray(item.options) &&
+      Object.prototype.hasOwnProperty.call(
+        item.options,
+        HOST_CAPABILITIES_OPTION_KEY,
+      )
+    ) {
+      throw new Error(
+        `${itemPath}.options.${HOST_CAPABILITIES_OPTION_KEY} is host-owned and cannot be persisted`,
+      );
     }
     const requiredRoleIds = validateRoleIds(
       item.requiredRoleIds,
