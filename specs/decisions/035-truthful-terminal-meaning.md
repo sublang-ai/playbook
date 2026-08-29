@@ -7,6 +7,7 @@
 
 Accepted.
 Extends [DR-029](029-session-scoped-conversational-captain.md)'s evidence contract to the terminal meaning a compiled workflow publishes about itself.
+[DR-040](040-outcome-authority-effect-reconciliation.md) preserves the authored-final-state rule by representing unresolved-effect abandonment as a host disposal result outside the `terminal` variant rather than an FSM outcome.
 
 ## Context
 

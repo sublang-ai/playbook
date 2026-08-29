@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+For a delegated-player call governed by [DR-040](040-outcome-authority-effect-reconciliation.md), the corrective re-ask requires a complete durable `unchanged` receipt; that decision does not amend schema-2, nongoverned, or direct-Captain boundaries.
 
 ## Context
 
