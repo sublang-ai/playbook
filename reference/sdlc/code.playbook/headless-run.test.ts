@@ -870,6 +870,9 @@ describe('playbook run shared Captain host (PBCLI-48)', () => {
     expect(stdout.text()).toContain('distinct ids remain isolated');
     expect(stdout.text()).toContain('playbooks.<id>.players is rejected');
     expect(stdout.text()).toContain('not auto-migrated');
+    expect(stdout.text()).toContain(
+      'prefer this working directory, else global newest',
+    );
     expect({ reads, loads, probes }).toEqual({ reads: 0, loads: 0, probes: 0 });
     await expect(readFile(join(home, '.config', 'playbook', 'playbook.config.yaml')))
       .rejects.toThrow();
@@ -2013,7 +2016,86 @@ describe('durable Captain continuation (PBCLI-24)', () => {
     ).toHaveProperty('code');
   });
 
-  it('selects the newest valid session by updatedAt for --continue', async () => {
+  it('prefers same-cwd continuation, reports global fallback, and honors explicit selection', async () => {
+    const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-cwd-select-'));
+    tempDirs.push(stateRoot);
+    const sessionsDir = join(stateRoot, 'sessions');
+    const localCwd = join(stateRoot, 'local');
+    const foreignCwd = join(stateRoot, 'foreign');
+    const unmatchedCwd = join(stateRoot, 'unmatched');
+    await Promise.all(
+      [localCwd, foreignCwd, unmatchedCwd].map((path) =>
+        mkdir(path, { recursive: true }),
+      ),
+    );
+
+    const local = await headlessHarness(['run', 'local session'], {
+      sessionsDir,
+      cwd: localCwd,
+      createLogicalSessionId: () => firstId,
+      now: () => new Date('2026-08-11T20:19:00.000Z'),
+    });
+    const foreign = await headlessHarness(['run', 'foreign session'], {
+      sessionsDir,
+      cwd: foreignCwd,
+      createLogicalSessionId: () => secondId,
+      now: () => new Date('2026-08-11T20:19:01.000Z'),
+    });
+    expect([local.result.code, foreign.result.code]).toEqual([0, 0]);
+
+    const preferred = await headlessHarness(
+      ['run', '--continue', 'local follow-up'],
+      {
+        sessionsDir,
+        cwd: localCwd,
+        now: () => new Date('2026-08-11T20:19:02.000Z'),
+      },
+    );
+    expect(preferred.result.code).toBe(0);
+    expect(preferred.result.sessionId).toBe(firstId);
+    expect(preferred.result.cwd).toBe(localCwd);
+    expect(preferred.inputs).toEqual(['local follow-up']);
+    expect(preferred.stderr).not.toContain(
+      'no same-directory Captain session exists',
+    );
+
+    const fallback = await headlessHarness(
+      ['run', '--continue', 'global follow-up'],
+      {
+        sessionsDir,
+        cwd: unmatchedCwd,
+        now: () => new Date('2026-08-11T20:19:03.000Z'),
+      },
+    );
+    expect(fallback.result.code).toBe(0);
+    expect(fallback.result.sessionId).toBe(firstId);
+    expect(fallback.result.cwd).toBe(localCwd);
+    expect(fallback.inputs).toEqual(['global follow-up']);
+    expect(fallback.stderr).toContain(
+      `no same-directory Captain session exists for invoking working directory "${unmatchedCwd}"`,
+    );
+    expect(fallback.stderr).toContain(
+      `selecting globally newest Captain session "${firstId}" with stored working directory "${localCwd}"`,
+    );
+
+    const explicit = await headlessHarness(
+      ['run', '--session', secondId, 'foreign by id'],
+      {
+        sessionsDir,
+        cwd: localCwd,
+        now: () => new Date('2026-08-11T20:19:04.000Z'),
+      },
+    );
+    expect(explicit.result.code).toBe(0);
+    expect(explicit.result.sessionId).toBe(secondId);
+    expect(explicit.result.cwd).toBe(foreignCwd);
+    expect(explicit.inputs).toEqual(['foreign by id']);
+    expect(explicit.stderr).not.toContain(
+      'no same-directory Captain session exists',
+    );
+  });
+
+  it('selects the newest valid same-cwd session by updatedAt for --continue', async () => {
     const stateRoot = await mkdtemp(join(tmpdir(), 'playbook-latest-'));
     tempDirs.push(stateRoot);
     const sessionsDir = join(stateRoot, 'sessions');

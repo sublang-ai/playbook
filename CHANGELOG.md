@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Spec validation now runs on Spex 3 while retaining the repository's cohesive-concern item boundary.** The runtime dependency floor, historical intent wording, and decision-reference layout now conform to the refreshed scaffold, while sentence-count findings remain advisory under [DR-039](specs/decisions/039-cohesive-concern-spec-item-boundary.md).
 
+### Fixed
+
+- **Bare continuation now prefers the invoking working directory's own Captain sessions.** `playbook run --continue` selects the newest valid record stored for that directory even when another repository has a globally newer session; if no local match exists it reports and retains the globally newest fallback. Explicit `--session <id>` selection and uncertain-turn refusal remain unchanged ([DR-041](specs/decisions/041-working-directory-aware-continuation.md), [[playbook-cli-22](specs/packages/playbook-cli.md#playbook-cli-22)]).
+
 ## [9.0.0] - 2026-08-27
 
 ### Changed

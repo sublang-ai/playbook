@@ -122,9 +122,11 @@ export async function runPlaybookRun(options = {}) {
   if (continuing) {
     try {
       if (args.sessionId === undefined) {
+        const invokingCwd = resolve(options.cwd ?? process.cwd());
         const selected = validateCaptainSessionRecord(
           await awaitWithAbort(
             store.latest({
+              preferredCwd: invokingCwd,
               onLegacyRecord: ({
                 sessionId: legacyId,
                 path,
@@ -138,6 +140,12 @@ export async function runPlaybookRun(options = {}) {
             options.signal,
           ),
         );
+        if (selected.cwd !== invokingCwd) {
+          await writeStream(
+            stderr,
+            `playbook run: no same-directory Captain session exists for invoking working directory ${JSON.stringify(invokingCwd)}; selecting globally newest Captain session ${JSON.stringify(selected.sessionId)} with stored working directory ${JSON.stringify(selected.cwd)}\n`,
+          );
+        }
         sessionId = selected.sessionId;
       } else {
         sessionId = args.sessionId;
@@ -1390,14 +1398,16 @@ function runHelpText(userConfigPath) {
     'provider conversation; distinct ids remain isolated.',
     'Legacy playbooks.<id>.players is rejected and is not auto-migrated,',
     'because choosing new ids decides sharing versus isolation.',
-    'An ordinary continued run restores the stored structure and working',
+    'Bare continuation prefers the newest session stored for the invoking',
+    'working directory and reports when it uses the global newest fallback.',
+    'An ordinary continued run restores that stored structure and working',
     'directory, then reads current config and overlays for model and effort.',
     'Uncertain retry instead uses its exact recorded input and settings.',
     '',
     'Options:',
     '  --with <path>    overlay a generic config fragment (repeatable)',
     '  --no-provision   do not provision thin filesystem registry engines',
-    '  --continue       reply to the latest durable Captain session',
+    '  --continue       prefer this working directory, else global newest',
     '  --session <id>   reply to one durable Captain session UUID',
     '  --retry-uncertain retry that session\'s exact recorded uncertain input',
     '  --discard-uncertain discard that session\'s uncertain attempt',

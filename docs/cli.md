@@ -169,7 +169,7 @@ stderr, and `--verbose` adds only telemetry topic names to stderr.
 | `--no-provision` | do not create missing engine links for configured filesystem registries |
 | `--json` | print exactly one `sessionId` / `reply` object |
 | `--verbose` | add Captain telemetry topic names to stderr |
-| `--continue` | continue the latest durable Captain session |
+| `--continue` | continue the newest Captain session stored for this working directory, or the reported global fallback |
 | `--session <id>` | continue one durable Captain session explicitly |
 | `--retry-uncertain` | with `--session`, retry its exact recorded uncertain input |
 | `--discard-uncertain` | with `--session`, abandon its uncertain attempt |
@@ -239,13 +239,21 @@ After the current writer exits or explicitly hands off, either presentation
 can reopen either origin:
 
 ```sh
-# Reopen the latest settled session headlessly:
+# Reopen the newest session stored for this working directory headlessly:
 playbook run --continue "keep the scope small; skip the docs"
 
 # Reopen one exact session in either presentation:
 playbook --session 4f2c0000-0000-4000-8000-000000009ab1
 playbook run --session 4f2c0000-0000-4000-8000-000000009ab1
 ```
+
+Bare `--continue` prefers the newest durable record whose stored working
+directory equals the directory where the command is invoked. If none matches,
+it reports that absence on stderr and selects the globally newest record,
+naming that session and its stored working directory. Use `--session <id>` to
+select one exact session without applying the directory preference. The
+uncertainty rules below still apply to whichever record is selected
+([DR-041](https://github.com/sublang-ai/playbook/blob/main/specs/decisions/041-working-directory-aware-continuation.md)).
 
 A missing headless reply is read verbatim from stdin. Reopening restores the
 compiled Captain conversation, engagement stack, nested child boundary,

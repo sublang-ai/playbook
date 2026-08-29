@@ -291,14 +291,17 @@ export function createCaptainSessionStore(options = {}) {
     return candidates;
   };
 
-  const latest = async ({ onLegacyRecord } = {}) => {
+  const latest = async ({ onLegacyRecord, preferredCwd } = {}) => {
     const candidates = sortCaptainSessionRecords(
       await listRecords({ onLegacyRecord }),
     );
     if (candidates.length === 0) {
       throw new Error('no resumable Captain session exists');
     }
-    return candidates[0];
+    return (
+      candidates.find((candidate) => candidate.cwd === preferredCwd) ??
+      candidates[0]
+    );
   };
 
   const selectAdoptionPredecessor = async (
