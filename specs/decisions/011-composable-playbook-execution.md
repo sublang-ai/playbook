@@ -11,6 +11,7 @@ The stack semantics themselves stay intact.
 [DR-030](030-shared-mapped-player-continuity.md) amends §4 and the player-isolation consequence: runtime frames remain distinct, while exact same-name nested roles inherit player bindings and continuation from their active ancestor path.
 [DR-032](032-explicit-roles-session-players.md) supersedes that inheritance with explicit role-to-player bindings while retaining rejection of simultaneous calls to one player.
 [DR-032](032-explicit-roles-session-players.md) also advances the linked trace schema from `2` to `3` for distinct role and player identities while retaining this decision's nested causality fields.
+[DR-040](040-outcome-authority-effect-reconciliation.md) adds same-worktree observation coordination around delegated calls while preserving the declared concurrent zero-only proposal cohort and its blind join.
 
 ## Context
 

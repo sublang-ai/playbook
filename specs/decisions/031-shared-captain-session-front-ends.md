@@ -7,6 +7,7 @@
 
 Accepted.
 [DR-032](032-explicit-roles-session-players.md) amends the shared configuration and durable record: active structure remains restorable, explicit session players and current model and effort replace the frozen namespaced lineup, and runtime snapshot schema `3` replaces schema `2` player identity.
+[DR-040](040-outcome-authority-effect-reconciliation.md) extends the leased uncertain record with governed-call receipts and permits whole-turn retry only after every started boundary durably proves `unchanged`.
 
 ## Context
 

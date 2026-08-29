@@ -10,6 +10,7 @@ Accepted.
 [DR-029](029-session-scoped-conversational-captain.md) places the compiled session Captain outside the engagement stack and owns ordinary-language routing and outcome-grounded replies.
 [DR-030](030-shared-mapped-player-continuity.md) adds exact same-role inheritance and root-owned continuation to nested frames.
 [DR-032](032-explicit-roles-session-players.md) supersedes the per-playbook fallback roster and same-role inheritance with top-level session players and explicit role bindings.
+[DR-040](040-outcome-authority-effect-reconciliation.md) refines §5 for CODE, REVIEW, and DECIDE: saved-count metrics consume accepted outcomes and replies consume canonical structured settlements.
 
 ## Context
 

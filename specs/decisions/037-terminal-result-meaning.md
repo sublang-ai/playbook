@@ -7,6 +7,7 @@
 
 Accepted.
 Extends [DR-035](035-truthful-terminal-meaning.md) from authored final-state identity to the public runtime result that carries that meaning to a host.
+[DR-040](040-outcome-authority-effect-reconciliation.md) preserves `terminal` for reached authored final states; its distinct `unresolved-effect` variant carries neither `stateDescription` nor output.
 
 ## Context
 

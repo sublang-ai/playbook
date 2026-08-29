@@ -6,6 +6,7 @@
 ## Status
 
 Accepted.
+[DR-040](040-outcome-authority-effect-reconciliation.md) requires every outstanding governed-call boundary to reconcile before retained-generation adoption and forbids duplicate-effect replay from an unresolved generation.
 
 ## Context
 
