@@ -1204,6 +1204,26 @@ function deferredBossSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
   };
 }
 
+function unchangedBossSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return {
+    ...deferredBossSchema3Spec(),
+    outcomeAuthority: {
+      governedPlayerStates: {
+        work: {
+          complete: {
+            fields: {},
+            repositoryDisposition: 'unchanged',
+          },
+          needsBossReply: {
+            fields: { question: 'presentation' },
+            repositoryDisposition: 'unchanged',
+          },
+        },
+      },
+    },
+  };
+}
+
 function foreignEffectRetrySchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
   return {
     compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
@@ -4374,6 +4394,109 @@ describe('DR-032 shared role runtime transition', () => {
 });
 
 describe('DR-040 deferred Boss continuation', () => {
+  it('keeps a governed unchanged question outside the deferred protocol', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['unchanged', 'unchanged'],
+    });
+    const harness = deferredTestPorts(
+      [
+        {
+          status: 'ok',
+          finalText: 'Choose a format.',
+          resumeToken: 'thread-question',
+        },
+        {
+          status: 'ok',
+          finalText: 'The unchanged review is complete.',
+          resumeToken: 'thread-final',
+        },
+      ],
+      ['{"guard":"needsBossReply"}', '{"guard":"complete"}'],
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      deferredBossMachine,
+      unchangedBossSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(harness.ports));
+
+    await expect(
+      runtime.handleBossInput(bossTurn('the task')),
+    ).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply' },
+    });
+    const questionLedger = hostCapabilities.effectLedger.snapshot();
+    expect(questionLedger.logicalOperations).toEqual([]);
+    expect(questionLedger.boundaries).toMatchObject([
+      {
+        semanticCandidate: { guard: 'needsBossReply' },
+        physicalReceipt: { classification: 'unchanged' },
+      },
+    ]);
+    expect(runtime.describe?.().pendingQuestions).toMatchObject([
+      { questionId: 'work', question: 'Choose a format.' },
+    ]);
+    expect(hostCapabilities.repository.runExclusive).toHaveBeenCalledOnce();
+    expect(hostCapabilities.repository.runDeferred).not.toHaveBeenCalled();
+
+    await expect(
+      runtime.handleBossInput(bossTurn('markdown')),
+    ).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'ready' },
+    });
+    const completed = hostCapabilities.effectLedger.snapshot();
+    expect(completed.logicalOperations).toEqual([]);
+    expect(
+      completed.boundaries.map(
+        ({ physicalReceipt }) => physicalReceipt?.classification,
+      ),
+    ).toEqual(['unchanged', 'unchanged']);
+    expect(harness.resumes).toEqual([false, 'thread-question']);
+    expect(hostCapabilities.repository.runExclusive).toHaveBeenCalledTimes(2);
+    expect(hostCapabilities.repository.runDeferred).not.toHaveBeenCalled();
+    await runtime.dispose();
+  });
+
+  it('withholds a governed unchanged question under nonmatching evidence', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['concurrent-or-foreign-change'],
+    });
+    const harness = deferredTestPorts(
+      [
+        {
+          status: 'ok',
+          finalText: 'Choose a format.',
+          resumeToken: 'thread-question',
+        },
+      ],
+      ['{"guard":"needsBossReply"}'],
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      deferredBossMachine,
+      unchangedBossSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(harness.ports));
+
+    await expect(
+      runtime.handleBossInput(bossTurn('the task')),
+    ).resolves.toMatchObject({ state: { stateId: 'ready' } });
+    expect(hostCapabilities.effectLedger.snapshot()).toMatchObject({
+      logicalOperations: [],
+      boundaries: [
+        {
+          semanticCandidate: { guard: 'needsBossReply' },
+          physicalReceipt: { classification: 'concurrent-or-foreign-change' },
+        },
+      ],
+    });
+    expect(runtime.describe?.().pendingQuestions).toEqual([]);
+    expect(harness.callPlayer).toHaveBeenCalledOnce();
+    expect(harness.callJudge).toHaveBeenCalledOnce();
+    expect(hostCapabilities.repository.runDeferred).not.toHaveBeenCalled();
+    await runtime.dispose();
+  });
+
   it('parks a deferred candidate whose complete receipt does not preserve HEAD', async () => {
     const hostCapabilities = emptyLedgerHostCapabilities({
       classifications: ['one-descendant-commit'],
