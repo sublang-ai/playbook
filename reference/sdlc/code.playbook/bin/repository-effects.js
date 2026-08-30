@@ -1440,6 +1440,74 @@ function boundaryById(ledger, boundaryId) {
   return boundary;
 }
 
+function logicalOperationById(ledger, operationId) {
+  const operation = ledger.logicalOperations.find(
+    (candidate) => candidate.operationId === operationId,
+  );
+  if (operation === undefined) {
+    throw new Error(
+      `effect-ledger write did not publish logical operation ${JSON.stringify(operationId)}`,
+    );
+  }
+  return operation;
+}
+
+function withoutDeferredBinding(operation, boundaryIds = operation.boundaryIds) {
+  return {
+    sequence: operation.sequence,
+    operationId: operation.operationId,
+    playbookId: operation.playbookId,
+    runtimeSessionId: operation.runtimeSessionId,
+    boundaryIds,
+    originalBaseline: operation.originalBaseline,
+    checkpointRestorationEligible: false,
+    ...(operation.logicalReceipt === undefined
+      ? {}
+      : { logicalReceipt: operation.logicalReceipt }),
+  };
+}
+
+function hasDeferredBinding(operation) {
+  return (
+    operation.checkpoint !== undefined &&
+    operation.pendingQuestion !== undefined &&
+    Object.prototype.hasOwnProperty.call(operation, 'playerContinuation')
+  );
+}
+
+function deferredCheckpointEligible(originalBaseline, effectReceipt) {
+  return (
+    effectReceipt.after !== undefined &&
+    effectReceipt.after.head === originalBaseline.head &&
+    (effectReceipt.classification === 'unchanged' ||
+      effectReceipt.classification === 'worktree-only-change')
+  );
+}
+
+function checkpointMatches(checkpoint, observation) {
+  return (
+    checkpoint.worktree === observation.worktree &&
+    checkpoint.gitDir === observation.gitDir &&
+    checkpoint.head === observation.head &&
+    checkpoint.projectionDigest === observation.projectionDigest &&
+    projectionText(checkpoint.projection) ===
+      projectionText(observation.projection)
+  );
+}
+
+async function cumulativeLogicalReceipt(
+  originalBaseline,
+  physicalReceipt,
+  dispositions,
+) {
+  if (physicalReceipt.after === undefined) {
+    return receipt('observation-ambiguous', originalBaseline);
+  }
+  return classifyRepositoryReceipt(originalBaseline, physicalReceipt.after, {
+    allowedDispositions: dispositions,
+  });
+}
+
 function completedBoundary(boundary, effectReceipt) {
   return {
     ...boundary,
@@ -1487,6 +1555,8 @@ async function effectCompletion({
     'semanticCandidate',
     'logicalOperationId',
     'commands',
+    'deferred',
+    'unresolved',
   ]);
   for (const [key, descriptor] of Object.entries(descriptors)) {
     if (
@@ -1516,6 +1586,60 @@ async function effectCompletion({
       'repository completeEffectBoundary commands must be a nonempty array',
     );
   }
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'unresolved') &&
+    value.unresolved !== true
+  ) {
+    throw new TypeError(
+      'repository completeEffectBoundary unresolved must be true',
+    );
+  }
+  let deferred;
+  if (Object.prototype.hasOwnProperty.call(value, 'deferred')) {
+    if (!isPlainObject(value.deferred)) {
+      throw new TypeError(
+        'repository completeEffectBoundary deferred must be an object',
+      );
+    }
+    const deferredKeys = Object.keys(value.deferred);
+    if (
+      deferredKeys.some(
+        (key) =>
+          key !== 'operationId' &&
+          key !== 'pendingQuestion' &&
+          key !== 'playerContinuation',
+      ) ||
+      !Object.prototype.hasOwnProperty.call(value.deferred, 'pendingQuestion') ||
+      !Object.prototype.hasOwnProperty.call(value.deferred, 'playerContinuation')
+    ) {
+      throw new TypeError(
+        'repository completeEffectBoundary deferred has unsupported or missing members',
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(value.deferred, 'operationId') &&
+      (typeof value.deferred.operationId !== 'string' ||
+        !UUID_PATTERN.test(value.deferred.operationId))
+    ) {
+      throw new TypeError(
+        'repository completeEffectBoundary deferred operationId must be a UUID',
+      );
+    }
+    deferred = snapshotJsonValue(
+      value.deferred,
+      'repository completeEffectBoundary deferred',
+    );
+  }
+  if (
+    deferred !== undefined &&
+    (value.unresolved === true ||
+      Object.prototype.hasOwnProperty.call(value, 'logicalOperationId') ||
+      Object.prototype.hasOwnProperty.call(value, 'commands'))
+  ) {
+    throw new TypeError(
+      'repository completeEffectBoundary deferred cannot be combined with unresolved, logicalOperationId, or commands',
+    );
+  }
   const evidence = {
     ...(Object.prototype.hasOwnProperty.call(value, 'finalText')
       ? { finalText: value.finalText }
@@ -1533,6 +1657,8 @@ async function effectCompletion({
       effectReceipt,
     ),
     commands: value.commands ?? [],
+    ...(deferred === undefined ? {} : { deferred }),
+    ...(value.unresolved === true ? { unresolved: true } : {}),
   };
 }
 
@@ -1618,16 +1744,65 @@ async function runDurableExclusive({
       operation,
       receipt: effectReceipt,
     });
+    let completedBoundaryValue = completion.boundary;
+    let deferredStatus;
+    let deferredCommands = [];
+    if (completion.deferred !== undefined) {
+      if (!current.dispositions.includes('deferred')) {
+        throw new TypeError(
+          'repository completion cannot bind a deferred operation for a boundary without deferred authority',
+        );
+      }
+      const operationId = completion.deferred.operationId;
+      if (typeof operationId !== 'string' || !UUID_PATTERN.test(operationId)) {
+        throw new TypeError(
+          'initial deferred repository completion requires an operationId UUID',
+        );
+      }
+      const eligible = deferredCheckpointEligible(
+        latest.baseline,
+        effectReceipt,
+      );
+      completedBoundaryValue = {
+        ...completedBoundaryValue,
+        logicalOperationId: operationId,
+      };
+      deferredCommands = [
+        {
+          kind: 'append-logical-operations',
+          operations: [
+            {
+              operationId,
+              playbookId: authority.playbookId,
+              runtimeSessionId: latest.runtimeSessionId,
+              boundaryIds: [latest.boundaryId],
+              originalBaseline: latest.baseline,
+              ...(eligible
+                ? {
+                    checkpoint: effectReceipt.after,
+                    pendingQuestion: completion.deferred.pendingQuestion,
+                    playerContinuation:
+                      completion.deferred.playerContinuation,
+                  }
+                : {}),
+              checkpointRestorationEligible: false,
+            },
+          ],
+        },
+      ];
+      deferredStatus = eligible ? 'bound' : 'unresolved';
+    }
     const commands = snapshotJsonValue([
       {
         kind: 'replace-boundaries',
         replacements: [
           {
             expected: latest,
-            next: completion.boundary,
+            next: completedBoundaryValue,
           },
         ],
       },
+      ...deferredCommands,
       ...completion.commands,
     ], 'exclusive repository completion commands');
     recovery = { ...recovery, commands };
@@ -1638,6 +1813,367 @@ async function runDurableExclusive({
       operation,
       receipt: effectReceipt,
       effectLedger: completed,
+      ...(deferredStatus === undefined ? {} : { deferredStatus }),
+    });
+  } catch (error) {
+    if (!effectPossible) {
+      await releaseRepositoryClaim(claim, error);
+    } else {
+      quarantineProcessClaim(claim, recovery);
+    }
+    throw error;
+  }
+}
+
+function deferredOperationForAuthority(ledger, operationId, authority) {
+  if (typeof operationId !== 'string' || !UUID_PATTERN.test(operationId)) {
+    throw new TypeError('deferred repository operationId must be a UUID');
+  }
+  const operation = logicalOperationById(ledger, operationId);
+  if (
+    operation.playbookId !== authority.playbookId ||
+    operation.logicalReceipt !== undefined
+  ) {
+    throw new Error(
+      `deferred logical operation ${JSON.stringify(operationId)} is not open under the current host authority`,
+    );
+  }
+  const firstBoundary = boundaryById(ledger, operation.boundaryIds[0]);
+  if (
+    firstBoundary.runtimeSessionId !== operation.runtimeSessionId ||
+    !isDeepStrictEqual(
+      firstBoundary.canonicalWorktree,
+      authority.canonicalWorktree,
+    )
+  ) {
+    throw new Error(
+      `deferred logical operation ${JSON.stringify(operationId)} does not match the current host worktree`,
+    );
+  }
+  return operation;
+}
+
+function replaceLogicalOperationCommand(expected, next) {
+  return {
+    kind: 'replace-logical-operations',
+    replacements: [{ expected, next }],
+  };
+}
+
+async function runDurableDeferred({
+  coordinator,
+  identity,
+  authority,
+  ledgerService,
+  options,
+}) {
+  if (!isPlainObject(options)) {
+    throw new TypeError('deferred repository operation options must be an object');
+  }
+  rejectBoundRepositoryOverride(options, 'runDeferred', ['cwd']);
+  const mode = options.mode;
+  if (mode !== 'continue' && mode !== 'park' && mode !== 'restore') {
+    throw new TypeError(
+      'deferred repository operation mode must be continue, park, or restore',
+    );
+  }
+  const operationId = options.operationId;
+  deferredOperationForAuthority(
+    ledgerService.snapshot(),
+    operationId,
+    authority,
+  );
+  if (
+    mode === 'continue' &&
+    (typeof options.operation !== 'function' ||
+      typeof options.completeEffectBoundary !== 'function')
+  ) {
+    throw new TypeError(
+      'deferred repository continuation requires operation and completeEffectBoundary functions',
+    );
+  }
+  if (
+    mode !== 'continue' &&
+    (Object.prototype.hasOwnProperty.call(options, 'operation') ||
+      Object.prototype.hasOwnProperty.call(options, 'effectBoundary') ||
+      Object.prototype.hasOwnProperty.call(options, 'completeEffectBoundary'))
+  ) {
+    throw new TypeError(
+      `deferred repository ${mode} cannot carry continuation members`,
+    );
+  }
+
+  const claim = await coordinator.acquire(identity.worktree, {
+    signal: options.signal,
+  });
+  let effectPossible = false;
+  let recovery;
+  try {
+    let ledger = ledgerService.snapshot();
+    let logicalOperation = deferredOperationForAuthority(
+      ledger,
+      operationId,
+      authority,
+    );
+
+    if (mode === 'park') {
+      if (!hasDeferredBinding(logicalOperation)) {
+        await releaseRepositoryClaim(claim);
+        return Object.freeze({ status: 'parked', effectLedger: ledger });
+      }
+      const next = withoutDeferredBinding(logicalOperation);
+      const commands = snapshotJsonValue(
+        [replaceLogicalOperationCommand(logicalOperation, next)],
+        'deferred repository park commands',
+      );
+      recovery = {
+        sessionId: authority.sessionId,
+        playbookId: authority.playbookId,
+        boundaryIds: [],
+        commands,
+        logicalOperationReplacement: { operationId, next },
+      };
+      effectPossible = true;
+      ledger = await ledgerService.writeAhead(authority, commands);
+      logicalOperationById(ledger, operationId);
+      await releaseRepositoryClaim(claim);
+      return Object.freeze({ status: 'parked', effectLedger: ledger });
+    }
+
+    if (!hasDeferredBinding(logicalOperation)) {
+      await releaseRepositoryClaim(claim);
+      return Object.freeze({ status: 'ineligible', effectLedger: ledger });
+    }
+    if (
+      mode === 'continue' &&
+      logicalOperation.checkpointRestorationEligible
+    ) {
+      await releaseRepositoryClaim(claim);
+      return Object.freeze({ status: 'ineligible', effectLedger: ledger });
+    }
+    if (
+      mode === 'restore' &&
+      !logicalOperation.checkpointRestorationEligible
+    ) {
+      await releaseRepositoryClaim(claim);
+      return Object.freeze({ status: 'ineligible', effectLedger: ledger });
+    }
+
+    let checkpointObservation;
+    try {
+      checkpointObservation = await claim.observe(options.observation);
+    } catch (error) {
+      if (!(error instanceof RepositoryObservationAmbiguousError)) throw error;
+    }
+    const checkpointExact =
+      checkpointObservation !== undefined &&
+      checkpointMatches(logicalOperation.checkpoint, checkpointObservation);
+
+    if (mode === 'restore') {
+      if (!checkpointExact) {
+        await releaseRepositoryClaim(claim);
+        return Object.freeze({
+          status: 'checkpoint-mismatch',
+          effectLedger: ledger,
+        });
+      }
+      const next = {
+        ...logicalOperation,
+        checkpointRestorationEligible: false,
+      };
+      const commands = snapshotJsonValue(
+        [replaceLogicalOperationCommand(logicalOperation, next)],
+        'deferred repository restoration commands',
+      );
+      recovery = {
+        sessionId: authority.sessionId,
+        playbookId: authority.playbookId,
+        boundaryIds: [],
+        commands,
+        logicalOperationReplacement: { operationId, next },
+      };
+      effectPossible = true;
+      ledger = await ledgerService.writeAhead(authority, commands);
+      logicalOperationById(ledger, operationId);
+      await releaseRepositoryClaim(claim);
+      return Object.freeze({ status: 'restored', effectLedger: ledger });
+    }
+
+    if (!checkpointExact) {
+      const next = {
+        ...logicalOperation,
+        checkpointRestorationEligible: true,
+      };
+      const commands = snapshotJsonValue(
+        [replaceLogicalOperationCommand(logicalOperation, next)],
+        'deferred repository checkpoint-mismatch commands',
+      );
+      recovery = {
+        sessionId: authority.sessionId,
+        playbookId: authority.playbookId,
+        boundaryIds: [],
+        commands,
+        logicalOperationReplacement: { operationId, next },
+      };
+      effectPossible = true;
+      ledger = await ledgerService.writeAhead(authority, commands);
+      logicalOperationById(ledger, operationId);
+      await releaseRepositoryClaim(claim);
+      return Object.freeze({
+        status: 'checkpoint-mismatch',
+        effectLedger: ledger,
+      });
+    }
+
+    if (!isPlainObject(options.effectBoundary)) {
+      throw new TypeError(
+        'deferred repository continuation effectBoundary must be an object',
+      );
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(
+        options.effectBoundary,
+        'logicalOperationId',
+      )
+    ) {
+      throw new TypeError(
+        'deferred repository continuation cannot override host-owned logicalOperationId',
+      );
+    }
+    const seed = {
+      ...effectBoundarySeed(
+        options.effectBoundary,
+        authority,
+        checkpointObservation,
+      ),
+      logicalOperationId: operationId,
+    };
+    if (seed.runtimeSessionId !== logicalOperation.runtimeSessionId) {
+      throw new Error(
+        'deferred repository continuation runtime session does not match its logical operation',
+      );
+    }
+    const boundPlayerContinuation = logicalOperation.playerContinuation;
+    const startingOperation = withoutDeferredBinding(logicalOperation, [
+      ...logicalOperation.boundaryIds,
+      seed.boundaryId,
+    ]);
+    const startCommands = snapshotJsonValue(
+      [
+        { kind: 'start-boundaries', boundaries: [seed] },
+        replaceLogicalOperationCommand(logicalOperation, startingOperation),
+      ],
+      'deferred repository continuation start commands',
+    );
+    recovery = {
+      sessionId: authority.sessionId,
+      playbookId: authority.playbookId,
+      boundaryIds: [seed.boundaryId],
+      startCommands,
+      operationStarted: false,
+    };
+    effectPossible = true;
+    ledger = await ledgerService.writeAhead(authority, startCommands);
+    const currentBoundary = boundaryById(ledger, seed.boundaryId);
+    logicalOperation = logicalOperationById(ledger, operationId);
+    recovery = { ...recovery, operationStarted: true };
+
+    let operation;
+    try {
+      operation = Object.freeze({
+        status: 'fulfilled',
+        value: await options.operation({
+          baseline: checkpointObservation,
+          identity: claim.identity,
+          // The start transition intentionally clears the bound group. Pass
+          // the detached pre-start continuation captured while the claim was
+          // held, never a later player-ledger selection.
+          playerContinuation: boundPlayerContinuation,
+        }),
+      });
+    } catch (error) {
+      operation = Object.freeze({ status: 'rejected', reason: error });
+    }
+    const effectReceipt = await claim.capture(checkpointObservation, {
+      allowedDispositions: currentBoundary.dispositions,
+      observation: options.afterObservation,
+    });
+    const latestBoundary = boundaryById(
+      ledgerService.snapshot(),
+      seed.boundaryId,
+    );
+    const latestOperation = logicalOperationById(
+      ledgerService.snapshot(),
+      operationId,
+    );
+    const completion = await effectCompletion({
+      callback: options.completeEffectBoundary,
+      boundary: latestBoundary,
+      operation,
+      receipt: effectReceipt,
+    });
+    if (
+      completion.commands.length > 0 ||
+      completion.boundary.logicalOperationId !== operationId ||
+      (completion.deferred?.operationId !== undefined &&
+        completion.deferred.operationId !== operationId)
+    ) {
+      throw new TypeError(
+        'deferred repository continuation completion cannot override its host-owned logical operation',
+      );
+    }
+    const logicalReceipt = await cumulativeLogicalReceipt(
+      latestOperation.originalBaseline,
+      effectReceipt,
+      latestBoundary.dispositions,
+    );
+    const eligibleDeferred =
+      completion.deferred !== undefined &&
+      deferredCheckpointEligible(
+        latestOperation.originalBaseline,
+        effectReceipt,
+      );
+    const nextOperation =
+      completion.deferred !== undefined && eligibleDeferred
+        ? {
+            ...latestOperation,
+            checkpoint: effectReceipt.after,
+            pendingQuestion: completion.deferred.pendingQuestion,
+            playerContinuation: completion.deferred.playerContinuation,
+            checkpointRestorationEligible: false,
+          }
+        : completion.deferred !== undefined || completion.unresolved === true
+          ? latestOperation
+          : { ...latestOperation, logicalReceipt };
+    const commands = snapshotJsonValue(
+      [
+        {
+          kind: 'replace-boundaries',
+          replacements: [
+            { expected: latestBoundary, next: completion.boundary },
+          ],
+        },
+        replaceLogicalOperationCommand(latestOperation, nextOperation),
+      ],
+      'deferred repository continuation completion commands',
+    );
+    recovery = { ...recovery, commands };
+    ledger = await ledgerService.writeAhead(authority, commands);
+    await releaseRepositoryClaim(claim);
+    return Object.freeze({
+      status: 'continued',
+      baseline: checkpointObservation,
+      operation,
+      receipt: effectReceipt,
+      ...(completion.deferred !== undefined || completion.unresolved === true
+        ? {}
+        : { logicalReceipt }),
+      effectLedger: ledger,
+      ...(completion.deferred === undefined
+        ? {}
+        : {
+            deferredStatus: eligibleDeferred ? 'bound' : 'unresolved',
+          }),
     });
   } catch (error) {
     if (!effectPossible) {
@@ -1799,6 +2335,46 @@ export async function recoverIncompleteRepositoryEffects({
       recovery?.sessionId !== capability.authority.sessionId ||
       recovery.playbookId !== capability.authority.playbookId
     ) {
+      continue;
+    }
+    if (recovery.logicalOperationReplacement !== undefined) {
+      const replacement = recovery.logicalOperationReplacement;
+      const current = ledger.logicalOperations.find(
+        (operation) => operation.operationId === replacement.operationId,
+      );
+      const commandReplacement = recovery.commands?.[0]?.replacements?.[0];
+      const claim = await acquireRecoveryClaim(
+        coordinator,
+        capability.authority.canonicalWorktree,
+        recovery,
+      );
+      try {
+        if (!isDeepStrictEqual(current, replacement.next)) {
+          if (
+            commandReplacement === undefined ||
+            !isDeepStrictEqual(current, commandReplacement.expected)
+          ) {
+            throw new Error(
+              'deferred repository recovery does not match the durable logical operation',
+            );
+          }
+          ledger = await capability.effectLedger.writeAhead(recovery.commands);
+          if (
+            !isDeepStrictEqual(
+              logicalOperationById(ledger, replacement.operationId),
+              replacement.next,
+            )
+          ) {
+            throw new Error(
+              'deferred repository recovery did not publish its logical operation replacement',
+            );
+          }
+        }
+        await releaseRepositoryClaim(claim);
+      } catch (error) {
+        quarantineProcessClaim(claim, recovery);
+        throw error;
+      }
       continue;
     }
     const savedBoundaries = recovery.boundaryIds.map((boundaryId) =>
@@ -2077,6 +2653,15 @@ export async function createRepositoryEffectCapabilities({
           options,
         });
       };
+      const runDeferred = async (options) => {
+        return runDurableDeferred({
+          coordinator,
+          identity,
+          authority,
+          ledgerService,
+          options,
+        });
+      };
       return [
         playbookId,
         deepFreeze({
@@ -2087,6 +2672,7 @@ export async function createRepositoryEffectCapabilities({
             acquire,
             runExclusive,
             runCohort,
+            runDeferred,
           },
           effectLedger: {
             snapshot: () => ledgerService.snapshot(),

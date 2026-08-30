@@ -16,6 +16,8 @@
 //   Output profile:     bespoke parallel runtime with the shared nested-call
 //                       bridge (slc/link.md §Output)
 
+import { randomUUID } from 'node:crypto';
+
 import PQueue from 'p-queue';
 import { createActor, fromPromise } from 'xstate';
 import type { InspectionEvent, SnapshotFrom } from 'xstate';
@@ -61,9 +63,12 @@ import type {
   PlaybookControlReceipt,
   PlaybookControlView,
   PlaybookEffectBoundary,
+  PlaybookEffectBoundaryStart,
   PlaybookEffectLedger,
+  PlaybookPendingBossQuestion,
   PlaybookPendingCall,
   PlaybookPorts,
+  PlaybookRepositoryReceipt,
   PlaybookRunResult,
   PlaybookRuntime,
   PlaybookRuntimeFactory,
@@ -627,6 +632,132 @@ interface Schema3AutomaticReplayEvidence {
   readEffectLedger(): unknown;
 }
 
+interface DecideRepositoryOperationSettlement<T> {
+  readonly status: 'fulfilled';
+  readonly value: T;
+}
+
+interface DecideRepositoryOperationRejection {
+  readonly status: 'rejected';
+  readonly reason: unknown;
+}
+
+interface DecideRepositoryCompletion<T> {
+  readonly boundary: PlaybookEffectBoundary;
+  readonly operation:
+    | DecideRepositoryOperationSettlement<T>
+    | DecideRepositoryOperationRejection;
+  readonly receipt: PlaybookRepositoryReceipt;
+}
+
+interface DecideDeferredBinding {
+  readonly operationId: string;
+  readonly pendingQuestion: PlaybookPendingBossQuestion;
+  readonly playerContinuation: JsonValue;
+}
+
+interface DecideRepositoryCompletionEvidence {
+  readonly finalText?: string;
+  readonly semanticCandidate?: JsonValue;
+  readonly deferred?: DecideDeferredBinding;
+  readonly unresolved?: true;
+}
+
+interface DecideRepositoryExclusiveResult<T> {
+  readonly operation:
+    | DecideRepositoryOperationSettlement<T>
+    | DecideRepositoryOperationRejection;
+  readonly receipt: PlaybookRepositoryReceipt;
+  readonly effectLedger: PlaybookEffectLedger;
+  readonly deferredStatus?: 'bound' | 'unresolved';
+}
+
+interface DecideRepositoryDeferredContinuationResult<T>
+  extends DecideRepositoryExclusiveResult<T> {
+  readonly status: 'continued';
+  readonly baseline: PlaybookRepositoryReceipt['baseline'];
+  readonly logicalReceipt?: PlaybookRepositoryReceipt;
+}
+
+interface DecideRepositoryDeferredCheckpointMismatch {
+  readonly status: 'checkpoint-mismatch' | 'ineligible';
+  readonly effectLedger: PlaybookEffectLedger;
+}
+
+interface DecideRepositoryDeferredParked {
+  readonly status: 'parked';
+  readonly effectLedger: PlaybookEffectLedger;
+}
+
+interface DecideRepositoryDeferredRestoreResult {
+  readonly status: 'restored' | 'checkpoint-mismatch' | 'ineligible';
+  readonly effectLedger: PlaybookEffectLedger;
+}
+
+type DecideEffectBoundarySeed = Omit<
+  PlaybookEffectBoundaryStart,
+  'playbookId' | 'canonicalWorktree' | 'baseline' | 'cohortId'
+>;
+
+interface DecideRepositoryCapability {
+  runExclusive<T>(options: {
+    readonly signal: AbortSignal;
+    readonly effectBoundary: DecideEffectBoundarySeed;
+    readonly operation: () => Promise<T>;
+    readonly completeEffectBoundary: (
+      completion: DecideRepositoryCompletion<T>,
+    ) =>
+      | DecideRepositoryCompletionEvidence
+      | Promise<DecideRepositoryCompletionEvidence>;
+  }): Promise<DecideRepositoryExclusiveResult<T>>;
+  runDeferred<T>(options: {
+    readonly mode: 'continue';
+    readonly signal: AbortSignal;
+    readonly operationId: string;
+    readonly effectBoundary: DecideEffectBoundarySeed;
+    readonly operation: (context: {
+      readonly baseline: PlaybookRepositoryReceipt['baseline'];
+      readonly identity: unknown;
+      readonly playerContinuation: JsonValue;
+    }) => Promise<T>;
+    readonly completeEffectBoundary: (
+      completion: DecideRepositoryCompletion<T>,
+    ) =>
+      | DecideRepositoryCompletionEvidence
+      | Promise<DecideRepositoryCompletionEvidence>;
+  }): Promise<
+    | DecideRepositoryDeferredContinuationResult<T>
+    | DecideRepositoryDeferredCheckpointMismatch
+  >;
+  runDeferred(options: {
+    readonly mode: 'park' | 'restore';
+    readonly signal: AbortSignal;
+    readonly operationId: string;
+  }): Promise<
+    DecideRepositoryDeferredParked | DecideRepositoryDeferredRestoreResult
+  >;
+}
+
+interface Schema3DeferredEffectEvidence extends Schema3AutomaticReplayEvidence {
+  readonly repository: DecideRepositoryCapability;
+}
+
+interface DeferredValue<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+  reject(reason: unknown): void;
+}
+
+function deferredValue<T>(): DeferredValue<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((onResolve, onReject) => {
+    resolve = onResolve;
+    reject = onReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function hasCompleteUnchangedReceipt(
   boundary: PlaybookEffectBoundary,
 ): boolean {
@@ -846,8 +977,12 @@ function telemetryPayload(
   state: PlaybookState,
   event: unknown,
   context: Record<string, unknown>,
+  hiddenQuestionId?: string,
 ): JsonValue {
-  const pendingBossQuestions = pendingQuestionsForState(state, context);
+  const pendingBossQuestions = pendingQuestionsForState(
+    state,
+    context,
+  ).filter(({ questionId }) => questionId !== hiddenQuestionId);
   const prior = previousState ?? state;
   const payload = {
     from: prior.value,
@@ -868,12 +1003,43 @@ type DecidePlaybookRuntime = PlaybookRuntime & {
   _getNestedBridge(): NestedPlaybookBridge<PlaybookInput>;
 };
 
+type DeferredContinuationEnvelope = {
+  readonly roleId: RoleId;
+  readonly playerId?: string;
+  readonly callId: string;
+  readonly result: PlayerResult;
+};
+
+interface ActiveDeferredContinuation {
+  readonly operationId: string;
+  readonly effectBoundary: DecideEffectBoundarySeed;
+  readonly result: DeferredValue<PlayerResult>;
+  readonly acknowledged: DeferredValue<void>;
+  playerContinuation?: string | false;
+  input?: PlayerInput;
+  playerId?: string;
+}
+
+type StagedDecidePlaybookRuntime = DecidePlaybookRuntime & {
+  _reconcileDeferred(signal: AbortSignal): Promise<
+    'restored' | 'checkpoint-mismatch' | 'ineligible'
+  >;
+};
+
 function createDecidePlaybookRuntime(
   options: PlaybookRuntimeOptions,
   automaticReplayPolicy: AutomaticReplayPolicy,
+  deferredEffects?: Schema3DeferredEffectEvidence,
 ): DecidePlaybookRuntime {
   const fsmInput = snapshotDecideRuntimeOptions(options);
-  const effectLedger = emptyPlaybookEffectLedger();
+  const readEffectLedger = (): PlaybookEffectLedger =>
+    deferredEffects === undefined
+      ? emptyPlaybookEffectLedger()
+      : assertPlaybookEffectLedger(
+          deferredEffects.readEffectLedger(),
+          'DECIDE current host effect ledger',
+        );
+  let effectLedgerMirror = readEffectLedger();
 
   type SessionIdentity = Readonly<PlaybookSession>;
 
@@ -906,6 +1072,11 @@ function createDecidePlaybookRuntime(
   const activeEmissionCalls = new Set<Promise<void>>();
   const emissionQueue = new PQueue({ concurrency: 1 });
   const judgeQueue = new PQueue({ concurrency: 1 });
+  const governedOutputsByBoundaryId = new Map<string, PlayerOutput>();
+  const governedPlayerOutputs = new WeakMap<object, PlayerOutput>();
+  let deferredOperationId: string | undefined;
+  let hiddenDeferredOperationId: string | undefined;
+  let activeDeferredContinuation: ActiveDeferredContinuation | undefined;
 
   const collectFailure = (failures: unknown[], error: unknown): void => {
     if (error instanceof AggregateError) {
@@ -1188,6 +1359,52 @@ function createDecidePlaybookRuntime(
       pendingCall,
     });
   };
+  const visiblePendingQuestionsForState = (
+    state: PlaybookState,
+    context: Record<string, unknown>,
+  ): PendingBossQuestion[] =>
+    pendingQuestionsForState(state, context).filter(
+      ({ questionId }) =>
+        questionId !== 'commitCoderProposal' ||
+        hiddenDeferredOperationId === undefined,
+    );
+  const openDeferredOperation = (
+    ledger: PlaybookEffectLedger = effectLedgerMirror,
+  ) => {
+    if (sessionIdentity === undefined) return undefined;
+    const open = ledger.logicalOperations.filter(
+      (operation) =>
+        operation.playbookId === sessionIdentity!.playbookId &&
+        operation.runtimeSessionId === sessionIdentity!.sessionId &&
+        operation.logicalReceipt === undefined,
+    );
+    if (open.length > 1) {
+      throw new TypeError(
+        'DECIDE runtime has multiple open deferred logical operations',
+      );
+    }
+    return open[0];
+  };
+  const synchronizeDeferredProjection = (
+    ledger: PlaybookEffectLedger = effectLedgerMirror,
+  ): void => {
+    if (deferredEffects === undefined) return;
+    effectLedgerMirror = ledger;
+    const operation = openDeferredOperation(ledger);
+    if (operation === undefined) {
+      deferredOperationId = undefined;
+      hiddenDeferredOperationId = undefined;
+      return;
+    }
+    deferredOperationId = operation.operationId;
+    hiddenDeferredOperationId =
+      operation.pendingQuestion !== undefined &&
+      operation.playerContinuation !== undefined &&
+      operation.checkpoint !== undefined &&
+      operation.checkpointRestorationEligible === false
+        ? undefined
+        : operation.operationId;
+  };
   const stateIdentity = (state: PlaybookState): { stateId?: string } => {
     return state.stateId === undefined ? {} : { stateId: state.stateId };
   };
@@ -1373,12 +1590,11 @@ function createDecidePlaybookRuntime(
   const runPlayerCall = async (
     input: PlayerInput,
     signal: AbortSignal,
-  ): Promise<{
-    roleId: RoleId;
-    playerId?: string;
-    callId: string;
-    result: PlayerResult;
-  }> => {
+    continuation?: {
+      readonly resume?: string | false;
+      readonly callId: string;
+    },
+  ): Promise<DeferredContinuationEnvelope> => {
     const aborts = abortReasonClassifier(signal);
     if (!ROLE_ID_SET.has(input.role)) {
       throw new TypeError(
@@ -1392,12 +1608,17 @@ function createDecidePlaybookRuntime(
     let resume: PlayerCallOptions['resume'];
     try {
       signal.throwIfAborted();
-      resume = selectPlayerResume(roleId, playerId);
+      resume =
+        continuation !== undefined &&
+        Object.prototype.hasOwnProperty.call(continuation, 'resume')
+          ? continuation.resume!
+          : selectPlayerResume(roleId, playerId);
     } catch (error) {
       latchControlPlaneError(error, signal);
       throw error;
     }
-    const callId = `player-${++playerCallSequence}`;
+    const callId =
+      continuation?.callId ?? `player-${++playerCallSequence}`;
     const identity = {
       stateId: input.stateId,
       sourceItem: input.sourceItem,
@@ -1529,16 +1750,246 @@ function createDecidePlaybookRuntime(
     }
   };
 
+  const governedBoundarySeed = (
+    input: PlayerInput,
+    callId: string,
+  ): DecideEffectBoundarySeed => {
+    if (
+      currentTurnId === undefined ||
+      !Number.isSafeInteger(currentTurnId) ||
+      currentTurnId <= 0
+    ) {
+      throw new Error(
+        'DECIDE governed player call requires an active positive turn id',
+      );
+    }
+    return {
+      boundaryId: randomUUID(),
+      runtimeSessionId: requireSessionIdentity().sessionId,
+      turnId: currentTurnId,
+      callId,
+      roleId: input.role,
+      sourceStateId: input.stateId,
+      sourceOutcomeSchema: snapshotJsonValue(
+        input.result,
+        'DECIDE governed player source outcome schema',
+      ),
+      dispositions: ['one-descendant-commit', 'deferred'],
+      correctionBudget: { limit: 1, spent: false },
+    };
+  };
+
+  const completionEvidenceFor = (
+    input: PlayerInput,
+    roleId: RoleId,
+    playerId: string | undefined,
+    signal: AbortSignal,
+    operationId?: string,
+  ) =>
+    async ({
+      boundary,
+      operation,
+    }: DecideRepositoryCompletion<PlayerResult>): Promise<DecideRepositoryCompletionEvidence> => {
+      if (
+        operation.status !== 'fulfilled' ||
+        operation.value.status !== 'ok' ||
+        isEmptyFinalText(operation.value.finalText)
+      ) {
+        const incomplete =
+          operation.status === 'fulfilled' &&
+          operation.value.finalText !== undefined
+            ? { finalText: operation.value.finalText }
+            : {};
+        return operationId === undefined
+          ? incomplete
+          : { ...incomplete, unresolved: true };
+      }
+      const finalText = operation.value.finalText!;
+      const output = parseAdjudication(
+        await callJudge(
+          buildAdjudicatorPrompt(input, finalText),
+          signal,
+          'player-output-adjudication',
+          input.stateId,
+        ),
+        input,
+        finalText,
+      );
+      governedOutputsByBoundaryId.set(boundary.boundaryId, output);
+      const semanticCandidate = snapshotJsonValue(
+        output,
+        'DECIDE governed semantic candidate',
+      );
+      if (output.guard !== 'needsBossReply') {
+        return { finalText, semanticCandidate };
+      }
+      if (typeof output.question !== 'string' || output.question.trim() === '') {
+        throw new TypeError(
+          'DECIDE deferred outcome must carry one exact Boss question',
+        );
+      }
+      const pendingQuestion: PlaybookPendingBossQuestion = {
+        questionId: input.stateId,
+        asker: { kind: 'role', roleId },
+        question: output.question,
+        sourceItem: input.sourceItem,
+      };
+      return {
+        finalText,
+        semanticCandidate,
+        deferred: {
+          operationId: operationId ?? randomUUID(),
+          pendingQuestion,
+          playerContinuation: snapshotJsonValue(
+            selectPlayerResume(roleId, playerId),
+            'DECIDE deferred player continuation',
+          ),
+        },
+      };
+    };
+
+  const acknowledgeGovernedPlayerResult = (
+    value: DecideRepositoryExclusiveResult<PlayerResult>,
+    boundaryId: string,
+  ): PlayerResult => {
+    const ledger = assertPlaybookEffectLedger(
+      value.effectLedger,
+      'DECIDE repository settlement effect ledger',
+    );
+    const completed = ledger.boundaries.find(
+      (candidate) => candidate.boundaryId === boundaryId,
+    );
+    if (
+      completed === undefined ||
+      completed.physicalReceipt === undefined ||
+      stableJson(completed.physicalReceipt, 'DECIDE completed receipt') !==
+        stableJson(value.receipt, 'DECIDE acknowledged receipt')
+    ) {
+      throw new TypeError(
+        'DECIDE repository settlement did not acknowledge its completed boundary',
+      );
+    }
+    effectLedgerMirror = ledger;
+    if (value.operation.status === 'rejected') {
+      throw value.operation.reason;
+    }
+    const result = validatePlayerResult(value.operation.value);
+    const output = governedOutputsByBoundaryId.get(boundaryId);
+    if (output !== undefined) {
+      governedOutputsByBoundaryId.delete(boundaryId);
+      governedPlayerOutputs.set(result, output);
+    }
+    const linkedOperationId = completed.logicalOperationId;
+    if (value.deferredStatus === 'unresolved') {
+      if (linkedOperationId === undefined) {
+        throw new TypeError(
+          'DECIDE unresolved deferred settlement omitted its logical operation',
+        );
+      }
+      deferredOperationId = linkedOperationId;
+      hiddenDeferredOperationId = linkedOperationId;
+      return result;
+    }
+    if (value.deferredStatus === 'bound') {
+      if (linkedOperationId === undefined) {
+        throw new TypeError(
+          'DECIDE bound deferred settlement omitted its logical operation',
+        );
+      }
+      deferredOperationId = linkedOperationId;
+      hiddenDeferredOperationId = undefined;
+    } else if (
+      'status' in value &&
+      value.status === 'continued' &&
+      (value as { readonly logicalReceipt?: PlaybookRepositoryReceipt })
+        .logicalReceipt === undefined &&
+      linkedOperationId !== undefined
+    ) {
+      deferredOperationId = linkedOperationId;
+      hiddenDeferredOperationId = linkedOperationId;
+    } else if (linkedOperationId !== undefined) {
+      deferredOperationId = undefined;
+      hiddenDeferredOperationId = undefined;
+    }
+    return result;
+  };
+
   const callPlayer = (
     input: PlayerInput,
     signal: AbortSignal,
-  ): Promise<{
-    roleId: RoleId;
-    playerId?: string;
-    callId: string;
-    result: PlayerResult;
-  }> => {
-    return trackBoundaryCall(runPlayerCall(input, signal));
+  ): Promise<DeferredContinuationEnvelope> => {
+    const invocation = async (): Promise<DeferredContinuationEnvelope> => {
+      if (
+        deferredEffects === undefined ||
+        input.stateId !== 'commitCoderProposal'
+      ) {
+        return runPlayerCall(input, signal);
+      }
+
+      const active = activeDeferredContinuation;
+      if (active !== undefined) {
+        if (
+          active.effectBoundary.runtimeSessionId !==
+            requireSessionIdentity().sessionId ||
+          active.effectBoundary.turnId !== currentTurnId ||
+          active.effectBoundary.roleId !== input.role ||
+          active.effectBoundary.sourceStateId !== input.stateId ||
+          active.playerContinuation === undefined
+        ) {
+          throw new TypeError(
+            'DECIDE deferred continuation did not invoke its bound player boundary',
+          );
+        }
+        active.input = input;
+        active.playerId = resolvedPlayerId(input.role);
+        try {
+          const envelope = await runPlayerCall(input, signal, {
+            callId: active.effectBoundary.callId,
+            resume: active.playerContinuation,
+          });
+          active.result.resolve(envelope.result);
+          await active.acknowledged.promise;
+          return envelope;
+        } catch (error) {
+          active.result.reject(error);
+          try {
+            await active.acknowledged.promise;
+          } catch (acknowledgementError) {
+            throw acknowledgementError;
+          }
+          throw error;
+        }
+      }
+
+      const callId = `player-${++playerCallSequence}`;
+      const effectBoundary = governedBoundarySeed(input, callId);
+      let envelope: DeferredContinuationEnvelope | undefined;
+      const settled = await deferredEffects.repository.runExclusive({
+        signal,
+        effectBoundary,
+        operation: async () => {
+          envelope = await runPlayerCall(input, signal, { callId });
+          return envelope.result;
+        },
+        completeEffectBoundary: completionEvidenceFor(
+          input,
+          input.role,
+          resolvedPlayerId(input.role),
+          signal,
+        ),
+      });
+      const result = acknowledgeGovernedPlayerResult(
+        settled,
+        effectBoundary.boundaryId,
+      );
+      if (envelope === undefined) {
+        throw new TypeError(
+          'DECIDE repository settlement omitted its player invocation',
+        );
+      }
+      return { ...envelope, result };
+    };
+    return trackBoundaryCall(invocation());
   };
 
   const player = fromPromise<PlayerOutput, PlayerInput>(
@@ -1602,6 +2053,12 @@ function createDecidePlaybookRuntime(
           );
         }
         combined.throwIfAborted();
+
+        const governedOutput = governedPlayerOutputs.get(result);
+        if (governedOutput !== undefined) {
+          governedPlayerOutputs.delete(result);
+          return governedOutput;
+        }
 
         try {
           const prompt = buildAdjudicatorPrompt(input, finalText);
@@ -1722,7 +2179,15 @@ function createDecidePlaybookRuntime(
       const state = normalizePlaybookSnapshot(snapshot);
       const prior = previousState ?? state;
       const context = snapshot.context as unknown as Record<string, unknown>;
-      const fsmPayload = telemetryPayload(prior, state, event.event, context);
+      const fsmPayload = telemetryPayload(
+        prior,
+        state,
+        event.event,
+        context,
+        hiddenDeferredOperationId === undefined
+          ? undefined
+          : 'commitCoderProposal',
+      );
       const describedFsmPayload = snapshotJsonValue(
         fsmPayload,
         'described FSM telemetry',
@@ -1742,7 +2207,7 @@ function createDecidePlaybookRuntime(
 
       const priorIds = new Set(previousState?.activeStateIds ?? []);
       previousState = state;
-      const pendingQuestions = pendingQuestionsFromContext(context);
+      const pendingQuestions = visiblePendingQuestionsForState(state, context);
       const bossRelevantStateIds = state.activeStateIds.filter((stateId) =>
         STATUS_STATE_IDS.has(stateId),
       );
@@ -1877,7 +2342,7 @@ function createDecidePlaybookRuntime(
     const state = normalizePlaybookSnapshot(snapshot, {
       pendingCall: nestedBridge.getPendingCall(),
     });
-    const pendingQuestions = pendingQuestionsForState(state, context);
+    const pendingQuestions = visiblePendingQuestionsForState(state, context);
     const failed = state.activeStateIds.includes('failed');
     if (
       pendingQuestions.length === 0 &&
@@ -1904,6 +2369,228 @@ function createDecidePlaybookRuntime(
       text,
       pendingQuestions.map(({ questionId }) => questionId),
     );
+  };
+
+  const deferredBoundarySeed = (
+    operationId: string,
+    callId: string,
+  ): DecideEffectBoundarySeed => {
+    const operation = effectLedgerMirror.logicalOperations.find(
+      (candidate) => candidate.operationId === operationId,
+    );
+    const latestBoundaryId = operation?.boundaryIds.at(-1);
+    const priorBoundary = effectLedgerMirror.boundaries.find(
+      (candidate) => candidate.boundaryId === latestBoundaryId,
+    );
+    if (operation === undefined || priorBoundary === undefined) {
+      throw new TypeError(
+        'DECIDE deferred logical operation has no linked physical boundary',
+      );
+    }
+    if (
+      currentTurnId === undefined ||
+      !Number.isSafeInteger(currentTurnId) ||
+      currentTurnId <= 0
+    ) {
+      throw new Error(
+        'DECIDE deferred continuation requires an active positive turn id',
+      );
+    }
+    return {
+      boundaryId: randomUUID(),
+      runtimeSessionId: requireSessionIdentity().sessionId,
+      turnId: currentTurnId,
+      callId,
+      roleId: priorBoundary.roleId,
+      sourceStateId: priorBoundary.sourceStateId,
+      sourceOutcomeSchema: snapshotJsonValue(
+        priorBoundary.sourceOutcomeSchema,
+        'DECIDE deferred source outcome schema',
+      ),
+      dispositions: [...priorBoundary.dispositions],
+      correctionBudget: { limit: 1, spent: false },
+    };
+  };
+
+  type PreparedDeferredContinuation =
+    | { readonly proceed: false }
+    | { readonly proceed: true; readonly acknowledgement: Promise<void> };
+
+  const prepareDeferredContinuation = async (
+    signal: AbortSignal,
+  ): Promise<PreparedDeferredContinuation> => {
+    if (deferredEffects === undefined || deferredOperationId === undefined) {
+      throw new TypeError(
+        'DECIDE deferred Boss reply has no host-bound logical operation',
+      );
+    }
+    const operationId = deferredOperationId;
+    const callId = `player-${++playerCallSequence}`;
+    const effectBoundary = deferredBoundarySeed(operationId, callId);
+    const active: ActiveDeferredContinuation = {
+      operationId,
+      effectBoundary,
+      result: deferredValue<PlayerResult>(),
+      acknowledged: deferredValue<void>(),
+    };
+    type Readiness =
+      | { readonly status: 'ready' }
+      | {
+          readonly status: 'settled';
+          readonly value:
+            | DecideRepositoryDeferredContinuationResult<PlayerResult>
+            | DecideRepositoryDeferredCheckpointMismatch;
+        }
+      | { readonly status: 'rejected'; readonly reason: unknown };
+    const readiness = deferredValue<Readiness>();
+    const repositoryCall = deferredEffects.repository.runDeferred({
+      mode: 'continue',
+      signal,
+      operationId,
+      effectBoundary,
+      operation: async ({ playerContinuation }) => {
+        if (
+          playerContinuation !== false &&
+          (typeof playerContinuation !== 'string' ||
+            playerContinuation.trim() === '')
+        ) {
+          throw new TypeError(
+            'DECIDE bound deferred player continuation is invalid',
+          );
+        }
+        active.playerContinuation = playerContinuation;
+        readiness.resolve({ status: 'ready' });
+        return active.result.promise;
+      },
+      completeEffectBoundary: async (completion) => {
+        if (active.input === undefined) {
+          throw new TypeError(
+            'DECIDE deferred continuation omitted its authored player input',
+          );
+        }
+        return completionEvidenceFor(
+          active.input,
+          active.input.role,
+          active.playerId,
+          signal,
+          operationId,
+        )(completion);
+      },
+    });
+    void repositoryCall.then(
+      (value) => readiness.resolve({ status: 'settled', value }),
+      (reason: unknown) => readiness.resolve({ status: 'rejected', reason }),
+    );
+    const prepared = await readiness.promise;
+    if (prepared.status === 'rejected') throw prepared.reason;
+    if (prepared.status === 'settled') {
+      synchronizeDeferredProjection(
+        assertPlaybookEffectLedger(
+          prepared.value.effectLedger,
+          'DECIDE deferred checkpoint-mismatch effect ledger',
+        ),
+      );
+      hiddenDeferredOperationId = operationId;
+      return { proceed: false };
+    }
+
+    activeDeferredContinuation = active;
+    const acknowledgement = repositoryCall.then(
+      (value) => {
+        if (value.status !== 'continued') {
+          throw new TypeError(
+            'DECIDE deferred repository changed status after starting its operation',
+          );
+        }
+        acknowledgeGovernedPlayerResult(value, effectBoundary.boundaryId);
+        if (hiddenDeferredOperationId === undefined) {
+          suppressInspectionEmissions = false;
+        }
+        active.acknowledged.resolve();
+      },
+      (error: unknown) => {
+        active.acknowledged.reject(error);
+        throw error;
+      },
+    ).catch((error: unknown) => {
+      active.acknowledged.reject(error);
+      throw error;
+    });
+    return { proceed: true, acknowledgement };
+  };
+
+  const parkDeferredContinuation = async (
+    signal: AbortSignal,
+  ): Promise<void> => {
+    if (deferredEffects === undefined || deferredOperationId === undefined) {
+      return;
+    }
+    const operationId = deferredOperationId;
+    const parked = await deferredEffects.repository.runDeferred({
+      mode: 'park',
+      signal,
+      operationId,
+    });
+    synchronizeDeferredProjection(
+      assertPlaybookEffectLedger(
+        parked.effectLedger,
+        'DECIDE deferred park effect ledger',
+      ),
+    );
+    hiddenDeferredOperationId = operationId;
+  };
+
+  const reconcileDeferred = async (
+    signal: AbortSignal,
+  ): Promise<'restored' | 'checkpoint-mismatch' | 'ineligible'> => {
+    if (deferredEffects === undefined) return 'ineligible';
+    if (currentSignal !== undefined) {
+      throw new Error('decide runtime: another runtime turn is active');
+    }
+    synchronizeDeferredProjection(readEffectLedger());
+    const operationId = hiddenDeferredOperationId;
+    if (operationId === undefined) return 'ineligible';
+    const restored = await deferredEffects.repository.runDeferred({
+      mode: 'restore',
+      signal,
+      operationId,
+    });
+    synchronizeDeferredProjection(
+      assertPlaybookEffectLedger(
+        restored.effectLedger,
+        'DECIDE deferred restoration effect ledger',
+      ),
+    );
+    if (restored.status === 'parked') {
+      throw new TypeError(
+        'DECIDE deferred restoration returned an invalid parked status',
+      );
+    }
+    if (restored.status !== 'restored') return restored.status;
+    const live = actor;
+    if (live === undefined) {
+      throw new Error('decide runtime: init(session) must be called first');
+    }
+    const state = currentState();
+    const context = (
+      live.getSnapshot() as SnapshotFrom<typeof decideMachine>
+    ).context as unknown as Record<string, unknown>;
+    const pending = questionForWaitState(
+      'awaitBossReply',
+      visiblePendingQuestionsForState(state, context),
+    );
+    if (pending !== undefined) {
+      await emitBoundaryStatus(
+        `${pending.asker.roleId} asks: ${pending.question}`,
+        state,
+      );
+      await emitBoundaryStatus(
+        `◆ awaiting Boss reply · ${pending.resumeStateId} · ${pending.asker.roleId} · ${pending.sourceItem}`,
+        state,
+      );
+      await flush();
+    }
+    return 'restored';
   };
 
   const resultForSnapshot = (signal?: AbortSignal): PlaybookRunResult => {
@@ -2050,6 +2737,10 @@ function createDecidePlaybookRuntime(
     playerCallSequence = 0;
     playbookCallSequence = 0;
     playbookCallTurnIds.clear();
+    governedOutputsByBoundaryId.clear();
+    deferredOperationId = undefined;
+    hiddenDeferredOperationId = undefined;
+    activeDeferredContinuation = undefined;
     lifecycleStarted = false;
   };
 
@@ -2075,6 +2766,10 @@ function createDecidePlaybookRuntime(
       ports = identity.ports;
       sessionIdentity = identity;
       try {
+        if (deferredEffects !== undefined) {
+          effectLedgerMirror = readEffectLedger();
+          synchronizeDeferredProjection(effectLedgerMirror);
+        }
         suppressInspectionEmissions = false;
         createRuntimeActor();
         const state = currentState();
@@ -2149,6 +2844,15 @@ function createDecidePlaybookRuntime(
       const context = (
         actor.getSnapshot() as SnapshotFrom<typeof decideMachine>
       ).context as unknown as Record<string, unknown>;
+      if (deferredEffects !== undefined) {
+        const current = readEffectLedger();
+        if (
+          stableJson(current, 'DECIDE current effect ledger') !==
+          stableJson(effectLedgerMirror, 'DECIDE acknowledged effect ledger')
+        ) {
+          return undefined;
+        }
+      }
       return {
         schemaVersion: 4,
         playbookId: sessionIdentity.playbookId,
@@ -2162,7 +2866,7 @@ function createDecidePlaybookRuntime(
           playbookCall: playbookCallSequence,
         },
         state,
-        pendingBossQuestions: pendingQuestionsForState(state, context).map(
+        pendingBossQuestions: visiblePendingQuestionsForState(state, context).map(
           (pending) => ({
             questionId: pending.questionId,
             asker: pending.asker,
@@ -2170,7 +2874,7 @@ function createDecidePlaybookRuntime(
             sourceItem: pending.sourceItem,
           }),
         ),
-        effectLedger,
+        effectLedger: effectLedgerMirror,
         ...(suspendedCall === undefined ? {} : { suspendedCall }),
       };
     },
@@ -2200,14 +2904,27 @@ function createDecidePlaybookRuntime(
         identity.playbookId,
         { allowSuspendedCall: true },
       );
-      if (
-        boundSnapshot.effectLedger.revision !== 0 ||
-        boundSnapshot.effectLedger.boundaries.length !== 0 ||
-        boundSnapshot.effectLedger.logicalOperations.length !== 0
-      ) {
-        throw new TypeError(
-          'decide runtime snapshot effectLedger must be the canonical empty ledger',
-        );
+      if (deferredEffects === undefined) {
+        if (
+          boundSnapshot.effectLedger.revision !== 0 ||
+          boundSnapshot.effectLedger.boundaries.length !== 0 ||
+          boundSnapshot.effectLedger.logicalOperations.length !== 0
+        ) {
+          throw new TypeError(
+            'decide runtime snapshot effectLedger must be the canonical empty ledger',
+          );
+        }
+      } else {
+        const current = readEffectLedger();
+        if (
+          stableJson(current, 'DECIDE current effect ledger') !==
+          stableJson(boundSnapshot.effectLedger, 'DECIDE snapshot effect ledger')
+        ) {
+          throw new TypeError(
+            'decide runtime snapshot effectLedger must equal the current host mirror',
+          );
+        }
+        effectLedgerMirror = current;
       }
       const suspendedCall = boundSnapshot.suspendedCall;
       let finishInitialization!: () => void;
@@ -2253,6 +2970,7 @@ function createDecidePlaybookRuntime(
           );
         }
         previousState = restoredState;
+        synchronizeDeferredProjection(effectLedgerMirror);
         await flush();
         suppressInspectionEmissions = false;
         // Final fallible step: after this publication the authoritative
@@ -2322,18 +3040,84 @@ function createDecidePlaybookRuntime(
           } else if (event.type === 'NO_ACTION') {
             result = { outcome: 'no-action', state: currentState() };
           } else {
-            await emitBoundaryStatus(event.type, currentState());
-            if (actor.getSnapshot().status === 'done') {
-              stopActor();
-              startActor();
+            const before = currentState();
+            const boundCommitWait =
+              deferredEffects !== undefined &&
+              deferredOperationId !== undefined &&
+              before.activeStateIds.includes('awaitBossReply');
+            if (boundCommitWait && event.type === 'BOSS_INTERRUPT') {
+              await parkDeferredContinuation(turn.signal);
+              result = { outcome: 'no-action', state: currentState() };
+            } else {
+              const prepared =
+                boundCommitWait &&
+                event.type === 'BOSS_REPLY' &&
+                event.questionId === 'commitCoderProposal'
+                  ? await prepareDeferredContinuation(turn.signal)
+                  : undefined;
+              if (prepared?.proceed === false) {
+                result = { outcome: 'no-action', state: currentState() };
+              } else {
+                await emitBoundaryStatus(event.type, before);
+                if (actor.getSnapshot().status === 'done') {
+                  stopActor();
+                  startActor();
+                }
+
+                const deferredMachineCheckpoint =
+                  prepared?.proceed === true
+                    ? detachPersistedMachineSnapshot(
+                        actor.getPersistedSnapshot(),
+                      )
+                    : undefined;
+                if (deferredMachineCheckpoint !== undefined) {
+                  suppressInspectionEmissions = true;
+                }
+
+                try {
+                  actor.send(event);
+                  await driveToQuiescence();
+                  await drainBoundaryCallsAndEmissions();
+                  await prepared?.acknowledgement;
+                  if (
+                    deferredMachineCheckpoint !== undefined &&
+                    hiddenDeferredOperationId !== undefined
+                  ) {
+                    stopActor();
+                    createRuntimeActor(deferredMachineCheckpoint);
+                    actor.start();
+                    previousState = before;
+                    suppressInspectionEmissions = false;
+                  }
+                } catch (error) {
+                  activeDeferredContinuation?.result.reject(error);
+                  if (deferredEffects !== undefined) {
+                    try {
+                      synchronizeDeferredProjection(readEffectLedger());
+                      hiddenDeferredOperationId ??= deferredOperationId;
+                    } catch {
+                      hiddenDeferredOperationId ??= deferredOperationId;
+                    }
+                  }
+                  if (deferredMachineCheckpoint !== undefined) {
+                    try {
+                      stopActor();
+                      createRuntimeActor(deferredMachineCheckpoint);
+                      actor.start();
+                      previousState = before;
+                    } finally {
+                      suppressInspectionEmissions = false;
+                    }
+                  }
+                  throw error;
+                } finally {
+                  activeDeferredContinuation = undefined;
+                }
+
+                if (controlPlaneError !== undefined) throw controlPlaneError;
+                result = resultForSnapshot(turn.signal);
+              }
             }
-
-            actor.send(event);
-            await driveToQuiescence();
-            await drainBoundaryCallsAndEmissions();
-
-            if (controlPlaneError !== undefined) throw controlPlaneError;
-            result = resultForSnapshot(turn.signal);
           }
         }
         settlement = {
@@ -2586,6 +3370,10 @@ function createDecidePlaybookRuntime(
           sessionIdentity = undefined;
           previousState = undefined;
           controlPlaneError = undefined;
+          governedOutputsByBoundaryId.clear();
+          deferredOperationId = undefined;
+          hiddenDeferredOperationId = undefined;
+          activeDeferredContinuation = undefined;
           disposed = true;
         }
         if (failures.length === 1) throw failures[0];
@@ -2601,6 +3389,9 @@ function createDecidePlaybookRuntime(
     _getNestedBridge() {
       return nestedBridge;
     },
+    ...(deferredEffects === undefined
+      ? {}
+      : { _reconcileDeferred: reconcileDeferred }),
   };
 }
 
@@ -2621,8 +3412,20 @@ function createStagedSchema3AutomaticReplayRuntime(
   );
 }
 
+function createStagedSchema3DeferredRuntime(
+  options: PlaybookRuntimeOptions,
+  evidence: Schema3DeferredEffectEvidence,
+): StagedDecidePlaybookRuntime {
+  return createDecidePlaybookRuntime(
+    options,
+    createAutomaticReplayPolicy(3, evidence),
+    evidence,
+  ) as StagedDecidePlaybookRuntime;
+}
+
 export const _internal = {
   createStagedSchema3AutomaticReplayRuntime,
+  createStagedSchema3DeferredRuntime,
   composePlayerPrompt,
   requiredFieldsFor,
   extractJson,

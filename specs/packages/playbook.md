@@ -105,6 +105,11 @@ Where a delegated-role state can return `needsBossReply`, the FSM shall declare 
 
 Where execution leaves a delegated-role state without suspending for its Boss question, or abandons a Boss-reply wait through another transition, the FSM shall clear the pending reply context.
 
+#### playbook-30
+
+Where a maintained workflow runs under artifact schema `3` and one governed delegated-role arm declares `needsBossReply` with repository disposition `deferred`, its compiled runtime shall apply the checkpoint-bound logical-operation continuation of [[playbook-runtime-73](playbook-runtime.md#playbook-runtime-73)] identically whether the workflow uses the shared flat runtime or DECIDE's bespoke parallel runtime.
+While CODE, REVIEW, or DECIDE remains under artifact schema `2`, its authored Boss-question suspension and continuation shall retain the legacy behavior of [[playbook-12](#playbook-12)] and [[playbook-13](#playbook-13)] until that workflow's atomic schema-3 migration under [[playbook-1](#playbook-1)].
+
 ## Verification
 
 ### Source and artifact coverage
@@ -160,3 +165,8 @@ When a workflow FSM can receive a delegated-role question, its conformance suite
 #### playbook-15
 
 When a workflow FSM leaves or abandons a Boss-reply path, its conformance suite shall fail unless pending reply context is cleared on every non-resume transition (verifying [[playbook-13](#playbook-13)]).
+
+#### playbook-31
+
+When maintained-workflow conformance drives equivalent staged artifact-schema-3 deferred question chains through the shared flat runtime and DECIDE's bespoke parallel runtime, it shall fail unless both withhold the question until its logical operation is durable, start one authored continuation only from a valid exact-checkpoint answer, preserve one original baseline and cumulative receipt across repeated questions, keep invalid answers waiting, park another exit or checkpoint mismatch without a player, and restore an eligible exact-checkpoint wait without a player or judge; authored and generated DECIDE runtime siblings shall remain behaviorally identical (verifying [[playbook-30](#playbook-30)]).
+The suite shall further fail unless the shipped artifact-schema-2 CODE, REVIEW, and DECIDE profiles retain their existing Boss-question behavior (verifying [[playbook-30](#playbook-30)]).

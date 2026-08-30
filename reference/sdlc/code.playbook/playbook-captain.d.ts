@@ -58,6 +58,7 @@ export interface PlaybookHostConstructionCapabilities {
         readonly acquire: (options?: unknown) => Promise<unknown>;
         readonly runExclusive: (options: unknown) => Promise<unknown>;
         readonly runCohort: (options: unknown) => Promise<unknown>;
+        readonly runDeferred: (options: unknown) => Promise<unknown>;
     };
     readonly effectLedger: {
         readonly snapshot: () => PlaybookEffectLedger;

@@ -119,6 +119,7 @@ export interface PlaybookHostConstructionCapabilities {
     readonly acquire: (options?: unknown) => Promise<unknown>;
     readonly runExclusive: (options: unknown) => Promise<unknown>;
     readonly runCohort: (options: unknown) => Promise<unknown>;
+    readonly runDeferred: (options: unknown) => Promise<unknown>;
   };
   readonly effectLedger: {
     readonly snapshot: () => PlaybookEffectLedger;
@@ -1218,6 +1219,7 @@ function validateHostCapabilities(
     'acquire',
     'runExclusive',
     'runCohort',
+    'runDeferred',
   ]);
   const identity = exactOwnDataRecord(repository?.identity, [
     'worktree',
@@ -1252,6 +1254,7 @@ function validateHostCapabilities(
     typeof repository.acquire !== 'function' ||
     typeof repository.runExclusive !== 'function' ||
     typeof repository.runCohort !== 'function' ||
+    typeof repository.runDeferred !== 'function' ||
     typeof effectLedger?.snapshot !== 'function' ||
     typeof effectLedger.writeAhead !== 'function'
   ) {

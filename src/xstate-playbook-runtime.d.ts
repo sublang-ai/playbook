@@ -1,5 +1,5 @@
 import type { AnyStateMachine, EventObject, PromiseActorLogic } from 'xstate';
-import type { CaptainResult, JsonValue, PlaybookEffectBoundary, PlaybookEffectBoundaryStart, PlaybookEffectLedger, PlaybookEffectLedgerCapability, PlaybookPorts, PlaybookRepositoryReceipt, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
+import type { CaptainResult, JsonValue, PlaybookEffectBoundary, PlaybookEffectBoundaryStart, PlaybookEffectLedger, PlaybookEffectLedgerCapability, PlaybookPendingBossQuestion, PlaybookPorts, PlaybookRepositoryReceipt, PlaybookRuntimeFactory, PlaybookSession, PlaybookState, PlayerResult } from './runtime.js';
 export interface PlaybookPendingBossQuestionContext {
     questionId: string;
     resumeStateId: string;
@@ -52,6 +52,12 @@ export type JudgePurpose = 'boss-input-classification' | 'player-output-adjudica
  */
 export interface RuntimeBoundaryCalls {
     callPlayer(input: PlaybookPlayerInput, roleId: string, prompt: string, signal: AbortSignal): Promise<PlayerResult>;
+    /**
+     * Return the host-acknowledged adjudication performed while a governed
+     * repository claim was still held. The value is consumable once.
+     */
+    takeGovernedPlayerOutput?(result: PlayerResult): PlaybookActorOutput | undefined;
+    recordGovernedPlayerOutput?(result: PlayerResult, output: PlaybookActorOutput): void;
     callJudge(purpose: JudgePurpose, stateId: string | undefined, prompt: string, signal: AbortSignal): Promise<string>;
     callCaptain?(input: PlaybookCaptainInput, prompt: string, signal: AbortSignal, callOptions?: XStateCaptainCallOptions): Promise<CaptainResult>;
 }
@@ -108,9 +114,41 @@ interface XStateRepositoryExclusiveCompletion<T> {
     readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
     readonly receipt: PlaybookRepositoryReceipt;
 }
+interface XStateDeferredBinding {
+    readonly operationId: string;
+    readonly pendingQuestion: PlaybookPendingBossQuestion;
+    readonly playerContinuation: JsonValue;
+}
+interface XStateRepositoryCompletionEvidence {
+    readonly finalText?: string;
+    readonly semanticCandidate?: JsonValue;
+    readonly deferred?: XStateDeferredBinding;
+    readonly unresolved?: true;
+}
 interface XStateRepositoryExclusiveResult<T> {
     readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
     readonly receipt: PlaybookRepositoryReceipt;
+    readonly effectLedger: PlaybookEffectLedger;
+    readonly deferredStatus?: 'bound' | 'unresolved';
+}
+interface XStateRepositoryDeferredContinuationResult<T> {
+    readonly status: 'continued';
+    readonly operation: XStateRepositoryOperationSettlement<T> | XStateRepositoryOperationRejection;
+    readonly receipt: PlaybookRepositoryReceipt;
+    readonly logicalReceipt?: PlaybookRepositoryReceipt;
+    readonly effectLedger: PlaybookEffectLedger;
+    readonly deferredStatus?: 'bound' | 'unresolved';
+}
+interface XStateRepositoryDeferredCheckpointMismatch {
+    readonly status: 'checkpoint-mismatch' | 'ineligible';
+    readonly effectLedger: PlaybookEffectLedger;
+}
+interface XStateRepositoryDeferredParked {
+    readonly status: 'parked';
+    readonly effectLedger: PlaybookEffectLedger;
+}
+interface XStateRepositoryDeferredRestoreResult {
+    readonly status: 'restored' | 'checkpoint-mismatch' | 'ineligible';
     readonly effectLedger: PlaybookEffectLedger;
 }
 type XStateEffectBoundarySeed = Omit<PlaybookEffectBoundaryStart, 'playbookId' | 'canonicalWorktree' | 'baseline' | 'cohortId'>;
@@ -119,12 +157,25 @@ export interface XStateRepositoryCapability {
         readonly signal: AbortSignal;
         readonly effectBoundary: XStateEffectBoundarySeed;
         readonly operation: () => Promise<T>;
-        readonly completeEffectBoundary: (completion: XStateRepositoryExclusiveCompletion<T>) => {
-            readonly finalText?: string;
-        } | Promise<{
-            readonly finalText?: string;
-        }>;
+        readonly completeEffectBoundary: (completion: XStateRepositoryExclusiveCompletion<T>) => XStateRepositoryCompletionEvidence | Promise<XStateRepositoryCompletionEvidence>;
     }): Promise<XStateRepositoryExclusiveResult<T>>;
+    runDeferred<T>(options: {
+        readonly mode: 'continue';
+        readonly signal: AbortSignal;
+        readonly operationId: string;
+        readonly effectBoundary: XStateEffectBoundarySeed;
+        readonly operation: (context: {
+            readonly baseline: PlaybookRepositoryReceipt['baseline'];
+            readonly identity: unknown;
+            readonly playerContinuation: JsonValue;
+        }) => Promise<T>;
+        readonly completeEffectBoundary: (completion: XStateRepositoryExclusiveCompletion<T>) => XStateRepositoryCompletionEvidence | Promise<XStateRepositoryCompletionEvidence>;
+    }): Promise<XStateRepositoryDeferredContinuationResult<T> | XStateRepositoryDeferredCheckpointMismatch>;
+    runDeferred(options: {
+        readonly mode: 'park' | 'restore';
+        readonly signal: AbortSignal;
+        readonly operationId: string;
+    }): Promise<XStateRepositoryDeferredParked | XStateRepositoryDeferredRestoreResult>;
 }
 /** The runtime ABI this engine implements (DR-022). */
 export declare const RUNTIME_ABI = 1;

@@ -194,6 +194,318 @@ function replayLedger(
   };
 }
 
+const DEFERRED_ATTEMPT_ID = '50000000-0000-4000-8000-000000000002';
+
+function createDeferredRepositoryHarness() {
+  let ledger: PlaybookEffectLedger = replayLedger([]);
+  let checkpointMatches = true;
+  let restorationMatches = true;
+  let failBindCompletion = false;
+  let failContinuationCompletion = false;
+  const calls: Array<{ mode: string; operationId?: string }> = [];
+
+  const replaceOperation = (
+    operationId: string,
+    update: (operation: PlaybookEffectLedger['logicalOperations'][number]) =>
+      PlaybookEffectLedger['logicalOperations'][number],
+  ): void => {
+    ledger = {
+      ...ledger,
+      revision: ledger.revision + 1,
+      logicalOperations: ledger.logicalOperations.map((operation) =>
+        operation.operationId === operationId ? update(operation) : operation,
+      ),
+    };
+  };
+  const boundaryFrom = (
+    seed: Record<string, unknown>,
+    options: {
+      baseline: ReturnType<typeof replayObservation>;
+      after: ReturnType<typeof replayObservation>;
+      receipt: PlaybookEffectBoundary['physicalReceipt'];
+      finalText?: string;
+      semanticCandidate?: unknown;
+      operationId: string;
+    },
+  ): PlaybookEffectBoundary => ({
+    ...(seed as unknown as Omit<
+      PlaybookEffectBoundary,
+      | 'sequence'
+      | 'attemptId'
+      | 'attemptNumber'
+      | 'playbookId'
+      | 'canonicalWorktree'
+      | 'baseline'
+      | 'after'
+      | 'physicalReceipt'
+      | 'logicalOperationId'
+    >),
+    sequence: ledger.boundaries.length + 1,
+    attemptId: DEFERRED_ATTEMPT_ID,
+    attemptNumber: 1,
+    playbookId: 'decide',
+    canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+    baseline: options.baseline,
+    after: options.after,
+    physicalReceipt: options.receipt,
+    ...(options.finalText === undefined
+      ? {}
+      : { finalText: options.finalText }),
+    ...(options.semanticCandidate === undefined
+      ? {}
+      : { semanticCandidate: options.semanticCandidate as never }),
+    logicalOperationId: options.operationId,
+  });
+
+  const repository = {
+    async runExclusive(options: any) {
+      calls.push({ mode: 'exclusive' });
+      const operation = await Promise.resolve()
+        .then(options.operation)
+        .then(
+          (value) => ({ status: 'fulfilled' as const, value }),
+          (reason) => ({ status: 'rejected' as const, reason }),
+        );
+      const after = REPLAY_BASELINE;
+      const receipt = {
+        classification: 'unchanged' as const,
+        baseline: REPLAY_BASELINE,
+        after,
+      };
+      const provisional = boundaryFrom(options.effectBoundary, {
+        baseline: REPLAY_BASELINE,
+        after,
+        receipt,
+        operationId: '50000000-0000-4000-8000-000000000001',
+      });
+      const completion = await options.completeEffectBoundary({
+        boundary: provisional,
+        operation,
+        receipt,
+      });
+      const operationId = completion.deferred?.operationId;
+      if (typeof operationId !== 'string') {
+        throw new Error('initial DECIDE question did not bind its operation');
+      }
+      if (failBindCompletion) {
+        failBindCompletion = false;
+        throw new Error('injected deferred bind completion failure');
+      }
+      const boundary = boundaryFrom(options.effectBoundary, {
+        baseline: REPLAY_BASELINE,
+        after,
+        receipt,
+        finalText: completion.finalText,
+        semanticCandidate: completion.semanticCandidate,
+        operationId,
+      });
+      ledger = {
+        schemaVersion: 1,
+        revision: 1,
+        boundaries: [boundary],
+        logicalOperations: [
+          {
+            sequence: 1,
+            operationId,
+            playbookId: 'decide',
+            runtimeSessionId: boundary.runtimeSessionId,
+            boundaryIds: [boundary.boundaryId],
+            originalBaseline: REPLAY_BASELINE,
+            checkpoint: after,
+            pendingQuestion: completion.deferred.pendingQuestion,
+            playerContinuation: completion.deferred.playerContinuation,
+            checkpointRestorationEligible: false,
+          },
+        ],
+      };
+      return {
+        operation,
+        receipt,
+        effectLedger: ledger,
+        deferredStatus: 'bound' as const,
+      };
+    },
+
+    async runDeferred(options: any) {
+      calls.push({ mode: options.mode, operationId: options.operationId });
+      const current = ledger.logicalOperations.find(
+        ({ operationId }) => operationId === options.operationId,
+      );
+      if (current === undefined) throw new Error('missing deferred operation');
+      if (options.mode === 'park') {
+        replaceOperation(options.operationId, (operation) => {
+          const {
+            checkpoint: _checkpoint,
+            pendingQuestion: _pendingQuestion,
+            playerContinuation: _playerContinuation,
+            ...withoutBinding
+          } = operation;
+          return {
+            ...withoutBinding,
+            checkpointRestorationEligible: false,
+          };
+        });
+        return { status: 'parked' as const, effectLedger: ledger };
+      }
+      if (options.mode === 'restore') {
+        if (!current.checkpointRestorationEligible) {
+          return { status: 'ineligible' as const, effectLedger: ledger };
+        }
+        if (!restorationMatches) {
+          return {
+            status: 'checkpoint-mismatch' as const,
+            effectLedger: ledger,
+          };
+        }
+        replaceOperation(options.operationId, (operation) => ({
+          ...operation,
+          checkpointRestorationEligible: false,
+        }));
+        return { status: 'restored' as const, effectLedger: ledger };
+      }
+      if (!checkpointMatches) {
+        replaceOperation(options.operationId, (operation) => ({
+          ...operation,
+          checkpointRestorationEligible: true,
+        }));
+        return {
+          status: 'checkpoint-mismatch' as const,
+          effectLedger: ledger,
+        };
+      }
+
+      const baseline = current.checkpoint!;
+      const operation = await Promise.resolve()
+        .then(() =>
+          options.operation({
+            baseline,
+            identity: { worktree: '/repo', gitDir: '/repo/.git' },
+            playerContinuation: current.playerContinuation,
+          }),
+        )
+        .then(
+          (value) => ({ status: 'fulfilled' as const, value }),
+          (reason) => ({ status: 'rejected' as const, reason }),
+        );
+      const committed =
+        operation.status === 'fulfilled' &&
+        String(operation.value.finalText ?? '').includes('Commit:');
+      const after = committed
+        ? { ...baseline, head: 'b'.repeat(40) }
+        : baseline;
+      const receipt = committed
+        ? {
+            classification: 'one-descendant-commit' as const,
+            baseline,
+            after,
+            commitOid: 'b'.repeat(40),
+          }
+        : {
+            classification: 'unchanged' as const,
+            baseline,
+            after,
+          };
+      const provisional = boundaryFrom(options.effectBoundary, {
+        baseline,
+        after,
+        receipt,
+        operationId: options.operationId,
+      });
+      const completion = await options.completeEffectBoundary({
+        boundary: provisional,
+        operation,
+        receipt,
+      });
+      if (failContinuationCompletion) {
+        failContinuationCompletion = false;
+        throw new Error('injected deferred continuation completion failure');
+      }
+      const boundary = boundaryFrom(options.effectBoundary, {
+        baseline,
+        after,
+        receipt,
+        finalText: completion.finalText,
+        semanticCandidate: completion.semanticCandidate,
+        operationId: options.operationId,
+      });
+      const logicalReceipt = committed
+        ? {
+            classification: 'one-descendant-commit' as const,
+            baseline: current.originalBaseline,
+            after,
+            commitOid: 'b'.repeat(40),
+          }
+        : undefined;
+      ledger = {
+        ...ledger,
+        revision: ledger.revision + 1,
+        boundaries: [...ledger.boundaries, boundary],
+        logicalOperations: ledger.logicalOperations.map((candidate) =>
+          candidate.operationId !== options.operationId
+            ? candidate
+            : completion.deferred
+              ? {
+                  ...candidate,
+                  boundaryIds: [...candidate.boundaryIds, boundary.boundaryId],
+                  checkpoint: after,
+                  pendingQuestion: completion.deferred.pendingQuestion,
+                  playerContinuation: completion.deferred.playerContinuation,
+                  checkpointRestorationEligible: false,
+                }
+              : (() => {
+                  const {
+                    checkpoint: _checkpoint,
+                    pendingQuestion: _pendingQuestion,
+                    playerContinuation: _playerContinuation,
+                    ...withoutBinding
+                  } = candidate;
+                  return {
+                    ...withoutBinding,
+                    boundaryIds: [
+                      ...candidate.boundaryIds,
+                      boundary.boundaryId,
+                    ],
+                    ...(logicalReceipt === undefined
+                      ? {}
+                      : { logicalReceipt }),
+                    checkpointRestorationEligible: false,
+                  };
+                })(),
+        ),
+      };
+      return {
+        status: 'continued' as const,
+        baseline,
+        operation,
+        receipt,
+        ...(logicalReceipt === undefined ? {} : { logicalReceipt }),
+        effectLedger: ledger,
+        ...(completion.deferred
+          ? { deferredStatus: 'bound' as const }
+          : {}),
+      };
+    },
+  };
+
+  return {
+    repository,
+    calls,
+    readEffectLedger: () => ledger,
+    setCheckpointMatches(value: boolean) {
+      checkpointMatches = value;
+    },
+    setRestorationMatches(value: boolean) {
+      restorationMatches = value;
+    },
+    failNextBindCompletion() {
+      failBindCompletion = true;
+    },
+    failNextContinuationCompletion() {
+      failContinuationCompletion = true;
+    },
+  };
+}
+
 function replaySession(ports: PlaybookPorts): PlaybookSession {
   return {
     ...session(ports),
@@ -1139,6 +1451,302 @@ describe('DECIDE automatic-replay effect fence', () => {
       await runtime.dispose();
     },
   );
+});
+
+describe('DECIDE staged deferred effect continuation', () => {
+  function stagedFixture(
+    harness = createDeferredRepositoryHarness(),
+  ) {
+    const playerSessions = createPlayerSessionStore();
+    const playerCalls: PlayerCallRecord[] = [];
+    const statuses: string[] = [];
+    let coderCalls = 0;
+    let reviewerCalls = 0;
+    let judgeCalls = 0;
+    const ports = completePorts({
+      callPlayer: async (roleId, prompt, _signal, options) => {
+        playerCalls.push({ roleId, prompt, options: { ...options } });
+        if (roleId === 'reviewer') {
+          reviewerCalls += 1;
+          return {
+            status: 'ok',
+            resumeToken: `reviewer-token-${reviewerCalls}`,
+            finalText: 'Reviewer proposal',
+          };
+        }
+        coderCalls += 1;
+        return {
+          status: 'ok',
+          resumeToken: `coder-token-${coderCalls}`,
+          finalText:
+            coderCalls === 1
+              ? 'Coder proposal'
+              : coderCalls === 2
+                ? 'Need approval'
+                : coderCalls === 3
+                  ? 'Need second approval'
+                  : 'Committed proposal\nCommit: abc123',
+        };
+      },
+      callJudge: async (prompt) => {
+        judgeCalls += 1;
+        if (prompt.includes('Boss-input classifier')) {
+          if (prompt.includes('Not an answer')) {
+            return JSON.stringify({ type: 'NO_ACTION' });
+          }
+          if (prompt.includes('Take a new direction')) {
+            return JSON.stringify({
+              type: 'BOSS_INTERRUPT',
+              targetId: 'independentProposals',
+            });
+          }
+          return JSON.stringify({
+            type: 'BOSS_REPLY',
+            questionId: 'commitCoderProposal',
+          });
+        }
+        if (prompt.includes('source item DECIDE-1')) {
+          return JSON.stringify({ guard: 'proposed' });
+        }
+        if (prompt.includes('source item DECIDE-2')) {
+          return JSON.stringify({ guard: 'proposed' });
+        }
+        if (prompt.includes('Need second approval')) {
+          return JSON.stringify({
+            guard: 'needsBossReply',
+            question: 'Approve the second checkpoint?',
+          });
+        }
+        if (prompt.includes('Need approval')) {
+          return JSON.stringify({
+            guard: 'needsBossReply',
+            question: 'Approve this checkpoint?',
+          });
+        }
+        return JSON.stringify({ guard: 'committed', latestCommit: 'abc123' });
+      },
+      callPlaybook: async () => ({
+        state: 'suspended',
+        childSessionId: 'review-child',
+      }),
+      emitStatus: async (message) => {
+        statuses.push(message);
+      },
+    });
+    const runtime = _internal.createStagedSchema3DeferredRuntime(
+      {},
+      harness as never,
+    );
+    return {
+      harness,
+      playerSessions,
+      playerCalls,
+      statuses,
+      runtime,
+      counts: () => ({ coderCalls, reviewerCalls, judgeCalls }),
+      init: () =>
+        runtime.init({ ...replaySession(ports), playerSessions }),
+      restore: (snapshot: PlaybookRuntimeSnapshot) =>
+        runtime.restore?.(
+          { ...replaySession(ports), playerSessions },
+          snapshot,
+        ),
+    };
+  }
+
+  it('binds one cumulative operation and uses only its saved continuation', async () => {
+    const fixture = stagedFixture();
+    await fixture.init();
+
+    await expect(
+      fixture.runtime.handleBossInput({
+        text: 'Choose the durable design.',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply' },
+    });
+    const firstLedger = fixture.harness.readEffectLedger();
+    const operationId = firstLedger.logicalOperations[0]?.operationId;
+    expect(operationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(firstLedger.logicalOperations[0]).toMatchObject({
+      originalBaseline: REPLAY_BASELINE,
+      pendingQuestion: { question: 'Approve this checkpoint?' },
+      playerContinuation: 'coder-token-2',
+    });
+    expect(fixture.statuses).toContain(
+      'coder asks: Approve this checkpoint?',
+    );
+
+    const callsBeforeInvalid = fixture.playerCalls.length;
+    const ledgerBeforeInvalid = JSON.stringify(firstLedger);
+    await expect(
+      fixture.runtime.handleBossInput({
+        text: 'Not an answer',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({ outcome: 'no-action' });
+    expect(fixture.playerCalls).toHaveLength(callsBeforeInvalid);
+    expect(JSON.stringify(fixture.harness.readEffectLedger())).toBe(
+      ledgerBeforeInvalid,
+    );
+
+    // The durable binding, not a later store read, selects the continuation.
+    fixture.playerSessions.update('coder', 'foreign-token');
+    await expect(
+      fixture.runtime.handleBossInput({
+        text: 'Yes, continue.',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply' },
+    });
+    expect(fixture.playerCalls.at(-1)?.options.resume).toBe('coder-token-2');
+    const repeated = fixture.harness.readEffectLedger();
+    expect(repeated.logicalOperations[0]).toMatchObject({
+      operationId,
+      originalBaseline: REPLAY_BASELINE,
+      pendingQuestion: { question: 'Approve the second checkpoint?' },
+      playerContinuation: 'coder-token-3',
+    });
+    expect(repeated.logicalOperations[0]?.boundaryIds).toHaveLength(2);
+
+    await expect(
+      fixture.runtime.handleBossInput({
+        text: 'Yes, finish.',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({ outcome: 'suspended' });
+    expect(fixture.playerCalls.at(-1)?.options.resume).toBe('coder-token-3');
+    const finalLedger = fixture.harness.readEffectLedger();
+    expect(finalLedger.logicalOperations[0]).toMatchObject({
+      operationId,
+      logicalReceipt: {
+        classification: 'one-descendant-commit',
+        baseline: REPLAY_BASELINE,
+      },
+    });
+    expect(finalLedger.logicalOperations[0]?.boundaryIds).toHaveLength(3);
+    expect(
+      fixture.harness.calls
+        .filter(({ mode }) => mode === 'continue')
+        .map(({ operationId: id }) => id),
+    ).toEqual([operationId, operationId]);
+
+    await fixture.runtime.dispose();
+  });
+
+  it('publishes no advanced question state when a durable completion rejects', async () => {
+    const bindFailure = stagedFixture();
+    bindFailure.harness.failNextBindCompletion();
+    await bindFailure.init();
+    await expect(
+      bindFailure.runtime.handleBossInput({
+        text: 'Choose the durable design.',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'failed',
+      state: { stateId: 'failed' },
+    });
+    expect(bindFailure.statuses).not.toContain(
+      'coder asks: Approve this checkpoint?',
+    );
+    expect(
+      bindFailure.runtime.exportSnapshot?.()?.pendingBossQuestions,
+    ).toEqual([]);
+    await bindFailure.runtime.dispose();
+
+    const continuationFailure = stagedFixture();
+    await continuationFailure.init();
+    await continuationFailure.runtime.handleBossInput({
+      text: 'Choose the durable design.',
+      signal: signal(),
+    });
+    continuationFailure.harness.failNextContinuationCompletion();
+    await expect(
+      continuationFailure.runtime.handleBossInput({
+        text: 'Yes, continue.',
+        signal: signal(),
+      }),
+    ).rejects.toThrow('injected deferred continuation completion failure');
+    expect(
+      continuationFailure.runtime.exportSnapshot?.()?.state,
+    ).toMatchObject({ stateId: 'awaitBossReply' });
+    expect(
+      continuationFailure.runtime.exportSnapshot?.()?.pendingBossQuestions,
+    ).toEqual([]);
+    await continuationFailure.runtime.dispose();
+  });
+
+  it('parks mismatches and exits, then restores only the exact saved wait', async () => {
+    const fixture = stagedFixture();
+    await fixture.init();
+    await fixture.runtime.handleBossInput({
+      text: 'Choose the durable design.',
+      signal: signal(),
+    });
+    const callsAtWait = fixture.playerCalls.length;
+    fixture.harness.setCheckpointMatches(false);
+
+    await expect(
+      fixture.runtime.handleBossInput({
+        text: 'Yes, continue.',
+        signal: signal(),
+      }),
+    ).resolves.toMatchObject({
+      outcome: 'no-action',
+      state: { stateId: 'awaitBossReply' },
+    });
+    expect(fixture.playerCalls).toHaveLength(callsAtWait);
+    expect(fixture.runtime.exportSnapshot?.()?.pendingBossQuestions).toEqual(
+      [],
+    );
+    expect(
+      fixture.harness.readEffectLedger().logicalOperations[0],
+    ).toMatchObject({
+      checkpointRestorationEligible: true,
+      pendingQuestion: { question: 'Approve this checkpoint?' },
+      playerContinuation: 'coder-token-2',
+    });
+
+    const parkedSnapshot = fixture.runtime.exportSnapshot?.();
+    expect(parkedSnapshot).toBeDefined();
+    await fixture.runtime.dispose();
+
+    const restoredFixture = stagedFixture(fixture.harness);
+    await restoredFixture.restore(parkedSnapshot!);
+    const beforeRestore = restoredFixture.counts();
+    expect(
+      await restoredFixture.runtime._reconcileDeferred(signal()),
+    ).toBe('restored');
+    expect(restoredFixture.counts()).toEqual(beforeRestore);
+    expect(
+      restoredFixture.runtime.exportSnapshot?.()?.pendingBossQuestions,
+    ).toMatchObject([
+      {
+        questionId: 'commitCoderProposal',
+        question: 'Approve this checkpoint?',
+      },
+    ]);
+
+    await restoredFixture.runtime.handleBossInput({
+      text: 'Take a new direction',
+      signal: signal(),
+    });
+    expect(restoredFixture.playerCalls).toHaveLength(0);
+    const parked = fixture.harness.readEffectLedger().logicalOperations[0];
+    expect(parked).not.toHaveProperty('pendingQuestion');
+    expect(parked).not.toHaveProperty('playerContinuation');
+    expect(parked).not.toHaveProperty('checkpoint');
+    expect(
+      restoredFixture.runtime.exportSnapshot?.()?.pendingBossQuestions,
+    ).toEqual([]);
+
+    await restoredFixture.runtime.dispose();
+  });
 });
 
 describe('DECIDE suspended REVIEW persistence', () => {

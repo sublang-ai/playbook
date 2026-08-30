@@ -1080,6 +1080,12 @@ After any successful durable write acknowledgement, every later schema-3 constru
 During teardown the shell shall preserve the last acknowledged detached mirror until every runtime is disposed, and disposal shall neither clear an unresolved or deferred logical operation nor synthesize a receipt.
 On restore, the current host shall complete or reconstruct every incomplete authoritative boundary under [[playbook-cli-49](playbook-cli.md#playbook-cli-49)] before the shell validates its version-4 snapshot or restores a runtime source state; the shell shall then require the recovered host mirror, its own snapshot member, and every schema-3 frame member to be exactly equal before opening a host-facing gate, so a recovered authoritative extension of the immutable pre-turn snapshot remains closed pending the later whole-turn reconciliation policy ([[playbook-captain-42](#playbook-captain-42)]).
 
+#### playbook-captain-52
+
+Where an active schema-3 frame enters, continues, or reconciles the deferred Boss-question operation of [[playbook-runtime-73](playbook-runtime.md#playbook-runtime-73)], the shell shall keep that frame's pending-question projection, runtime snapshot ledger, and the shared session mirror mutually exact before publishing the question, returning a Boss-visible settlement, or accepting another turn.
+The shell shall update its session mirror only from the current lease-owning host's durable acknowledgement under [[playbook-runtime-69](playbook-runtime.md#playbook-runtime-69)], preserve that complete mirror through teardown, and on ordinary restore give the frame the same logical operation and the Captain-session player's exact bound continuation before reopening the host-facing gate.
+A later turn shall route an invalid reply, valid reply, other exit, or explicit reconciliation action to that same frame without substituting another pending question or player continuation, and shall publish a restored wait only after the exact checkpoint-restoration acknowledgement required by [[playbook-runtime-73](playbook-runtime.md#playbook-runtime-73)].
+
 ### Retained generation settlement
 
 #### playbook-captain-44
@@ -1739,6 +1745,11 @@ Where the integration suite drives the public Playbook Captain shell through saf
 When the complete-shell integration suite constructs fresh and restored mixed-schema catalogs under one durable host ledger, it shall fail unless every shell export uses schema version `4`, the internal Captain and schema-2 frames carry the canonical empty ledger, every schema-3 root and nested frame carries the shell's exact complete current-host mirror, and neither configured options nor any snapshot contains a callback, lease token, claim, or store handle (verifying [[playbook-captain-41](#playbook-captain-41)] and [[playbook-captain-50](#playbook-captain-50)]).
 Direct mutations of revision, boundary order or identity, logical-operation references, correction budget, shell-versus-frame equality, the internal Captain's empty mirror, and a schema-2 frame's empty mirror shall reject before runtime construction or host work, while export during a stale frame acknowledgement shall return `undefined` (verifying [[playbook-captain-41](#playbook-captain-41)], [[playbook-captain-42](#playbook-captain-42)], and [[playbook-captain-50](#playbook-captain-50)]).
 The restore suite shall fail unless authoritative incomplete-boundary reconstruction finishes before shell validation and source-state restoration, no player or runtime begins during reconstruction, the recovered authoritative extension leaves the immutable pre-turn snapshot unchanged, and that mismatch leaves every host-facing gate closed with partial runtimes disposed in the existing order (verifying [[playbook-captain-42](#playbook-captain-42)] and [[playbook-captain-50](#playbook-captain-50)]).
+
+#### playbook-captain-53
+
+When the complete-shell integration suite drives a schema-3 frame across successive Boss turns and an export-and-restore boundary, it shall fail unless a pending question and its bound logical operation become Boss-visible together only after durable acknowledgement, every safe shell and frame snapshot carries the same complete ledger, and restoration reinstalls the exact pending question and session-player continuation before accepting another turn (verifying [[playbook-captain-52](#playbook-captain-52)]).
+The suite shall fail unless an invalid later answer leaves that bound ledger and question unchanged with no player call, while a valid later answer reaches the same restored frame with its exact bound session-player continuation and the next safe shell and frame snapshots carry the same acknowledged ledger (verifying [[playbook-captain-52](#playbook-captain-52)]).
 
 #### playbook-captain-45
 

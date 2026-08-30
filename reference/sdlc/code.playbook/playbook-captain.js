@@ -551,6 +551,7 @@ function validateHostCapabilities(value, entry, command) {
         'acquire',
         'runExclusive',
         'runCohort',
+        'runDeferred',
     ]);
     const identity = exactOwnDataRecord(repository?.identity, [
         'worktree',
@@ -581,6 +582,7 @@ function validateHostCapabilities(value, entry, command) {
         typeof repository.acquire !== 'function' ||
         typeof repository.runExclusive !== 'function' ||
         typeof repository.runCohort !== 'function' ||
+        typeof repository.runDeferred !== 'function' ||
         typeof effectLedger?.snapshot !== 'function' ||
         typeof effectLedger.writeAhead !== 'function') {
         throw new Error(`/${command} schema-3 current-host capability authority does not match its imported artifact`);

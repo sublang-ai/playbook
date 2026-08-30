@@ -2035,6 +2035,507 @@ describe('schema-3 repository host capabilities', () => {
     }
   });
 
+  it('binds repeated deferred checkpoints and reconciles one cumulative receipt', async () => {
+    const repo = await initRepository('playbook-deferred-chain-');
+    const backing = fakeEffectLedgerService();
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const runtimeSessionId = '40000000-0000-4000-8000-000000000004';
+    const operationId = '50000000-0000-4000-8000-000000000005';
+    const capability = (
+      await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog: {
+          code: {
+            id: 'code',
+            artifactSchema: 3,
+            requiredRoleIds: ['coder'],
+            concurrentRoleSets: [],
+          },
+        },
+        sessionId,
+        sessionLease: {
+          sessionId,
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => backing.service,
+      })
+    ).code;
+    const effectBoundary = (
+      boundaryId: string,
+      turnId: number,
+      callId: string,
+    ) => ({
+      boundaryId,
+      runtimeSessionId,
+      turnId,
+      callId,
+      roleId: 'coder',
+      sourceStateId: 'code.coder',
+      sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+      dispositions: ['deferred', 'one-descendant-commit'],
+      correctionBudget: { limit: 1, spent: false },
+    });
+
+    const first = await capability.repository.runExclusive({
+      effectBoundary: effectBoundary(
+        '30000000-0000-4000-8000-000000000003',
+        1,
+        'player-1',
+      ),
+      operation: async () => ({
+        status: 'ok',
+        finalText: 'Which file should I edit?',
+        resumeToken: 'thread-1',
+      }),
+      completeEffectBoundary: ({ operation }: any) => ({
+        finalText: operation.value.finalText,
+        semanticCandidate: {
+          guard: 'needsBossReply',
+          question: operation.value.finalText,
+        },
+        deferred: {
+          operationId,
+          pendingQuestion: {
+            questionId: 'code.coder',
+            asker: { kind: 'role', roleId: 'coder' },
+            question: operation.value.finalText,
+            sourceItem: 'playbook-1',
+          },
+          playerContinuation: operation.value.resumeToken,
+        },
+      }),
+    });
+    expect(first.deferredStatus).toBe('bound');
+    expect(first.effectLedger.logicalOperations[0]).toMatchObject({
+      operationId,
+      boundaryIds: ['30000000-0000-4000-8000-000000000003'],
+      checkpointRestorationEligible: false,
+      pendingQuestion: { question: 'Which file should I edit?' },
+      playerContinuation: 'thread-1',
+    });
+    const originalBaseline = first.effectLedger.logicalOperations[0]
+      .originalBaseline;
+
+    const repeated = await capability.repository.runDeferred({
+      mode: 'continue',
+      operationId,
+      effectBoundary: effectBoundary(
+        '60000000-0000-4000-8000-000000000006',
+        2,
+        'player-2',
+      ),
+      operation: async ({ playerContinuation }: any) => {
+        expect(playerContinuation).toBe('thread-1');
+        await writeFile(join(repo, 'draft.txt'), 'draft\n', 'utf8');
+        return {
+          status: 'ok',
+          finalText: 'Should the draft be committed?',
+          resumeToken: 'thread-2',
+        };
+      },
+      completeEffectBoundary: ({ operation }: any) => ({
+        finalText: operation.value.finalText,
+        semanticCandidate: {
+          guard: 'needsBossReply',
+          question: operation.value.finalText,
+        },
+        deferred: {
+          pendingQuestion: {
+            questionId: 'code.coder',
+            asker: { kind: 'role', roleId: 'coder' },
+            question: operation.value.finalText,
+            sourceItem: 'playbook-1',
+          },
+          playerContinuation: operation.value.resumeToken,
+        },
+      }),
+    });
+    expect(repeated).toMatchObject({
+      status: 'continued',
+      deferredStatus: 'bound',
+      receipt: { classification: 'worktree-only-change' },
+    });
+    expect(repeated.effectLedger.logicalOperations[0]).toMatchObject({
+      operationId,
+      boundaryIds: [
+        '30000000-0000-4000-8000-000000000003',
+        '60000000-0000-4000-8000-000000000006',
+      ],
+      originalBaseline,
+      pendingQuestion: { question: 'Should the draft be committed?' },
+      playerContinuation: 'thread-2',
+    });
+    expect(repeated.effectLedger.boundaries[1]).toMatchObject({
+      logicalOperationId: operationId,
+      physicalReceipt: { classification: 'worktree-only-change' },
+    });
+
+    const final = await capability.repository.runDeferred({
+      mode: 'continue',
+      operationId,
+      effectBoundary: effectBoundary(
+        '70000000-0000-4000-8000-000000000007',
+        3,
+        'player-3',
+      ),
+      operation: async ({ playerContinuation }: any) => {
+        expect(playerContinuation).toBe('thread-2');
+        await git(repo, 'add', '--', 'draft.txt');
+        await git(repo, 'commit', '--quiet', '-m', 'finish draft');
+        return {
+          status: 'ok',
+          finalText: 'Committed.',
+          resumeToken: 'thread-3',
+        };
+      },
+      completeEffectBoundary: ({ operation }: any) => ({
+        finalText: operation.value.finalText,
+        semanticCandidate: { guard: 'committed' },
+      }),
+    });
+    expect(final).toMatchObject({
+      status: 'continued',
+      receipt: { classification: 'observation-ambiguous' },
+      logicalReceipt: { classification: 'one-descendant-commit' },
+    });
+    expect(final.effectLedger.logicalOperations[0]).toMatchObject({
+      operationId,
+      originalBaseline,
+      boundaryIds: [
+        '30000000-0000-4000-8000-000000000003',
+        '60000000-0000-4000-8000-000000000006',
+        '70000000-0000-4000-8000-000000000007',
+      ],
+      logicalReceipt: { classification: 'one-descendant-commit' },
+    });
+    expect(final.effectLedger.logicalOperations[0]).not.toHaveProperty(
+      'pendingQuestion',
+    );
+    expect(final.effectLedger.boundaries).toHaveLength(3);
+  });
+
+  it('fences mismatched deferred checkpoints and restores or parks without a call', async () => {
+    const repo = await initRepository('playbook-deferred-mismatch-');
+    const backing = fakeEffectLedgerService();
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const runtimeSessionId = '40000000-0000-4000-8000-000000000004';
+    const operationId = '50000000-0000-4000-8000-000000000005';
+    const capability = (
+      await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog: {
+          code: {
+            id: 'code',
+            artifactSchema: 3,
+            requiredRoleIds: ['coder'],
+            concurrentRoleSets: [],
+          },
+        },
+        sessionId,
+        sessionLease: {
+          sessionId,
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => backing.service,
+      })
+    ).code;
+    await capability.repository.runExclusive({
+      effectBoundary: {
+        boundaryId: '30000000-0000-4000-8000-000000000003',
+        runtimeSessionId,
+        turnId: 1,
+        callId: 'player-1',
+        roleId: 'coder',
+        sourceStateId: 'code.coder',
+        sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+        dispositions: ['deferred', 'one-descendant-commit'],
+        correctionBudget: { limit: 1, spent: false },
+      },
+      operation: async () => 'question',
+      completeEffectBoundary: () => ({
+        deferred: {
+          operationId,
+          pendingQuestion: {
+            questionId: 'code.coder',
+            asker: { kind: 'role', roleId: 'coder' },
+            question: 'May I proceed?',
+          },
+          playerContinuation: false,
+        },
+      }),
+    });
+    await writeFile(join(repo, 'foreign.txt'), 'foreign\n', 'utf8');
+    const player = vi.fn(async () => 'must not run');
+    const mismatched = await capability.repository.runDeferred({
+      mode: 'continue',
+      operationId,
+      effectBoundary: {
+        boundaryId: '60000000-0000-4000-8000-000000000006',
+        runtimeSessionId,
+        turnId: 2,
+        callId: 'player-2',
+        roleId: 'coder',
+        sourceStateId: 'code.coder',
+        sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+        dispositions: ['deferred', 'one-descendant-commit'],
+        correctionBudget: { limit: 1, spent: false },
+      },
+      operation: player,
+      completeEffectBoundary: () => ({ unresolved: true }),
+    });
+    expect(mismatched.status).toBe('checkpoint-mismatch');
+    expect(player).not.toHaveBeenCalled();
+    expect(mismatched.effectLedger.logicalOperations[0]).toMatchObject({
+      checkpointRestorationEligible: true,
+      pendingQuestion: { question: 'May I proceed?' },
+      playerContinuation: false,
+    });
+    const reused = await capability.repository.runDeferred({
+      mode: 'continue',
+      operationId,
+      effectBoundary: {
+        boundaryId: '70000000-0000-4000-8000-000000000007',
+        runtimeSessionId,
+        turnId: 2,
+        callId: 'player-3',
+        roleId: 'coder',
+        sourceStateId: 'code.coder',
+        sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+        dispositions: ['deferred', 'one-descendant-commit'],
+        correctionBudget: { limit: 1, spent: false },
+      },
+      operation: player,
+      completeEffectBoundary: () => ({ unresolved: true }),
+    });
+    expect(reused.status).toBe('ineligible');
+    expect(player).not.toHaveBeenCalled();
+    expect(
+      await capability.repository.runDeferred({
+        mode: 'restore',
+        operationId,
+      }),
+    ).toMatchObject({ status: 'checkpoint-mismatch' });
+    await rm(join(repo, 'foreign.txt'));
+    const restored = await capability.repository.runDeferred({
+      mode: 'restore',
+      operationId,
+    });
+    expect(restored).toMatchObject({
+      status: 'restored',
+      effectLedger: {
+        logicalOperations: [{ checkpointRestorationEligible: false }],
+      },
+    });
+    const parked = await capability.repository.runDeferred({
+      mode: 'park',
+      operationId,
+    });
+    expect(parked.status).toBe('parked');
+    expect(parked.effectLedger.logicalOperations[0]).not.toHaveProperty(
+      'checkpoint',
+    );
+    expect(
+      await capability.repository.runDeferred({
+        mode: 'restore',
+        operationId,
+      }),
+    ).toMatchObject({ status: 'ineligible' });
+    expect(player).not.toHaveBeenCalled();
+    expect(parked.effectLedger.boundaries).toHaveLength(1);
+  });
+
+  it('withholds an initial deferred binding when its completed checkpoint is ineligible', async () => {
+    const repo = await initRepository('playbook-deferred-ineligible-');
+    const backing = fakeEffectLedgerService();
+    const sessionId = '10000000-0000-4000-8000-000000000001';
+    const operationId = '50000000-0000-4000-8000-000000000005';
+    const capability = (
+      await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog: {
+          code: {
+            id: 'code',
+            artifactSchema: 3,
+            requiredRoleIds: ['coder'],
+            concurrentRoleSets: [],
+          },
+        },
+        sessionId,
+        sessionLease: {
+          sessionId,
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => backing.service,
+      })
+    ).code;
+    const result = await capability.repository.runExclusive({
+      effectBoundary: {
+        boundaryId: '30000000-0000-4000-8000-000000000003',
+        runtimeSessionId: '40000000-0000-4000-8000-000000000004',
+        turnId: 1,
+        callId: 'player-1',
+        roleId: 'coder',
+        sourceStateId: 'code.coder',
+        sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+        dispositions: ['deferred', 'one-descendant-commit'],
+        correctionBudget: { limit: 1, spent: false },
+      },
+      operation: async () => {
+        await commitFile(repo, 'committed.txt', 'committed\n', 'effect');
+        return 'May I continue?';
+      },
+      completeEffectBoundary: ({ operation }: any) => ({
+        finalText: operation.value,
+        semanticCandidate: {
+          guard: 'needsBossReply',
+          question: operation.value,
+        },
+        deferred: {
+          operationId,
+          pendingQuestion: {
+            questionId: 'code.coder',
+            asker: { kind: 'role', roleId: 'coder' },
+            question: operation.value,
+          },
+          playerContinuation: 'thread-1',
+        },
+      }),
+    });
+    expect(result).toMatchObject({
+      deferredStatus: 'unresolved',
+      receipt: { classification: 'one-descendant-commit' },
+      effectLedger: {
+        boundaries: [
+          {
+            logicalOperationId: operationId,
+            semanticCandidate: { guard: 'needsBossReply' },
+          },
+        ],
+        logicalOperations: [
+          {
+            operationId,
+            checkpointRestorationEligible: false,
+          },
+        ],
+      },
+    });
+    expect(result.effectLedger.logicalOperations[0]).not.toHaveProperty(
+      'pendingQuestion',
+    );
+  });
+
+  it.each(['before', 'after'] as const)(
+    'recovers an indeterminate deferred checkpoint fence %s acknowledgement without a call',
+    async (failurePoint) => {
+      const repo = await initRepository('playbook-deferred-recovery-');
+      const backing = fakeEffectLedgerService();
+      let failFence = true;
+      const service = {
+        snapshot: backing.service.snapshot,
+        writeAhead: vi.fn(async (authority: unknown, commands: any[]) => {
+          if (
+            failFence &&
+            commands[0]?.kind === 'replace-logical-operations'
+          ) {
+            failFence = false;
+            if (failurePoint === 'after') {
+              await backing.service.writeAhead(authority, commands);
+            }
+            throw new Error(`deferred fence failed ${failurePoint} acknowledgement`);
+          }
+          return backing.service.writeAhead(authority, commands);
+        }),
+      };
+      const sessionId = '10000000-0000-4000-8000-000000000001';
+      const runtimeSessionId = '40000000-0000-4000-8000-000000000004';
+      const operationId = '50000000-0000-4000-8000-000000000005';
+      const catalog = {
+        code: {
+          id: 'code',
+          artifactSchema: 3,
+          requiredRoleIds: ['coder'],
+          concurrentRoleSets: [],
+        },
+      };
+      const capabilities = await createRepositoryEffectCapabilities({
+        cwd: repo,
+        catalog,
+        sessionId,
+        sessionLease: {
+          sessionId,
+          ownerToken: '20000000-0000-4000-8000-000000000002',
+          assertOwner: async () => undefined,
+        },
+        createWriteAhead: () => service,
+      });
+      const capability = capabilities.code;
+      await capability.repository.runExclusive({
+        effectBoundary: {
+          boundaryId: '30000000-0000-4000-8000-000000000003',
+          runtimeSessionId,
+          turnId: 1,
+          callId: 'player-1',
+          roleId: 'coder',
+          sourceStateId: 'code.coder',
+          sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+          dispositions: ['deferred', 'one-descendant-commit'],
+          correctionBudget: { limit: 1, spent: false },
+        },
+        operation: async () => 'question',
+        completeEffectBoundary: () => ({
+          deferred: {
+            operationId,
+            pendingQuestion: {
+              questionId: 'code.coder',
+              asker: { kind: 'role', roleId: 'coder' },
+              question: 'May I continue?',
+            },
+            playerContinuation: false,
+          },
+        }),
+      });
+      await writeFile(join(repo, 'foreign.txt'), 'foreign\n', 'utf8');
+      const player = vi.fn(async () => 'must not run');
+      await expect(
+        capability.repository.runDeferred({
+          mode: 'continue',
+          operationId,
+          effectBoundary: {
+            boundaryId: '60000000-0000-4000-8000-000000000006',
+            runtimeSessionId,
+            turnId: 2,
+            callId: 'player-2',
+            roleId: 'coder',
+            sourceStateId: 'code.coder',
+            sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+            dispositions: ['deferred', 'one-descendant-commit'],
+            correctionBudget: { limit: 1, spent: false },
+          },
+          operation: player,
+          completeEffectBoundary: () => ({ unresolved: true }),
+        }),
+      ).rejects.toThrow(
+        `deferred fence failed ${failurePoint} acknowledgement`,
+      );
+      expect(player).not.toHaveBeenCalled();
+
+      const recovered = await recoverIncompleteRepositoryEffects({
+        catalog,
+        capabilities,
+      });
+      expect(recovered.logicalOperations[0]).toMatchObject({
+        operationId,
+        checkpointRestorationEligible: true,
+        pendingQuestion: { question: 'May I continue?' },
+      });
+      const claim = await createRepositoryEffectCoordinator().acquire(repo);
+      await claim.release();
+    },
+  );
+
   it('rejects a lease for a different logical session before host work', async () => {
     const assertOwner = vi.fn(async () => undefined);
     const writeAhead = vi.fn(async () => undefined);

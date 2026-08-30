@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type {
   PlaybookEffectLedger,
   PlaybookPorts,
+  PlaybookRepositoryObservation,
   PlaybookRepositoryReceipt,
   PlaybookRoleBinding,
   PlaybookSession,
@@ -34,6 +35,15 @@ const EFFECT_OBSERVATION = Object.freeze({
     'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
 });
 
+const EFFECT_CHANGED_OBSERVATION = Object.freeze({
+  ...EFFECT_OBSERVATION,
+  projection: Object.freeze({
+    'changed.txt': Object.freeze({ mode: '100644', content: 'changed' }),
+  }),
+  projectionDigest:
+    'sha256:4b797d2a72bd825a64e65ec546734edc020fc9070965c5eb3678943ddcfd1b25',
+});
+
 function emptyLedgerHostCapabilities(
   options: {
     readonly classifications?: readonly PlaybookRepositoryReceipt['classification'][];
@@ -41,15 +51,115 @@ function emptyLedgerHostCapabilities(
     readonly initialLedger?: PlaybookEffectLedger;
     readonly startAcknowledgement?: Promise<void>;
     readonly completionAcknowledgement?: Promise<void>;
+    readonly finalWriteAcknowledgement?: Promise<void>;
     readonly failCompletionAt?: readonly number[];
+    readonly failAfterCompletionAt?: readonly number[];
   } = {},
 ) {
   let ledger = options.initialLedger ?? emptyPlaybookEffectLedger();
+  let observation: PlaybookRepositoryObservation = EFFECT_OBSERVATION;
   let callIndex = 0;
   const attemptId =
     options.attemptId ?? '20000000-0000-4000-8000-000000000001';
+  const receiptFor = (
+    classification: PlaybookRepositoryReceipt['classification'],
+    baseline: PlaybookRepositoryObservation,
+    currentCallIndex: number,
+  ): PlaybookRepositoryReceipt => {
+    const changedProjection = Object.freeze({
+      'changed.txt': Object.freeze({
+        mode: '100644',
+        content: 'changed',
+      }),
+    });
+    const changedProjectionObservation = Object.freeze({
+      ...baseline,
+      projection: changedProjection,
+      projectionDigest:
+        'sha256:4b797d2a72bd825a64e65ec546734edc020fc9070965c5eb3678943ddcfd1b25',
+    });
+    const changedHeadObservation = Object.freeze({
+      ...baseline,
+      head: (currentCallIndex + 2).toString(16).repeat(40).slice(0, 40),
+      projection: Object.freeze({}),
+      projectionDigest:
+        'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    });
+    switch (classification) {
+      case 'unchanged':
+        return { classification, baseline, after: baseline };
+      case 'one-descendant-commit':
+        return {
+          classification,
+          baseline,
+          after: changedHeadObservation,
+          commitOid: changedHeadObservation.head,
+        };
+      case 'multiple-commits':
+      case 'rewritten-or-non-descendant':
+        return { classification, baseline, after: changedHeadObservation };
+      case 'worktree-only-change':
+      case 'concurrent-or-foreign-change':
+        return {
+          classification,
+          baseline,
+          after: changedProjectionObservation,
+        };
+      case 'observation-ambiguous':
+        return { classification, baseline };
+    }
+  };
+  const completionFor = async (
+    input: Record<string, unknown>,
+    boundary: Record<string, unknown>,
+    operation: Record<string, unknown>,
+    receipt: PlaybookRepositoryReceipt,
+  ) =>
+    (input.completeEffectBoundary as (value: unknown) => Promise<{
+      readonly finalText?: string;
+      readonly semanticCandidate?: unknown;
+      readonly deferred?: {
+        readonly operationId: string;
+        readonly pendingQuestion: unknown;
+        readonly playerContinuation: unknown;
+      };
+      readonly unresolved?: true;
+    }> | {
+      readonly finalText?: string;
+      readonly semanticCandidate?: unknown;
+      readonly deferred?: {
+        readonly operationId: string;
+        readonly pendingQuestion: unknown;
+        readonly playerContinuation: unknown;
+      };
+      readonly unresolved?: true;
+    })({ boundary, operation, receipt });
+  const completedBoundary = (
+    started: Record<string, unknown>,
+    receipt: PlaybookRepositoryReceipt,
+    completion: {
+      readonly finalText?: string;
+      readonly semanticCandidate?: unknown;
+    },
+    logicalOperationId?: string,
+  ) => ({
+    ...started,
+    ...(receipt.after === undefined ? {} : { after: receipt.after }),
+    physicalReceipt: receipt,
+    ...(completion.finalText === undefined
+      ? {}
+      : { finalText: completion.finalText }),
+    ...(completion.semanticCandidate === undefined
+      ? {}
+      : { semanticCandidate: completion.semanticCandidate }),
+    ...(logicalOperationId === undefined ? {} : { logicalOperationId }),
+  });
+  const updateObservation = (receipt: PlaybookRepositoryReceipt) => {
+    if (receipt.after !== undefined) observation = receipt.after;
+  };
   const runExclusive = vi.fn(async (input: Record<string, unknown>) => {
     const currentCallIndex = callIndex++;
+    const baseline = observation;
     const seed = input.effectBoundary as Record<string, unknown>;
     const started = {
       sequence: ledger.boundaries.length + 1,
@@ -58,7 +168,7 @@ function emptyLedgerHostCapabilities(
       attemptNumber: 1,
       playbookId: 'role-fixture',
       canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
-      baseline: EFFECT_OBSERVATION,
+      baseline,
     };
     ledger = assertPlaybookEffectLedger({
       ...ledger,
@@ -81,82 +191,245 @@ function emptyLedgerHostCapabilities(
     if (options.failCompletionAt?.includes(currentCallIndex)) {
       throw new Error('effect boundary completion acknowledgement unavailable');
     }
-    const classification =
-      options.classifications?.[currentCallIndex] ?? 'unchanged';
-    const changedProjection = Object.freeze({
-      'changed.txt': Object.freeze({ mode: '100644', content: 'changed' }),
-    });
-    const changedProjectionObservation = Object.freeze({
-      ...EFFECT_OBSERVATION,
-      projection: changedProjection,
-      projectionDigest:
-        'sha256:4b797d2a72bd825a64e65ec546734edc020fc9070965c5eb3678943ddcfd1b25',
-    });
-    const changedHeadObservation = Object.freeze({
-      ...EFFECT_OBSERVATION,
-      head: '2'.repeat(40),
-    });
-    const receipt: PlaybookRepositoryReceipt = (() => {
-      switch (classification) {
-        case 'unchanged':
-          return {
-            classification,
-            baseline: EFFECT_OBSERVATION,
-            after: EFFECT_OBSERVATION,
-          };
-        case 'one-descendant-commit':
-          return {
-            classification,
-            baseline: EFFECT_OBSERVATION,
-            after: changedHeadObservation,
-            commitOid: changedHeadObservation.head,
-          };
-        case 'multiple-commits':
-        case 'rewritten-or-non-descendant':
-          return {
-            classification,
-            baseline: EFFECT_OBSERVATION,
-            after: changedHeadObservation,
-          };
-        case 'worktree-only-change':
-        case 'concurrent-or-foreign-change':
-          return {
-            classification,
-            baseline: EFFECT_OBSERVATION,
-            after: changedProjectionObservation,
-          };
-        case 'observation-ambiguous':
-          return { classification, baseline: EFFECT_OBSERVATION };
-      }
-    })();
-    const completion = await (
-      input.completeEffectBoundary as (value: unknown) => Promise<{
-        readonly finalText?: string;
-      }>
-    )({ boundary: started, operation, receipt });
-    const completed = {
-      ...started,
-      ...(receipt.after === undefined ? {} : { after: receipt.after }),
-      physicalReceipt: receipt,
-      ...(completion.finalText === undefined
-        ? {}
-        : { finalText: completion.finalText }),
-    };
+    const classification = options.classifications?.[currentCallIndex] ?? 'unchanged';
+    const receipt = receiptFor(classification, baseline, currentCallIndex);
+    updateObservation(receipt);
+    const completion = await completionFor(input, started, operation, receipt);
+    await options.finalWriteAcknowledgement;
+    if (options.failAfterCompletionAt?.includes(currentCallIndex)) {
+      throw new Error('effect boundary final write acknowledgement unavailable');
+    }
+    const operationId = completion.deferred?.operationId;
+    const eligible =
+      completion.deferred !== undefined &&
+      receipt.after !== undefined &&
+      receipt.after.head === baseline.head &&
+      (classification === 'unchanged' ||
+        classification === 'worktree-only-change');
+    const completed = completedBoundary(
+      started,
+      receipt,
+      completion,
+      operationId,
+    );
     ledger = assertPlaybookEffectLedger({
       ...ledger,
       revision: ledger.revision + 1,
       boundaries: [...ledger.boundaries.slice(0, -1), completed],
+      logicalOperations:
+        completion.deferred === undefined
+          ? ledger.logicalOperations
+          : [
+              ...ledger.logicalOperations,
+              {
+                sequence: ledger.logicalOperations.length + 1,
+                operationId: operationId!,
+                playbookId: 'role-fixture',
+                runtimeSessionId: seed.runtimeSessionId,
+                boundaryIds: [seed.boundaryId],
+                originalBaseline: baseline,
+                ...(eligible
+                  ? {
+                      checkpoint: receipt.after,
+                      pendingQuestion: completion.deferred.pendingQuestion,
+                      playerContinuation:
+                        completion.deferred.playerContinuation,
+                    }
+                  : {}),
+                checkpointRestorationEligible: false,
+              },
+            ],
     });
-    return { operation, receipt, effectLedger: ledger };
+    return {
+      operation,
+      receipt,
+      effectLedger: ledger,
+      ...(completion.deferred === undefined
+        ? {}
+        : { deferredStatus: eligible ? 'bound' : 'unresolved' }),
+    };
+  });
+  const runDeferred = vi.fn(async (input: Record<string, unknown>) => {
+    const operationId = input.operationId as string;
+    const logicalIndex = ledger.logicalOperations.findIndex(
+      (operation) => operation.operationId === operationId,
+    );
+    const logical = ledger.logicalOperations[logicalIndex];
+    if (logical === undefined || logical.logicalReceipt !== undefined) {
+      throw new Error('deferred test operation is not open');
+    }
+    const hasBinding =
+      logical.checkpoint !== undefined &&
+      logical.pendingQuestion !== undefined &&
+      Object.prototype.hasOwnProperty.call(logical, 'playerContinuation');
+    if (input.mode === 'park') {
+      if (hasBinding) {
+        const next = {
+          sequence: logical.sequence,
+          operationId: logical.operationId,
+          playbookId: logical.playbookId,
+          runtimeSessionId: logical.runtimeSessionId,
+          boundaryIds: logical.boundaryIds,
+          originalBaseline: logical.originalBaseline,
+          checkpointRestorationEligible: false,
+        };
+        ledger = assertPlaybookEffectLedger({
+          ...ledger,
+          revision: ledger.revision + 1,
+          logicalOperations: ledger.logicalOperations.map((candidate, index) =>
+            index === logicalIndex ? next : candidate,
+          ),
+        });
+      }
+      return { status: 'parked', effectLedger: ledger };
+    }
+    if (!hasBinding) return { status: 'ineligible', effectLedger: ledger };
+    const checkpointExact = JSON.stringify(logical.checkpoint) === JSON.stringify(observation);
+    if (input.mode === 'restore') {
+      if (!logical.checkpointRestorationEligible) {
+        return { status: 'ineligible', effectLedger: ledger };
+      }
+      if (!checkpointExact) {
+        return { status: 'checkpoint-mismatch', effectLedger: ledger };
+      }
+      ledger = assertPlaybookEffectLedger({
+        ...ledger,
+        revision: ledger.revision + 1,
+        logicalOperations: ledger.logicalOperations.map((candidate, index) =>
+          index === logicalIndex
+            ? { ...logical, checkpointRestorationEligible: false }
+            : candidate,
+        ),
+      });
+      return { status: 'restored', effectLedger: ledger };
+    }
+    if (logical.checkpointRestorationEligible) {
+      return { status: 'ineligible', effectLedger: ledger };
+    }
+    if (!checkpointExact) {
+      ledger = assertPlaybookEffectLedger({
+        ...ledger,
+        revision: ledger.revision + 1,
+        logicalOperations: ledger.logicalOperations.map((candidate, index) =>
+          index === logicalIndex
+            ? { ...logical, checkpointRestorationEligible: true }
+            : candidate,
+        ),
+      });
+      return { status: 'checkpoint-mismatch', effectLedger: ledger };
+    }
+    const currentCallIndex = callIndex++;
+    const seed = input.effectBoundary as Record<string, unknown>;
+    const started = {
+      sequence: ledger.boundaries.length + 1,
+      ...seed,
+      attemptId,
+      attemptNumber: 1,
+      playbookId: 'role-fixture',
+      canonicalWorktree: { worktree: '/repo', gitDir: '/repo/.git' },
+      baseline: observation,
+      logicalOperationId: operationId,
+    };
+    const startingLogical = {
+      sequence: logical.sequence,
+      operationId: logical.operationId,
+      playbookId: logical.playbookId,
+      runtimeSessionId: logical.runtimeSessionId,
+      boundaryIds: [...logical.boundaryIds, seed.boundaryId as string],
+      originalBaseline: logical.originalBaseline,
+      checkpointRestorationEligible: false,
+    };
+    ledger = assertPlaybookEffectLedger({
+      ...ledger,
+      revision: ledger.revision + 1,
+      boundaries: [...ledger.boundaries, started],
+      logicalOperations: ledger.logicalOperations.map((candidate, index) =>
+        index === logicalIndex ? startingLogical : candidate,
+      ),
+    });
+    let operation:
+      | { readonly status: 'fulfilled'; readonly value: unknown }
+      | { readonly status: 'rejected'; readonly reason: unknown };
+    try {
+      operation = {
+        status: 'fulfilled',
+        value: await (input.operation as (value: unknown) => Promise<unknown>)({
+          baseline: observation,
+          identity: { worktree: '/repo', gitDir: '/repo/.git' },
+          playerContinuation: logical.playerContinuation,
+        }),
+      };
+    } catch (reason) {
+      operation = { status: 'rejected', reason };
+    }
+    const baseline = observation;
+    const classification = options.classifications?.[currentCallIndex] ?? 'unchanged';
+    const receipt = receiptFor(classification, baseline, currentCallIndex);
+    updateObservation(receipt);
+    const completion = await completionFor(input, started, operation, receipt);
+    await options.finalWriteAcknowledgement;
+    if (options.failAfterCompletionAt?.includes(currentCallIndex)) {
+      throw new Error('deferred completion write acknowledgement unavailable');
+    }
+    const eligible =
+      completion.deferred !== undefined &&
+      receipt.after !== undefined &&
+      receipt.after.head === logical.originalBaseline.head &&
+      (classification === 'unchanged' ||
+        classification === 'worktree-only-change');
+    const completed = completedBoundary(started, receipt, completion, operationId);
+    const logicalReceipt: PlaybookRepositoryReceipt = {
+      classification,
+      baseline: logical.originalBaseline,
+      ...(receipt.after === undefined ? {} : { after: receipt.after }),
+      ...(classification === 'one-descendant-commit' && receipt.commitOid
+        ? { commitOid: receipt.commitOid }
+        : {}),
+    };
+    const nextLogical =
+      completion.deferred !== undefined && eligible
+        ? {
+            ...startingLogical,
+            checkpoint: receipt.after,
+            pendingQuestion: completion.deferred.pendingQuestion,
+            playerContinuation: completion.deferred.playerContinuation,
+            checkpointRestorationEligible: false,
+          }
+        : completion.deferred !== undefined || completion.unresolved === true
+          ? startingLogical
+          : { ...startingLogical, logicalReceipt };
+    ledger = assertPlaybookEffectLedger({
+      ...ledger,
+      revision: ledger.revision + 1,
+      boundaries: [...ledger.boundaries.slice(0, -1), completed],
+      logicalOperations: ledger.logicalOperations.map((candidate, index) =>
+        index === logicalIndex ? nextLogical : candidate,
+      ),
+    });
+    return {
+      status: 'continued',
+      operation,
+      receipt,
+      effectLedger: ledger,
+      ...(completion.deferred !== undefined || completion.unresolved === true
+        ? {}
+        : { logicalReceipt }),
+      ...(completion.deferred === undefined
+        ? {}
+        : { deferredStatus: eligible ? 'bound' : 'unresolved' }),
+    };
   });
   return {
-    repository: { runExclusive },
+    repository: { runExclusive, runDeferred },
     effectLedger: {
       snapshot: () => ledger,
       writeAhead: async () => ledger,
     },
     replaceEffectLedger(next: PlaybookEffectLedger) {
       ledger = assertPlaybookEffectLedger(next);
+    },
+    replaceObservation(next: PlaybookRepositoryObservation) {
+      observation = next;
     },
   };
 }
@@ -283,6 +556,127 @@ const retryMachine = createMachine({
       meta: stateMeta('failed', 'The task failed.'),
       tags: ['playbook.parked'],
       on: { START: 'work' },
+    },
+  },
+});
+
+const deferredBossMachine = createMachine({
+  id: 'role-deferred-boss',
+  context: {
+    task: '',
+    pendingBossQuestion: undefined as
+      | {
+          questionId: string;
+          resumeStateId: string;
+          sourceItem: string;
+          asker: { kind: 'role'; roleId: string };
+          question: string;
+        }
+      | undefined,
+    bossReply: undefined as string | undefined,
+  },
+  initial: 'ready',
+  states: {
+    ready: {
+      meta: stateMeta('ready', 'Waiting for a task.'),
+      tags: ['playbook.parked'],
+      on: {
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+            pendingBossQuestion: () => undefined,
+            bossReply: () => undefined,
+          }),
+        },
+      },
+    },
+    work: {
+      meta: roleMeta('work', 'coder', 'Implement the governed task.'),
+      tags: ['playbook.busy'],
+      invoke: {
+        src: 'player',
+        input: ({ context }) => ({
+          stateId: 'work',
+          role: 'coder',
+          sourceItem: 'ROLE-DEFERRED-1',
+          prompt: `Implement ${context.task}.`,
+          result: {
+            complete:
+              'The task is complete. Output shall include no additional fields.',
+            needsBossReply:
+              "The acting agent needs Boss input. Output shall include `question: <verbatim question text from the acting agent's prose>`.",
+          },
+          ...(context.pendingBossQuestion === undefined
+            ? {}
+            : { pendingBossQuestion: context.pendingBossQuestion }),
+          ...(context.bossReply === undefined
+            ? {}
+            : { bossReply: context.bossReply }),
+        }),
+        onDone: [
+          {
+            guard: ({ event }) =>
+              (event as { output?: { guard?: string } }).output?.guard ===
+              'needsBossReply',
+            target: 'awaitBossReply',
+            actions: assign({
+              pendingBossQuestion: ({ event }) => {
+                const output = (event as {
+                  output: { guard: string; question: string };
+                }).output;
+                return {
+                  questionId: 'work',
+                  resumeStateId: 'work',
+                  sourceItem: 'ROLE-DEFERRED-1',
+                  asker: { kind: 'role' as const, roleId: 'coder' },
+                  question: output.question,
+                };
+              },
+              bossReply: () => undefined,
+            }),
+          },
+          {
+            target: 'ready',
+            actions: assign({
+              pendingBossQuestion: () => undefined,
+              bossReply: () => undefined,
+            }),
+          },
+        ],
+        onError: 'ready',
+      },
+    },
+    awaitBossReply: {
+      meta: stateMeta('awaitBossReply', 'Waiting for Boss to answer Coder.'),
+      tags: ['playbook.parked'],
+      on: {
+        BOSS_REPLY: {
+          guard: ({ context, event }) => {
+            const reply = event as { questionId?: string; answer?: string };
+            return (
+              typeof reply.answer === 'string' &&
+              reply.answer.trim().length > 0 &&
+              (reply.questionId === undefined ||
+                reply.questionId === context.pendingBossQuestion?.questionId)
+            );
+          },
+          target: 'work',
+          reenter: true,
+          actions: assign({
+            bossReply: ({ event }) =>
+              (event as { answer: string }).answer,
+          }),
+        },
+        START: {
+          target: 'work',
+          actions: assign({
+            task: ({ event }) => (event as { task: string }).task,
+            pendingBossQuestion: () => undefined,
+            bossReply: () => undefined,
+          }),
+        },
+      },
     },
   },
 });
@@ -457,6 +851,43 @@ function retrySchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
   });
 }
 
+function deferredBossSchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
+  return {
+    compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
+    snapshotOptions: () => ({}),
+    entryEvent: { type: 'START', textField: 'task' },
+    roleStates: {
+      work: { role: 'coder', label: 'Implement the governed task.' },
+    },
+    classifyBossText: async (text) =>
+      text === 'new directive'
+        ? { type: 'START', task: text }
+        : text === 'invalid'
+          ? { type: 'BOSS_REPLY', questionId: 'work', answer: '' }
+          : text === 'wrong question'
+            ? {
+                type: 'BOSS_REPLY',
+                questionId: 'different-question',
+                answer: text,
+              }
+            : { type: 'BOSS_REPLY', questionId: 'work', answer: text },
+    outcomeAuthority: {
+      governedPlayerStates: {
+        work: {
+          complete: {
+            fields: {},
+            repositoryDisposition: 'one-descendant-commit',
+          },
+          needsBossReply: {
+            fields: { question: 'presentation' },
+            repositoryDisposition: 'deferred',
+          },
+        },
+      },
+    },
+  };
+}
+
 function foreignEffectRetrySchema3Spec(): XStatePlaybookRuntimeSpecV3<EmptyOptions> {
   return {
     compat: { artifactSchema: 3, runtimeAbi: RUNTIME_ABI },
@@ -492,6 +923,36 @@ function recordingPorts(
       telemetry.push(event);
     },
   };
+}
+
+function deferredTestPorts(
+  playerResults: PlayerResult[],
+  judgeReplies: string[],
+) {
+  const statuses: string[] = [];
+  const telemetry: unknown[] = [];
+  const resumes: Array<string | false> = [];
+  const callPlayer = vi.fn<PlaybookPorts['callPlayer']>(
+    async (_roleId, _prompt, _signal, options) => {
+      resumes.push(options.resume);
+      const result = playerResults.shift();
+      if (result === undefined) throw new Error('unexpected deferred player call');
+      return result;
+    },
+  );
+  const callJudge = vi.fn<PlaybookPorts['callJudge']>(async () => {
+    const reply = judgeReplies.shift();
+    if (reply === undefined) throw new Error('unexpected deferred judge call');
+    return reply;
+  });
+  const ports: PlaybookPorts = {
+    ...recordingPorts(callPlayer, telemetry),
+    callJudge,
+    emitStatus: async (message) => {
+      statuses.push(message);
+    },
+  };
+  return { ports, callPlayer, callJudge, resumes, statuses, telemetry };
 }
 
 let sessionSequence = 0;
@@ -2079,6 +2540,340 @@ describe('DR-032 shared role runtime transition', () => {
     );
     await restored.dispose();
   });
+});
+
+describe('DR-040 deferred Boss continuation', () => {
+  it('publishes a bound question only after acknowledgement and completes from the original baseline', async () => {
+    let acknowledgeFinalWrite!: () => void;
+    const finalWriteAcknowledgement = new Promise<void>((resolve) => {
+      acknowledgeFinalWrite = resolve;
+    });
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['unchanged', 'one-descendant-commit'],
+      finalWriteAcknowledgement,
+    });
+    const harness = deferredTestPorts(
+      [
+        {
+          status: 'ok',
+          finalText: 'I need a decision.',
+          resumeToken: 'thread-question',
+        },
+        {
+          status: 'ok',
+          finalText: 'Implemented and committed.',
+          resumeToken: 'thread-final',
+        },
+      ],
+      [
+        '{"guard":"needsBossReply","question":"Choose a format."}',
+        '{"guard":"complete"}',
+      ],
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      deferredBossMachine,
+      deferredBossSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(harness.ports));
+    harness.statuses.length = 0;
+
+    const initial = runtime.handleBossInput(bossTurn('the task'));
+    await vi.waitFor(() => expect(harness.callJudge).toHaveBeenCalledOnce());
+    expect(harness.statuses).not.toContain('Coder asks: Choose a format.');
+    expect(hostCapabilities.effectLedger.snapshot().logicalOperations).toEqual(
+      [],
+    );
+    acknowledgeFinalWrite();
+    await expect(initial).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'awaitBossReply' },
+    });
+
+    const initialLedger = hostCapabilities.effectLedger.snapshot();
+    const open = initialLedger.logicalOperations[0]!;
+    expect(open).toMatchObject({
+      boundaryIds: [initialLedger.boundaries[0]?.boundaryId],
+      originalBaseline: EFFECT_OBSERVATION,
+      checkpointRestorationEligible: false,
+      pendingQuestion: {
+        questionId: 'work',
+        sourceItem: 'ROLE-DEFERRED-1',
+        question: 'Choose a format.',
+      },
+      playerContinuation: 'thread-question',
+    });
+    expect(initialLedger.boundaries[0]?.logicalOperationId).toBe(
+      open.operationId,
+    );
+    expect(harness.statuses).toContain('coder asks: Choose a format.');
+    expect(runtime.describe?.().pendingQuestions).toEqual([
+      {
+        questionId: 'work',
+        asker: { kind: 'role', roleId: 'coder' },
+        question: 'Choose a format.',
+        sourceItem: 'ROLE-DEFERRED-1',
+      },
+    ]);
+
+    const revision = initialLedger.revision;
+    await runtime.handleBossInput(bossTurn('invalid'));
+    await runtime.handleBossInput(bossTurn('wrong question'));
+    expect(hostCapabilities.effectLedger.snapshot().revision).toBe(revision);
+    expect(harness.callPlayer).toHaveBeenCalledOnce();
+    expect(harness.callJudge).toHaveBeenCalledOnce();
+
+    await expect(runtime.handleBossInput(bossTurn('markdown'))).resolves.toMatchObject({
+      outcome: 'quiescent',
+      state: { stateId: 'ready' },
+    });
+    const completed = hostCapabilities.effectLedger.snapshot();
+    expect(harness.resumes).toEqual([false, 'thread-question']);
+    expect(completed.boundaries).toHaveLength(2);
+    expect(completed.logicalOperations[0]).toMatchObject({
+      operationId: open.operationId,
+      originalBaseline: EFFECT_OBSERVATION,
+      boundaryIds: completed.boundaries.map(({ boundaryId }) => boundaryId),
+      logicalReceipt: {
+        classification: 'one-descendant-commit',
+        baseline: EFFECT_OBSERVATION,
+      },
+    });
+    expect(completed.boundaries[1]?.physicalReceipt?.baseline).toEqual(
+      open.checkpoint,
+    );
+    await runtime.dispose();
+  });
+
+  it('discards a mismatched answer and restores the same wait across restart without a call', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['unchanged', 'one-descendant-commit'],
+    });
+    const harness = deferredTestPorts(
+      [
+        {
+          status: 'ok',
+          finalText: 'I need a decision.',
+          resumeToken: 'thread-question',
+        },
+        { status: 'ok', finalText: 'done', resumeToken: 'thread-final' },
+      ],
+      [
+        '{"guard":"needsBossReply","question":"Choose a format."}',
+        '{"guard":"complete"}',
+      ],
+    );
+    const createRuntime = () =>
+      createXStatePlaybookRuntime<EmptyOptions, object>(
+        deferredBossMachine,
+        deferredBossSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+    const boundSession = session(harness.ports);
+    const runtime = createRuntime();
+    await runtime.init(boundSession);
+    await runtime.handleBossInput(bossTurn('the task'));
+    const bound = hostCapabilities.effectLedger.snapshot().logicalOperations[0]!;
+    const checkpoint = bound.checkpoint!;
+
+    hostCapabilities.replaceObservation(EFFECT_CHANGED_OBSERVATION);
+    await expect(
+      runtime.handleBossInput(bossTurn('answer that must be discarded')),
+    ).resolves.toMatchObject({ outcome: 'no-action' });
+    const mismatched = hostCapabilities.effectLedger.snapshot();
+    expect(mismatched.logicalOperations[0]).toMatchObject({
+      operationId: bound.operationId,
+      pendingQuestion: bound.pendingQuestion,
+      playerContinuation: bound.playerContinuation,
+      checkpointRestorationEligible: true,
+    });
+    expect(mismatched.boundaries).toHaveLength(1);
+    expect(harness.callPlayer).toHaveBeenCalledOnce();
+    expect(harness.callJudge).toHaveBeenCalledOnce();
+    expect(runtime.describe?.()).toMatchObject({
+      pendingQuestions: [],
+      actions: [{ id: 'reconcile:restore-deferred-wait' }],
+    });
+    const snapshot = runtime.exportSnapshot?.();
+    expect(snapshot?.pendingBossQuestions).toEqual([]);
+    expect(JSON.stringify(snapshot?.machine)).not.toContain(
+      'answer that must be discarded',
+    );
+    await runtime.dispose();
+
+    const restored = createRuntime();
+    await restored.restore?.(boundSession, snapshot!);
+    await restored.apply?.({
+      actionId: 'reconcile:restore-deferred-wait',
+      key: 'unequal-retry',
+      signal: new AbortController().signal,
+    });
+    expect(
+      hostCapabilities.effectLedger.snapshot().logicalOperations[0]
+        ?.checkpointRestorationEligible,
+    ).toBe(true);
+    expect(harness.callPlayer).toHaveBeenCalledOnce();
+    expect(harness.callJudge).toHaveBeenCalledOnce();
+
+    hostCapabilities.replaceObservation(checkpoint);
+    await expect(
+      restored.apply?.({
+        actionId: 'reconcile:restore-deferred-wait',
+        key: 'exact-retry',
+        signal: new AbortController().signal,
+      }),
+    ).resolves.toMatchObject({
+      disposition: 'executed',
+      run: { outcome: 'quiescent' },
+    });
+    expect(restored.describe?.().pendingQuestions[0]).toEqual(
+      bound.pendingQuestion,
+    );
+    expect(harness.callPlayer).toHaveBeenCalledOnce();
+    expect(harness.callJudge).toHaveBeenCalledOnce();
+
+    await restored.handleBossInput(bossTurn('later valid answer'));
+    expect(harness.resumes).toEqual([false, 'thread-question']);
+    await restored.dispose();
+  });
+
+  it('preserves one operation and original baseline across repeated questions', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: [
+        'unchanged',
+        'unchanged',
+        'one-descendant-commit',
+      ],
+    });
+    const harness = deferredTestPorts(
+      [
+        { status: 'ok', finalText: 'question one', resumeToken: 'thread-1' },
+        { status: 'ok', finalText: 'question two', resumeToken: 'thread-2' },
+        { status: 'ok', finalText: 'done', resumeToken: 'thread-3' },
+      ],
+      [
+        '{"guard":"needsBossReply","question":"First question?"}',
+        '{"guard":"needsBossReply","question":"Second question?"}',
+        '{"guard":"complete"}',
+      ],
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      deferredBossMachine,
+      deferredBossSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(harness.ports));
+    await runtime.handleBossInput(bossTurn('the task'));
+    const first = hostCapabilities.effectLedger.snapshot().logicalOperations[0]!;
+
+    await runtime.handleBossInput(bossTurn('first answer'));
+    const repeated = hostCapabilities.effectLedger.snapshot();
+    expect(repeated.logicalOperations).toHaveLength(1);
+    expect(repeated.logicalOperations[0]).toMatchObject({
+      operationId: first.operationId,
+      originalBaseline: first.originalBaseline,
+      playerContinuation: 'thread-2',
+      pendingQuestion: { question: 'Second question?' },
+    });
+    expect(repeated.boundaries).toHaveLength(2);
+    expect(repeated.logicalOperations[0]?.boundaryIds).toEqual(
+      repeated.boundaries.map(({ boundaryId }) => boundaryId),
+    );
+
+    await runtime.handleBossInput(bossTurn('second answer'));
+    const final = hostCapabilities.effectLedger.snapshot();
+    expect(final.logicalOperations[0]).toMatchObject({
+      operationId: first.operationId,
+      originalBaseline: first.originalBaseline,
+      logicalReceipt: { baseline: first.originalBaseline },
+    });
+    expect(harness.resumes).toEqual([false, 'thread-1', 'thread-2']);
+    await runtime.dispose();
+  });
+
+  it('parks another exit without starting its authored transition', async () => {
+    const hostCapabilities = emptyLedgerHostCapabilities({
+      classifications: ['worktree-only-change'],
+    });
+    const harness = deferredTestPorts(
+      [
+        { status: 'ok', finalText: 'question', resumeToken: 'thread-question' },
+      ],
+      ['{"guard":"needsBossReply","question":"Choose a format."}'],
+    );
+    const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+      deferredBossMachine,
+      deferredBossSchema3Spec(),
+    )({ configuredOptions: {}, hostCapabilities });
+    await runtime.init(session(harness.ports));
+    await runtime.handleBossInput(bossTurn('the task'));
+    await runtime.handleBossInput(bossTurn('new directive'));
+
+    const parked = hostCapabilities.effectLedger.snapshot().logicalOperations[0]!;
+    expect(parked).not.toHaveProperty('checkpoint');
+    expect(parked).not.toHaveProperty('pendingQuestion');
+    expect(parked).not.toHaveProperty('playerContinuation');
+    expect(parked.checkpointRestorationEligible).toBe(false);
+    expect(harness.callPlayer).toHaveBeenCalledOnce();
+    expect(runtime.describe?.()).toMatchObject({
+      pendingQuestions: [],
+      actions: [],
+    });
+    await runtime.dispose();
+  });
+
+  it.each([
+    ['initial bind', 0],
+    ['continued bind', 1],
+  ])(
+    'closes every state surface when the %s write is indeterminate',
+    async (_label, failureIndex) => {
+      const hostCapabilities = emptyLedgerHostCapabilities({
+        classifications: ['worktree-only-change', 'unchanged'],
+        failAfterCompletionAt: [failureIndex],
+      });
+      const harness = deferredTestPorts(
+        [
+          { status: 'ok', finalText: 'question one', resumeToken: 'thread-1' },
+          { status: 'ok', finalText: 'question two', resumeToken: 'thread-2' },
+        ],
+        [
+          '{"guard":"needsBossReply","question":"First question?"}',
+          '{"guard":"needsBossReply","question":"Second question?"}',
+        ],
+      );
+      const runtime = createXStatePlaybookRuntime<EmptyOptions, object>(
+        deferredBossMachine,
+        deferredBossSchema3Spec(),
+      )({ configuredOptions: {}, hostCapabilities });
+      await runtime.init(session(harness.ports));
+      harness.telemetry.length = 0;
+      harness.statuses.length = 0;
+
+      if (failureIndex === 1) {
+        await runtime.handleBossInput(bossTurn('the task'));
+        harness.telemetry.length = 0;
+        harness.statuses.length = 0;
+      }
+      await expect(
+        runtime.handleBossInput(
+          bossTurn(failureIndex === 0 ? 'the task' : 'valid answer'),
+        ),
+      ).rejects.toThrow('write acknowledgement unavailable');
+      expect(runtime.exportSnapshot?.()).toBeUndefined();
+      expect(() => runtime.describe?.()).toThrow(
+        'deferred settlement recovery is required',
+      );
+      await expect(
+        runtime.handleBossInput(bossTurn('another turn')),
+      ).rejects.toThrow('deferred settlement recovery is required');
+      const settled = harness.telemetry.filter(
+        (event) =>
+          (event as { payload?: { type?: string } }).payload?.type ===
+          'boss.input.settled',
+      );
+      expect(settled).toEqual([]);
+      expect(harness.statuses).not.toContain('Coder asks: Second question?');
+      await runtime.dispose();
+    },
+  );
 });
 
 const aliasMachine = createMachine({

@@ -54,6 +54,8 @@ import type {
   PlaybookEffectBoundaryStart,
   PlaybookEffectLedger,
   PlaybookEffectLedgerCapability,
+  PlaybookEffectLogicalOperation,
+  PlaybookPendingBossQuestion,
   PlaybookPorts,
   PlaybookRepositoryReceipt,
   PlaybookRunResult,
@@ -129,6 +131,15 @@ export interface RuntimeBoundaryCalls {
     prompt: string,
     signal: AbortSignal,
   ): Promise<PlayerResult>;
+  /**
+   * Return the host-acknowledged adjudication performed while a governed
+   * repository claim was still held. The value is consumable once.
+   */
+  takeGovernedPlayerOutput?(result: PlayerResult): PlaybookActorOutput | undefined;
+  recordGovernedPlayerOutput?(
+    result: PlayerResult,
+    output: PlaybookActorOutput,
+  ): void;
   callJudge(
     purpose: JudgePurpose,
     stateId: string | undefined,
@@ -253,11 +264,51 @@ interface XStateRepositoryExclusiveCompletion<T> {
   readonly receipt: PlaybookRepositoryReceipt;
 }
 
+interface XStateDeferredBinding {
+  readonly operationId: string;
+  readonly pendingQuestion: PlaybookPendingBossQuestion;
+  readonly playerContinuation: JsonValue;
+}
+
+interface XStateRepositoryCompletionEvidence {
+  readonly finalText?: string;
+  readonly semanticCandidate?: JsonValue;
+  readonly deferred?: XStateDeferredBinding;
+  readonly unresolved?: true;
+}
+
 interface XStateRepositoryExclusiveResult<T> {
   readonly operation:
     | XStateRepositoryOperationSettlement<T>
     | XStateRepositoryOperationRejection;
   readonly receipt: PlaybookRepositoryReceipt;
+  readonly effectLedger: PlaybookEffectLedger;
+  readonly deferredStatus?: 'bound' | 'unresolved';
+}
+
+interface XStateRepositoryDeferredContinuationResult<T> {
+  readonly status: 'continued';
+  readonly operation:
+    | XStateRepositoryOperationSettlement<T>
+    | XStateRepositoryOperationRejection;
+  readonly receipt: PlaybookRepositoryReceipt;
+  readonly logicalReceipt?: PlaybookRepositoryReceipt;
+  readonly effectLedger: PlaybookEffectLedger;
+  readonly deferredStatus?: 'bound' | 'unresolved';
+}
+
+interface XStateRepositoryDeferredCheckpointMismatch {
+  readonly status: 'checkpoint-mismatch' | 'ineligible';
+  readonly effectLedger: PlaybookEffectLedger;
+}
+
+interface XStateRepositoryDeferredParked {
+  readonly status: 'parked';
+  readonly effectLedger: PlaybookEffectLedger;
+}
+
+interface XStateRepositoryDeferredRestoreResult {
+  readonly status: 'restored' | 'checkpoint-mismatch' | 'ineligible';
   readonly effectLedger: PlaybookEffectLedger;
 }
 
@@ -273,10 +324,30 @@ export interface XStateRepositoryCapability {
     readonly operation: () => Promise<T>;
     readonly completeEffectBoundary: (
       completion: XStateRepositoryExclusiveCompletion<T>,
-    ) =>
-      | { readonly finalText?: string }
-      | Promise<{ readonly finalText?: string }>;
+    ) => XStateRepositoryCompletionEvidence | Promise<XStateRepositoryCompletionEvidence>;
   }): Promise<XStateRepositoryExclusiveResult<T>>;
+  runDeferred<T>(options: {
+    readonly mode: 'continue';
+    readonly signal: AbortSignal;
+    readonly operationId: string;
+    readonly effectBoundary: XStateEffectBoundarySeed;
+    readonly operation: (context: {
+      readonly baseline: PlaybookRepositoryReceipt['baseline'];
+      readonly identity: unknown;
+      readonly playerContinuation: JsonValue;
+    }) => Promise<T>;
+    readonly completeEffectBoundary: (
+      completion: XStateRepositoryExclusiveCompletion<T>,
+    ) => XStateRepositoryCompletionEvidence | Promise<XStateRepositoryCompletionEvidence>;
+  }): Promise<
+    | XStateRepositoryDeferredContinuationResult<T>
+    | XStateRepositoryDeferredCheckpointMismatch
+  >;
+  runDeferred(options: {
+    readonly mode: 'park' | 'restore';
+    readonly signal: AbortSignal;
+    readonly operationId: string;
+  }): Promise<XStateRepositoryDeferredParked | XStateRepositoryDeferredRestoreResult>;
 }
 
 function assertNoConfiguredHostCapabilities(value: unknown, label: string): void {
@@ -398,10 +469,11 @@ function repositoryCapabilityFromHostCapabilities(
     typeof repository !== 'object' ||
     Array.isArray(repository) ||
     typeof (repository as { runExclusive?: unknown }).runExclusive !==
-      'function'
+      'function' ||
+    typeof (repository as { runDeferred?: unknown }).runDeferred !== 'function'
   ) {
     throw new TypeError(
-      `${label} schema-3 factory input hostCapabilities.repository must be an own data property exposing runExclusive`,
+      `${label} schema-3 factory input hostCapabilities.repository must be an own data property exposing runExclusive and runDeferred`,
     );
   }
   return repository as XStateRepositoryCapability;
@@ -1409,14 +1481,17 @@ export function createPlayerBridge(
         );
       }
       try {
-        const output = await adjudicatePlayerOutput(
-          spec.adjudication,
-          input,
-          finalText,
-          ports,
-          activeSignal,
-          boundary,
-        );
+        const output =
+          boundary?.takeGovernedPlayerOutput?.(result) ??
+          (await adjudicatePlayerOutput(
+            spec.adjudication,
+            input,
+            finalText,
+            ports,
+            activeSignal,
+            boundary,
+          ));
+        boundary?.recordGovernedPlayerOutput?.(result, output);
         validateBossReplyOutput(input, output, spec.resumableStateIds);
         return output;
       } catch (error) {
@@ -2922,6 +2997,11 @@ export function createXStatePlaybookRuntime<
       object,
       { readonly boundaryId: string; readonly attemptId: string }
     >();
+    const governedPlayerOutputs = new WeakMap<object, PlaybookActorOutput>();
+    const governedOutputsByBoundaryId = new Map<
+      string,
+      PlaybookActorOutput
+    >();
     const boundOptions = spec.snapshotOptions(configuredOptions);
     assertNoConfiguredHostCapabilities(boundOptions, label);
     const boundScriptCwd = scriptCwd(boundOptions);
@@ -2962,6 +3042,25 @@ export function createXStatePlaybookRuntime<
     let failedGovernedAttemptUnknown = false;
     let failedEffectBoundaryPrefix: number | undefined;
     let failedGovernedAttemptId: string | undefined;
+    let deferredReconciliationOperationId: string | undefined;
+    let deferredSettlementClosure: Error | undefined;
+    let expectedBoundPendingQuestion:
+      | PlaybookPendingBossQuestionContext
+      | undefined;
+    let activeDeferredContinuation:
+      | {
+          readonly operationId: string;
+          readonly effectBoundary: XStateEffectBoundarySeed;
+          playerContinuation?: string | false;
+          input?: PlaybookPlayerInput;
+          roleId?: string;
+          playerId?: string;
+          result?: PlayerResult;
+          output?: PlaybookActorOutput;
+        }
+      | undefined;
+    let deferInspectionEmissions = false;
+    let deferredInspectionEmissions: Array<() => void> = [];
     let controlPlaneError: unknown;
     // Previous root-machine state for the inspect-driven telemetry /
     // status emitter. undefined before the first inspect firing.
@@ -3004,6 +3103,118 @@ export function createXStatePlaybookRuntime<
     // Inspection callbacks enqueue a complete ordered batch synchronously;
     // imperative boundaries await their queued work directly.
     let emissionFailure: { readonly error: unknown } | undefined;
+
+    function runtimeLogicalOperations(
+      ledger: PlaybookEffectLedger = effectLedgerMirror,
+    ): PlaybookEffectLogicalOperation[] {
+      if (session === undefined) return [];
+      return ledger.logicalOperations.filter(
+        (operation) =>
+          operation.playbookId === session!.playbookId &&
+          operation.runtimeSessionId === session!.sessionId,
+      );
+    }
+
+    function syncDeferredReconciliationOverlay(): void {
+      const unresolved = runtimeLogicalOperations().filter(
+        (operation) =>
+          operation.logicalReceipt === undefined &&
+          (operation.checkpointRestorationEligible ||
+            operation.pendingQuestion === undefined),
+      );
+      if (unresolved.length > 1) {
+        throw new Error(
+          `${label} effect ledger contains multiple unresolved deferred operations`,
+        );
+      }
+      deferredReconciliationOperationId = unresolved[0]?.operationId;
+    }
+
+    function closeAfterIndeterminateDeferredSettlement(
+      operationId: string | undefined,
+      cause: unknown,
+    ): void {
+      try {
+        effectLedgerMirror = currentEffectLedger();
+        syncDeferredReconciliationOverlay();
+      } catch {
+        // The current host mirror is itself unavailable. The closure below
+        // keeps every public state surface shut until a fresh host recovers
+        // the write-ahead record and constructs a replacement runtime.
+      }
+      expectedBoundPendingQuestion = undefined;
+      deferredSettlementClosure ??= new Error(
+        `${label} deferred settlement is indeterminate; recover the host effect ledger before continuing`,
+        { cause },
+      );
+      if (
+        operationId !== undefined &&
+        deferredReconciliationOperationId === undefined
+      ) {
+        deferredReconciliationOperationId = operationId;
+      }
+    }
+
+    function assertDeferredSettlementOpen(method: string): void {
+      if (deferredSettlementClosure !== undefined) {
+        throw new Error(
+          `createPlaybookRuntime.${method}: deferred settlement recovery is required`,
+          { cause: deferredSettlementClosure },
+        );
+      }
+    }
+
+    function currentBoundDeferredOperation(
+      pending: PlaybookPendingBossQuestionContext,
+    ): PlaybookEffectLogicalOperation | undefined {
+      const projected = {
+        questionId: pending.questionId,
+        asker: pending.asker,
+        question: pending.question,
+        sourceItem: pending.sourceItem,
+      };
+      const matches = runtimeLogicalOperations().filter(
+        (operation) =>
+          operation.logicalReceipt === undefined &&
+          operation.checkpoint !== undefined &&
+          operation.pendingQuestion !== undefined &&
+          operation.playerContinuation !== undefined &&
+          !operation.checkpointRestorationEligible &&
+          isDeepStrictEqual(operation.pendingQuestion, projected),
+      );
+      if (matches.length > 1) {
+        throw new Error(
+          `${label} effect ledger contains multiple operations for one pending question`,
+        );
+      }
+      return matches[0];
+    }
+
+    function continuationBoundarySeed(
+      operation: PlaybookEffectLogicalOperation,
+      turnId: number,
+    ): XStateEffectBoundarySeed {
+      const latestBoundaryId = operation.boundaryIds.at(-1);
+      const latestBoundary = effectLedgerMirror.boundaries.find(
+        ({ boundaryId }) => boundaryId === latestBoundaryId,
+      );
+      if (latestBoundary === undefined) {
+        throw new Error(
+          `${label} deferred logical operation has no latest physical boundary`,
+        );
+      }
+      return {
+        boundaryId: randomUUID(),
+        runtimeSessionId: latestBoundary.runtimeSessionId,
+        turnId,
+        callId: `player-${++playerCallSequence}`,
+        roleId: latestBoundary.roleId,
+        sourceStateId: latestBoundary.sourceStateId,
+        sourceOutcomeSchema: latestBoundary.sourceOutcomeSchema,
+        dispositions: latestBoundary.dispositions,
+        correctionBudget: { limit: 1, spent: false },
+      };
+    }
 
     function bindSession(nextSession: PlaybookSession): PlaybookSession {
       const bound = snapshotPlaybookSession(nextSession);
@@ -3469,6 +3680,166 @@ export function createXStatePlaybookRuntime<
       };
     }
 
+    function stateHasDeferredOutcome(stateId: string): boolean {
+      const governed = outcomeAuthority?.governedPlayerStates[stateId];
+      return (
+        governed !== undefined &&
+        Object.values(governed).some(
+          ({ repositoryDisposition }) =>
+            repositoryDisposition === 'deferred',
+        )
+      );
+    }
+
+    function boundPendingQuestion(
+      input: PlaybookPlayerInput,
+      roleId: string,
+      output: PlaybookActorOutput,
+    ): PlaybookPendingBossQuestionContext {
+      if (output.guard !== 'needsBossReply' || typeof output.question !== 'string') {
+        throw new TypeError(
+          `${label} deferred outcome must carry one exact Boss question`,
+        );
+      }
+      return {
+        questionId: input.stateId,
+        resumeStateId: input.stateId,
+        sourceItem: input.sourceItem,
+        asker: { kind: 'role', roleId },
+        question: output.question,
+      };
+    }
+
+    function detachedPlayerContinuation(
+      roleId: string,
+      playerId: string | undefined,
+    ): JsonValue {
+      return snapshotJsonValue(
+        selectPlayerResume(roleId, playerId),
+        `${label} deferred player continuation`,
+      );
+    }
+
+    function completionEvidenceFor(
+      input: PlaybookPlayerInput,
+      roleId: string,
+      playerId: string | undefined,
+      signal: AbortSignal,
+      operationId: string | undefined,
+    ): (
+      completion: XStateRepositoryExclusiveCompletion<PlayerResult>,
+    ) => Promise<XStateRepositoryCompletionEvidence> {
+      return async ({ boundary: completedBoundary, operation }) => {
+        if (
+          operation.status !== 'fulfilled' ||
+          operation.value.status !== 'ok' ||
+          isEmptyFinalText(operation.value.finalText)
+        ) {
+          return operation.status === 'fulfilled' &&
+            operation.value.finalText !== undefined
+            ? { finalText: operation.value.finalText }
+            : {};
+        }
+        const finalText = operation.value.finalText!;
+        const output = await adjudicatePlayerOutput(
+          adjudication,
+          input,
+          finalText,
+          requireHostPorts(),
+          signal,
+          boundary,
+        );
+        validateBossReplyOutput(input, output, resumableStateIds);
+        const semanticCandidate = snapshotJsonValue(
+          output,
+          `${label} governed semantic candidate`,
+        );
+        governedOutputsByBoundaryId.set(completedBoundary.boundaryId, output);
+        if (output.guard !== 'needsBossReply') {
+          return { finalText, semanticCandidate };
+        }
+        const pending = boundPendingQuestion(input, roleId, output);
+        const bindingId = operationId ?? randomUUID();
+        expectedBoundPendingQuestion = pending;
+        return {
+          finalText,
+          semanticCandidate,
+          deferred: {
+            operationId: bindingId,
+            pendingQuestion: {
+              questionId: pending.questionId,
+              asker: pending.asker,
+              question: pending.question,
+              sourceItem: pending.sourceItem,
+            },
+            playerContinuation: detachedPlayerContinuation(roleId, playerId),
+          },
+        };
+      };
+    }
+
+    async function deferredContinuationCompletionEvidence(
+      completion: XStateRepositoryExclusiveCompletion<unknown>,
+    ): Promise<XStateRepositoryCompletionEvidence> {
+      const continuation = activeDeferredContinuation;
+      if (continuation === undefined) {
+        throw new Error(
+          `${label} deferred continuation completed without active runtime context`,
+        );
+      }
+      const result = continuation.result;
+      const output = continuation.output;
+      if (
+        completion.operation.status !== 'fulfilled' ||
+        completion.operation.value !== null ||
+        result === undefined ||
+        result.status !== 'ok' ||
+        isEmptyFinalText(result.finalText) ||
+        output === undefined
+      ) {
+        return {
+          ...(result?.finalText === undefined
+            ? {}
+            : { finalText: result.finalText }),
+          unresolved: true,
+        };
+      }
+      const finalText = result.finalText!;
+      const semanticCandidate = snapshotJsonValue(
+        output,
+        `${label} deferred semantic candidate`,
+      );
+      if (output.guard !== 'needsBossReply') {
+        return { finalText, semanticCandidate };
+      }
+      const input = continuation.input;
+      const roleId = continuation.roleId;
+      if (input === undefined || roleId === undefined) {
+        throw new Error(
+          `${label} deferred continuation lost its bound player identity`,
+        );
+      }
+      const pending = boundPendingQuestion(input, roleId, output);
+      expectedBoundPendingQuestion = pending;
+      return {
+        finalText,
+        semanticCandidate,
+        deferred: {
+          operationId: continuation.operationId,
+          pendingQuestion: {
+            questionId: pending.questionId,
+            asker: pending.asker,
+            question: pending.question,
+            sourceItem: pending.sourceItem,
+          },
+          playerContinuation: detachedPlayerContinuation(
+            roleId,
+            continuation.playerId,
+          ),
+        },
+      };
+    }
+
     function recordActiveGovernedAttempt(
       boundary: PlaybookEffectBoundary,
     ): void {
@@ -3501,15 +3872,16 @@ export function createXStatePlaybookRuntime<
     function acknowledgeGovernedPlayerResult(
       value: unknown,
       boundaryId: string,
+      source: 'runExclusive' | 'runDeferred' = 'runExclusive',
     ): PlayerResult {
       if (!isPlainObject(value) || !isPlainObject(value.operation)) {
         throw new TypeError(
-          `${label} repository runExclusive returned an invalid settlement`,
+          `${label} repository ${source} returned an invalid settlement`,
         );
       }
       const ledger = assertPlaybookEffectLedger(
         value.effectLedger,
-        `${label} repository runExclusive effect ledger`,
+        `${label} repository ${source} effect ledger`,
       );
       const completed = ledger.boundaries.find(
         (candidate) => candidate.boundaryId === boundaryId,
@@ -3520,15 +3892,16 @@ export function createXStatePlaybookRuntime<
         !isDeepStrictEqual(completed.physicalReceipt, value.receipt)
       ) {
         throw new TypeError(
-          `${label} repository runExclusive did not acknowledge its completed boundary`,
+          `${label} repository ${source} did not acknowledge its completed boundary`,
         );
       }
       effectLedgerMirror = ledger;
+      syncDeferredReconciliationOverlay();
       recordActiveGovernedAttempt(completed);
       if (value.operation.status === 'rejected') {
         if (!Object.prototype.hasOwnProperty.call(value.operation, 'reason')) {
           throw new TypeError(
-            `${label} repository runExclusive rejection omitted its reason`,
+            `${label} repository ${source} rejection omitted its reason`,
           );
         }
         throw value.operation.reason;
@@ -3538,7 +3911,7 @@ export function createXStatePlaybookRuntime<
         !Object.prototype.hasOwnProperty.call(value.operation, 'value')
       ) {
         throw new TypeError(
-          `${label} repository runExclusive returned an invalid operation settlement`,
+          `${label} repository ${source} returned an invalid operation settlement`,
         );
       }
       const result = validatePlayerResult(value.operation.value);
@@ -3546,6 +3919,49 @@ export function createXStatePlaybookRuntime<
         boundaryId: completed.boundaryId,
         attemptId: completed.attemptId,
       });
+      const governedOutput = governedOutputsByBoundaryId.get(boundaryId);
+      if (governedOutput !== undefined) {
+        governedOutputsByBoundaryId.delete(boundaryId);
+        governedPlayerOutputs.set(result, governedOutput);
+      }
+      if (source === 'runExclusive' && governedOutput?.guard === 'needsBossReply') {
+        if (
+          value.deferredStatus !== 'bound' &&
+          value.deferredStatus !== 'unresolved'
+        ) {
+          throw new TypeError(
+            `${label} deferred settlement omitted its durable binding status`,
+          );
+        }
+        const operationId = completed.logicalOperationId;
+        if (operationId === undefined) {
+          throw new TypeError(
+            `${label} deferred settlement omitted its logical operation`,
+          );
+        }
+        if (value.deferredStatus === 'bound') {
+          if (
+            expectedBoundPendingQuestion === undefined ||
+            currentBoundDeferredOperation(expectedBoundPendingQuestion)
+              ?.operationId !== operationId
+          ) {
+            throw new TypeError(
+              `${label} deferred settlement did not acknowledge its exact bound question`,
+            );
+          }
+        } else {
+          if (deferredReconciliationOperationId !== operationId) {
+            throw new TypeError(
+              `${label} unresolved deferred settlement is not structurally unresolved`,
+            );
+          }
+          expectedBoundPendingQuestion = undefined;
+        }
+      } else if (source === 'runExclusive' && value.deferredStatus !== undefined) {
+        throw new TypeError(
+          `${label} non-deferred settlement returned a deferred binding status`,
+        );
+      }
       return result;
     }
 
@@ -3692,22 +4108,27 @@ export function createXStatePlaybookRuntime<
         const turnId = activeTurnId;
         const stateId = input.stateId;
         const playerId = resolvedPlayerId(roleId);
-        let resume: string | false;
+        const deferredContinuation = activeDeferredContinuation;
+        let selectedResume: string | false;
         try {
           signal.throwIfAborted();
-          resume = selectPlayerResume(roleId, playerId);
+          selectedResume =
+            deferredContinuation?.playerContinuation ??
+            selectPlayerResume(roleId, playerId);
         } catch (error) {
           if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
           throw error;
         }
-        const callId = `player-${++playerCallSequence}`;
-        const identity = {
-          ...stateIdentity(stateId),
-          sourceItem: input.sourceItem,
-          roleId,
-          ...(playerId === undefined ? {} : { playerId }),
-          resume,
-        };
+        const callId =
+          deferredContinuation?.effectBoundary.callId ??
+          `player-${++playerCallSequence}`;
+        const callIdentity = (resume: string | false) => ({
+            ...stateIdentity(stateId),
+            sourceItem: input.sourceItem,
+            roleId,
+            ...(playerId === undefined ? {} : { playerId }),
+            resume,
+          });
         const position: TracePosition = {
           ...(turnId !== undefined ? { turnId } : {}),
           callId,
@@ -3721,13 +4142,17 @@ export function createXStatePlaybookRuntime<
           await emitCallStarted(
             'player.call.started',
             'player.call.finished',
-            { ...identity, prompt },
+            { ...callIdentity(selectedResume), prompt },
             position,
             signal,
           );
           await emitTrace(
             'player.call.finished',
-            { ...identity, status: 'error', error: normalizeError(error) },
+            {
+              ...callIdentity(selectedResume),
+              status: 'error',
+              error: normalizeError(error),
+            },
             position,
           );
           throw error;
@@ -3735,7 +4160,10 @@ export function createXStatePlaybookRuntime<
         activePlayerKeys.add(playerKey);
 
         try {
-          const runTracedPlayerCall = async (): Promise<PlayerResult> => {
+          const runTracedPlayerCall = async (
+            resume: string | false = selectedResume,
+          ): Promise<PlayerResult> => {
+            const identity = callIdentity(resume);
             await emitCallStarted(
               'player.call.started',
               'player.call.finished',
@@ -3840,6 +4268,37 @@ export function createXStatePlaybookRuntime<
             callId,
             turnId,
           );
+          if (deferredContinuation !== undefined) {
+            if (
+              effectBoundary === undefined ||
+              effectBoundary.runtimeSessionId !==
+                deferredContinuation.effectBoundary.runtimeSessionId ||
+              effectBoundary.turnId !== deferredContinuation.effectBoundary.turnId ||
+              effectBoundary.callId !== deferredContinuation.effectBoundary.callId ||
+              effectBoundary.roleId !== deferredContinuation.effectBoundary.roleId ||
+              effectBoundary.sourceStateId !==
+                deferredContinuation.effectBoundary.sourceStateId ||
+              !isDeepStrictEqual(
+                effectBoundary.sourceOutcomeSchema,
+                deferredContinuation.effectBoundary.sourceOutcomeSchema,
+              ) ||
+              !isDeepStrictEqual(
+                effectBoundary.dispositions,
+                deferredContinuation.effectBoundary.dispositions,
+              )
+            ) {
+              throw new TypeError(
+                `${label} deferred continuation did not invoke its bound player boundary`,
+              );
+            }
+            activeGovernedBoundarySeen = true;
+            deferredContinuation.input = input;
+            deferredContinuation.roleId = roleId;
+            deferredContinuation.playerId = playerId;
+            const result = await runTracedPlayerCall(selectedResume);
+            deferredContinuation.result = result;
+            return result;
+          }
           // Await inside this try so its finally retains the player-key
           // exclusion until the host operation actually settles.
           if (effectBoundary === undefined) return await runTracedPlayerCall();
@@ -3850,27 +4309,58 @@ export function createXStatePlaybookRuntime<
           }
           activeGovernedBoundarySeen = true;
           try {
+            const completeEffectBoundary = stateHasDeferredOutcome(
+              input.stateId,
+            )
+              ? completionEvidenceFor(
+                  input,
+                  roleId,
+                  playerId,
+                  signal,
+                  undefined,
+                )
+              : async ({ operation }: XStateRepositoryExclusiveCompletion<PlayerResult>) =>
+                  operation.status === 'fulfilled' &&
+                  operation.value.finalText !== undefined
+                    ? { finalText: operation.value.finalText }
+                    : {};
             const exclusive = await repositoryCapability.runExclusive({
               signal,
               effectBoundary,
               operation: runTracedPlayerCall,
-              completeEffectBoundary: async ({ operation }) =>
-                operation.status === 'fulfilled' &&
-                operation.value.finalText !== undefined
-                  ? { finalText: operation.value.finalText }
-                  : {},
+              completeEffectBoundary,
             });
             return acknowledgeGovernedPlayerResult(
               exclusive,
               effectBoundary.boundaryId,
             );
           } catch (error) {
+            if (expectedBoundPendingQuestion !== undefined) {
+              closeAfterIndeterminateDeferredSettlement(undefined, error);
+            }
+            expectedBoundPendingQuestion = undefined;
+            governedOutputsByBoundaryId.delete(effectBoundary.boundaryId);
             refreshGovernedBoundaryStart(effectBoundary.boundaryId);
             if (!isAbortFailure(error, signal)) controlPlaneError ??= error;
             throw error;
           }
         } finally {
           activePlayerKeys.delete(playerKey);
+        }
+      },
+
+      takeGovernedPlayerOutput(result): PlaybookActorOutput | undefined {
+        const output = governedPlayerOutputs.get(result);
+        if (output !== undefined) governedPlayerOutputs.delete(result);
+        return output;
+      },
+
+      recordGovernedPlayerOutput(
+        result,
+        output,
+      ): void {
+        if (activeDeferredContinuation?.result === result) {
+          activeDeferredContinuation.output = output;
         }
       },
 
@@ -4492,7 +4982,10 @@ export function createXStatePlaybookRuntime<
         state,
       };
       const pendingBossQuestion = pendingBossQuestionForState(state, context);
-      if (pendingBossQuestion !== undefined) {
+      if (
+        pendingBossQuestion !== undefined &&
+        deferredReconciliationOperationId === undefined
+      ) {
         payload.pendingBossQuestion = pendingBossQuestion;
       }
       if (state.stateId === 'failed') {
@@ -4651,6 +5144,20 @@ export function createXStatePlaybookRuntime<
             }
             const context = ((snap as { context?: unknown }).context ??
               {}) as Record<string, unknown>;
+            if (
+              state.stateId === BOSS_REPLY_WAIT_STATE_ID &&
+              deferredReconciliationOperationId !== undefined
+            ) {
+              priorState = state;
+              return;
+            }
+            if (
+              state.stateId === BOSS_REPLY_WAIT_STATE_ID &&
+              expectedBoundPendingQuestion !== undefined &&
+              !deferInspectionEmissions
+            ) {
+              validateBoundQuestionProjection();
+            }
             const payload = structuredStateTelemetryPayload(
               previousState,
               state,
@@ -4662,13 +5169,19 @@ export function createXStatePlaybookRuntime<
               context,
               inspectionEvent.event,
             );
-            enqueueTransitionEmission(
-              payload,
-              state,
-              statuses,
-              tracePositionForActiveTurn(),
-              settlementAborts,
-            );
+            const publish = () =>
+              enqueueTransitionEmission(
+                payload,
+                state,
+                statuses,
+                tracePositionForActiveTurn(),
+                settlementAborts,
+              );
+            if (deferInspectionEmissions) {
+              deferredInspectionEmissions.push(publish);
+            } else {
+              publish();
+            }
             priorState = state;
           } catch (error) {
             latchRuntimeError(error, settlementAborts);
@@ -4708,7 +5221,10 @@ export function createXStatePlaybookRuntime<
         const output = (
           actor?.getSnapshot() as { output?: unknown } | undefined
         )?.output;
-        const stateDescription = stateDescriptionFor(state);
+        const stateDescription =
+          deferredReconciliationOperationId === undefined
+            ? stateDescriptionFor(state)
+            : undefined;
         return {
           outcome,
           state,
@@ -4848,6 +5364,12 @@ export function createXStatePlaybookRuntime<
       controlPlaneError = undefined;
       emissionFailure = undefined;
       priorState = undefined;
+      deferredReconciliationOperationId = undefined;
+      deferredSettlementClosure = undefined;
+      expectedBoundPendingQuestion = undefined;
+      activeDeferredContinuation = undefined;
+      deferInspectionEmissions = false;
+      deferredInspectionEmissions = [];
       lastBossEvent = undefined;
       suppressInspectionEmissions = false;
       initialized = false;
@@ -4867,7 +5389,8 @@ export function createXStatePlaybookRuntime<
 
     interface DerivedControlAction {
       action: PlaybookControlAction;
-      event: EventObject;
+      event?: EventObject;
+      deferredRestoreOperationId?: string;
     }
 
     function snapshotCan(snapshot: unknown, event: EventObject): boolean {
@@ -4972,6 +5495,22 @@ export function createXStatePlaybookRuntime<
         return [];
       }
       const derived: DerivedControlAction[] = [];
+      if (deferredReconciliationOperationId !== undefined) {
+        const operation = effectLedgerMirror.logicalOperations.find(
+          ({ operationId }) =>
+            operationId === deferredReconciliationOperationId,
+        );
+        if (operation?.checkpointRestorationEligible) {
+          derived.push({
+            action: {
+              id: 'reconcile:restore-deferred-wait',
+              label: 'Retry repository checkpoint reconciliation',
+            },
+            deferredRestoreOperationId: operation.operationId,
+          });
+        }
+        return derived;
+      }
       const retry = retryActionFor(snapshot, state.stateId);
       if (retry !== undefined) derived.push(retry);
       // Jump entries: resumable targets whose explicit-state-jump event the
@@ -5128,6 +5667,7 @@ export function createXStatePlaybookRuntime<
       initInFlight = initialization;
       const initTask = (async () => {
         session = boundSession;
+        syncDeferredReconciliationOverlay();
         savedPorts = boundSession.ports;
         runtimePorts = createRuntimePorts(boundSession.ports);
         if (adoptionContext === undefined) {
@@ -5313,6 +5853,272 @@ export function createXStatePlaybookRuntime<
       }
     }
 
+    function validateBoundQuestionProjection(): void {
+      const expected = expectedBoundPendingQuestion;
+      if (expected === undefined) return;
+      const snapshot = actor?.getSnapshot();
+      const state = snapshot === undefined
+        ? undefined
+        : normalizePlaybookSnapshot(snapshot);
+      const context = ((snapshot as { context?: unknown } | undefined)
+        ?.context ?? {}) as Record<string, unknown>;
+      const actual =
+        state?.stateId === BOSS_REPLY_WAIT_STATE_ID
+          ? pendingBossQuestionFromContext(context)
+          : undefined;
+      if (!isDeepStrictEqual(actual, expected)) {
+        throw new Error(
+          `${label} deferred FSM question does not equal its durable binding`,
+        );
+      }
+      const operation = currentBoundDeferredOperation(expected);
+      if (operation === undefined) {
+        throw new Error(
+          `${label} deferred FSM question has no exact durable operation`,
+        );
+      }
+      expectedBoundPendingQuestion = undefined;
+    }
+
+    function settleDeferredInspectionBuffer(publish: boolean): void {
+      const buffered = deferredInspectionEmissions;
+      deferredInspectionEmissions = [];
+      deferInspectionEmissions = false;
+      if (publish) {
+        for (const emission of buffered) emission();
+      }
+    }
+
+    async function continueBoundDeferredOperation(
+      operation: PlaybookEffectLogicalOperation,
+      event: EventObject,
+      signal: AbortSignal,
+      turnId: number,
+      classificationLine?: string,
+    ): Promise<'continued' | 'unresolved'> {
+      if (repositoryCapability === undefined) {
+        throw new Error(
+          `${label} deferred continuation requires repository.runDeferred`,
+        );
+      }
+      const effectBoundary = continuationBoundarySeed(operation, turnId);
+      const continuation: NonNullable<typeof activeDeferredContinuation> = {
+        operationId: operation.operationId,
+        effectBoundary,
+      };
+      activeDeferredContinuation = continuation;
+      deferInspectionEmissions = true;
+      let continuationStarted = false;
+      deferredInspectionEmissions =
+        classificationLine === undefined
+          ? []
+          : [() => void runtimePorts!.emitStatus(classificationLine)];
+      try {
+        const result = await repositoryCapability.runDeferred({
+          mode: 'continue',
+          signal,
+          operationId: operation.operationId,
+          effectBoundary,
+          operation: async ({ playerContinuation }) => {
+            if (
+              playerContinuation !== false &&
+              (typeof playerContinuation !== 'string' ||
+                playerContinuation.trim().length === 0)
+            ) {
+              throw new TypeError(
+                `${label} bound deferred player continuation is invalid`,
+              );
+            }
+            continuation.playerContinuation = playerContinuation;
+            continuationStarted = true;
+            actor!.send(event);
+            await waitForPlaybookQuiescence(actor!, {
+              pendingCalls: nestedBridge,
+            });
+            if (controlPlaneError !== undefined) throw controlPlaneError;
+            return null;
+          },
+          completeEffectBoundary: deferredContinuationCompletionEvidence,
+        });
+        effectLedgerMirror = assertPlaybookEffectLedger(
+          result.effectLedger,
+          `${label} deferred continuation effect ledger`,
+        );
+        syncDeferredReconciliationOverlay();
+        if (result.status !== 'continued') {
+          expectedBoundPendingQuestion = undefined;
+          settleDeferredInspectionBuffer(false);
+          return 'unresolved';
+        }
+        const completed = effectLedgerMirror.boundaries.find(
+          ({ boundaryId }) => boundaryId === effectBoundary.boundaryId,
+        );
+        if (
+          completed?.physicalReceipt === undefined ||
+          !isDeepStrictEqual(completed.physicalReceipt, result.receipt)
+        ) {
+          throw new TypeError(
+            `${label} deferred continuation did not acknowledge its physical boundary`,
+          );
+        }
+        recordActiveGovernedAttempt(completed);
+        if (result.logicalReceipt !== undefined) {
+          const completedOperation = effectLedgerMirror.logicalOperations.find(
+            ({ operationId }) => operationId === operation.operationId,
+          );
+          if (
+            completedOperation?.logicalReceipt === undefined ||
+            !isDeepStrictEqual(
+              completedOperation.logicalReceipt,
+              result.logicalReceipt,
+            )
+          ) {
+            throw new TypeError(
+              `${label} deferred continuation did not acknowledge its cumulative receipt`,
+            );
+          }
+        }
+        if (continuation.output?.guard === 'needsBossReply') {
+          if (
+            result.deferredStatus !== 'bound' &&
+            result.deferredStatus !== 'unresolved'
+          ) {
+            throw new TypeError(
+              `${label} repeated deferred settlement omitted its durable binding status`,
+            );
+          }
+        } else if (
+          continuation.output !== undefined &&
+          result.logicalReceipt === undefined
+        ) {
+          throw new TypeError(
+            `${label} final deferred settlement omitted its cumulative receipt`,
+          );
+        }
+        if (deferredReconciliationOperationId === undefined) {
+          validateBoundQuestionProjection();
+          settleDeferredInspectionBuffer(true);
+        } else {
+          expectedBoundPendingQuestion = undefined;
+          settleDeferredInspectionBuffer(false);
+        }
+        return 'continued';
+      } catch (error) {
+        if (continuationStarted) {
+          closeAfterIndeterminateDeferredSettlement(
+            operation.operationId,
+            error,
+          );
+        }
+        settleDeferredInspectionBuffer(false);
+        throw error;
+      } finally {
+        activeDeferredContinuation = undefined;
+      }
+    }
+
+    function isExactDeferredBossReply(
+      snapshot: unknown,
+      event: EventObject,
+      pending: PlaybookPendingBossQuestionContext,
+    ): boolean {
+      const candidate = event as {
+        readonly type: string;
+        readonly questionId?: unknown;
+        readonly answer?: unknown;
+      };
+      return (
+        candidate.type === 'BOSS_REPLY' &&
+        (candidate.questionId === undefined ||
+          candidate.questionId === pending.questionId) &&
+        typeof candidate.answer === 'string' &&
+        candidate.answer.trim().length > 0 &&
+        snapshotCan(snapshot, event)
+      );
+    }
+
+    async function parkBoundDeferredOperation(
+      operationId: string,
+      signal: AbortSignal,
+    ): Promise<void> {
+      if (repositoryCapability === undefined) {
+        throw new Error(
+          `${label} deferred parking requires repository.runDeferred`,
+        );
+      }
+      const parked = await repositoryCapability.runDeferred({
+        mode: 'park',
+        signal,
+        operationId,
+      });
+      if (parked.status !== 'parked') {
+        throw new TypeError(
+          `${label} repository refused to park its deferred operation`,
+        );
+      }
+      effectLedgerMirror = assertPlaybookEffectLedger(
+        parked.effectLedger,
+        `${label} parked deferred effect ledger`,
+      );
+      syncDeferredReconciliationOverlay();
+      if (deferredReconciliationOperationId !== operationId) {
+        throw new TypeError(
+          `${label} parked deferred operation is not structurally unresolved`,
+        );
+      }
+    }
+
+    async function restoreBoundDeferredOperation(
+      operationId: string,
+      signal: AbortSignal,
+    ): Promise<'restored' | 'checkpoint-mismatch' | 'ineligible'> {
+      if (repositoryCapability === undefined) {
+        throw new Error(
+          `${label} deferred restoration requires repository.runDeferred`,
+        );
+      }
+      const restored = await repositoryCapability.runDeferred({
+        mode: 'restore',
+        signal,
+        operationId,
+      });
+      if (restored.status === 'parked') {
+        throw new TypeError(
+          `${label} repository returned a park result for deferred restoration`,
+        );
+      }
+      effectLedgerMirror = assertPlaybookEffectLedger(
+        restored.effectLedger,
+        `${label} restored deferred effect ledger`,
+      );
+      syncDeferredReconciliationOverlay();
+      if (restored.status === 'restored') {
+        if (deferredReconciliationOperationId !== undefined) {
+          throw new TypeError(
+            `${label} restored deferred operation remained unresolved`,
+          );
+        }
+        const snapshot = actor!.getSnapshot();
+        const state = normalizePlaybookSnapshot(snapshot);
+        const context = ((snapshot as { context?: unknown }).context ??
+          {}) as Record<string, unknown>;
+        const pending = pendingBossQuestionForState(state, context);
+        if (
+          pending === undefined ||
+          currentBoundDeferredOperation(pending)?.operationId !== operationId
+        ) {
+          throw new TypeError(
+            `${label} restored deferred wait does not equal its FSM question`,
+          );
+        }
+      } else if (deferredReconciliationOperationId !== operationId) {
+        throw new TypeError(
+          `${label} unresolved deferred restoration lost its operation identity`,
+        );
+      }
+      return restored.status;
+    }
+
     const runtime = {
       ...(retainedGenerationMetadata === undefined
         ? {}
@@ -5330,6 +6136,7 @@ export function createXStatePlaybookRuntime<
         initInFlight = initialization;
         const initTask = (async () => {
           session = boundSession;
+          syncDeferredReconciliationOverlay();
           savedPorts = boundSession.ports;
           runtimePorts = createRuntimePorts(boundSession.ports);
           suppressInspectionEmissions = false;
@@ -5359,6 +6166,7 @@ export function createXStatePlaybookRuntime<
           return undefined;
         }
         if (activeSignal !== undefined) return undefined;
+        if (deferredSettlementClosure !== undefined) return undefined;
         const pendingCall = nestedBridge.getPendingCall();
         const bridgeSuspendedCall = nestedBridge.getSuspendedCall();
         if ((pendingCall === undefined) !== (bridgeSuspendedCall === undefined)) {
@@ -5403,7 +6211,10 @@ export function createXStatePlaybookRuntime<
         );
         const context = (actor.getSnapshot() as { context?: unknown })
           .context as Record<string, unknown>;
-        const pending = pendingBossQuestionForState(state, context ?? {});
+        const pending =
+          deferredReconciliationOperationId === undefined
+            ? pendingBossQuestionForState(state, context ?? {})
+            : undefined;
         effectLedgerMirror = currentEffectLedger();
         const failedEffectAttempt =
           hasGovernedPlayerStates &&
@@ -5494,14 +6305,21 @@ export function createXStatePlaybookRuntime<
             'createPlaybookRuntime.describe: another runtime turn is active',
           );
         }
+        assertDeferredSettlementOpen('describe');
         const snapshot = actor.getSnapshot();
         const state = currentState();
         const context = ((snapshot as { context?: unknown }).context ??
           {}) as Record<string, unknown>;
-        const pending = pendingBossQuestionForState(state, context);
+        const pending =
+          deferredReconciliationOperationId === undefined
+            ? pendingBossQuestionForState(state, context)
+            : undefined;
         const lastError = normalizeErrorFull(context.lastError);
         const projectedContext = projectControlContext(context);
-        const stateDescription = stateDescriptionFor(state);
+        const stateDescription =
+          deferredReconciliationOperationId === undefined
+            ? stateDescriptionFor(state)
+            : undefined;
         return deepFreeze({
           state,
           ...(stateDescription === undefined ? {} : { stateDescription }),
@@ -5542,6 +6360,7 @@ export function createXStatePlaybookRuntime<
             'createPlaybookRuntime.apply: input must be an object',
           );
         }
+        assertDeferredSettlementOpen('apply');
         const { actionId, key, signal } = input;
         if (typeof actionId !== 'string' || actionId.length === 0) {
           throw new TypeError(
@@ -5717,12 +6536,25 @@ export function createXStatePlaybookRuntime<
               // the key, so the action can never execute twice.
               accepted = true;
               try {
-                actor.send(candidate.event);
-                await waitForPlaybookQuiescence(actor, {
-                  pendingCalls: nestedBridge,
-                });
+                if (candidate.deferredRestoreOperationId !== undefined) {
+                  await restoreBoundDeferredOperation(
+                    candidate.deferredRestoreOperationId,
+                    signal,
+                  );
+                } else {
+                  actor.send(candidate.event!);
+                  await waitForPlaybookQuiescence(actor, {
+                    pendingCalls: nestedBridge,
+                  });
+                }
                 if (controlPlaneError !== undefined) throw controlPlaneError;
-                const run = runResultFor(settledOutcome(signal));
+                const run = runResultFor(
+                  candidate.deferredRestoreOperationId === undefined
+                    ? settledOutcome(signal)
+                    : deferredReconciliationOperationId === undefined
+                      ? 'quiescent'
+                      : 'no-action',
+                );
                 receipt = settledReceipt(
                   run.outcome === 'failed' || run.outcome === 'aborted'
                     ? {
@@ -5856,6 +6688,7 @@ export function createXStatePlaybookRuntime<
             'createPlaybookRuntime.handleBossInput: another runtime turn is active',
           );
         }
+        assertDeferredSettlementOpen('handleBossInput');
         const turnId = ++turnSequence;
         activeTurnId = turnId;
         beginAutomaticReplayBoundary();
@@ -5881,11 +6714,27 @@ export function createXStatePlaybookRuntime<
             //    where applicable (slc/link.md §Boss-event mapping), judge
             //    classification otherwise.
             let event: EventObject | undefined;
+            let classifiedSnapshot: unknown;
+            let deferredPending:
+              | PlaybookPendingBossQuestionContext
+              | undefined;
+            let deferredOperation: PlaybookEffectLogicalOperation | undefined;
             const trimmed = text.trim();
             if (trimmed !== '') {
               const snapshot = actor.getSnapshot();
+              classifiedSnapshot = snapshot;
               const terminal = snapshot.status === 'done';
               const stateId = normalizePlaybookSnapshot(snapshot).stateId;
+              const snapshotContext = ((snapshot as { context?: unknown })
+                .context ?? {}) as Record<string, unknown>;
+              deferredPending = pendingBossQuestionForState(
+                normalizePlaybookSnapshot(snapshot),
+                snapshotContext,
+              );
+              deferredOperation =
+                deferredPending === undefined
+                  ? undefined
+                  : currentBoundDeferredOperation(deferredPending);
               // PBRT-1 / slc/link.md §Boss-event mapping: the idle entry, the
               // recoverable failure state, and the reconstructed terminal all
               // accept exactly one ordinary textual entry event, so delivered
@@ -5893,7 +6742,12 @@ export function createXStatePlaybookRuntime<
               // classifier whim to settle a restart as no action. Every other
               // parked state — a reply wait or an authored mid-workflow
               // checkpoint — classifies under its own Boss-event contracts.
-              if (stateId === 'failed' && !failedAttemptAllowsReplay()) {
+              if (deferredReconciliationOperationId !== undefined) {
+                event = undefined;
+              } else if (
+                stateId === 'failed' &&
+                !failedAttemptAllowsReplay()
+              ) {
                 event = undefined;
               } else if (
                 spec.entryEvent !== undefined &&
@@ -5915,9 +6769,81 @@ export function createXStatePlaybookRuntime<
               }
               signal.throwIfAborted();
             }
+            if (
+              event !== undefined &&
+              deferredPending !== undefined &&
+              deferredOperation === undefined &&
+              hasGovernedPlayerStates &&
+              deferredReconciliationOperationId === undefined
+            ) {
+              throw new Error(
+                `${label} pending governed Boss question has no durable logical operation`,
+              );
+            }
+            let handledDeferred = false;
+            if (
+              event !== undefined &&
+              classifiedSnapshot !== undefined &&
+              deferredPending !== undefined &&
+              deferredOperation !== undefined
+            ) {
+              if (
+                isExactDeferredBossReply(
+                  classifiedSnapshot,
+                  event,
+                  deferredPending,
+                )
+              ) {
+                const statusLine = classificationStatus(event);
+                const continuation = await continueBoundDeferredOperation(
+                  deferredOperation,
+                  event,
+                  signal,
+                  turnId,
+                  statusLine,
+                );
+                if (continuation === 'continued') {
+                  try {
+                    lastBossEvent = snapshotJsonValue(
+                      event,
+                      'recorded Boss event',
+                    ) as unknown as EventObject;
+                  } catch {
+                    lastBossEvent = undefined;
+                  }
+                  if (controlPlaneError !== undefined) {
+                    throw controlPlaneError;
+                  }
+                  result = runResultFor(
+                    deferredReconciliationOperationId === undefined
+                      ? settledOutcome(signal)
+                      : 'no-action',
+                  );
+                } else {
+                  lastBossEvent = undefined;
+                  result = runResultFor('no-action');
+                }
+                handledDeferred = true;
+              } else if (event.type === 'BOSS_REPLY') {
+                // A malformed, empty, or mismatched answer does not consume
+                // the durable wait and starts no repository or player work.
+                event = undefined;
+              } else {
+                await parkBoundDeferredOperation(
+                  deferredOperation.operationId,
+                  signal,
+                );
+                lastBossEvent = undefined;
+                result = runResultFor('no-action');
+                handledDeferred = true;
+              }
+            }
             // Empty input, no-action classifier output, or invalid classifier
             // output — nothing to send.
-            if (event === undefined) {
+            if (handledDeferred) {
+              // The deferred host transaction already decided whether the
+              // authored continuation ran; never send its event a second time.
+            } else if (event === undefined) {
               result = runResultFor('no-action');
             } else {
               // 2. Optional Captain-pane classification line: the bare FSM
@@ -5979,20 +6905,32 @@ export function createXStatePlaybookRuntime<
             ((operationError !== undefined &&
               isAbortFailure(operationError, signal)) ||
               (drainAbort && operationError === undefined));
+          // A deferred continuation whose actor advanced before the host's
+          // completion write became authoritative has no safe public FSM
+          // settlement. The durable uncertain record is the only recovery
+          // source, so do not project the actor's advanced snapshot into a
+          // `boss.input.settled` event.
           const settlementResult =
-            primaryError === undefined
-              ? (result ?? runResultFor('no-action'))
-              : runResultFor(abortError ? 'aborted' : 'failed', primaryError);
+            deferredSettlementClosure !== undefined
+              ? undefined
+              : primaryError === undefined
+                ? (result ?? runResultFor('no-action'))
+                : runResultFor(
+                    abortError ? 'aborted' : 'failed',
+                    primaryError,
+                  );
 
           let settlementEmissionError: unknown;
-          try {
-            await emitTrace(
-              'boss.input.settled',
-              settlementTracePayload(settlementResult),
-              { turnId },
-            );
-          } catch (error) {
-            settlementEmissionError = error;
+          if (settlementResult !== undefined) {
+            try {
+              await emitTrace(
+                'boss.input.settled',
+                settlementTracePayload(settlementResult),
+                { turnId },
+              );
+            } catch (error) {
+              settlementEmissionError = error;
+            }
           }
           try {
             await drainEmissions();
@@ -6018,6 +6956,9 @@ export function createXStatePlaybookRuntime<
             !(abortError && settlementEmissionError === undefined)
           ) {
             throw failure;
+          }
+          if (settlementResult === undefined) {
+            throw deferredSettlementClosure;
           }
           return settlementResult;
         } finally {
@@ -6230,6 +7171,12 @@ export function createXStatePlaybookRuntime<
             controlPlaneError = undefined;
             emissionFailure = undefined;
             lastBossEvent = undefined;
+            deferredReconciliationOperationId = undefined;
+            deferredSettlementClosure = undefined;
+            expectedBoundPendingQuestion = undefined;
+            activeDeferredContinuation = undefined;
+            deferInspectionEmissions = false;
+            deferredInspectionEmissions = [];
             savedPorts = undefined;
             runtimePorts = undefined;
             session = undefined;

@@ -286,6 +286,7 @@ function runtimeSnapshot(
     turn?: number;
     roleResumeTokens?: Readonly<Record<string, string>>;
     pendingBossQuestions?: PlaybookRuntimeSnapshot['pendingBossQuestions'];
+    effectLedger?: PlaybookRuntimeSnapshot['effectLedger'];
     suspendedCall?: NonNullable<PlaybookRuntimeSnapshot['suspendedCall']>;
   } = {},
 ): PlaybookRuntimeSnapshot {
@@ -304,7 +305,7 @@ function runtimeSnapshot(
     },
     state,
     pendingBossQuestions: options.pendingBossQuestions ?? [],
-    effectLedger: emptyPlaybookEffectLedger(),
+    effectLedger: options.effectLedger ?? emptyPlaybookEffectLedger(),
     ...(options.suspendedCall === undefined
       ? {}
       : { suspendedCall: options.suspendedCall }),
@@ -623,6 +624,7 @@ function fakeHostCapabilities(
       acquire: vi.fn(async () => ({ marker: leaseOwnerToken })),
       runExclusive: vi.fn(async () => ({ marker: leaseOwnerToken })),
       runCohort: vi.fn(async () => ({ marker: leaseOwnerToken })),
+      runDeferred: vi.fn(async () => ({ marker: leaseOwnerToken })),
     }),
     effectLedger: Object.freeze({
       snapshot: vi.fn(() => effectLedger),
@@ -1278,6 +1280,14 @@ describe('createPlaybookCaptainShell explicit CODE routing (CAPTAIN-12/15)', () 
           },
         },
       }),
+      (capability) =>
+        ({
+          ...capability,
+          repository: {
+            ...capability.repository,
+            runDeferred: undefined,
+          },
+        }) as unknown as PlaybookHostConstructionCapabilities,
     ];
 
     for (const mutate of mutations) {
@@ -6718,6 +6728,104 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       asker: { kind: 'role' as const, roleId: 'coder' },
       question: 'Which target?',
     };
+    const observation = {
+      worktree: '/current/worktree',
+      gitDir: '/current/worktree/.git',
+      head: 'a'.repeat(40),
+      projection: {},
+      projectionDigest:
+        'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    };
+    const operationId = '43000000-0000-4000-8000-000000000003';
+    const firstBoundary = {
+      sequence: 1,
+      boundaryId: '41000000-0000-4000-8000-000000000001',
+      attemptId: '42000000-0000-4000-8000-000000000002',
+      attemptNumber: 1,
+      playbookId: 'code',
+      runtimeSessionId: ROOT_ID,
+      turnId: 1,
+      callId: 'code:coder:1',
+      roleId: 'coder',
+      sourceStateId: 'code.coder',
+      sourceOutcomeSchema: { needsBossReply: {}, committed: {} },
+      dispositions: ['deferred', 'one-descendant-commit'],
+      canonicalWorktree: {
+        worktree: observation.worktree,
+        gitDir: observation.gitDir,
+      },
+      baseline: observation,
+      after: observation,
+      physicalReceipt: {
+        classification: 'unchanged',
+        baseline: observation,
+        after: observation,
+      },
+      finalText: pendingQuestion.question,
+      semanticCandidate: {
+        guard: 'needsBossReply',
+        question: pendingQuestion.question,
+      },
+      correctionBudget: { limit: 1, spent: false },
+      logicalOperationId: operationId,
+    };
+    const boundLedger = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 2,
+      boundaries: [firstBoundary],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId,
+          playbookId: 'code',
+          runtimeSessionId: ROOT_ID,
+          boundaryIds: [firstBoundary.boundaryId],
+          originalBaseline: observation,
+          checkpoint: observation,
+          pendingQuestion,
+          playerContinuation: 'coder-root-token',
+          checkpointRestorationEligible: false,
+        },
+      ],
+    });
+    const completedLedger = assertPlaybookEffectLedger({
+      schemaVersion: 1,
+      revision: 4,
+      boundaries: [
+        firstBoundary,
+        {
+          ...firstBoundary,
+          sequence: 2,
+          boundaryId: '44000000-0000-4000-8000-000000000004',
+          attemptId: '45000000-0000-4000-8000-000000000005',
+          turnId: 3,
+          callId: 'code:coder:2',
+          finalText: 'Implemented.',
+          semanticCandidate: { guard: 'committed' },
+        },
+      ],
+      logicalOperations: [
+        {
+          sequence: 1,
+          operationId,
+          playbookId: 'code',
+          runtimeSessionId: ROOT_ID,
+          boundaryIds: [
+            firstBoundary.boundaryId,
+            '44000000-0000-4000-8000-000000000004',
+          ],
+          originalBaseline: observation,
+          checkpointRestorationEligible: false,
+          logicalReceipt: {
+            classification: 'unchanged',
+            baseline: observation,
+            after: observation,
+          },
+        },
+      ],
+    });
+    let sourceLedger = emptyPlaybookEffectLedger();
+    let runtimeOwnedSnapshot: PlaybookRuntimeSnapshot | undefined;
     const sourceCode = promoteToSchema3(
       fakeCodeEntry(async (runtime, runtimeTurn) => {
         await callPlayerAndCommit(
@@ -6727,19 +6835,39 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
           runtimeTurn.signal,
           false,
         );
+        sourceLedger = boundLedger;
+        runtimeOwnedSnapshot = runtimeSnapshot(
+          'code',
+          playbookState('awaitBossReply'),
+          {
+            turn: 1,
+            roleResumeTokens: { coder: 'coder-root-token' },
+            pendingBossQuestions: [pendingQuestion],
+            effectLedger: sourceLedger,
+          },
+        );
+        runtime.snapshot = runtimeOwnedSnapshot;
         await runtime.ports?.emitTelemetry(
-          stateTelemetry('ready', {
+          stateTelemetry('awaitBossReply', {
             pendingBossQuestions: [pendingQuestion],
             lastError: { name: 'TargetError', message: 'target missing' },
           }),
         );
-        return quiescentResult('ready');
+        return quiescentResult('awaitBossReply');
       }),
     );
-    const sourceCapabilities = fakeHostCapabilities(
+    const sourceCapabilityBase = fakeHostCapabilities(
       sourceCode.entry,
       'source-lease-authority',
     );
+    const sourceCapabilities: PlaybookHostConstructionCapabilities =
+      Object.freeze({
+        ...sourceCapabilityBase,
+        effectLedger: Object.freeze({
+          snapshot: vi.fn(() => sourceLedger),
+          writeAhead: vi.fn(async () => sourceLedger),
+        }),
+      });
     const source = makeShell(sourceCode, {
       sessionIds: [ROOT_ID],
       hostCapabilities: { code: sourceCapabilities },
@@ -6756,19 +6884,10 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       resumeToken: 'coder-root-token',
     });
     await source.handleBossTurn(turn('/code implement it'), sourceContext.context);
-    const runtimeOwnedSnapshot = runtimeSnapshot(
-      'code',
-      playbookState('ready'),
-      {
-        turn: 1,
-        roleResumeTokens: { coder: 'coder-root-token' },
-        pendingBossQuestions: [pendingQuestion],
-      },
-    );
-    sourceCode.runtimes[0]!.snapshot = runtimeOwnedSnapshot;
     const snapshot = source.exportSnapshot();
     expect(snapshot).toMatchObject({
       mode: 'engaged.parked',
+      effectLedger: boundLedger,
       playerSessions: {
         'code-coder': expect.objectContaining({
           resumeToken: 'coder-root-token',
@@ -6776,7 +6895,14 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       },
       pendingBossQuestions: [pendingQuestion],
       lastError: { name: 'TargetError', message: 'target missing' },
-      frames: [{ playbookId: 'code', sessionId: ROOT_ID, depth: 0 }],
+      frames: [
+        {
+          playbookId: 'code',
+          sessionId: ROOT_ID,
+          depth: 0,
+          runtime: { effectLedger: boundLedger },
+        },
+      ],
     });
     expect(Object.isFrozen(snapshot)).toBe(true);
     expect(Object.isFrozen(snapshot?.captain)).toBe(true);
@@ -6785,7 +6911,7 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
         Object.isFrozen(snapshot.frames[0]?.runtime),
     ).toBe(true);
     (
-      runtimeOwnedSnapshot.roleResumeTokens as Record<string, string>
+      runtimeOwnedSnapshot!.roleResumeTokens as Record<string, string>
     ).coder = 'mutated-after-export';
     expect(snapshot).toMatchObject({
       frames: [
@@ -6794,16 +6920,65 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
     });
 
     let restoredToken: string | false | undefined;
+    let targetLedger = boundLedger;
+    let targetInvocation = 0;
     const targetCode = promoteToSchema3(
-      fakeCodeEntry(async (runtime) => {
+      fakeCodeEntry(async (runtime, runtimeTurn) => {
+        targetInvocation += 1;
         restoredToken = runtime.session?.playerSessions?.select('coder');
+        expect(
+          targetLedger.logicalOperations[0]?.playerContinuation,
+        ).toBe(restoredToken);
+        if (targetInvocation === 1) {
+          runtime.snapshot = runtimeSnapshot(
+            'code',
+            playbookState('awaitBossReply'),
+            {
+              turn: 2,
+              roleResumeTokens: { coder: 'coder-root-token' },
+              pendingBossQuestions: [pendingQuestion],
+              effectLedger: targetLedger,
+            },
+          );
+          await runtime.ports?.emitTelemetry(
+            stateTelemetry('awaitBossReply', {
+              pendingBossQuestions: [pendingQuestion],
+            }),
+          );
+          return quiescentResult('awaitBossReply');
+        }
+        await callPlayerAndCommit(
+          runtime,
+          'coder',
+          'continue the exact bound question',
+          runtimeTurn.signal,
+          restoredToken ?? false,
+        );
+        targetLedger = completedLedger;
+        runtime.snapshot = runtimeSnapshot('code', playbookState('ready'), {
+          turn: 3,
+          roleResumeTokens:
+            runtime.session?.playerSessions?.snapshot() ?? {},
+          effectLedger: targetLedger,
+        });
+        await runtime.ports?.emitTelemetry(
+          stateTelemetry('ready', { pendingBossQuestions: [] }),
+        );
         return quiescentResult('ready');
       }),
     );
-    const targetCapabilities = fakeHostCapabilities(
+    const targetCapabilityBase = fakeHostCapabilities(
       targetCode.entry,
       'target-lease-authority',
     );
+    const targetCapabilities: PlaybookHostConstructionCapabilities =
+      Object.freeze({
+        ...targetCapabilityBase,
+        effectLedger: Object.freeze({
+          snapshot: vi.fn(() => targetLedger),
+          writeAhead: vi.fn(async () => targetLedger),
+        }),
+      });
     const target = makeShell(targetCode, {
       hostCapabilities: { code: targetCapabilities },
     });
@@ -6828,13 +7003,40 @@ describe('Playbook Captain complete session snapshots (CAPTAIN-41/42/43)', () =>
       /source-lease-authority|target-lease-authority/,
     );
 
+    const invalidContext = stubContext([
+      { status: 'ok', turnId: 2, finalText: 'Still waiting.' },
+    ]);
     await target.handleBossTurn(
-      turn('/code continue', 2),
-      stubContext([
-        { status: 'ok', turnId: 2, finalText: 'Continued.' },
-      ]).context,
+      turn('/code invalid answer', 2),
+      invalidContext.context,
+    );
+    expect(invalidContext.playerCalls).toEqual([]);
+    expect(target.exportSnapshot()).toMatchObject({
+      effectLedger: boundLedger,
+      pendingBossQuestions: [pendingQuestion],
+      frames: [{ runtime: { effectLedger: boundLedger } }],
+    });
+
+    const validContext = stubContext([
+      { status: 'ok', turnId: 3, finalText: 'Continued.' },
+    ]);
+    await target.handleBossTurn(
+      turn('/code valid answer', 3),
+      validContext.context,
     );
     expect(restoredToken).toBe('coder-root-token');
+    expect(validContext.playerCalls).toMatchObject([
+      {
+        playerId: 'code-coder',
+        options: { resume: 'coder-root-token' },
+      },
+    ]);
+    expect(targetCode.runtimes[0]?.inputs).toHaveLength(2);
+    expect(target.exportSnapshot()).toMatchObject({
+      effectLedger: completedLedger,
+      pendingBossQuestions: [],
+      frames: [{ runtime: { effectLedger: completedLedger } }],
+    });
 
     await source.dispose?.();
     await target.dispose?.();
